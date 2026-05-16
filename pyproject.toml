@@ -16,6 +16,8 @@ dependencies = [
     "anthropic>=0.40",
     "pgvector>=0.3",
     "python-dotenv>=1.0",
+    "sentence-transformers>=3.0,<4",
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]
@@ -26,6 +28,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "types-python-dateutil",
+    "types-PyYAML",
 ]
 
 [tool.ruff]

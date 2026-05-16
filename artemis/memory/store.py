@@ -12,13 +12,17 @@ caller's responsibility:
 
     async with session.begin():
         drawer = await write_drawer(session, scope, content, source)
+
+Embedding is best-effort: if the provider fails (or is unavailable),
+the row is written without an embedding and picked up by backfill later.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -26,11 +30,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.memory.models import (
     MemoryDrawer,
+    MemoryEmbedding,
     MemoryEvidence,
     MemoryObservation,
     MemoryScope,
 )
 from artemis.memory.schemas import Drawer, Evidence, Observation, Scope, Source
+
+if TYPE_CHECKING:
+    from artemis.memory.embeddings import EmbeddingProvider
+
+_logger = logging.getLogger(__name__)
 
 
 # ── Internals ────────────────────────────────────────────────────────────────
@@ -52,7 +62,63 @@ async def _ensure_scope(session: AsyncSession, scope: Scope) -> None:
     await session.execute(stmt)
 
 
+async def _embed_and_store(
+    session: AsyncSession,
+    target_table: Literal["drawer", "observation"],
+    target_id: int,
+    content: str,
+    provider: "EmbeddingProvider | None" = None,
+) -> None:
+    """Embed content and persist to memory_embeddings. Best-effort: never raises.
+
+    Uses a SAVEPOINT so a DB failure on the embedding write cannot corrupt the
+    outer transaction that wrote the primary row.
+    """
+    from artemis.memory.embeddings import get_default_provider
+
+    try:
+        _provider = provider or get_default_provider()
+        vector = await _provider.embed(content)
+        async with session.begin_nested():
+            await upsert_embedding(session, target_table, target_id, _provider.model_version, vector)
+    except Exception:
+        _logger.warning(
+            "Embedding failed for %s id=%d; row will be backfilled",
+            target_table,
+            target_id,
+            exc_info=True,
+        )
+
+
 # ── Public write API ─────────────────────────────────────────────────────────
+
+
+async def upsert_embedding(
+    session: AsyncSession,
+    target_table: Literal["drawer", "observation"],
+    target_id: int,
+    model_version: str,
+    vector: list[float],
+) -> None:
+    """Insert or replace the embedding for a drawer or observation.
+
+    Idempotent on (target_table, target_id, model_version). An existing vector
+    is overwritten — used by both the write path and the backfill coroutine.
+    """
+    stmt = (
+        pg_insert(MemoryEmbedding)
+        .values(
+            target_table=target_table,
+            target_id=target_id,
+            model_version=model_version,
+            embedding=vector,
+        )
+        .on_conflict_do_update(
+            constraint="uq_embeddings_target_model",
+            set_={"embedding": vector},
+        )
+    )
+    await session.execute(stmt)
 
 
 async def write_drawer(
@@ -62,11 +128,15 @@ async def write_drawer(
     source: Source,
     corpus_kind: str | None = None,
     owner_user_id: int | None = None,
+    embedding_provider: "EmbeddingProvider | None" = None,
 ) -> Drawer:
     """Write a drawer, deduplicating by content hash within the scope.
 
     Idempotent: if a drawer with identical content already exists in this scope,
     the existing drawer is returned without modification.
+
+    Embeds content in the same transaction (best-effort; failure is logged and
+    the row is queued for backfill — it never blocks the write).
     """
     content_hash = _content_hash(scope.scope_kind, scope.scope_id, content)
     await _ensure_scope(session, scope)
@@ -94,7 +164,9 @@ async def write_drawer(
         )
     )
     row = result.scalar_one()
-    return Drawer.model_validate(row)
+    drawer = Drawer.model_validate(row)
+    await _embed_and_store(session, "drawer", drawer.id, content, embedding_provider)
+    return drawer
 
 
 async def write_observation(
@@ -106,11 +178,15 @@ async def write_observation(
     valid_from: datetime | None = None,
     valid_until: datetime | None = None,
     owner_user_id: int | None = None,
+    embedding_provider: "EmbeddingProvider | None" = None,
 ) -> Observation:
     """Write an observation, deduplicating by content hash within the scope.
 
     Idempotent: if an observation with identical content already exists in this
     scope, the existing observation is returned without modification.
+
+    Embeds content in the same transaction (best-effort; failure is logged and
+    the row is queued for backfill — it never blocks the write).
     """
     content_hash = _content_hash(scope.scope_kind, scope.scope_id, content)
     await _ensure_scope(session, scope)
@@ -138,7 +214,9 @@ async def write_observation(
         )
     )
     row = result.scalar_one()
-    return Observation.model_validate(row)
+    obs = Observation.model_validate(row)
+    await _embed_and_store(session, "observation", obs.id, content, embedding_provider)
+    return obs
 
 
 async def link_evidence(

@@ -26,13 +26,55 @@ All functions accept `session: AsyncSession`. Wrap calls in `async with session.
 
 | Function | Description |
 |---|---|
-| `write_drawer(session, scope, content, source, ...)` | Write a drawer. Idempotent on content hash. |
-| `write_observation(session, scope, content, ...)` | Write an observation. Idempotent on content hash. |
+| `write_drawer(session, scope, content, source, ...)` | Write a drawer. Embeds on write (best-effort). Idempotent on content hash. |
+| `write_observation(session, scope, content, ...)` | Write an observation. Embeds on write (best-effort). Idempotent on content hash. |
+| `upsert_embedding(session, target_table, target_id, model_version, vector)` | Insert or update embedding for a drawer or observation. |
 | `link_evidence(session, obs_id, source_kind, source_id, ...)` | Link drawer or observation as evidence. Idempotent. |
 | `supersede_observation(session, old_id, new_id)` | Mark `old_id` superseded. No-op if already superseded. |
 | `get_drawer(session, id)` | Fetch drawer by id; returns `None` if missing. |
 | `get_observation(session, id)` | Fetch observation by id; returns `None` if missing. |
 | `list_evidence_for_observation(session, obs_id)` | All evidence for an observation, ordered by weight DESC. |
+
+## Retrieval API (`artemis.memory.retrieval`)
+
+```python
+from artemis.memory.retrieval import search_observations, RetrievalConfig
+
+results = await search_observations(
+    session,
+    scope_set=[Scope(scope_kind="workspace", scope_id="default")],
+    query="brand voice guidelines",
+    limit=10,
+    as_of=datetime.now(timezone.utc),   # validity window anchor
+    modes=["fts", "semantic", "recency", "score"],  # all by default
+)
+# returns list[ScoredObservation] sorted by final_score DESC
+```
+
+Weights are loaded from `config/memory-retrieval.yaml` (fts: 0.30, semantic: 0.40, recency: 0.15, score: 0.15). Edit the YAML to tune.
+
+## Embedding service (`artemis.memory.embeddings`)
+
+Default provider: `MiniLMProvider` — `all-MiniLM-L6-v2`, 384 dims, lazy-loaded.
+
+```python
+from artemis.memory.embeddings import get_default_provider
+
+provider = get_default_provider()
+vector = await provider.embed("some text")   # list[float], len 384
+```
+
+Set `ARTEMIS_EMBEDDING_PROVIDER=minilm` (default) in `.env`. Only `minilm` is available in V1.
+
+## Backfill CLI
+
+Rows written without an embedding (e.g. when the model was unavailable) are backfilled:
+
+```bash
+uv run python -m artemis.memory.backfill
+```
+
+Idempotent. Processes drawers and observations in batches of 50.
 
 ### Scope kinds
 
@@ -66,8 +108,6 @@ async with session.begin():
 
 ## Out of scope (this slice)
 
-- Embeddings / pgvector retrieval — Slice B2
-- Full-text search — Slice B2
 - Consolidation, scoring, decay — Slice B3
 - Graph entities and relations — Slice B4
 - HTTP routes — Phase C

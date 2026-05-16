@@ -1,0 +1,14 @@
+# Memory retrieval fusion weights and tuning knobs.
+# Weights must sum to 1.0. Matches the Node reference memory-retrieval.json.
+
+weights:
+  fts: 0.30        # tsvector BM25 (ts_rank)
+  semantic: 0.40   # pgvector cosine similarity
+  recency: 0.15    # exponential decay from created_at
+  score: 0.15      # stored score field (decayed by maintenance in B3)
+
+# Candidate pool per modality before fusion
+top_k: 50
+
+# Recency half-life in days — score halves after this many days
+recency_decay_days: 30.0

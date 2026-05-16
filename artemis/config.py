@@ -29,6 +29,11 @@ class Settings(BaseSettings):
 
     token: str | None = Field(default=None, description="Shared-account auth token; None disables.")
 
+    embedding_provider: str = Field(
+        default="minilm",
+        description="Embedding backend. Only 'minilm' supported in V1.",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

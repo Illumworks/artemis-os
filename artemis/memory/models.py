@@ -15,9 +15,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Computed,
     Float,
     ForeignKey,
     Index,
@@ -26,7 +28,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from artemis.db import Base
@@ -78,6 +80,13 @@ class MemoryDrawer(Base):
         TIMESTAMP(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+    # Generated column — maintained by Postgres; never written by ORM.
+    content_fts: Mapped[Any] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('english', content)", persisted=True),
+        nullable=True,
+        deferred=True,
     )
 
 
@@ -134,6 +143,13 @@ class MemoryObservation(Base):
         server_default=func.now(),
         nullable=False,
     )
+    # Generated column — maintained by Postgres; never written by ORM.
+    content_fts: Mapped[Any] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('english', content)", persisted=True),
+        nullable=True,
+        deferred=True,
+    )
 
     evidence: Mapped[list[MemoryEvidence]] = relationship(
         "MemoryEvidence",
@@ -180,4 +196,33 @@ class MemoryEvidence(Base):
         "MemoryObservation",
         back_populates="evidence",
         lazy="noload",
+    )
+
+
+class MemoryEmbedding(Base):
+    """Stores embedding vectors for drawers and observations.
+
+    One row per (target_table, target_id, model_version). The HNSW index on
+    embedding enables fast approximate cosine similarity search via pgvector.
+    Embedding writes are best-effort — absence means "needs backfill", not error.
+    """
+
+    __tablename__ = "memory_embeddings"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_table", "target_id", "model_version",
+            name="uq_embeddings_target_model",
+        ),
+        Index("idx_memory_embeddings_target", "target_table", "target_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    target_table: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Any] = mapped_column(Vector(384), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
