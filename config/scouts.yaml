@@ -28,7 +28,24 @@ scouts:
     enabled: false
     interval_minutes: 240  # 4h poll
 
-  # D3+ stubs — implemented in later phases
+  # D5 — State DoE Scout (RSS + scraping + state-board PDFs, 7 priority states).
+  # No extra env vars required; scraping is unauthenticated.
+  state_doe_scout:
+    enabled: false
+    interval_minutes: 1440  # daily
+
+  # D6 — Board Minutes Scout (BoardDocs + Granicus + per-district PDFs).
+  # Watch list is hardcoded for V1; migrates to districts table in a later phase.
+  board_minutes_scout:
+    enabled: false
+    interval_minutes: 10080  # weekly (7 days)
+
+  # D7 — Procurement Scout (9 statewide portals, twice-daily cadence).
+  procurement_scout:
+    enabled: false
+    interval_minutes: 720  # 12h (twice daily)
+
+  # D8+ stubs — implemented in later phases
   regional_news_scout:
     enabled: false
     interval_minutes: 120

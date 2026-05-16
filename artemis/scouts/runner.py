@@ -25,18 +25,20 @@ import os
 import sys
 
 from artemis.scouts.base import BaseScout, ScoutConfig
+from artemis.scouts.board_minutes.scout import BoardMinutesScout
 from artemis.scouts.config import load_config, scout_config_for
 from artemis.scouts.federal_funding.scout import FederalFundingScout
 from artemis.scouts.legislative.scout import LegislativeScout
 from artemis.scouts.linkedin_observer import LinkedInObserverScout
+from artemis.scouts.procurement.scout import ProcurementScout
 from artemis.scouts.regional_news_scout import RegionalNewsScout
 from artemis.scouts.starbridge.scout import StarbridgeResearcherScout
+from artemis.scouts.state_doe.scout import StateDoEScout
 
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Scout registry  — maps scout_type → class.
-# Add new scouts here as D5+ land.
 # ---------------------------------------------------------------------------
 
 _REGISTRY: dict[str, type[BaseScout]] = {
@@ -45,6 +47,9 @@ _REGISTRY: dict[str, type[BaseScout]] = {
     StarbridgeResearcherScout.scout_type: StarbridgeResearcherScout,
     RegionalNewsScout.scout_type: RegionalNewsScout,
     LinkedInObserverScout.scout_type: LinkedInObserverScout,
+    StateDoEScout.scout_type: StateDoEScout,
+    BoardMinutesScout.scout_type: BoardMinutesScout,
+    ProcurementScout.scout_type: ProcurementScout,
 }
 
 
