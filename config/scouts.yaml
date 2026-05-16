@@ -11,10 +11,24 @@ api_url: "http://localhost:8000"
 dry_run: false
 
 scouts:
+  # D2 — Legislative Scout (LegiScan API). Requires LEGISCAN_API_KEY.
+  legislative_scout:
+    enabled: false
+    interval_minutes: 1440  # daily; off-session: set to 10080 (weekly)
+
+  # D3 — Federal Funding Scout (Federal Register + Grants.gov + ED.gov RSS).
+  # Grants.gov optional key: GRANTS_GOV_API_KEY (higher rate limit with key).
+  federal_funding_scout:
+    enabled: false
+    interval_minutes: 1440  # daily
+
+  # D4 — Starbridge Researcher. API shape TBD; bench-test status.
+  # Requires STARBRIDGE_API_KEY. All API calls tagged bench_test_period=true.
   starbridge_researcher:
     enabled: false
-    interval_minutes: 60
+    interval_minutes: 240  # 4h poll
 
+  # D3+ stubs — implemented in later phases
   regional_news_scout:
     enabled: false
     interval_minutes: 120
