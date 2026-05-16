@@ -122,6 +122,7 @@ class IncrementalConsolidator:
         except RuntimeError:
             # No running loop — skip scheduling (e.g., in sync test environments)
             return
+
         def _fire(k: _SlotKey = key) -> asyncio.Task[None]:
             return asyncio.ensure_future(self._run_consolidation(k))
 
@@ -186,6 +187,18 @@ class IncrementalConsolidator:
                         key.scope_kind,
                         key.scope_id,
                     )
+                    # Trigger graph extraction for newly-consolidated observations
+                    try:
+                        from artemis.memory.graph_extractor import notify_consolidation_complete
+
+                        notify_consolidation_complete(key.scope_kind, key.scope_id)
+                    except Exception:
+                        _logger.debug(
+                            "Graph extraction trigger failed for %s/%s",
+                            key.scope_kind,
+                            key.scope_id,
+                            exc_info=True,
+                        )
         except Exception:
             _logger.exception(
                 "Incremental consolidation failed for %s/%s category=%s",

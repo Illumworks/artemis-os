@@ -17,13 +17,14 @@ Why this shape:
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
 
 import pytest
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-import artemis.memory.models  # noqa: F401 — registers MemoryEmbedding on Base.metadata
+import artemis.memory.models  # noqa: F401 — registers all models on Base.metadata
 from artemis.config import settings
 from artemis.db import attach_pgvector_codec
 
@@ -32,7 +33,11 @@ _engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
 attach_pgvector_codec(_engine)
 
 _TRUNCATE_SQL = text(
-    "TRUNCATE memory_embeddings, memory_evidence, memory_observations, "
+    # Graph tables first (depend on memory_entities + memory_observations)
+    "TRUNCATE memory_relation_rejections, memory_relations, "
+    "memory_entity_mentions, memory_entity_aliases, memory_entities, "
+    # B1/B2 tables
+    "memory_embeddings, memory_evidence, memory_observations, "
     "memory_drawers, memory_scopes RESTART IDENTITY CASCADE"
 )
 
@@ -44,3 +49,21 @@ async def db_session() -> AsyncIterator[AsyncSession]:
         async with session.begin():
             await session.execute(_TRUNCATE_SQL)
         yield session
+
+
+@pytest.fixture
+def test_session_factory() -> Callable[[], AbstractAsyncContextManager[AsyncSession]]:
+    """Session factory for injection into graph_extractor in tests.
+
+    Creates fresh NullPool sessions on the same test engine, avoiding the
+    'Future attached to a different loop' error that would occur if the
+    production SessionLocal (with its connection pool) were used.
+    """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _factory() -> AsyncIterator[AsyncSession]:
+        async with AsyncSession(_engine, expire_on_commit=False) as session:
+            yield session
+
+    return _factory
