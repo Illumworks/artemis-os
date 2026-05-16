@@ -40,6 +40,7 @@ class RetrievalWeights(BaseModel):
     semantic: float = 0.40
     recency: float = 0.15
     score: float = 0.15
+    graph_proximity: float = 0.12  # B4: graph entity expansion channel
 
 
 class ScoreFeatureWeights(BaseModel):
@@ -127,6 +128,7 @@ def _compute_final_score(
     source_quality: float = 0.0,
     user_confirmed: bool = False,
     score_features: ScoreFeatureWeights | None = None,
+    graph_proximity: float = 0.0,
 ) -> float:
     sf = score_features or ScoreFeatureWeights()
     score_contrib = _composite_score(obs_score, hit_count, source_quality, user_confirmed, sf)
@@ -135,6 +137,7 @@ def _compute_final_score(
         + weights.semantic * max(0.0, semantic_sim)
         + weights.recency * recency
         + weights.score * score_contrib
+        + weights.graph_proximity * max(0.0, min(1.0, graph_proximity))
     )
 
 
@@ -175,7 +178,7 @@ async def search_observations(
     query: str,
     limit: int = 10,
     as_of: datetime | None = None,
-    modes: list[Literal["fts", "semantic", "recency", "score"]] | None = None,
+    modes: list[Literal["fts", "semantic", "recency", "score", "graph_expand"]] | None = None,
     cfg: RetrievalConfig | None = None,
     provider: EmbeddingProvider | None = None,
 ) -> list[ScoredObservation]:
@@ -198,7 +201,7 @@ async def search_observations(
         return []
 
     cfg = cfg or get_retrieval_config()
-    modes = modes or ["fts", "semantic", "recency", "score"]
+    modes = modes or ["fts", "semantic", "recency", "score", "graph_expand"]
     _as_of = as_of or datetime.now(UTC)
 
     scope_clause, scope_params = _scope_sql_parts(scope_set)
@@ -208,6 +211,7 @@ async def search_observations(
     candidate_ids: set[int] = set()
     fts_scores: dict[int, float] = {}
     semantic_scores: dict[int, float] = {}
+    graph_scores: dict[int, float] = {}  # obs_id → graph_proximity (0.0/0.5/1.0)
 
     # ── FTS candidates ────────────────────────────────────────────────────────
     if "fts" in modes and query.strip():
@@ -240,7 +244,7 @@ async def search_observations(
             scope_clause_o, _ = _scope_sql_parts(scope_set, prefix="o.")
             sem_sql = text(f"""
                 SELECT o.id,
-                       1.0 - (me.embedding <=> :_qvec::vector) AS semantic_sim
+                       1.0 - (me.embedding <=> CAST(:_qvec AS vector)) AS semantic_sim
                 FROM memory_observations o
                 JOIN memory_embeddings me
                   ON me.target_table = 'observation' AND me.target_id = o.id
@@ -249,7 +253,7 @@ async def search_observations(
                   AND me.model_version = :_model_version
                   AND (o.valid_from IS NULL OR o.valid_from <= :_as_of)
                   AND (o.valid_until IS NULL OR o.valid_until >= :_as_of)
-                ORDER BY me.embedding <=> :_qvec::vector
+                ORDER BY me.embedding <=> CAST(:_qvec AS vector)
                 LIMIT :_k
             """)
             sem_params = {
@@ -263,6 +267,33 @@ async def search_observations(
                 semantic_scores[int(row.id)] = float(row.semantic_sim)
         except Exception:
             _logger.warning("Semantic search failed", exc_info=True)
+
+    # ── Graph expansion candidates ────────────────────────────────────────────
+    if "graph_expand" in modes and query.strip():
+        try:
+            from artemis.memory.graph import (
+                find_entities_in_text,
+                get_neighbor_entity_ids,
+                get_observation_ids_for_entities,
+            )
+
+            direct_entities = await find_entities_in_text(session, scope_set, query)
+            if direct_entities:
+                direct_ids = [e.id for e in direct_entities]
+                direct_obs = await get_observation_ids_for_entities(session, direct_ids)
+                for obs_id in direct_obs:
+                    candidate_ids.add(obs_id)
+                    graph_scores[obs_id] = max(graph_scores.get(obs_id, 0.0), 1.0)
+
+                neighbor_ids = await get_neighbor_entity_ids(session, direct_ids)
+                if neighbor_ids:
+                    neighbor_obs = await get_observation_ids_for_entities(session, neighbor_ids)
+                    for obs_id in neighbor_obs:
+                        candidate_ids.add(obs_id)
+                        if obs_id not in graph_scores:
+                            graph_scores[obs_id] = 0.5
+        except Exception:
+            _logger.warning("Graph expansion failed", exc_info=True)
 
     # ── Recency + score candidates (always include for fusion stability) ───────
     if "recency" in modes or "score" in modes:
@@ -296,6 +327,7 @@ async def search_observations(
         recency = _recency_score(obs.created_at, _as_of, cfg.recency_decay_days)
         fts_r = fts_scores.get(obs_id, 0.0)
         sem_r = semantic_scores.get(obs_id, 0.0)
+        graph_prox = graph_scores.get(obs_id, 0.0)
         final = _compute_final_score(
             fts_r,
             sem_r,
@@ -306,6 +338,7 @@ async def search_observations(
             source_quality=obs.source_quality,
             user_confirmed=obs.user_confirmed,
             score_features=cfg.score_features,
+            graph_proximity=graph_prox,
         )
         scored.append(
             ScoredObservation(
@@ -328,6 +361,7 @@ async def search_observations(
                 fts_rank=fts_r,
                 semantic_sim=sem_r,
                 recency=recency,
+                graph_proximity=graph_prox,
             )
         )
 

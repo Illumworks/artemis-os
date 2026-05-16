@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 ScopeKind = Literal["project", "workspace", "brand", "agent", "skill", "global"]
 EvidenceSourceKind = Literal["drawer", "observation"]
+EntityKind = Literal["person", "project", "brand", "campaign", "post", "channel", "other"]
 
 
 class SourceQualityHint:
@@ -124,3 +125,59 @@ class ScoredObservation(BaseModel):
     fts_rank: float
     semantic_sim: float
     recency: float
+    graph_proximity: float = 0.0
+
+
+# ── Graph layer DTOs (B4) ─────────────────────────────────────────────────────
+
+
+class EntityRead(BaseModel):
+    """Represents a named entity extracted from memory observations."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entity_kind: str
+    canonical_name: str
+    name_slug: str
+    scope_kind: str
+    scope_id: str
+    attributes: dict[str, Any] | None
+    first_seen_at: datetime
+    last_seen_at: datetime
+    mention_count: int
+    confidence: float
+    superseded_by: int | None
+
+
+class RelationRead(BaseModel):
+    """Directed predicate-labelled edge between two entities.
+
+    subject_name / subject_kind / object_name / object_kind are populated
+    only when returned from get_entity_neighborhood (joined query).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    subject_id: int
+    predicate: str
+    object_id: int
+    evidence_observation_id: int | None
+    weight: float
+    confidence: float
+    first_seen_at: datetime
+    last_seen_at: datetime
+    superseded_by: int | None
+    # Set by neighborhood query (None when fetched without join)
+    subject_name: str | None = None
+    subject_kind: str | None = None
+    object_name: str | None = None
+    object_kind: str | None = None
+
+
+class EntityNeighborhood(BaseModel):
+    """An entity plus all of its relations within a given hop radius."""
+
+    entity: EntityRead
+    relations: list[RelationRead]

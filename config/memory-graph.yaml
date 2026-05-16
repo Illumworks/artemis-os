@@ -1,0 +1,21 @@
+# Memory graph extraction config.
+# Mirrors the Node reference config/memory-graph.json shape.
+
+# Default Haiku model for graph extraction. Override per-scope with scope_overrides.
+extraction_model: "claude-haiku-4-5-20251001"
+
+# Per-scope model overrides (optional). Key format: "scope_kind:scope_id"
+# scope_overrides:
+#   "workspace:default":
+#     extraction_model: "claude-haiku-4-5-20251001"
+
+# Graph fusion weight in the retrieval reranker.
+# graph_proximity is 1.0 for direct entity match, 0.5 for 1-hop neighbor, 0.0 otherwise.
+graph_proximity_weight: 0.12
+
+# Maximum hop depth for graph expansion in retrieval (1 or 2).
+graph_expand_hops: 1
+
+# Set to true to disable graph extraction globally (also controlled by env
+# ARTEMIS_GRAPH_EXTRACTION_DISABLED=1).
+disabled: false
