@@ -18,7 +18,7 @@ _MARKETING_OS_SURFACES = {
 
 _NODE_ONLY_SURFACES = {
     "sessions",
-    "agents",
+    # "agents" moved to available_surfaces in Phase F2a
     "okr-studio",
 }
 

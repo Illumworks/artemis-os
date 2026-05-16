@@ -21,18 +21,22 @@ _AVAILABLE_SURFACES = {
     "content-assets",
     "approvals",
     "writing-studio",
+    # Phase F2a — Builders backend CRUD
+    "agents",
+    "skills",
+    "workflows",
+    "agent-chains",
+    "agent-dags",
+    "agent-runs",
 }
 _UNAVAILABLE_SURFACES = {
     # Node-only surfaces — backends not ported yet.
     "sessions",
-    "agents",
     "projects",
     "chat",
     "memory-shell",
     "okr-studio",
     "jira-board",
-    "skills",
-    "workflows",
     "dags",
     "voice",
     "telegram",

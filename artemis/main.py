@@ -28,6 +28,14 @@ from artemis.marketing.routes import (
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.routes import health, status
+from artemis.routes.builders import (
+    agent_chains,
+    agent_dags,
+    agent_runs,
+    agents,
+    skills,
+    workflows,
+)
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
@@ -103,6 +111,14 @@ app.include_router(campaign_deliverables.router)
 app.include_router(content_assets.router)
 app.include_router(approvals.router)
 app.include_router(writing_studio.router)
+
+# Phase F2a — Builders backend CRUD (agents, skills, workflows, chains, DAGs)
+app.include_router(agents.router)
+app.include_router(agent_runs.router)
+app.include_router(skills.router)
+app.include_router(workflows.router)
+app.include_router(agent_chains.router)
+app.include_router(agent_dags.router)
 
 # Mount static frontend AFTER all API routes.
 # html=True makes GET / serve public/index.html.
