@@ -4,7 +4,7 @@ Endpoints:
   POST   /intake          — structured ingestion seam (scouts / operators)
   GET    /                — list signals (filtered, paginated)
   GET    /{id}            — single signal
-  POST   /{id}/qualify    — on-demand re-qualification (stub until C3)
+  POST   /{id}/qualify    — on-demand re-qualification (C3 real implementation)
   POST   /{id}/approve    — Gate 1: promote to candidate
   POST   /{id}/reject     — reject and record reason
   POST   /{id}/snooze     — snooze for N days
@@ -13,14 +13,22 @@ Endpoints:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import SignalQueue
+from artemis.marketing.models import Ruleset, SignalQueue, TerritoryConfig
+from artemis.marketing.qualifier import (
+    RulesetInput,
+    SignalInput,
+    TerritoryEntry,
+    qualify_signal,
+)
 from artemis.marketing.repository import (
     create_campaign_candidate_from_signal,
     create_signal,
@@ -28,10 +36,14 @@ from artemis.marketing.repository import (
     get_active_ruleset_version,
     get_signal,
     list_signals,
+    save_signal_qualification,
     update_signal,
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
+from artemis.marketing.scout_intake import normalize_intake_payload
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/signal-queue",
@@ -55,25 +67,46 @@ async def intake(
 
     Mirrors Node's /api/signal-queue/intake endpoint including dry-run mode.
     Dry-run returns 200; successful creation returns 201.
+
+    C3: intake now calls normalize_intake_payload for full validation, then
+    attempts best-effort qualification (non-fatal — signal creation wins).
     """
     dry_run: bool = bool(body.pop("dryRun", False))
 
-    errors = _validate_intake(body)
+    # Determine scout_type for anti-spoof; default to sourceType or "manual"
+    scout_type = (
+        body.get("scoutType")
+        or body.get("scout_type")
+        or body.get("sourceType")
+        or body.get("source_type")
+        or "manual"
+    )
+
+    # Default sourceType to "manual" when absent (Node behavior: sourceType optional)
+    if not body.get("sourceType") and not body.get("source_type"):
+        body = {**body, "sourceType": "manual"}
+
+    # Use scout_intake for full validation (strict mode)
+    validation_error: str | None = None
+    try:
+        normalized = normalize_intake_payload(body, scout_type=scout_type)
+    except ValueError as exc:
+        validation_error = str(exc)
 
     if dry_run:
-        # Dry-run always returns 200 regardless of validation outcome
-        if errors:
+        if validation_error:
             return {
                 "dryRun": True,
                 "valid": False,
-                "errors": errors,
+                "errors": [validation_error],
                 "wouldCreate": None,
                 "duplicate": None,
             }
+        assert normalized is not None  # mypy: validation_error is None → normalized set
         dup = await find_signal_by_dedupe_key(
             session,
-            source_url=body.get("sourceUrl") or body.get("source_url") or "",
-            headline=body.get("headline") or "",
+            source_url=normalized.source_url or "",
+            headline=normalized.headline or "",
         )
         return {
             "dryRun": True,
@@ -82,13 +115,14 @@ async def intake(
             "duplicate": _serialize_signal(dup) if dup else None,
         }
 
-    if errors:
-        raise bad_request(errors[0])  # noqa: B904
+    if validation_error:
+        raise bad_request(validation_error)  # noqa: B904
 
+    assert normalized is not None  # mypy: validation_error is None → normalized set
     dup = await find_signal_by_dedupe_key(
         session,
-        source_url=body.get("sourceUrl") or body.get("source_url") or "",
-        headline=body.get("headline") or "",
+        source_url=normalized.source_url or "",
+        headline=normalized.headline or "",
     )
     if dup is not None:
         raise conflict(
@@ -96,9 +130,30 @@ async def intake(
             code="duplicate_signal",
         )
 
-    signal = await create_signal(session, **_normalize_intake(body))
+    signal = await create_signal(
+        session,
+        headline=normalized.headline,
+        campaign_family=normalized.campaign_family,
+        source_type=normalized.source_type,
+        source_url=normalized.source_url,
+        summary=normalized.why_flagged or "",
+        urgency_tier=normalized.urgency_tier,
+        discovered_by=normalized.discovered_by,
+        state=normalized.state_code,
+        district_id=normalized.district,
+        reason_codes=normalized.reason_codes,
+    )
     await session.commit()
     await session.refresh(signal)
+
+    # Best-effort, non-fatal auto-qualification after intake
+    try:
+        await _run_and_store_qualification(session, signal)
+        await session.commit()
+        await session.refresh(signal)
+    except Exception:  # noqa: BLE001
+        log.warning("Auto-qualification failed for signal id=%s (non-fatal)", signal.id)
+
     response.status_code = 201
     return {"signal": _serialize_signal(signal)}
 
@@ -146,25 +201,33 @@ async def get_signal_route(
     return _serialize_signal(signal)
 
 
-# ── Qualify (stub — C3 replaces with real logic) ──────────────────────────────
+# ── Qualify (C3 real implementation) ─────────────────────────────────────────
 
 
 @router.post("/{signal_id}/qualify")
-async def qualify_signal(
+async def qualify_signal_route(
     signal_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """On-demand re-qualification stub.
+    """On-demand re-qualification using the deterministic scorer.
 
-    Returns a minimal stub shape. C3 will replace this with the deterministic
-    scorer port from the Node app's signal-qualifier.js.
+    Loads all active rulesets + territory configs, runs qualify_signal(),
+    and stores the result on the signal. 422 if no active rulesets exist.
     """
     try:
-        await get_signal(session, signal_id)
+        signal = await get_signal(session, signal_id)
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
-    now = datetime.now(UTC).isoformat()
-    return {"qualifiedAt": now, "scores": []}
+
+    result = await _run_and_store_qualification(session, signal)
+    if result is None:
+        raise bad_request(
+            "No active rulesets found — cannot qualify signal",
+            "no_active_rulesets",
+        )
+    await session.commit()
+    await session.refresh(signal)
+    return result
 
 
 # ── Approve ───────────────────────────────────────────────────────────────────
@@ -339,34 +402,65 @@ async def ask_signal(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _validate_intake(body: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    headline = body.get("headline") or ""
-    family = body.get("campaignFamily") or body.get("campaign_family") or ""
-    if not str(headline).strip():
-        errors.append("headline is required")
-    if not str(family).strip():
-        errors.append("campaignFamily is required")
-    return errors
+async def _run_and_store_qualification(
+    session: AsyncSession,
+    signal: SignalQueue,
+) -> dict[str, Any] | None:
+    """Load active rulesets + territory configs, run qualify_signal(), store result.
 
+    Returns the serialized qualification dict, or None if no active rulesets exist.
+    Callers own commit/rollback. Raises on unexpected DB errors.
+    """
+    # Load all active rulesets
+    result = await session.execute(select(Ruleset).where(Ruleset.state == "active"))
+    active_rulesets_rows = list(result.scalars().all())
 
-def _normalize_intake(body: dict[str, Any]) -> dict[str, Any]:
-    """Map camelCase intake payload to ORM snake_case kwargs."""
-    return {
-        "headline": body.get("headline", ""),
-        "campaign_family": body.get("campaignFamily") or body.get("campaign_family", ""),
-        "source_type": body.get("sourceType") or body.get("source_type", "manual"),
-        "source_url": body.get("sourceUrl") or body.get("source_url"),
-        "source_id": body.get("sourceId") or body.get("source_id"),
-        "summary": body.get("summary", ""),
-        "urgency_tier": body.get("urgencyTier") or body.get("urgency_tier", "standard"),
-        "discovered_by": body.get("discoveredBy") or body.get("discovered_by", "manual"),
-        "district_id": body.get("districtId") or body.get("district_id"),
-        "state": body.get("state"),
-        "reason_codes": body.get("reasonCodes") or body.get("reason_codes") or [],
-        "provenance": body.get("provenance"),
-        "owner_user_id": body.get("ownerUserId") or body.get("owner_user_id"),
-    }
+    if not active_rulesets_rows:
+        return None
+
+    # Build RulesetInput list
+    ruleset_inputs = [
+        RulesetInput(
+            campaign_family=row.family,
+            version_number=row.version_tag,
+            min_fit_score=0.5,  # default; rulesets don't have a min_fit_score column yet
+            hard_filters=row.hard_filters or [],
+            weighted_signals=row.weighted_signals or [],
+        )
+        for row in active_rulesets_rows
+    ]
+
+    # Load territory configs for the families we're scoring
+    families = [r.family for r in active_rulesets_rows]
+    tc_result = await session.execute(
+        select(TerritoryConfig).where(TerritoryConfig.family.in_(families))
+    )
+    territory_rows = list(tc_result.scalars().all())
+
+    # Build territories_by_family using JSONB hot_states / standard_states arrays
+    territories_by_family: dict[str, list[TerritoryEntry]] = {}
+    for tc in territory_rows:
+        entries: list[TerritoryEntry] = []
+        for state in tc.hot_states or []:
+            entries.append(TerritoryEntry(state_code=str(state).upper(), priority_tier="hot"))
+        for state in tc.standard_states or []:
+            entries.append(TerritoryEntry(state_code=str(state).upper(), priority_tier="standard"))
+        territories_by_family[tc.family] = entries
+
+    # Build SignalInput from ORM row
+    signal_input = SignalInput(
+        state_code=signal.state,
+        reason_codes=signal.reason_codes or [],
+        campaign_family=signal.campaign_family,
+        urgency_tier=signal.urgency_tier,
+    )
+
+    qual = qualify_signal(signal_input, ruleset_inputs, territories_by_family)
+    qual_dict = qual.to_dict()
+
+    # Store on signal
+    await save_signal_qualification(session, signal.id, qual_dict)
+    return qual_dict
 
 
 def _serialize_signal(signal: SignalQueue) -> dict[str, Any]:

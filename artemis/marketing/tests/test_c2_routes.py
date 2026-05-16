@@ -282,9 +282,10 @@ class TestSignalQueueIntake:
     async def test_intake_dry_run_valid(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
+        # C3: campaignFamily must be in VALID_CAMPAIGN_FAMILIES; use "obc"
         r = await client.post(
             "/api/signal-queue/intake",
-            json={"dryRun": True, "headline": "Big news", "campaignFamily": "ev_awareness"},
+            json={"dryRun": True, "headline": "Big news", "campaignFamily": "obc"},
         )
         assert r.status_code == 200
         body = r.json()
@@ -294,9 +295,10 @@ class TestSignalQueueIntake:
     async def test_intake_creates_signal(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
+        # C3: campaignFamily must be in VALID_CAMPAIGN_FAMILIES; use "obc"
         r = await client.post(
             "/api/signal-queue/intake",
-            json={"headline": "New district opens", "campaignFamily": "ev_awareness"},
+            json={"headline": "New district opens", "campaignFamily": "obc"},
         )
         assert r.status_code == 201
         body = r.json()
@@ -310,13 +312,15 @@ class TestSignalQueueIntake:
             db_session,
             headline="Duplicate Signal",
             source_url="http://example.com/dupe",
+            campaign_family="obc",
         )
         await db_session.commit()
+        # C3: campaignFamily must be in VALID_CAMPAIGN_FAMILIES; use "obc"
         r = await client.post(
             "/api/signal-queue/intake",
             json={
                 "headline": "Duplicate Signal",
-                "campaignFamily": "test_family",
+                "campaignFamily": "obc",
                 "sourceUrl": "http://example.com/dupe",
             },
         )
@@ -328,14 +332,15 @@ class TestSignalQueueActions:
         r = await client.post("/api/signal-queue/99999/qualify")
         assert r.status_code == 404
 
-    async def test_qualify_stub_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_qualify_returns_400_when_no_active_rulesets(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # C3: qualify endpoint now requires active rulesets; 400 when none exist
         signal = await _make_signal(db_session)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/qualify")
-        assert r.status_code == 200
-        body = r.json()
-        assert "qualifiedAt" in body
-        assert body["scores"] == []
+        assert r.status_code == 400
+        assert r.json()["code"] == "no_active_rulesets"
 
     async def test_approve_not_found(self, client: AsyncClient, db_session: AsyncSession) -> None:
         r = await client.post("/api/signal-queue/99999/approve")
@@ -560,13 +565,19 @@ class TestCampaignOps:
         assert body["id"] == candidate.id
         assert body["campaignFamily"] == signal.campaign_family
 
-    async def test_brief_assemble_stub(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_brief_assemble_produces_real_brief(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # C3: brief assembly now returns a real brief (stub replaced)
         signal = await _make_signal(db_session)
         candidate = await _make_candidate(db_session, signal)
         await db_session.commit()
         r = await client.post(f"/api/campaign-ops/candidates/{candidate.id}/brief/assemble")
         assert r.status_code == 201
-        assert r.json() == {"stub": True}
+        body = r.json()
+        assert "brief" in body
+        assert "stub" not in body
+        assert body["brief"]["candidateId"] == candidate.id
 
     async def test_brief_assemble_not_found(
         self, client: AsyncClient, db_session: AsyncSession

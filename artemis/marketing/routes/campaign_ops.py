@@ -16,11 +16,20 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import CampaignCandidate
+from artemis.marketing.brief_assembler import (
+    AssetContext,
+    CandidateInput,
+    QualificationSummary,
+    SignalContext,
+    assemble_brief,
+)
+from artemis.marketing.models import CampaignCandidate, ContentAsset, ContentAssetLink, SignalQueue
 from artemis.marketing.repository import (
+    create_campaign_brief,
     get_candidate,
     list_candidates,
 )
@@ -80,16 +89,111 @@ async def get_candidate_route(
 
 
 @router.post("/candidates/{candidate_id}/brief/assemble", status_code=201)
-async def assemble_brief(
+async def assemble_brief_route(
     candidate_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Brief assembly stub — C3 replaces this with the real assembler port."""
+    """Assemble a Campaign Brief for a candidate (C3 real implementation).
+
+    Loads candidate + signals + qualification summary + linked content assets,
+    calls assemble_brief(), and stores the result as a new campaign_briefs row.
+    Returns { brief } with the assembled content.
+    """
     try:
-        await get_candidate(session, candidate_id)
+        candidate = await get_candidate(session, candidate_id)
     except ValueError:
         raise not_found("Campaign candidate not found", "campaign_ops_candidate_not_found")  # noqa: B904
-    return {"stub": True}
+
+    # Load related signal (if any)
+    signals: list[SignalContext] = []
+    qual_summary: QualificationSummary | None = None
+    if candidate.source_signal_id is not None:
+        sig_row = await session.get(SignalQueue, candidate.source_signal_id)
+        if sig_row is not None:
+            signals = [
+                SignalContext(
+                    reason_codes=sig_row.reason_codes or [],
+                    verbatim_snippet=sig_row.summary or None,
+                    urgency_tier=sig_row.urgency_tier,
+                    state=sig_row.state,
+                    headline=sig_row.headline,
+                )
+            ]
+            # Extract qualification summary from signal's qualification_json
+            qual_json = sig_row.qualification_json
+            if qual_json and isinstance(qual_json, dict):
+                family_scores = qual_json.get("scores", [])
+                primary_score = next(
+                    (
+                        s
+                        for s in family_scores
+                        if s.get("campaignFamily") == candidate.campaign_family
+                    ),
+                    None,
+                )
+                qual_summary = QualificationSummary(
+                    adjusted_score=(primary_score.get("adjustedScore") if primary_score else None),
+                    recommended_families=qual_json.get("recommendedFamilies", []),
+                    qualified_at=qual_json.get("qualifiedAt"),
+                    ruleset_versions_used=qual_json.get("rulesetVersionsUsed", {}),
+                )
+
+    # Load linked content assets
+    links_result = await session.execute(
+        select(ContentAssetLink).where(ContentAssetLink.candidate_id == candidate_id)
+    )
+    link_rows = list(links_result.scalars().all())
+    linked_assets: list[AssetContext] = []
+    for link in link_rows:
+        asset = await session.get(ContentAsset, link.asset_id)
+        if asset is not None:
+            linked_assets.append(
+                AssetContext(
+                    asset_id=asset.id,
+                    asset_type=asset.asset_type,
+                    summary=asset.summary,
+                    link_role=link.link_role,
+                )
+            )
+
+    # Build candidate input
+    metrics = candidate.metrics_json or {}
+    candidate_input = CandidateInput(
+        id=candidate.id,
+        campaign_family=candidate.campaign_family,
+        decision_state=candidate.decision_state,
+        metrics_json=metrics if isinstance(metrics, dict) else {},
+        deliverables=candidate.deliverables,
+        owner_user_id=candidate.owner_user_id,
+    )
+
+    # Assemble brief (pure, no DB)
+    brief = assemble_brief(
+        candidate=candidate_input,
+        signals=signals,
+        qualification_summary=qual_summary,
+        linked_assets=linked_assets,
+    )
+
+    # Persist as a new campaign_briefs row (append-only)
+    brief_row = await create_campaign_brief(
+        session,
+        candidate_id=candidate_id,
+        content=brief.to_dict(),
+        generated_by="c3_assembler",
+    )
+    await session.commit()
+    await session.refresh(brief_row)
+
+    return {
+        "brief": {
+            "id": brief_row.id,
+            "candidateId": brief_row.candidate_id,
+            "generatedAt": brief_row.generated_at.isoformat(),
+            "generatedBy": brief_row.generated_by,
+            "content": brief_row.content,
+        }
+    }
 
 
 @router.post("/candidates/{candidate_id}/advance")

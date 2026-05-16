@@ -122,6 +122,7 @@ class IncrementalConsolidator:
         except RuntimeError:
             # No running loop — skip scheduling (e.g., in sync test environments)
             return
+
         def _fire(k: _SlotKey = key) -> asyncio.Task[None]:
             return asyncio.ensure_future(self._run_consolidation(k))
 
