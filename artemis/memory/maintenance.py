@@ -18,7 +18,7 @@ Category decay factors (per-run):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,7 @@ async def run_maintenance(session: AsyncSession) -> dict[str, int]:
     Runs inside the caller-managed transaction. Returns a dict mapping
     category name to number of rows updated.
     """
-    as_of = datetime.now(timezone.utc)
+    as_of = datetime.now(UTC)
     _logger.info("Memory maintenance starting at %s", as_of.isoformat())
 
     updated: dict[str, int] = {}
@@ -60,7 +60,7 @@ async def run_maintenance(session: AsyncSession) -> dict[str, int]:
             update(MemoryObservation)
             .where(
                 MemoryObservation.category == category,
-                MemoryObservation.superseded_by.is_(None),  # type: ignore[attr-defined]
+                MemoryObservation.superseded_by.is_(None),
             )
             .values(score=MemoryObservation.score * factor)
         )
@@ -77,7 +77,7 @@ async def run_maintenance(session: AsyncSession) -> dict[str, int]:
         update(MemoryObservation)
         .where(
             MemoryObservation.category.notin_(list(_DECAY_FACTORS.keys())),
-            MemoryObservation.superseded_by.is_(None),  # type: ignore[attr-defined]
+            MemoryObservation.superseded_by.is_(None),
         )
         .values(score=MemoryObservation.score * _DEFAULT_DECAY)
     )

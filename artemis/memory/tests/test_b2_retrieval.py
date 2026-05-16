@@ -121,8 +121,19 @@ def test_recency_score_bounded_between_zero_and_one() -> None:
 
 def test_compute_final_score_weights_applied() -> None:
     weights = RetrievalWeights(fts=0.30, semantic=0.40, recency=0.15, score=0.15)
+    # B3 split the score channel into sub-features (relevance / hits / quality /
+    # confirmed). Saturating all four — `obs_score`, `hit_count` ≥ 10, max
+    # `source_quality`, `user_confirmed=True` — recovers the pre-B3 "everything
+    # at 1.0 → composite 1.0" behavior.
     score = _compute_final_score(
-        fts_rank=1.0, semantic_sim=1.0, recency=1.0, obs_score=1.0, weights=weights
+        fts_rank=1.0,
+        semantic_sim=1.0,
+        recency=1.0,
+        obs_score=1.0,
+        weights=weights,
+        hit_count=10,
+        source_quality=1.0,
+        user_confirmed=True,
     )
     assert score == pytest.approx(1.0)
 

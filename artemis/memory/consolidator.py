@@ -30,10 +30,10 @@ _HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 # Heuristic reject patterns — match any one → skip observation
 _NOISE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^#{1,6}\s"),          # markdown headers
-    re.compile(r"^\s*[-*]\s"),          # bullet / task list items
-    re.compile(r"^```"),                # fenced code blocks
-    re.compile(r"^={3,}|-{3,}"),        # section dividers
+    re.compile(r"^#{1,6}\s"),  # markdown headers
+    re.compile(r"^\s*[-*]\s"),  # bullet / task list items
+    re.compile(r"^```"),  # fenced code blocks
+    re.compile(r"^={3,}|-{3,}"),  # section dividers
     re.compile(r"^(Result|Output|Response|Error):", re.IGNORECASE),  # tool output openers
 ]
 _MARKDOWN_CHARS = set("#*`_~[]|")
@@ -85,9 +85,7 @@ def _load_system_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
-def _parse_proposals(
-    raw: str, category: str, input_ids: set[int]
-) -> list[ConsolidationProposal]:
+def _parse_proposals(raw: str, category: str, input_ids: set[int]) -> list[ConsolidationProposal]:
     """Parse LLM JSON output into ConsolidationProposal list.
 
     Validates that every input id appears in at least one evidence list or
@@ -112,7 +110,9 @@ def _parse_proposals(
                 category=str(entry.get("category", category)),
                 content=content,
                 evidence_from_ids=evidence_ids,
-                supersedes_ids=list(set(evidence_ids) - {evidence_ids[0]} if evidence_ids else set()),
+                supersedes_ids=list(
+                    set(evidence_ids) - {evidence_ids[0]} if evidence_ids else set()
+                ),
                 source_quality=0.9,
             )
         )
@@ -162,7 +162,7 @@ async def consolidate_observations(
     )
 
     async def _call() -> str:
-        response = await client.messages.create(  # type: ignore[union-attr]
+        response = await client.messages.create(
             model=_HAIKU_MODEL,
             max_tokens=2048,
             system=[

@@ -7,7 +7,7 @@ DB tests use the shared db_session fixture from conftest.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -29,12 +29,12 @@ from artemis.memory.maintenance import _DECAY_FACTORS, run_maintenance
 from artemis.memory.retrieval import (
     RetrievalWeights,
     ScoreFeatureWeights,
-    _compute_final_score,
     _composite_score,
+    _compute_final_score,
 )
-from artemis.memory.schemas import Scope, Source, SourceQualityHint
+from artemis.memory.schemas import Scope, SourceQualityHint
 from artemis.memory.store import write_drawer, write_observation
-from artemis.memory.tests.test_b2_embeddings import MockProvider, _SCOPE, _SOURCE
+from artemis.memory.tests.test_b2_embeddings import _SCOPE, _SOURCE, MockProvider
 
 _SCOPE2 = Scope(scope_kind="project", scope_id="proj-b3")
 
@@ -66,8 +66,8 @@ def _make_obs(
         valid_until=None,
         superseded_by=None,
         owner_user_id=None,
-        created_at=datetime.now(timezone.utc),
-        accessed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        accessed_at=datetime.now(UTC),
     )
 
 
@@ -130,7 +130,9 @@ def test_heuristic_filter_rejects_high_markdown_density() -> None:
 
 
 def test_heuristic_filter_passes_clean_prose() -> None:
-    obs = _make_obs(content="The district announced a new phonics curriculum adoption for fall 2025.")
+    obs = _make_obs(
+        content="The district announced a new phonics curriculum adoption for fall 2025."
+    )
     assert heuristic_filter([obs]) == [obs]
 
 
@@ -240,10 +242,16 @@ async def test_apply_consolidation_creates_new_observation(db_session: AsyncSess
     provider = MockProvider()
     async with db_session.begin():
         obs1 = await write_observation(
-            db_session, _SCOPE, "Federal grant announced for reading programs.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "Federal grant announced for reading programs.",
+            embedding_provider=provider,
         )
         obs2 = await write_observation(
-            db_session, _SCOPE, "Title I funding available in rural districts.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "Title I funding available in rural districts.",
+            embedding_provider=provider,
         )
 
     proposal = ConsolidationProposal(
@@ -263,17 +271,24 @@ async def test_apply_consolidation_creates_new_observation(db_session: AsyncSess
     assert len(created) == 1
     new_obs = await get_observation(db_session, created[0].id)
     assert new_obs is not None
-    assert new_obs.source_quality == 0.9
+    # source_quality is REAL (float32) — allow precision drift on round-trip.
+    assert new_obs.source_quality == pytest.approx(0.9, rel=1e-5)
 
 
 async def test_apply_consolidation_supersedes_sources(db_session: AsyncSession) -> None:
     provider = MockProvider()
     async with db_session.begin():
         obs1 = await write_observation(
-            db_session, _SCOPE, "District issued an RFP for reading software tools.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "District issued an RFP for reading software tools.",
+            embedding_provider=provider,
         )
         obs2 = await write_observation(
-            db_session, _SCOPE, "Procurement bid open for elementary phonics curriculum.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "Procurement bid open for elementary phonics curriculum.",
+            embedding_provider=provider,
         )
 
     proposal = ConsolidationProposal(
@@ -301,10 +316,16 @@ async def test_apply_consolidation_links_evidence(db_session: AsyncSession) -> N
     provider = MockProvider()
     async with db_session.begin():
         obs1 = await write_observation(
-            db_session, _SCOPE, "Senate bill advances literacy assessment requirements.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "Senate bill advances literacy assessment requirements.",
+            embedding_provider=provider,
         )
         obs2 = await write_observation(
-            db_session, _SCOPE, "House committee reviews phonics mandate legislation.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "House committee reviews phonics mandate legislation.",
+            embedding_provider=provider,
         )
 
     proposal = ConsolidationProposal(
@@ -331,10 +352,16 @@ async def test_apply_consolidation_is_lossless(db_session: AsyncSession) -> None
     provider = MockProvider()
     async with db_session.begin():
         obs1 = await write_observation(
-            db_session, _SCOPE, "Superintendent announced retirement after long tenure.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "Superintendent announced retirement after long tenure.",
+            embedding_provider=provider,
         )
         obs2 = await write_observation(
-            db_session, _SCOPE, "Board begins national search for new superintendent.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "Board begins national search for new superintendent.",
+            embedding_provider=provider,
         )
 
     proposal = ConsolidationProposal(
@@ -347,9 +374,7 @@ async def test_apply_consolidation_is_lossless(db_session: AsyncSession) -> None
     from artemis.memory.store import get_observation
 
     async with db_session.begin():
-        await apply_consolidation(
-            db_session, _SCOPE, [proposal], {obs1.id: obs1, obs2.id: obs2}
-        )
+        await apply_consolidation(db_session, _SCOPE, [proposal], {obs1.id: obs1, obs2.id: obs2})
 
     # Both source observations must still exist in the DB (lossless rule)
     still1 = await get_observation(db_session, obs1.id)
@@ -362,11 +387,17 @@ async def test_apply_consolidation_forwards_drawer_evidence(db_session: AsyncSes
     provider = MockProvider()
     async with db_session.begin():
         drawer = await write_drawer(
-            db_session, _SCOPE, "Source article text about district reading scores.", _SOURCE,
+            db_session,
+            _SCOPE,
+            "Source article text about district reading scores.",
+            _SOURCE,
             embedding_provider=provider,
         )
         obs1 = await write_observation(
-            db_session, _SCOPE, "District reading scores declined in third grade cohort.", embedding_provider=provider
+            db_session,
+            _SCOPE,
+            "District reading scores declined in third grade cohort.",
+            embedding_provider=provider,
         )
 
     from artemis.memory.store import link_evidence, list_evidence_for_observation
@@ -382,9 +413,7 @@ async def test_apply_consolidation_forwards_drawer_evidence(db_session: AsyncSes
     )
 
     async with db_session.begin():
-        created = await apply_consolidation(
-            db_session, _SCOPE, [proposal], {obs1.id: obs1}
-        )
+        created = await apply_consolidation(db_session, _SCOPE, [proposal], {obs1.id: obs1})
 
     evidence = await list_evidence_for_observation(db_session, created[0].id)
     drawer_ev = [e for e in evidence if e.source_kind == "drawer"]
@@ -478,8 +507,11 @@ async def test_run_maintenance_decays_discovery(db_session: AsyncSession) -> Non
     provider = MockProvider()
     async with db_session.begin():
         obs = await write_observation(
-            db_session, _SCOPE, "Observation that should decay during maintenance run.",
-            category="discovery", embedding_provider=provider,
+            db_session,
+            _SCOPE,
+            "Observation that should decay during maintenance run.",
+            category="discovery",
+            embedding_provider=provider,
         )
 
     from artemis.memory.store import get_observation
@@ -499,8 +531,11 @@ async def test_run_maintenance_does_not_decay_warning(db_session: AsyncSession) 
     provider = MockProvider()
     async with db_session.begin():
         obs = await write_observation(
-            db_session, _SCOPE, "Warning signal that must never decay over time.",
-            category="warning", embedding_provider=provider,
+            db_session,
+            _SCOPE,
+            "Warning signal that must never decay over time.",
+            category="warning",
+            embedding_provider=provider,
         )
 
     from artemis.memory.store import get_observation
@@ -518,8 +553,11 @@ async def test_run_maintenance_decays_decision(db_session: AsyncSession) -> None
     provider = MockProvider()
     async with db_session.begin():
         obs = await write_observation(
-            db_session, _SCOPE, "Decision made to adopt new phonics curriculum district-wide.",
-            category="decision", embedding_provider=provider,
+            db_session,
+            _SCOPE,
+            "Decision made to adopt new phonics curriculum district-wide.",
+            category="decision",
+            embedding_provider=provider,
         )
 
     from artemis.memory.store import get_observation
@@ -537,25 +575,33 @@ async def test_run_maintenance_skips_superseded(db_session: AsyncSession) -> Non
     provider = MockProvider()
     async with db_session.begin():
         old = await write_observation(
-            db_session, _SCOPE, "Old discovery superseded by a newer consolidated observation.",
-            category="discovery", embedding_provider=provider,
+            db_session,
+            _SCOPE,
+            "Old discovery superseded by a newer consolidated observation.",
+            category="discovery",
+            embedding_provider=provider,
         )
         new = await write_observation(
-            db_session, _SCOPE, "New consolidated discovery observation replacing the old one.",
-            category="discovery", embedding_provider=provider,
+            db_session,
+            _SCOPE,
+            "New consolidated discovery observation replacing the old one.",
+            category="discovery",
+            embedding_provider=provider,
         )
 
     from artemis.memory.store import get_observation, supersede_observation
 
     async with db_session.begin():
         await supersede_observation(db_session, old.id, new.id)
-
-    old_score_before = (await get_observation(db_session, old.id)).score  # type: ignore[union-attr]
+        # Capture old score INSIDE this transaction to avoid autobegin
+        # leaking a pending tx into the next `async with begin()`.
+        old_score_before = (await get_observation(db_session, old.id)).score  # type: ignore[union-attr]
 
     async with db_session.begin():
         await run_maintenance(db_session)
 
-    old_refreshed = await get_observation(db_session, old.id)
+    async with db_session.begin():
+        old_refreshed = await get_observation(db_session, old.id)
     assert old_refreshed is not None
     # Superseded row score must NOT have decayed
     assert old_refreshed.score == pytest.approx(old_score_before, rel=1e-6)
@@ -565,8 +611,11 @@ async def test_run_maintenance_returns_category_counts(db_session: AsyncSession)
     provider = MockProvider()
     async with db_session.begin():
         await write_observation(
-            db_session, _SCOPE, "Convention: always use structured data formats in exports.",
-            category="convention", embedding_provider=provider,
+            db_session,
+            _SCOPE,
+            "Convention: always use structured data formats in exports.",
+            category="convention",
+            embedding_provider=provider,
         )
 
     async with db_session.begin():
@@ -613,8 +662,13 @@ def test_compute_final_score_uses_score_features() -> None:
     weights = RetrievalWeights(fts=0.0, semantic=0.0, recency=0.0, score=1.0)
     sf = ScoreFeatureWeights(relevance=0.0, hits=0.0, quality=1.0, confirmed=0.0)
     score = _compute_final_score(
-        0.0, 0.0, 0.0, 0.0, weights,
-        source_quality=0.8, score_features=sf,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        weights,
+        source_quality=0.8,
+        score_features=sf,
     )
     assert score == pytest.approx(0.8, rel=0.01)
 

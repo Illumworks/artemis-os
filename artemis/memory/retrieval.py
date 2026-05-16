@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -50,10 +50,10 @@ class ScoreFeatureWeights(BaseModel):
     independently and the result is multiplied by RetrievalWeights.score.
     """
 
-    relevance: float = 0.40    # obs.score (decayed stored value)
-    hits: float = 0.15         # normalized hit_count (min(1, count/10))
-    quality: float = 0.35      # source_quality
-    confirmed: float = 0.10    # 1.0 if user_confirmed else 0.0
+    relevance: float = 0.40  # obs.score (decayed stored value)
+    hits: float = 0.15  # normalized hit_count (min(1, count/10))
+    quality: float = 0.35  # source_quality
+    confirmed: float = 0.10  # 1.0 if user_confirmed else 0.0
 
 
 class RetrievalConfig(BaseModel):
@@ -92,7 +92,7 @@ def _recency_score(created_at: datetime, as_of: datetime, decay_days: float) -> 
     At t=0 → 1.0. At t=half_life → 0.5. At t=∞ → 0.
     """
     if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
+        created_at = created_at.replace(tzinfo=UTC)
     delta = as_of - created_at
     days = max(delta.total_seconds() / 86400.0, 0.0)
     return math.exp(-math.log(2) * days / max(decay_days, 1.0))
@@ -177,7 +177,7 @@ async def search_observations(
     as_of: datetime | None = None,
     modes: list[Literal["fts", "semantic", "recency", "score"]] | None = None,
     cfg: RetrievalConfig | None = None,
-    provider: "EmbeddingProvider | None" = None,
+    provider: EmbeddingProvider | None = None,
 ) -> list[ScoredObservation]:
     """Fusion search across active (non-superseded) observations in scope_set.
 
@@ -199,7 +199,7 @@ async def search_observations(
 
     cfg = cfg or get_retrieval_config()
     modes = modes or ["fts", "semantic", "recency", "score"]
-    _as_of = as_of or datetime.now(timezone.utc)
+    _as_of = as_of or datetime.now(UTC)
 
     scope_clause, scope_params = _scope_sql_parts(scope_set)
     validity = _validity_sql()
