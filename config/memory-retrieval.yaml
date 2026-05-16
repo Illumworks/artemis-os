@@ -12,3 +12,11 @@ top_k: 50
 
 # Recency half-life in days — score halves after this many days
 recency_decay_days: 30.0
+
+# Sub-weights for the stored score channel.
+# Each component is multiplied by weights.score in the final fusion sum.
+score_features:
+  relevance: 0.40   # decayed stored obs.score
+  hits: 0.15        # normalized hit_count (min(1, count/10))
+  quality: 0.35     # source_quality
+  confirmed: 0.10   # 1.0 if user_confirmed

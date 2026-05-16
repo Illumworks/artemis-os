@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -42,8 +42,23 @@ class RetrievalWeights(BaseModel):
     score: float = 0.15
 
 
+class ScoreFeatureWeights(BaseModel):
+    """Sub-weights for decomposing the stored `score` channel.
+
+    The four components together determine the contribution of the `score`
+    channel in fusion. They do NOT need to sum to 1.0 — each is applied
+    independently and the result is multiplied by RetrievalWeights.score.
+    """
+
+    relevance: float = 0.40    # obs.score (decayed stored value)
+    hits: float = 0.15         # normalized hit_count (min(1, count/10))
+    quality: float = 0.35      # source_quality
+    confirmed: float = 0.10    # 1.0 if user_confirmed else 0.0
+
+
 class RetrievalConfig(BaseModel):
     weights: RetrievalWeights = RetrievalWeights()
+    score_features: ScoreFeatureWeights = ScoreFeatureWeights()
     top_k: int = 50
     recency_decay_days: float = 30.0
 
@@ -77,10 +92,28 @@ def _recency_score(created_at: datetime, as_of: datetime, decay_days: float) -> 
     At t=0 → 1.0. At t=half_life → 0.5. At t=∞ → 0.
     """
     if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=UTC)
+        created_at = created_at.replace(tzinfo=timezone.utc)
     delta = as_of - created_at
     days = max(delta.total_seconds() / 86400.0, 0.0)
     return math.exp(-math.log(2) * days / max(decay_days, 1.0))
+
+
+def _composite_score(
+    obs_score: float,
+    hit_count: int,
+    source_quality: float,
+    user_confirmed: bool,
+    sf: ScoreFeatureWeights,
+) -> float:
+    """Decompose the stored score channel into its four sub-components."""
+    hits_norm = min(1.0, hit_count / 10.0)
+    confirmed = 1.0 if user_confirmed else 0.0
+    return (
+        sf.relevance * max(0.0, obs_score)
+        + sf.hits * hits_norm
+        + sf.quality * max(0.0, min(1.0, source_quality))
+        + sf.confirmed * confirmed
+    )
 
 
 def _compute_final_score(
@@ -89,12 +122,19 @@ def _compute_final_score(
     recency: float,
     obs_score: float,
     weights: RetrievalWeights,
+    *,
+    hit_count: int = 0,
+    source_quality: float = 0.0,
+    user_confirmed: bool = False,
+    score_features: ScoreFeatureWeights | None = None,
 ) -> float:
+    sf = score_features or ScoreFeatureWeights()
+    score_contrib = _composite_score(obs_score, hit_count, source_quality, user_confirmed, sf)
     return (
         weights.fts * min(fts_rank, 1.0)
         + weights.semantic * max(0.0, semantic_sim)
         + weights.recency * recency
-        + weights.score * max(0.0, obs_score)
+        + weights.score * score_contrib
     )
 
 
@@ -137,7 +177,7 @@ async def search_observations(
     as_of: datetime | None = None,
     modes: list[Literal["fts", "semantic", "recency", "score"]] | None = None,
     cfg: RetrievalConfig | None = None,
-    provider: EmbeddingProvider | None = None,
+    provider: "EmbeddingProvider | None" = None,
 ) -> list[ScoredObservation]:
     """Fusion search across active (non-superseded) observations in scope_set.
 
@@ -159,7 +199,7 @@ async def search_observations(
 
     cfg = cfg or get_retrieval_config()
     modes = modes or ["fts", "semantic", "recency", "score"]
-    _as_of = as_of or datetime.now(UTC)
+    _as_of = as_of or datetime.now(timezone.utc)
 
     scope_clause, scope_params = _scope_sql_parts(scope_set)
     validity = _validity_sql()
@@ -256,7 +296,17 @@ async def search_observations(
         recency = _recency_score(obs.created_at, _as_of, cfg.recency_decay_days)
         fts_r = fts_scores.get(obs_id, 0.0)
         sem_r = semantic_scores.get(obs_id, 0.0)
-        final = _compute_final_score(fts_r, sem_r, recency, obs.score, cfg.weights)
+        final = _compute_final_score(
+            fts_r,
+            sem_r,
+            recency,
+            obs.score,
+            cfg.weights,
+            hit_count=obs.hit_count,
+            source_quality=obs.source_quality,
+            user_confirmed=obs.user_confirmed,
+            score_features=cfg.score_features,
+        )
         scored.append(
             ScoredObservation(
                 id=obs.id,

@@ -106,9 +106,68 @@ async with session.begin():
     await link_evidence(session, obs.id, "drawer", drawer.id, source_quote="Jon prefers direct tone.")
 ```
 
+## Consolidation (`artemis.memory.consolidator`)
+
+LLM-based (Haiku) consolidation reduces observation count per scope+category. Operates losslessly: creates a new observation that supersedes sources, links evidence back to each source row, and forwards drawer evidence at 0.9× weight.
+
+```python
+from artemis.memory.consolidator import consolidate_observations, apply_consolidation
+
+proposals = await consolidate_observations(candidates)  # filters via heuristic_filter first
+async with session.begin():
+    created = await apply_consolidation(session, scope, proposals, source_map)
+```
+
+## Incremental consolidator (`artemis.memory.incremental_consolidator`)
+
+Triggered automatically from `write_drawer`. Counts writes per scope+category; fires a debounced consolidation job when the threshold (default 25) is crossed.
+
+```python
+from artemis.memory.incremental_consolidator import get_incremental_consolidator
+
+ic = get_incremental_consolidator()
+ic.enabled = False  # disable globally for testing
+```
+
+## Score channel sub-weights
+
+The `score` channel in fusion is decomposed into four components via `ScoreFeatureWeights`:
+
+| component | default | description |
+|---|---|---|
+| `relevance` | 0.40 | decayed stored `obs.score` |
+| `hits` | 0.15 | normalized hit count (`min(1, count/10)`) |
+| `quality` | 0.35 | `source_quality` (0.5–1.0) |
+| `confirmed` | 0.10 | 1.0 if `user_confirmed` |
+
+Configure in `config/memory-retrieval.yaml` under `score_features`.
+
+## Source quality hints (`SourceQualityHint`)
+
+Canonical `source_quality` values for `write_observation` callers:
+
+| constant | value | meaning |
+|---|---|---|
+| `SourceQualityHint.user` | 1.0 | human-confirmed |
+| `SourceQualityHint.consolidation` | 0.9 | LLM-synthesized |
+| `SourceQualityHint.agent` | 0.7 | agent-generated |
+| `SourceQualityHint.extractor` | 0.5 | raw extraction |
+
+## Maintenance (`artemis.memory.maintenance`)
+
+Score decay applied per category on each maintenance run:
+
+```python
+from artemis.memory.maintenance import run_maintenance
+
+async with session.begin():
+    updated = await run_maintenance(session)  # returns {category: row_count}
+```
+
+Category decay factors per run: `warning` 1.0 (never decays), `convention` 0.99, `decision` 0.97, `discovery` 0.93.
+
 ## Out of scope (this slice)
 
-- Consolidation, scoring, decay — Slice B3
 - Graph entities and relations — Slice B4
 - HTTP routes — Phase C
 
