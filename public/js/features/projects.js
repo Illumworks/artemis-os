@@ -1,4 +1,5 @@
 // Project selection & system prompts
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { getState, setState } from '../core/store.js';
 import { CHAT_IDS } from '../core/constants.js';
@@ -29,6 +30,10 @@ const projectPickerState = {
 };
 
 export async function loadProjects() {
+  if (!isSurfaceAvailable("projects")) {
+    console.info("Projects surface not available in this build — module disabled");
+    return;
+  }
   try {
     const projects = await api.fetchProjects();
     setState("projectsData", projects);

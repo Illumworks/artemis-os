@@ -1,4 +1,5 @@
 // Session management
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { getState, setState, on as onState } from '../core/store.js';
 import { CHAT_IDS } from '../core/constants.js';
@@ -73,6 +74,10 @@ onState("sessionId", (val) => {
 })();
 
 export async function loadSessions(searchTerm) {
+  if (!isSurfaceAvailable("sessions")) {
+    console.info("Sessions surface not available in this build — module disabled");
+    return;
+  }
   try {
     const cwd = $.projectSelect?.value;
     if (!cwd) {

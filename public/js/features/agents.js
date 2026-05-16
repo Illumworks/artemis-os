@@ -1,4 +1,5 @@
 // Agents — autonomous AI agents with CRUD + Agent Chains
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { getState, setState } from '../core/store.js';
 import { escapeHtml, scrollToBottom } from '../core/utils.js';
@@ -45,6 +46,10 @@ function finishAgentStreaming(pane) {
 // ══════════════════════════════════════════════════════════
 
 export async function loadAgents() {
+  if (!isSurfaceAvailable("agents")) {
+    console.info("Agents surface not available in this build — module disabled");
+    return;
+  }
   setState("agentsLoading", true);
   setState("agentsError", null);
   let agents = null;

@@ -225,13 +225,12 @@ export async function fetchEntityNeighborhoodApi(entityId, hops = 1) {
   return _readJsonOrThrow(res, "Failed to load entity neighborhood");
 }
 
-export async function fetchCampaignOpsOverview() {
-  const res = await fetch("/api/campaign-ops/overview");
-  return _readJsonOrThrow(res, "Failed to load Campaign Ops");
-}
+// TODO E1b: not yet ported — /overview does not exist in Python (C2/C3/C4).
+// export async function fetchCampaignOpsOverview() { ... }
 
 export async function decideCampaignCandidateApi(id, payload = {}) {
-  const res = await fetch(`/api/campaign-ops/candidates/${encodeURIComponent(id)}/decision`, {
+  // E1b: Python uses /advance (not /decision). Payload shape unchanged.
+  const res = await fetch(`/api/campaign-ops/candidates/${encodeURIComponent(id)}/advance`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -239,29 +238,20 @@ export async function decideCampaignCandidateApi(id, payload = {}) {
   return _readJsonOrThrow(res, "Failed to update campaign decision");
 }
 
-export async function promoteCampaignCandidateApi(id, payload = {}) {
-  const res = await fetch(`/api/campaign-ops/candidates/${encodeURIComponent(id)}/promote`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return _readJsonOrThrow(res, "Failed to promote campaign candidate");
-}
+// TODO E1b: not yet ported — /promote does not exist in Python (C2/C3/C4). Use /advance instead.
+// export async function promoteCampaignCandidateApi(id, payload = {}) { ... }
 
-export async function reopenCampaignCandidateApi(id, payload = {}) {
-  const res = await fetch(`/api/campaign-ops/candidates/${encodeURIComponent(id)}/reopen`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return _readJsonOrThrow(res, "Failed to reopen campaign candidate");
-}
+// TODO E1b: not yet ported — /reopen does not exist in Python (C2/C3/C4). Use /advance instead.
+// export async function reopenCampaignCandidateApi(id, payload = {}) { ... }
 
 export async function getCampaignCandidateApi(id) {
   const res = await fetch(`/api/campaign-ops/candidates/${encodeURIComponent(id)}`);
   return _readJsonOrThrow(res, "Failed to load campaign candidate");
 }
 
+// TODO E1b: not yet ported — /writing-handoff does not exist in Python (C2/C3/C4).
+// The writing-handoff concept is partially handled via campaign-deliverables POST.
+// Flag for Lead review: callers should use createCampaignDeliverableApi instead.
 export async function createCampaignWritingHandoffApi(id, payload = {}) {
   const res = await fetch(`/api/campaign-ops/candidates/${encodeURIComponent(id)}/writing-handoff`, {
     method: "POST",
@@ -622,6 +612,7 @@ export async function pollOkrDeckStatusApi(jobId) {
   return _readJsonOrThrow(res, "Failed to poll deck status");
 }
 
+// TODO E1b: not yet ported — /writing-studio/overview does not exist in Python (C4).
 export async function fetchWritingStudioOverview() {
   const res = await fetch("/api/writing-studio/overview");
   return _readJsonOrThrow(res, "Failed to load Writing Studio");
@@ -793,7 +784,8 @@ export async function updateWritingDraftApi(id, payload = {}) {
 }
 
 export async function submitDraftForReviewApi(draftId) {
-  const res = await fetch(`/api/writing-studio/drafts/${encodeURIComponent(draftId)}/submit-for-review`, {
+  // E1b: Python endpoint is /submit-review (not /submit-for-review).
+  const res = await fetch(`/api/writing-studio/drafts/${encodeURIComponent(draftId)}/submit-review`, {
     method: "POST",
   });
   const body = await res.json();
@@ -839,6 +831,7 @@ export async function assembleCampaignBriefApi(candidateId, { assembledBy } = {}
   return _readJsonOrThrow(res, "Failed to assemble campaign brief");
 }
 
+// TODO E1b: not yet ported — GET /brief does not exist in Python (only POST /brief/assemble).
 export async function getCampaignBriefApi(candidateId) {
   const res = await fetch(
     `/api/campaign-ops/candidates/${encodeURIComponent(candidateId)}/brief`,
@@ -1728,6 +1721,8 @@ export async function listApprovalsApi({ status, targetType, limit = 50 } = {}) 
 }
 
 export async function decideApprovalApi(id, { decision, note, reviewer } = {}) {
+  // E1b: Python approvals do NOT trigger automation-run or workflow-run resumption.
+  // The Node app had side effects (resume workflow run on approval). Do not expect those here.
   const res = await fetch(`/api/approvals/${encodeURIComponent(id)}/decision`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1806,6 +1801,9 @@ export async function listCampaignRulesetsApi() {
 }
 
 export async function getCampaignRulesetApi(family) {
+  // E1b: Python returns { family, versions[], activeVersionDetails } (flat shape).
+  // Node returned a nested two-level shape. Callers must read activeVersionDetails
+  // for the active ruleset, not a top-level "active" key.
   const res = await fetch(`/api/signal-criteria/rulesets/${encodeURIComponent(family)}`);
   if (!res.ok) throw new Error("getCampaignRulesetApi failed");
   return res.json();
@@ -1848,9 +1846,12 @@ export async function getTerritoryConfigApi(family) {
   return res.json();
 }
 
-export async function upsertTerritoryStateApi(family, stateCode, payload = {}) {
+// E1b: Python territory PUT is per-family (not per-state). Send the whole family config in one PUT.
+// Callers should pass the full family payload (hotStates, standardStates, unlistedMultiplier).
+// The stateCode parameter is kept for API compat but is ignored — merge it into payload before calling.
+export async function upsertTerritoryStateApi(family, _stateCode, payload = {}) {
   const res = await fetch(
-    `/api/signal-criteria/territory/${encodeURIComponent(family)}/${encodeURIComponent(stateCode)}`,
+    `/api/signal-criteria/territory/${encodeURIComponent(family)}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1963,6 +1964,8 @@ export async function submitSignalIntakeApi(payload = {}) {
     body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => ({}));
+  // E1b: Python returns 200 for dry-run mode and 201 for committed intake.
+  // Both are success states — only throw on other non-ok statuses.
   if (!res.ok) throw new Error(body.error || "submitSignalIntakeApi failed");
   return body;
 }

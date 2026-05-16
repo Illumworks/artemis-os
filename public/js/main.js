@@ -1,4 +1,8 @@
 // Entry point — imports all modules and runs boot sequence
+import { loadStatus } from './core/status.js';
+
+// Bootstrap availability flags before anything else
+await loadStatus();
 
 // Web Components — must load before dom.js so getElementById finds their elements
 import './components/welcome-overlay.js';

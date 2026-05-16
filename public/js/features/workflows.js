@@ -1,4 +1,5 @@
 // Workflows
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { getState, setState } from '../core/store.js';
 import { escapeHtml, scrollToBottom } from '../core/utils.js';
@@ -16,6 +17,10 @@ function bindListener(target, eventName, handler) {
 }
 
 export async function loadWorkflows() {
+  if (!isSurfaceAvailable("workflows")) {
+    console.info("Workflows surface not available in this build — module disabled");
+    return;
+  }
   setState("workflowsLoading", true);
   setState("workflowsError", null);
   let workflows = null;

@@ -1,4 +1,5 @@
 // Analytics dashboard — renders inside the account popup
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/utils.js';
 import { getState } from '../core/store.js';
@@ -525,6 +526,10 @@ async function populateAnalyticsFilter() {
 }
 
 export async function loadSidebarAnalytics() {
+  if (!isSurfaceAvailable("analytics")) {
+    console.info("Analytics surface not available in this build — module disabled");
+    return;
+  }
   if (!analyticsFilter || !analyticsContent) return;
   await populateAnalyticsFilter();
   await loadAnalyticsData(analyticsFilter.value);

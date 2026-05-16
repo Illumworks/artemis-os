@@ -1,4 +1,5 @@
 // Telegram notification settings — UI for configuring bot token, chat ID, and notification preferences
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { registerCommand } from '../ui/commands.js';
 
@@ -149,6 +150,10 @@ registerCommand("telegram", {
 });
 
 // Load initial state
-loadConfig().then(config => {
-  if (config) updateLabel(config.enabled);
-});
+if (!isSurfaceAvailable("telegram")) {
+  console.info("Telegram surface not available in this build — module disabled");
+} else {
+  loadConfig().then(config => {
+    if (config) updateLabel(config.enabled);
+  });
+}

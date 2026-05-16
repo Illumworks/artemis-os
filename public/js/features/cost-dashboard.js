@@ -1,4 +1,5 @@
 // Cost dashboard
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/utils.js';
 import * as api from '../core/api.js';
@@ -11,6 +12,10 @@ function formatTokenCount(n) {
 }
 
 export async function loadStats() {
+  if (!isSurfaceAvailable("cost-dashboard")) {
+    console.info("Cost-dashboard surface not available in this build — module disabled");
+    return;
+  }
   try {
     const cwd = $.projectSelect?.value;
     const data = await api.fetchStats(cwd || undefined);

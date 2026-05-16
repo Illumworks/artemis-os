@@ -1,4 +1,5 @@
 // Send/Stop logic + message handler + boot sequence
+import { isSurfaceAvailable } from '../core/status.js';
 import { $ } from '../core/dom.js';
 import { getState, setState, on as onState } from '../core/store.js';
 import { CHAT_IDS, BOT_CHAT_ID } from '../core/constants.js';
@@ -1336,20 +1337,24 @@ function showForkToast(title) {
 }
 
 // ── Boot sequence ──
-try {
-  showChatEmptyState();
-  updateHistoryButtonVisibility();
-  loadProjects().then(() => {
-    inputHistory = new InputHistory(historyKey());
+if (!isSurfaceAvailable("chat")) {
+  console.info("Chat surface not available in this build — module disabled");
+} else {
+  try {
+    showChatEmptyState();
     updateHistoryButtonVisibility();
-  }).catch(err => console.warn('[chat] loadProjects failed:', err.message));
-  loadAccountInfo();
-  loadStats();
-  loadPrompts();
-  connectWebSocket();
-  loadWorkflows();
-  loadAgents();
-  loadSkillCommands();
-} catch (err) {
-  console.warn('[chat] boot sequence skipped:', err.message);
+    loadProjects().then(() => {
+      inputHistory = new InputHistory(historyKey());
+      updateHistoryButtonVisibility();
+    }).catch(err => console.warn('[chat] loadProjects failed:', err.message));
+    loadAccountInfo();
+    loadStats();
+    loadPrompts();
+    connectWebSocket();
+    loadWorkflows();
+    loadAgents();
+    loadSkillCommands();
+  } catch (err) {
+    console.warn('[chat] boot sequence skipped:', err.message);
+  }
 }

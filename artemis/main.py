@@ -27,7 +27,7 @@ from artemis.marketing.routes import (
 )
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
-from artemis.routes import health
+from artemis.routes import health, status
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
@@ -92,6 +92,7 @@ app.add_middleware(
 
 # API routes — must be mounted BEFORE StaticFiles so /api/* takes precedence.
 app.include_router(health.router)
+app.include_router(status.router)  # Phase E1b — surface availability bootstrap
 
 # Phase C2 — Marketing OS HTTP routes
 app.include_router(scouts.router)
