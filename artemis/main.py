@@ -27,7 +27,7 @@ from artemis.marketing.routes import (
 )
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
-from artemis.routes import health, status
+from artemis.routes import health, okr, status, writing_rules
 from artemis.routes.builders import (
     agent_chains,
     agent_dags,
@@ -119,6 +119,10 @@ app.include_router(skills.router)
 app.include_router(workflows.router)
 app.include_router(agent_chains.router)
 app.include_router(agent_dags.router)
+
+# Phase H — OKR Studio + Writing Studio rules (dry-run + validator shipped; cutover pending)
+app.include_router(okr.router)
+app.include_router(writing_rules.router)
 
 # Mount static frontend AFTER all API routes.
 # html=True makes GET / serve public/index.html.
