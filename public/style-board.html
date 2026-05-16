@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Artemis Style Board</title>
+
+  <!-- Core design system -->
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="artemis-design.css" />
+  <link rel="stylesheet" href="css/core/reset.css" />
+  <link rel="stylesheet" href="css/core/variables.css" />
+  <link rel="stylesheet" href="css/core/theme.css" />
+  <link rel="stylesheet" href="css/core/components.css" />
+  <link rel="stylesheet" href="css/core/layout.css" />
+
+  <!-- UI layer -->
+  <link rel="stylesheet" href="css/ui/modals.css" />
+  <link rel="stylesheet" href="css/ui/sessions.css" />
+  <link rel="stylesheet" href="css/ui/status-bar.css" />
+  <link rel="stylesheet" href="css/ui/settings.css" />
+  <link rel="stylesheet" href="css/ui/messages.css" />
+  <link rel="stylesheet" href="css/ui/parallel-panes.css" />
+
+  <!-- Feature surfaces -->
+  <link rel="stylesheet" href="css/features/home.css" />
+  <link rel="stylesheet" href="css/features/okr.css" />
+  <link rel="stylesheet" href="css/features/writing-studio.css" />
+  <link rel="stylesheet" href="css/features/marketing-os.css" />
+  <link rel="stylesheet" href="css/features/jira-board.css" />
+  <link rel="stylesheet" href="css/features/agent-sidebar.css" />
+  <link rel="stylesheet" href="css/features/operations.css" />
+
+  <!-- Panels -->
+  <link rel="stylesheet" href="css/panels/assistant-bot.css" />
+  <link rel="stylesheet" href="css/panels/memory.css" />
+
+  <style>
+    /* ── Style-board chrome ──────────────────────────────── */
+    * { box-sizing: border-box; }
+
+    body {
+      background: var(--bg, #0F0D0B);
+      color: var(--text, #F2E8D9);
+      font-family: var(--font-sans, system-ui, sans-serif);
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Sticky top nav */
+    .sb-nav {
+      position: sticky;
+      top: 0;
+      z-index: 200;
+      background: var(--bg-secondary, #161310);
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding: 0 16px;
+      height: 44px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    .sb-nav::-webkit-scrollbar { display: none; }
+
+    .sb-nav-brand {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent, #D4891A);
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      white-space: nowrap;
+      margin-right: 20px;
+      font-family: var(--font-display, system-ui);
+    }
+
+    .sb-nav a {
+      color: var(--text-dim, #6B5D4F);
+      text-decoration: none;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      padding: 0 12px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .sb-nav a:hover {
+      color: var(--text, #F2E8D9);
+      border-bottom-color: var(--accent, #D4891A);
+    }
+
+    /* Main content */
+    .sb-main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    /* Section */
+    .sb-section {
+      margin-bottom: 64px;
+    }
+
+    .sb-section-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text, #F2E8D9);
+      font-family: var(--font-display, system-ui);
+      margin: 0 0 4px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+      letter-spacing: 0.01em;
+    }
+
+    .sb-section-desc {
+      font-size: 12px;
+      color: var(--text-dim, #6B5D4F);
+      margin: 8px 0 20px;
+      line-height: 1.6;
+    }
+
+    /* Row layout */
+    .sb-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+
+    .sb-row--col {
+      flex-direction: column;
+    }
+
+    /* Label + specimen card */
+    .sb-specimen {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sb-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim, #6B5D4F);
+      font-family: var(--font-mono, monospace);
+    }
+
+    /* Theme toggle in nav */
+    .sb-theme-btn {
+      margin-left: auto;
+      background: var(--accent-dim, rgba(212,137,26,0.08));
+      border: 1px solid var(--accent-border, rgba(212,137,26,0.3));
+      color: var(--accent, #D4891A);
+      border-radius: 8px;
+      padding: 4px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--font-sans, system-ui);
+      white-space: nowrap;
+    }
+
+    .sb-theme-btn:hover {
+      background: var(--accent, #D4891A);
+      color: #000;
+    }
+
+    /* Color swatch */
+    .sb-swatch {
+      width: 80px;
+      height: 48px;
+      border-radius: var(--radius, 12px);
+      border: 1px solid var(--border, rgba(255,255,255,0.06));
+      flex-shrink: 0;
+    }
+
+    /* Spacing scale block */
+    .sb-space-block {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sb-space-rect {
+      background: var(--accent, #D4891A);
+      opacity: 0.6;
+      border-radius: 3px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .sb-space-label {
+      font-size: 11px;
+      color: var(--text-secondary, #9C8878);
+      font-family: var(--font-mono, monospace);
+      min-width: 80px;
+    }
+
+    /* Radius demo */
+    .sb-radius-demo {
+      width: 60px;
+      height: 60px;
+      background: var(--accent-dim, rgba(212,137,26,0.08));
+      border: 1px solid var(--accent-border, rgba(212,137,26,0.3));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-family: var(--font-mono, monospace);
+      color: var(--accent, #D4891A);
+      text-align: center;
+    }
+
+    /* Motion demo */
+    .sb-motion-box {
+      width: 48px;
+      height: 48px;
+      background: var(--accent, #D4891A);
+      border-radius: var(--radius, 12px);
+      opacity: 0.8;
+    }
+
+    .sb-motion-box.ease-out-expo:hover {
+      transform: translateY(-8px);
+      transition: transform 0.4s var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1));
+    }
+
+    .sb-motion-box.ease-spring:hover {
+      transform: scale(1.15);
+      transition: transform 0.4s var(--ease-spring, cubic-bezier(0.34,1.56,0.64,1));
+    }
+
+    .sb-motion-box.ease-smooth:hover {
+      transform: translateX(12px);
+      transition: transform 0.35s var(--ease-smooth, cubic-bezier(0.25,0.1,0.25,1));
+    }
+
+    .sb-motion-hint {
+      font-size: 11px;
+      color: var(--text-dim, #6B5D4F);
+      font-family: var(--font-mono, monospace);
+      margin-top: 4px;
+    }
+
+    /* Status dot */
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* Typography scale */
+    .sb-type-row {
+      margin-bottom: 10px;
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.04));
+      padding-bottom: 10px;
+    }
+
+    .sb-type-meta {
+      font-size: 10px;
+      font-family: var(--font-mono, monospace);
+      color: var(--text-dim, #6B5D4F);
+      margin-top: 2px;
+    }
+
+    /* Card surface */
+    .sb-card {
+      background: var(--surface-card, rgba(32,28,24,0.96));
+      border: 1px solid var(--surface-outline, rgba(185,152,109,0.18));
+      border-radius: var(--radius-md, 16px);
+      padding: 20px;
+      box-shadow: var(--surface-shadow-soft, 0 8px 24px rgba(116,88,49,0.06));
+    }
+
+    /* Glass panel */
+    .sb-glass-panel {
+      background: var(--surface-panel, rgba(28,24,21,0.76));
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--surface-outline, rgba(255,255,255,0.08));
+      border-radius: var(--radius-lg, 24px);
+      padding: 20px;
+      box-shadow: var(--surface-shadow, 0 20px 56px rgba(0,0,0,0.32));
+    }
+
+    /* Inline code */
+    .sb-code {
+      font-family: var(--font-mono, monospace);
+      font-size: 11px;
+      background: var(--code-bg, rgba(0,0,0,0.3));
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent, #D4891A);
+    }
+
+    /* Warning flag */
+    .sb-flag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      background: rgba(201,74,31,0.12);
+      border: 1px solid rgba(201,74,31,0.24);
+      color: #C94A1F;
+      border-radius: 6px;
+      padding: 2px 8px;
+    }
+
+    /* Table */
+    .sb-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .sb-table th {
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim, #6B5D4F);
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+      padding: 6px 10px 8px;
+      font-family: var(--font-mono, monospace);
+    }
+
+    .sb-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.03));
+      color: var(--text-secondary, #9C8878);
+      vertical-align: top;
+    }
+
+    .sb-table td:first-child {
+      font-family: var(--font-mono, monospace);
+      font-size: 11px;
+      color: var(--accent, #D4891A);
+      white-space: nowrap;
+    }
+
+    /* Badge */
+    .sb-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      font-family: var(--font-display, system-ui);
+    }
+
+    /* Section anchor offset for sticky nav */
+    [id] { scroll-margin-top: 52px; }
+
+    /* Icon grid */
+    .sb-icon-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .sb-icon-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 12px;
+      background: var(--surface-card, rgba(32,28,24,0.96));
+      border: 1px solid var(--surface-outline, rgba(255,255,255,0.08));
+      border-radius: var(--radius, 12px);
+      min-width: 80px;
+    }
+
+    .sb-icon-cell img {
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+    }
+
+    .sb-icon-name {
+      font-size: 9px;
+      font-family: var(--font-mono, monospace);
+      color: var(--text-dim, #6B5D4F);
+      text-align: center;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Sticky Navigation ─────────────────────────────── -->
+<nav class="sb-nav">
+  <span class="sb-nav-brand">Artemis · Style Board</span>
+  <a href="#buttons">Buttons</a>
+  <a href="#inputs">Inputs</a>
+  <a href="#cards">Cards</a>
+  <a href="#modals">Modals</a>
+  <a href="#panels">Panels</a>
+  <a href="#navigation">Navigation</a>
+  <a href="#status">Status</a>
+  <a href="#typography">Typography</a>
+  <a href="#colors">Color Tokens</a>
+  <a href="#spacing">Spacing</a>
+  <a href="#iconography">Iconography</a>
+  <a href="#motion">Motion</a>
+  <a href="#datadisplay">Data Display</a>
+  <a href="#forms">Form Patterns</a>
+  <a href="#surfaces">Feature Surfaces</a>
+  <button class="sb-theme-btn" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'">
+    Toggle Theme
+  </button>
+</nav>
+
+<main class="sb-main">
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 1. BUTTONS                                       -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="buttons" class="sb-section">
+    <h2 class="sb-section-title">Buttons</h2>
+    <p class="sb-section-desc">
+      All button variants from <span class="sb-code">css/core/components.css</span>. Hover states are live.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen">
+        <span class="sb-label">.btn-primary / .modal-btn-save</span>
+        <button class="btn-primary">Save Changes</button>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.btn-primary disabled</span>
+        <button class="btn-primary" disabled>Save Changes</button>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.btn-cancel / .modal-btn-cancel</span>
+        <button class="btn-cancel">Cancel</button>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.btn-danger / .perm-deny-btn</span>
+        <button class="btn-danger">Delete</button>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.btn-icon</span>
+        <button class="btn-icon" title="Edit">✎</button>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.btn-dashed</span>
+        <button class="btn-dashed">+ Add item</button>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.btn-secondary (sidebar)</span>
+        <button class="btn-secondary" style="margin:0;width:auto;">+ New Session</button>
+      </div>
+    </div>
+
+    <p class="sb-section-desc" style="margin-top:8px;">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;<span class="sb-code">.btn-primary</span> uses <span class="sb-code">color: #000</span> (hard-coded) while dark theme sets
+      <span class="sb-code">--btn-primary-text: #0F0D0B</span> — the variable is defined but not consumed by <span class="sb-code">.btn-primary</span>.
+      <br>
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;<span class="sb-code">.btn-danger:hover</span> uses hard-coded <span class="sb-code">#ff6b6f</span> instead of <span class="sb-code">var(--error)</span>.
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 2. INPUTS                                        -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="inputs" class="sb-section">
+    <h2 class="sb-section-title">Inputs</h2>
+    <p class="sb-section-desc">
+      Form controls from <span class="sb-code">css/core/components.css</span>. Focus state activates <span class="sb-code">var(--glow)</span>.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen">
+        <span class="sb-label">input[type="text"]</span>
+        <input type="text" placeholder="Enter text…" style="width:200px;" />
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">input[type="password"]</span>
+        <input type="password" placeholder="Password" style="width:200px;" />
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">input[type="search"]</span>
+        <input type="search" placeholder="Search…" style="width:200px;" />
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">input[type="number"]</span>
+        <input type="number" placeholder="0" style="width:120px;" />
+      </div>
+    </div>
+    <div class="sb-row">
+      <div class="sb-specimen">
+        <span class="sb-label">textarea</span>
+        <textarea placeholder="Multi-line content…" style="width:300px;height:72px;"></textarea>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">select</span>
+        <select style="width:180px;">
+          <option>Claude Sonnet 4.6</option>
+          <option>Claude Opus 4</option>
+          <option>Gemini Pro</option>
+        </select>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">input[type="checkbox"]</span>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" checked /> Enable streaming
+        </label>
+      </div>
+    </div>
+    <div class="sb-row">
+      <div class="sb-specimen">
+        <span class="sb-label">.input-compact</span>
+        <input type="text" class="input-compact" placeholder="Compact input" style="width:160px;" />
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.input-mono</span>
+        <input type="text" class="input-mono" placeholder="/path/to/file" style="width:200px;" />
+      </div>
+    </div>
+
+    <p class="sb-section-desc">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;Textarea defaults to <span class="sb-code">font-family: var(--font-mono)</span> while text inputs use <span class="sb-code">var(--font-sans)</span>.
+      In modals, <span class="sb-code">.modal form textarea</span> also forces <span class="sb-code">font-mono</span>.
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 3. CARDS                                         -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="cards" class="sb-section">
+    <h2 class="sb-section-title">Cards</h2>
+    <p class="sb-section-desc">
+      Surface-card (high opacity) vs glass panel (translucent).
+      Session card is the primary interactive card pattern.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen" style="flex:1;min-width:240px;">
+        <span class="sb-label">.surface-card (via CSS var)</span>
+        <div class="sb-card">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Session title</div>
+          <div style="font-size:11px;color:var(--text-dim);">Today at 14:23 · 3 messages</div>
+        </div>
+      </div>
+
+      <div class="sb-specimen" style="flex:1;min-width:240px;">
+        <span class="sb-label">Glass panel (.sb-glass-panel)</span>
+        <div class="sb-glass-panel">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Assistant Panel</div>
+          <div style="font-size:11px;color:var(--text-dim);">backdrop-filter: blur(20px)</div>
+        </div>
+      </div>
+
+      <div class="sb-specimen" style="flex:1;min-width:240px;">
+        <span class="sb-label">.session-list li (active)</span>
+        <ul class="session-list" style="list-style:none;padding:0;margin:0;">
+          <li class="active" style="margin:0;">
+            <div class="session-card-header">
+              <span class="session-title" style="max-width:none;">My active session</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">12:04 · 7 messages</div>
+          </li>
+        </ul>
+      </div>
+
+      <div class="sb-specimen" style="flex:1;min-width:240px;">
+        <span class="sb-label">.session-list li (default)</span>
+        <ul class="session-list" style="list-style:none;padding:0;margin:0;">
+          <li style="margin:0;">
+            <div class="session-card-header">
+              <span class="session-title" style="max-width:none;">Another session</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">Yesterday · 2 messages</div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 4. MODALS                                        -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="modals" class="sb-section">
+    <h2 class="sb-section-title">Modals &amp; Dialogs</h2>
+    <p class="sb-section-desc">
+      Modal anatomy from <span class="sb-code">css/ui/modals.css</span>. The <span class="sb-code">::before</span> pseudo-element renders the accent gradient line at top.
+      <br>Overlay uses <span class="sb-code">backdrop-filter: blur(8px)</span>; modal body uses <span class="sb-code">var(--radius-lg)</span> = 24px.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen" style="flex:1;max-width:500px;">
+        <span class="sb-label">.modal (inline preview — no overlay)</span>
+        <div class="modal" style="position:relative;max-height:none;overflow:visible;animation:none;">
+          <div class="modal-header">
+            <h3>Create Agent</h3>
+            <button class="modal-close">×</button>
+          </div>
+          <div>
+            <label class="form-label">Agent name</label>
+            <input type="text" placeholder="My specialist agent" style="width:100%;" />
+            <label class="form-label" style="margin-top:14px;">System prompt</label>
+            <textarea placeholder="You are…" style="width:100%;height:80px;"></textarea>
+            <p class="sp-hint">Prompt runs before every message. Supports <code>{{variable}}</code> interpolation.</p>
+          </div>
+          <div class="modal-actions">
+            <button class="btn-cancel modal-btn-cancel">Cancel</button>
+            <button class="btn-primary modal-btn-save">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="sb-section-desc">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;The <span class="sb-code">.add-project-modal</span> overrides <span class="sb-code">.modal</span> border-radius to <span class="sb-code">18px</span>
+      (hard-coded) while the base modal uses <span class="sb-code">var(--radius-lg)</span> = 24px.
+      It also uses <span class="sb-code">!important</span> overrides for background, border, and box-shadow — indicating style drift vs the base modal token.
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 5. PANELS & SHEETS                               -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="panels" class="sb-section">
+    <h2 class="sb-section-title">Panels &amp; Sheets</h2>
+    <p class="sb-section-desc">
+      Sidebar and panel surfaces. Sidebar uses a vertical glass gradient + <span class="sb-code">blur(34px)</span>.
+      Right panels (assistant bot, memory, skills) use lighter fills.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen" style="flex:1;min-width:200px;">
+        <span class="sb-label">.sidebar surface preview</span>
+        <div style="
+          background: linear-gradient(180deg, var(--surface-panel-strong) 0%, var(--surface-panel) 100%);
+          border: 1px solid var(--surface-outline);
+          border-radius: var(--radius-md);
+          padding: 16px 18px;
+          box-shadow: var(--surface-shadow-soft);
+        ">
+          <div style="font-size:16px;font-weight:700;color:var(--accent);letter-spacing:0.14em;text-transform:uppercase;font-family:var(--font-display);">ARTEMIS</div>
+          <div style="margin-top:10px;font-size:11px;color:var(--text-dim);">Sidebar header pattern</div>
+        </div>
+      </div>
+
+      <div class="sb-specimen" style="flex:1;min-width:200px;">
+        <span class="sb-label">.status-popover</span>
+        <div class="status-popover" style="position:relative;top:auto;left:auto;width:auto;">
+          <div class="status-popover-head">
+            <div class="status-popover-head-dot"></div>
+            <div>
+              <div class="status-popover-title">Claude Code · Ready</div>
+              <div class="status-popover-subtitle">Sonnet 4.6 · All systems nominal</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sb-specimen" style="flex:1;min-width:200px;">
+        <span class="sb-label">Right panel (sb-glass-panel)</span>
+        <div class="sb-glass-panel" style="min-height:100px;">
+          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:10px;">Memory</div>
+          <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;">Panel content area with glass fill and blur.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 6. NAVIGATION                                    -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="navigation" class="sb-section">
+    <h2 class="sb-section-title">Navigation</h2>
+    <p class="sb-section-desc">
+      Session list as primary nav, status bar, sidebar header, toggle switch, and provider badges.
+    </p>
+
+    <!-- Session list sample -->
+    <div class="sb-specimen" style="max-width:280px;margin-bottom:20px;">
+      <span class="sb-label">Session list (.session-list)</span>
+      <ul class="session-list" style="list-style:none;padding:0;margin:0;background:var(--surface-panel);border-radius:16px;overflow:hidden;">
+        <li class="active" style="margin:8px 8px 0;">
+          <div class="session-card-header">
+            <span class="session-title" style="max-width:none;font-size:12px;font-weight:600;">Active session</span>
+          </div>
+          <div class="session-preview">
+            <span class="session-provider provider-claude-code">Claude Code</span>
+            <span class="session-preview-time">2 min</span>
+          </div>
+        </li>
+        <li style="margin:8px 8px;">
+          <div class="session-card-header">
+            <span class="session-title" style="max-width:none;font-size:12px;font-weight:600;">Writing draft</span>
+          </div>
+          <div class="session-preview">
+            <span class="session-provider provider-local">Local</span>
+            <span class="session-preview-time">1 hr</span>
+          </div>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Toggle switch -->
+    <div class="sb-specimen" style="margin-bottom:20px;">
+      <span class="sb-label">.toggle-switch (.mode-toggle)</span>
+      <div class="mode-toggle" style="padding:0;">
+        <label class="toggle-switch">
+          <input type="checkbox" checked />
+          <div class="toggle-slider"></div>
+          <span class="toggle-label">Parallel mode</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Provider badges -->
+    <div class="sb-specimen">
+      <span class="sb-label">.session-provider badges</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span class="session-provider provider-claude-code">Claude Code</span>
+        <span class="session-provider provider-local">Local</span>
+        <span class="session-provider provider-codex">Codex</span>
+        <span class="session-provider provider-hermes">Hermes</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 7. STATUS INDICATORS                             -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="status" class="sb-section">
+    <h2 class="sb-section-title">Status Indicators</h2>
+    <p class="sb-section-desc">
+      Connection dots, status-orb button, session-mode badges, and status-bar items.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen">
+        <span class="sb-label">.sb-dot (connection)</span>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <div class="sb-dot connected"></div> Connected
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <div class="sb-dot reconnecting"></div> Reconnecting
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <div class="sb-dot"></div> Offline
+          </div>
+        </div>
+      </div>
+
+      <div class="sb-specimen">
+        <span class="sb-label">.status-orb-btn</span>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <button class="status-orb-btn status-orb-ready"><div class="status-orb-dot"></div></button>
+          <button class="status-orb-btn status-orb-degraded"><div class="status-orb-dot"></div></button>
+          <button class="status-orb-btn status-orb-attention"><div class="status-orb-dot"></div></button>
+        </div>
+      </div>
+
+      <div class="sb-specimen">
+        <span class="sb-label">.session-mode badges</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="session-mode single">Single</span>
+          <span class="session-mode parallel">Parallel</span>
+          <span class="session-mode both">Both</span>
+        </div>
+      </div>
+
+      <div class="sb-specimen">
+        <span class="sb-label">.status-popover-row-dot states</span>
+        <div style="display:flex;gap:14px;align-items:center;font-size:11px;color:var(--text-dim);">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div class="status-popover-row-dot ready"></div> Ready
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div class="status-popover-row-dot warn" style="background:#f0a54a;"></div> Warn
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div class="status-popover-row-dot alert" style="background:var(--error);"></div> Alert
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="sb-section-desc">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;Degraded state uses hard-coded <span class="sb-code">#f0a54a</span> in both <span class="sb-code">sessions.css</span> and <span class="sb-code">status-bar.css</span>
+      instead of a shared token. There is no <span class="sb-code">--warning-soft</span> or intermediate-severity semantic token.
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 8. TYPOGRAPHY                                    -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="typography" class="sb-section">
+    <h2 class="sb-section-title">Typography</h2>
+    <p class="sb-section-desc">
+      Two font families: <span class="sb-code">--font-sans</span> = Inter/Segoe UI and <span class="sb-code">--font-mono</span> = JetBrains Mono/SF Mono.
+      <span class="sb-code">--font-display</span> aliases <span class="sb-code">--font-sans</span>.
+      No explicit type scale — sizes are ad-hoc per component (9px–22px found in CSS).
+    </p>
+
+    <div style="max-width:680px;">
+      <div class="sb-type-row">
+        <div style="font-size:22px;font-weight:700;font-family:var(--font-display);">Display / 22px 700 · Page title</div>
+        <div class="sb-type-meta">font: 22px 700 var(--font-display)</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:16px;font-weight:700;font-family:var(--font-display);">Heading / 16px 700 · Modal header, sidebar h1</div>
+        <div class="sb-type-meta">font: 16px 700 var(--font-display)</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:14px;font-weight:600;font-family:var(--font-sans);">Sub-heading / 14px 600 · Section label</div>
+        <div class="sb-type-meta">font: 14px 600 var(--font-sans)</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:13px;font-weight:600;font-family:var(--font-sans);">Body strong / 13px 600 · Session title, card name</div>
+        <div class="sb-type-meta">font: 13px 600 var(--font-sans)</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:12px;font-weight:400;font-family:var(--font-sans);">Body / 12px 400 · General text, button labels</div>
+        <div class="sb-type-meta">font: 12px 400 var(--font-sans)</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:11px;font-weight:400;font-family:var(--font-sans);">Small / 11px 400 · Metadata, captions, previews</div>
+        <div class="sb-type-meta">font: 11px 400 var(--font-sans)</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;font-family:var(--font-sans);color:var(--text-dim);">LABEL / 10px 600 UPPERCASE · Form labels, section headers</div>
+        <div class="sb-type-meta">font: 10px 600 var(--font-sans); text-transform: uppercase; letter-spacing: 0.08em</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.14em;font-family:var(--font-mono);color:var(--text-dim);">MICRO LABEL / 9px 600 UPPERCASE · Sidebar section headers</div>
+        <div class="sb-type-meta">font: 9px 600 var(--font-mono); letter-spacing: 0.14em</div>
+      </div>
+      <div class="sb-type-row">
+        <div style="font-size:13px;font-family:var(--font-mono);">Monospace / 13px 400 · Code, paths, IDs</div>
+        <div class="sb-type-meta">font: 13px 400 var(--font-mono)</div>
+      </div>
+    </div>
+
+    <p class="sb-section-desc" style="margin-top:8px;">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;Font weights found across CSS: 300, 400, 500, 600, 650, 700, 800 — 7 distinct values.
+      No named weight tokens exist (e.g. <span class="sb-code">--weight-bold</span>).
+      Font sizes range from 8.5px to 22px with no systematic scale.
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 9. COLOR TOKENS                                  -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="colors" class="sb-section">
+    <h2 class="sb-section-title">Color Tokens</h2>
+    <p class="sb-section-desc">
+      Defined in <span class="sb-code">css/core/variables.css</span> (84 tokens) plus <span class="sb-code">artemis-design.css</span> (70 tokens).
+      163 distinct hex color literals found across CSS files — significant usage of hard-coded values alongside token references.
+    </p>
+
+    <!-- Backgrounds -->
+    <div class="sb-label" style="margin-bottom:8px;">Backgrounds</div>
+    <div class="sb-row" style="margin-bottom:20px;">
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--bg)"></div><span class="sb-label">--bg</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--bg-secondary)"></div><span class="sb-label">--bg-secondary</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--bg-tertiary)"></div><span class="sb-label">--bg-tertiary</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--bg-elevated)"></div><span class="sb-label">--bg-elevated</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--bg-deep)"></div><span class="sb-label">--bg-deep</span></div>
+    </div>
+
+    <!-- Accent -->
+    <div class="sb-label" style="margin-bottom:8px;">Accent (amber)</div>
+    <div class="sb-row" style="margin-bottom:20px;">
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--accent)"></div><span class="sb-label">--accent #D4891A</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--accent-hover)"></div><span class="sb-label">--accent-hover</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--accent-dim)"></div><span class="sb-label">--accent-dim</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--accent-glow)"></div><span class="sb-label">--accent-glow</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--accent-glass)"></div><span class="sb-label">--accent-glass</span></div>
+    </div>
+
+    <!-- Secondary -->
+    <div class="sb-label" style="margin-bottom:8px;">Secondary / Status</div>
+    <div class="sb-row" style="margin-bottom:20px;">
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--secondary)"></div><span class="sb-label">--secondary #C94A1F</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--success)"></div><span class="sb-label">--success #7A9E8E</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--warning)"></div><span class="sb-label">--warning (=accent)</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--error)"></div><span class="sb-label">--error #C94A1F</span></div>
+    </div>
+
+    <!-- Text -->
+    <div class="sb-label" style="margin-bottom:8px;">Text</div>
+    <div class="sb-row" style="margin-bottom:20px;">
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--text)"></div><span class="sb-label">--text</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--text-secondary)"></div><span class="sb-label">--text-secondary</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--text-dim)"></div><span class="sb-label">--text-dim</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--text-muted)"></div><span class="sb-label">--text-muted</span></div>
+    </div>
+
+    <!-- Glass surfaces -->
+    <div class="sb-label" style="margin-bottom:8px;">Glass Surfaces</div>
+    <div class="sb-row" style="margin-bottom:20px;">
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--surface-panel)"></div><span class="sb-label">--surface-panel</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--surface-card)"></div><span class="sb-label">--surface-card</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--glass-fill)"></div><span class="sb-label">--glass-fill</span></div>
+      <div class="sb-specimen"><div class="sb-swatch" style="background:var(--glass-fill-heavy)"></div><span class="sb-label">--glass-fill-heavy</span></div>
+    </div>
+
+    <p class="sb-section-desc">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;<span class="sb-code">--warning</span> = <span class="sb-code">var(--accent)</span> (#D4891A) — both warning and primary accent are amber.
+      Degraded states fall back to hard-coded <span class="sb-code">#f0a54a</span>.<br>
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;<span class="sb-code">--secondary</span> = <span class="sb-code">--error</span> = <span class="sb-code">#C94A1F</span> — two semantically distinct tokens share the same resolved value.
+      55 orphaned variable references (used in CSS but not defined in any token file).
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 10. SPACING SCALE                                -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="spacing" class="sb-section">
+    <h2 class="sb-section-title">Spacing Scale &amp; Radii</h2>
+    <p class="sb-section-desc">
+      No explicit spacing token system — values are hard-coded per component.
+      Observed values from CSS: 2, 4, 6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40px.
+      Border-radius tokens are defined; 24 distinct hard-coded radius values also exist.
+    </p>
+
+    <!-- De-facto spacing scale from components -->
+    <div class="sb-label" style="margin-bottom:12px;">Common padding/gap values (de-facto scale)</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:24px;">
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:4px;"></div><span class="sb-space-label">4px — icon gap, micro</span></div>
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:6px;"></div><span class="sb-space-label">6px — label gap</span></div>
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:8px;"></div><span class="sb-space-label">8px — btn padding v, gap</span></div>
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:12px;"></div><span class="sb-space-label">12px — sidebar item margin</span></div>
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:14px;"></div><span class="sb-space-label">14px — modal field gap</span></div>
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:16px;"></div><span class="sb-space-label">16px — btn padding h, section pad</span></div>
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:20px;"></div><span class="sb-space-label">20px — modal header gap</span></div>
+      <div class="sb-space-block"><div class="sb-space-rect" style="width:24px;"></div><span class="sb-space-label">24px — modal padding</span></div>
+    </div>
+
+    <!-- Radius tokens -->
+    <div class="sb-label" style="margin-bottom:12px;">Border-radius tokens</div>
+    <div class="sb-row">
+      <div class="sb-specimen">
+        <div class="sb-radius-demo" style="border-radius:var(--radius)">--radius<br>12px</div>
+      </div>
+      <div class="sb-specimen">
+        <div class="sb-radius-demo" style="border-radius:var(--radius-md)">--radius-md<br>16px</div>
+      </div>
+      <div class="sb-specimen">
+        <div class="sb-radius-demo" style="border-radius:var(--radius-lg)">--radius-lg<br>24px</div>
+      </div>
+      <div class="sb-specimen">
+        <div class="sb-radius-demo" style="border-radius:var(--radius-xl)">--radius-xl<br>22px</div>
+      </div>
+      <div class="sb-specimen">
+        <div class="sb-radius-demo" style="border-radius:999px">999px<br>(pill)</div>
+      </div>
+    </div>
+
+    <p class="sb-section-desc" style="margin-top:8px;">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;<span class="sb-code">--radius-xl</span> (22px) &lt; <span class="sb-code">--radius-lg</span> (24px) — the "xl" token is smaller than "lg".
+      Additionally 24 distinct hard-coded pixel values for border-radius appear across CSS, many not matching any defined token.
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 11. ICONOGRAPHY                                  -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="iconography" class="sb-section">
+    <h2 class="sb-section-title">Iconography</h2>
+    <p class="sb-section-desc">
+      App icons (PNG, used for PWA install and favicons). UI icons are inline SVG or Unicode glyphs —
+      no icon font or sprite system. SVG icons are unsystematized: drawn inline per-component with varying viewBox and stroke widths.
+    </p>
+
+    <div class="sb-icon-grid">
+      <div class="sb-icon-cell">
+        <img src="icons/artemis-mark.png" alt="artemis-mark" />
+        <span class="sb-icon-name">artemis-mark.png</span>
+      </div>
+      <div class="sb-icon-cell">
+        <img src="icons/artemis.png" alt="artemis" />
+        <span class="sb-icon-name">artemis.png</span>
+      </div>
+      <div class="sb-icon-cell">
+        <img src="icons/icon-192.png" alt="icon-192" />
+        <span class="sb-icon-name">icon-192.png</span>
+      </div>
+      <div class="sb-icon-cell">
+        <img src="icons/favicon.png" alt="favicon" />
+        <span class="sb-icon-name">favicon.png</span>
+      </div>
+    </div>
+
+    <p class="sb-section-desc" style="margin-top:16px;">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;No unified icon system. UI icons are a mix of: inline SVG (agent-sidebar, okr, writing-studio),
+      Unicode emoji (✎, ×, +, ⚙, …), and Lucide-style SVG paths. No size tokens (e.g. <span class="sb-code">--icon-sm</span> / <span class="sb-code">--icon-md</span>).
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 12. MOTION                                       -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="motion" class="sb-section">
+    <h2 class="sb-section-title">Motion</h2>
+    <p class="sb-section-desc">
+      Three easing tokens from <span class="sb-code">variables.css</span>. Hover each box to preview the curve.
+      Named keyframes live in <span class="sb-code">css/core/theme.css</span>.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen">
+        <span class="sb-label">--ease-out-expo (hover: translateY -8px)</span>
+        <div class="sb-motion-box ease-out-expo"></div>
+        <div class="sb-motion-hint">cubic-bezier(0.16, 1, 0.3, 1)</div>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">--ease-spring (hover: scale 1.15)</span>
+        <div class="sb-motion-box ease-spring"></div>
+        <div class="sb-motion-hint">cubic-bezier(0.34, 1.56, 0.64, 1)</div>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">--ease-smooth (hover: translateX 12px)</span>
+        <div class="sb-motion-box ease-smooth"></div>
+        <div class="sb-motion-hint">cubic-bezier(0.25, 0.1, 0.25, 1)</div>
+      </div>
+    </div>
+
+    <div class="sb-label" style="margin:20px 0 12px;">Named @keyframes (from css/core/theme.css)</div>
+    <table class="sb-table" style="max-width:540px;">
+      <thead>
+        <tr><th>Name</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>fadeIn</td><td>opacity 0→1</td></tr>
+        <tr><td>fadeInUp</td><td>opacity + translateY 8px→0</td></tr>
+        <tr><td>slideUp</td><td>opacity + translateY 10px→0</td></tr>
+        <tr><td>slideInLeft</td><td>opacity + translateX -12px→0</td></tr>
+        <tr><td>slideInRight</td><td>opacity + translateX 12px→0</td></tr>
+        <tr><td>scaleIn</td><td>opacity + scale 0.95→1</td></tr>
+        <tr><td>blink</td><td>opacity 1→0.3→1 (1s loop)</td></tr>
+        <tr><td>thinkingPulse</td><td>opacity + scale thinking dots</td></tr>
+        <tr><td>shimmer</td><td>background-position shimmer</td></tr>
+        <tr><td>glowPulse</td><td>box-shadow glow pulse</td></tr>
+        <tr><td>borderGlow</td><td>border-color accent pulse</td></tr>
+        <tr><td>float</td><td>translateY 0→-6px→0</td></tr>
+        <tr><td>modalEnter</td><td>opacity + translateY + scale (modals.css)</td></tr>
+        <tr><td>hintFadeIn</td><td>opacity + translateY + scale (status-bar.css)</td></tr>
+      </tbody>
+    </table>
+
+    <p class="sb-section-desc" style="margin-top:8px;">
+      <span class="sb-flag">⚠ Inconsistency</span>
+      &nbsp;Transition durations are ad-hoc per component: 0.12s, 0.15s, 0.2s, 0.25s, 0.3s, 0.35s, 0.4s found across CSS.
+      No duration token system. <span class="sb-code">fadeInUp</span> and <span class="sb-code">slideUp</span> are near-identical (differ by 2px).
+    </p>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 13. DATA DISPLAY                                 -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="datadisplay" class="sb-section">
+    <h2 class="sb-section-title">Data Display</h2>
+    <p class="sb-section-desc">
+      Badge, pill, session-preview strip, code blocks, and status-bar cost/token display.
+    </p>
+
+    <div class="sb-row" style="margin-bottom:20px;">
+      <div class="sb-specimen">
+        <span class="sb-label">Accent badge</span>
+        <span class="sb-badge" style="background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent-border);">In Progress</span>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">Success badge</span>
+        <span class="sb-badge" style="background:rgba(122,158,142,0.12);color:var(--success);border:1px solid rgba(122,158,142,0.2);">Done</span>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">Error badge</span>
+        <span class="sb-badge" style="background:var(--secondary-dim);color:var(--error);border:1px solid rgba(201,74,31,0.24);">Failed</span>
+      </div>
+      <div class="sb-specimen">
+        <span class="sb-label">.system-prompt-badge</span>
+        <span class="system-prompt-badge">Prompt Active</span>
+      </div>
+    </div>
+
+    <div class="sb-specimen" style="margin-bottom:16px;">
+      <span class="sb-label">Status bar sample (non-interactive)</span>
+      <div class="status-bar" style="position:relative;">
+        <div class="status-bar-left">
+          <div class="sb-item">
+            <div class="sb-dot connected"></div>
+            <span>Connected</span>
+          </div>
+          <div class="sb-sep"></div>
+          <div class="sb-item"><span>main</span></div>
+        </div>
+        <div class="status-bar-center">
+          <div class="sb-activity">Thinking…</div>
+        </div>
+        <div class="status-bar-right">
+          <div class="sb-item sb-cost">
+            <span>$0.0023</span>
+            <span class="sb-cost-pipe">|</span>
+            <span id="sb-total-cost">$0.12</span>
+          </div>
+          <div class="sb-sep"></div>
+          <div class="sb-item sb-version">v2.1.0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sb-specimen">
+      <span class="sb-label">Inline code (.sp-hint code)</span>
+      <p class="sp-hint">
+        Use <code>{{variable}}</code> syntax in system prompts. See <code>CLAUDE.md</code> for full reference.
+      </p>
+    </div>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 14. FORM PATTERNS                                -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="forms" class="sb-section">
+    <h2 class="sb-section-title">Form Patterns</h2>
+    <p class="sb-section-desc">
+      Common form compositions: labeled field group, settings row, inline action row.
+    </p>
+
+    <div class="sb-row">
+      <div class="sb-specimen" style="flex:1;max-width:320px;">
+        <span class="sb-label">Labeled field group</span>
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <label class="form-label">API Key</label>
+          <input type="password" placeholder="sk-ant-…" style="width:100%;" />
+          <div class="sp-hint">Never shared. Stored locally in <code>~/.artemis/.env</code>.</div>
+        </div>
+      </div>
+
+      <div class="sb-specimen" style="flex:1;max-width:320px;">
+        <span class="sb-label">Toggle row (settings pattern)</span>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <label class="toggle-switch" style="padding:0;">
+            <input type="checkbox" checked />
+            <div class="toggle-slider"></div>
+            <span class="toggle-label">Enable cost tracking</span>
+          </label>
+          <label class="toggle-switch" style="padding:0;">
+            <input type="checkbox" />
+            <div class="toggle-slider"></div>
+            <span class="toggle-label">Show thinking steps</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="sb-specimen" style="flex:1;max-width:320px;">
+        <span class="sb-label">Inline action row</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" placeholder="Session name" style="flex:1;" />
+          <button class="btn-primary" style="white-space:nowrap;">Rename</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- 15. FEATURE-SPECIFIC SURFACES                    -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <section id="surfaces" class="sb-section">
+    <h2 class="sb-section-title">Feature-Specific Surfaces</h2>
+    <p class="sb-section-desc">
+      Surfaces unique to feature areas. These often introduce their own local tokens
+      (e.g. <span class="sb-code">--writing-ink</span>, <span class="sb-code">--writing-panel</span>) that are orphaned from the core token set.
+    </p>
+
+    <!-- Writing Studio surface -->
+    <div class="sb-label" style="margin-bottom:8px;">Writing Studio doc surface pattern</div>
+    <div style="
+      background: var(--surface-card, rgba(32,28,24,0.96));
+      border: 1px solid var(--surface-outline);
+      border-radius: var(--radius-md);
+      padding: 24px 32px;
+      max-width: 520px;
+      margin-bottom:24px;
+    ">
+      <div style="font-size:20px;font-weight:700;font-family:var(--font-display);margin-bottom:12px;">Document title</div>
+      <div style="font-size:13px;line-height:1.8;color:var(--text-secondary);">
+        Paragraph text in writing context. The writing-studio feature (<span class="sb-code">css/features/writing-studio.css</span>)
+        introduces 6 orphaned local tokens: <span class="sb-code">--writing-ink</span>, <span class="sb-code">--writing-line</span>,
+        <span class="sb-code">--writing-muted</span>, <span class="sb-code">--writing-panel</span>,
+        <span class="sb-code">--writing-soft</span>, <span class="sb-code">--writing-list-depth</span>.
+      </div>
+    </div>
+
+    <!-- OKR board surface -->
+    <div class="sb-label" style="margin-bottom:8px;">OKR / Objective card pattern</div>
+    <div style="
+      background: var(--surface-card);
+      border: 1px solid var(--surface-outline);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      max-width: 420px;
+      margin-bottom:24px;
+    ">
+      <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent);margin-bottom:8px;">Q2 2026</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Ship writing studio v1</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+        <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+          <div style="width:65%;height:100%;background:var(--accent);border-radius:2px;"></div>
+        </div>
+        <span style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);">65%</span>
+      </div>
+    </div>
+
+    <!-- Jira board card -->
+    <div class="sb-label" style="margin-bottom:8px;">Jira board card surface</div>
+    <div style="
+      background: var(--surface-card);
+      border: 1px solid var(--surface-outline);
+      border-radius: var(--radius);
+      padding: 12px;
+      max-width:260px;
+      box-shadow: var(--surface-shadow-soft);
+    ">
+      <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:4px;">FEAT-123</div>
+      <div style="font-size:12px;font-weight:600;color:var(--text);line-height:1.4;">Implement inline KR editing with auto-save</div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:6px;">
+        <span style="font-size:9px;padding:1px 6px;border-radius:999px;background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent-border);">In Progress</span>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  // Highlight current nav item based on scroll
+  const sections = document.querySelectorAll('[id]');
+  const navLinks = document.querySelectorAll('.sb-nav a');
+
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(a => a.style.borderBottomColor = '');
+        const link = document.querySelector(`.sb-nav a[href="#${entry.target.id}"]`);
+        if (link) link.style.borderBottomColor = 'var(--accent)';
+      }
+    });
+  }, { rootMargin: '-52px 0px -70% 0px' });
+
+  sections.forEach(s => obs.observe(s));
+</script>
+</body>
+</html>
