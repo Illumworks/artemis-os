@@ -18,24 +18,30 @@ import logging
 import signal
 
 from artemis.scouts.base import BaseScout
+from artemis.scouts.board_minutes.scout import BoardMinutesScout
 from artemis.scouts.config import load_config, scout_config_for
 from artemis.scouts.federal_funding.scout import FederalFundingScout
 from artemis.scouts.legislative.scout import LegislativeScout
 from artemis.scouts.linkedin_observer import LinkedInObserverScout
+from artemis.scouts.procurement.scout import ProcurementScout
 from artemis.scouts.regional_news_scout import RegionalNewsScout
 from artemis.scouts.scheduler import create_scheduler
 from artemis.scouts.starbridge.scout import StarbridgeResearcherScout
+from artemis.scouts.state_doe.scout import StateDoEScout
 
 _logger = logging.getLogger(__name__)
 
 # All known scout classes. Scouts default to enabled=false in scouts.yaml;
-# set enabled: true and restart to activate. Add new scouts here as D5+ land.
+# set enabled: true and restart to activate.
 _SCOUT_CLASSES = [
     LegislativeScout,
     FederalFundingScout,
     StarbridgeResearcherScout,
     RegionalNewsScout,
     LinkedInObserverScout,
+    StateDoEScout,
+    BoardMinutesScout,
+    ProcurementScout,
 ]
 
 
