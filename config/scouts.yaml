@@ -45,11 +45,23 @@ scouts:
     enabled: false
     interval_minutes: 720  # 12h (twice daily)
 
-  # D8+ stubs — implemented in later phases
+  # D8 — Leadership Transition Scout (cross-source aggregator: board minutes + state DoE + news API).
+  # NEWS_API_KEY optional — falls back to board_minutes + state_doe only when absent.
+  # No districts table yet — V1 watch list is hardcoded in the scout.
+  leadership_transition_scout:
+    enabled: false
+    interval_minutes: 10080  # weekly base; transitions are rare
+
+  # D9 — Regional News Scout (News API + board minutes + state DoE, multi-source).
+  # Requires NEWS_API_KEY for news API access (graceful no-op when absent).
   regional_news_scout:
     enabled: false
-    interval_minutes: 120
+    interval_minutes: 1440  # daily
 
+  # D10 — LinkedIn Observer (Mode B only — leader post monitoring).
+  # Requires LINKEDIN_SCRAPER_API_KEY (third-party scraper service).
+  # Mode A (follower digest) is disabled in v1 — no Contact team consumer yet.
+  # LEGAL: confirm scraper service ToS compliance before enabling.
   linkedin_observer:
     enabled: false
-    interval_minutes: 240
+    interval_minutes: 60  # hourly during business hours (scheduler filters off-hours)

@@ -21,10 +21,11 @@ from artemis.scouts.base import BaseScout
 from artemis.scouts.board_minutes.scout import BoardMinutesScout
 from artemis.scouts.config import load_config, scout_config_for
 from artemis.scouts.federal_funding.scout import FederalFundingScout
+from artemis.scouts.leadership.scout import LeadershipTransitionScout
 from artemis.scouts.legislative.scout import LegislativeScout
-from artemis.scouts.linkedin_observer import LinkedInObserverScout
+from artemis.scouts.linkedin.scout import LinkedInObserverScout
 from artemis.scouts.procurement.scout import ProcurementScout
-from artemis.scouts.regional_news_scout import RegionalNewsScout
+from artemis.scouts.regional_news.scout import RegionalNewsScout
 from artemis.scouts.scheduler import create_scheduler
 from artemis.scouts.starbridge.scout import StarbridgeResearcherScout
 from artemis.scouts.state_doe.scout import StateDoEScout
@@ -37,11 +38,12 @@ _SCOUT_CLASSES = [
     LegislativeScout,
     FederalFundingScout,
     StarbridgeResearcherScout,
-    RegionalNewsScout,
-    LinkedInObserverScout,
     StateDoEScout,
     BoardMinutesScout,
     ProcurementScout,
+    LeadershipTransitionScout,
+    RegionalNewsScout,
+    LinkedInObserverScout,
 ]
 
 

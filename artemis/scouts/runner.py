@@ -28,10 +28,11 @@ from artemis.scouts.base import BaseScout, ScoutConfig
 from artemis.scouts.board_minutes.scout import BoardMinutesScout
 from artemis.scouts.config import load_config, scout_config_for
 from artemis.scouts.federal_funding.scout import FederalFundingScout
+from artemis.scouts.leadership.scout import LeadershipTransitionScout
 from artemis.scouts.legislative.scout import LegislativeScout
-from artemis.scouts.linkedin_observer import LinkedInObserverScout
+from artemis.scouts.linkedin.scout import LinkedInObserverScout
 from artemis.scouts.procurement.scout import ProcurementScout
-from artemis.scouts.regional_news_scout import RegionalNewsScout
+from artemis.scouts.regional_news.scout import RegionalNewsScout
 from artemis.scouts.starbridge.scout import StarbridgeResearcherScout
 from artemis.scouts.state_doe.scout import StateDoEScout
 
@@ -45,11 +46,12 @@ _REGISTRY: dict[str, type[BaseScout]] = {
     LegislativeScout.scout_type: LegislativeScout,
     FederalFundingScout.scout_type: FederalFundingScout,
     StarbridgeResearcherScout.scout_type: StarbridgeResearcherScout,
-    RegionalNewsScout.scout_type: RegionalNewsScout,
-    LinkedInObserverScout.scout_type: LinkedInObserverScout,
     StateDoEScout.scout_type: StateDoEScout,
     BoardMinutesScout.scout_type: BoardMinutesScout,
     ProcurementScout.scout_type: ProcurementScout,
+    LeadershipTransitionScout.scout_type: LeadershipTransitionScout,
+    RegionalNewsScout.scout_type: RegionalNewsScout,
+    LinkedInObserverScout.scout_type: LinkedInObserverScout,
 }
 
 
