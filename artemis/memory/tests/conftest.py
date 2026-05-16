@@ -1,8 +1,17 @@
 """Test fixtures for memory keystone tests.
 
-Requires a running Postgres at ARTEMIS_DB_URL (or ARTEMIS_TEST_DB_URL override).
-Tables are created from SQLAlchemy metadata at session start and dropped at session end.
-Each test gets a fresh session; memory tables are truncated before each test for isolation.
+Requires a running Postgres at ARTEMIS_DB_URL (or ARTEMIS_TEST_DB_URL override),
+already migrated via `alembic upgrade head`. The fixtures do NOT create or drop
+the schema — that's owned by Alembic. Per-test isolation comes from a TRUNCATE
+before each test.
+
+Why this shape:
+- Function-scoped fixture loops (pyproject.toml) avoid cross-loop asyncpg
+  binding errors. A session-scoped schema setup fixture would clash with
+  function-scoped tests.
+- NullPool: each test gets fresh connections, no pool-cached connections
+  bound to a previous loop.
+- pgvector codec attached per engine (see artemis/db.py).
 """
 
 from __future__ import annotations
@@ -14,50 +23,18 @@ import pytest
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-# Register models on Base.metadata before create_all
-import artemis.memory.models  # noqa: F401
+import artemis.memory.models  # noqa: F401 — registers MemoryEmbedding on Base.metadata
 from artemis.config import settings
-from artemis.db import Base
-from artemis.memory.models import (
-    MemoryDrawer,
-    MemoryEmbedding,
-    MemoryEvidence,
-    MemoryObservation,
-    MemoryScope,
-)
+from artemis.db import attach_pgvector_codec
 
 _db_url = os.environ.get("ARTEMIS_TEST_DB_URL", settings.db_url)
-# NullPool: each connection is closed when its session closes, avoiding the
-# "Future attached to a different loop" error that pooled asyncpg connections
-# hit when the session-scoped loop is replaced between fixture batches.
 _engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
-
-_MEMORY_TABLES = [
-    MemoryScope.__table__,
-    MemoryDrawer.__table__,
-    MemoryObservation.__table__,
-    MemoryEvidence.__table__,
-    MemoryEmbedding.__table__,
-]
+attach_pgvector_codec(_engine)
 
 _TRUNCATE_SQL = text(
     "TRUNCATE memory_embeddings, memory_evidence, memory_observations, "
     "memory_drawers, memory_scopes RESTART IDENTITY CASCADE"
 )
-
-
-@pytest.fixture(scope="session", autouse=True)
-async def setup_memory_schema() -> AsyncIterator[None]:
-    async with _engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.run_sync(
-            lambda c: Base.metadata.create_all(c, tables=_MEMORY_TABLES, checkfirst=True)
-        )
-    yield
-    async with _engine.begin() as conn:
-        await conn.run_sync(
-            lambda c: Base.metadata.drop_all(c, tables=list(reversed(_MEMORY_TABLES)))
-        )
 
 
 @pytest.fixture

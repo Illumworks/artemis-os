@@ -57,18 +57,14 @@ class MiniLMProvider:
             if self._model is None:
                 _logger.info("Loading embedding model %s (first call)", _MODEL_NAME)
                 loop = asyncio.get_running_loop()
-                self._model = await loop.run_in_executor(
-                    None, _load_model_sync, _MODEL_NAME
-                )
+                self._model = await loop.run_in_executor(None, _load_model_sync, _MODEL_NAME)
                 _logger.info("Embedding model loaded")
         return self._model
 
     async def embed(self, text: str) -> list[float]:
         model = await self._load()
         loop = asyncio.get_running_loop()
-        result: Any = await loop.run_in_executor(
-            None, _encode_sync, model, text
-        )
+        result: Any = await loop.run_in_executor(None, _encode_sync, model, text)
         return [float(x) for x in result]
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -76,9 +72,7 @@ class MiniLMProvider:
             return []
         model = await self._load()
         loop = asyncio.get_running_loop()
-        results: Any = await loop.run_in_executor(
-            None, _encode_batch_sync, model, texts
-        )
+        results: Any = await loop.run_in_executor(None, _encode_batch_sync, model, texts)
         return [[float(x) for x in row] for row in results]
 
     @property
@@ -91,7 +85,7 @@ class MiniLMProvider:
 
 
 def _load_model_sync(model_name: str) -> Any:
-    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+    from sentence_transformers import SentenceTransformer
 
     return SentenceTransformer(model_name)
 

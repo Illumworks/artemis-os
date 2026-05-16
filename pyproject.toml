@@ -46,7 +46,13 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "session"
+# Both fixture and test loops use the same per-function scope. Session-scoped
+# fixture loops cause "Future attached to a different loop" errors when
+# function-scoped tests touch the fixture's asyncpg connections. NullPool on
+# the test engine (see artemis/memory/tests/conftest.py) makes per-function
+# loops safe — each test gets fresh connections and closes them cleanly.
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
 testpaths = ["tests", "artemis"]
 addopts = "-ra --strict-markers"
 

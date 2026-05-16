@@ -13,7 +13,7 @@ Coverage targets:
 from __future__ import annotations
 
 import inspect
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,14 +96,14 @@ async def test_write_drawer_content_hash_computed(db_session: AsyncSession) -> N
     content = "hash me"
     scope = _DEFAULT_SCOPE
     drawer = await _drawer(db_session, content=content, scope=scope)
-    expected = hashlib.sha256(
-        f"{scope.scope_kind}:{scope.scope_id}:{content}".encode()
-    ).hexdigest()
+    expected = hashlib.sha256(f"{scope.scope_kind}:{scope.scope_id}:{content}".encode()).hexdigest()
     assert drawer.content_hash == expected
 
 
 async def test_write_drawer_source_stored(db_session: AsyncSession) -> None:
-    source = Source(source_kind="document", source_id="doc-99", source_extra={"url": "http://example.com"})
+    source = Source(
+        source_kind="document", source_id="doc-99", source_extra={"url": "http://example.com"}
+    )
     drawer = await _drawer(db_session, source=source)
     assert drawer.source_kind == "document"
     assert drawer.source_id == "doc-99"
@@ -131,7 +131,7 @@ async def test_write_drawer_owner_user_id_defaults_none(db_session: AsyncSession
 
 
 async def test_write_drawer_captured_at_set(db_session: AsyncSession) -> None:
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     drawer = await _drawer(db_session)
     assert drawer.captured_at >= before
 
@@ -204,8 +204,8 @@ async def test_write_observation_score_defaults_to_one(db_session: AsyncSession)
 
 
 async def test_write_observation_valid_from_until(db_session: AsyncSession) -> None:
-    vf = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    vu = datetime(2026, 12, 31, tzinfo=timezone.utc)
+    vf = datetime(2026, 1, 1, tzinfo=UTC)
+    vu = datetime(2026, 12, 31, tzinfo=UTC)
     obs = await _observation(db_session, valid_from=vf, valid_until=vu)
     assert obs.valid_from is not None
     assert obs.valid_until is not None
@@ -316,9 +316,7 @@ async def test_evidence_chain_traversal_obs_to_drawer(db_session: AsyncSession) 
     drawer = await _drawer(db_session, content="source text")
     obs = await _observation(db_session)
     async with db_session.begin():
-        await link_evidence(
-            db_session, obs.id, "drawer", drawer.id, source_quote="source text"
-        )
+        await link_evidence(db_session, obs.id, "drawer", drawer.id, source_quote="source text")
         evs = await list_evidence_for_observation(db_session, obs.id)
         assert len(evs) == 1
         fetched_drawer = await get_drawer(db_session, evs[0].source_id)
@@ -420,7 +418,7 @@ async def test_owner_user_id_observation_default_none(db_session: AsyncSession) 
 async def test_scope_kind_drawer_round_trip(
     db_session: AsyncSession, scope_kind: str, scope_id: str
 ) -> None:
-    scope = Scope(scope_kind=scope_kind, scope_id=scope_id)  # type: ignore[arg-type]
+    scope = Scope(scope_kind=scope_kind, scope_id=scope_id)
     source = Source(source_kind="test")
     async with db_session.begin():
         drawer = await write_drawer(db_session, scope, "scoped content", source)
@@ -442,7 +440,7 @@ async def test_scope_kind_drawer_round_trip(
 async def test_scope_kind_observation_round_trip(
     db_session: AsyncSession, scope_kind: str, scope_id: str
 ) -> None:
-    scope = Scope(scope_kind=scope_kind, scope_id=scope_id)  # type: ignore[arg-type]
+    scope = Scope(scope_kind=scope_kind, scope_id=scope_id)
     async with db_session.begin():
         obs = await write_observation(db_session, scope, "scoped observation")
     assert obs.scope_kind == scope_kind
@@ -477,7 +475,8 @@ def test_store_public_api_is_complete() -> None:
     public_fns = [
         getattr(store_module, n)
         for n in dir(store_module)
-        if not n.startswith("_") and callable(getattr(store_module, n))
+        if not n.startswith("_")
+        and callable(getattr(store_module, n))
         and inspect.iscoroutinefunction(getattr(store_module, n))
     ]
     # At minimum the seven specified functions must be present

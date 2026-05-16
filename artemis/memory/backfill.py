@@ -23,7 +23,9 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-_TARGETS: list[tuple[Literal["drawer", "observation"], type[MemoryDrawer] | type[MemoryObservation]]] = [
+_TARGETS: list[
+    tuple[Literal["drawer", "observation"], type[MemoryDrawer] | type[MemoryObservation]]
+] = [
     ("drawer", MemoryDrawer),
     ("observation", MemoryObservation),
 ]
@@ -32,7 +34,7 @@ _TARGETS: list[tuple[Literal["drawer", "observation"], type[MemoryDrawer] | type
 async def backfill_embeddings(
     engine: AsyncEngine,
     batch_size: int = 50,
-    provider: "EmbeddingProvider | None" = None,
+    provider: EmbeddingProvider | None = None,
 ) -> int:
     """Embed all rows that are missing embeddings for the current model version.
 
@@ -65,7 +67,7 @@ async def _backfill_table(
     target_label: Literal["drawer", "observation"],
     model_cls: type[MemoryDrawer] | type[MemoryObservation],
     model_version: str,
-    provider: "EmbeddingProvider",
+    provider: EmbeddingProvider,
     batch_size: int,
 ) -> int:
     count = 0
@@ -81,8 +83,8 @@ async def _backfill_table(
                 .scalar_subquery()
             )
             rows_result = await session.execute(
-                select(model_cls.id, model_cls.content)  # type: ignore[attr-defined]
-                .where(model_cls.id.notin_(existing_subq))  # type: ignore[attr-defined]
+                select(model_cls.id, model_cls.content)
+                .where(model_cls.id.notin_(existing_subq))
                 .limit(batch_size)
             )
             rows = rows_result.all()
@@ -97,16 +99,14 @@ async def _backfill_table(
             vectors = await provider.embed_batch(texts)
         except Exception:
             _logger.warning(
-                "embed_batch failed for %s ids %s; skipping batch",
-                target_label, ids, exc_info=True
+                "embed_batch failed for %s ids %s; skipping batch", target_label, ids, exc_info=True
             )
             # Skip the whole batch to avoid an infinite loop on persistent failure.
             break
 
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            async with session.begin():
-                for row_id, vector in zip(ids, vectors):
-                    await upsert_embedding(session, target_label, row_id, model_version, vector)
+        async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
+            for row_id, vector in zip(ids, vectors, strict=True):
+                await upsert_embedding(session, target_label, row_id, model_version, vector)
 
         count += len(rows)
         _logger.debug("Backfilled %d %ss (running total %d)", len(rows), target_label, count)

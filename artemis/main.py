@@ -3,6 +3,7 @@
 Run: `uv run uvicorn artemis.main:app --reload`
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -14,7 +15,7 @@ from artemis.routes import health
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 

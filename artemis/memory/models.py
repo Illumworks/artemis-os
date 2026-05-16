@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+from pgvector.sqlalchemy import Vector as _PgVector  # type: ignore[import-untyped]
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -34,11 +34,34 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from artemis.db import Base
 
 
+class Vector(_PgVector):  # type: ignore[misc]
+    """`pgvector.sqlalchemy.Vector` with asyncpg-compatible parameter binding.
+
+    pgvector's stock SQLAlchemy type calls `Vector._to_db()` in its
+    `bind_processor`, which serializes the list to a text form like
+    `'[0.1, 0.2, ...]'`. That works for psycopg2 but breaks under asyncpg,
+    which receives a text string and tries to bind it as a float (because
+    the registered asyncpg codec uses binary format and expects a list /
+    ndarray, not pre-serialized text).
+
+    On asyncpg dialect we return None from `bind_processor`, telling
+    SQLAlchemy to pass the value through unchanged. The asyncpg codec
+    (registered in `artemis.db.attach_pgvector_codec`) then encodes the
+    list / ndarray to vector binary format.
+
+    Reference: pgvector-python issue surface area — the stock type assumes
+    psycopg; asyncpg needs the bind processor bypassed.
+    """
+
+    def bind_processor(self, dialect):  # type: ignore[no-untyped-def]
+        if dialect.driver == "asyncpg":
+            return None
+        return super().bind_processor(dialect)
+
+
 class MemoryScope(Base):
     __tablename__ = "memory_scopes"
-    __table_args__ = (
-        Index("idx_memory_scopes_parent", "parent_scope_kind", "parent_scope_id"),
-    )
+    __table_args__ = (Index("idx_memory_scopes_parent", "parent_scope_kind", "parent_scope_id"),)
 
     scope_kind: Mapped[str] = mapped_column(Text, primary_key=True)
     scope_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -59,9 +82,7 @@ class MemoryDrawer(Base):
 
     __tablename__ = "memory_drawers"
     __table_args__ = (
-        UniqueConstraint(
-            "scope_kind", "scope_id", "content_hash", name="uq_drawers_scope_hash"
-        ),
+        UniqueConstraint("scope_kind", "scope_id", "content_hash", name="uq_drawers_scope_hash"),
         Index("idx_memory_drawers_scope", "scope_kind", "scope_id"),
         Index("idx_memory_drawers_source", "source_kind", "source_id"),
     )
@@ -97,9 +118,7 @@ class MemoryObservation(Base):
 
     __tablename__ = "memory_observations"
     __table_args__ = (
-        UniqueConstraint(
-            "scope_kind", "scope_id", "content_hash", name="uq_obs_scope_hash"
-        ),
+        UniqueConstraint("scope_kind", "scope_id", "content_hash", name="uq_obs_scope_hash"),
         Index("idx_memory_observations_scope", "scope_kind", "scope_id"),
         Index("idx_memory_observations_category", "category"),
         Index("idx_memory_observations_score", "score"),
@@ -108,25 +127,15 @@ class MemoryObservation(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     scope_kind: Mapped[str] = mapped_column(Text, nullable=False)
     scope_id: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="discovery"
-    )
+    category: Mapped[str] = mapped_column(Text, nullable=False, server_default="discovery")
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    source_quality: Mapped[float] = mapped_column(
-        Float, nullable=False, server_default="0.5"
-    )
-    user_confirmed: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false"
-    )
-    valid_from: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    valid_until: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    source_quality: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
+    user_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    valid_from: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     superseded_by: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("memory_observations.id", name="fk_obs_superseded_by"),
@@ -210,7 +219,9 @@ class MemoryEmbedding(Base):
     __tablename__ = "memory_embeddings"
     __table_args__ = (
         UniqueConstraint(
-            "target_table", "target_id", "model_version",
+            "target_table",
+            "target_id",
+            "model_version",
             name="uq_embeddings_target_model",
         ),
         Index("idx_memory_embeddings_target", "target_table", "target_id"),

@@ -7,19 +7,14 @@ with @pytest.mark.slow to allow skipping in fast mode (model download is ~90MB).
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-from unittest.mock import AsyncMock, patch
-
-import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.memory.embeddings import (
-    EmbeddingProvider,
-    MiniLMProvider,
     _DIMS,
     _MODEL_VERSION,
+    EmbeddingProvider,
+    MiniLMProvider,
     get_default_provider,
 )
 from artemis.memory.models import MemoryEmbedding
@@ -77,11 +72,13 @@ class MockProvider:
     async def embed(self, text: str) -> list[float]:
         if self._fail:
             raise RuntimeError("mock embedding failure")
-        # Deterministic: hash of text normalised to unit sphere
+        # Deterministic: hash text, repeat bytes to fill self._dims, normalise.
+        # sha256 is only 32 bytes — naive `digest[:dims]` truncates to 32
+        # regardless of dims, which produces malformed (too-short) vectors.
         import hashlib
 
         digest = hashlib.sha256(text.encode()).digest()
-        raw = [float(b) / 255.0 for b in digest[: self._dims]]
+        raw = [float(digest[i % len(digest)]) / 255.0 for i in range(self._dims)]
         norm = sum(x**2 for x in raw) ** 0.5 or 1.0
         return [x / norm for x in raw]
 
@@ -140,9 +137,7 @@ async def test_upsert_embedding_different_models_are_distinct(db_session: AsyncS
     async with db_session.begin():
         await upsert_embedding(db_session, "observation", 1, "modelA@1", [0.1] * 384)
         await upsert_embedding(db_session, "observation", 1, "modelB@1", [0.2] * 384)
-    result = await db_session.execute(
-        select(MemoryEmbedding).where(MemoryEmbedding.target_id == 1)
-    )
+    result = await db_session.execute(select(MemoryEmbedding).where(MemoryEmbedding.target_id == 1))
     rows = result.scalars().all()
     assert len(rows) == 2
 

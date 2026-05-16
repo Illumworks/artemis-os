@@ -18,7 +18,9 @@ async def healthz() -> dict[str, Any]:
 
 
 @router.get("/readyz")
-async def readyz(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def readyz(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
     """Readiness probe — process can serve requests (DB reachable)."""
     try:
         result = await session.execute(text("SELECT 1"))

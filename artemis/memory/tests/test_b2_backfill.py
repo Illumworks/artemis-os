@@ -22,10 +22,16 @@ _SOURCE = Source(source_kind="test")
 
 async def test_backfill_embeds_missing_drawers(db_session: AsyncSession) -> None:
     """Drawers written without a provider get picked up by backfill."""
-    # Write without embedding (no provider)
+    # Simulate "embed-on-write was unavailable" by writing with a failing
+    # provider — the embedding never lands, and backfill should pick it up.
+    failing = MockProvider(fail=True)
     async with db_session.begin():
-        d1 = await write_drawer(db_session, _SCOPE, "drawer needs backfill", _SOURCE)
-        d2 = await write_drawer(db_session, _SCOPE, "another drawer for backfill", _SOURCE)
+        d1 = await write_drawer(
+            db_session, _SCOPE, "drawer needs backfill", _SOURCE, embedding_provider=failing
+        )
+        d2 = await write_drawer(
+            db_session, _SCOPE, "another drawer for backfill", _SOURCE, embedding_provider=failing
+        )
 
     provider = MockProvider()
     n = await backfill_embeddings(_engine, batch_size=10, provider=provider)
@@ -42,9 +48,14 @@ async def test_backfill_embeds_missing_drawers(db_session: AsyncSession) -> None
 
 
 async def test_backfill_embeds_missing_observations(db_session: AsyncSession) -> None:
+    failing = MockProvider(fail=True)
     async with db_session.begin():
-        o1 = await write_observation(db_session, _SCOPE, "obs needs backfill")
-        o2 = await write_observation(db_session, _SCOPE, "another obs for backfill")
+        o1 = await write_observation(
+            db_session, _SCOPE, "obs needs backfill", embedding_provider=failing
+        )
+        o2 = await write_observation(
+            db_session, _SCOPE, "another obs for backfill", embedding_provider=failing
+        )
 
     provider = MockProvider()
     n = await backfill_embeddings(_engine, batch_size=10, provider=provider)
@@ -77,7 +88,6 @@ async def test_backfill_is_idempotent(db_session: AsyncSession) -> None:
         select(MemoryEmbedding).where(MemoryEmbedding.target_table == "drawer")
     )
     rows = result.scalars().all()
-    model_versions = {r.model_version for r in rows}
     # All rows for same model version should be unique per target_id
     pairs = [(r.target_id, r.model_version) for r in rows]
     assert len(pairs) == len(set(pairs))
@@ -88,11 +98,11 @@ async def test_backfill_skips_already_embedded_rows(db_session: AsyncSession) ->
     provider = MockProvider()
     async with db_session.begin():
         # Write with embedding (already embedded)
-        d_with = await write_drawer(
+        d_with = await write_drawer(  # noqa: F841
             db_session, _SCOPE, "already embedded", _SOURCE, embedding_provider=provider
         )
         # Write without embedding
-        d_without = await write_drawer(db_session, _SCOPE, "needs embedding", _SOURCE)
+        d_without = await write_drawer(db_session, _SCOPE, "needs embedding", _SOURCE)  # noqa: F841
 
     n = await backfill_embeddings(_engine, batch_size=10, provider=provider)
     # Only the un-embedded drawer should be processed
