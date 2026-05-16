@@ -1,0 +1,450 @@
+/* ── Responsive Layout ────────────────────────────────── */
+/* Mobile-first breakpoints: tablet ≤1024px, mobile ≤640px */
+
+/* ── Hamburger Button (hidden by default on desktop) ──── */
+#sidebar-toggle-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 0.2s var(--ease-smooth);
+}
+
+#sidebar-toggle-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+  background: rgba(255,255,255,0.02);
+}
+
+#sidebar-toggle-btn svg {
+  pointer-events: none;
+}
+
+/* ── Sidebar Backdrop (hidden by default) ──────────────── */
+#sidebar-backdrop {
+  display: none;
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 190; /* Below sidebar but above everything else */
+  opacity: 0;
+  transition: opacity 0.25s var(--ease-smooth);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+body.sidebar-open #sidebar-backdrop {
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════════════════════ */
+/* ── TABLET (≤1024px)                                    */
+/* ═══════════════════════════════════════════════════════ */
+@media (max-width: 1024px) {
+
+  /* Show hamburger */
+  #sidebar-toggle-btn {
+    display: flex;
+  }
+
+  /* Ensure theme toggle is visible on mobile */
+  .theme-toggle-btn {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: relative !important;
+    z-index: 1 !important;
+    color: var(--text) !important;
+  }
+
+
+  /* Ensure sidebar header remains visible with theme toggle */
+  .sidebar-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+  }
+
+  /* Show backdrop when sidebar is open */
+  body.sidebar-open #sidebar-backdrop {
+    display: block;
+  }
+
+  /* Sidebar → fixed overlay, slides in from left */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    min-width: 280px;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.3s var(--ease-out-expo);
+    box-shadow: none;
+  }
+
+  body.sidebar-open .sidebar {
+    transform: translateX(0);
+    box-shadow: 8px 0 32px rgba(0,0,0,0.5);
+  }
+
+  .layout {
+    height: calc(100vh - 24px);
+  }
+
+  /* Hide secondary header info on tablet */
+  .term-user,
+  .term-sep,
+  .term-plan,
+  .term-project-name {
+    display: none;
+  }
+
+  /* Reduce home page padding */
+  .home-page {
+    padding: 20px 16px;
+  }
+
+  .shell-nav-wrap {
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  /* Header dropdowns text labels hidden, keep icons */
+  .header-dropdown-trigger {
+    padding: 3px 8px;
+  }
+
+  .header-project-title-btn {
+    max-width: min(100%, 420px);
+    min-height: 48px;
+    padding: 8px 10px 8px 8px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════ */
+/* ── MOBILE (≤640px)                                     */
+/* ═══════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+
+  /* Sidebar max 85vw on mobile */
+  .sidebar {
+    width: 85vw;
+    min-width: 85vw;
+    max-width: 320px;
+  }
+
+  /* ── Chat Messages ─────────────────────────────────── */
+  .messages {
+    padding: 18px 12px 12px;
+  }
+
+  .artemis-chat-empty-card {
+    padding: 20px 18px;
+    border-radius: 24px;
+  }
+
+  .artemis-chat-empty-topline {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .artemis-chat-empty .artemis-chat-empty-text {
+    font-size: 20px;
+  }
+
+  .messages .msg {
+    max-width: 100%;
+    padding: 10px 12px;
+  }
+
+  /* ── Input Bar → compact ───────────────────────────── */
+  .input-bar {
+    gap: 6px;
+    padding: 12px 10px;
+    margin-bottom: 8px;
+    border-radius: 20px 20px 0 0;
+  }
+
+  /* Hide toolbox strip on mobile */
+  .toolbox-strip {
+    display: none;
+  }
+
+  .input-bar textarea {
+    font-size: 16px; /* prevent iOS zoom on focus */
+  }
+
+  .composer-context-strip {
+    padding: 8px 10px;
+  }
+
+  .composer-context-note {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .input-meta {
+    display: none;
+  }
+
+  /* ── Header → compact ──────────────────────────────── */
+  .top-header {
+    padding: 0 8px;
+    gap: 4px;
+  }
+
+  /* Icon-only dropdown triggers */
+  .header-dropdown-trigger {
+    padding: 3px 6px;
+    gap: 3px;
+    font-size: 0;       /* hide text */
+    line-height: 0;
+  }
+
+  .header-dropdown-trigger svg {
+    font-size: initial;
+  }
+
+  .header-dropdown-chevron {
+    display: none;
+  }
+
+  .header-project-title-btn {
+    width: min(100%, 320px);
+    min-height: 44px;
+    padding: 7px 9px 7px 7px;
+    gap: 8px;
+  }
+
+  .header-project-meta {
+    display: none;
+  }
+
+  /* Hide costs in header */
+  .term-costs {
+    display: none;
+  }
+
+  /* ── Status Bar → simplified ───────────────────────── */
+  .status-bar {
+    padding: 0 6px;
+  }
+
+  .sb-branch,
+  .sb-project,
+  .status-bar-center,
+  .sb-branch + .sb-sep,
+  .sb-project + .sb-sep {
+    display: none;
+  }
+
+  /* iOS safe area */
+  .status-bar {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  /* ── Home Cards → 2-column grid ────────────────────── */
+  .home-cards {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
+  }
+
+  .home-page {
+    padding: 12px 10px;
+  }
+
+  /* Smaller activity grid cells */
+  .home-activity-grid {
+    gap: 2px;
+  }
+
+  .home-grid-cell {
+    width: 8px;
+    height: 8px;
+  }
+
+  /* ── Modals → bottom-sheet style ───────────────────── */
+  .modal-overlay {
+    align-items: flex-end;
+  }
+
+  .modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 85vh;
+    margin: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: slideUpSheet 0.3s var(--ease-out-expo);
+  }
+
+  @keyframes slideUpSheet {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+
+  /* ── Header Dropdowns → bottom-sheet on mobile ─────── */
+  .header-dropdown-menu {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-height: 70vh;
+    overflow-y: auto;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: slideUpSheet 0.25s var(--ease-out-expo);
+    padding: 8px;
+    z-index: 300;
+  }
+
+  /* Submenus inline on mobile instead of flyout */
+  .header-submenu {
+    position: static !important;
+    display: none;
+    left: auto !important;
+    right: auto !important;
+    top: auto !important;
+    border: none;
+    box-shadow: none;
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    margin: 4px 0 4px 12px;
+    padding: 2px;
+  }
+
+  .header-dropdown-item.has-submenu:hover > .header-submenu,
+  .header-dropdown-item.has-submenu.open > .header-submenu {
+    display: block;
+  }
+
+  .header-dropdown-item.has-submenu.open {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .header-dropdown-item.has-submenu.open > .header-submenu {
+    flex-basis: 100%;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 8px 0 0;
+  }
+
+  .header-submenu--source,
+  .header-submenu--stacked {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .header-dropdown-arrow {
+    transform: rotate(90deg);
+    transition: transform 0.2s;
+  }
+
+  .header-dropdown-item.has-submenu.open > .header-dropdown-arrow {
+    transform: rotate(-90deg);
+  }
+
+  /* ── Touch Targets → min 44px ──────────────────────── */
+  .header-dropdown-item,
+  .header-submenu-item {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+
+  .header-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  #sidebar-toggle-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* Session list items → taller, always-visible actions */
+  .session-list li {
+    min-height: 48px;
+    padding: 10px 12px;
+  }
+
+  .session-list li .session-actions {
+    opacity: 1;
+  }
+
+  /* ── Tips Feed → full-screen overlay ───────────────── */
+  .tips-feed-panel {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    z-index: 90;
+    border: none;
+  }
+
+  .tips-feed-resize {
+    display: none;
+  }
+
+  /* ── Hide bot bubble when chat is active ─────────── */
+  body:has(.chat-area-main:not(.hidden)) .bot-bubble {
+    display: none;
+  }
+
+  /* ── Input bar alignment on mobile ───────────────────── */
+  .input-textarea-wrap {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .input-bar button {
+    margin-bottom: 0;
+  }
+
+  #send-btn,
+  #stop-btn {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+  }
+
+  /* ── Analytics tables → horizontal scroll ──────────── */
+  .analytics-section .cost-table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .analytics-section .cost-table {
+    min-width: 500px;
+  }
+
+  /* ── Folder picker & session controls ──────────────── */
+  .folder-picker {
+    padding: 8px 10px;
+  }
+
+  .session-controls {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+}

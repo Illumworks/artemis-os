@@ -1,0 +1,3518 @@
+.writing-studio-page {
+  --writing-ink: color-mix(in srgb, var(--text-primary) 96%, #fff);
+  --writing-muted: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  --writing-soft: color-mix(in srgb, var(--surface-panel-soft) 95%, transparent);
+  --writing-panel: color-mix(in srgb, var(--surface-panel-strong) 97%, transparent);
+  --writing-line: color-mix(in srgb, var(--border-color) 60%, transparent);
+  --writing-warm: color-mix(in srgb, var(--amber) 14%, transparent);
+  color: var(--writing-ink);
+}
+
+.writing-profile-label {
+  color: var(--writing-muted);
+  font-size: 12px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.writing-sidebar,
+.writing-training {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.writing-training {
+  gap: 12px;
+}
+
+.writing-card {
+  border: 1px solid var(--writing-line);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 36%),
+    var(--writing-panel);
+  box-shadow: 0 18px 40px rgba(16, 24, 40, 0.06);
+  padding: 18px;
+  backdrop-filter: blur(16px) saturate(1.06);
+}
+
+.writing-canvas-card {
+  min-height: 780px;
+  padding: 16px 20px 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 18%),
+    color-mix(in srgb, var(--surface-panel-strong) 99%, transparent);
+}
+
+.writing-canvas-card-chat {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  align-content: start;
+  gap: 10px;
+  min-height: max(calc(100vh - 132px), 520px);
+}
+
+.writing-card-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.writing-card-heading h3,
+.writing-canvas-header h3 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.035em;
+}
+
+.writing-card-intro,
+.writing-canvas-header p,
+.writing-empty,
+.writing-learning-box p,
+.writing-candidate small,
+.writing-seed-note,
+.writing-moves-heading p,
+.writing-move-button span,
+.writing-draft-row span,
+.writing-draft-row small,
+.writing-rule span {
+  color: var(--text-secondary);
+}
+
+.writing-card-intro,
+.writing-seed-note,
+.writing-learning-box p,
+.writing-moves-heading p {
+  margin: 0;
+  line-height: 1.52;
+}
+
+.writing-new-card,
+.writing-library-card,
+.writing-support-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 38%),
+    var(--writing-soft);
+}
+
+.writing-support-card {
+  padding: 14px;
+}
+
+.writing-new-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.writing-version-history-card {
+  display: flex;
+  flex-direction: column;
+  min-height: max(calc(100vh - 132px), 520px);
+}
+
+.writing-version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 24px;
+  overflow-y: auto;
+}
+
+.writing-version-row {
+  display: grid;
+  gap: 8px;
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.writing-version-row:hover {
+  background: color-mix(in srgb, var(--amber) 5%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 20%, var(--writing-line));
+}
+
+.writing-version-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.writing-version-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.writing-version-number {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--writing-ink);
+  letter-spacing: -0.02em;
+}
+
+.writing-version-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--writing-muted);
+  padding: 2px 7px;
+  border-radius: 99px;
+  border: 1px solid var(--writing-line);
+  background: color-mix(in srgb, var(--background-color) 70%, transparent);
+}
+
+.writing-version-badge-latest {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 35%, var(--writing-line));
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
+.writing-version-date,
+.writing-version-words {
+  font-size: 12px;
+  color: var(--writing-muted);
+}
+
+.writing-version-date::after {
+  content: "·";
+  margin-left: 8px;
+  opacity: 0.4;
+}
+
+.writing-version-note {
+  font-size: 12px;
+  color: var(--writing-muted);
+  font-style: italic;
+}
+
+.writing-version-preview {
+  margin: 0;
+  font-size: 13px;
+  color: var(--writing-ink);
+  opacity: 0.65;
+  line-height: 1.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.writing-version-restore-btn {
+  align-self: start;
+  justify-self: end;
+  margin-top: 4px;
+}
+
+.writing-version-row:not(:hover) .writing-version-restore-btn {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.writing-version-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--writing-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.writing-new-draft-canvas {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: max(calc(100vh - 132px), 520px);
+  padding: 48px 32px 48px;
+}
+
+.writing-new-draft-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 600px;
+}
+
+.writing-new-draft-head {
+  margin-bottom: 0;
+}
+
+.writing-new-draft-head .shell-eyebrow {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.writing-new-draft-head h2 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+  color: var(--writing-ink);
+}
+
+.writing-new-draft-profile-chip {
+  margin: 0;
+  font-size: 12px;
+  color: var(--writing-muted);
+}
+
+.writing-new-draft-profile-chip strong {
+  color: var(--writing-ink);
+  font-weight: 500;
+}
+
+.writing-library-new-folder-link {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--writing-muted);
+  line-height: 1;
+}
+
+.writing-library-new-folder-link:hover {
+  color: var(--amber);
+}
+
+.writing-new-draft-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.writing-new-draft-section-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--writing-muted);
+}
+
+.writing-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--writing-ink);
+}
+
+.writing-field-optional {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--writing-muted);
+  margin-left: 4px;
+}
+
+.writing-new-draft-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.writing-input-title {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.writing-new-draft-brief {
+  min-height: 100px;
+}
+
+.writing-new-draft-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.writing-new-draft-divider {
+  height: 1px;
+  background: var(--writing-line);
+  margin: 2px 0;
+}
+
+.writing-new-draft-gdoc-row {
+  margin-top: 4px;
+}
+
+/* Stronger field chrome inside the new-draft canvas */
+.writing-new-draft-inner .writing-input,
+.writing-new-draft-inner .writing-select,
+.writing-new-draft-inner .writing-learning-input {
+  border: 1px solid rgba(0,0,0,0.28) !important;
+  background: #fff !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+}
+
+.writing-new-draft-inner .writing-input:focus,
+.writing-new-draft-inner .writing-select:focus,
+.writing-new-draft-inner .writing-learning-input:focus {
+  border: 1px solid color-mix(in srgb, var(--amber) 80%, #000) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent) !important;
+  background: #fff !important;
+}
+
+.writing-field-header {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.writing-new-draft-engine-row {
+  padding: 12px 14px;
+  border: 1px solid var(--writing-line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--background-color) 50%, transparent);
+}
+
+.writing-new-draft-submit {
+  align-self: stretch;
+  justify-content: center;
+  min-width: 160px;
+  margin-top: 4px;
+}
+
+.writing-new-draft-blank-link {
+  display: block;
+  width: 100%;
+  padding: 6px 0 0;
+  background: none;
+  border: none;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary, #999);
+  cursor: pointer;
+}
+.writing-new-draft-blank-link:hover {
+  color: var(--text-secondary);
+}
+
+.writing-profile-inline {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 14%, var(--writing-line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--background-color) 66%, transparent);
+}
+
+.writing-profile-inline strong {
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.writing-rail-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.writing-rail-summary strong {
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+
+.writing-rail-summary span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.writing-input,
+.writing-select,
+.writing-editor,
+.writing-learning-input {
+  width: 100%;
+  border: 1px solid var(--writing-line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 76%, transparent);
+  color: var(--writing-ink);
+  font: inherit;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.writing-input:focus,
+.writing-select:focus,
+.writing-editor:focus,
+.writing-learning-input:focus {
+  border-color: var(--writing-line);
+  box-shadow: 0 2px 8px rgba(30, 26, 21, 0.08);
+  background: color-mix(in srgb, var(--background-color) 68%, transparent);
+}
+
+.writing-input,
+.writing-select {
+  min-height: 44px;
+  padding: 0 13px;
+}
+
+.writing-learning-input,
+.writing-editor {
+  padding: 14px 16px;
+}
+
+.writing-brief-input {
+  min-height: 118px;
+}
+
+.writing-form-grid,
+.writing-engine-controls,
+.writing-setup-grid,
+.writing-meta-grid,
+.writing-editor-footer,
+.writing-learning-box,
+.writing-moves-list {
+  display: grid;
+  gap: 10px;
+}
+
+.writing-form-grid,
+.writing-engine-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.writing-draft-list,
+.writing-candidate-list,
+.writing-rule-list,
+.writing-source-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.writing-organization-card {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 8px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.writing-organization-note,
+.writing-browser-caption {
+  margin: 6px 0 0;
+  color: var(--writing-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.writing-browser-caption {
+  margin: 0;
+}
+
+.writing-organization-browser,
+.writing-organization-filters,
+.writing-organization-utility {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.writing-organization-browser-head,
+.writing-organization-filter-head,
+.writing-organization-utility-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.writing-organization-filter-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.writing-browser-head-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  align-content: start;
+}
+
+.writing-browser-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+
+.writing-browser-toolbar-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.writing-browser-toolbar-menu > summary {
+  list-style: none;
+}
+
+.writing-browser-toolbar-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.writing-browser-toolbar-button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1.5px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 88%, white);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.72) inset;
+}
+
+.writing-browser-toolbar-button:hover {
+  border-color: color-mix(in srgb, var(--ink) 34%, var(--amber));
+  background: color-mix(in srgb, var(--background-color) 62%, transparent);
+}
+
+.writing-browser-toolbar-button-icon {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-color: color-mix(in srgb, var(--amber) 72%, transparent);
+  background: linear-gradient(180deg, var(--amber) 0%, #c97a38 100%);
+  color: #fff7ec;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.26) inset,
+    0 -1px 0 rgba(0,0,0,0.05) inset,
+    0 6px 14px -6px rgba(170,95,40,0.4);
+}
+
+.writing-browser-toolbar-button-icon:hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--amber) 92%, white) 0%, #bf6f2e 100%);
+  border-color: color-mix(in srgb, var(--amber) 82%, transparent);
+}
+
+.writing-browser-toolbar-value {
+  color: var(--writing-muted);
+  font-weight: 500;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writing-browser-toolbar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.writing-browser-toolbar-menu[open] > .writing-browser-popover {
+  display: grid;
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 20;
+  gap: 10px;
+  width: min(320px, calc(100vw - 96px));
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--writing-line) 88%, transparent) !important;
+  border-radius: 18px;
+  background: #fbfaf7 !important;
+  background-color: #fbfaf7 !important;
+  box-shadow:
+    0 18px 40px -24px rgba(30, 26, 21, 0.28),
+    0 1px 0 rgba(255,255,255,0.92) inset,
+    inset 0 0 0 1px color-mix(in srgb, var(--ink) 4%, transparent) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  mix-blend-mode: normal !important;
+  opacity: 1 !important;
+  overflow: hidden;
+}
+
+.writing-browser-toolbar-menu-filter[open] > .writing-browser-popover {
+  right: 0;
+}
+
+.writing-browser-toolbar-menu-folder[open] > .writing-browser-popover {
+  right: 0;
+}
+
+.writing-browser-popover-title {
+  color: var(--writing-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.writing-organization-browser-head .shell-eyebrow {
+  margin-bottom: 1px;
+}
+
+.writing-organization-browser-head .writing-browser-caption {
+  font-size: 13px;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--writing-muted) 92%, transparent);
+}
+
+.writing-organization-disclosure {
+  margin-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--writing-line) 72%, transparent);
+  padding-top: 6px;
+}
+
+.writing-organization-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.writing-browser-panel {
+  gap: 14px;
+}
+
+.writing-browser-panel-head,
+.writing-browser-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.writing-browser-list,
+.writing-browser-files {
+  display: grid;
+  gap: 8px;
+}
+
+.writing-browser-list {
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--writing-line) 78%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 78%, transparent);
+}
+
+.writing-browser-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.writing-browser-row-folder {
+  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+}
+
+.writing-browser-group {
+  display: grid;
+  gap: 6px;
+}
+
+.writing-browser-children {
+  display: grid;
+  gap: 6px;
+  padding-left: 20px;
+  margin-left: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--writing-line) 84%, transparent);
+}
+
+.writing-browser-children-root {
+  padding-top: 2px;
+  margin-top: -2px;
+}
+
+.writing-browser-empty-nested {
+  padding: 4px 0 2px 6px;
+}
+
+.writing-inline-folder-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--amber) 44%, var(--writing-line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--amber) 5%, var(--background-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
+.writing-inline-folder-input {
+  border: none;
+  background: transparent;
+  color: var(--writing-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.writing-inline-folder-input::placeholder {
+  color: var(--writing-muted);
+  font-weight: 400;
+}
+
+.writing-inline-folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.writing-folder-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--writing-muted);
+  transition: transform 180ms ease;
+}
+
+.writing-folder-chevron-placeholder {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.writing-folder-row[aria-expanded="true"] .writing-folder-chevron {
+  transform: rotate(90deg);
+}
+
+.writing-browser-row.selected .writing-browser-row-main {
+  border-color: color-mix(in srgb, var(--amber) 48%, var(--writing-line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--amber) 8%, transparent), transparent 68%),
+    color-mix(in srgb, var(--background-color) 82%, transparent);
+}
+
+.writing-browser-row-main {
+  width: 100%;
+}
+
+.writing-browser-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.writing-browser-row-folder .writing-browser-row-actions,
+.writing-browser-root-row .writing-browser-row-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 3px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  background: var(--surface-panel-strong);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10);
+}
+
+.writing-browser-row-folder:hover .writing-browser-row-actions,
+.writing-browser-root-row:hover .writing-browser-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.writing-browser-row-folder .writing-browser-row-actions .writing-row-action,
+.writing-browser-root-row .writing-browser-row-actions .writing-row-action {
+  border: none;
+  background: transparent;
+}
+
+.writing-browser-row-folder .writing-browser-row-actions .writing-row-action:hover,
+.writing-browser-root-row .writing-browser-row-actions .writing-row-action:hover {
+  background: color-mix(in srgb, var(--writing-line) 60%, transparent);
+  color: var(--writing-ink);
+}
+
+.writing-row-action {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--writing-line) 92%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background-color) 88%, transparent);
+  color: var(--writing-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.writing-row-action svg {
+  display: block;
+  margin: 0 auto;
+}
+
+.writing-row-action:hover {
+  border-color: color-mix(in srgb, var(--amber) 32%, var(--writing-line));
+  color: var(--writing-ink);
+}
+
+.writing-row-action-danger:hover {
+  border-color: color-mix(in srgb, #d46a5c 46%, var(--writing-line));
+  color: #9d2c1e;
+}
+
+.writing-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-height: 20px;
+  color: var(--writing-muted);
+  cursor: grab;
+  opacity: 0.55;
+  border: none;
+  background: transparent;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.writing-drag-handle:active {
+  cursor: grabbing;
+}
+
+[draggable="true"]:active .writing-drag-handle {
+  cursor: grabbing;
+}
+
+.writing-drop-target-active {
+  outline: 2px solid color-mix(in srgb, var(--amber) 72%, var(--writing-line));
+  outline-offset: -2px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--amber) 8%, transparent) !important;
+}
+
+.writing-browser-children-root.writing-drop-target-active {
+  outline: 2px dashed color-mix(in srgb, var(--amber) 55%, var(--writing-line));
+  outline-offset: 2px;
+  border-radius: 12px;
+  min-height: 32px;
+}
+
+.writing-browser-row-icon-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--writing-ink) 76%, #71809b);
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.82), rgba(220, 231, 248, 0.72)),
+    color-mix(in srgb, #dce7f8 48%, rgba(255,255,255,0.78));
+}
+
+.writing-browser-empty {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--writing-muted);
+  font-size: 12px;
+}
+
+.writing-sync-card {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.writing-sync-actions,
+.writing-sync-counts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.writing-sync-inline-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.writing-sync-note,
+.writing-sync-summary span,
+.writing-sync-conflicts p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.writing-sync-summary {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.writing-sync-summary strong,
+.writing-sync-conflicts strong {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.writing-sync-snapshot {
+  display: grid;
+  gap: 8px;
+}
+
+.writing-sync-snapshot p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.writing-sync-diff,
+.writing-sync-preview-group,
+.writing-sync-conflicts {
+  display: grid;
+  gap: 4px;
+}
+
+.writing-sync-diff {
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.writing-sync-preview-group p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.writing-sync-preview-toolbar,
+.writing-sync-preview-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.writing-sync-preview-toolbar {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.writing-sync-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  width: 100%;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-color) 68%, transparent);
+  color: var(--writing-ink);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.writing-sync-filter-chip span {
+  color: var(--writing-muted);
+  font-size: 11px;
+}
+
+.writing-sync-filter-chip:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--amber) 42%, var(--writing-line));
+}
+
+.writing-sync-filter-chip.is-active {
+  border-color: color-mix(in srgb, var(--amber) 58%, var(--writing-line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--amber) 8%, transparent), transparent 72%),
+    color-mix(in srgb, var(--background-color) 74%, transparent);
+}
+
+.writing-sync-preview-group {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 16%, var(--writing-line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--background-color) 52%, transparent);
+}
+
+.writing-sync-preview-head,
+.writing-sync-preview-actions,
+.writing-sync-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.writing-sync-preview-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.writing-sync-preview-list {
+  display: grid;
+  gap: 6px;
+}
+
+.writing-sync-preview-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.writing-sync-inline-action {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.writing-sync-preview-collapsed,
+.writing-sync-preview-footer span {
+  margin: 0;
+  color: var(--writing-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.writing-sync-toggle-card {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.writing-sync-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: #d6a63e;
+}
+
+.writing-folder-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 14px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  border: 1px solid var(--writing-line);
+  border-radius: 16px;
+  padding: 11px 12px 11px 11px;
+  color: var(--writing-ink);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 70%),
+    color-mix(in srgb, var(--background-color) 82%, transparent);
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.writing-browser-root-row {
+  position: relative;
+}
+
+.writing-folder-row:hover {
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--writing-line));
+}
+
+.writing-folder-row.selected {
+  border-color: color-mix(in srgb, var(--amber) 48%, var(--writing-line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--amber) 10%, transparent), transparent 70%),
+    color-mix(in srgb, var(--background-color) 82%, transparent);
+}
+
+.writing-folder-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  border-radius: 10px;
+  color: color-mix(in srgb, #b57a22 74%, var(--writing-ink));
+  background: color-mix(in srgb, #f0c56d 20%, rgba(255,255,255,0.74));
+}
+
+.writing-folder-row-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.writing-folder-row-copy strong {
+  display: block;
+  font-size: 14px;
+  letter-spacing: -0.015em;
+}
+
+.writing-folder-row-copy span,
+.writing-folder-row small {
+  color: var(--text-secondary);
+}
+
+.writing-folder-row-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writing-folder-row-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 86%, transparent);
+  color: var(--writing-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.writing-folder-create-disclosure {
+  margin-top: 2px;
+}
+
+.writing-folder-description {
+  min-height: 88px;
+}
+
+.writing-draft-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  border: 1px solid var(--writing-line);
+  border-radius: 16px;
+  padding: 10px 12px;
+  color: var(--writing-ink);
+  background: color-mix(in srgb, var(--background-color) 76%, transparent);
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.writing-draft-row:hover {
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--writing-line));
+}
+
+.writing-draft-row.selected {
+  border-color: color-mix(in srgb, var(--amber) 38%, var(--writing-line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--amber) 6%, transparent), transparent 70%),
+    color-mix(in srgb, var(--background-color) 80%, transparent);
+}
+
+.writing-browser-row-file {
+  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+}
+
+.writing-browser-row-file .writing-browser-row-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 3px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  background: var(--surface-panel-strong);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10);
+}
+
+.writing-browser-row-file:hover .writing-browser-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.writing-browser-row-file .writing-browser-row-actions .writing-row-action {
+  border: none;
+  background: transparent;
+}
+
+.writing-browser-row-file .writing-browser-row-actions .writing-row-action:hover {
+  background: color-mix(in srgb, var(--writing-line) 60%, transparent);
+  color: var(--writing-ink);
+}
+
+.writing-browser-row-file .writing-browser-row-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.writing-browser-row-file .writing-browser-row-copy strong {
+  display: block;
+  font-size: 13px;
+  letter-spacing: -0.015em;
+}
+
+.writing-browser-row-file .writing-browser-row-copy span,
+.writing-browser-row-file .writing-browser-row-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writing-browser-row-file .writing-browser-row-count {
+  color: var(--writing-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.writing-button,
+.writing-mini-button {
+  border: 1px solid color-mix(in srgb, var(--amber) 42%, var(--writing-line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-elevated) 74%, transparent);
+  color: var(--writing-ink);
+  cursor: pointer;
+  font: inherit;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.writing-button:hover,
+.writing-mini-button:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--amber) 72%, var(--writing-line));
+}
+
+.writing-button {
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+.writing-button-primary {
+  background: linear-gradient(135deg, #f0c46c, color-mix(in srgb, #f0c46c 52%, #fff));
+  color: #2e2207;
+  font-weight: 700;
+}
+
+.writing-button-rdf {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--amber) 0%, #c97a38 100%);
+  color: #fff7ec;
+  border: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.3) inset,
+    0 -1px 0 rgba(0,0,0,0.05) inset,
+    0 4px 10px -4px rgba(170,95,40,0.35);
+}
+
+.writing-button-rdf:hover {
+  filter: brightness(1.03);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.3) inset,
+    0 -1px 0 rgba(0,0,0,0.05) inset,
+    0 6px 14px -4px rgba(170,95,40,0.45);
+}
+
+.writing-button-rdf:active {
+  transform: translateY(1px);
+}
+
+.writing-button-rdf-outline {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--background-color) 96%, transparent);
+  border: 2px solid color-mix(in srgb, var(--ink) 28%, var(--writing-line));
+  color: color-mix(in srgb, var(--ink) 90%, white);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.9) inset,
+    inset 0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent),
+    0 8px 18px -18px rgba(30, 26, 21, 0.28);
+}
+
+.writing-button-rdf-outline:hover {
+  border-color: color-mix(in srgb, var(--ink) 44%, var(--amber));
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    inset 0 0 0 1px color-mix(in srgb, var(--ink) 10%, transparent),
+    0 10px 20px -18px rgba(30, 26, 21, 0.32);
+}
+
+.writing-button-rdf-outline-danger {
+  border-color: color-mix(in srgb, #d26b4f 64%, var(--writing-line));
+  color: color-mix(in srgb, #8d3218 82%, var(--writing-ink));
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.9) inset,
+    inset 0 0 0 1px color-mix(in srgb, #d26b4f 10%, transparent),
+    0 8px 18px -18px rgba(95, 40, 30, 0.2);
+}
+
+.writing-button:disabled,
+.writing-mini-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.writing-disclosure {
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 55%),
+    color-mix(in srgb, var(--background-color) 62%, transparent);
+}
+
+.writing-disclosure summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  color: var(--writing-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.writing-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.writing-disclosure summary::after {
+  content: "+";
+  float: right;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.writing-disclosure[open] summary::after {
+  content: "−";
+}
+
+.writing-disclosure-body {
+  display: grid;
+  gap: 12px;
+  padding: 6px 0 2px;
+}
+
+.writing-disclosure-brief {
+  margin-bottom: 10px;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--background-color) 56%, transparent);
+}
+
+.writing-brief-inline-input {
+  min-height: 96px;
+}
+
+.writing-rail-disclosure {
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
+  padding-top: 4px;
+}
+
+.writing-rail-disclosure summary {
+  position: relative;
+  padding: 8px 0;
+  color: var(--writing-ink);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.writing-rail-disclosure summary:hover {
+  color: color-mix(in oklab, var(--amber) 72%, var(--writing-ink));
+}
+
+.writing-rail-disclosure summary::after {
+  content: "›";
+  display: inline-block;
+  font-size: 16px;
+  line-height: 1.1;
+  color: var(--writing-muted);
+  transition: transform 150ms ease, color 150ms ease;
+}
+
+.writing-rail-disclosure[open] > summary::after {
+  transform: rotate(90deg);
+  color: color-mix(in oklab, var(--amber) 65%, var(--writing-muted));
+}
+
+.writing-canvas-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.writing-canvas-header-minimal {
+  align-items: center;
+}
+
+.writing-canvas-titleblock {
+  display: grid;
+  gap: 4px;
+}
+
+.writing-canvas-titleblock h3 {
+  font-size: 18px;
+}
+
+.writing-canvas-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.writing-rules-pill-wrap {
+  position: relative;
+}
+
+.writing-rules-pill-button {
+  cursor: pointer;
+  background: transparent;
+}
+
+.writing-rules-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 25;
+  width: min(420px, 70vw);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.045), transparent 42%),
+    color-mix(in srgb, var(--surface-panel-strong) 97%, transparent);
+  box-shadow:
+    0 18px 36px rgba(16, 24, 40, 0.14),
+    0 0 0 1px rgba(255,255,255,0.06) inset;
+  backdrop-filter: blur(18px);
+}
+
+.writing-pill {
+  align-self: flex-start;
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--writing-line));
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--writing-muted);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.writing-meta span,
+.writing-setup-card span {
+  color: var(--writing-muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.writing-moves-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 15px 16px;
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--amber) 7%, transparent), transparent 70%),
+    color-mix(in srgb, var(--surface-elevated) 50%, transparent);
+}
+
+.writing-moves-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.writing-moves-heading strong,
+.writing-move-button strong,
+.writing-move-button span {
+  display: block;
+}
+
+.writing-moves-heading strong {
+  margin-top: 4px;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.writing-moves-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.writing-moves-card-minimal {
+  gap: 8px;
+  margin-top: 12px;
+  margin-bottom: 12px;
+  padding: 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--amber) 5%, transparent), transparent 72%),
+    color-mix(in srgb, var(--background-color) 58%, transparent);
+}
+
+.writing-moves-heading-minimal {
+  display: block;
+}
+
+.writing-move-button {
+  display: grid;
+  gap: 5px;
+  text-align: left;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 72%, transparent);
+  color: var(--writing-ink);
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.writing-move-button:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--amber) 38%, var(--writing-line));
+  background: color-mix(in srgb, var(--amber) 8%, var(--background-color));
+}
+
+.writing-move-button strong {
+  font-size: 14px;
+}
+
+.writing-move-button span {
+  line-height: 1.4;
+  font-size: 13px;
+}
+
+.writing-editor {
+  min-height: 420px;
+  resize: vertical;
+  padding: 24px 26px;
+  line-height: 1.78;
+  font-size: 17px;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 24%),
+    color-mix(in srgb, var(--background-color) 82%, transparent);
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Georgia", serif;
+}
+
+.writing-editor-primary {
+  min-height: 560px;
+  margin-top: 2px;
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 20%),
+    color-mix(in srgb, var(--background-color) 86%, transparent);
+}
+
+.writing-editor-chat {
+  min-height: 320px;
+  margin-top: 14px;
+  border: 0;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--background-color) 62%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 48%, transparent);
+}
+
+.writing-studio-memory-tray {
+  margin-top: 14px;
+}
+
+.writing-studio-memory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.writing-compose-label {
+  color: var(--writing-muted);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.writing-compose-input {
+  min-height: 74px;
+  resize: vertical;
+  border: 1px solid var(--writing-line);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--background-color) 82%, transparent);
+  color: var(--writing-ink);
+  font: inherit;
+  line-height: 1.5;
+  outline: none;
+  padding: 14px 16px;
+}
+
+.writing-compose-input:focus {
+  border-color: var(--writing-line);
+  box-shadow: 0 2px 8px rgba(30, 26, 21, 0.08);
+}
+
+.writing-editor-footer {
+  grid-template-columns: auto minmax(180px, 1fr) 170px auto;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.writing-editor-footer-chat {
+  grid-template-columns: auto minmax(180px, 1fr) 180px;
+  margin-top: 12px;
+}
+
+.writing-change-note {
+  min-width: 0;
+}
+
+.writing-meta-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.writing-meta {
+  padding: 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--background-color) 72%, transparent);
+}
+
+.writing-meta strong {
+  font-size: 13px;
+}
+
+.writing-setup-grid {
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+}
+
+.writing-setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--writing-line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 68%, transparent);
+}
+
+.writing-library-card .writing-card-heading h3,
+.writing-memory-rail-card .writing-card-heading h3 {
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.writing-library-card .writing-card-heading,
+.writing-memory-rail-card .writing-card-heading {
+  margin-bottom: 8px;
+}
+
+.writing-sync-hidden-panel {
+  display: none;
+}
+
+.writing-rail-value {
+  margin-right: 18px;
+  color: var(--writing-muted);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.writing-organization-filters .writing-setup-card,
+.writing-sync-card .writing-setup-card,
+.writing-organization-utility .writing-input,
+.writing-organization-utility .writing-learning-input,
+.writing-sync-card .writing-input {
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--background-color) 78%, transparent);
+}
+
+.writing-sync-card .writing-setup-card {
+  padding: 10px 12px;
+}
+
+.writing-google-doc-setup small {
+  display: block;
+  margin-top: 2px;
+}
+
+.writing-organization-utility .writing-button,
+.writing-sync-actions .writing-button {
+  min-height: 38px;
+}
+
+.writing-sync-note {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.writing-learning-box {
+  grid-template-columns: minmax(180px, 1fr) 150px;
+  align-items: start;
+}
+
+.writing-learning-input {
+  grid-column: 1 / -1;
+  min-height: 92px;
+  resize: vertical;
+}
+
+.writing-learning-box .writing-button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.writing-candidate {
+  border: 1px solid var(--writing-line);
+  border-radius: 18px;
+  padding: 13px;
+  background: color-mix(in srgb, var(--background-color) 70%, transparent);
+}
+
+.writing-candidate-top,
+.writing-candidate-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.writing-candidate p {
+  margin: 10px 0 6px;
+  line-height: 1.45;
+}
+
+.writing-candidate-actions {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.writing-mini-button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.writing-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 42%, transparent);
+  border-radius: 16px;
+  padding: 11px;
+  background: color-mix(in srgb, var(--background-color) 68%, transparent);
+}
+
+.writing-rule p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.48;
+  font-size: 13px;
+}
+
+.writing-memory-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.writing-memory-card-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.writing-memory-card-head-example {
+  align-items: center;
+}
+
+.writing-seed-button {
+  min-height: 38px;
+}
+
+.writing-source-stack {
+  margin: 6px 0 6px;
+}
+
+.writing-source-row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--background-color) 60%, transparent);
+}
+
+.writing-source-row span {
+  color: var(--writing-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writing-source-row strong {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.writing-source-row small {
+  margin-top: 1px;
+  font-size: 12px;
+}
+
+.writing-memory-row-side {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.writing-source-row-body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.writing-source-row-body p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.writing-status {
+  display: none;
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 120;
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--border-color));
+  border-radius: 20px;
+  padding: 10px 18px;
+  background: color-mix(in srgb, var(--amber) 9%, var(--surface-color));
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.writing-status.visible {
+  display: block;
+}
+
+.writing-status.error {
+  border-color: color-mix(in srgb, #ff6b4a 58%, var(--border-color));
+  background: color-mix(in srgb, #ff6b4a 12%, var(--surface-color));
+}
+
+.writing-empty-canvas {
+  min-height: 520px;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.writing-empty-canvas-chat {
+  place-items: center;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.writing-chat-shell {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 420px;
+  height: auto;
+  padding: 16px 16px 14px;
+  border: 1.5px solid color-mix(in oklab, var(--amber) 65%, transparent);
+  border-radius: 30px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 26%),
+    color-mix(in oklab, var(--surface) 54%, transparent);
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--amber) 10%, transparent),
+    0 12px 28px -18px color-mix(in oklab, var(--amber) 40%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.writing-chat-shell.is-dragging::after {
+  content: "Drop files to add context";
+  position: absolute;
+  inset: 12px 12px 128px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed color-mix(in srgb, var(--amber) 52%, var(--writing-line));
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--amber) 8%, var(--background-color));
+  color: var(--writing-ink);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  z-index: 2;
+}
+
+.writing-chat-thread,
+.writing-composer-dock {
+  position: relative;
+  z-index: 1;
+}
+
+.writing-chat-thread {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  min-height: 240px;
+  max-height: calc(100vh - 420px);
+  overflow-y: auto;
+  padding: 6px 6px 8px;
+  scrollbar-gutter: stable;
+}
+
+.writing-chat-message {
+  display: block;
+}
+
+.writing-chat-message-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.writing-chat-bubble {
+  max-width: min(760px, 100%);
+  padding: 18px 20px;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 24%),
+    color-mix(in srgb, var(--background-color) 76%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 40%, transparent);
+}
+
+.writing-chat-message-user .writing-chat-bubble {
+  max-width: min(640px, calc(100% - 48px));
+}
+
+.writing-chat-bubble-user {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 24%),
+    color-mix(in srgb, var(--amber) 8%, var(--background-color));
+}
+
+.writing-chat-bubble-pending {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 28%),
+    color-mix(in srgb, var(--amber) 10%, var(--background-color));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--amber) 28%, var(--border-color)),
+    0 10px 24px -20px rgba(208, 136, 40, 0.45);
+}
+
+.writing-chat-bubble-draft {
+  max-width: 100%;
+  padding: 0;
+  border-radius: 28px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.writing-chat-empty {
+  display: grid;
+  place-items: center;
+  padding: 16px 24px;
+  text-align: center;
+  color: var(--writing-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.writing-chat-empty p {
+  margin: 0;
+  max-width: 460px;
+}
+
+.writing-draft-body {
+  margin-top: 14px;
+  padding: 14px 18px;
+  border: 1px solid var(--rule);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--background-color) 70%, transparent);
+}
+
+.writing-draft-body[open] {
+  background: color-mix(in srgb, var(--background-color) 78%, transparent);
+}
+
+.writing-draft-body > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 2px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  color: var(--writing-ink);
+}
+
+.writing-draft-body > summary::-webkit-details-marker {
+  display: none;
+}
+
+.writing-draft-body-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--writing-muted);
+}
+
+.writing-draft-body-meta {
+  font-size: 12px;
+  color: var(--writing-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.writing-draft-body-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.writing-draft-body-editor {
+  width: 100%;
+  min-height: 220px;
+  padding: 14px 16px;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  color: var(--writing-ink);
+  font-size: 14.5px;
+  line-height: 1.55;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.writing-draft-body-editor:focus {
+  outline: none;
+  border-color: var(--rule);
+  box-shadow: 0 2px 8px rgba(30, 26, 21, 0.08);
+}
+
+.writing-draft-body-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.writing-draft-body-footer .writing-change-note {
+  flex: 1;
+  min-width: 180px;
+}
+
+.writing-chat-meta {
+  color: var(--writing-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.writing-chat-rich-text {
+  margin-top: 8px;
+  color: var(--writing-ink);
+}
+
+.writing-chat-rich-paragraph,
+.writing-chat-rich-heading,
+.writing-chat-rich-list {
+  margin: 0;
+}
+
+.writing-chat-rich-text > * + * {
+  margin-top: 12px;
+}
+
+.writing-chat-rich-paragraph {
+  line-height: 1.65;
+}
+
+.writing-chat-rich-heading {
+  font-family: var(--font-display);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.writing-chat-rich-heading-1,
+.writing-chat-rich-heading-2 {
+  font-size: 1.05rem;
+}
+
+.writing-chat-rich-heading-3,
+.writing-chat-rich-heading-4 {
+  font-size: 0.98rem;
+}
+
+.writing-chat-rich-list {
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
+.writing-chat-rich-list-item {
+  margin: 0;
+  margin-left: calc(var(--writing-list-depth, 0) * 16px);
+}
+
+.writing-chat-rich-list-item + .writing-chat-rich-list-item {
+  margin-top: 6px;
+}
+
+.writing-chat-pending-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.writing-chat-pending-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 74%, white);
+  opacity: 0.38;
+  animation: writing-chat-pulse 1.08s ease-in-out infinite;
+}
+
+.writing-chat-pending-dot:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.writing-chat-pending-dot:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes writing-chat-pulse {
+  0%, 80%, 100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+}
+
+.writing-trace-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 62%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 34%, transparent);
+}
+
+.writing-trace-title {
+  color: var(--writing-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.writing-trace-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.writing-trace-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--writing-muted);
+  font-size: 12px;
+}
+
+.writing-trace-card p {
+  margin: 0;
+  color: var(--writing-ink);
+  line-height: 1.55;
+}
+
+.writing-trace-details {
+  display: grid;
+  gap: 10px;
+}
+
+.writing-trace-details summary {
+  cursor: pointer;
+  color: var(--writing-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.writing-trace-prompt-block {
+  display: grid;
+  gap: 6px;
+}
+
+.writing-trace-prompt-block strong {
+  color: var(--writing-muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.writing-trace-prompt-block pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--background-color) 56%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 30%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--writing-ink);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.writing-chat-attachment-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.writing-thread-attachment {
+  display: grid;
+  gap: 3px;
+  min-width: 160px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--background-color) 56%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 36%, transparent);
+}
+
+.writing-thread-attachment small,
+.writing-attachment-chip small,
+.writing-attach-button small,
+.writing-composer-hint {
+  color: var(--text-secondary);
+}
+
+.writing-composer-dock {
+  display: grid;
+  gap: 12px;
+  padding: 2px 4px 0;
+}
+
+.writing-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.writing-attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 66%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 36%, transparent);
+}
+
+.writing-attachment-chip > div {
+  display: grid;
+  gap: 3px;
+}
+
+.writing-attachment-chip button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  color: var(--writing-ink);
+  cursor: pointer;
+  font: inherit;
+}
+
+.writing-composer-panel {
+  display: none;
+}
+
+.writing-chat-composer-card {
+  position: relative;
+  width: 100%;
+  max-width: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: 22px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 2px 6px rgba(30, 26, 21, 0.04),
+    0 14px 30px -16px rgba(30, 26, 21, 0.12);
+  padding: 16px 18px 12px;
+  transition: border-color 0.14s, box-shadow 0.14s, transform 0.14s;
+}
+
+.writing-chat-composer-card:focus-within {
+  border-color: var(--rule);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 4px 16px rgba(30, 26, 21, 0.10),
+    0 14px 34px -16px rgba(30, 26, 21, 0.12);
+}
+
+[data-theme="dark"] .writing-chat-composer-card {
+  background: rgba(38, 30, 22, 0.86);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.writing-compose-input-chat {
+  width: 100%;
+  min-height: 48px;
+  max-height: 260px;
+  padding: 6px 4px 10px;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none !important;
+  resize: none;
+  outline: none;
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+.writing-chat-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.writing-chat-composer-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.writing-chat-attach-trigger {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--border-color) 68%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-color) 88%, transparent);
+  color: var(--writing-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.writing-chat-attach-trigger:hover {
+  border-color: color-mix(in srgb, var(--amber) 38%, var(--border-color));
+  color: var(--writing-ink);
+}
+
+.writing-chat-attach-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.writing-chat-attach-count {
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  color: var(--writing-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.writing-chat-send-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  background: linear-gradient(135deg, var(--amber), #C77E2B);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.18) inset,
+    0 8px 18px rgba(170, 95, 40, 0.22);
+  transition: filter 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
+}
+
+.writing-chat-send-button:hover {
+  filter: brightness(1.06);
+  transform: translateY(-0.5px);
+}
+
+.writing-hidden-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.writing-setup-card-brief {
+  margin-bottom: 4px;
+}
+
+@media (max-width: 1180px) {
+  .writing-sidebar,
+  .writing-canvas,
+  .writing-training {
+    grid-column: span 12;
+  }
+
+  .writing-canvas-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .writing-meta-grid,
+  .writing-form-grid,
+  .writing-organization-filters,
+  .writing-organization-filter-grid,
+  .writing-engine-controls,
+  .writing-setup-grid,
+  .writing-editor-footer,
+  .writing-learning-box {
+    grid-template-columns: 1fr;
+  }
+
+  .writing-moves-heading {
+    flex-direction: column;
+  }
+
+  .writing-studio-memory-grid,
+  .writing-editor-footer-chat,
+  .writing-memory-bank-grid,
+  .writing-memory-bank-highlight-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .writing-source-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .writing-memory-row-side,
+  .writing-memory-card-head,
+  .writing-example-top {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .writing-memory-card-head,
+  .writing-example-top {
+    display: grid;
+  }
+
+  .writing-chat-thread {
+    max-height: calc(100vh - 410px);
+  }
+
+  .writing-rule-strip-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .writing-card,
+  .writing-canvas-card {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .writing-canvas-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .writing-editor {
+    min-height: 340px;
+    padding: 18px;
+    font-size: 16px;
+  }
+
+  .writing-chat-shell {
+    padding: 12px;
+  }
+
+  .writing-organization-browser-head,
+  .writing-browser-files-head,
+  .writing-organization-filter-head,
+  .writing-organization-utility-head,
+  .writing-rule-strip-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .writing-folder-row {
+    grid-template-columns: 14px auto minmax(0, 1fr);
+  }
+
+  .writing-folder-row-count {
+    display: none;
+  }
+
+  .writing-chat-bubble,
+  .writing-chat-message-user .writing-chat-bubble {
+    max-width: 100%;
+  }
+
+  .writing-chat-composer-bar {
+    gap: 8px;
+  }
+
+  .writing-chat-attach-label {
+    font-size: 12px;
+  }
+
+  .writing-source-row span {
+    white-space: normal;
+  }
+
+  .writing-memory-editor-actions {
+    justify-content: flex-start;
+  }
+
+  .writing-ctx-brief-meta {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Header meta pills ──────────────────────────────────────────── */
+.writing-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--rule);
+  color: var(--ink-3);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.writing-meta-pill-alert {
+  border-color: color-mix(in oklab, var(--amber) 55%, var(--rule));
+  color: color-mix(in oklab, var(--amber) 80%, var(--ink));
+  background: color-mix(in oklab, var(--amber) 8%, transparent);
+}
+
+.writing-meta-pill-active {
+  border-color: color-mix(in oklab, var(--amber) 30%, var(--rule));
+  color: color-mix(in oklab, var(--amber) 60%, var(--ink-3));
+}
+
+/* ── Memory rail sidebar card ───────────────────────────────────── */
+.writing-memory-rail-card {
+  gap: 10px;
+}
+
+.writing-memory-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.writing-memory-rail-profile {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--writing-ink);
+  letter-spacing: -0.01em;
+}
+
+.writing-memory-bank-summary {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
+}
+
+.writing-memory-bank-copy p {
+  display: none;
+}
+
+.writing-memory-bank-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.writing-memory-bank-copy strong {
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.writing-memory-bank-copy span,
+.writing-memory-bank-copy p,
+.writing-memory-bank-section-head p,
+.writing-source-row small,
+.writing-memory-bank-stat span {
+  color: var(--text-secondary);
+}
+
+.writing-memory-bank-copy span,
+.writing-source-row small,
+.writing-memory-bank-stat span {
+  font-size: 12px;
+}
+
+.writing-memory-bank-copy p,
+.writing-memory-bank-section-head p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.writing-memory-bank-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.writing-memory-bank-actions .writing-button-primary {
+  width: 100%;
+  justify-content: center;
+}
+
+.writing-memory-bank-actions .writing-seed-button {
+  width: auto;
+}
+
+.writing-memory-bank-card {
+  display: grid;
+  gap: 18px;
+}
+
+.writing-memory-bank-header {
+  align-items: flex-start;
+}
+
+.writing-memory-bank-header .writing-canvas-titleblock {
+  max-width: 760px;
+}
+
+.writing-memory-bank-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.writing-memory-bank-section {
+  display: grid;
+  gap: 14px;
+  min-height: 240px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 28%),
+    color-mix(in srgb, var(--background-color) 74%, transparent);
+}
+
+.writing-memory-bank-section-spotlight {
+  grid-column: 1 / -1;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--amber) 8%, transparent), transparent 64%),
+    color-mix(in srgb, var(--background-color) 76%, transparent);
+}
+
+.writing-memory-bank-section-head {
+  display: grid;
+  gap: 6px;
+}
+
+.writing-memory-bank-section-head strong {
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.writing-memory-bank-section-head-compact {
+  gap: 0;
+  margin-bottom: 10px;
+}
+
+.writing-memory-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--writing-muted);
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.writing-memory-bank-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--writing-muted);
+}
+
+.writing-memory-bank-meta-row span + span::before {
+  content: "·";
+  margin-right: 12px;
+}
+
+/* Proposed pill as clickable button */
+.writing-meta-pill-btn {
+  cursor: pointer;
+  border: none;
+  font: inherit;
+}
+
+.writing-meta-pill-btn:hover {
+  opacity: 0.85;
+}
+
+/* Source row compact */
+.writing-source-key {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--writing-muted);
+  min-width: 72px;
+}
+
+/* Proposed review lightbox */
+.writing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.writing-modal {
+  width: 100%;
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-color, #fff);
+  border-radius: 24px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+  overflow: hidden;
+}
+
+.writing-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 24px 24px 0;
+  gap: 12px;
+}
+
+.writing-modal-head h3 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.writing-modal-close {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--writing-line);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  color: var(--writing-muted);
+  margin-top: 2px;
+}
+
+.writing-modal-close:hover {
+  background: color-mix(in srgb, var(--writing-ink) 6%, transparent);
+  color: var(--writing-ink);
+}
+
+.writing-modal-description {
+  margin: 8px 24px 0;
+  font-size: 13px;
+  color: var(--writing-muted);
+  line-height: 1.55;
+}
+
+.writing-modal-body {
+  overflow-y: auto;
+  padding: 16px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.writing-candidate-modal {
+  border: 1px solid var(--writing-line);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--background-color) 60%, transparent);
+}
+
+.writing-mini-button-approve {
+  color: color-mix(in srgb, var(--amber) 80%, #000);
+  border-color: color-mix(in srgb, var(--amber) 40%, var(--writing-line));
+}
+
+.writing-mini-button-approve:hover {
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+
+.writing-mini-button-reject {
+  color: #c0392b;
+  border-color: rgba(192,57,43,0.3);
+}
+
+.writing-mini-button-reject:hover {
+  background: rgba(192,57,43,0.08);
+}
+
+.writing-memory-bank-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.writing-example-list {
+  display: grid;
+  gap: 10px;
+}
+
+.writing-example-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--amber) 16%, var(--writing-line));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 68%, transparent);
+}
+
+.writing-example-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.writing-example-top strong {
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+
+.writing-example-top span,
+.writing-example-card small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.writing-example-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.48;
+  font-size: 13px;
+}
+
+.writing-memory-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.writing-memory-editor-textarea {
+  min-height: 180px;
+}
+
+.writing-memory-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.writing-memory-bank-stat {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--amber) 16%, var(--writing-line));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 68%, transparent);
+}
+
+.writing-memory-bank-stat strong {
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.writing-count-alert {
+  color: color-mix(in oklab, var(--amber) 80%, var(--ink));
+}
+
+.writing-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--rule);
+  color: var(--ink-3);
+}
+
+.writing-count-badge-alert {
+  background: color-mix(in oklab, var(--amber) 18%, var(--surface-raised));
+  color: color-mix(in oklab, var(--amber) 80%, var(--ink));
+  border: 1px solid color-mix(in oklab, var(--amber) 35%, transparent);
+}
+
+/* ── Active draft card (left rail, replaces creation form) ─────── */
+.writing-active-card {
+  gap: 6px;
+}
+
+.writing-active-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.writing-new-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: color-mix(in oklab, var(--amber) 75%, var(--ink));
+  letter-spacing: 0.03em;
+  padding: 2px 0;
+}
+
+.writing-new-link:hover {
+  color: var(--amber);
+}
+
+.writing-active-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.writing-active-title-row {
+  display: grid;
+  gap: 4px;
+}
+
+.writing-active-meta {
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.writing-active-brief {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.5;
+  margin: 2px 0 4px;
+}
+
+.writing-active-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.writing-active-actions {
+  display: none;
+}
+
+.writing-active-google-doc {
+  display: none;
+}
+
+.writing-active-doc-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--background-color) 78%, transparent);
+}
+
+.writing-active-doc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.writing-active-doc-status {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.writing-active-doc-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 16%, rgba(255,255,255,0.8));
+  color: color-mix(in srgb, var(--amber) 74%, var(--ink));
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.writing-active-doc-preview {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.writing-active-doc-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.writing-active-doc-actions .writing-mini-button {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--writing-line));
+  font-weight: 600;
+}
+
+.writing-active-doc-actions-secondary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.writing-active-doc-actions-secondary .writing-mini-button {
+  border-color: color-mix(in srgb, var(--writing-line) 88%, transparent);
+}
+
+.writing-active-doc-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.writing-active-doc-button-primary {
+  background: linear-gradient(180deg, var(--amber) 0%, #c97a38 100%) !important;
+  color: #fff7ec !important;
+  border: 0 !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.3) inset,
+    0 -1px 0 rgba(0,0,0,0.05) inset,
+    0 4px 10px -4px rgba(170,95,40,0.35) !important;
+}
+
+.writing-active-doc-button-secondary,
+.writing-active-doc-button-quiet,
+.writing-active-doc-button-danger {
+  background: color-mix(in srgb, var(--background-color) 96%, transparent) !important;
+  border-width: 2px !important;
+  font-weight: 600 !important;
+}
+
+.writing-active-doc-button-secondary {
+  border-color: color-mix(in srgb, var(--ink) 30%, var(--writing-line)) !important;
+  color: color-mix(in srgb, var(--ink) 92%, white) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.92) inset,
+    inset 0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent),
+    0 8px 18px -18px rgba(30, 26, 21, 0.28) !important;
+}
+
+.writing-active-doc-button-quiet {
+  border-color: color-mix(in srgb, var(--ink) 28%, var(--writing-line)) !important;
+  color: color-mix(in srgb, var(--ink) 88%, white) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.92) inset,
+    inset 0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent),
+    0 8px 18px -18px rgba(30, 26, 21, 0.24) !important;
+}
+
+.writing-active-doc-button-danger {
+  border-color: color-mix(in srgb, #d26b4f 62%, var(--writing-line)) !important;
+  color: color-mix(in srgb, #8d3218 82%, var(--writing-ink)) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.92) inset,
+    inset 0 0 0 1px color-mix(in srgb, #d26b4f 10%, transparent),
+    0 8px 18px -18px rgba(95, 40, 30, 0.2) !important;
+}
+
+.writing-active-google-doc-input {
+  min-height: 40px;
+}
+
+.writing-active-action-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+.writing-active-link {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 8px;
+  color: color-mix(in oklab, var(--amber) 70%, var(--ink));
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.writing-active-link:hover {
+  color: var(--amber);
+  text-decoration: underline;
+}
+
+.writing-active-engine-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+
+.writing-active-engine-row .writing-engine-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.writing-active-engine-row .writing-setup-card {
+  padding: 0;
+  background: none;
+  border: none;
+}
+
+/* ── Context strip (top of chat thread, project-picker style) ───── */
+.writing-context-strip {
+  display: grid;
+  gap: 12px;
+  padding: 4px 6px 0;
+  flex-shrink: 0;
+}
+
+.writing-chat-message-draft {
+  margin-bottom: 12px;
+}
+
+.writing-chat-bubble-draft {
+  border: 1px solid color-mix(in srgb, var(--amber) 20%, var(--writing-line));
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05), transparent 70%),
+    color-mix(in srgb, var(--background-color) 82%, transparent);
+}
+
+.writing-context-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-4);
+  flex-wrap: wrap;
+}
+
+.writing-ctx-meta-item {
+  white-space: nowrap;
+}
+
+.writing-ctx-dot {
+  color: var(--ink-5);
+  flex-shrink: 0;
+}
+
+.writing-ctx-brief-wrap {
+  position: relative;
+}
+
+.writing-ctx-doc-link {
+  color: color-mix(in oklab, var(--amber) 70%, var(--ink-4));
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.writing-ctx-doc-link:hover {
+  color: var(--amber);
+  text-decoration: underline;
+}
+
+.writing-ctx-brief-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 300px;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid color-mix(in oklab, var(--amber) 28%, var(--rule));
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05), transparent 40%),
+    color-mix(in srgb, var(--surface-panel-strong) 97%, transparent);
+  box-shadow:
+    0 8px 24px -8px rgba(16, 24, 40, 0.14),
+    0 0 0 1px rgba(255,255,255,0.08) inset;
+  backdrop-filter: blur(16px);
+}
+
+.writing-ctx-brief-toggle summary::marker,
+.writing-ctx-brief-toggle summary::-webkit-details-marker {
+  display: none;
+}
+
+.writing-ctx-brief-trigger {
+  cursor: pointer;
+  color: color-mix(in oklab, var(--amber) 70%, var(--ink-4));
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.writing-ctx-brief-trigger:hover {
+  color: var(--amber);
+}
+
+.writing-ctx-brief-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: color-mix(in oklab, var(--amber) 4%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--amber) 20%, var(--rule));
+  border-radius: 12px;
+  width: 100%;
+}
+
+.writing-ctx-brief-body .writing-brief-input {
+  min-height: 72px;
+  font-size: 13px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  resize: none;
+  outline: none;
+  box-shadow: none;
+}
+
+.writing-ctx-brief-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.writing-ctx-inline-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
+.writing-ctx-engine-row {
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in oklab, var(--amber) 15%, var(--rule));
+}
+
+.writing-ctx-engine-row .writing-engine-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.writing-ctx-engine-row .writing-setup-card {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* ── Propose learning form ──────────────────────────────────────── */
+.writing-propose-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.writing-propose-form .writing-select {
+  font-size: 12px;
+}
+
+.writing-ctx-brief-textarea {
+  min-height: 72px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+  padding: 10px 12px;
+}
+
+.writing-ctx-brief-dropdown .writing-ctx-inline-input {
+  min-height: 36px;
+  font-size: 12px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
+  background: color-mix(in srgb, var(--background-color) 92%, transparent);
+}
+
+.writing-ctx-propose-wrap {
+  position: relative;
+  margin-left: auto;
+}
+
+.writing-rule-strip {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--amber) 18%, var(--writing-line));
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), transparent 55%),
+    color-mix(in srgb, var(--background-color) 70%, transparent);
+}
+
+.writing-rule-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.writing-rule-strip-button {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 11.5px;
+}
+
+.writing-rule-strip-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.writing-rule-chip {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 14%, var(--writing-line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--background-color) 84%, transparent);
+}
+
+.writing-rule-chip strong {
+  font-size: 12.5px;
+  letter-spacing: -0.015em;
+}
+
+.writing-rule-chip span {
+  color: var(--writing-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.writing-propose-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: 260px;
+  padding: 14px;
+  border: 1px solid color-mix(in oklab, var(--amber) 28%, var(--rule));
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05), transparent 40%),
+    color-mix(in srgb, var(--surface-panel-strong) 97%, transparent);
+  box-shadow:
+    0 8px 24px -8px rgba(16, 24, 40, 0.14),
+    0 0 0 1px rgba(255,255,255,0.08) inset;
+  backdrop-filter: blur(16px);
+}

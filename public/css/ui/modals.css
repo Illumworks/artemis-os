@@ -1,0 +1,187 @@
+/* ── Modal ────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.15s ease;
+}
+
+.modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 460px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 24px;
+  box-shadow: var(--shadow-lg), var(--glow-ambient);
+  animation: modalEnter 0.25s var(--ease-out-expo);
+  position: relative;
+}
+
+@keyframes modalEnter {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Accent line at top of modal */
+.modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--user), var(--accent));
+  opacity: 0.4;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.modal-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  transition: all 0.2s var(--ease-smooth);
+}
+
+.modal-close:hover { background: var(--bg-tertiary); color: var(--text); }
+
+.modal form label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  font-family: var(--font-display);
+}
+
+.modal form input,
+.modal form textarea {
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.modal form textarea {
+  font-family: var(--font-mono);
+}
+
+.sp-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 4px 0 10px;
+  line-height: 1.6;
+  font-family: var(--font-sans);
+}
+.sp-hint code {
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* modal-btn-cancel and modal-btn-save styles unified in components.css */
+
+/* ── CLAUDE.md editor modal ──────────────────────────────── */
+.claude-md-modal {
+  width: 640px;
+  max-width: 92vw;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+.claude-md-modal .modal-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border-1);
+}
+.claude-md-status {
+  padding: 6px 20px;
+  font-size: 12px;
+  color: var(--ink-5);
+  min-height: 28px;
+}
+.claude-md-status--success { color: var(--green, #22c55e); }
+.claude-md-status--error   { color: var(--red,   #ef4444); }
+.claude-md-status--warning { color: var(--amber, #f59e0b); }
+.claude-md-body {
+  flex: 1;
+  overflow: hidden;
+  padding: 0 20px 0;
+  display: flex;
+  flex-direction: column;
+}
+.claude-md-textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-1);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  outline: none;
+  box-sizing: border-box;
+}
+.claude-md-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-alpha, color-mix(in srgb, var(--accent) 20%, transparent));
+}
+
+/* Inline help text under skill-edit-modal fields */
+.skill-edit-modal .modal-help {
+  font-size: 11px;
+  color: var(--ink-5);
+  margin-top: 4px;
+  line-height: 1.45;
+}
+.skill-edit-modal .modal-help code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  background: var(--bg-2, rgba(127, 127, 127, 0.08));
+  padding: 1px 4px;
+  border-radius: 3px;
+}

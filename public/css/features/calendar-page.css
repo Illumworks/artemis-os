@@ -1,0 +1,205 @@
+/* CAL Phase 2 — overrides and additions on top of artemis-design.css .cal-* base */
+
+/* Week grid: 7 columns (Sun–Sat) instead of the design's 5 */
+.cal-grid {
+  grid-template-columns: 64px repeat(7, 1fr);
+}
+
+/* Navigation controls */
+.cal-nav-btn {
+  padding: 5px 10px; font-size: 13px; font-weight: 500;
+  color: var(--ink-2); background: transparent;
+  border: 1px solid var(--rule); border-radius: var(--r-sm);
+  cursor: pointer; line-height: 1; transition: background .12s, color .12s;
+}
+.cal-nav-btn:hover { background: var(--surface-sunken); color: var(--ink); }
+.cal-nav-today { font-size: 12px; padding: 5px 12px; }
+
+.cal-range-label {
+  font-size: 13px; font-weight: 600; color: var(--ink-2); letter-spacing: -0.01em;
+}
+
+/* All-day chips */
+.cal-allday-row {
+  padding: 4px 8px; display: flex; flex-wrap: wrap; gap: 4px;
+  border-bottom: 1px solid var(--rule-2);
+}
+.cal-allday-chip {
+  padding: 2px 8px; border-radius: var(--r-full);
+  font-size: 11px; font-weight: 500;
+  background: var(--amber-wash); color: var(--amber-ink);
+  border: 1px solid var(--amber-soft);
+}
+
+/* Month head cell */
+.cal-month-head-cell {
+  padding: 10px 8px; font-size: 11px; font-weight: 600;
+  color: var(--ink-4); letter-spacing: 0.08em; text-transform: uppercase;
+  text-align: center; border-right: 1px solid var(--rule-2);
+  background: var(--surface-sunken);
+}
+.cal-month-head-cell:last-child { border-right: none; }
+
+/* "+N more" in month cells */
+.cal-month-more {
+  font-size: 10px; color: var(--ink-4); font-weight: 500;
+}
+
+/* Drag-over highlight */
+.cal-drop-highlight {
+  background: var(--amber-wash) !important;
+  outline: 2px solid var(--amber-soft);
+  outline-offset: -1px;
+}
+
+/* Draggable event cursor */
+.cal-event[draggable="true"] { cursor: grab; }
+.cal-event[draggable="true"]:active { cursor: grabbing; }
+
+/* Error banner when events fail to load */
+.cal-fetch-error {
+  padding: 10px 14px; margin-bottom: 12px;
+  background: var(--rust-soft); color: var(--danger);
+  border: 1px solid var(--danger); border-radius: var(--r-sm);
+  font-size: 13px; line-height: 1.5;
+}
+.cal-reconnect-btn {
+  background: none; border: none; padding: 0;
+  color: var(--danger); text-decoration: underline; cursor: pointer;
+  font-size: inherit; font-family: inherit;
+}
+
+/* ── Calendar event modal ── */
+
+/* RSVP strip — Accept / Decline / Tentative buttons */
+.cal-rsvp-strip {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 12px 0 16px; border-bottom: 1px solid var(--rule); margin-bottom: 4px;
+}
+.cal-rsvp-strip-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-4); margin-right: 4px;
+}
+.cal-rsvp-btn {
+  font-size: 12.5px; padding: 5px 14px; border-radius: var(--r-sm, 8px);
+  border: 1px solid var(--rule); background: var(--surface-sunken);
+  color: var(--ink-3); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.cal-rsvp-btn:hover { background: var(--surface-hover, var(--surface-sunken)); color: var(--ink); }
+.cal-rsvp-btn--active.cal-rsvp-sage   { background: var(--sage-soft, #d4edda);  border-color: var(--sage, #4a7c59);  color: var(--sage, #2d6a40); }
+.cal-rsvp-btn--active.cal-rsvp-rust   { background: var(--rust-soft, #fde8e8);  border-color: var(--rust, #c0392b);  color: var(--rust, #a93226); }
+.cal-rsvp-btn--active.cal-rsvp-amber  { background: var(--amber-soft, #fef3cd); border-color: var(--amber, #c9a227); color: var(--amber, #a07d1a); }
+.cal-rsvp-strip-err { font-size: 11.5px; color: var(--danger); }
+
+/* Form inputs in the modal */
+.cal-field-input,
+.cal-field-textarea {
+  width: 100%; padding: 8px 12px;
+  font-size: 13.5px; font-family: inherit;
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  transition: border-color .12s, box-shadow .12s;
+  box-sizing: border-box;
+}
+.cal-field-input:focus,
+.cal-field-textarea:focus {
+  outline: none;
+  border-color: var(--amber-soft);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--amber-ink) 12%, transparent);
+}
+.cal-field-textarea { resize: vertical; min-height: 88px; }
+
+.cal-field-err {
+  padding: 8px 12px; margin-top: 8px;
+  background: var(--rust-soft); color: var(--danger);
+  border: 1px solid var(--danger); border-radius: var(--r-sm);
+  font-size: 12.5px;
+}
+
+/* Attendee rows */
+.cal-attendees-list { display: flex; flex-direction: column; gap: 6px; }
+.cal-attendee-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; border-bottom: 1px solid var(--rule-2); font-size: 13px;
+}
+.cal-attendee-name { font-weight: 500; flex: 0 0 auto; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-attendee-email { color: var(--ink-4); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-rsvp-badge {
+  flex: 0 0 auto; padding: 2px 7px; border-radius: var(--r-full);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+}
+.cal-rsvp-sage  { background: var(--sage-soft);   color: var(--ok); }
+.cal-rsvp-rust  { background: var(--rust-soft);   color: var(--danger); }
+.cal-rsvp-amber { background: var(--amber-wash);  color: var(--amber-ink); }
+.cal-rsvp-slate { background: var(--surface-sunken); color: var(--ink-3); }
+
+/* ── Toolbar: + Event button ── */
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--rule); flex-wrap: wrap; }
+.cal-new-event-btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* ── Chip input (attendees) — shared by new-event modal + drawer ── */
+.cal-chip-row {
+  display: flex; flex-wrap: wrap; gap: 5px; min-height: 28px;
+}
+.cal-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px 3px 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-full);
+  font-size: 12.5px; color: var(--ink-2);
+}
+.cal-chip-remove {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  background: none; border: none; padding: 0;
+  color: var(--ink-4); cursor: pointer;
+  border-radius: var(--r-full);
+  font-size: 13px; line-height: 1;
+  transition: color .1s, background .1s;
+}
+.cal-chip-remove:hover { color: var(--danger); background: var(--rust-soft); }
+
+/* Also used in attendee rows inside the drawer */
+.cal-attendee-row .cal-chip-remove {
+  margin-left: auto; flex: 0 0 auto;
+}
+
+/* ── New-event modal ── */
+/* Reuses global .modal-overlay / .modal / .modal-header / .modal-close from modals.css */
+.cal-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 110;
+  animation: fadeIn .15s ease;
+}
+.cal-new-event-modal {
+  width: 500px;
+}
+.modal-body {
+  padding: 0 24px 4px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.modal-footer {
+  padding: 16px 24px 20px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  border-top: 1px solid var(--rule-2);
+}
+
+/* Fields inside the new-event modal */
+.cnm-field { display: flex; flex-direction: column; gap: 5px; }
+.cnm-label { font-size: 11px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.06em; text-transform: uppercase; }
+.cnm-req { color: var(--danger); }
+.cnm-row { display: flex; gap: 12px; }
+.cnm-row .cnm-field { flex: 1; min-width: 0; }
+
+/* Don't-notify checkbox row (shared by modal + drawer) */
+.cnm-notify-row {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+}
+.cnm-notify-row input[type="checkbox"] { cursor: pointer; }

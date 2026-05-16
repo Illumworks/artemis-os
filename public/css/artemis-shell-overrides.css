@@ -1,0 +1,568 @@
+/* ── Artemis OS shell overrides ──────────────────────────────────────────
+   Small, targeted tweaks for design fidelity + interaction state on top of
+   artemis-design.css. Keep this file SMALL — it's only for:
+     • re-styling legacy affordances that live inside new shell components
+       (pin/delete action buttons inside .rdf-session, etc.)
+     • fixing z-index/stacking so the main gradient mask never washes over
+       the rail, header, or composer
+     • ensuring key interaction states (:hover, :focus-visible, :active)
+       are present for critical shell controls
+   ─────────────────────────────────────────────────────────────────── */
+
+/* ── Rail section body inner — allow inline project picker dropdown ─ */
+/* .rail-section-body-inner has overflow:hidden which clips the inline
+   .rdf-dropdown when the project picker opens. The approved design has
+   the dropdown inline (pushes New session CTA down), so we must allow
+   the overflow here. The rail itself scrolls (overflow-y:auto) so no
+   content escapes the rail chrome. */
+.rail-section-body-inner {
+  overflow: visible !important;
+}
+
+/* ── Rail section headers — no pill background ─────────────────── */
+/* public/css/core/liquid-glass.css applies a global `button, .btn` rule
+   (background: var(--glass-fill); border-radius: 12px; inset highlight
+   shadow; backdrop-filter: blur(...); padding: 10px 18px). That rule
+   reaches the `.rail-section-toggle` <button> and produces the warm
+   pill shape visible around WORKSPACE / OPERATIONS / DEV PROJECTS even
+   after the background is stripped. The approved artemis-os design has
+   a flat transparent text label, so we have to fully reset the
+   liquid-glass chrome here. */
+.rail-section-label,
+.rail-section-toggle {
+  background: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 12px 9px !important;
+  overflow: visible !important;
+  transform: none !important;
+}
+.rail-section-toggle::before,
+.rail-section-label::before {
+  /* liquid-glass adds a ::before gradient sheen on every button. */
+  display: none !important;
+  content: none !important;
+}
+.rail-section-toggle:hover,
+.rail-section-label:hover {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+  border-color: transparent !important;
+}
+.rail-section-toggle:active,
+.rail-section-label:active {
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+.rail-section-collapse.closed .rail-section-label,
+.rail-section-collapse.closed .rail-section-toggle {
+  padding: 0 12px 4px !important;
+}
+
+/* ── New session CTA — hover / active / focus-visible ──────────── */
+.rdf-primary:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--amber-wash),
+    0 0 0 3px var(--amber),
+    0 1px 0 rgba(255,255,255,0.3) inset,
+    0 -1px 0 rgba(0,0,0,0.05) inset,
+    0 6px 14px -4px rgba(170,95,40,0.45);
+}
+
+/* ── Session rail rows — hover actions + focus-visible ─────────── */
+.rdf-session {
+  position: relative;
+  cursor: pointer;
+}
+.rdf-session:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: -2px;
+  border-radius: var(--r-sm, 8px);
+}
+.rdf-session .session-card-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity .12s ease;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--surface, #fff) 30%);
+  padding: 0 4px 0 18px;
+}
+.rdf-session:hover .session-card-actions,
+.rdf-session:focus-within .session-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.rdf-session .session-pin,
+.rdf-session .session-delete {
+  background: transparent;
+  border: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ink-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  transition: background .12s, color .12s;
+}
+.rdf-session .session-pin:hover,
+.rdf-session .session-delete:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.rdf-session .session-pin.pinned {
+  color: var(--amber-ink);
+}
+.rdf-session .session-mode,
+.rdf-session .session-provider,
+.rdf-session .session-summary {
+  /* Legacy inline badges — hide in rail rows; rdf-session-meta line shows the
+     core metadata. Keep these hidden by default, accessible via tooltip/data. */
+  display: none;
+}
+.rdf-session .session-fork-badge {
+  display: inline-flex;
+  vertical-align: -1px;
+  margin-right: 4px;
+  color: var(--amber-ink);
+}
+
+/* ── Project picker row: remove (×) button ─────────────────────── */
+.rdf-dropdown-remove {
+  background: transparent;
+  border: 0;
+  padding: 3px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--ink-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity .12s, background .12s, color .12s;
+  margin-left: 4px;
+}
+.rdf-dropdown-item:hover .rdf-dropdown-remove,
+.rdf-dropdown-item:focus-within .rdf-dropdown-remove {
+  opacity: 1;
+}
+.rdf-dropdown-remove:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.rdf-dropdown-remove:disabled {
+  opacity: 0.35;
+  cursor: wait;
+}
+
+/* ── Project picker menu — variant positioning hints ───────────── */
+/* Rail variant is inline (sits between project card and New session CTA).
+   sessions.css sets .project-picker-menu { position: absolute; top: calc(100% + 8px) }
+   which would float it way below the wrapper. Reset to static flow. */
+.artemis-project-picker--rail {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  margin-top: 0 !important;
+  margin-bottom: 4px !important;
+  border-radius: 12px !important;
+}
+
+/* ── Dev Projects rail spacing — restore breathing room ────────── */
+[data-section="devprojects"] .rail-dev.rail-dev-friendly {
+  margin: 8px 10px 0 !important;
+  padding: 4px 0 12px !important;
+  gap: 12px;
+}
+
+[data-section="devprojects"] .rdf-project {
+  padding: 8px 10px 8px 11px;
+  border-radius: 16px;
+}
+
+[data-section="devprojects"] .rdf-project-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+[data-section="devprojects"] .rdf-project-name {
+  font-size: 12.75px;
+}
+
+[data-section="devprojects"] .rdf-project-sub {
+  font-size: 10.5px;
+}
+
+[data-section="devprojects"] .rdf-primary {
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+
+[data-section="devprojects"] .rdf-primary-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.artemis-project-picker--header {
+  /* Inline positioning set by JS (position:fixed + top/left). */
+  box-shadow: 0 18px 40px -18px rgba(0,0,0,0.22),
+              0 3px 8px -3px rgba(0,0,0,0.08);
+}
+
+/* ── rdf-dropdown rows — strip liquid-glass chrome from items ───── */
+/* `.rdf-dropdown-item` is a <button>, so liquid-glass.css stamps each
+   row with a 12px radius, blur backdrop-filter, inset highlight shadow,
+   and a ::before gradient sheen. That's why the project picker renders
+   as a washed blue/lavender panel with individually pilled rows instead
+   of the flat divided list in the approved design. */
+.artemis-project-picker .rdf-dropdown-item,
+.artemis-project-picker .artemis-project-picker-item {
+  background: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--rule-2, rgba(30,26,21,0.05)) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transform: none !important;
+  padding: 10px 12px !important;
+  width: 100%;
+  text-align: left;
+  color: var(--ink, #1e1a15);
+}
+.artemis-project-picker .rdf-dropdown-item:last-child,
+.artemis-project-picker .artemis-project-picker-item:last-child {
+  border-bottom: 0 !important;
+}
+.artemis-project-picker .rdf-dropdown-item::before,
+.artemis-project-picker .artemis-project-picker-item::before {
+  display: none !important;
+  content: none !important;
+}
+.artemis-project-picker .rdf-dropdown-item:hover,
+.artemis-project-picker .artemis-project-picker-item:hover {
+  background: var(--surface-sunken, rgba(30,26,21,0.035)) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+  border-color: var(--rule-2, rgba(30,26,21,0.05)) !important;
+}
+.artemis-project-picker .rdf-dropdown-item.active,
+.artemis-project-picker .artemis-project-picker-item.active {
+  background: var(--amber-wash, rgba(199,126,43,0.08)) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+.artemis-project-picker .rdf-dropdown-item:active,
+.artemis-project-picker .artemis-project-picker-item:active {
+  background: var(--surface-sunken, rgba(30,26,21,0.06)) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+.artemis-project-picker .rdf-dropdown-item:focus-visible,
+.artemis-project-picker .artemis-project-picker-item:focus-visible {
+  outline: 2px solid var(--amber, #c77e2b);
+  outline-offset: -2px;
+}
+
+/* Ensure the container itself stays the solid raised surface from the
+   approved design (no translucency / no glass). */
+.artemis-project-picker {
+  background: var(--surface-raised, #fff) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ── Main Artemis composer: neutralize legacy ID-specific button rules ─ */
+.dp-composer #send-btn,
+.dp-composer #stop-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  position: static;
+  box-shadow: none;
+  color: #fff;
+}
+.dp-composer #send-btn {
+  background: var(--amber);
+}
+.dp-composer #stop-btn {
+  background: var(--error, #d75a44);
+}
+.dp-composer #send-btn::after {
+  display: none;
+  content: none;
+}
+.dp-composer #send-btn:hover:not(:disabled),
+.dp-composer #stop-btn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-0.5px);
+  box-shadow: none;
+}
+.dp-composer #send-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ── Composer anchoring + gradient mask z-index fix ────────────── */
+.dp-composer {
+  position: relative;
+  z-index: 2;
+}
+.dp-header {
+  position: relative;
+  z-index: 3;
+}
+/* If any fade/gradient-mask pseudo sits on .dp-main or .canvas-scroll, pin it
+   below the composer and header layers. */
+.dp-main::before,
+.canvas-scroll::before,
+.canvas::before {
+  z-index: 0 !important;
+  pointer-events: none;
+}
+.dp-main > * { position: relative; z-index: 1; }
+
+/* ── Empty-state: mark-forward treatment ───────────────────────── */
+/* Option B: 96px mark (height:auto fixes squish), ghostly at rest,
+   brightens on cursor proximity; title at 22px weight 300; faint sub. */
+.dp-chat-empty { position: relative; }
+.dp-chat-empty-center { gap: 12px; }
+
+.dp-chat-mark {
+  width: 180px;
+  height: auto;           /* fixes the squish from the old 112×112 box */
+  opacity: 0.18;
+  filter: saturate(0.6);
+  transition: opacity .4s ease, filter .4s ease, transform .4s ease;
+  will-change: opacity, filter, transform;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.dp-chat-empty[data-proximity] .dp-chat-mark {
+  opacity: var(--dp-chat-mark-opacity, 0.18);
+  filter: saturate(calc(0.6 + var(--dp-chat-mark-proximity, 0) * 0.55));
+}
+.dp-chat-empty:hover .dp-chat-mark {
+  opacity: 0.82;
+  filter: saturate(1);
+  transform: translateY(-2px);
+}
+
+/* Subtitle — fades in slightly on proximity, hidden at rest */
+.dp-chat-empty-sub--state {
+  font-size: 12px !important;
+  color: var(--ink-4) !important;
+  letter-spacing: 0.01em;
+  opacity: 0;
+  transition: opacity .4s ease;
+  max-width: 320px;
+  text-align: center;
+  line-height: 1.6;
+}
+.dp-chat-empty[data-proximity] .dp-chat-empty-sub--state {
+  opacity: calc(var(--dp-chat-mark-proximity, 0) * 0.7);
+}
+.dp-chat-empty:hover .dp-chat-empty-sub--state {
+  opacity: 0.7;
+}
+
+/* ── Floating assistant orb ─────────────────────────────────────────── */
+.assistant-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 1px solid var(--rule, rgba(0,0,0,0.1));
+  cursor: pointer;
+  /* Warm dark surface — feels like the app's dark-mode canvas, not stark black */
+  background: var(--surface-raised, #2a2825);
+  color: var(--ink, #1a1a18);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0,0,0,0.1);
+  z-index: 500;
+  transition: transform .2s, box-shadow .2s, background .2s;
+  overflow: visible;
+}
+.assistant-fab:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 16px 36px -10px rgba(0, 0, 0, 0.4),
+    0 0 0 4px var(--amber-wash);
+}
+.assistant-fab:active { transform: translateY(0); }
+.assistant-fab:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px var(--amber-wash),
+    0 0 0 4px var(--amber),
+    0 12px 28px -10px rgba(0, 0, 0, 0.3);
+}
+.assistant-fab-pulse {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: var(--amber);
+  opacity: 0;
+  animation: assistant-fab-pulse 2.8s ease-out infinite;
+  pointer-events: none;
+}
+.assistant-fab-mark {
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  position: relative;
+  z-index: 1;
+}
+.assistant-fab-icon {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  display: block;
+  position: relative;
+  z-index: 1;
+}
+@keyframes assistant-fab-pulse {
+  0%   { transform: scale(0.8); opacity: 0.5; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+
+/* ── Settings popover (rail profile dropdown) ──────────────────────── */
+/* Design classes `.settings-popover` + `.settings-pop-item` + `.settings-pop-divider`
+   already exist in artemis-design.css. Keep overrides minimal and only
+   layer on placement specifics for the live shell. */
+.rail-footer { position: relative; }
+.rail-footer .settings-popover {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+}
+
+/* ── Session Config tray — approved design .dp-cfg-drop ────────────── */
+/* Tray is the approved .dp-cfg-drop card. Only override: pin positioning
+   to fixed (JS anchors it under the Session Config button) and hide when
+   .hidden. Everything else comes from artemis-design.css. */
+#session-config-tray.dp-cfg-drop {
+  position: fixed !important;
+}
+#session-config-tray.dp-cfg-drop.hidden { display: none; }
+
+/* ── Notification badge: don't let parent overflow clip it ─────────── */
+.notif-bell,
+.notif-bell .dp-icon-btn,
+.dp-header-right .dp-icon-btn {
+  overflow: visible !important;
+}
+.notif-badge {
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ── Composer inset — don't glue to viewport bottom ────────────────── */
+/* Design's .dp-main is a flex column; the composer was flush at bottom:0
+   because dp-main has no bottom padding. Inset the composer from the
+   viewport edge so the chrome breathes. */
+.dp-main {
+  padding-bottom: 20px;
+}
+.dp-composer {
+  max-width: 820px;
+  width: calc(100% - 64px);
+  margin: 0 auto;
+}
+
+/* ── Unify popover/dropdown visual system ──────────────────────────── */
+/* Notification dropdown and any remaining shell popovers should use the
+   design tokens, not legacy --border/--bg-secondary. */
+#notif-dropdown,
+.notif-dropdown {
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--rule, rgba(30,26,21,0.08));
+  border-radius: var(--r-lg, 14px);
+  box-shadow: 0 18px 40px -18px rgba(0,0,0,0.22),
+              0 3px 8px -3px rgba(0,0,0,0.08);
+  color: var(--ink, #1e1a15);
+}
+
+/* ── Ensure legacy history button is fully gone from composer ─── */
+#history-btn { display: none !important; }
+
+/* ── Legacy session-empty inside rdf-sessions — soft placeholder ─ */
+.rdf-sessions .session-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 12px;
+  color: var(--ink-4);
+  font-size: 12px;
+  text-align: center;
+}
+.rdf-sessions .session-empty svg {
+  opacity: 0.55;
+  color: var(--ink-4);
+}
+.rdf-sessions .session-empty-hint {
+  color: var(--ink-5);
+  font-size: 11px;
+}
+
+/* ── Dashboard-home intro card: don't let it block the empty-state ── */
+/* When no session is active and the chat empty state is visible, hide the
+   legacy dashboard-home intro that was rendering inside .dp-main. */
+.dp-main > .home-intro,
+.dp-main > #dashboard-home-card,
+.dp-main > .dashboard-home-intro {
+  display: none !important;
+}
+
+/* ── Parallel mode: grid sits inside dp-shell like dp-main did ──────── */
+.dp-shell > .chat-grid {
+  flex: 1;
+  min-height: 0;
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+}
+
+/* All parallel-pane / composer styling now lives in
+   public/css/ui/parallel-panes.css (own class namespace, no legacy
+   cascade fights). Don't add .chat-pane / .input-bar rules here. */
+
+/* Brief dropdown must respect [hidden] — display:flex in CSS overrides browser default */
+.writing-ctx-brief-dropdown[hidden] {
+  display: none !important;
+}
+
+/* Writing studio brief dropdown — inputs need a visible border */
+.writing-ctx-brief-dropdown .writing-ctx-inline-input {
+  border: 1px solid color-mix(in srgb, var(--border-color, #c8b89a) 80%, transparent) !important;
+  background: color-mix(in srgb, var(--background-color, #faf8f5) 92%, transparent) !important;
+}

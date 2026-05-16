@@ -1,0 +1,167 @@
+/* ── Glass Theme Border Options for Tip Cards ────────── */
+
+/* OPTION 1: Subtle gradient border with glass shine */
+.tips-feed-card.glass-option-1 {
+  background: linear-gradient(
+    to bottom right,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.03)
+  );
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: none;
+  position: relative;
+}
+
+.tips-feed-card.glass-option-1::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(
+    to bottom,
+    rgba(212, 137, 26, 0.6),  /* Golden accent */
+    rgba(212, 137, 26, 0.3)
+  );
+  border-radius: 3px 0 0 3px;
+}
+
+/* OPTION 2: Glowing edge with blur effect */
+.tips-feed-card.glass-option-2 {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.02)
+  );
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 2px solid transparent;
+  background-clip: padding-box;
+  position: relative;
+}
+
+.tips-feed-card.glass-option-2::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: -1px;
+  bottom: -1px;
+  width: 4px;
+  background: linear-gradient(
+    to bottom,
+    rgba(212, 137, 26, 0.8),
+    rgba(212, 137, 26, 0.2)
+  );
+  filter: blur(2px);
+  border-radius: 4px 0 0 4px;
+}
+
+/* OPTION 3: Inset glass border with light refraction */
+.tips-feed-card.glass-option-3 {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(8px) saturate(1.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: none;
+  box-shadow:
+    inset 3px 0 0 0 rgba(212, 137, 26, 0.4),
+    inset 4px 0 4px -2px rgba(212, 137, 26, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* OPTION 4: Minimal glass with category color dots */
+.tips-feed-card.glass-option-4 {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding-left: 20px;
+  position: relative;
+}
+
+.tips-feed-card.glass-option-4::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(212, 137, 26, 0.4);
+}
+
+/* OPTION 5: Full glass card with no left accent */
+.tips-feed-card.glass-option-5 {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.04)
+  );
+  backdrop-filter: blur(16px) saturate(1.2);
+  border: 0.5px solid rgba(255, 255, 255, 0.15);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.2),
+    0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.tips-feed-card.glass-option-5:hover {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.1),
+    rgba(255, 255, 255, 0.05)
+  );
+  border-color: rgba(212, 137, 26, 0.3);
+}
+
+/* Dark theme variants */
+html[data-theme="dark"] .tips-feed-card.glass-option-1 {
+  background: linear-gradient(
+    to bottom right,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.01)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme="dark"] .tips-feed-card.glass-option-2 {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.03),
+    rgba(255, 255, 255, 0.01)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .tips-feed-card.glass-option-3 {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .tips-feed-card.glass-option-4 {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme="dark"] .tips-feed-card.glass-option-5 {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.02)
+  );
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Apply to all tip cards including TOTD and RSS cards */
+.tips-feed-totd.glass-option-1,
+.tips-feed-rss-card.glass-option-1 {
+  /* Same as option 1 */
+}
+
+.tips-feed-totd.glass-option-2,
+.tips-feed-rss-card.glass-option-2 {
+  /* Same as option 2 */
+}
+
+/* Etc for other options... */

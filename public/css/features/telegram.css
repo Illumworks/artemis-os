@@ -1,0 +1,127 @@
+/* Telegram Settings Modal */
+.telegram-modal {
+  max-width: 480px;
+}
+
+.telegram-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.telegram-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.telegram-toggle-row input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.telegram-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telegram-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.telegram-field input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.telegram-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.telegram-status {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  text-align: center;
+  transition: opacity 0.2s;
+}
+
+.telegram-status.success {
+  color: var(--success);
+  background: rgba(212, 137, 26, 0.1);
+  border: 1px solid rgba(212, 137, 26, 0.2);
+}
+
+.telegram-status.error {
+  color: var(--error);
+  background: rgba(237, 51, 59, 0.1);
+  border: 1px solid rgba(237, 51, 59, 0.2);
+}
+
+.telegram-status.hidden {
+  display: none;
+}
+
+.telegram-notify-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.telegram-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.telegram-notify-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.telegram-notify-grid .telegram-toggle-row {
+  font-size: 12px;
+}
+
+.telegram-help {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.telegram-help summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.telegram-help summary:hover {
+  color: var(--accent);
+}
+
+.telegram-help ol {
+  margin: 8px 0 0 16px;
+  line-height: 1.8;
+}
+
+.telegram-help code {
+  background: var(--bg-deep);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}

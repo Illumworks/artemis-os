@@ -12,12 +12,12 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_root(client: AsyncClient) -> None:
+    # Phase E1: GET / now serves the static frontend (index.html) via
+    # StaticFiles(html=True). The JSON root handler was removed when
+    # StaticFiles was mounted. The shell should return 200 with text/html.
     response = await client.get("/")
     assert response.status_code == 200
-    body = response.json()
-    assert body["name"] == "Artemis OS"
-    assert "version" in body
-    assert body["env"] in {"development", "test", "production"}
+    assert "text/html" in response.headers["content-type"]
 
 
 async def test_healthz(client: AsyncClient) -> None:

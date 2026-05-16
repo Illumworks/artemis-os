@@ -1,0 +1,59 @@
+/* ── Artemis styles ───────────────────────────────────── */
+/* Split into focused modules loaded via @import          */
+
+@import url("css/core/variables.css");
+/* Liquid-glass is legacy Claudeck chrome — its global `button, .btn`
+   rule was stamping every button in the shell with a blurred-glass
+   pill (12px radius, backdrop-filter, inset highlight, ::before sheen)
+   that fights the approved artemis-os treatments. Removed to stop the
+   whack-a-mole overrides. SVG filter defs in index.html remain unused
+   but harmless. */
+/* @import url("css/core/liquid-glass.css"); */
+/* @import url("css/core/liquid-glass-overrides.css"); */
+@import url("css/core/reset.css");
+@import url("css/core/components.css");
+@import url("css/core/layout.css");
+@import url("css/ui/sessions.css");
+@import url("css/ui/messages.css");
+@import url("css/ui/modals.css");
+@import url("css/ui/toolbox.css");
+@import url("css/ui/commands.css");
+@import url("css/ui/file-picker.css");
+@import url("css/features/home.css");
+@import url("css/features/page-layout.css");
+@import url("css/features/jira-board.css");
+@import url("css/features/okr.css");
+@import url("css/features/operations.css");
+@import url("css/features/writing-studio.css");
+@import url("css/features/cost-dashboard.css");
+@import url("css/features/analytics.css");
+@import url("css/core/theme.css");
+@import url("css/core/print.css");
+@import url("css/features/background-sessions.css");
+@import url("css/ui/permissions.css");
+@import url("css/features/dev-project-files.css");
+
+@import url("css/panels/mcp-manager.css");
+@import url("css/ui/settings.css");
+@import url("css/ui/image-attachments.css");
+@import url("css/panels/tips-feed.css");
+@import url("css/ui/context-gauge.css");
+
+@import url("css/panels/assistant-bot.css");
+@import url("css/features/agents.css");
+@import url("css/features/agent-monitor.css");
+@import url("css/features/agent-sidebar.css");
+@import url("css/ui/status-bar.css");
+@import url("css/ui/notification-bell.css");
+@import url("css/ui/input-history.css");
+@import url("css/ui/worktree.css");
+@import url("css/panels/memory.css");
+@import url("css/panels/dev-docs.css");
+@import url("css/panels/skills-manager.css");
+@import url("css/features/telegram.css");
+@import url("css/features/voice-input.css");
+@import url("css/features/retro-terminal.css");
+@import url("css/features/welcome.css");
+@import url("css/features/setup.css");
+@import url("css/features/tour.css");
+@import url("css/core/responsive.css");

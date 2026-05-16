@@ -1,0 +1,1420 @@
+/* ── Critical Z-Index and Glass Overrides ────────────── */
+/* This file ensures dropdowns appear above everything else */
+
+/* Chat area must be relative for overlay positioning */
+.chat-area {
+  position: relative !important;
+}
+
+/* iMessage-style fade at top of chat - no blur to avoid hard line */
+.chat-area::before {
+  content: "" !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 140px !important;
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0%,
+    var(--bg) 15%,
+    rgba(249, 248, 245, 0.98) 25%,
+    rgba(249, 248, 245, 0.92) 35%,
+    rgba(249, 248, 245, 0.8) 45%,
+    rgba(249, 248, 245, 0.6) 60%,
+    rgba(249, 248, 245, 0.3) 75%,
+    rgba(249, 248, 245, 0.1) 90%,
+    transparent 100%
+  ) !important;
+  z-index: 400 !important;
+  pointer-events: none !important;
+}
+
+/* Add a secondary layer for enhanced fade effect */
+.chat-area::after {
+  content: "" !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 60px !important;
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0%,
+    rgba(249, 248, 245, 0.5) 50%,
+    transparent 100%
+  ) !important;
+  z-index: 399 !important;
+  pointer-events: none !important;
+  mix-blend-mode: normal !important;
+}
+
+/* Dark theme fade */
+html[data-theme="dark"] .chat-area::before {
+  background: linear-gradient(
+    to bottom,
+    var(--bg-deep) 0%,
+    var(--bg-deep) 15%,
+    rgba(13, 17, 23, 0.98) 25%,
+    rgba(13, 17, 23, 0.92) 35%,
+    rgba(13, 17, 23, 0.8) 45%,
+    rgba(13, 17, 23, 0.6) 60%,
+    rgba(13, 17, 23, 0.3) 75%,
+    rgba(13, 17, 23, 0.1) 90%,
+    transparent 100%
+  ) !important;
+}
+
+html[data-theme="dark"] .chat-area::after {
+  background: linear-gradient(
+    to bottom,
+    var(--bg-deep) 0%,
+    rgba(13, 17, 23, 0.5) 50%,
+    transparent 100%
+  ) !important;
+}
+
+/* Ensure overlays sit above the fade */
+.chat-overlay-left,
+.chat-overlay-right {
+  z-index: 500 !important;
+}
+
+/* Mobile adjustments - smaller fade height */
+@media (max-width: 640px) {
+  .chat-area::before {
+    height: 100px !important;
+  }
+
+  .chat-area::after {
+    height: 50px !important;
+  }
+}
+
+/* Ensure home page and other content starts below fade */
+.home-page,
+.parallel-container {
+  padding-top: 80px !important;
+}
+
+@media (max-width: 640px) {
+  .home-page,
+  .parallel-container {
+    padding-top: 60px !important;
+  }
+}
+
+/* Sidebar toggle - hidden on desktop, visible on mobile */
+.sidebar-toggle-btn {
+  display: none !important;
+}
+
+/* Show hamburger only on mobile/tablet */
+@media (max-width: 1024px) {
+  .sidebar-toggle-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 30px !important;
+    height: 30px !important;
+    border-radius: 8px !important;
+    background: none !important;
+    border: none !important;
+    color: var(--text-dim) !important;
+    cursor: pointer !important;
+    transition: all 0.15s !important;
+    flex-shrink: 0 !important;
+  }
+
+  .sidebar-toggle-btn:hover {
+    background: rgba(var(--accent-rgb), 0.08) !important;
+    color: var(--text) !important;
+  }
+}
+
+/* Fix header dropdown z-index hierarchy */
+.top-header {
+  z-index: 1000 !important;
+  position: relative;
+}
+
+.header-dropdown {
+  position: relative;
+  z-index: 1001 !important;
+}
+
+/* MILKY WHITE FROSTED GLASS for dropdowns - maximum opacity and blur */
+.header-dropdown-menu {
+  /* Light theme: Nearly opaque white with heavy frosting */
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.98),
+    rgba(252, 250, 248, 0.96)
+  ) !important;
+  backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.9) !important;
+  border-radius: 16px !important;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.9),
+    inset 0 1px 2px rgba(255, 255, 255, 0.6),
+    0 20px 50px rgba(0, 0, 0, 0.15),
+    0 8px 20px rgba(0, 0, 0, 0.08) !important;
+  z-index: 999999 !important;
+  position: absolute !important;
+}
+
+/* Add extra frosting layer with pseudo-element */
+.header-dropdown-menu::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.4),
+    rgba(255, 255, 255, 0.2)
+  ) !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+/* Dark theme dropdown glass - also more opaque */
+html[data-theme="dark"] .header-dropdown-menu {
+  background: linear-gradient(
+    to bottom,
+    rgba(40, 36, 32, 0.98),
+    rgba(35, 31, 28, 0.96)
+  ) !important;
+  backdrop-filter: blur(80px) saturate(1.1) brightness(0.95) !important;
+  -webkit-backdrop-filter: blur(80px) saturate(1.1) brightness(0.95) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+html[data-theme="dark"] .header-dropdown-menu::before {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.02)
+  ) !important;
+}
+
+.header-submenu {
+  /* Light theme: Milky white frosted submenu */
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.97),
+    rgba(252, 250, 248, 0.95)
+  ) !important;
+  backdrop-filter: blur(70px) saturate(1.2) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(70px) saturate(1.2) brightness(1.05) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.8) !important;
+  border-radius: 14px !important;
+  z-index: 999999 !important;
+  position: absolute !important;
+  box-shadow:
+    inset 0 1px 3px rgba(255, 255, 255, 0.8),
+    0 16px 40px rgba(0, 0, 0, 0.12),
+    0 6px 16px rgba(0, 0, 0, 0.06) !important;
+}
+
+.header-submenu::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: rgba(255, 255, 255, 0.3) !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+html[data-theme="dark"] .header-submenu {
+  background: linear-gradient(
+    to bottom,
+    rgba(40, 36, 32, 0.97),
+    rgba(35, 31, 28, 0.95)
+  ) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+html[data-theme="dark"] .header-submenu::before {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Fix dropdown items background */
+.header-dropdown-item {
+  background: transparent !important;
+  position: relative;
+  z-index: 1;
+  border-radius: 10px !important;
+}
+
+.header-dropdown-item:hover {
+  background: rgba(var(--accent-rgb), 0.1) !important;
+}
+
+.header-submenu-item {
+  background: transparent !important;
+  border-radius: 8px !important;
+}
+
+.header-submenu-item:hover {
+  background: rgba(var(--accent-rgb), 0.12) !important;
+}
+
+.header-submenu-item.active {
+  background: rgba(var(--accent-rgb), 0.08) !important;
+}
+
+/* Notification bell dropdown */
+.notif-bell {
+  position: relative;
+  z-index: 1002 !important;
+}
+
+.notif-dropdown {
+  /* Milky white frosted glass for notifications */
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.98),
+    rgba(252, 250, 248, 0.96)
+  ) !important;
+  backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.9) !important;
+  border-radius: 16px !important;
+  z-index: 999999 !important;
+  position: absolute !important;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.9),
+    inset 0 1px 2px rgba(255, 255, 255, 0.6),
+    0 20px 50px rgba(0, 0, 0, 0.15),
+    0 8px 20px rgba(0, 0, 0, 0.08) !important;
+}
+
+.notif-dropdown::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.4),
+    rgba(255, 255, 255, 0.2)
+  ) !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+html[data-theme="dark"] .notif-dropdown {
+  background: linear-gradient(
+    to bottom,
+    rgba(40, 36, 32, 0.98),
+    rgba(35, 31, 28, 0.96)
+  ) !important;
+  backdrop-filter: blur(80px) saturate(1.1) brightness(0.95) !important;
+  -webkit-backdrop-filter: blur(80px) saturate(1.1) brightness(0.95) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+html[data-theme="dark"] .notif-dropdown::before {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.02)
+  ) !important;
+}
+
+/* Main content area should be below dropdowns */
+.chat-area,
+.main-content,
+.messages {
+  position: relative;
+  z-index: 10 !important;
+}
+
+/* Input bar should be above chat but below dropdowns */
+.input-bar {
+  position: relative;
+  z-index: 100 !important;
+}
+
+/* Sidebar should be below dropdowns on desktop, but above on mobile */
+.sidebar {
+  z-index: 50;
+}
+
+/* Mobile override for sidebar to appear above glass panels */
+@media (max-width: 1024px) {
+  body.sidebar-open .sidebar {
+    z-index: 200 !important;
+  }
+  #sidebar-backdrop {
+    z-index: 190 !important;
+  }
+}
+
+/* Theme toggle icon visibility fix */
+.theme-toggle-btn {
+  color: #D4891A !important;
+}
+
+.theme-toggle-btn svg {
+  color: #D4891A !important;
+}
+
+/* Right panel above fade overlay but below dropdowns */
+.right-panel {
+  z-index: 501 !important;
+  position: relative !important;
+}
+
+/* Tips feed panel specifically above fade overlay */
+.tips-feed-panel {
+  z-index: 501 !important;
+  position: relative !important;
+}
+
+/* Ensure all tooltips are on top */
+.tooltip,
+[data-tooltip]::after,
+.meta-label {
+  z-index: 9999999 !important;
+}
+
+/* Input meta — inline in toolbar, not floating above the card */
+.input-meta {
+  position: static !important;
+  bottom: auto !important;
+  background: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  z-index: auto !important;
+  gap: 4px !important;
+}
+
+.input-meta-item {
+  background: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 2px !important;
+  font-size: 10px !important;
+  color: var(--text-dim) !important;
+  opacity: 0.7;
+}
+
+.input-meta-sep {
+  opacity: 0.3;
+}
+
+.input-meta-kbd {
+  opacity: 0.5;
+}
+
+/* Session search dropdown */
+.session-search-dropdown {
+  /* Milky white frosted glass */
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.98),
+    rgba(252, 250, 248, 0.96)
+  ) !important;
+  backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.9) !important;
+  z-index: 999999 !important;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.9),
+    0 20px 50px rgba(0, 0, 0, 0.15),
+    0 8px 20px rgba(0, 0, 0, 0.08) !important;
+}
+
+.session-search-dropdown::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: rgba(255, 255, 255, 0.35) !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+html[data-theme="dark"] .session-search-dropdown {
+  background: linear-gradient(
+    to bottom,
+    rgba(40, 36, 32, 0.98),
+    rgba(35, 31, 28, 0.96)
+  ) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+html[data-theme="dark"] .session-search-dropdown::before {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Toolbox panel */
+.toolbox-panel {
+  /* Milky white frosted glass for toolbox */
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.97),
+    rgba(252, 250, 248, 0.95)
+  ) !important;
+  backdrop-filter: blur(75px) saturate(1.2) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(75px) saturate(1.2) brightness(1.05) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.85) !important;
+  z-index: 999999 !important;
+  position: absolute !important;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.8),
+    0 20px 50px rgba(0, 0, 0, 0.15),
+    0 8px 20px rgba(0, 0, 0, 0.08) !important;
+}
+
+.toolbox-panel::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: rgba(255, 255, 255, 0.3) !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+html[data-theme="dark"] .toolbox-panel {
+  background: linear-gradient(
+    to bottom,
+    rgba(40, 36, 32, 0.97),
+    rgba(35, 31, 28, 0.95)
+  ) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+html[data-theme="dark"] .toolbox-panel::before {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Modal overlays should be on top of everything except tooltips */
+.modal-overlay {
+  z-index: 999990 !important;
+}
+
+.modal {
+  z-index: 999991 !important;
+}
+
+/* Command palette */
+.command-palette {
+  z-index: 999992 !important;
+}
+
+/* Fix any overflow issues that might hide dropdowns */
+.top-header {
+  overflow: visible !important;
+}
+
+.header-dropdown {
+  overflow: visible !important;
+}
+
+.header-right {
+  overflow: visible !important;
+}
+
+/* Ensure dropdown trigger buttons don't have backgrounds that hide the glass */
+.header-dropdown-trigger {
+  background: rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+}
+
+.header-dropdown-trigger:hover,
+.header-dropdown.open .header-dropdown-trigger {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme="dark"] .header-dropdown-trigger {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+
+html[data-theme="dark"] .header-dropdown-trigger:hover,
+html[data-theme="dark"] .header-dropdown.open .header-dropdown-trigger {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Generic dropdown menu milky white frosted glass */
+.dropdown-menu {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.98),
+    rgba(252, 250, 248, 0.96)
+  ) !important;
+  backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(80px) saturate(1.2) brightness(1.05) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.9) !important;
+  border-radius: 16px !important;
+  z-index: 999999 !important;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.9),
+    0 20px 50px rgba(0, 0, 0, 0.15),
+    0 8px 20px rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-theme="dark"] .dropdown-menu {
+  background: linear-gradient(
+    to bottom,
+    rgba(40, 36, 32, 0.98),
+    rgba(35, 31, 28, 0.96)
+  ) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Remove any solid backgrounds from dropdown containers */
+/* This is now redundant as we're applying milky glass to all */
+.header-dropdown-menu,
+.header-submenu,
+.notif-dropdown,
+.session-search-dropdown,
+.dropdown-menu,
+.toolbox-panel {
+  /* Backgrounds are now properly set above with milky white frosted glass */
+  background-color: transparent !important;
+}
+
+/* Fix input bar layout and positioning */
+.input-bar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 16px 20px !important;
+  margin: 12px auto !important;
+  max-width: min(calc(100% - 48px), calc(var(--chat-max-w) + 48px)) !important;
+  position: relative !important;
+  z-index: 100 !important;
+}
+
+/* Status bar above input should float too */
+.status-bar,
+.input-status-bar {
+  background: var(--glass-fill) !important;
+  backdrop-filter: blur(30px) saturate(1.5) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(1.5) !important;
+  border: 0.5px solid var(--glass-border) !important;
+  border-radius: 16px !important;
+  padding: 8px 16px !important;
+  margin: 0 auto 8px !important;
+  max-width: min(calc(100% - 48px), calc(var(--chat-max-w) + 48px)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 16px rgba(0, 0, 0, 0.08),
+    0 1px 4px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Fix text contrast in dropdowns */
+.header-dropdown-item,
+.header-submenu-item {
+  color: var(--text) !important;
+  font-weight: 500 !important;
+}
+
+.header-dropdown-item-value {
+  color: var(--accent) !important;
+  font-weight: 600 !important;
+}
+
+/* Ensure tips feed and other cards are readable */
+.tips-card,
+.tip-card {
+  /* Milky white frosted glass for cards */
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.96),
+    rgba(252, 250, 248, 0.94)
+  ) !important;
+  backdrop-filter: blur(60px) saturate(1.2) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(60px) saturate(1.2) brightness(1.05) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.8) !important;
+  border-radius: 16px !important;
+  padding: 16px !important;
+  box-shadow:
+    inset 0 1px 3px rgba(255, 255, 255, 0.7),
+    0 8px 24px rgba(0, 0, 0, 0.1),
+    0 2px 8px rgba(0, 0, 0, 0.05) !important;
+}
+
+html[data-theme="dark"] .tips-card,
+html[data-theme="dark"] .tip-card {
+  background: linear-gradient(
+    to bottom,
+    rgba(40, 36, 32, 0.96),
+    rgba(35, 31, 28, 0.94)
+  ) !important;
+  backdrop-filter: blur(60px) saturate(1.1) brightness(0.95) !important;
+  -webkit-backdrop-filter: blur(60px) saturate(1.1) brightness(0.95) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Fix chat area width to prevent overflow */
+.chat-area {
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+}
+
+.messages {
+  max-width: 100% !important;
+  padding: 80px 20px 32px !important;
+}
+
+/* Additional padding on mobile */
+@media (max-width: 640px) {
+  .messages {
+    padding-top: 60px !important;
+  }
+}
+
+/* ── Agent Sidebar — Liquid Glass Style ─────────────── */
+
+.agent-sidebar {
+  background: var(--glass-fill-heavy) !important;
+  backdrop-filter: blur(60px) saturate(1.8) brightness(1.08) !important;
+  -webkit-backdrop-filter: blur(60px) saturate(1.8) brightness(1.08) !important;
+  border-right: 0.5px solid rgba(var(--glass-border), 0.5) !important;
+  box-shadow:
+    inset -1px 0 0 rgba(255, 255, 255, 0.05),
+    4px 0 30px rgba(0, 0, 0, 0.08) !important;
+}
+
+.agent-sidebar-header {
+  background: transparent !important;
+  border-bottom: 0.5px solid rgba(var(--glass-border), 0.3) !important;
+}
+
+/* Cards: flat rows, no box/border/shadow */
+.agent-sidebar-body .toolbox-card {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  padding: 8px 10px !important;
+  transition: background 0.18s ease !important;
+  overflow: visible !important;
+}
+
+.agent-sidebar-body .toolbox-card:hover {
+  background: rgba(var(--accent-rgb), 0.06) !important;
+  border: none !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* No colored left borders on any card type */
+.agent-sidebar-body .orch-card,
+.agent-sidebar-body .monitor-card,
+.agent-sidebar-body .chain-card,
+.agent-sidebar-body .dag-card,
+.agent-sidebar-body .wf-card,
+.agent-sidebar-body .agent-card {
+  border-left: none !important;
+}
+
+/* Readable text */
+.agent-sidebar-body .toolbox-card-title {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: var(--text) !important;
+  opacity: 1 !important;
+}
+
+.agent-sidebar-body .toolbox-card-desc {
+  color: var(--text-dim) !important;
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+  margin-top: 2px !important;
+}
+
+/* Section headers */
+.agent-sidebar-body .agent-section-header {
+  font-size: 9px !important;
+  letter-spacing: 0.14em !important;
+  color: var(--text-dim) !important;
+  opacity: 0.55 !important;
+  padding: 14px 10px 4px !important;
+  border-bottom: none !important;
+  margin: 0 !important;
+}
+
+/* Add buttons */
+.agent-sidebar-body .toolbox-card-add {
+  background: transparent !important;
+  border: 0.5px dashed rgba(var(--glass-border), 0.4) !important;
+  border-radius: 10px !important;
+  color: var(--text-dim) !important;
+  font-size: 11px !important;
+  padding: 6px 12px !important;
+  margin: 4px 0 !important;
+  transition: all 0.2s ease !important;
+  box-shadow: none !important;
+}
+
+.agent-sidebar-body .toolbox-card-add:hover {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  background: rgba(var(--accent-rgb), 0.05) !important;
+  transform: none !important;
+}
+
+/* Step tags: keep in one line, clip if too wide */
+.agent-sidebar-body .chain-steps-preview {
+  flex-wrap: nowrap !important;
+  overflow: hidden !important;
+  mask-image: linear-gradient(to right, black 85%, transparent 100%) !important;
+  -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%) !important;
+}
+
+.agent-sidebar-body .chain-step-tag {
+  background: rgba(var(--accent-rgb), 0.07) !important;
+  border: none !important;
+  border-radius: 5px !important;
+  color: var(--text-dim) !important;
+  font-size: 9px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.agent-sidebar-body .chain-arrow {
+  flex-shrink: 0 !important;
+}
+
+/* Edit/delete action buttons — strip glass style, keep minimal */
+.agent-sidebar-body .agent-card-edit,
+.agent-sidebar-body .agent-card-delete {
+  background: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 4px !important;
+}
+
+.agent-sidebar-body .agent-card-edit:hover {
+  background: rgba(var(--accent-rgb), 0.1) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.agent-sidebar-body .agent-card-delete:hover {
+  background: rgba(237, 51, 59, 0.1) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.agent-sidebar-body .agent-card-actions {
+  top: 6px !important;
+  right: 6px !important;
+}
+
+.agent-sidebar-close {
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.agent-sidebar-close:hover {
+  background: rgba(var(--accent-rgb), 0.08) !important;
+  color: var(--text) !important;
+  transform: none !important;
+}
+
+/* Scrollbar — subtle and visible */
+.agent-sidebar-body::-webkit-scrollbar {
+  width: 3px !important;
+}
+
+.agent-sidebar-body::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.agent-sidebar-body::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.25) !important;
+  border-radius: 4px !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.agent-sidebar-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--accent-rgb), 0.45) !important;
+}
+
+/* ── Attachment Badge — fix z-index stacking ─────────── */
+
+/* The toolbox-strip needs a stacking context so the badge
+   on #attach-btn sits above the sibling buttons */
+.toolbox-strip {
+  position: relative !important;
+  z-index: 0 !important;
+}
+
+#attach-btn {
+  overflow: visible !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.attach-badge {
+  top: -5px !important;
+  right: -5px !important;
+  z-index: 10 !important;
+  position: absolute !important;
+}
+
+/* ── Floating overlay glass styles ─────────────────────── */
+
+.chat-overlay-btn,
+.notif-bell-btn,
+.mobile-hamburger-btn {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 40px !important;
+  height: 40px !important;
+  background: var(--glass-fill-light) !important;
+  backdrop-filter: blur(20px) saturate(1.6) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.6) !important;
+  border: 0.5px solid var(--glass-border) !important;
+  border-radius: 12px !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-dim) !important;
+  cursor: pointer !important;
+  position: relative !important;
+  overflow: visible !important;
+}
+
+.chat-overlay-btn:hover,
+.notif-bell-btn:hover,
+.mobile-hamburger-btn:hover {
+  background: var(--glass-fill) !important;
+  border-color: rgba(var(--accent-rgb), 0.4) !important;
+  color: var(--text) !important;
+}
+
+.chat-overlay-btn.active,
+.notif-bell-btn.has-unread {
+  background: var(--accent-dim) !important;
+  border-color: rgba(var(--accent-rgb), 0.5) !important;
+  color: var(--accent) !important;
+}
+
+/* Ensure SVG icons are visible */
+.chat-overlay-btn svg,
+.notif-bell-btn svg,
+.mobile-hamburger-btn svg {
+  width: 18px !important;
+  height: 18px !important;
+  stroke: currentColor !important;
+  fill: none !important;
+  flex-shrink: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Desktop adjustments */
+@media (min-width: 1025px) {
+  /* Ensure hamburger never shows on desktop */
+  .mobile-hamburger-btn {
+    display: none !important;
+  }
+
+  .chat-overlay-btn,
+  .notif-bell-btn {
+    width: 34px !important;
+    height: 34px !important;
+  }
+
+  .chat-overlay-btn svg,
+  .notif-bell-btn svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+
+  /* Project pill stays left-aligned on desktop */
+  .header-project-pill {
+    position: relative !important;
+    left: auto !important;
+    transform: none !important;
+    max-width: 380px !important;
+  }
+
+  .header-project-pill-btn {
+    height: 44px !important;
+    padding: 10px 20px !important;
+    font-size: 15px !important;
+    min-width: 180px !important;
+  }
+
+  .chat-overlay-left {
+    width: auto !important;
+    justify-content: flex-start !important;
+  }
+}
+
+.chat-overlay-left,
+.chat-overlay-right {
+  overflow: visible !important;
+}
+
+/* Hide cost display on mobile to save space */
+@media (max-width: 640px) {
+  .term-costs {
+    display: none !important;
+  }
+
+  .chat-overlay-right {
+    gap: 6px !important;
+  }
+}
+
+/* Force dropdown to open downward on mobile */
+@media (max-width: 1024px) {
+  #session-dropdown-menu {
+    top: calc(100% + 6px) !important;
+    bottom: auto !important;
+  }
+
+  .header-dropdown-menu--up {
+    top: calc(100% + 6px) !important;
+    bottom: auto !important;
+  }
+
+  /* Fix pill centering on mobile */
+  .header-project-pill {
+    position: static !important;
+    transform: none !important;
+    left: auto !important;
+    flex: 1 !important;
+    display: flex !important;
+    justify-content: center !important;
+    margin: 0 8px !important;
+  }
+}
+
+.header-project-pill-btn {
+  background: var(--glass-fill-light) !important;
+  backdrop-filter: blur(20px) saturate(1.6) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.6) !important;
+  border: 0.5px solid var(--glass-border) !important;
+  border-radius: 24px !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 4px !important;
+  width: auto !important;
+  min-width: 220px !important;
+  max-width: 420px !important;
+  height: auto !important;
+  padding: 12px 16px !important;
+  overflow: hidden !important;
+}
+
+/* Mobile specific pill sizing */
+@media (max-width: 1024px) {
+  .header-project-pill-btn {
+    min-width: 180px !important;
+    width: auto !important;
+    height: auto !important;
+    padding: 10px 14px !important;
+    font-size: 14px !important;
+    overflow: hidden !important;
+    max-width: 260px !important;
+  }
+
+  /* Fix text visibility on mobile */
+  .header-pill-name {
+    display: block !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+
+  /* Hide tips button on mobile to save space */
+  #tips-feed-toggle-btn {
+    display: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .header-project-pill-btn {
+    height: auto !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    min-width: 160px !important;
+    overflow: hidden !important;
+    max-width: 190px !important;
+  }
+
+  .header-pill-name {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+}
+
+.header-project-pill-btn:hover,
+.header-project-pill.open .header-project-pill-btn {
+  background: var(--glass-fill) !important;
+  border-color: rgba(var(--accent-rgb), 0.5) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 12px rgba(var(--accent-rgb), 0.12) !important;
+}
+
+/* Ensure pill content is visible */
+.header-project-pill-btn > * {
+  flex-shrink: 0 !important;
+  width: 100% !important;
+}
+
+.header-pill-name {
+  display: block !important;
+  min-width: 0 !important;
+  line-height: 1.2 !important;
+}
+
+/* ── Sidebar user footer — glass style ──────────────── */
+
+.sidebar-user-footer {
+  background: transparent !important;
+  border-top: 0.5px solid rgba(var(--glass-border), 0.3) !important;
+}
+
+.sidebar-user-pill {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 12px !important;
+}
+
+.sidebar-user-pill:hover {
+  background: rgba(var(--accent-rgb), 0.07) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.sidebar-user-avatar {
+  background: rgba(var(--accent-rgb), 0.12) !important;
+  border: 1.5px solid rgba(var(--accent-rgb), 0.5) !important;
+  box-shadow: none !important;
+  min-width: 38px !important;
+  min-height: 38px !important;
+}
+
+.sidebar-user-footer {
+  overflow: visible !important;
+}
+
+.sidebar-user-pill {
+  overflow: visible !important;
+}
+
+/* Mobile-specific adjustments for user account pill */
+@media (max-width: 640px) {
+  .sidebar-user-footer {
+    padding: 8px 10px !important;
+  }
+
+  .sidebar-user-pill {
+    padding: 8px 10px !important;
+    min-height: 48px !important;
+    gap: 10px !important;
+  }
+
+  .sidebar-user-avatar {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    font-size: 13px !important;
+  }
+
+  .sidebar-user-email {
+    font-size: 11px !important;
+  }
+
+  .sidebar-user-plan {
+    font-size: 10px !important;
+  }
+}
+
+/* Hide mobile hamburger button when in chat-only layouts */
+.chat-parallel .mobile-hamburger-btn,
+.agent-sidebar-open .mobile-hamburger-btn {
+  display: none !important;
+}
+
+/* ── Notification Toast - Liquid Glass Style ──────────── */
+
+.toast-container {
+  position: fixed !important;
+  top: 80px !important;
+  bottom: auto !important;
+  right: 16px !important;
+  left: auto !important;
+  z-index: 10000 !important;
+  max-width: 420px !important;
+}
+
+@media (max-width: 640px) {
+  .toast-container {
+    top: 60px !important;
+    right: 12px !important;
+    left: 60px !important;
+    max-width: none !important;
+  }
+}
+
+/* Individual toast with glass effect */
+.bg-toast {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 14px 16px !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(20px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.8) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.6) !important;
+  border-radius: 16px !important;
+  box-shadow:
+    0 0 24px rgba(122, 158, 142, 0.25),
+    0 8px 32px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+  min-width: 320px !important;
+  font-family: var(--font-sans) !important;
+  font-size: 14px !important;
+  animation: glassToastSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+/* Error toast - red glow */
+.bg-toast.toast-error {
+  box-shadow:
+    0 0 24px rgba(237, 51, 59, 0.3),
+    0 8px 32px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Info toast - blue glow */
+.bg-toast.toast-info {
+  box-shadow:
+    0 0 24px rgba(59, 130, 246, 0.25),
+    0 8px 32px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Warning toast - amber glow */
+.bg-toast.toast-warning {
+  box-shadow:
+    0 0 24px rgba(251, 191, 36, 0.3),
+    0 8px 32px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Dark theme toast */
+html[data-theme="dark"] .bg-toast {
+  background: rgba(30, 30, 30, 0.92) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow:
+    0 0 24px rgba(122, 158, 142, 0.2),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme="dark"] .bg-toast.toast-error {
+  box-shadow:
+    0 0 24px rgba(237, 51, 59, 0.25),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme="dark"] .bg-toast.toast-info {
+  box-shadow:
+    0 0 24px rgba(59, 130, 246, 0.2),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme="dark"] .bg-toast.toast-warning {
+  box-shadow:
+    0 0 24px rgba(251, 191, 36, 0.25),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Toast dot - matches the glow color */
+.bg-toast-dot {
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  background: rgba(122, 158, 142, 0.9) !important;
+  flex-shrink: 0 !important;
+  box-shadow: 0 0 12px rgba(122, 158, 142, 0.6) !important;
+}
+
+.bg-toast.toast-error .bg-toast-dot {
+  background: rgba(237, 51, 59, 0.9) !important;
+  box-shadow: 0 0 12px rgba(237, 51, 59, 0.6) !important;
+}
+
+.bg-toast.toast-info .bg-toast-dot {
+  background: rgba(59, 130, 246, 0.9) !important;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.6) !important;
+}
+
+.bg-toast.toast-warning .bg-toast-dot {
+  background: rgba(251, 191, 36, 0.9) !important;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.6) !important;
+}
+
+/* Toast content */
+.bg-toast-body {
+  flex: 1 !important;
+  min-width: 0 !important;
+}
+
+.bg-toast-label {
+  color: var(--text-dim) !important;
+  font-size: 11px !important;
+  margin-bottom: 3px !important;
+  font-weight: 500 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  opacity: 0.7 !important;
+}
+
+.bg-toast-title {
+  color: var(--text) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+}
+
+/* Action buttons */
+.bg-toast-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-left: 12px !important;
+}
+
+.bg-toast-actions button,
+.bg-toast-link {
+  padding: 6px 12px !important;
+  background: rgba(var(--accent-rgb), 0.1) !important;
+  border: 0.5px solid rgba(var(--accent-rgb), 0.2) !important;
+  border-radius: 10px !important;
+  color: var(--accent) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.bg-toast-actions button:hover,
+.bg-toast-link:hover {
+  background: rgba(var(--accent-rgb), 0.15) !important;
+  border-color: rgba(var(--accent-rgb), 0.3) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Close button */
+.bg-toast-close {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  border: none !important;
+  color: var(--text-dim) !important;
+  cursor: pointer !important;
+  transition: all 0.2s !important;
+  margin-left: 8px !important;
+}
+
+.bg-toast-close:hover {
+  background: rgba(var(--text-rgb, 38, 38, 38), 0.08) !important;
+  color: var(--text) !important;
+}
+
+/* Custom animations for glass effect */
+@keyframes glassToastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.bg-toast.toast-exit {
+  animation: glassToastSlideOut 0.3s ease-in forwards !important;
+}
+
+@keyframes glassToastSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.95);
+  }
+}
+
+/* Fix notification badge positioning */
+.notif-badge {
+  position: absolute !important;
+  top: -4px !important;
+  right: -4px !important;
+  min-width: 16px !important;
+  height: 16px !important;
+  padding: 0 4px !important;
+  background: var(--error) !important;
+  color: white !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  border-radius: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+}
+
+.notif-bell {
+  position: relative !important;
+}
+
+/* Remove wrapper div styles */
+.notif-bell {
+  display: contents !important;
+}

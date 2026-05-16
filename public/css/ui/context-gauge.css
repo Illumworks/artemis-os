@@ -1,0 +1,226 @@
+/* Context Window Gauge — compact SVG ring icon */
+
+/* ── Wrapper ─────────────────────────────────────────────────────── */
+.context-gauge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 6px;
+  transition: background 0.15s;
+  outline: none;
+}
+.context-gauge:hover,
+.context-gauge:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+.context-gauge.is-open {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── SVG ring ─────────────────────────────────────────────────────── */
+.cgr-svg {
+  flex-shrink: 0;
+  display: block;
+}
+
+.cgr-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 2.5;
+}
+
+.cgr-fill {
+  fill: none;
+  stroke: #4ade80;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transform-origin: 10px 10px;
+  transform: rotate(-90deg);
+  transition: stroke-dashoffset 0.35s ease, stroke 0.3s ease;
+}
+
+.cgr-fill.warning { stroke: #facc15; }
+.cgr-fill.critical { stroke: #f87171; }
+
+/* ── Label ────────────────────────────────────────────────────────── */
+.context-gauge-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, rgba(255,255,255,0.55));
+  white-space: nowrap;
+  transition: color 0.3s;
+  min-width: 26px;
+  text-align: right;
+}
+
+.context-gauge.warning .context-gauge-label { color: #facc15; }
+.context-gauge.critical .context-gauge-label { color: #f87171; }
+
+/* ── Hover popup ─────────────────────────────────────────────────── */
+.context-gauge-popup {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  width: 230px;
+  background: var(--surface-raised, #1e1a15);
+  border: 1px solid var(--rule, rgba(255,255,255,0.1));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -8px rgba(0,0,0,0.45), 0 2px 6px -2px rgba(0,0,0,0.2);
+  padding: 12px;
+  z-index: 200;
+  color: var(--text, rgba(255,255,255,0.88));
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+/* Arrow pointing down */
+.context-gauge-popup::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  right: 18px;
+  width: 8px;
+  height: 8px;
+  background: var(--surface-raised, #1e1a15);
+  border-right: 1px solid var(--rule, rgba(255,255,255,0.1));
+  border-bottom: 1px solid var(--rule, rgba(255,255,255,0.1));
+  transform: rotate(45deg);
+}
+
+.context-gauge:hover .context-gauge-popup,
+.context-gauge:focus-visible .context-gauge-popup,
+.context-gauge.is-open .context-gauge-popup {
+  display: block;
+}
+
+/* ── Popup content ───────────────────────────────────────────────── */
+.cgp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.cgp-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, rgba(255,255,255,0.45));
+}
+.cgp-pct {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text, rgba(255,255,255,0.88));
+}
+.context-gauge.warning .cgp-pct { color: #facc15; }
+.context-gauge.critical .cgp-pct { color: #f87171; }
+
+/* Mini bar */
+.cgp-bar-wrap {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.cgp-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: #4ade80;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.cgp-bar-fill.warning { background: #facc15; }
+.cgp-bar-fill.critical { background: #f87171; }
+
+/* Token rows */
+.cgp-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+.cgp-token-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text, rgba(255,255,255,0.88));
+}
+.cgp-dim {
+  color: var(--text-muted, rgba(255,255,255,0.4));
+}
+
+/* Guidance */
+.cgp-guidance {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted, rgba(255,255,255,0.55));
+}
+
+/* CTA */
+.cgp-cta {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  color: var(--text, rgba(255,255,255,0.88));
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cgp-cta:hover { background: rgba(255,255,255,0.12); }
+
+/* ── Light theme ─────────────────────────────────────────────────── */
+html[data-theme="light"] .cgr-track {
+  stroke: rgba(0, 0, 0, 0.12);
+}
+html[data-theme="light"] .cgr-fill { stroke: #22c55e; }
+html[data-theme="light"] .cgr-fill.warning { stroke: #ca8a04; }
+html[data-theme="light"] .cgr-fill.critical { stroke: #dc2626; }
+
+html[data-theme="light"] .context-gauge:hover,
+html[data-theme="light"] .context-gauge:focus-visible {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme="light"] .context-gauge-label {
+  color: var(--text-muted, rgba(0,0,0,0.45));
+}
+html[data-theme="light"] .context-gauge.warning .context-gauge-label { color: #ca8a04; }
+html[data-theme="light"] .context-gauge.critical .context-gauge-label { color: #dc2626; }
+
+html[data-theme="light"] .context-gauge-popup {
+  background: #fff;
+  border-color: rgba(0,0,0,0.1);
+  box-shadow: 0 12px 32px -8px rgba(0,0,0,0.18), 0 2px 6px -2px rgba(0,0,0,0.08);
+  color: #1e1a15;
+}
+html[data-theme="light"] .context-gauge-popup::after {
+  background: #fff;
+  border-color: rgba(0,0,0,0.1);
+}
+html[data-theme="light"] .cgp-bar-fill { background: #22c55e; }
+html[data-theme="light"] .cgp-bar-fill.warning { background: #ca8a04; }
+html[data-theme="light"] .cgp-bar-fill.critical { background: #dc2626; }
+html[data-theme="light"] .cgp-bar-wrap { background: rgba(0,0,0,0.08); }
+html[data-theme="light"] .cgp-token-row { color: #1e1a15; }
+html[data-theme="light"] .cgp-dim { color: rgba(0,0,0,0.4); }
+html[data-theme="light"] .cgp-title { color: rgba(0,0,0,0.45); }
+html[data-theme="light"] .cgp-guidance { color: rgba(0,0,0,0.55); }
+html[data-theme="light"] .cgp-cta {
+  background: rgba(0,0,0,0.04);
+  border-color: rgba(0,0,0,0.12);
+  color: #1e1a15;
+}
+html[data-theme="light"] .cgp-cta:hover { background: rgba(0,0,0,0.08); }

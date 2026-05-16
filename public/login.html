@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#F5F2ED">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Artemis :: authenticate</title>
+<link rel="icon" type="image/png" href="/icons/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --bg:            #F5F2ED;
+  --bg-secondary:  #FBF8F2;
+  --bg-deep:       #EDE7DE;
+  --bg-elevated:   #FFFDF8;
+  --border:        rgba(30, 26, 21, 0.08);
+  --border-subtle: rgba(30, 26, 21, 0.05);
+  --border-accent: rgba(212, 137, 26, 0.12);
+  --text:          #1E1A15;
+  --text-sec:      #6B5D4F;
+  --text-dim:      #9C8878;
+  --accent:        #D4891A;
+  --accent-ink:    #8A5A12;
+  --accent-dim:    rgba(212, 137, 26, 0.08);
+  --accent-mid:    rgba(212, 137, 26, 0.18);
+  --accent-glow:   rgba(212, 137, 26, 0.18);
+  --success:       #7A9E8E;
+  --error:         #C94A1F;
+  --font-display:  "Inter","Segoe UI",sans-serif;
+  --font-sans:     "Inter","Segoe UI",sans-serif;
+  --font-mono:     "JetBrains Mono","SF Mono","Fira Code","Cascadia Code","Consolas",monospace;
+  --radius:        4px;
+}
+
+html{height:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-sans);
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(212, 137, 26, 0.10), transparent 30%),
+    radial-gradient(circle at 80% 18%, rgba(94, 131, 114, 0.08), transparent 26%),
+    linear-gradient(180deg, rgba(255,255,255,0.58), transparent 24%);
+}
+
+/* ═══════════════════════════════════════
+   MAIN — centered Artemis brand + form
+   ═══════════════════════════════════════ */
+.main-area{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:48px 24px 120px;
+  gap:28px;
+  opacity:0;
+  animation:fadeIn .5s ease .1s forwards;
+}
+@keyframes fadeIn{to{opacity:1}}
+
+/* Brand block — Artemis wordmark + mark (matches .rail-brand in app) */
+.artemis-brand{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:18px;
+}
+.artemis-login-mark{
+  width:96px;
+  height:auto;
+  image-rendering:pixelated;
+  filter:drop-shadow(0 8px 24px rgba(212, 137, 26,.08));
+  transition:filter .3s;
+  cursor:pointer;
+}
+.artemis-login-mark:hover{
+  filter:drop-shadow(0 8px 32px rgba(212, 137, 26,.18));
+}
+.artemis-wordmark{
+  font-family:var(--font-display);
+  font-weight:800;
+  font-size:28px;
+  letter-spacing:0.14em;
+  color:var(--accent-ink);
+  line-height:1;
+}
+
+.artemis-login-text{
+  color:var(--text-sec);
+  font-size:14px;
+  font-family:var(--font-display);
+  text-align:center;
+  letter-spacing:.02em;
+  font-weight:500;
+}
+.artemis-login-hint{
+  color:var(--text-dim);
+  font-size:12px;
+  font-family:var(--font-sans);
+  text-align:center;
+  margin-top:-18px;
+}
+
+/* ═══════════════════════════════════════
+   INPUT BAR
+   ═══════════════════════════════════════ */
+.input-bar{
+  position:fixed;
+  bottom:48px;
+  left:50%;
+  transform:translateX(-50%);
+  width:100%;
+  max-width:520px;
+  padding:0 20px;
+  opacity:0;
+  animation:slideUp .4s ease .3s forwards;
+}
+@keyframes slideUp{
+  from{opacity:0;transform:translateX(-50%) translateY(12px)}
+  to{opacity:1;transform:translateX(-50%) translateY(0)}
+}
+
+.input-wrap{
+  background:var(--bg-elevated);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:4px;
+  box-shadow:0 1px 2px rgba(30,26,21,0.03);
+  transition:border-color .2s, box-shadow .2s;
+}
+.input-wrap:focus-within{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-dim);
+}
+
+.input-row{
+  display:flex;
+  align-items:center;
+  gap:0;
+}
+
+.token-input{
+  flex:1;
+  background:transparent;
+  border:none;
+  color:var(--text);
+  font-family:var(--font-mono);
+  font-size:13px;
+  padding:12px 14px;
+  outline:none;
+  min-width:0;
+}
+.token-input::placeholder{
+  color:var(--text-dim);
+}
+
+.submit-btn{
+  width:36px;height:36px;
+  border-radius:7px;
+  border:none;
+  background:var(--accent);
+  color:#1E1A15;
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+  transition:all .15s;
+  margin-right:2px;
+}
+.submit-btn:hover{
+  background:#C17D15;
+}
+.submit-btn:disabled{
+  opacity:.3;
+  cursor:not-allowed;
+}
+.submit-btn svg{
+  width:18px;height:18px;
+}
+
+.input-feedback{
+  font-family:var(--font-sans);
+  font-size:12px;
+  min-height:20px;
+  padding:8px 4px 0;
+  text-align:center;
+  transition:color .2s;
+}
+.input-feedback.error{ color:var(--error); }
+.input-feedback.success{ color:var(--success); }
+
+/* ═══════════════════════════════════════
+   STATUS BAR — matches app
+   ═══════════════════════════════════════ */
+.status-bar{
+  height:24px;
+  background:var(--bg-deep);
+  border-top:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  padding:0 12px;
+  font-family:var(--font-mono);
+  font-size:11px;
+  color:var(--text-dim);
+  flex-shrink:0;
+  user-select:none;
+  position:relative;
+}
+.status-bar::before{
+  content:"";
+  position:absolute;
+  top:-1px;left:0;right:0;
+  height:1px;
+  background:linear-gradient(90deg, transparent, var(--accent-glow), transparent);
+  opacity:.3;
+}
+.sb-left,.sb-right{
+  display:flex;align-items:center;gap:0;
+}
+.sb-left{flex:1;justify-content:flex-start;}
+.sb-right{flex:1;justify-content:flex-end;}
+.sb-item{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:0 8px;height:24px;white-space:nowrap;
+}
+.sb-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--accent);flex-shrink:0;
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{
+  0%,100%{opacity:.6}
+  50%{opacity:1}
+}
+.sb-sep{
+  width:1px;height:12px;
+  background:var(--border);flex-shrink:0;
+}
+
+/* Shake */
+@keyframes shake{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-6px)}
+  40%{transform:translateX(6px)}
+  60%{transform:translateX(-3px)}
+  80%{transform:translateX(3px)}
+}
+.shake{ animation:shake .35s ease-in-out; }
+
+/* Light theme */
+html[data-theme="light"] .status-bar::before{ opacity:0; }
+html[data-theme="light"] .input-wrap:focus-within{
+  box-shadow:0 0 0 3px var(--accent-dim);
+}
+
+/* Responsive */
+@media(max-width:640px){
+  .input-bar{max-width:100%;padding:0 16px;bottom:36px;}
+  .artemis-login-mark{width:72px}
+  .artemis-wordmark{font-size:22px;letter-spacing:0.12em;}
+}
+</style>
+<script>
+const t = localStorage.getItem('artemis-theme');
+if (t) document.documentElement.setAttribute('data-theme', t);
+</script>
+</head>
+<body>
+
+<main class="main-area">
+  <div class="artemis-brand">
+    <img src="/icons/artemis-mark.png" alt="Artemis" class="artemis-login-mark" id="artemis-login-mark">
+    <div class="artemis-wordmark">ARTEMIS</div>
+  </div>
+  <div class="artemis-login-text">Authenticate to continue</div>
+  <div class="artemis-login-hint">Enter the access token from your terminal</div>
+</main>
+
+<div class="input-bar">
+  <form id="loginForm" autocomplete="off">
+    <div class="input-wrap" id="inputWrap">
+      <div class="input-row">
+        <input
+          type="password"
+          class="token-input"
+          id="tokenInput"
+          placeholder="Paste access token"
+          autocomplete="off"
+          spellcheck="false"
+          autofocus
+        >
+        <button type="submit" class="submit-btn" id="loginBtn" aria-label="Authenticate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="input-feedback" id="feedback"></div>
+  </form>
+</div>
+
+<div class="status-bar">
+  <div class="sb-left">
+    <div class="sb-item">
+      <div class="sb-dot"></div>
+      waiting
+    </div>
+    <div class="sb-sep"></div>
+    <div class="sb-item">ARTEMIS &middot; authenticate</div>
+  </div>
+  <div class="sb-right">
+    <div class="sb-item">token required</div>
+  </div>
+</div>
+
+<script>
+const form = document.getElementById('loginForm');
+const input = document.getElementById('tokenInput');
+const feedback = document.getElementById('feedback');
+const loginBtn = document.getElementById('loginBtn');
+const inputWrap = document.getElementById('inputWrap');
+const artemisLoginMark = document.getElementById('artemis-login-mark');
+
+let clicks = 0;
+artemisLoginMark.addEventListener('click', () => {
+  clicks++;
+  if (clicks >= 5) {
+    clicks = 0;
+    artemisLoginMark.style.transition = 'transform .4s cubic-bezier(.34,1.56,.64,1)';
+    artemisLoginMark.style.transform = 'scale(1.2) rotate(-10deg)';
+    setTimeout(() => { artemisLoginMark.style.transform = ''; }, 500);
+  }
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const token = input.value.trim();
+  if (!token) {
+    feedback.textContent = 'Enter a token to continue';
+    feedback.className = 'input-feedback error';
+    inputWrap.classList.add('shake');
+    setTimeout(() => inputWrap.classList.remove('shake'), 350);
+    return;
+  }
+
+  loginBtn.disabled = true;
+  feedback.textContent = 'Verifying…';
+  feedback.className = 'input-feedback';
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+
+    if (res.ok) {
+      feedback.textContent = 'Access granted';
+      feedback.className = 'input-feedback success';
+      inputWrap.style.borderColor = 'var(--accent)';
+      setTimeout(() => { window.location.href = '/'; }, 500);
+    } else {
+      feedback.textContent = 'Invalid token';
+      feedback.className = 'input-feedback error';
+      inputWrap.classList.add('shake');
+      setTimeout(() => inputWrap.classList.remove('shake'), 350);
+      input.select();
+    }
+  } catch {
+    feedback.textContent = 'Connection error';
+    feedback.className = 'input-feedback error';
+  } finally {
+    loginBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

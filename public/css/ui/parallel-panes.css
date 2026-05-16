@@ -1,0 +1,326 @@
+/* ─────────────────────────────────────────────────────────────────
+   parallel-panes.css
+
+   Fresh, self-contained styles for parallel chat panes. All class
+   names are `pane-*` and do NOT collide with legacy Claudeck classes
+   (.input-bar, .messages, .msg-*, .chat-pane-header). No stylesheet
+   in the legacy cascade targets these, so we don't need !important
+   and we don't have to fight specificity wars.
+
+   Composer card mirrors .dp-composer (artemis-design.css:4319) so the
+   parallel composer is visually identical to the main one. Loaded AFTER
+   artemis-shell-overrides.css in index.html.
+   ───────────────────────────────────────────────────────────────── */
+
+/* Grid (2 / 3 / 4 panes) — layout only. .chat-pane and .chat-grid
+   remain as containers because parallel.js sets them and the grid
+   layout variants key on data-parallel-count. */
+.chat-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 0;
+  background: transparent;
+  min-width: 0;
+  min-height: 0;
+}
+.chat-grid[data-parallel-count="2"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.chat-grid[data-parallel-count="3"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.chat-grid[data-parallel-count="3"] .chat-pane:first-child {
+  grid-row: span 2;
+}
+.chat-grid[data-parallel-count="4"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* Individual pane — transparent flex column. Background comes from
+   the canvas behind (so the canvas's warm aura shows through like in
+   the main chat). */
+.chat-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+  /* Important: visible so composer's drop shadow + focus ring don't
+     get clipped. The pane-body owns its own scroll; we don't need
+     pane-level overflow. */
+  overflow: visible;
+  /* Thin separators between panes — drawn on right + bottom edges,
+     then suppressed on the grid's outer edges below. */
+  border-right: 1px solid var(--rule, rgba(30, 26, 21, 0.10));
+  border-bottom: 1px solid var(--rule, rgba(30, 26, 21, 0.10));
+}
+/* Suppress the outer-edge borders so only interior dividers show */
+.chat-grid .chat-pane:nth-child(even)                        { border-right: none; }
+.chat-grid[data-parallel-count="2"] .chat-pane               { border-bottom: none; }
+.chat-grid[data-parallel-count="3"] .chat-pane:first-child   { border-bottom: none; }
+.chat-grid[data-parallel-count="3"] .chat-pane:nth-child(3)  { border-bottom: none; }
+.chat-grid[data-parallel-count="4"] .chat-pane:nth-child(3),
+.chat-grid[data-parallel-count="4"] .chat-pane:nth-child(4)  { border-bottom: none; }
+
+/* ── Pane header ──────────────────────────────────────────────── */
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  user-select: none;
+  padding: 10px 16px 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  color: var(--ink-5, var(--text-secondary));
+  background: transparent;
+  border: 0;
+}
+.pane-header-label {
+  color: var(--amber, var(--accent));
+}
+.pane-header-status {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--ink-4, var(--text-dim));
+}
+.pane-header-status.streaming {
+  color: var(--success, #2e9e6a);
+}
+
+/* ── Pane body (scrollable message list) ──────────────────────── */
+.pane-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  background: transparent;
+}
+
+/* Terminal-esque placeholder when empty */
+.pane-body:empty::after {
+  content: "> waiting for input...";
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  color: var(--ink-5, var(--text-dim));
+  opacity: 0.6;
+}
+
+/* Compact message styling inside panes. Scoped under .pane-body so
+   legacy .msg-* rules from messages.css get overridden by higher
+   specificity without needing !important. */
+.pane-body .msg {
+  max-width: 100%;
+}
+.pane-body .msg-user {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.pane-body .msg-assistant {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.pane-body .tool-indicator {
+  font-size: 11px;
+  padding: 6px 10px;
+}
+.pane-body .status {
+  font-size: 11px;
+  padding: 4px;
+}
+.pane-body .thinking-bar {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.pane-body .cli-output-header {
+  font-size: 11px;
+  padding: 6px 10px;
+}
+.pane-body .cli-output-body pre {
+  font-size: 11px;
+}
+.pane-body .diff-view {
+  font-size: 11px;
+}
+.pane-body .diff-body {
+  max-height: 250px;
+}
+.pane-body .diff-gutter {
+  width: 32px;
+  min-width: 32px;
+}
+/* Parallel panes: show only the centered logo, hide all card content */
+.pane-body .artemis-chat-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+.pane-body .artemis-chat-empty-card {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pane-body .artemis-chat-empty-eyebrow,
+.pane-body .artemis-chat-empty-copy,
+.pane-body .artemis-chat-empty-meta {
+  display: none;
+}
+.pane-body .artemis-chat-empty-topline {
+  gap: 0;
+}
+.pane-body .artemis-chat-empty img {
+  width: 56px;
+  opacity: 0.55;
+}
+
+/* ── Composer ─────────────────────────────────────────────────────
+   Byte-for-byte mirror of .dp-composer (artemis-design.css:4319-4338).
+   The only intentional differences:
+   - Compact radius (20px vs 22px) and padding to fit panes
+   - padding-bottom: 44px reserves space for the round send button
+     that sits absolutely positioned bottom-right (main composer
+     uses a full flex bar row instead). */
+.pane-composer-wrap {
+  flex-shrink: 0;
+  padding: 18px 14px 14px;
+  background: transparent;
+  overflow: visible;
+}
+.pane-composer {
+  position: relative;
+  display: block;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 2px 6px rgba(30, 26, 21, 0.04),
+    0 14px 30px -16px rgba(30, 26, 21, 0.12);
+  padding: 14px 16px 44px;
+  box-sizing: border-box;
+  width: 100%;
+  transition: border-color 0.14s, box-shadow 0.14s, transform 0.14s;
+}
+.pane-composer:focus-within {
+  border-color: var(--rule);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 4px 16px rgba(30, 26, 21, 0.10),
+    0 14px 34px -16px rgba(30, 26, 21, 0.12);
+}
+[data-theme="dark"] .pane-composer {
+  background: rgba(38, 30, 22, 0.86);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Textarea — mirror of .dp-composer-input, compact sizes */
+.pane-composer-input {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  box-shadow: none;
+  color: var(--ink, var(--text));
+  font-family: var(--font-sans);
+  font-size: 14px;
+  padding: 0;
+  resize: none;
+  line-height: 1.55;
+  min-height: 40px;
+  max-height: 180px;
+  letter-spacing: -0.005em;
+}
+.pane-composer-input::placeholder {
+  color: var(--ink-4, var(--text-dim));
+  font-weight: 400;
+}
+.pane-composer-input:focus {
+  outline: 0;
+  box-shadow: none;
+  border: 0;
+}
+
+/* Send button — round, anchored bottom-right, mirrors .dp-composer-send */
+.pane-composer-send,
+.pane-composer-stop {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  transition: filter 0.15s, transform 0.1s, opacity 0.15s;
+}
+.pane-composer-send {
+  background: var(--amber, #C77E2B);
+}
+.pane-composer-send:hover {
+  filter: brightness(1.06);
+  transform: translateY(-0.5px);
+}
+.pane-composer-stop {
+  background: var(--error, #e53e3e);
+}
+.pane-composer-stop:hover {
+  opacity: 0.85;
+}
+.pane-composer-stop.hidden,
+.pane-composer-send.hidden {
+  display: none;
+}
+
+/* Autocomplete dropdown — positioned relative to .pane-composer */
+.pane-composer-autocomplete {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 100%;
+  margin-bottom: 6px;
+  z-index: 10;
+}
+.pane-composer-autocomplete.hidden {
+  display: none;
+}
+.pane-composer-autocomplete .cmd-name {
+  font-size: 11px;
+  min-width: 80px;
+}
+.pane-composer-autocomplete .cmd-desc {
+  font-size: 11px;
+}
+
+/* ── Canvas treatment in parallel mode ────────────────────────────
+   Remove the top/bottom fade mask since pane headers should be fully
+   opaque. Keep the canvas::before warm aura on — transparent panes
+   need it as their backdrop so the composer card doesn't read as a
+   cold standalone band. */
+.canvas-scroll.is-parallel,
+.canvas-scroll:has(.chat-grid) {
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}

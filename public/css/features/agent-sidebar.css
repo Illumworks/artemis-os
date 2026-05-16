@@ -1,0 +1,680 @@
+/* ── Agent Sidebar ─────────────────────────────────────── */
+/* Left sidebar panel for agents, chains, DAGs              */
+
+.agent-sidebar {
+  position: relative;
+  width: 280px;
+  min-width: 220px;
+  max-width: 50vw;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-strong) 96%, transparent), color-mix(in srgb, var(--surface-panel) 98%, transparent));
+  border-right: 1px solid var(--surface-outline);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.25s var(--ease-out-expo), opacity 0.2s;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.agent-sidebar.hidden {
+  width: 0 !important;
+  min-width: 0;
+  border-right: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Header */
+.agent-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--surface-outline);
+  flex-shrink: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cyan) 10%, transparent) 0%, transparent 100%);
+}
+
+.agent-sidebar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.agent-sidebar-logo {
+  color: var(--cyan);
+  opacity: 0.8;
+}
+
+.agent-sidebar-title {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--cyan);
+}
+
+.agent-sidebar-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+}
+
+.agent-sidebar-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+/* Body — override the old toolbox-panel grid with a vertical stack */
+.agent-sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Override toolbox-card styling inside sidebar */
+.agent-sidebar-body .toolbox-card {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-outline);
+  border-radius: 18px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.2s var(--ease-smooth);
+  width: 100%;
+  box-shadow: var(--surface-shadow-soft);
+}
+
+.agent-sidebar-body .toolbox-card:hover {
+  border-color: var(--surface-outline-strong);
+  background: var(--surface-card-hover);
+  transform: translateY(-1px);
+}
+
+.agent-sidebar-body .toolbox-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.agent-sidebar-body .toolbox-card-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-sidebar-body .toolbox-card-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.agent-sidebar-body .toolbox-card-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-sidebar-body .toolbox-card-chip-muted {
+  background: color-mix(in srgb, var(--surface-panel-soft) 96%, transparent);
+  border-color: var(--surface-outline);
+  color: var(--text-dim);
+}
+
+/* Section headers */
+.agent-sidebar-body .agent-section-header {
+  display: grid;
+  gap: 6px;
+  padding: 4px 2px 0;
+  margin-top: 2px;
+}
+
+.agent-section-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-section-header-title {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+
+.agent-section-header-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-panel-soft) 94%, transparent);
+  border: 1px solid var(--surface-outline);
+  color: var(--text-dim);
+  font-size: 9px;
+  font-family: var(--font-mono);
+}
+
+.agent-section-header-note {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: var(--font-sans);
+}
+
+/* Add cards */
+.agent-sidebar-body .toolbox-card-add {
+  background: none;
+  border: 1px dashed var(--surface-outline);
+  border-radius: 18px;
+  padding: 10px 14px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+  width: 100%;
+}
+
+.agent-sidebar-body .toolbox-card-add:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 6%, transparent);
+}
+
+/* Orch card accent */
+.agent-sidebar-body .orch-card {
+  border-left: 2px solid var(--user, #7b9bf5);
+}
+
+/* Monitor card accent */
+.agent-sidebar-body .monitor-card {
+  border-left: 2px solid var(--success);
+}
+
+.agent-runs-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-sidebar-body .agent-run-card {
+  border-left: 2px solid color-mix(in srgb, var(--success) 68%, var(--surface-outline));
+}
+
+.agent-sidebar-body .agent-run-card-empty {
+  border-left-color: var(--surface-outline);
+}
+
+.agent-run-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-run-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--surface-outline);
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--surface-panel-soft) 94%, transparent);
+  white-space: nowrap;
+}
+
+.agent-run-status.success {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 28%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.agent-run-status.running {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.agent-run-status.warn {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 28%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.agent-run-status.error {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 28%, transparent);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+}
+
+.agent-run-meta,
+.agent-run-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.agent-run-meta {
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+}
+
+.agent-run-stats strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Chain card in sidebar */
+.agent-sidebar-body .chain-card {
+  border-left: 2px solid var(--accent);
+}
+
+.agent-sidebar-body .chain-steps-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.agent-sidebar-body .chain-step-tag {
+  font-size: 9px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-panel-soft) 94%, transparent);
+  border: 1px solid var(--surface-outline);
+}
+
+.agent-sidebar-body .chain-arrow {
+  color: var(--text-dim);
+  font-size: 10px;
+  align-self: center;
+}
+
+/* DAG card in sidebar */
+.agent-sidebar-body .dag-card {
+  border-left: 2px solid var(--warning, #e5c07b);
+}
+
+.agent-sidebar-body .dag-nodes-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* Agent card hover actions in sidebar */
+.agent-sidebar-body .agent-card-actions {
+  top: 4px;
+  right: 4px;
+}
+
+/* ── Enhanced Form Styling ─────────────────────────────── */
+
+.agent-form-modal {
+  width: 520px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+/* Form sections */
+.af-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.af-section-label {
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--cyan);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.af-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.af-field {
+  margin-bottom: 8px;
+}
+
+.af-field:last-child {
+  margin-bottom: 0;
+}
+
+.af-field label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 5px;
+  font-family: var(--font-display);
+}
+
+.af-field input,
+.af-field textarea,
+.af-field select {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: all 0.2s var(--ease-smooth);
+  caret-color: var(--cyan);
+}
+
+.af-field textarea {
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.af-field input:focus,
+.af-field textarea:focus,
+.af-field select:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 8px rgba(86, 212, 221, 0.12), 0 0 0 1px rgba(86, 212, 221, 0.08);
+}
+
+.af-field select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%233a4250' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+
+.af-input-with-hint {
+  position: relative;
+}
+
+.af-hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+/* Chain form — agent list inside af-section */
+.af-section .chain-agent-list {
+  margin-bottom: 8px;
+}
+
+.af-section .chain-add-agent-btn {
+  margin-bottom: 0;
+}
+
+/* Light theme */
+html[data-theme="light"] .agent-sidebar {
+  background: var(--bg-secondary);
+}
+
+html[data-theme="light"] .agent-sidebar-header {
+  background: linear-gradient(180deg, rgba(42, 138, 154, 0.04) 0%, transparent 100%);
+}
+
+html[data-theme="light"] .agent-sidebar-logo,
+html[data-theme="light"] .agent-sidebar-title {
+  color: #2a8a9a;
+}
+
+html[data-theme="light"] .af-section-label {
+  color: #2a8a9a;
+}
+
+/* ── Workflow Step Editor ─────────────────────────────── */
+
+.wf-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.wf-step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.wf-step-number {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(86, 212, 221, 0.1);
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid rgba(86, 212, 221, 0.2);
+  margin-top: 4px;
+}
+
+.wf-step-fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wf-step-fields input,
+.wf-step-fields textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.2s;
+  caret-color: var(--cyan);
+}
+
+.wf-step-fields textarea {
+  resize: vertical;
+  min-height: 56px;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.wf-step-fields input:focus,
+.wf-step-fields textarea:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 8px rgba(86, 212, 221, 0.12);
+}
+
+.wf-step-remove {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+  margin-top: 4px;
+}
+
+.wf-step-remove:hover {
+  background: rgba(255, 80, 80, 0.1);
+  color: var(--error, #e55);
+}
+
+.wf-step-add {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+  width: 100%;
+}
+
+.wf-step-add:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+/* Workflow card accent in sidebar */
+.agent-sidebar-body .wf-card {
+  border-left: 2px solid var(--cyan);
+}
+
+html[data-theme="light"] .wf-step-number {
+  background: rgba(42, 138, 154, 0.08);
+  color: #2a8a9a;
+  border-color: rgba(42, 138, 154, 0.15);
+}
+
+/* ── Orchestrate Modal ────────────────────────────────── */
+
+.orch-explainer {
+  padding: 4px 0;
+}
+
+.orch-explainer-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orch-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.orch-step-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(86, 212, 221, 0.1);
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid rgba(86, 212, 221, 0.2);
+}
+
+.dag-explainer-text {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.dag-explainer-text strong {
+  color: var(--text);
+}
+
+html[data-theme="light"] .orch-step-num {
+  background: rgba(42, 138, 154, 0.08);
+  color: #2a8a9a;
+  border-color: rgba(42, 138, 154, 0.15);
+}
+
+/* Mobile: overlay sidebar */
+@media (max-width: 768px) {
+  .agent-sidebar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 50;
+    box-shadow: var(--shadow-lg);
+  }
+}
