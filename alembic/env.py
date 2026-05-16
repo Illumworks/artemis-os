@@ -17,7 +17,7 @@ from artemis.db import Base
 
 # Import all model modules so they register on Base.metadata.
 # As B1 / B2 / B3 / B4 land their models, add imports here.
-# (intentionally empty for Phase A — health-only)
+import artemis.memory.models  # noqa: F401 — registers memory keystone models
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.db_url)
