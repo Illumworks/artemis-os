@@ -88,3 +88,30 @@ class Evidence(BaseModel):
     source_quote: str | None
     weight: float
     created_at: datetime
+
+
+class ScoredObservation(BaseModel):
+    """An observation with retrieval-scoring metadata attached."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scope_kind: str
+    scope_id: str
+    category: str
+    content: str
+    score: float
+    hit_count: int
+    source_quality: float
+    user_confirmed: bool
+    valid_from: datetime | None
+    valid_until: datetime | None
+    superseded_by: int | None
+    owner_user_id: int | None
+    created_at: datetime
+    accessed_at: datetime
+    # Retrieval scores
+    final_score: float
+    fts_rank: float
+    semantic_sim: float
+    recency: float

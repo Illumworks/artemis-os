@@ -20,6 +20,7 @@ from artemis.config import settings
 from artemis.db import Base
 from artemis.memory.models import (
     MemoryDrawer,
+    MemoryEmbedding,
     MemoryEvidence,
     MemoryObservation,
     MemoryScope,
@@ -36,11 +37,12 @@ _MEMORY_TABLES = [
     MemoryDrawer.__table__,
     MemoryObservation.__table__,
     MemoryEvidence.__table__,
+    MemoryEmbedding.__table__,
 ]
 
 _TRUNCATE_SQL = text(
-    "TRUNCATE memory_evidence, memory_observations, memory_drawers, memory_scopes "
-    "RESTART IDENTITY CASCADE"
+    "TRUNCATE memory_embeddings, memory_evidence, memory_observations, "
+    "memory_drawers, memory_scopes RESTART IDENTITY CASCADE"
 )
 
 
