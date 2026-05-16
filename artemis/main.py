@@ -37,6 +37,7 @@ from artemis.routes.builders import (
     skills,
     workflows,
 )
+from artemis.ws.routes import router as ws_router
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
@@ -123,6 +124,9 @@ app.include_router(agent_dags.router)
 
 # Phase F2b — Execution wiring (run agents / workflows / chains / DAGs)
 app.include_router(execution.router)
+
+# Phase E2 — WebSocket relay for live run streaming
+app.include_router(ws_router)
 
 # Phase H — OKR Studio + Writing Studio rules (dry-run + validator shipped; cutover pending)
 app.include_router(okr.router)

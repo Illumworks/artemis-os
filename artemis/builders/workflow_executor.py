@@ -27,6 +27,13 @@ from artemis.builders.repository import (
     set_workflow_context,
     update_workflow_run_status,
 )
+from artemis.ws.events import (
+    workflow_completed_event,
+    workflow_failed_event,
+    workflow_started_event,
+    workflow_step_completed_event,
+)
+from artemis.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +74,12 @@ async def run_workflow(
     )
     await session.flush()
 
+    # Broadcast workflow started
+    await ws_manager.broadcast(
+        run_id,
+        workflow_started_event(run_id, workflow_id).to_dict(),
+    )
+
     steps: list[dict[str, Any]] = workflow.steps if isinstance(workflow.steps, list) else []
     total_input_tokens = 0
     total_output_tokens = 0
@@ -103,6 +116,12 @@ async def run_workflow(
                 current_step=i + 1,
             )
 
+            # Broadcast step completed
+            await ws_manager.broadcast(
+                run_id,
+                workflow_step_completed_event(run_id, i, len(steps), response_text).to_dict(),
+            )
+
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow '%s' run '%s' failed at step %d", workflow_id, run_id, i)
             if on_failure == "continue":
@@ -131,6 +150,11 @@ async def run_workflow(
                     total_cost_usd=cost,
                 )
                 await session.flush()
+                error_str = f"{type(exc).__name__}: {exc}"
+                await ws_manager.broadcast(
+                    run_id,
+                    workflow_failed_event(run_id, i, error_str).to_dict(),
+                )
                 return wf_run
 
     cost = estimate_cost_usd(total_input_tokens, total_output_tokens)
@@ -143,6 +167,10 @@ async def run_workflow(
         total_cost_usd=cost,
     )
     await session.flush()
+    await ws_manager.broadcast(
+        run_id,
+        workflow_completed_event(run_id, cost).to_dict(),
+    )
     return wf_run
 
 

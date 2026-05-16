@@ -343,6 +343,14 @@ async def delete_workflow(session: AsyncSession, workflow_id: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+async def get_workflow_run(session: AsyncSession, run_id: str) -> WorkflowRun:
+    result = await session.execute(select(WorkflowRun).where(WorkflowRun.run_id == run_id).limit(1))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise ValueError(f"WorkflowRun '{run_id}' not found")
+    return row
+
+
 async def create_workflow_run(session: AsyncSession, **kwargs: Any) -> WorkflowRun:
     run = WorkflowRun(**kwargs)
     session.add(run)

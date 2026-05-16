@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.agent import AnthropicAdapter, run_turn
 from artemis.agent.client import ModelAdapter
+from artemis.agent.hooks import HookRegistry
 from artemis.builders.models import AgentRun
 from artemis.builders.repository import (
     create_agent_run,
@@ -27,8 +28,96 @@ from artemis.builders.repository import (
     set_agent_context,
     set_agent_run_completed,
 )
+from artemis.ws.events import (
+    agent_completed_event,
+    agent_failed_event,
+    agent_message_event,
+    agent_started_event,
+    tool_completed_event,
+    tool_started_event,
+)
+from artemis.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _build_agent_hooks(run_id: str) -> HookRegistry:
+    """Build a HookRegistry that broadcasts WS events for a given run_id."""
+    hooks = HookRegistry()
+
+    async def on_message(message: object) -> None:
+        from artemis.agent.types import Message
+
+        if isinstance(message, Message):
+            content = []
+            for block in message.content:
+                if hasattr(block, "text"):
+                    content.append({"type": "text", "text": block.text})
+                elif hasattr(block, "name"):
+                    # ToolUseBlock
+                    content.append(
+                        {
+                            "type": "tool_use",
+                            "id": getattr(block, "id", ""),
+                            "name": block.name,
+                            "input": getattr(block, "input", {}),
+                        }
+                    )
+                elif hasattr(block, "tool_use_id"):
+                    # ToolResultBlock
+                    content.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.tool_use_id,
+                            "content": getattr(block, "content", ""),
+                            "is_error": getattr(block, "is_error", False),
+                        }
+                    )
+            event = agent_message_event(run_id, message.role, content)
+            await ws_manager.broadcast(run_id, event.to_dict())
+
+    async def before_tool(payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        event = tool_started_event(
+            run_id,
+            name=payload.get("name", ""),
+            input=payload.get("input", {}),
+            tool_use_id=payload.get("tool_use_id", ""),
+        )
+        await ws_manager.broadcast(run_id, event.to_dict())
+
+    async def after_tool(payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        event = tool_completed_event(
+            run_id,
+            name=payload.get("name", ""),
+            input=payload.get("input", {}),
+            tool_use_id=payload.get("tool_use_id", ""),
+            result=str(payload.get("result", "")),
+            is_error=bool(payload.get("is_error", False)),
+            elapsed_ms=int(payload.get("elapsed_ms", 0)),
+        )
+        await ws_manager.broadcast(run_id, event.to_dict())
+
+    async def on_done(result: object) -> None:
+        from artemis.agent.types import RunResult
+
+        if isinstance(result, RunResult):
+            event = agent_completed_event(
+                run_id,
+                stop_reason=result.stop_reason,
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+            )
+            await ws_manager.broadcast(run_id, event.to_dict())
+
+    hooks.on("on_message", on_message)
+    hooks.on("before_tool", before_tool)
+    hooks.on("after_tool", after_tool)
+    hooks.on("on_done", on_done)
+    return hooks
 
 
 async def run_agent(
@@ -99,6 +188,15 @@ async def run_agent(
     )
     await session.flush()
 
+    # Broadcast run started
+    await ws_manager.broadcast(
+        run_id,
+        agent_started_event(run_id, agent_id, effective_message).to_dict(),
+    )
+
+    # Build hook registry that streams events to WS subscribers
+    hooks = _build_agent_hooks(run_id)
+
     try:
         result = await run_turn(
             adapter=adapter,
@@ -107,6 +205,7 @@ async def run_agent(
             model=agent.model,
             max_iterations=agent.max_iterations,
             tools=None,
+            hooks=hooks,
         )
 
         # Extract final assistant text
@@ -126,11 +225,13 @@ async def run_agent(
 
     except Exception as exc:  # noqa: BLE001
         logger.exception("Agent run '%s' failed", run_id)
+        error_msg = f"{type(exc).__name__}: {exc}"
+        await ws_manager.broadcast(run_id, agent_failed_event(run_id, error_msg).to_dict())
         run = await set_agent_run_completed(
             session,
             run_id,
             status="failed",
-            error=f"{type(exc).__name__}: {exc}",
+            error=error_msg,
         )
 
     await session.flush()
