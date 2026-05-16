@@ -21,6 +21,9 @@ _AVAILABLE_SURFACES = {
     "content-assets",
     "approvals",
     "writing-studio",
+    # Phase H — OKR Studio + Writing Studio rules backend ported
+    "okr",
+    "writing-rules",
 }
 _UNAVAILABLE_SURFACES = {
     # Node-only surfaces — backends not ported yet.
@@ -29,7 +32,7 @@ _UNAVAILABLE_SURFACES = {
     "projects",
     "chat",
     "memory-shell",
-    "okr-studio",
+    # "okr-studio" removed — superseded by "okr" surface above
     "jira-board",
     "skills",
     "workflows",
