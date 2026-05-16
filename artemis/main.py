@@ -33,6 +33,7 @@ from artemis.routes.builders import (
     agent_dags,
     agent_runs,
     agents,
+    execution,
     skills,
     workflows,
 )
@@ -119,6 +120,9 @@ app.include_router(skills.router)
 app.include_router(workflows.router)
 app.include_router(agent_chains.router)
 app.include_router(agent_dags.router)
+
+# Phase F2b — Execution wiring (run agents / workflows / chains / DAGs)
+app.include_router(execution.router)
 
 # Phase H — OKR Studio + Writing Studio rules (dry-run + validator shipped; cutover pending)
 app.include_router(okr.router)

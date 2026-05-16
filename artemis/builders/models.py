@@ -80,19 +80,32 @@ class AgentRun(Base):
 
 
 class AgentContext(Base):
-    """Per-run key/value store for sharing output between agent steps."""
+    """Per-run key/value store for sharing output between agent steps.
+
+    Either ``run_id`` (agent run) or ``workflow_run_id`` (workflow run) must be
+    set, but not both. The CHECK constraint enforcing this is added by migration
+    0008_workflow_context.
+    """
 
     __tablename__ = "agent_context"
     __table_args__ = (
+        # The unique constraint covers BOTH key columns so agent and workflow
+        # rows can coexist without conflicts.
         UniqueConstraint("run_id", "key", name="uq_agent_context_run_key"),
         Index("idx_agent_context_run_id", "run_id"),
+        Index("idx_agent_context_workflow_run_id", "workflow_run_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    run_id: Mapped[str] = mapped_column(
+    run_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey("agent_runs.run_id", name="fk_agent_context_run", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    workflow_run_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("workflow_runs.id", name="fk_agent_context_workflow_run", ondelete="CASCADE"),
+        nullable=True,
     )
     key: Mapped[str] = mapped_column(Text, nullable=False)
     value: Mapped[Any] = mapped_column(JSONB, nullable=False)
