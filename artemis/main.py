@@ -23,7 +23,10 @@ from artemis.marketing.routes import (
     scouts,
     signal_criteria,
     signal_queue,
+    writing_studio,
 )
+from artemis.marketing.writing_studio import adapter as ws_adapter
+from artemis.marketing.writing_studio import events as ws_events
 from artemis.routes import health
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
@@ -31,7 +34,14 @@ PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    yield
+    # Subscribe the Writing Studio adapter to draft lifecycle events.
+    ws_adapter.init_adapter()
+    try:
+        yield
+    finally:
+        # Unsubscribe the adapter on shutdown so tests / restarts start clean.
+        ws_adapter.reset_adapter()
+        ws_events.clear_subscribers()
 
 
 app = FastAPI(
@@ -91,6 +101,7 @@ app.include_router(campaign_ops.router)
 app.include_router(campaign_deliverables.router)
 app.include_router(content_assets.router)
 app.include_router(approvals.router)
+app.include_router(writing_studio.router)
 
 # Mount static frontend AFTER all API routes.
 # html=True makes GET / serve public/index.html.
