@@ -17,15 +17,22 @@ import asyncio
 import logging
 import signal
 
+from artemis.scouts.base import BaseScout
 from artemis.scouts.config import load_config, scout_config_for
+from artemis.scouts.federal_funding.scout import FederalFundingScout
+from artemis.scouts.legislative.scout import LegislativeScout
 from artemis.scouts.linkedin_observer import LinkedInObserverScout
 from artemis.scouts.regional_news_scout import RegionalNewsScout
 from artemis.scouts.scheduler import create_scheduler
-from artemis.scouts.starbridge_researcher import StarbridgeResearcherScout
+from artemis.scouts.starbridge.scout import StarbridgeResearcherScout
 
 _logger = logging.getLogger(__name__)
 
+# All known scout classes. Scouts default to enabled=false in scouts.yaml;
+# set enabled: true and restart to activate. Add new scouts here as D5+ land.
 _SCOUT_CLASSES = [
+    LegislativeScout,
+    FederalFundingScout,
     StarbridgeResearcherScout,
     RegionalNewsScout,
     LinkedInObserverScout,
@@ -35,7 +42,7 @@ _SCOUT_CLASSES = [
 async def run() -> None:
     """Start the scheduler and run until a stop signal is received."""
     cfg = load_config()
-    scouts = [cls(scout_config_for(cfg, cls.scout_type)) for cls in _SCOUT_CLASSES]  # type: ignore[abstract]
+    scouts: list[BaseScout] = [cls(scout_config_for(cfg, cls.scout_type)) for cls in _SCOUT_CLASSES]  # type: ignore[attr-defined]
     scheduler = create_scheduler(scouts)
     scheduler.start()
 
