@@ -1,0 +1,24 @@
+# Artemis scout worker configuration.
+# All scouts default to disabled until their D2+ implementation is ready.
+# Set enabled: true and restart the worker process to activate a scout.
+#
+# Env var overrides (take precedence over this file):
+#   ARTEMIS_API_URL        — Python app base URL (default: http://localhost:8000)
+#   ARTEMIS_TOKEN          — bearer token for /api/scouts/runs
+#   ARTEMIS_SCOUT_DRY_RUN  — set to "1" to force dry_run on all scouts
+
+api_url: "http://localhost:8000"
+dry_run: false
+
+scouts:
+  starbridge_researcher:
+    enabled: false
+    interval_minutes: 60
+
+  regional_news_scout:
+    enabled: false
+    interval_minutes: 120
+
+  linkedin_observer:
+    enabled: false
+    interval_minutes: 240
