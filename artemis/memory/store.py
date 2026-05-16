@@ -67,7 +67,7 @@ async def _embed_and_store(
     target_table: Literal["drawer", "observation"],
     target_id: int,
     content: str,
-    provider: EmbeddingProvider | None = None,
+    provider: "EmbeddingProvider | None" = None,
 ) -> None:
     """Embed content and persist to memory_embeddings. Best-effort: never raises.
 
@@ -80,9 +80,7 @@ async def _embed_and_store(
         _provider = provider or get_default_provider()
         vector = await _provider.embed(content)
         async with session.begin_nested():
-            await upsert_embedding(
-                session, target_table, target_id, _provider.model_version, vector
-            )
+            await upsert_embedding(session, target_table, target_id, _provider.model_version, vector)
     except Exception:
         _logger.warning(
             "Embedding failed for %s id=%d; row will be backfilled",
@@ -130,7 +128,7 @@ async def write_drawer(
     source: Source,
     corpus_kind: str | None = None,
     owner_user_id: int | None = None,
-    embedding_provider: EmbeddingProvider | None = None,
+    embedding_provider: "EmbeddingProvider | None" = None,
 ) -> Drawer:
     """Write a drawer, deduplicating by content hash within the scope.
 
@@ -168,6 +166,17 @@ async def write_drawer(
     row = result.scalar_one()
     drawer = Drawer.model_validate(row)
     await _embed_and_store(session, "drawer", drawer.id, content, embedding_provider)
+
+    # Notify incremental consolidator (synchronous — never blocks the write)
+    try:
+        from artemis.memory.incremental_consolidator import get_incremental_consolidator
+
+        get_incremental_consolidator().notify_drawer_written(
+            scope, category=corpus_kind or "discovery"
+        )
+    except Exception:
+        _logger.debug("Incremental consolidator notification failed", exc_info=True)
+
     return drawer
 
 
@@ -180,7 +189,7 @@ async def write_observation(
     valid_from: datetime | None = None,
     valid_until: datetime | None = None,
     owner_user_id: int | None = None,
-    embedding_provider: EmbeddingProvider | None = None,
+    embedding_provider: "EmbeddingProvider | None" = None,
 ) -> Observation:
     """Write an observation, deduplicating by content hash within the scope.
 
@@ -272,7 +281,7 @@ async def supersede_observation(
         update(MemoryObservation)
         .where(
             MemoryObservation.id == old_id,
-            MemoryObservation.superseded_by.is_(None),
+            MemoryObservation.superseded_by.is_(None),  # type: ignore[attr-defined]
         )
         .values(superseded_by=new_id)
     )
@@ -283,12 +292,16 @@ async def supersede_observation(
 
 
 async def get_drawer(session: AsyncSession, drawer_id: int) -> Drawer | None:
-    result = await session.execute(select(MemoryDrawer).where(MemoryDrawer.id == drawer_id))
+    result = await session.execute(
+        select(MemoryDrawer).where(MemoryDrawer.id == drawer_id)
+    )
     row = result.scalar_one_or_none()
     return Drawer.model_validate(row) if row is not None else None
 
 
-async def get_observation(session: AsyncSession, observation_id: int) -> Observation | None:
+async def get_observation(
+    session: AsyncSession, observation_id: int
+) -> Observation | None:
     result = await session.execute(
         select(MemoryObservation).where(MemoryObservation.id == observation_id)
     )
