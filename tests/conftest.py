@@ -1,17 +1,15 @@
-"""Pytest fixtures shared across the suite."""
+"""Pytest fixtures shared across the suite.
 
-import asyncio
-from collections.abc import AsyncIterator, Iterator
+Async loop management is delegated to pytest-asyncio via the
+`asyncio_default_fixture_loop_scope = "session"` setting in pyproject.toml.
+Do not define a custom `event_loop` fixture here — doing so causes
+RuntimeError: Event loop is closed during async resource teardown.
+"""
+
+from collections.abc import AsyncIterator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-
-
-@pytest.fixture(scope="session")
-def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture

@@ -7,12 +7,11 @@ Each test gets a fresh session; memory tables are truncated before each test for
 
 from __future__ import annotations
 
-import asyncio
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 # Register models on Base.metadata before create_all
@@ -27,7 +26,10 @@ from artemis.memory.models import (
 )
 
 _db_url = os.environ.get("ARTEMIS_TEST_DB_URL", settings.db_url)
-_engine = create_async_engine(_db_url, echo=False, pool_pre_ping=True)
+# NullPool: each connection is closed when its session closes, avoiding the
+# "Future attached to a different loop" error that pooled asyncpg connections
+# hit when the session-scoped loop is replaced between fixture batches.
+_engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
 
 _MEMORY_TABLES = [
     MemoryScope.__table__,
@@ -40,13 +42,6 @@ _TRUNCATE_SQL = text(
     "TRUNCATE memory_evidence, memory_observations, memory_drawers, memory_scopes "
     "RESTART IDENTITY CASCADE"
 )
-
-
-@pytest.fixture(scope="session")
-def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture(scope="session", autouse=True)
