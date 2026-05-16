@@ -159,8 +159,7 @@ async def set_agent_run_completed(
 async def set_agent_context(
     session: AsyncSession, run_id: str, key: str, value: Any
 ) -> AgentContext:
-    """Upsert a context key for a run (insert or replace)."""
-    # Check existence
+    """Upsert a context key for an agent run (insert or replace)."""
     result = await session.execute(
         select(AgentContext).where(AgentContext.run_id == run_id, AgentContext.key == key).limit(1)
     )
@@ -177,6 +176,34 @@ async def set_agent_context(
     return ctx
 
 
+async def set_workflow_context(
+    session: AsyncSession, workflow_run_id: int, key: str, value: Any
+) -> AgentContext:
+    """Upsert a context key for a workflow run (insert or replace).
+
+    Stores the row with ``workflow_run_id`` set and ``run_id=NULL``.
+    """
+    result = await session.execute(
+        select(AgentContext)
+        .where(
+            AgentContext.workflow_run_id == workflow_run_id,
+            AgentContext.key == key,
+        )
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing is not None:
+        existing.value = value
+        await session.flush()
+        await session.refresh(existing)
+        return existing
+    ctx = AgentContext(workflow_run_id=workflow_run_id, key=key, value=value)
+    session.add(ctx)
+    await session.flush()
+    await session.refresh(ctx)
+    return ctx
+
+
 async def get_agent_context(session: AsyncSession, run_id: str, key: str) -> AgentContext:
     result = await session.execute(
         select(AgentContext).where(AgentContext.run_id == run_id, AgentContext.key == key).limit(1)
@@ -185,6 +212,16 @@ async def get_agent_context(session: AsyncSession, run_id: str, key: str) -> Age
     if row is None:
         raise ValueError(f"AgentContext key '{key}' not found for run '{run_id}'")
     return row
+
+
+async def get_workflow_context(session: AsyncSession, workflow_run_id: int) -> list[AgentContext]:
+    """Return all context entries for a workflow run, ordered by id."""
+    result = await session.execute(
+        select(AgentContext)
+        .where(AgentContext.workflow_run_id == workflow_run_id)
+        .order_by(AgentContext.id.asc())
+    )
+    return list(result.scalars().all())
 
 
 async def get_all_agent_context_for_run(session: AsyncSession, run_id: str) -> list[AgentContext]:
