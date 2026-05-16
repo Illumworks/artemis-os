@@ -1046,35 +1046,130 @@ export async function deletePromptApi(idx) {
   return res.json();
 }
 
+// ── F3: Python response-shape adapters ───────────────────────────────────────
+/** Derive a stable slug from a display name (lowercase, hyphens, no specials) */
+function _slugify(name = "") {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item";
+}
+// Python F2a CRUD endpoints return Pydantic-serialized models with camelCase
+// aliases (via model_dump(by_alias=True)) but list endpoints wrap the array in
+// a keyed envelope: { agents: [...] }, { workflows: [...] }, etc.
+// The feature modules (agents.js, workflows.js, dag-editor.js) expect flat
+// arrays of objects whose shape matches the *Node* schema: id, title, agents
+// (chains), edges (DAGs), etc.  These small normaliser functions sit here so
+// the feature modules need zero changes.
+
+/** Map a Python AgentRead → Node agent shape */
+function _normaliseAgent(a) {
+  return {
+    ...a,
+    // Python: agentId / name → Node: id / title
+    id: a.agentId ?? a.id,
+    title: a.name ?? a.title ?? a.agentId ?? "",
+  };
+}
+
+/** Map a Python WorkflowRead → Node workflow shape */
+function _normaliseWorkflow(w) {
+  return {
+    ...w,
+    // Python: workflowId / name → Node: id / title
+    id: w.workflowId ?? w.id,
+    title: w.name ?? w.title ?? w.workflowId ?? "",
+  };
+}
+
+/** Map a Python AgentChainRead → Node chain shape
+ *  Python stores per-step agent refs inside steps[].agentId; Node stores a
+ *  flat agents[] array of IDs.  We coerce here so the chain modal can
+ *  populate its agent-picker rows without backend changes.
+ */
+function _normaliseChain(c) {
+  const agents = (c.steps || [])
+    .map((s) => s.agentId ?? s.agent_id ?? s)
+    .filter((v) => v && typeof v === "string");
+  return {
+    ...c,
+    id: c.chainId ?? c.id,
+    title: c.name ?? c.title ?? c.chainId ?? "",
+    agents,
+  };
+}
+
+/** Map a Python AgentDagRead → Node dag shape
+ *  Python stores adjacency in nodes[].deps (or nodes[].edges); Node stores
+ *  separate nodes[] + edges[].  We materialise edges from deps if present.
+ */
+function _normaliseDag(d) {
+  const rawNodes = d.nodes || [];
+  // Build edges from per-node deps array if edges not already present
+  const edges = d.edges
+    ? d.edges
+    : rawNodes.flatMap((n) =>
+        (n.deps || []).map((dep) => ({ from: dep, to: n.id ?? n.agentId }))
+      );
+  const nodes = rawNodes.map((n) => ({
+    id: n.id ?? n.agentId,
+    agentId: n.agentId ?? n.id,
+    x: n.x ?? 0,
+    y: n.y ?? 0,
+    ...n,
+  }));
+  return {
+    ...d,
+    id: d.dagId ?? d.id,
+    title: d.name ?? d.title ?? d.dagId ?? "",
+    nodes,
+    edges,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function fetchWorkflows() {
   const res = await fetch("/api/workflows");
-  return res.json();
+  const body = await res.json();
+  // Python returns { workflows: [...] }; Node expected a flat array
+  const raw = Array.isArray(body) ? body : (body.workflows ?? []);
+  return raw.map(_normaliseWorkflow);
 }
 
 export async function createWorkflow(workflow) {
+  // Send Node shape → Python expects workflowId / name
+  const payload = {
+    workflowId: workflow.id ?? workflow.workflowId ?? _slugify(workflow.title),
+    name: workflow.title ?? workflow.name,
+    description: workflow.description || "",
+    steps: workflow.steps || [],
+  };
   const res = await fetch("/api/workflows", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(workflow),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to create workflow");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to create workflow");
   }
-  return res.json();
+  return _normaliseWorkflow(await res.json());
 }
 
 export async function updateWorkflow(id, workflow) {
+  // Python uses PATCH; Node used PUT.  Send only the changed fields.
+  const payload = {};
+  if (workflow.title != null || workflow.name != null) payload.name = workflow.title ?? workflow.name;
+  if (workflow.description != null) payload.description = workflow.description;
+  if (workflow.steps != null) payload.steps = workflow.steps;
   const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(workflow),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to update workflow");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to update workflow");
   }
-  return res.json();
+  return _normaliseWorkflow(await res.json());
 }
 
 export async function deleteWorkflowApi(id) {
@@ -1082,19 +1177,23 @@ export async function deleteWorkflowApi(id) {
     method: "DELETE",
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to delete workflow");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to delete workflow");
   }
-  return res.json();
+  // Python returns 204 No Content — no JSON body
 }
 
 export async function runWorkflowApi(id) {
   const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
     method: "POST",
   });
+  if (res.status === 404) {
+    // F2b execution endpoints not yet wired — graceful no-op
+    return { __notYetWired: true, message: "Run not yet wired (Phase F2b in progress)" };
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to start workflow run");
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to start workflow run");
   }
   return res.json(); // { runId }
 }
@@ -1102,7 +1201,8 @@ export async function runWorkflowApi(id) {
 export async function listWorkflowRunsApi(id) {
   const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs`);
   if (!res.ok) return [];
-  return res.json();
+  const body = await res.json();
+  return Array.isArray(body) ? body : (body.runs ?? []);
 }
 
 export async function getLatestWorkflowRunApi(id) {
@@ -1114,33 +1214,58 @@ export async function getLatestWorkflowRunApi(id) {
 
 export async function fetchAgents() {
   const res = await fetch("/api/agents");
-  return res.json();
+  const body = await res.json();
+  // Python returns { agents: [...] }; Node expected a flat array
+  const raw = Array.isArray(body) ? body : (body.agents ?? []);
+  return raw.map(_normaliseAgent);
 }
 
 export async function createAgent(agent) {
+  // Map Node shape → Python AgentCreate
+  const payload = {
+    agentId: agent.id ?? agent.agentId ?? _slugify(agent.title),
+    name: agent.title ?? agent.name,
+    description: agent.description || "",
+    goal: agent.goal || "",
+    system_prompt: agent.systemPrompt ?? agent.system_prompt ?? "",
+    tools: agent.tools || [],
+    model: agent.model || "claude-sonnet-4-5",
+    provider: agent.provider || "anthropic",
+    max_iterations: agent.constraints?.maxTurns ?? agent.maxIterations ?? 50,
+  };
   const res = await fetch("/api/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(agent),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to create agent");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to create agent");
   }
-  return res.json();
+  return _normaliseAgent(await res.json());
 }
 
 export async function updateAgent(id, agent) {
+  // Python uses PATCH; Node used PUT.
+  const payload = {};
+  if (agent.title != null || agent.name != null) payload.name = agent.title ?? agent.name;
+  if (agent.description != null) payload.description = agent.description;
+  if (agent.goal != null) payload.goal = agent.goal;
+  if (agent.systemPrompt != null || agent.system_prompt != null) payload.system_prompt = agent.systemPrompt ?? agent.system_prompt;
+  if (agent.tools != null) payload.tools = agent.tools;
+  if (agent.model != null) payload.model = agent.model;
+  if (agent.provider != null) payload.provider = agent.provider;
+  if (agent.constraints?.maxTurns != null) payload.max_iterations = agent.constraints.maxTurns;
   const res = await fetch(`/api/agents/${encodeURIComponent(id)}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(agent),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to update agent");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to update agent");
   }
-  return res.json();
+  return _normaliseAgent(await res.json());
 }
 
 export async function deleteAgentApi(id) {
@@ -1148,42 +1273,73 @@ export async function deleteAgentApi(id) {
     method: "DELETE",
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to delete agent");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to delete agent");
+  }
+  // Python returns 204 No Content — no JSON body
+}
+
+export async function runAgentApi(id) {
+  const res = await fetch(`/api/agents/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+  });
+  if (res.status === 404) {
+    // F2b execution endpoints not yet wired — graceful no-op
+    return { __notYetWired: true, message: "Run not yet wired (Phase F2b in progress)" };
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to start agent run");
   }
   return res.json();
 }
 
-// Agent Chains
+// Agent Chains — Python prefix is /api/agent-chains (not /api/agents/chains)
 export async function fetchChains() {
-  const res = await fetch("/api/agents/chains");
-  return res.json();
+  const res = await fetch("/api/agent-chains");
+  const body = await res.json();
+  const raw = Array.isArray(body) ? body : (body.chains ?? []);
+  return raw.map(_normaliseChain);
 }
 
 export async function createChain(chain) {
-  const res = await fetch("/api/agents/chains", {
+  const payload = {
+    chainId: chain.id ?? chain.chainId ?? _slugify(chain.title),
+    name: chain.title ?? chain.name,
+    description: chain.description || "",
+    // Convert flat agents[] of IDs → steps[{ agentId }]
+    steps: (chain.agents || []).map((agentId) => ({ agentId, contextPassing: chain.contextPassing ?? "summary" })),
+  };
+  const res = await fetch("/api/agent-chains", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(chain),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to create chain");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to create chain");
   }
-  return res.json();
+  return _normaliseChain(await res.json());
 }
 
 export async function updateChain(id, chain) {
-  const res = await fetch(`/api/agents/chains/${encodeURIComponent(id)}`, {
-    method: "PUT",
+  // Python uses PATCH; Node used PUT.
+  const payload = {};
+  if (chain.title != null || chain.name != null) payload.name = chain.title ?? chain.name;
+  if (chain.description != null) payload.description = chain.description;
+  if (chain.agents != null) {
+    payload.steps = chain.agents.map((agentId) => ({ agentId, contextPassing: chain.contextPassing ?? "summary" }));
+  }
+  const res = await fetch(`/api/agent-chains/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(chain),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to update chain");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to update chain");
   }
-  return res.json();
+  return _normaliseChain(await res.json());
 }
 
 export async function fetchAgentContext(runId) {
@@ -1191,56 +1347,107 @@ export async function fetchAgentContext(runId) {
   return res.json();
 }
 
-// Agent DAGs
+// Agent DAGs — Python prefix is /api/agent-dags (not /api/agents/dags)
 export async function fetchDags() {
-  const res = await fetch("/api/agents/dags");
-  return res.json();
+  const res = await fetch("/api/agent-dags");
+  const body = await res.json();
+  const raw = Array.isArray(body) ? body : (body.dags ?? []);
+  return raw.map(_normaliseDag);
 }
 
 export async function createDag(dag) {
-  const res = await fetch("/api/agents/dags", {
+  // Convert Node { nodes[], edges[] } → Python { nodes[] } (edges folded into deps)
+  const nodes = (dag.nodes || []).map((n) => {
+    const deps = (dag.edges || []).filter((e) => e.to === n.id).map((e) => e.from);
+    return { id: n.id, agentId: n.agentId ?? n.id, x: n.x ?? 0, y: n.y ?? 0, deps };
+  });
+  const payload = {
+    dagId: dag.id ?? dag.dagId ?? _slugify(dag.title),
+    name: dag.title ?? dag.name,
+    description: dag.description || "",
+    nodes,
+  };
+  const res = await fetch("/api/agent-dags", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(dag),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to create DAG");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to create DAG");
   }
-  return res.json();
+  return _normaliseDag(await res.json());
 }
 
 export async function updateDag(id, dag) {
-  const res = await fetch(`/api/agents/dags/${encodeURIComponent(id)}`, {
-    method: "PUT",
+  // Python uses PATCH; Node used PUT.
+  const payload = {};
+  if (dag.title != null || dag.name != null) payload.name = dag.title ?? dag.name;
+  if (dag.description != null) payload.description = dag.description;
+  if (dag.nodes != null) {
+    payload.nodes = (dag.nodes || []).map((n) => {
+      const deps = (dag.edges || []).filter((e) => e.to === n.id).map((e) => e.from);
+      return { id: n.id, agentId: n.agentId ?? n.id, x: n.x ?? 0, y: n.y ?? 0, deps };
+    });
+  }
+  const res = await fetch(`/api/agent-dags/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(dag),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to update DAG");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to update DAG");
   }
-  return res.json();
+  return _normaliseDag(await res.json());
 }
 
 export async function deleteDagApi(id) {
-  const res = await fetch(`/api/agents/dags/${encodeURIComponent(id)}`, {
+  const res = await fetch(`/api/agent-dags/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to delete DAG");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to delete DAG");
+  }
+  // Python returns 204 No Content — no JSON body
+}
+
+export async function deleteChainApi(id) {
+  const res = await fetch(`/api/agent-chains/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to delete chain");
+  }
+  // Python returns 204 No Content — no JSON body
+}
+
+export async function runChainApi(id) {
+  const res = await fetch(`/api/agent-chains/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+  });
+  if (res.status === 404) {
+    return { __notYetWired: true, message: "Run not yet wired (Phase F2b in progress)" };
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to start chain run");
   }
   return res.json();
 }
 
-export async function deleteChainApi(id) {
-  const res = await fetch(`/api/agents/chains/${encodeURIComponent(id)}`, {
-    method: "DELETE",
+export async function runDagApi(id) {
+  const res = await fetch(`/api/agent-dags/${encodeURIComponent(id)}/run`, {
+    method: "POST",
   });
+  if (res.status === 404) {
+    return { __notYetWired: true, message: "Run not yet wired (Phase F2b in progress)" };
+  }
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Failed to delete chain");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to start DAG run");
   }
   return res.json();
 }
@@ -1479,83 +1686,126 @@ export async function fetchRssFeed(url) {
 
 // ── Skills (Artemis-native skill library) ──────────────────────────
 
-export async function fetchSkills({ status, category } = {}) {
+export async function fetchSkills({ status, category, kind } = {}) {
   const params = new URLSearchParams();
-  if (status) params.set("status", status);
-  if (category) params.set("category", category);
+  // Python uses `kind` not `status`/`category`; forward both for compatibility
+  if (kind) params.set("kind", kind);
+  if (status) params.set("kind", status); // fallback mapping: status→kind
+  if (category) params.set("kind", category); // category param not supported by Python; best-effort
   const qs = params.toString();
   const res = await fetch(`/api/skills${qs ? `?${qs}` : ""}`);
-  return res.json();
+  const body = await res.json();
+  // Python returns { skills: [...] }; Node expected a flat array
+  const raw = Array.isArray(body) ? body : (body.skills ?? []);
+  // Normalise: Python skills have slug/name; callers also use .id
+  return raw.map((s) => ({ ...s, id: s.id ?? s.slug }));
 }
 
 export async function fetchSkill(id) {
+  // Python identifies skills by slug; id IS the slug for skills
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}`);
-  return res.json();
+  const body = await res.json();
+  return body ? { ...body, id: body.id ?? body.slug } : body;
 }
 
 export async function createSkillApi(data) {
+  // Map Node skill payload → Python SkillCreate
+  const payload = {
+    slug: data.slug ?? _slugify(data.name),
+    name: data.name,
+    description: data.description || "",
+    instructions: data.body ?? data.instructions ?? "",
+    tools: data.tools || [],
+    kind: data.kind ?? data.scope ?? "global",
+    source_path: data.source_path ?? null,
+  };
   const res = await fetch("/api/skills", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
-  return res.json();
+  const body = await res.json();
+  if (body?.error || body?.detail) {
+    return body; // let caller handle error shape
+  }
+  return body ? { ...body, id: body.id ?? body.slug } : body;
 }
 
 export async function updateSkillApi(id, data) {
+  // Python uses PATCH; Node used PUT.
+  const payload = {};
+  if (data.name != null) payload.name = data.name;
+  if (data.description != null) payload.description = data.description;
+  if (data.body != null || data.instructions != null) payload.instructions = data.body ?? data.instructions;
+  if (data.tools != null) payload.tools = data.tools;
+  if (data.kind != null || data.scope != null) payload.kind = data.kind ?? data.scope;
+  if (data.source_path != null) payload.source_path = data.source_path;
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
-  return res.json();
+  const body = await res.json();
+  return body ? { ...body, id: body.id ?? body.slug } : body;
 }
 
 export async function approveSkillApi(id) {
+  // Python F2a does not have /approve — graceful no-op returning optimistic ok
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}/approve`, { method: "POST" });
-  return res.json();
+  if (res.status === 404) return { ok: true, __notYetWired: true };
+  return res.json().catch(() => ({}));
 }
 
 export async function archiveSkillApi(id) {
+  // Python F2a does not have /archive — graceful no-op
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}/archive`, { method: "POST" });
-  return res.json();
+  if (res.status === 404) return { ok: true, __notYetWired: true };
+  return res.json().catch(() => ({}));
 }
 
 export async function deleteSkillApi(id) {
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Delete failed");
+    throw new Error(body.detail?.[0]?.msg ?? body.error ?? "Delete failed");
   }
+  // Python returns 204 — no JSON body
 }
 
 export async function assignSkillApi(id, agentId) {
+  // Python F2a does not have /assign — graceful no-op
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}/assign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ agentId }),
   });
-  return res.json();
+  if (res.status === 404) return { ok: true, __notYetWired: true };
+  return res.json().catch(() => ({}));
 }
 
 export async function unassignSkillApi(id, agentId) {
+  // Python F2a does not have /unassign — graceful no-op
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}/unassign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ agentId }),
   });
-  return res.json();
+  if (res.status === 404) return { ok: true, __notYetWired: true };
+  return res.json().catch(() => ({}));
 }
 
 export async function fetchSkillBySlug(slug) {
-  const res = await fetch(`/api/skills/slug/${encodeURIComponent(slug)}`);
+  // Python exposes skills directly at /api/skills/{slug} (slug IS the ID)
+  const res = await fetch(`/api/skills/${encodeURIComponent(slug)}`);
   if (!res.ok) return null;
-  return res.json();
+  const body = await res.json();
+  return body ? { ...body, id: body.id ?? body.slug } : null;
 }
 
 export async function fetchSkillCategories() {
   const res = await fetch("/api/skills/categories");
-  return res.json();
+  if (res.status === 404) return []; // not yet wired in Python F2a
+  return res.json().catch(() => []);
 }
 
 export async function fetchSkillTemplates() {
