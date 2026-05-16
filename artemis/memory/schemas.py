@@ -1,0 +1,90 @@
+"""Pydantic 2.x DTOs for the memory keystone public API."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+ScopeKind = Literal["project", "workspace", "brand", "agent", "skill", "global"]
+EvidenceSourceKind = Literal["drawer", "observation"]
+
+
+class Scope(BaseModel):
+    """Identifies the memory namespace for a write or read operation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    scope_kind: ScopeKind
+    scope_id: str
+
+
+class Source(BaseModel):
+    """Provenance for a drawer write."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source_kind: str
+    source_id: str | None = None
+    source_extra: dict[str, Any] | None = None
+
+
+class ScopeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    scope_kind: str
+    scope_id: str
+    display_name: str | None
+    parent_scope_kind: str | None
+    parent_scope_id: str | None
+    created_at: datetime
+
+
+class Drawer(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scope_kind: str
+    scope_id: str
+    corpus_kind: str | None
+    content: str
+    content_hash: str
+    source_kind: str
+    source_id: str | None
+    source_extra: dict[str, Any] | None
+    owner_user_id: int | None
+    captured_at: datetime
+
+
+class Observation(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scope_kind: str
+    scope_id: str
+    category: str
+    content: str
+    content_hash: str
+    score: float
+    hit_count: int
+    source_quality: float
+    user_confirmed: bool
+    valid_from: datetime | None
+    valid_until: datetime | None
+    superseded_by: int | None
+    owner_user_id: int | None
+    created_at: datetime
+    accessed_at: datetime
+
+
+class Evidence(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    observation_id: int
+    source_kind: str
+    source_id: int
+    source_quote: str | None
+    weight: float
+    created_at: datetime
