@@ -1,0 +1,411 @@
+"""Repository helpers for the Marketing OS domain.
+
+All functions are async and accept a SQLAlchemy AsyncSession.
+No business logic here — just DB read/write helpers.
+
+Convention: functions raise ValueError for not-found or conflict
+conditions that callers should handle. Callers own the commit/rollback.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from artemis.marketing.models import (
+    Approval,
+    CampaignBrief,
+    CampaignCandidate,
+    ContentAsset,
+    ContentAssetLink,
+    Ruleset,
+    ScoutRun,
+    SignalQueue,
+    TerritoryConfig,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Signal Queue
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_signal(session: AsyncSession, **kwargs: Any) -> SignalQueue:
+    """Insert a new signal_queue row and flush to get the server-assigned id."""
+    signal = SignalQueue(**kwargs)
+    session.add(signal)
+    await session.flush()
+    await session.refresh(signal)
+    return signal
+
+
+async def find_signal_by_dedupe_key(
+    session: AsyncSession,
+    source_url: str,
+    headline: str,
+) -> SignalQueue | None:
+    """Return the first active (in_inbox or approved) signal matching url+headline.
+
+    Mirrors the Node app's dedupeByUrlHeadline prepared statement.
+    """
+    result = await session.execute(
+        select(SignalQueue)
+        .where(
+            SignalQueue.source_url == source_url,
+            SignalQueue.headline == headline,
+            SignalQueue.signal_status.in_(["in_inbox", "approved"]),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_signals(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    campaign_family: str | None = None,
+    limit: int = 50,
+    cursor: int | None = None,
+) -> list[SignalQueue]:
+    """Cursor-based paginated list of signals, newest first."""
+    q = select(SignalQueue)
+    if status:
+        q = q.where(SignalQueue.signal_status == status)
+    if campaign_family:
+        q = q.where(SignalQueue.campaign_family == campaign_family)
+    if cursor is not None:
+        q = q.where(SignalQueue.id < cursor)
+    q = q.order_by(SignalQueue.id.desc()).limit(limit)
+    result = await session.execute(q)
+    return list(result.scalars().all())
+
+
+async def get_signal(session: AsyncSession, signal_id: int) -> SignalQueue:
+    signal = await session.get(SignalQueue, signal_id)
+    if signal is None:
+        raise ValueError(f"signal_queue id={signal_id} not found")
+    return signal
+
+
+async def update_signal(session: AsyncSession, signal_id: int, **kwargs: Any) -> SignalQueue:
+    signal = await get_signal(session, signal_id)
+    for key, value in kwargs.items():
+        setattr(signal, key, value)
+    signal.updated_at = datetime.now(tz=UTC)
+    await session.flush()
+    return signal
+
+
+async def save_signal_qualification(
+    session: AsyncSession,
+    signal_id: int,
+    qualification_json: dict[str, Any],
+) -> SignalQueue:
+    """Attach a qualification result to a signal."""
+    return await update_signal(session, signal_id, qualification_json=qualification_json)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rulesets
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def get_active_ruleset_version(session: AsyncSession, family: str) -> Ruleset | None:
+    """Return the single active ruleset for a campaign family, or None."""
+    result = await session.execute(
+        select(Ruleset)
+        .where(Ruleset.family == family, Ruleset.state == "active")
+        .order_by(Ruleset.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_ruleset_versions(session: AsyncSession, family: str | None = None) -> list[Ruleset]:
+    """List all ruleset versions, optionally filtered by family."""
+    q = select(Ruleset)
+    if family:
+        q = q.where(Ruleset.family == family)
+    q = q.order_by(Ruleset.family, Ruleset.created_at.desc())
+    result = await session.execute(q)
+    return list(result.scalars().all())
+
+
+async def activate_ruleset_version(session: AsyncSession, ruleset_id: int) -> Ruleset:
+    """Activate a ruleset version; archive any previously active version for the family.
+
+    Transaction is the caller's responsibility.
+    """
+    ruleset = await session.get(Ruleset, ruleset_id)
+    if ruleset is None:
+        raise ValueError(f"ruleset id={ruleset_id} not found")
+
+    # Archive any currently active version for the same family
+    await session.execute(
+        update(Ruleset)
+        .where(Ruleset.family == ruleset.family, Ruleset.state == "active")
+        .values(state="archived")
+    )
+    ruleset.state = "active"
+    await session.flush()
+    return ruleset
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Campaign Candidates
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_campaign_candidate_from_signal(
+    session: AsyncSession,
+    signal_id: int,
+    ruleset_version_tag: str,
+    qualification_summary: dict[str, Any] | None = None,
+) -> CampaignCandidate:
+    """Promote a qualified signal to a campaign candidate.
+
+    Sets decision_state='approved' and workspace_state='created' on creation
+    to match Node app's insertCandidateFromSignal behavior.
+    """
+    signal = await get_signal(session, signal_id)
+    candidate = CampaignCandidate(
+        source_signal_id=signal_id,
+        campaign_family=signal.campaign_family,
+        stage="human_gate_1",
+        decision_state="approved",
+        workspace_state="created",
+        ruleset_version_at_qualification=ruleset_version_tag,
+        metrics_json=qualification_summary,
+    )
+    session.add(candidate)
+    await session.flush()
+    await session.refresh(candidate)
+    return candidate
+
+
+async def list_candidates(
+    session: AsyncSession,
+    *,
+    decision_state: str | None = None,
+    campaign_family: str | None = None,
+    limit: int = 50,
+    cursor: int | None = None,
+) -> list[CampaignCandidate]:
+    q = select(CampaignCandidate)
+    if decision_state:
+        q = q.where(CampaignCandidate.decision_state == decision_state)
+    if campaign_family:
+        q = q.where(CampaignCandidate.campaign_family == campaign_family)
+    if cursor is not None:
+        q = q.where(CampaignCandidate.id < cursor)
+    q = q.order_by(CampaignCandidate.id.desc()).limit(limit)
+    result = await session.execute(q)
+    return list(result.scalars().all())
+
+
+async def get_candidate(session: AsyncSession, candidate_id: int) -> CampaignCandidate:
+    candidate = await session.get(CampaignCandidate, candidate_id)
+    if candidate is None:
+        raise ValueError(f"campaign_candidates id={candidate_id} not found")
+    return candidate
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Campaign Briefs
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_campaign_brief(
+    session: AsyncSession,
+    candidate_id: int,
+    content: dict[str, Any],
+    generated_by: str | None = None,
+) -> CampaignBrief:
+    """Create a new brief version for a candidate (append-only)."""
+    # Validate candidate exists
+    await get_candidate(session, candidate_id)
+    brief = CampaignBrief(
+        candidate_id=candidate_id,
+        content=content,
+        generated_by=generated_by,
+    )
+    session.add(brief)
+    await session.flush()
+    await session.refresh(brief)
+    return brief
+
+
+async def get_campaign_brief(session: AsyncSession, candidate_id: int) -> CampaignBrief | None:
+    """Return the most recent brief for a candidate, or None."""
+    result = await session.execute(
+        select(CampaignBrief)
+        .where(CampaignBrief.candidate_id == candidate_id)
+        .order_by(CampaignBrief.generated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Content Assets
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_content_asset(session: AsyncSession, **kwargs: Any) -> ContentAsset:
+    # The DB column is named 'metadata' but the ORM attribute is 'asset_metadata'
+    # Accept either keyword for caller convenience.
+    if "metadata" in kwargs:
+        kwargs["asset_metadata"] = kwargs.pop("metadata")
+    asset = ContentAsset(**kwargs)
+    session.add(asset)
+    await session.flush()
+    await session.refresh(asset)
+    return asset
+
+
+async def link_content_asset_to_candidate(
+    session: AsyncSession,
+    candidate_id: int,
+    asset_id: int,
+    link_role: str | None = None,
+) -> ContentAssetLink:
+    """Link a content asset to a campaign candidate.
+
+    Raises ValueError on duplicate (unique constraint violation).
+    """
+    link = ContentAssetLink(
+        candidate_id=candidate_id,
+        asset_id=asset_id,
+        link_role=link_role,
+    )
+    session.add(link)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise ValueError(
+            f"content_asset_links already exists for candidate={candidate_id} asset={asset_id}"
+        ) from exc
+    await session.refresh(link)
+    return link
+
+
+async def list_campaign_asset_links(
+    session: AsyncSession, candidate_id: int
+) -> list[ContentAssetLink]:
+    result = await session.execute(
+        select(ContentAssetLink).where(ContentAssetLink.candidate_id == candidate_id)
+    )
+    return list(result.scalars().all())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Approvals
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_approval(
+    session: AsyncSession,
+    kind: str,
+    subject_id: str,
+    decision_payload: dict[str, Any] | None = None,
+) -> Approval:
+    approval = Approval(
+        kind=kind,
+        subject_id=subject_id,
+        status="pending",
+        decision_payload=decision_payload,
+    )
+    session.add(approval)
+    await session.flush()
+    await session.refresh(approval)
+    return approval
+
+
+async def decide_approval(
+    session: AsyncSession,
+    approval_id: int,
+    decision: str,
+    decided_by: str,
+    decision_payload: dict[str, Any] | None = None,
+) -> Approval:
+    approval = await session.get(Approval, approval_id)
+    if approval is None:
+        raise ValueError(f"approvals id={approval_id} not found")
+    approval.status = decision
+    approval.decided_by = decided_by
+    approval.decided_at = datetime.now(tz=UTC)
+    if decision_payload is not None:
+        approval.decision_payload = decision_payload
+    await session.flush()
+    return approval
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Territory Config
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def get_territory_config(session: AsyncSession, family: str) -> TerritoryConfig | None:
+    result = await session.execute(
+        select(TerritoryConfig).where(TerritoryConfig.family == family).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scout Runs
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_scout_run(
+    session: AsyncSession,
+    run_id: str,
+    scout_type: str,
+    status: str = "pending",
+) -> ScoutRun:
+    run = ScoutRun(
+        id=run_id,
+        scout_type=scout_type,
+        status=status,
+    )
+    session.add(run)
+    await session.flush()
+    await session.refresh(run)
+    return run
+
+
+async def update_scout_run(session: AsyncSession, run_id: str, **kwargs: Any) -> ScoutRun:
+    run = await get_scout_run(session, run_id)
+    for key, value in kwargs.items():
+        setattr(run, key, value)
+    await session.flush()
+    return run
+
+
+async def get_scout_run(session: AsyncSession, run_id: str) -> ScoutRun:
+    run = await session.get(ScoutRun, run_id)
+    if run is None:
+        raise ValueError(f"scout_runs id={run_id} not found")
+    return run
+
+
+async def list_scout_runs(
+    session: AsyncSession,
+    *,
+    scout_type: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+) -> list[ScoutRun]:
+    q = select(ScoutRun)
+    if scout_type:
+        q = q.where(ScoutRun.scout_type == scout_type)
+    if status:
+        q = q.where(ScoutRun.status == status)
+    q = q.order_by(ScoutRun.started_at.desc()).limit(limit)
+    result = await session.execute(q)
+    return list(result.scalars().all())
