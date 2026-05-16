@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
     db_url: str = Field(
-        default="postgresql+asyncpg://artemis:artemis@localhost:5433/artemis_os",
+        default="postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os",
         description="SQLAlchemy async URL for Postgres.",
     )
 

@@ -57,23 +57,35 @@ Read these before doing anything substantive.
 
 ## Local dev quickstart
 
-```bash
-# 1. Bring up Postgres
-docker compose up -d
+**Prerequisites (one-time, brew-native).** This Mac mini is set up with Postgres running natively, not in Docker:
 
-# 2. Install Python deps
+```bash
+brew install uv postgresql@17 pgvector
+brew services start postgresql@17
+createuser -s artemis
+createdb -O artemis artemis_os
+psql -d postgres -c "ALTER USER artemis WITH PASSWORD 'artemis';"
+psql -d artemis_os -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+(`docker-compose.yml` is kept as an optional alternative for contributors who prefer containers, but the brew path is the supported one on this machine.)
+
+**Dev loop.**
+
+```bash
+# 1. Install Python deps (creates .venv automatically)
 uv sync
 
-# 3. Run migrations
+# 2. Run migrations
 uv run alembic upgrade head
 
-# 4. Run the app
+# 3. Run the app
 uv run uvicorn artemis.main:app --reload
 
-# 5. Run tests
+# 4. Run tests
 uv run pytest
 
-# 6. Run full checks (lint + type + test)
+# 5. Run full checks (lint + type + test)
 ./scripts/check.sh
 ```
 
