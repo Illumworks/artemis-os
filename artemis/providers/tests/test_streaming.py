@@ -107,9 +107,18 @@ async def _collect(adapter: Any, request: CompletionRequest) -> list[Any]:
 async def test_gemini_stream_text_deltas() -> None:
     adapter = _gemini_adapter()
     chunks: list[dict[str, Any]] = [
-        {"candidates": [{"content": {"parts": [{"text": "Hello"}]}, "finishReason": ""}], "usageMetadata": {}},
-        {"candidates": [{"content": {"parts": [{"text": " world"}]}, "finishReason": ""}], "usageMetadata": {}},
-        {"candidates": [{"content": {"parts": [{"text": "!"}]}, "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 4}},
+        {
+            "candidates": [{"content": {"parts": [{"text": "Hello"}]}, "finishReason": ""}],
+            "usageMetadata": {},
+        },
+        {
+            "candidates": [{"content": {"parts": [{"text": " world"}]}, "finishReason": ""}],
+            "usageMetadata": {},
+        },
+        {
+            "candidates": [{"content": {"parts": [{"text": "!"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 4},
+        },
     ]
     with _stream_ctx(text=_sse(*chunks)):
         events = await _collect(adapter, _simple_request())
@@ -127,8 +136,21 @@ async def test_gemini_stream_text_deltas() -> None:
 async def test_gemini_stream_text_and_function_call() -> None:
     adapter = _gemini_adapter()
     chunks: list[dict[str, Any]] = [
-        {"candidates": [{"content": {"parts": [{"text": "Let me search"}]}, "finishReason": ""}], "usageMetadata": {}},
-        {"candidates": [{"content": {"parts": [{"functionCall": {"name": "search", "args": {"query": "cats"}}}]}, "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 8}},
+        {
+            "candidates": [{"content": {"parts": [{"text": "Let me search"}]}, "finishReason": ""}],
+            "usageMetadata": {},
+        },
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"functionCall": {"name": "search", "args": {"query": "cats"}}}]
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 8},
+        },
     ]
     with _stream_ctx(text=_sse(*chunks)):
         events = await _collect(adapter, _simple_request())
@@ -153,7 +175,10 @@ async def test_gemini_stream_cancel_stops_early() -> None:
     cancel.set()  # already cancelled before we begin
 
     chunks: list[dict[str, Any]] = [
-        {"candidates": [{"content": {"parts": [{"text": "A"}]}, "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 1}},
+        {
+            "candidates": [{"content": {"parts": [{"text": "A"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 1},
+        },
     ]
     with _stream_ctx(text=_sse(*chunks)):
         gen: AsyncIterator[Any] = await adapter.stream(_simple_request(), cancel=cancel)
@@ -169,7 +194,12 @@ async def test_gemini_stream_cancel_stops_early() -> None:
 async def test_gemini_stream_max_tokens_stop_reason() -> None:
     adapter = _gemini_adapter()
     chunks: list[dict[str, Any]] = [
-        {"candidates": [{"content": {"parts": [{"text": "truncated"}]}, "finishReason": "MAX_TOKENS"}], "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 100}},
+        {
+            "candidates": [
+                {"content": {"parts": [{"text": "truncated"}]}, "finishReason": "MAX_TOKENS"}
+            ],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 100},
+        },
     ]
     with _stream_ctx(text=_sse(*chunks)):
         events = await _collect(adapter, _simple_request())
@@ -181,7 +211,10 @@ async def test_gemini_stream_cost_computed() -> None:
     adapter = _gemini_adapter()
     model_id = resolve_model(GEMINI_DEFAULT_MODEL)
     chunks: list[dict[str, Any]] = [
-        {"candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 500}},
+        {
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 500},
+        },
     ]
     with _stream_ctx(text=_sse(*chunks)):
         events = await _collect(adapter, _simple_request())
@@ -196,8 +229,15 @@ async def test_gemini_stream_cost_computed() -> None:
 async def test_openrouter_stream_text_deltas() -> None:
     adapter = _openrouter_adapter()
     deltas = ["The ", "quick ", "brown ", "fox"]
-    chunks: list[dict[str, Any]] = [{"choices": [{"delta": {"content": d}, "finish_reason": None}]} for d in deltas]
-    chunks.append({"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_cost": 0.001}})
+    chunks: list[dict[str, Any]] = [
+        {"choices": [{"delta": {"content": d}, "finish_reason": None}]} for d in deltas
+    ]
+    chunks.append(
+        {
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_cost": 0.001},
+        }
+    )
     with _stream_ctx(text=_or_sse(*chunks)):
         events = await _collect(adapter, _simple_request())
     text_events = [e for e in events if isinstance(e, StreamTextDelta)]
@@ -211,9 +251,42 @@ async def test_openrouter_stream_text_deltas() -> None:
 
 async def test_openrouter_stream_tool_call_across_chunks() -> None:
     adapter = _openrouter_adapter()
-    chunk1: dict[str, Any] = {"choices": [{"delta": {"tool_calls": [{"id": "call-abc", "type": "function", "function": {"name": "calculator", "arguments": ""}}]}, "finish_reason": None}]}
-    chunk2: dict[str, Any] = {"choices": [{"delta": {"tool_calls": [{"id": "call-abc", "type": "function", "function": {"name": "", "arguments": '{"expr": "2+2"}'}}]}, "finish_reason": None}]}
-    chunk3: dict[str, Any] = {"choices": [{"delta": {}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+    chunk1: dict[str, Any] = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "id": "call-abc",
+                            "type": "function",
+                            "function": {"name": "calculator", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            }
+        ]
+    }
+    chunk2: dict[str, Any] = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "id": "call-abc",
+                            "type": "function",
+                            "function": {"name": "", "arguments": '{"expr": "2+2"}'},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            }
+        ]
+    }
+    chunk3: dict[str, Any] = {
+        "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    }
     with _stream_ctx(text=_or_sse(chunk1, chunk2, chunk3)):
         events = await _collect(adapter, _simple_request())
     start_events = [e for e in events if isinstance(e, StreamToolUseStart)]
@@ -226,7 +299,10 @@ async def test_openrouter_stream_tool_call_across_chunks() -> None:
 
 async def test_openrouter_stream_done_sentinel_exits_cleanly() -> None:
     adapter = _openrouter_adapter()
-    chunk: dict[str, Any] = {"choices": [{"delta": {"content": "Hi"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 2, "completion_tokens": 1}}
+    chunk: dict[str, Any] = {
+        "choices": [{"delta": {"content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+    }
     with _stream_ctx(text=_or_sse(chunk, done=True)):
         events = await _collect(adapter, _simple_request())
     assert len([e for e in events if isinstance(e, StreamTextDelta)]) == 1
@@ -273,7 +349,10 @@ async def test_openrouter_stream_cost_defaults_zero_when_absent() -> None:
 
 async def test_openrouter_stream_finish_reason_length() -> None:
     adapter = _openrouter_adapter()
-    chunk: dict[str, Any] = {"choices": [{"delta": {"content": "truncated"}, "finish_reason": "length"}], "usage": {"prompt_tokens": 5, "completion_tokens": 100}}
+    chunk: dict[str, Any] = {
+        "choices": [{"delta": {"content": "truncated"}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 100},
+    }
     with _stream_ctx(text=_or_sse(chunk)):
         events = await _collect(adapter, _simple_request())
     assert next(e for e in events if isinstance(e, StreamMessageStop)).stop_reason == "max_tokens"

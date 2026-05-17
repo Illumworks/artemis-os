@@ -6,7 +6,7 @@ Design language: fluidity, simplicity, purposefulness, naturalness, spacious, op
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Union
+from typing import Literal
 
 
 @dataclass(slots=True, frozen=True)
@@ -43,10 +43,6 @@ class StreamUsage:
     type: Literal["usage"] = "usage"
 
 
-StreamEvent = Union[
-    StreamTextDelta,
-    StreamToolUseStart,
-    StreamToolUseDelta,
-    StreamMessageStop,
-    StreamUsage,
-]
+StreamEvent = (
+    StreamTextDelta | StreamToolUseStart | StreamToolUseDelta | StreamMessageStop | StreamUsage
+)
