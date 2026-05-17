@@ -1,6 +1,9 @@
 """FastAPI app entrypoint.
 
 Run: `uv run uvicorn artemis.main:app --reload`
+
+Note: env files are loaded in `artemis/__init__.py` on package import, before
+any other module reads `os.environ`.
 """
 
 from collections.abc import AsyncIterator
