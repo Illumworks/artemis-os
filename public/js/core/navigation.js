@@ -17,6 +17,7 @@ export const MARKETING_SIGNALS_VIEW = "marketing-signals";
 export const MARKETING_APPROVALS_VIEW = "marketing-approvals";
 export const MARKETING_RULESETS_VIEW = "marketing-rulesets";
 export const MARKETING_SCOUT_RUNS_VIEW = "marketing-scout-runs";
+export const INTEGRATIONS_VIEW = "integrations";
 
 export const PRIMARY_NAV_DESTINATIONS = [
   {
@@ -194,6 +195,14 @@ export const SECONDARY_NAV_DESTINATIONS = [
     view: DEV_PROJECTS_VIEW,
     action: "open-project-files",
   },
+  {
+    id: INTEGRATIONS_VIEW,
+    label: "Integrations",
+    shortLabel: "Integrations",
+    description: "Connect Slack and other external services.",
+    section: "Settings",
+    view: INTEGRATIONS_VIEW,
+  },
 ];
 
 const KNOWN_VIEWS = new Set([
@@ -209,6 +218,7 @@ const KNOWN_VIEWS = new Set([
   DEV_PROJECTS_VIEW,
   WRITING_STUDIO_VIEW,
   LEGACY_DASHBOARD_VIEW,
+  INTEGRATIONS_VIEW,
   ...PRIMARY_NAV_DESTINATIONS.map((item) => item.id),
   ...SECONDARY_NAV_DESTINATIONS.map((item) => item.id),
 ]);
@@ -232,6 +242,7 @@ export function normalizeAppView(view) {
   if (view === "marketing-rulesets") return MARKETING_RULESETS_VIEW;
   if (view === "marketing-scout-runs") return MARKETING_SCOUT_RUNS_VIEW;
   if (view === "dev-projects") return "chat";
+  if (view === "integrations") return INTEGRATIONS_VIEW;
   if (view === "command-center") return DEFAULT_APP_VIEW;
   if (view === "modules") return WORKSPACE_VIEW;
   if (view === "chat") return "chat";
@@ -262,5 +273,6 @@ export function isShellView(view) {
     || normalizedView === MARKETING_CAMPAIGNS_VIEW
     || normalizedView === MARKETING_SIGNALS_VIEW
     || normalizedView === MARKETING_APPROVALS_VIEW
-    || normalizedView === LEGACY_DASHBOARD_VIEW;
+    || normalizedView === LEGACY_DASHBOARD_VIEW
+    || normalizedView === INTEGRATIONS_VIEW;
 }

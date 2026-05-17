@@ -1,0 +1,239 @@
+/* ── Integrations Page ───────────────────────────────── */
+
+.integrations-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 32px 56px;
+  width: 100%;
+}
+
+.integrations-section-title {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0 0 20px;
+}
+
+.integration-cards-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Card ─────────────────────────────────────────────── */
+
+.integration-card {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-outline);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: var(--surface-shadow-soft);
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.integration-card:hover {
+  border-color: var(--surface-outline-strong);
+  box-shadow: var(--surface-shadow);
+}
+
+/* ── Header ───────────────────────────────────────────── */
+
+.integration-card__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.integration-card__logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.integration-card__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.integration-card__name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.integration-card__tagline {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+/* ── Connected pill ───────────────────────────────────── */
+
+.integration-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.integration-card__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+/* ── Body ─────────────────────────────────────────────── */
+
+.integration-card__body {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.integration-card__workspace-name {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.integration-card__connected-since {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── Actions ──────────────────────────────────────────── */
+
+.integration-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+/* Connect button — primary */
+.integration-card__connect-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--btn-primary-text);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.integration-card__connect-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.integration-card__connect-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Disconnect button — secondary */
+.integration-card__disconnect-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.integration-card__disconnect-btn:hover {
+  border-color: var(--error);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 6%, transparent);
+}
+
+/* Test connection link */
+.integration-card__test-link {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.12s;
+  white-space: nowrap;
+}
+
+.integration-card__test-link:hover {
+  color: var(--text-secondary);
+}
+
+/* Test result badge (appears briefly, then removed) */
+.integration-card__test-result {
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.integration-card__test-result[data-test-result="ok"] {
+  color: var(--success);
+}
+
+.integration-card__test-result[data-test-result="fail"] {
+  color: var(--error);
+}
+
+.integration-card__test-result.hidden {
+  display: none;
+}
+
+/* Inline error (briefly shown near connect btn) */
+.integration-card__error {
+  font-size: 11px;
+  color: var(--error);
+}
+
+/* ── Dark mode adjustments ─────────────────────────────── */
+/* The app uses html[data-theme="dark"] — variables already handle most of it.
+   Only logo needs a nudge in dark mode since it uses accent-dim which is warm. */
+
+html[data-theme="dark"] .integration-card__logo {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}

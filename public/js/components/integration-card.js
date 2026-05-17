@@ -1,0 +1,185 @@
+// integration-card.js
+// Renders a single integration provider card in two states: disconnected and connected.
+//
+// Provider shape:   { id: string, name: string, tagline: string }
+// ConnectedData:    null | { id: number, workspace_name: string | null, connected_at: string }
+
+function _formatDate(isoString) {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  } catch {
+    return isoString;
+  }
+}
+
+function _logoEl(provider) {
+  const el = document.createElement('div');
+  el.className = `integration-card__logo integration-card__logo--${provider.id}`;
+  el.setAttribute('aria-hidden', 'true');
+  el.textContent = provider.name.charAt(0).toUpperCase();
+  return el;
+}
+
+function _showTestResult(span, ok) {
+  span.textContent = ok ? '✓' : '✗';
+  span.dataset.testResult = ok ? 'ok' : 'fail';
+  span.classList.remove('hidden');
+  setTimeout(() => {
+    span.textContent = '';
+    span.removeAttribute('data-test-result');
+    span.classList.add('hidden');
+  }, 2000);
+}
+
+async function _connectProvider(provider) {
+  const res = await fetch(`/api/integrations/${provider.id}/oauth/start`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  const { url } = await res.json();
+  window.location.href = url;
+}
+
+async function _disconnectProvider(container, provider, connectedId) {
+  const res = await fetch(`/api/integrations/${connectedId}`, { method: 'DELETE' });
+  if (res.ok || res.status === 204) {
+    // Re-render disconnected state
+    renderIntegrationCard(container, provider, null);
+  }
+}
+
+async function _verifyProvider(provider, testResultSpan) {
+  try {
+    const res = await fetch(`/api/integrations/${provider.id}/verify`);
+    _showTestResult(testResultSpan, res.ok);
+  } catch {
+    _showTestResult(testResultSpan, false);
+  }
+}
+
+/**
+ * Render a single integration provider card into `container`.
+ *
+ * @param {HTMLElement} container
+ * @param {{ id: string, name: string, tagline: string }} provider
+ * @param {{ id: number, workspace_name: string|null, connected_at: string }|null} connectedData
+ */
+export function renderIntegrationCard(container, provider, connectedData) {
+  container.innerHTML = '';
+
+  const card = document.createElement('div');
+  card.className = 'integration-card';
+
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const header = document.createElement('div');
+  header.className = 'integration-card__header';
+
+  header.appendChild(_logoEl(provider));
+
+  const meta = document.createElement('div');
+  meta.className = 'integration-card__meta';
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'integration-card__name';
+  nameEl.textContent = provider.name;
+
+  const taglineEl = document.createElement('div');
+  taglineEl.className = 'integration-card__tagline';
+  taglineEl.textContent = provider.tagline;
+
+  meta.appendChild(nameEl);
+  meta.appendChild(taglineEl);
+  header.appendChild(meta);
+
+  if (connectedData) {
+    const pill = document.createElement('div');
+    pill.className = 'integration-card__status';
+    pill.innerHTML = '<span class="integration-card__status-dot" aria-hidden="true"></span>Connected';
+    header.appendChild(pill);
+  }
+
+  card.appendChild(header);
+
+  // ── Body ─────────────────────────────────────────────────────────────────────
+  if (connectedData) {
+    // Connected state
+    const body = document.createElement('div');
+    body.className = 'integration-card__body';
+
+    if (connectedData.workspace_name) {
+      const workspaceEl = document.createElement('div');
+      workspaceEl.className = 'integration-card__workspace-name';
+      workspaceEl.textContent = connectedData.workspace_name;
+      body.appendChild(workspaceEl);
+    }
+
+    const sinceEl = document.createElement('div');
+    sinceEl.className = 'integration-card__connected-since';
+    sinceEl.textContent = `Connected ${_formatDate(connectedData.connected_at)}`;
+    body.appendChild(sinceEl);
+
+    card.appendChild(body);
+
+    // ── Actions ──────────────────────────────────────────────────────────────
+    const actions = document.createElement('div');
+    actions.className = 'integration-card__actions';
+
+    const disconnectBtn = document.createElement('button');
+    disconnectBtn.type = 'button';
+    disconnectBtn.className = 'integration-card__disconnect-btn';
+    disconnectBtn.textContent = 'Disconnect';
+    disconnectBtn.addEventListener('click', () => {
+      _disconnectProvider(container, provider, connectedData.id);
+    });
+
+    const testResultSpan = document.createElement('span');
+    testResultSpan.className = 'integration-card__test-result hidden';
+    testResultSpan.setAttribute('aria-live', 'polite');
+
+    const testLink = document.createElement('button');
+    testLink.type = 'button';
+    testLink.className = 'integration-card__test-link';
+    testLink.textContent = 'Test connection';
+    testLink.addEventListener('click', () => {
+      _verifyProvider(provider, testResultSpan);
+    });
+
+    actions.appendChild(disconnectBtn);
+    actions.appendChild(testLink);
+    actions.appendChild(testResultSpan);
+    card.appendChild(actions);
+  } else {
+    // Disconnected state
+    const actions = document.createElement('div');
+    actions.className = 'integration-card__actions';
+
+    const connectBtn = document.createElement('button');
+    connectBtn.type = 'button';
+    connectBtn.className = 'integration-card__connect-btn';
+    connectBtn.textContent = `Connect ${provider.name}`;
+    connectBtn.addEventListener('click', async () => {
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Redirecting…';
+      try {
+        await _connectProvider(provider);
+      } catch (err) {
+        connectBtn.disabled = false;
+        connectBtn.textContent = `Connect ${provider.name}`;
+        // surface error inline
+        const errEl = document.createElement('span');
+        errEl.className = 'integration-card__error';
+        errEl.textContent = err.message || 'Could not start connection.';
+        actions.appendChild(errEl);
+        setTimeout(() => errEl.remove(), 4000);
+      }
+    });
+
+    actions.appendChild(connectBtn);
+    card.appendChild(actions);
+  }
+
+  container.appendChild(card);
+}

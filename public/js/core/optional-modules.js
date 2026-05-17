@@ -38,6 +38,10 @@ const OPTIONAL_MODULES = [
     name: "skills-manager",
     load: () => import("../panels/skills-manager.js"),
   },
+  {
+    name: "integrations",
+    load: () => import("../features/integrations.js"),
+  },
 ];
 
 export async function loadOptionalModules(logger = console) {
