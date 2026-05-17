@@ -161,8 +161,9 @@ async function _setupSession() {
   const sid = stored || _genSessionId();
   _isFirstRun = !stored || localStorage.getItem(_FIRST_RUN_KEY) !== '1';
 
+  let sessionData;
   try {
-    await apiEnsureSession(sid);
+    sessionData = await apiEnsureSession(sid);
     _sessionId = sid;
     _setSessionId(sid);
   } catch (err) {
@@ -171,6 +172,13 @@ async function _setupSession() {
   }
 
   connectFASession(_sessionId);
+
+  // Notify the panel that the session is ready (wires model picker)
+  _panelDispatch('fa:session-ready', {
+    sessionId: _sessionId,
+    provider: sessionData?.provider ?? null,
+    model: sessionData?.model ?? null,
+  });
 
   // Relay WS events to panel
   onFAEvent((event) => {

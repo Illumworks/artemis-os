@@ -129,6 +129,28 @@ async def touch_session(session: AsyncSession, session_id: str) -> None:
     )
 
 
+async def update_session_model(
+    session: AsyncSession,
+    session_id: str,
+    *,
+    provider: str | None,
+    model: str | None,
+) -> FloatingArtemisSession:
+    """Set the provider/model for a session.
+
+    Validation (provider must be registered or null) is the caller's
+    responsibility — the repository is deliberately thin.
+    Raises ValueError if the session is not found.
+    """
+    row = await get_session_by_id(session, session_id)
+    row.provider = provider
+    row.model = model
+    row.last_active_at = datetime.now(UTC)
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Messages
 # ─────────────────────────────────────────────────────────────────────────────
