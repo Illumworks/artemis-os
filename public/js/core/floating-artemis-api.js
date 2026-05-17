@@ -118,6 +118,23 @@ export async function getActiveRuns({ ownerUserId = null } = {}) {
   return res.json();
 }
 
+// ── Memory read backfill ──────────────────────────────────────────────────────
+
+/**
+ * Fetch the most recent MemoryReadEvent for a session (backfill on inspector open).
+ * Returns null if no memory read has occurred yet (204 response).
+ * @param {string} sessionId
+ * @returns {Promise<object|null>}
+ */
+export async function getLatestMemoryReads(sessionId) {
+  const res = await fetch(
+    `${_BASE}/sessions/${encodeURIComponent(sessionId)}/memory-reads/latest`,
+  );
+  if (res.status === 204) return null;
+  if (!res.ok) throw new Error(`getLatestMemoryReads failed: ${res.status}`);
+  return res.json();
+}
+
 // ── WebSocket connection ──────────────────────────────────────────────────────
 
 let _ws = null;
