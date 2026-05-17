@@ -218,6 +218,10 @@ class FloatingArtemisPanel extends HTMLElement {
     this.addEventListener('fa:calibrating', (e) => this._stream.showCalibrating(e.detail.step));
     this.addEventListener('fa:fresh-start', () => { this._stream.clear(); this._stream.showEmpty(); });
     this.addEventListener('fa:opened', () => this.querySelector('.fa-textarea').focus());
+    this.addEventListener('fa:memory-read', (e) => {
+      const { observations, turn_id } = e.detail || {};
+      this._memInspector?.update(observations || [], turn_id);
+    });
   }
 
   // ── Outgoing messages ─────────────────────────────────────────────────────

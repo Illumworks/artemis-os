@@ -421,8 +421,9 @@ async def test_gcal_client_create_event_mock() -> None:
 def test_gcal_frontend_provider_in_list() -> None:
     """PROVIDERS array in integrations.js must contain a gcal entry."""
     import re
+    from pathlib import Path
 
-    js_path = "/Users/artemis/Desktop/Artemis/artemis-os/public/js/features/integrations.js"
-    with open(js_path) as f:
-        content = f.read()
+    repo_root = Path(__file__).resolve().parent.parent
+    js_path = repo_root / "public" / "js" / "features" / "integrations.js"
+    content = js_path.read_text()
     assert re.search(r"id:\s*['\"]gcal['\"]", content), "gcal not found in PROVIDERS array"
