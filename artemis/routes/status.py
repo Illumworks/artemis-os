@@ -31,6 +31,8 @@ _AVAILABLE_SURFACES = {
     # Phase H — OKR Studio + Writing Studio rules backend ported
     "okr",
     "writing-rules",
+    # Phase G1 — Floating Artemis backend
+    "floating-artemis",
 }
 _UNAVAILABLE_SURFACES = {
     # Node-only surfaces — backends not ported yet.
