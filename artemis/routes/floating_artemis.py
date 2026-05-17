@@ -139,6 +139,28 @@ async def close_session(
     await session.commit()
 
 
+@router.post("/sessions/{session_id}/archive")
+async def archive_session(
+    session_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Archive the session ('Start fresh'). Marks closed + archived=true.
+
+    Unlike DELETE, archived sessions remain queryable via include_closed=true
+    and will surface in a future session-history view. Not destructive.
+    """
+    try:
+        row = await repo.archive_session(session, session_id)
+    except ValueError:
+        raise not_found(f"Session '{session_id}' not found", "session_not_found")  # noqa: B904
+    await session.commit()
+    await ws_manager.broadcast(
+        f"fa:{session_id}",
+        {"type": "floating_artemis.archived", "session_id": session_id},
+    )
+    return SessionRead.from_orm_row(row).model_dump()
+
+
 # ── Message endpoints ─────────────────────────────────────────────────────────
 
 

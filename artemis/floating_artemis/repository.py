@@ -104,6 +104,22 @@ async def close_session(session: AsyncSession, session_id: str) -> FloatingArtem
     return row
 
 
+async def archive_session(session: AsyncSession, session_id: str) -> FloatingArtemisSession:
+    """Archive a session — marks it closed + sets metadata.archived=true.
+
+    Unlike close_session (which is a hard close), archive is recoverable:
+    the session remains queryable via include_closed=true and can be
+    surfaced in a future session-history view. "Start fresh" uses this.
+    """
+    row = await get_session_by_id(session, session_id)
+    row.closed_at = datetime.now(UTC)
+    existing_meta = row.metadata_ or {}
+    row.metadata_ = {**existing_meta, "archived": True}
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
 async def touch_session(session: AsyncSession, session_id: str) -> None:
     """Update last_active_at without a full fetch."""
     await session.execute(

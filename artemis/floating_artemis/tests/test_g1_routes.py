@@ -194,3 +194,48 @@ async def test_send_message_accepted() -> None:
 
     assert resp.status_code == 202
     assert resp.json()["accepted"] is True
+
+
+# ── archive session ───────────────────────────────────────────────────────────
+
+
+async def test_archive_session_not_found() -> None:
+    """POST /sessions/{id}/archive returns 404 when session missing."""
+    with patch("artemis.routes.floating_artemis.repo") as mock_repo:
+        mock_repo.archive_session = AsyncMock(side_effect=ValueError("not found"))
+        async with await _make_client() as client:
+            resp = await client.post("/api/floating-artemis/sessions/nonexistent/archive")
+    assert resp.status_code == 404
+
+
+async def test_archive_session_returns_200_and_broadcasts() -> None:
+    """POST /sessions/{id}/archive marks archived=true and broadcasts the event."""
+    from datetime import datetime
+
+    now = datetime(2026, 5, 17, 12, 0, 0, tzinfo=UTC)
+    mock_row = MagicMock()
+    mock_row.id = 42
+    mock_row.session_id = "s-arch-1"
+    mock_row.owner_user_id = None
+    mock_row.started_at = now
+    mock_row.last_active_at = now
+    mock_row.closed_at = now
+    mock_row.title = None
+    mock_row.metadata_ = {"archived": True}
+
+    with patch("artemis.routes.floating_artemis.repo") as mock_repo:
+        mock_repo.archive_session = AsyncMock(return_value=mock_row)
+        with patch("artemis.routes.floating_artemis.ws_manager") as mock_ws:
+            mock_ws.broadcast = AsyncMock()
+            async with await _make_client() as client:
+                resp = await client.post("/api/floating-artemis/sessions/s-arch-1/archive")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == "s-arch-1"
+    assert data["closed_at"] is not None
+
+    mock_ws.broadcast.assert_awaited_once_with(
+        "fa:s-arch-1",
+        {"type": "floating_artemis.archived", "session_id": "s-arch-1"},
+    )

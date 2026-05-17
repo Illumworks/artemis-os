@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="artemis-design.css">
   <!-- Panel stylesheets — loaded after artemis-design.css so they win on conflicts -->
   <link rel="stylesheet" href="css/panels/assistant-bot.css">
+  <link rel="stylesheet" href="css/panels/floating-artemis.css">
   <!-- Targeted shell fidelity overrides — loaded last so it wins on conflicts -->
   <link rel="stylesheet" href="css/artemis-shell-overrides.css">
   <!-- Parallel pane fresh-build — loaded last, own class namespace (pane-*),
@@ -491,6 +492,9 @@
       </div>
     </main>
   </div>
+
+  <!-- Floating Artemis G2 panel — loaded via optional-modules when surface is available -->
+  <floating-artemis-panel id="floating-artemis-panel"></floating-artemis-panel>
 
   <!-- Floating assistant orb (artemis-os AssistantFab: ink bg + aIcon + amber pulse) -->
   <button id="assistant-fab" class="assistant-fab" type="button" aria-label="Open Artemis assistant" title="Artemis">
