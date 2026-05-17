@@ -56,9 +56,7 @@ class SlackClient:
     async def post_dm(self, user: str, text: str) -> dict[str, object]:
         open_resp = await self._post("conversations.open", users=user)
         channel_raw = open_resp["channel"]
-        channel_id = (
-            str(channel_raw["id"]) if isinstance(channel_raw, dict) else str(channel_raw)
-        )
+        channel_id = str(channel_raw["id"]) if isinstance(channel_raw, dict) else str(channel_raw)
         return await self._post("chat.postMessage", channel=channel_id, text=text)
 
     async def get_channel_history(self, channel: str, limit: int = 20) -> list[dict[str, object]]:

@@ -55,14 +55,71 @@ def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool
 async def route_inbound(event_data: dict[str, object]) -> None:
     """Route an inbound Slack event into a floating-artemis session.
 
-    Stub: Worker wires the full routing logic in the integration pass.
-    Logs the event for now.
+    Session key: (team_id, channel_id, thread_ts or "_").
+    The session is marked surface=slack so the web UI panel doesn't show it.
+    After handle_turn completes, the response text is posted back in-thread.
     """
-    logger.info(
-        "route_inbound stub: team=%s channel=%s",
-        event_data.get("team_id"),
-        event_data.get("channel"),
-    )
+    team_id = str(event_data.get("team_id", ""))
+    channel_id = str(event_data.get("channel", ""))
+    thread_ts = event_data.get("thread_ts")
+    ts = str(event_data.get("ts", ""))
+    text = str(event_data.get("text", ""))
+
+    if not team_id or not channel_id or not text:
+        logger.warning("route_inbound: missing required fields in event_data")
+        return
+
+    # Stable session key — one FA session per Slack thread (or channel if not threaded)
+    bucket = str(thread_ts) if thread_ts else "_"
+    session_id = f"slack-{team_id}-{channel_id}-{bucket}"
+    reply_thread_ts = str(thread_ts) if thread_ts else ts
+
+    import artemis.db as _db
+    from artemis.floating_artemis import repository as fa_repo
+    from artemis.floating_artemis.chat import handle_turn
+
+    async with _db.SessionLocal() as db_session:
+        try:
+            await fa_repo.get_session_by_id(db_session, session_id)
+        except ValueError:
+            await fa_repo.create_session(
+                db_session,
+                session_id=session_id,
+                metadata={"surface": "slack", "team_id": team_id, "channel_id": channel_id},
+            )
+            await db_session.commit()
+
+    try:
+        result = await handle_turn(session_id=session_id, user_text=text)
+    except Exception:
+        logger.exception("route_inbound: handle_turn failed for session %s", session_id)
+        return
+
+    response_text = result.response_text
+    if not response_text:
+        return
+
+    try:
+        async with _db.SessionLocal() as db_session:
+            from artemis.integrations import repository as int_repo
+            from artemis.integrations.crypto import decrypt_credentials
+            from artemis.integrations.slack.client import SlackClient
+
+            rows = await int_repo.list_active(db_session, provider="slack")
+            if not rows:
+                logger.warning("route_inbound: no active Slack integration to reply with")
+                return
+            integration = rows[0]
+            creds = decrypt_credentials(bytes(integration.encrypted_credentials))
+            token = str(creds.get("access_token", ""))
+            client = SlackClient(token=token)
+            await client.post_message(
+                channel=channel_id,
+                text=response_text,
+                thread_ts=reply_thread_ts,
+            )
+    except Exception:
+        logger.exception("route_inbound: failed to post Slack reply for session %s", session_id)
 
 
 # ── Event handler helper ──────────────────────────────────────────────────────

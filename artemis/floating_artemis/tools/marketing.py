@@ -108,7 +108,9 @@ async def _reject_signal(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.update_signal(session, int(signal_id), signal_status="rejected", rejected_reason=reason)
+            await repo.update_signal(
+                session, int(signal_id), signal_status="rejected", rejected_reason=reason
+            )
             await session.commit()
         return f"Signal {signal_id} rejected."
     except Exception as exc:
@@ -125,7 +127,9 @@ async def _snooze_signal(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.update_signal(session, int(signal_id), signal_status="snoozed", snoozed_until=until)
+            await repo.update_signal(
+                session, int(signal_id), signal_status="snoozed", snoozed_until=until
+            )
             await session.commit()
         msg = f"Signal {signal_id} snoozed"
         if until:
@@ -145,7 +149,9 @@ async def _list_candidates(inp: dict[str, Any]) -> str:
             candidates = await repo.list_candidates(session, limit=limit)
         if not candidates:
             return "No campaign candidates."
-        lines = [f"{c.id}: {c.campaign_family or 'unknown'} — {c.decision_state}" for c in candidates]
+        lines = [
+            f"{c.id}: {c.campaign_family or 'unknown'} — {c.decision_state}" for c in candidates
+        ]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_candidates failed: {exc}"
@@ -161,7 +167,9 @@ async def _assemble_brief(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            brief = await repo.create_campaign_brief(session, candidate_id=int(candidate_id), content=brief_content)
+            brief = await repo.create_campaign_brief(
+                session, candidate_id=int(candidate_id), content=brief_content
+            )
             await session.commit()
         return f"Brief assembled for candidate {candidate_id}: brief_id={brief.id}"
     except Exception as exc:
@@ -195,7 +203,9 @@ async def _decide_approval(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.decide_approval(session, int(approval_id), decision=decision, decided_by=decided_by)
+            await repo.decide_approval(
+                session, int(approval_id), decision=decision, decided_by=decided_by
+            )
             await session.commit()
         return f"Approval {approval_id}: decision={decision}"
     except Exception as exc:

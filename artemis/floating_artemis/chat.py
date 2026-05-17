@@ -33,6 +33,7 @@ from artemis.floating_artemis.tools.marketing import register_marketing_tools
 from artemis.floating_artemis.tools.okr import register_okr_tools
 from artemis.floating_artemis.tools.system import register_system_tools
 from artemis.floating_artemis.tools.writing_rules import register_writing_rules_tools
+from artemis.integrations.slack.tools import register_slack_tools
 from artemis.routes.status import get_status
 from artemis.ws.manager import ws_manager
 
@@ -104,6 +105,7 @@ def _build_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry
         register_writing_rules_tools(registry)
     if "marketing-os" in available_surfaces or "signal-queue" in available_surfaces:
         register_marketing_tools(registry)
+    register_slack_tools(registry)
     return registry
 
 
@@ -479,7 +481,9 @@ async def resume_after_confirm(
 class _PendingConfirmationError(BaseException):  # noqa: N818 N818 — intentional non-error naming
     """Raised (not really an error) when a layer-3/4 tool is encountered."""
 
-    def __init__(self, tool_use_id: str, tool_name: str, tool_input: dict[str, Any], layer: int) -> None:
+    def __init__(
+        self, tool_use_id: str, tool_name: str, tool_input: dict[str, Any], layer: int
+    ) -> None:
         super().__init__(f"tool_pending:{tool_use_id}")
         self.tool_use_id = tool_use_id
         self.tool_name = tool_name
@@ -573,7 +577,9 @@ async def _load_message_history(
                     )
             if content_blocks:
                 if isinstance(m.role, str) and m.role in ("user", "assistant", "system"):
-                    role: Literal["user", "assistant", "system"] = cast(Literal["user", "assistant", "system"], m.role)
+                    role: Literal["user", "assistant", "system"] = cast(
+                        Literal["user", "assistant", "system"], m.role
+                    )
                 else:
                     role = "user"
                 result.append(Message(role=role, content=content_blocks))
