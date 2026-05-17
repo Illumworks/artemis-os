@@ -25,6 +25,7 @@ import {
   getActiveRuns,
   connectFASession,
   onFAEvent,
+  getLatestMemoryReads,
 } from '../core/floating-artemis-api.js';
 
 // ── Session persistence ───────────────────────────────────────────────────────
@@ -179,6 +180,13 @@ async function _setupSession() {
       event.type === 'floating_artemis.failed'
     ) {
       _refreshBadge();
+    }
+    // ── Memory inspector: relay memory_read events ────────────────────────────
+    if (event.event === 'floating_artemis.memory_read' && event.session_id === _sessionId) {
+      _panelDispatch('fa:memory-read', {
+        observations: event.observations || [],
+        turn_id: event.turn_id || null,
+      });
     }
   });
 

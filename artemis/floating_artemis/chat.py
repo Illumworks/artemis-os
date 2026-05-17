@@ -27,6 +27,8 @@ from artemis.floating_artemis.authority import (
     confirmation_store,
 )
 from artemis.floating_artemis.intent import IntentKind, classify_intent, handle_observability_intent
+from artemis.floating_artemis.memory_read_cache import put as cache_put
+from artemis.floating_artemis.schemas import MemoryObservationDigest, MemoryReadEvent
 from artemis.floating_artemis.tools.builders import register_builders_tools
 from artemis.floating_artemis.tools.core import register_core_tools
 from artemis.floating_artemis.tools.marketing import register_marketing_tools
@@ -128,6 +130,59 @@ def _build_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry
 async def _broadcast(session_id: str, event: dict[str, Any]) -> None:
     room = f"fa:{session_id}"
     await ws_manager.broadcast(room, event)
+
+
+async def _emit_memory_read_event(session_id: str, inp: dict[str, Any]) -> None:
+    """Re-run search_observations after query_memory completes to emit the provenance event.
+
+    This is a secondary lightweight retrieval — results are used only for the
+    inspector, never shown as the tool response. If retrieval fails, we still
+    emit a MemoryReadEvent with an empty list so the inspector clears stale state.
+    """
+    import datetime
+
+    digests: list[MemoryObservationDigest] = []
+    try:
+        import artemis.db as _db
+        from artemis.memory.retrieval import search_observations
+        from artemis.memory.schemas import Scope
+
+        query = inp.get("query", "")
+        scope = inp.get("scope", "global:global")
+        limit = int(inp.get("limit", 10))
+        scope_kind, scope_id = scope.split(":") if ":" in scope else (scope, "default")
+
+        async with _db.SessionLocal() as db_session:
+            results = await search_observations(
+                db_session,
+                scope_set=[Scope(scope_kind=scope_kind, scope_id=scope_id)],
+                query=query,
+                limit=limit,
+            )
+
+        for r in results:
+            text_trunc = r.content[:200] if len(r.content) > 200 else r.content
+            digests.append(
+                MemoryObservationDigest(
+                    id=r.id,
+                    drawer=f"{r.scope_kind}:{r.scope_id}",
+                    text=text_trunc,
+                    score=r.final_score,
+                    sources=[r.scope_kind],
+                    why=None,
+                )
+            )
+    except Exception:
+        logger.debug("Memory read event retrieval failed; emitting empty event", exc_info=True)
+
+    turn_id = datetime.datetime.now(datetime.UTC).isoformat()
+    mem_event = MemoryReadEvent(
+        session_id=session_id,
+        turn_id=turn_id,
+        observations=digests,
+    )
+    cache_put(mem_event)
+    await _broadcast(session_id, mem_event.model_dump())
 
 
 # ── Turn result ───────────────────────────────────────────────────────────────
@@ -517,7 +572,25 @@ def _build_intercepting_tool_registry(
     plain = ToolRegistry()
     for entry in auth_registry.all_entries():
         if entry.layer <= 2:
-            plain.register(entry.tool, entry.impl)
+            if entry.tool.name == "query_memory":
+                # Wrap to emit MemoryReadEvent after retrieval (inspector wiring).
+                _orig_impl = entry.impl
+
+                async def _query_memory_with_emit(
+                    inp: dict[str, Any],
+                    _impl: Any = _orig_impl,
+                    _sid: str = session_id,
+                ) -> str:
+                    result_str: str = await _impl(inp)
+                    try:
+                        await _emit_memory_read_event(_sid, inp)
+                    except Exception:
+                        logger.debug("MemoryReadEvent emit failed", exc_info=True)
+                    return result_str
+
+                plain.register(entry.tool, _query_memory_with_emit)
+            else:
+                plain.register(entry.tool, entry.impl)
         else:
             # Capture layer/name for the closure
             _layer = entry.layer

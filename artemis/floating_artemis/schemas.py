@@ -147,3 +147,26 @@ class ActiveRunRead(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     owner_user_id: int | None
+
+
+# ── Memory read event (provenance inspector) ──────────────────────────────────
+
+
+class MemoryObservationDigest(BaseModel):
+    """One observation read during a turn, digested for the provenance inspector."""
+
+    id: int
+    drawer: str  # "{scope_kind}:{scope_id}" label
+    text: str  # truncated to 200 chars
+    score: float
+    sources: list[str]  # source labels drawn from scope metadata
+    why: str | None = None  # always None for V1
+
+
+class MemoryReadEvent(BaseModel):
+    """Broadcast when a turn reads from memory (even if 0 observations returned)."""
+
+    event: Literal["floating_artemis.memory_read"] = "floating_artemis.memory_read"
+    session_id: str
+    turn_id: str  # opaque — current ISO timestamp
+    observations: list[MemoryObservationDigest]

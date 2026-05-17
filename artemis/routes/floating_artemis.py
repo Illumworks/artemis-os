@@ -30,7 +30,9 @@ from artemis.db import get_session
 from artemis.floating_artemis import repository as repo
 from artemis.floating_artemis.authority import confirmation_store
 from artemis.floating_artemis.chat import handle_turn, resume_after_confirm
+from artemis.floating_artemis.memory_read_cache import get as memory_cache_get
 from artemis.floating_artemis.schemas import (
+    MemoryReadEvent,
     MessageRead,
     PageContextRead,
     PageContextSet,
@@ -276,6 +278,26 @@ async def get_active_runs(
 ) -> dict[str, Any]:
     rows = await repo.get_active_runs(session, owner_user_id=owner_user_id)
     return {"runs": rows}
+
+
+# ── Memory read backfill ──────────────────────────────────────────────────────
+
+
+@router.get("/sessions/{session_id}/memory-reads/latest")
+async def get_latest_memory_reads(
+    session_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> MemoryReadEvent:
+    """Return the most recent MemoryReadEvent for this session (in-memory cache).
+
+    Returns 204 No Content if the session has not yet executed a memory query.
+    """
+    from fastapi import Response
+
+    cached = memory_cache_get(session_id)
+    if cached is None:
+        return Response(status_code=204)  # type: ignore[return-value]
+    return cached
 
 
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
