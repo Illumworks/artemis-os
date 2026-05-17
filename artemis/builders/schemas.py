@@ -84,6 +84,7 @@ class AgentRunRead(_Base):
     cost_output_tokens: int = Field(alias="costOutputTokens")
     error: str | None = None
     owner_user_id: int | None = Field(default=None, alias="ownerUserId")
+    is_ephemeral: bool = Field(default=False, alias="isEphemeral")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

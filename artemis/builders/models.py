@@ -18,7 +18,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Index, Integer, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -77,6 +87,7 @@ class AgentRun(Base):
     cost_output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    is_ephemeral: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
 
 class AgentContext(Base):
