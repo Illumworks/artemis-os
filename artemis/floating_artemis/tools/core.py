@@ -1,18 +1,23 @@
-"""Core Floating Artemis tools — memory, status, filesystem, preferences.
+"""Core Floating Artemis tools — memory, status, filesystem, preferences, sub-agents.
 
 Authority layers:
   1 (read-only): query_memory, list_scopes, surface_status, list_routes, read_file
   2 (idempotent write): write_memory, set_pref, propose_edit
+  3 (side-effect): spawn_subagent (spends tokens, requires confirmation for Sonnet/Opus)
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import uuid
 from pathlib import Path
 from typing import Any
 
 from artemis.agent.types import Tool
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
+
+logger = logging.getLogger(__name__)
 
 # ── Repo-root constraint for read_file ───────────────────────────────────────
 
@@ -295,6 +300,159 @@ SET_PREF = Tool(
 )
 
 
+# ── Model alias map ───────────────────────────────────────────────────────────
+
+_MODEL_ALIASES: dict[str, str] = {
+    "haiku": "claude-haiku-4-5",
+    "sonnet": "claude-sonnet-4-6",
+}
+
+_SUBAGENT_SYSTEM = (
+    "You are a helper sub-agent. Complete the requested task and return your output "
+    "as a clear final message. Do not propose anything; just execute."
+)
+
+
+async def _spawn_subagent(inp: dict[str, Any]) -> str:
+    """Spawn a one-shot ephemeral sub-agent.
+
+    Calls F1 run_turn with a temporary message list. Creates an agent_runs row
+    with is_ephemeral=True and agent_id=None for cost tracking. Returns the
+    sub-agent's final text output.
+
+    This is SPAWN (do, return, disappear) — NOT propose (save, persist, reuse).
+    """
+    task = inp.get("task", "").strip()
+    if not task:
+        return "Error: task is required"
+
+    raw_model = inp.get("model") or "haiku"
+    model = _MODEL_ALIASES.get(raw_model, raw_model)
+    max_turns = int(inp.get("max_turns", 8))
+
+    run_id = str(uuid.uuid4())
+
+    # ── 1. Record run start ───────────────────────────────────────────────────
+    try:
+        import artemis.db as _db
+        from artemis.builders import repository as builder_repo
+
+        async with _db.SessionLocal() as db_session:
+            await builder_repo.create_agent_run(
+                db_session,
+                run_id=run_id,
+                agent_id=None,
+                user_message=task,
+                status="running",
+                is_ephemeral=True,
+            )
+            await db_session.commit()
+    except Exception as exc:
+        logger.warning("spawn_subagent: could not record run start: %s", exc)
+
+    # ── 2. Run the F1 loop ────────────────────────────────────────────────────
+    output: str = ""
+    cost_input = 0
+    cost_output = 0
+    final_status = "completed"
+    error_msg: str | None = None
+
+    try:
+        from artemis.agent.client import AnthropicAdapter
+        from artemis.agent.loop import run_turn, user_message
+
+        adapter = AnthropicAdapter()
+        result = await run_turn(
+            adapter=adapter,
+            messages=[user_message(task)],
+            system=_SUBAGENT_SYSTEM,
+            model=model,
+            max_iterations=max_turns,
+        )
+        cost_input = result.usage.input_tokens
+        cost_output = result.usage.output_tokens
+
+        # Extract final text from the last assistant message
+        from artemis.agent.types import TextBlock
+
+        for msg in reversed(result.messages):
+            if msg.role == "assistant":
+                texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
+                if texts:
+                    output = " ".join(texts)
+                    break
+        if not output:
+            output = "(sub-agent produced no text output)"
+    except Exception as exc:
+        logger.exception("spawn_subagent run_turn failed run_id=%s", run_id)
+        final_status = "failed"
+        error_msg = str(exc)
+        output = f"Sub-agent failed: {exc}"
+
+    # ── 3. Record run completion ──────────────────────────────────────────────
+    try:
+        import artemis.db as _db
+        from artemis.builders import repository as builder_repo
+
+        async with _db.SessionLocal() as db_session:
+            await builder_repo.set_agent_run_completed(
+                db_session,
+                run_id,
+                status=final_status,
+                cost_input_tokens=cost_input,
+                cost_output_tokens=cost_output,
+                error=error_msg,
+            )
+            await db_session.commit()
+    except Exception as exc:
+        logger.warning("spawn_subagent: could not record run completion: %s", exc)
+
+    return json.dumps(
+        {
+            "ok": final_status == "completed",
+            "output": output,
+            "run_id": run_id,
+            "cost_usd": None,  # token-cost USD rollup deferred to a separate slice
+        }
+    )
+
+
+SPAWN_SUBAGENT = Tool(
+    name="spawn_subagent",
+    description=(
+        "Spawn a one-shot ephemeral helper sub-agent to complete a bounded task. "
+        "The helper runs, returns its result, and disappears — no persistent artifact "
+        "is created in the builders surface. Use SPAWN for one-time tasks (write code, "
+        "audit a thing, summarize, generate fixtures). Use propose_agent when you want "
+        "something the operator will reuse. Costs tokens; requires operator confirmation. "
+        "[layer:3]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "The task for the sub-agent to complete.",
+            },
+            "model": {
+                "type": "string",
+                "enum": ["haiku", "sonnet"],
+                "description": "Model to use. 'haiku' is faster and cheaper; 'sonnet' for complex tasks.",
+                "default": "haiku",
+            },
+            "max_turns": {
+                "type": "integer",
+                "description": "Maximum model iterations (default 8, max 20).",
+                "default": 8,
+                "minimum": 1,
+                "maximum": 20,
+            },
+        },
+        "required": ["task"],
+    },
+)
+
+
 def register_core_tools(registry: AuthorizedToolRegistry) -> None:
     """Register all core tools into the provided registry."""
     registry.register(QUERY_MEMORY, _query_memory, layer=1)
@@ -305,3 +463,4 @@ def register_core_tools(registry: AuthorizedToolRegistry) -> None:
     registry.register(READ_FILE, _read_file, layer=1)
     registry.register(PROPOSE_EDIT, _propose_edit, layer=2)
     registry.register(SET_PREF, _set_pref, layer=2)
+    registry.register(SPAWN_SUBAGENT, _spawn_subagent, layer=3)

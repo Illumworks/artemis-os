@@ -106,6 +106,7 @@ async def list_agent_runs(
     status: str | None = None,
     limit: int = 50,
     cursor: int | None = None,
+    include_ephemeral: bool = False,
 ) -> list[AgentRun]:
     q = select(AgentRun).order_by(AgentRun.id.desc()).limit(limit)
     if agent_id is not None:
@@ -114,6 +115,8 @@ async def list_agent_runs(
         q = q.where(AgentRun.status == status)
     if cursor is not None:
         q = q.where(AgentRun.id < cursor)
+    if not include_ephemeral:
+        q = q.where(AgentRun.is_ephemeral.is_(False))
     result = await session.execute(q)
     return list(result.scalars().all())
 

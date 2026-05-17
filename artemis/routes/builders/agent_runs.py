@@ -26,10 +26,16 @@ async def list_agent_runs(
     status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = Query(default=None),
+    include_ephemeral: bool = Query(default=False, alias="includeEphemeral"),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
     runs = await repo.list_agent_runs(
-        session, agent_id=agent_id, status=status, limit=limit, cursor=cursor
+        session,
+        agent_id=agent_id,
+        status=status,
+        limit=limit,
+        cursor=cursor,
+        include_ephemeral=include_ephemeral,
     )
     return {"runs": [AgentRunRead.model_validate(r).model_dump(by_alias=True) for r in runs]}
 
