@@ -11,6 +11,8 @@ HTTP endpoints:
   POST   /api/floating-artemis/sessions/{session_id}/page-context
   POST   /api/floating-artemis/sessions/{session_id}/tool-confirm
   POST   /api/floating-artemis/sessions/{session_id}/stop
+  PATCH  /api/floating-artemis/sessions/{session_id}/model
+  GET    /api/floating-artemis/models
 
 WebSocket:
   WS     /ws/floating-artemis/{session_id}
@@ -35,6 +37,7 @@ from artemis.floating_artemis.schemas import (
     PageContextRead,
     PageContextSet,
     SessionCreate,
+    SessionModelUpdate,
     SessionRead,
     SessionUpdate,
     ToolConfirmRequest,
@@ -43,6 +46,9 @@ from artemis.floating_artemis.schemas import (
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
+from artemis.providers import list_providers
+from artemis.providers.gemini.models import GEMINI_DEFAULT_MODEL, GEMINI_MODEL_MAP
+from artemis.providers.openrouter.models import OPENROUTER_DEFAULT_MODEL, OPENROUTER_MODEL_MAP
 from artemis.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -264,6 +270,80 @@ async def stop_session_turn(
         {"type": "floating_artemis.stopped", "session_id": session_id},
     )
     return {"stopped": True, "session_id": session_id}
+
+
+# ── Provider / model picker ───────────────────────────────────────────────────
+
+# Static Anthropic models exposed in the picker (hardcoded per spec).
+_ANTHROPIC_PICKER_MODELS = [
+    {"id": "claude-opus-4-7", "label": "Opus 4.7", "default": False},
+    {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "default": True},
+    {"id": "claude-haiku-4-5", "label": "Haiku 4.5", "default": False},
+]
+
+
+def _build_provider_model_list() -> list[dict[str, Any]]:
+    """Build the {providers: [...]} payload consumed by the picker UI.
+
+    Gemini and OpenRouter models come from their alias maps; Anthropic is
+    a fixed short list (the adapter does not expose its own map).
+    """
+    gemini_default_alias = GEMINI_DEFAULT_MODEL  # e.g. "gemini-2.5-flash"
+    gemini_models = [
+        {"id": alias, "label": alias, "default": alias == gemini_default_alias}
+        for alias in GEMINI_MODEL_MAP
+    ]
+
+    openrouter_models = [
+        {
+            "id": alias,
+            "label": alias,
+            "default": OPENROUTER_MODEL_MAP.get(alias) == OPENROUTER_DEFAULT_MODEL,
+        }
+        for alias in OPENROUTER_MODEL_MAP
+    ]
+
+    return [
+        {"id": "anthropic", "name": "Anthropic", "models": _ANTHROPIC_PICKER_MODELS},
+        {"id": "gemini", "name": "Google Gemini", "models": gemini_models},
+        {"id": "openrouter", "name": "OpenRouter", "models": openrouter_models},
+    ]
+
+
+@router.get("/models")
+async def list_models() -> dict[str, Any]:
+    """Return all provider + model options for the picker UI.
+
+    Response shape:
+      { providers: [ { id, name, models: [ { id, label, default } ] } ] }
+    """
+    return {"providers": _build_provider_model_list()}
+
+
+@router.patch("/sessions/{session_id}/model")
+async def update_session_model(
+    session_id: str,
+    body: SessionModelUpdate,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Set the provider/model for a session.
+
+    Both fields are nullable — send null to revert to the Anthropic default.
+    Rejects unknown provider IDs with 400 / bad_request.
+    """
+    if body.provider is not None and body.provider not in list_providers():
+        raise bad_request(
+            f"Unknown provider {body.provider!r}. Valid: {list_providers()}",
+            "unknown_provider",
+        )
+    try:
+        row = await repo.update_session_model(
+            session, session_id, provider=body.provider, model=body.model
+        )
+    except ValueError:
+        raise not_found(f"Session '{session_id}' not found", "session_not_found")  # noqa: B904
+    await session.commit()
+    return SessionRead.from_orm_row(row).model_dump()
 
 
 # ── Active runs ───────────────────────────────────────────────────────────────

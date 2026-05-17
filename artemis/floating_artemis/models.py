@@ -42,6 +42,9 @@ class FloatingArtemisSession(Base):
     closed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[Any] = mapped_column("metadata", JSONB, nullable=False, server_default="'{}'")
+    # Provider/model selection (migration 0014) — null means "use Anthropic default"
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class FloatingArtemisMessage(Base):

@@ -39,9 +39,13 @@ class SessionRead(BaseModel):
     closed_at: datetime | None
     title: str | None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    provider: str | None = None
+    model: str | None = None
 
     @classmethod
     def from_orm_row(cls, row: Any) -> SessionRead:
+        _p = getattr(row, "provider", None)
+        _m = getattr(row, "model", None)
         return cls(
             id=row.id,
             session_id=row.session_id,
@@ -51,7 +55,16 @@ class SessionRead(BaseModel):
             closed_at=row.closed_at,
             title=row.title,
             metadata=row.metadata_ or {},
+            provider=_p if isinstance(_p, str) else None,
+            model=_m if isinstance(_m, str) else None,
         )
+
+
+class SessionModelUpdate(BaseModel):
+    """Request body for PATCH /sessions/{id}/model."""
+
+    provider: str | None = None
+    model: str | None = None
 
 
 # ── Messages ─────────────────────────────────────────────────────────────────

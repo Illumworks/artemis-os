@@ -34,6 +34,8 @@ from artemis.floating_artemis.tools.okr import register_okr_tools
 from artemis.floating_artemis.tools.system import register_system_tools
 from artemis.floating_artemis.tools.writing_rules import register_writing_rules_tools
 from artemis.integrations.slack.tools import register_slack_tools
+from artemis.providers import get_adapter
+from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 from artemis.routes.status import get_status
 from artemis.ws.manager import ws_manager
 
@@ -115,6 +117,58 @@ def _build_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry
 async def _broadcast(session_id: str, event: dict[str, Any]) -> None:
     room = f"fa:{session_id}"
     await ws_manager.broadcast(room, event)
+
+
+# ── Provider resolution ────────────────────────────────────────────────────────
+
+
+async def _resolve_adapter(
+    *,
+    session_id: str,
+    db_session: Any | None,
+) -> ModelAdapter | str:
+    """Build the appropriate ModelAdapter for the session's provider/model.
+
+    Returns a ModelAdapter on success.
+    Returns a plain str error message when the adapter cannot be built (e.g.
+    missing API key) — the caller must handle this case and broadcast a
+    floating_artemis.failed event.
+    Falls back to AnthropicAdapter when no provider is set on the session.
+    """
+    provider_id = "anthropic"
+    model_id: str | None = None
+
+    try:
+        import artemis.db as _db
+        from artemis.floating_artemis.repository import get_session_by_id
+
+        if db_session is not None:
+            row = await get_session_by_id(db_session, session_id)
+        else:
+            async with _db.SessionLocal() as session:
+                row = await get_session_by_id(session, session_id)
+
+        if getattr(row, "provider", None):
+            provider_id = row.provider  # type: ignore[assignment]
+        if getattr(row, "model", None):
+            model_id = row.model
+    except Exception:
+        # Session not found or DB error — fall back to Anthropic default
+        pass
+
+    try:
+        kwargs: dict[str, Any] = {}
+        if model_id:
+            kwargs["default_model"] = model_id
+        return get_adapter(provider_id, **kwargs)
+    except MissingApiKeyError as exc:
+        return (
+            f"Provider '{provider_id}' needs configuration — "
+            f"add the API key in Integrations. ({exc})"
+        )
+    except UnknownProviderError as exc:
+        # Defense in depth: should be impossible after route validation
+        return f"Unknown provider '{provider_id}'. ({exc})"
 
 
 # ── Turn result ───────────────────────────────────────────────────────────────
@@ -227,7 +281,24 @@ async def handle_turn(
     messages = history + [user_message(user_text)]
 
     if adapter is None:
-        adapter = AnthropicAdapter()
+        resolved = await _resolve_adapter(session_id=session_id, db_session=db_session)
+        if isinstance(resolved, str):
+            # Provider misconfigured — surface inline, do not crash
+            await _broadcast(
+                session_id,
+                {
+                    "type": "floating_artemis.failed",
+                    "session_id": session_id,
+                    "error": resolved,
+                },
+            )
+            return TurnResult(
+                session_id=session_id,
+                response_text=None,
+                stop_reason="provider_error",
+                usage=Usage(),
+            )
+        adapter = resolved
 
     # Set up hooks for broadcasting events
     hooks = HookRegistry()
@@ -414,7 +485,8 @@ async def resume_after_confirm(
     messages = history + [tool_result_msg]
 
     if adapter is None:
-        adapter = AnthropicAdapter()
+        resolved = await _resolve_adapter(session_id=session_id, db_session=db_session)
+        adapter = resolved if not isinstance(resolved, str) else AnthropicAdapter()
 
     await _broadcast(
         session_id,

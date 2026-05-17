@@ -19,6 +19,7 @@ import { ChatStream } from './chat-stream.js';
 import { ToolConfirmCard } from './tool-confirm-card.js';
 import { ActiveRunsSidebar } from './active-runs-sidebar.js';
 import { MemoryInspector } from './memory-inspector.js';
+import './model-picker-floating.js';
 import {
   sendMessage,
   stopTurn,
@@ -117,6 +118,7 @@ class FloatingArtemisPanel extends HTMLElement {
               <span class="fa-context-label">Focus</span>
             </div>
             <div class="fa-header-actions">
+              <model-picker-floating class="fa-model-picker"></model-picker-floating>
               <button class="fa-hdr-btn fa-btn-activity" title="Activity sidebar">${ICON_ACTIVITY}</button>
               <button class="fa-hdr-btn fa-btn-memory" title="Memory inspector">${ICON_MEMORY}</button>
               <button class="fa-hdr-btn fa-btn-fresh" title="Start fresh">${ICON_REFRESH}</button>
@@ -169,6 +171,7 @@ class FloatingArtemisPanel extends HTMLElement {
     this._stream = new ChatStream(this.querySelector('.fa-panel-body'));
     this._sidebar = new ActiveRunsSidebar(this.querySelector('.fa-sidebar'));
     this._memInspector = new MemoryInspector(this.querySelector('.fa-memory-inspector-wrap'));
+    this._modelPicker = this.querySelector('.fa-model-picker');
 
     this._stream.showEmpty();
   }
@@ -210,6 +213,7 @@ class FloatingArtemisPanel extends HTMLElement {
     // CustomEvents from floating_artemis.js
     this.addEventListener('fa:event', (e) => this._handleFAEvent(e.detail));
     this.addEventListener('fa:history', (e) => this._renderHistory(e.detail.messages));
+    this.addEventListener('fa:session-ready', (e) => this._onSessionReady(e.detail));
     this.addEventListener('fa:page-changed', (e) => this._updatePage(e.detail.page));
     this.addEventListener('fa:calibrating', (e) => this._stream.showCalibrating(e.detail.step));
     this.addEventListener('fa:fresh-start', () => { this._stream.clear(); this._stream.showEmpty(); });
@@ -322,6 +326,14 @@ class FloatingArtemisPanel extends HTMLElement {
   _renderHistory(messages) {
     this._stream.clear();
     this._stream.renderHistory(messages);
+  }
+
+  // ── Session ready (picker wiring) ─────────────────────────────────────────
+
+  _onSessionReady({ sessionId, provider, model } = {}) {
+    if (this._modelPicker && sessionId) {
+      this._modelPicker.setSession(sessionId, { provider: provider ?? null, model: model ?? null });
+    }
   }
 
   // ── Page context chip ─────────────────────────────────────────────────────
