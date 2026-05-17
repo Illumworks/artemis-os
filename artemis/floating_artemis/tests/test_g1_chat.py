@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -121,7 +121,7 @@ async def test_handle_turn_simple_reply() -> None:
 async def test_handle_turn_system_prompt_includes_voice_samples() -> None:
     """Verify voice samples appear in the system prompt sent to the model."""
     adapter = FakeAdapter([ScriptedReply(text="Done.")])
-    captured_requests = []
+    captured_requests: list[Any] = []
 
     original_complete = adapter.complete
 
@@ -129,11 +129,10 @@ async def test_handle_turn_system_prompt_includes_voice_samples() -> None:
         captured_requests.append(req)
         return await original_complete(req)
 
-    adapter.complete = capturing_complete
-
     samples = ["Already on it.", "Done. You're welcome."]
 
     with (
+        patch.object(adapter, "complete", side_effect=capturing_complete),
         patch("artemis.floating_artemis.chat._get_voice_samples", return_value=samples),
         patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
         patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
@@ -238,8 +237,7 @@ async def test_handle_turn_resume_after_confirm_run() -> None:
         )
 
     assert turn1.stop_reason == "tool_pending"
-    pending_id = turn1.pending_tool_use_id
-    assert pending_id is not None
+    pending_id = cast(str, turn1.pending_tool_use_id)
 
     # Now confirm with run
     adapter_resume = FakeAdapter([ScriptedReply(text="Agent proposal submitted.")])
@@ -287,7 +285,7 @@ async def test_handle_turn_resume_after_confirm_cancel() -> None:
         )
 
     assert turn1.stop_reason == "tool_pending"
-    pending_id = turn1.pending_tool_use_id
+    pending_id = cast(str, turn1.pending_tool_use_id)
 
     adapter_resume = FakeAdapter([ScriptedReply(text="Cancelled. No agent created.")])
 

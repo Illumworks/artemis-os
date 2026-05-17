@@ -238,7 +238,7 @@ async def seed_voice_corpus_from_profile(session: AsyncSession) -> int:
             .on_conflict_do_nothing(index_elements=["line"])
         )
         result = await session.execute(stmt)
-        inserted += result.rowcount or 0
+        inserted += getattr(result, "rowcount", 0) or 0
 
     await session.flush()
     return inserted

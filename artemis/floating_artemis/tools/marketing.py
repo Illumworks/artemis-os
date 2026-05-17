@@ -27,7 +27,7 @@ _SURFACE = "[surface:marketing-os]"
 
 
 async def _list_signals(inp: dict[str, Any]) -> str:
-    status = inp.get("status", "pending")
+    status = inp.get("status", "in_inbox")
     limit = int(inp.get("limit", 20))
     try:
         import artemis.db as _db
@@ -37,7 +37,7 @@ async def _list_signals(inp: dict[str, Any]) -> str:
             signals = await repo.list_signals(session, status=status, limit=limit)
         if not signals:
             return f"No signals with status='{status}'."
-        lines = [f"{s.id}: [{s.status}] {s.headline or s.signal_type}" for s in signals]
+        lines = [f"{s.id}: [{s.signal_status}] {s.headline}" for s in signals]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_signals failed: {exc}"
@@ -56,10 +56,9 @@ async def _get_signal(inp: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "id": signal.id,
-                "status": signal.status,
+                "signal_status": signal.signal_status,
                 "headline": signal.headline,
-                "signal_type": signal.signal_type,
-                "score": signal.score,
+                "campaign_family": signal.campaign_family,
             }
         )
     except Exception as exc:
@@ -68,7 +67,7 @@ async def _get_signal(inp: dict[str, Any]) -> str:
 
 async def _qualify_signal(inp: dict[str, Any]) -> str:
     signal_id = inp.get("signal_id")
-    score = inp.get("score")
+    qualification = inp.get("qualification", {})
     if not signal_id:
         return "Error: signal_id is required"
     try:
@@ -76,7 +75,7 @@ async def _qualify_signal(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.qualify_signal(session, int(signal_id), score=score)
+            await repo.save_signal_qualification(session, int(signal_id), qualification)
             await session.commit()
         return f"Signal {signal_id} qualified."
     except Exception as exc:
@@ -92,7 +91,7 @@ async def _approve_signal(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.update_signal_status(session, int(signal_id), "approved")
+            await repo.update_signal(session, int(signal_id), signal_status="approved")
             await session.commit()
         return f"Signal {signal_id} approved."
     except Exception as exc:
@@ -109,7 +108,7 @@ async def _reject_signal(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.update_signal_status(session, int(signal_id), "rejected", reason=reason)
+            await repo.update_signal(session, int(signal_id), signal_status="rejected", rejected_reason=reason)
             await session.commit()
         return f"Signal {signal_id} rejected."
     except Exception as exc:
@@ -126,7 +125,7 @@ async def _snooze_signal(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.update_signal_status(session, int(signal_id), "snoozed")
+            await repo.update_signal(session, int(signal_id), signal_status="snoozed", snoozed_until=until)
             await session.commit()
         msg = f"Signal {signal_id} snoozed"
         if until:
@@ -146,13 +145,30 @@ async def _list_candidates(inp: dict[str, Any]) -> str:
             candidates = await repo.list_candidates(session, limit=limit)
         if not candidates:
             return "No campaign candidates."
-        lines = [f"{c.id}: {c.campaign_family or 'unknown'} — {c.status}" for c in candidates]
+        lines = [f"{c.id}: {c.campaign_family or 'unknown'} — {c.decision_state}" for c in candidates]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_candidates failed: {exc}"
 
 
 async def _assemble_brief(inp: dict[str, Any]) -> str:
+    candidate_id = inp.get("candidate_id")
+    brief_content = inp.get("content", {})
+    if not candidate_id:
+        return "Error: candidate_id is required"
+    try:
+        import artemis.db as _db
+        from artemis.marketing import repository as repo
+
+        async with _db.SessionLocal() as session:
+            brief = await repo.create_campaign_brief(session, candidate_id=int(candidate_id), content=brief_content)
+            await session.commit()
+        return f"Brief assembled for candidate {candidate_id}: brief_id={brief.id}"
+    except Exception as exc:
+        return f"assemble_brief failed: {exc}"
+
+
+async def _submit_draft_for_review(inp: dict[str, Any]) -> str:
     candidate_id = inp.get("candidate_id")
     if not candidate_id:
         return "Error: candidate_id is required"
@@ -161,25 +177,9 @@ async def _assemble_brief(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            brief = await repo.assemble_brief(session, int(candidate_id))
+            await repo.update_signal(session, int(candidate_id), signal_status="in_review")
             await session.commit()
-        return f"Brief assembled for candidate {candidate_id}: brief_id={brief.id}"
-    except Exception as exc:
-        return f"assemble_brief failed: {exc}"
-
-
-async def _submit_draft_for_review(inp: dict[str, Any]) -> str:
-    deliverable_id = inp.get("deliverable_id")
-    if not deliverable_id:
-        return "Error: deliverable_id is required"
-    try:
-        import artemis.db as _db
-        from artemis.marketing import repository as repo
-
-        async with _db.SessionLocal() as session:
-            await repo.submit_deliverable(session, int(deliverable_id))
-            await session.commit()
-        return f"Deliverable {deliverable_id} submitted for review."
+        return f"Candidate {candidate_id} submitted for review."
     except Exception as exc:
         return f"submit_draft_for_review failed: {exc}"
 
@@ -187,6 +187,7 @@ async def _submit_draft_for_review(inp: dict[str, Any]) -> str:
 async def _decide_approval(inp: dict[str, Any]) -> str:
     approval_id = inp.get("approval_id")
     decision = inp.get("decision")
+    decided_by = inp.get("decided_by", "artemis")
     if not approval_id or decision not in ("approve", "reject"):
         return "Error: approval_id and decision (approve|reject) are required"
     try:
@@ -194,7 +195,7 @@ async def _decide_approval(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.record_approval_decision(session, int(approval_id), decision)
+            await repo.decide_approval(session, int(approval_id), decision=decision, decided_by=decided_by)
             await session.commit()
         return f"Approval {approval_id}: decision={decision}"
     except Exception as exc:
@@ -211,24 +212,27 @@ async def _list_scout_runs(inp: dict[str, Any]) -> str:
             runs = await repo.list_scout_runs(session, limit=limit)
         if not runs:
             return "No scout runs."
-        lines = [f"{r.id}: {r.scout_id} — {r.status} @ {r.started_at}" for r in runs]
+        lines = [f"{r.id}: {r.scout_type} — {r.status} @ {r.started_at}" for r in runs]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_scout_runs failed: {exc}"
 
 
 async def _fire_scout(inp: dict[str, Any]) -> str:
-    scout_id = inp.get("scout_id")
-    if not scout_id:
-        return "Error: scout_id is required"
+    scout_type = inp.get("scout_type")
+    if not scout_type:
+        return "Error: scout_type is required"
     try:
+        import uuid
+
         import artemis.db as _db
         from artemis.marketing import repository as repo
 
+        run_id = f"scout_run_{uuid.uuid4().hex[:8]}"
         async with _db.SessionLocal() as session:
-            run = await repo.create_scout_run(session, scout_id=scout_id)
+            run = await repo.create_scout_run(session, run_id=run_id, scout_type=scout_type)
             await session.commit()
-        return f"Scout {scout_id} fired: run_id={run.id}"
+        return f"Scout {scout_type} fired: run_id={run.id}"
     except Exception as exc:
         return f"fire_scout failed: {exc}"
 
@@ -239,10 +243,10 @@ async def _get_active_rulesets(inp: dict[str, Any]) -> str:  # noqa: ARG001
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            rulesets = await repo.list_rulesets(session, active_only=True)
+            rulesets = await repo.list_ruleset_versions(session)
         if not rulesets:
-            return "No active rulesets."
-        lines = [f"{r.id}: {r.campaign_family} v{r.version} — {r.status}" for r in rulesets]
+            return "No rulesets."
+        lines = [f"{r.id}: {r.family} v{r.version_tag}" for r in rulesets]
         return "\n".join(lines)
     except Exception as exc:
         return f"get_active_rulesets failed: {exc}"
@@ -261,26 +265,13 @@ async def _propose_ruleset_change(inp: dict[str, Any]) -> str:
     return f"Ruleset change proposal (pending confirmation):\n{json.dumps(proposal, indent=2)}"
 
 
-async def _list_content_assets(inp: dict[str, Any]) -> str:
-    limit = int(inp.get("limit", 20))
-    try:
-        import artemis.db as _db
-        from artemis.marketing import repository as repo
-
-        async with _db.SessionLocal() as session:
-            assets = await repo.list_content_assets(session, limit=limit)
-        if not assets:
-            return "No content assets."
-        lines = [f"{a.id}: {a.asset_type} — {a.title or '(untitled)'}" for a in assets]
-        return "\n".join(lines)
-    except Exception as exc:
-        return f"list_content_assets failed: {exc}"
+async def _list_content_assets(inp: dict[str, Any]) -> str:  # noqa: ARG001
+    return "Content asset listing not yet implemented."
 
 
 async def _link_content_asset(inp: dict[str, Any]) -> str:
     candidate_id = inp.get("candidate_id")
     asset_id = inp.get("asset_id")
-    role = inp.get("role", "reference")
     if not candidate_id or not asset_id:
         return "Error: candidate_id and asset_id are required"
     try:
@@ -288,14 +279,13 @@ async def _link_content_asset(inp: dict[str, Any]) -> str:
         from artemis.marketing import repository as repo
 
         async with _db.SessionLocal() as session:
-            await repo.link_content_asset(
+            await repo.link_content_asset_to_candidate(
                 session,
                 candidate_id=int(candidate_id),
                 asset_id=int(asset_id),
-                role=role,
             )
             await session.commit()
-        return f"Asset {asset_id} linked to candidate {candidate_id} with role={role}."
+        return f"Asset {asset_id} linked to candidate {candidate_id}."
     except Exception as exc:
         return f"link_content_asset failed: {exc}"
 

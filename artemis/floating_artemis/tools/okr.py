@@ -18,18 +18,17 @@ _SURFACE = "[surface:okr]"
 
 
 async def _list_okr_objectives(inp: dict[str, Any]) -> str:
-    limit = int(inp.get("limit", 20))
     try:
         import artemis.db as _db
         from artemis.okr import repository as repo
 
         async with _db.SessionLocal() as session:
-            objectives = await repo.list_objectives(session, limit=limit)
+            objectives = await repo.list_objectives(session)
         if not objectives:
             return "No OKR objectives found."
         lines = []
         for obj in objectives:
-            lines.append(f"[{obj.id}] {obj.title} ({obj.status})")
+            lines.append(f"[{obj.id}] {obj.title} (progress: {obj.progress}%)")
         return "\n".join(lines)
     except Exception as exc:
         return f"list_okr_objectives failed: {exc}"

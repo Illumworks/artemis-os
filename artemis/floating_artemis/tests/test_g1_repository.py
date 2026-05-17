@@ -148,6 +148,7 @@ async def test_add_message_default_costs() -> None:
         role="assistant",
         content=[],
     )
+    assert captured is not None
     assert captured.cost_input_tokens == 0
     assert captured.cost_output_tokens == 0
 

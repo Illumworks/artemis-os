@@ -28,8 +28,6 @@ from artemis.marketing.routes import (
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.routes import health, okr, status, writing_rules
-from artemis.routes.floating_artemis import router as fa_router
-from artemis.routes.floating_artemis import ws_router as fa_ws_router
 from artemis.routes.builders import (
     agent_chains,
     agent_dags,
@@ -39,6 +37,8 @@ from artemis.routes.builders import (
     skills,
     workflows,
 )
+from artemis.routes.floating_artemis import router as fa_router
+from artemis.routes.floating_artemis import ws_router as fa_ws_router
 from artemis.ws.routes import router as ws_router
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"

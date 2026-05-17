@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -171,7 +172,7 @@ async def test_send_message_accepted() -> None:
 
     mock_db_session = AsyncMock()
 
-    async def _mock_get_session():
+    async def _mock_get_session() -> Any:
         yield mock_db_session
 
     app.dependency_overrides[get_session] = _mock_get_session

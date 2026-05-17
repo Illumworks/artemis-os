@@ -40,18 +40,21 @@ async def _query_memory(inp: dict[str, Any]) -> str:
 
     try:
         import artemis.db as _db
-        from artemis.memory.retrieval import retrieve_observations
+        from artemis.memory.retrieval import search_observations
+        from artemis.memory.schemas import Scope
 
         async with _db.SessionLocal() as session:
-            results = await retrieve_observations(
+            scope_kind, scope_id = scope.split(":") if ":" in scope else (scope, "default")
+            scope_obj = Scope(scope_kind=scope_kind, scope_id=scope_id)
+            results = await search_observations(
                 session,
+                scope_set=[scope_obj],
                 query=query,
-                scope_filter=scope if scope != "all" else None,
                 limit=limit,
             )
         if not results:
             return "No relevant memory found."
-        lines = [f"[{r.scope}] {r.content}" for r in results]
+        lines = [f"[{r.scope_kind}:{r.scope_id}] {r.content}" for r in results]
         return "\n".join(lines)
     except Exception as exc:
         return f"Memory query failed: {exc}"
@@ -61,7 +64,6 @@ async def _write_memory(inp: dict[str, Any]) -> str:
     """Write an observation to the Artemis memory store."""
     content = inp.get("content", "")
     scope = inp.get("scope", "agent:floating-artemis")
-    source = inp.get("source", "agent")
 
     if not content:
         return "Error: content is required"
@@ -75,7 +77,7 @@ async def _write_memory(inp: dict[str, Any]) -> str:
         scope_obj = Scope(scope_kind=scope_kind, scope_id=scope_id or "default")
 
         async with _db.SessionLocal() as session, session.begin():
-            await write_observation(session, scope=scope_obj, content=content, source=source)
+            await write_observation(session, scope=scope_obj, content=content)
         return f"Memory written to {scope}."
     except Exception as exc:
         return f"Memory write failed: {exc}"

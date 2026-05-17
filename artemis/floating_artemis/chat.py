@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, cast
 
 from artemis.agent.client import AnthropicAdapter, ModelAdapter
 from artemis.agent.hooks import HookRegistry
@@ -192,7 +192,8 @@ async def handle_turn(
     # ── 2. Get current surfaces ───────────────────────────────────────────────
     try:
         status = await get_status()
-        available_surfaces: set[str] = set(status.get("available_surfaces", []))
+        surfaces_list = status.get("available_surfaces", []) if isinstance(status, dict) else []
+        available_surfaces: set[str] = set(surfaces_list if isinstance(surfaces_list, list) else [])
     except Exception:
         available_surfaces = set()
 
@@ -478,7 +479,7 @@ async def resume_after_confirm(
 class _PendingConfirmationError(BaseException):  # noqa: N818 N818 — intentional non-error naming
     """Raised (not really an error) when a layer-3/4 tool is encountered."""
 
-    def __init__(self, tool_use_id: str, tool_name: str, tool_input: dict, layer: int) -> None:
+    def __init__(self, tool_use_id: str, tool_name: str, tool_input: dict[str, Any], layer: int) -> None:
         super().__init__(f"tool_pending:{tool_use_id}")
         self.tool_use_id = tool_use_id
         self.tool_name = tool_name
@@ -506,7 +507,7 @@ def _build_intercepting_tool_registry(
             _name = entry.tool.name
 
             async def pending_impl(
-                inp: dict, _tool_name: str = _name, _layer_n: int = _layer
+                inp: dict[str, Any], _tool_name: str = _name, _layer_n: int = _layer
             ) -> str:
                 import uuid
 
@@ -549,7 +550,7 @@ async def _load_message_history(
 
         result: list[Message] = []
         for m in msgs:
-            content_blocks = []
+            content_blocks: list[TextBlock | ToolUseBlock | ToolResultBlock] = []
             for block_dict in m.content or []:
                 btype = block_dict.get("type", "text")
                 if btype == "text":
@@ -571,7 +572,11 @@ async def _load_message_history(
                         )
                     )
             if content_blocks:
-                result.append(Message(role=m.role, content=content_blocks))
+                if isinstance(m.role, str) and m.role in ("user", "assistant", "system"):
+                    role: Literal["user", "assistant", "system"] = cast(Literal["user", "assistant", "system"], m.role)
+                else:
+                    role = "user"
+                result.append(Message(role=role, content=content_blocks))
         return result
     except Exception:
         logger.debug("Could not load message history for session %s", session_id)

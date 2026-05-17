@@ -60,7 +60,7 @@ async def _list_skills(inp: dict[str, Any]) -> str:
             skills = await repo.list_skills(session, limit=limit)
         if not skills:
             return "No skills defined."
-        lines = [f"{s.skill_id}: {s.name}" for s in skills]
+        lines = [f"{s.slug}: {s.name}" for s in skills]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_skills failed: {exc}"
@@ -73,7 +73,7 @@ async def _list_chains(inp: dict[str, Any]) -> str:
         from artemis.builders import repository as repo
 
         async with _db.SessionLocal() as session:
-            chains = await repo.list_chains(session, limit=limit)
+            chains = await repo.list_agent_chains(session, limit=limit)
         if not chains:
             return "No chains defined."
         lines = [f"{c.chain_id}: {c.name}" for c in chains]
@@ -89,7 +89,7 @@ async def _list_dags(inp: dict[str, Any]) -> str:
         from artemis.builders import repository as repo
 
         async with _db.SessionLocal() as session:
-            dags = await repo.list_dags(session, limit=limit)
+            dags = await repo.list_agent_dags(session, limit=limit)
         if not dags:
             return "No DAGs defined."
         lines = [f"{d.dag_id}: {d.name}" for d in dags]

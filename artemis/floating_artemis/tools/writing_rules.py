@@ -20,7 +20,6 @@ _SURFACE = "[surface:writing-rules]"
 
 async def _list_writing_rules(inp: dict[str, Any]) -> str:
     profile_id = inp.get("profile_id")
-    limit = int(inp.get("limit", 30))
     try:
         import artemis.db as _db
         from artemis.writing_rules import repository as repo
@@ -29,11 +28,10 @@ async def _list_writing_rules(inp: dict[str, Any]) -> str:
             rules = await repo.list_rules(
                 session,
                 profile_id=int(profile_id) if profile_id else None,
-                limit=limit,
             )
         if not rules:
             return "No writing rules found."
-        lines = [f"[{r.id}] [{r.rule_type}] {r.title}: {r.description or ''}" for r in rules]
+        lines = [f"[{r.id}] [{r.rule_type}] {r.title}" for r in rules]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_writing_rules failed: {exc}"
