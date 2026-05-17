@@ -104,6 +104,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# No-cache for HTML/JS/CSS/JSON during active development so Cloudflare and
+# browsers don't serve stale bundles. Static binary assets (icons/fonts)
+# are unaffected.
+@app.middleware("http")
+async def _no_cache_for_app_assets(request: Request, call_next):  # type: ignore[no-untyped-def]
+    response = await call_next(request)
+    path = request.url.path
+    if path.endswith((".js", ".css", ".html", ".json")) or path == "/":
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 # API routes — must be mounted BEFORE StaticFiles so /api/* takes precedence.
 app.include_router(health.router)
 app.include_router(status.router)  # Phase E1b — surface availability bootstrap

@@ -225,8 +225,15 @@ export async function fetchEntityNeighborhoodApi(entityId, hops = 1) {
   return _readJsonOrThrow(res, "Failed to load entity neighborhood");
 }
 
-// TODO E1b: not yet ported — /overview does not exist in Python (C2/C3/C4).
-// export async function fetchCampaignOpsOverview() { ... }
+// E1b: Python doesn't have /overview yet — synthesize from /candidates so
+// the marketing dashboard can render live data instead of falling back to demo.
+export async function fetchCampaignOpsOverview() {
+  const res = await fetch("/api/campaign-ops/candidates");
+  if (!res.ok) return { campaigns: [] };
+  const data = await res.json();
+  const candidates = Array.isArray(data) ? data : (data.candidates || data.items || []);
+  return { campaigns: candidates };
+}
 
 export async function decideCampaignCandidateApi(id, payload = {}) {
   // E1b: Python uses /advance (not /decision). Payload shape unchanged.
@@ -238,11 +245,14 @@ export async function decideCampaignCandidateApi(id, payload = {}) {
   return _readJsonOrThrow(res, "Failed to update campaign decision");
 }
 
-// TODO E1b: not yet ported — /promote does not exist in Python (C2/C3/C4). Use /advance instead.
-// export async function promoteCampaignCandidateApi(id, payload = {}) { ... }
+// E1b: Python uses /advance with stage payload instead of dedicated /promote and /reopen.
+export async function promoteCampaignCandidateApi(id, payload = {}) {
+  return decideCampaignCandidateApi(id, { action: "promote", ...payload });
+}
 
-// TODO E1b: not yet ported — /reopen does not exist in Python (C2/C3/C4). Use /advance instead.
-// export async function reopenCampaignCandidateApi(id, payload = {}) { ... }
+export async function reopenCampaignCandidateApi(id, payload = {}) {
+  return decideCampaignCandidateApi(id, { action: "reopen", ...payload });
+}
 
 export async function getCampaignCandidateApi(id) {
   const res = await fetch(`/api/campaign-ops/candidates/${encodeURIComponent(id)}`);

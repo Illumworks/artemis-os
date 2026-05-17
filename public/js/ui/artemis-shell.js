@@ -44,6 +44,7 @@ const RAIL_NAV_VIEW_MAP = {
   agents: 'agents',
   workflows: 'workflows',
   memory: MEMORY_VIEW,
+  integrations: 'integrations',
   'marketing-dashboard': MARKETING_DASHBOARD_VIEW,
   'marketing-campaigns': MARKETING_CAMPAIGNS_VIEW,
   'marketing-signals': MARKETING_SIGNALS_VIEW,

@@ -202,9 +202,17 @@ onState('view', (view) => {
       loadMarketingRulesets(appShellContent);
     } else if (normalizedView === MARKETING_SCOUT_RUNS_VIEW) {
       loadMarketingScoutRuns(appShellContent);
+    } else if (normalizedView === 'integrations') {
+      loadIntegrationsShell();
     }
   }
 });
+
+async function loadIntegrationsShell() {
+  if (!appShellContent) return;
+  const mod = await import('./integrations.js');
+  await mod.init(appShellContent);
+}
 
 onState('sessionId', (id) => {
   if (id) setState('view', 'chat');
