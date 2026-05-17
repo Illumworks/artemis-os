@@ -22,7 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
 from artemis.integrations import repository as repo
-from artemis.integrations.config_resolver import MissingProviderConfigError, resolve_slack_config
+from artemis.integrations.config_resolver import (
+    MissingProviderConfigError,
+    resolve_gcal_config,
+    resolve_slack_config,
+)
+from artemis.integrations.gcal.provider import GCalProvider
 from artemis.integrations.models import _KNOWN_PROVIDERS, Integration
 from artemis.integrations.slack.provider import SlackProvider
 
@@ -191,6 +196,117 @@ async def slack_verify(
         await repo.mark_verified(session, integration.id)
         await session.commit()
     return {"ok": ok, "workspace": integration.display_name or integration.workspace_id}
+
+
+# ── GCal OAuth ────────────────────────────────────────────────────────────────
+
+_GCAL_SCOPE = " ".join(
+    [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "openid",
+    ]
+)
+
+
+def _gcal_redirect_uri() -> str:
+    return os.environ.get(
+        "GCAL_REDIRECT_URI",
+        "https://app.artemisos.me/api/integrations/gcal/oauth/callback",
+    )
+
+
+async def _gcal_provider_from_session(session: AsyncSession) -> GCalProvider:
+    try:
+        cfg = await resolve_gcal_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"GCal credentials incomplete: {', '.join(exc.missing_fields)} not configured.",
+        ) from exc
+    return GCalProvider(
+        client_id=cfg.client_id,
+        client_secret=cfg.client_secret,
+        redirect_uri=_gcal_redirect_uri(),
+    )
+
+
+@router.get("/gcal/oauth/start")
+async def gcal_oauth_start(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, str]:
+    try:
+        cfg = await resolve_gcal_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"GCal credentials incomplete: {', '.join(exc.missing_fields)} not configured.",
+        ) from exc
+
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = "pending"
+
+    url = (
+        "https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={cfg.client_id}"
+        f"&redirect_uri={_gcal_redirect_uri()}"
+        f"&response_type=code"
+        f"&scope={_GCAL_SCOPE}"
+        f"&access_type=offline"
+        f"&prompt=consent"
+        f"&state={state}"
+    )
+    return {"url": url}
+
+
+@router.get("/gcal/oauth/callback")
+async def gcal_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> RedirectResponse:
+    if state not in _oauth_states:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
+    del _oauth_states[state]
+
+    provider = await _gcal_provider_from_session(session)
+    try:
+        integration_row = await provider.connect(code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await repo.upsert_integration(
+        session,
+        provider=integration_row.provider,
+        workspace_id=integration_row.workspace_id,
+        encrypted_credentials=integration_row.encrypted_credentials,
+        display_name=integration_row.display_name,
+    )
+    await session.commit()
+
+    return RedirectResponse(url="/?gcal_connected=1", status_code=302)
+
+
+@router.get("/gcal/verify")
+async def gcal_verify(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, bool | str]:
+    """List calendars as a smoke-test for the active GCal integration."""
+    try:
+        rows = await repo.list_active(session, provider="gcal")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No active Google Calendar integration.")
+
+    integration = rows[0]
+    provider = await _gcal_provider_from_session(session)
+    ok = await provider.verify(integration)
+    if ok:
+        await repo.mark_verified(session, integration.id)
+        await session.commit()
+    return {"ok": ok, "account": integration.display_name or integration.workspace_id}
 
 
 # ── Provider credential config (J1b) ─────────────────────────────────────────

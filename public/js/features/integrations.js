@@ -17,6 +17,11 @@ const PROVIDERS = [
     name: 'Slack',
     tagline: 'Post messages, read channels, get mentioned.',
   },
+  {
+    id: 'gcal',
+    name: 'Google Calendar',
+    tagline: 'Read your calendar; create, update, and remove events.',
+  },
 ];
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -60,9 +65,11 @@ function _checkConnectionToast() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('slack_connected') === '1') {
     _showToast('Slack connected successfully.');
-    // Strip the query param from the URL without a full reload
-    const clean = window.location.pathname;
-    window.history.replaceState({}, '', clean);
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+  if (params.get('gcal_connected') === '1') {
+    _showToast('Google Calendar connected successfully.');
+    window.history.replaceState({}, '', window.location.pathname);
   }
 }
 
