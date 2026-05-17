@@ -1,9 +1,23 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Artemis Style Board</title>
+  <title>Artemis · Style Board</title>
+
+  <!-- Theme init — runs before CSS loads to prevent FOUC -->
+  <script>
+    (function () {
+      var stored = localStorage.getItem('artemis-sb-theme');
+      var preferred = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = stored || preferred;
+    })();
+  </script>
+
+  <!-- Fonts — same stack as the app -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
   <!-- Core design system -->
   <link rel="stylesheet" href="style.css" />
@@ -40,11 +54,13 @@
     * { box-sizing: border-box; }
 
     body {
-      background: var(--bg, #0F0D0B);
-      color: var(--text, #F2E8D9);
-      font-family: var(--font-sans, system-ui, sans-serif);
+      background: var(--bg, #F9F8F5);
+      background-image: var(--liquid-bg-gradient, none);
+      color: var(--text, #262626);
+      font-family: 'Inter', var(--font-sans, system-ui, sans-serif);
       margin: 0;
       padding: 0;
+      min-height: 100vh;
     }
 
     /* Sticky top nav */
@@ -52,48 +68,68 @@
       position: sticky;
       top: 0;
       z-index: 200;
-      background: var(--bg-secondary, #161310);
-      border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+      background: var(--surface-panel, rgba(255,255,255,0.74));
+      border-bottom: 1px solid var(--glass-border, rgba(0,0,0,0.08));
       display: flex;
       align-items: center;
       gap: 0;
-      padding: 0 16px;
-      height: 44px;
+      padding: 0 20px;
+      height: 48px;
       overflow-x: auto;
       scrollbar-width: none;
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 1px 0 var(--glass-border, rgba(0,0,0,0.06));
     }
 
     .sb-nav::-webkit-scrollbar { display: none; }
 
     .sb-nav-brand {
-      font-size: 12px;
-      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-right: 24px;
+      flex-shrink: 0;
+    }
+
+    .sb-nav-wordmark {
+      font-size: 11px;
+      font-weight: 800;
       color: var(--accent, #D4891A);
       text-transform: uppercase;
       letter-spacing: 0.14em;
-      white-space: nowrap;
-      margin-right: 20px;
-      font-family: var(--font-display, system-ui);
+      font-family: 'Inter', var(--font-display, system-ui);
+    }
+
+    .sb-nav-badge {
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--text-dim, #9C8878);
+      background: var(--accent-dim, rgba(212,137,26,0.08));
+      border: 1px solid var(--accent-border, rgba(212,137,26,0.2));
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: 'JetBrains Mono', var(--font-mono, monospace);
+      letter-spacing: 0.04em;
     }
 
     .sb-nav a {
-      color: var(--text-dim, #6B5D4F);
+      color: var(--text-secondary, #6B5D4F);
       text-decoration: none;
       font-size: 11px;
       font-weight: 500;
       white-space: nowrap;
-      padding: 0 12px;
-      height: 44px;
+      padding: 0 11px;
+      height: 48px;
       display: flex;
       align-items: center;
       border-bottom: 2px solid transparent;
       transition: color 0.15s, border-color 0.15s;
     }
 
-    .sb-nav a:hover {
-      color: var(--text, #F2E8D9);
+    .sb-nav a:hover,
+    .sb-nav a.active {
+      color: var(--text, #262626);
       border-bottom-color: var(--accent, #D4891A);
     }
 
@@ -112,17 +148,17 @@
     .sb-section-title {
       font-size: 20px;
       font-weight: 700;
-      color: var(--text, #F2E8D9);
-      font-family: var(--font-display, system-ui);
+      color: var(--text, #262626);
+      font-family: 'Inter', var(--font-display, system-ui);
       margin: 0 0 4px;
       padding-bottom: 12px;
-      border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+      border-bottom: 1px solid var(--border, rgba(0,0,0,0.06));
       letter-spacing: 0.01em;
     }
 
     .sb-section-desc {
       font-size: 12px;
-      color: var(--text-dim, #6B5D4F);
+      color: var(--text-secondary, #6B5D4F);
       margin: 8px 0 20px;
       line-height: 1.6;
     }
@@ -159,21 +195,33 @@
     /* Theme toggle in nav */
     .sb-theme-btn {
       margin-left: auto;
-      background: var(--accent-dim, rgba(212,137,26,0.08));
-      border: 1px solid var(--accent-border, rgba(212,137,26,0.3));
-      color: var(--accent, #D4891A);
-      border-radius: 8px;
-      padding: 4px 12px;
+      flex-shrink: 0;
+      background: var(--glass-fill, rgba(255,255,255,0.6));
+      border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
+      color: var(--text-secondary, #6B5D4F);
+      border-radius: 20px;
+      padding: 4px 10px 4px 8px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
-      font-family: var(--font-sans, system-ui);
+      font-family: 'Inter', var(--font-sans, system-ui);
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
 
     .sb-theme-btn:hover {
-      background: var(--accent, #D4891A);
-      color: #000;
+      background: var(--glass-fill-hover, rgba(255,255,255,0.8));
+      color: var(--text, #262626);
+      border-color: var(--accent-border, rgba(212,137,26,0.3));
+    }
+
+    .sb-theme-icon {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
     }
 
     /* Color swatch */
@@ -403,7 +451,10 @@
 
 <!-- ── Sticky Navigation ─────────────────────────────── -->
 <nav class="sb-nav">
-  <span class="sb-nav-brand">Artemis · Style Board</span>
+  <div class="sb-nav-brand">
+    <span class="sb-nav-wordmark">Artemis</span>
+    <span class="sb-nav-badge">Style Board</span>
+  </div>
   <a href="#buttons">Buttons</a>
   <a href="#inputs">Inputs</a>
   <a href="#cards">Cards</a>
@@ -419,8 +470,16 @@
   <a href="#datadisplay">Data Display</a>
   <a href="#forms">Form Patterns</a>
   <a href="#surfaces">Feature Surfaces</a>
-  <button class="sb-theme-btn" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'">
-    Toggle Theme
+  <button class="sb-theme-btn" id="sb-theme-btn" aria-label="Switch theme">
+    <!-- Sun icon (shown in dark mode → switch to light) -->
+    <svg id="sb-icon-sun" class="sb-theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4"/><path d="M12 3v1M12 20v1M3 12h1M20 12h1M5 5l1 1M18 18l1 1M5 19l1-1M18 6l1-1"/>
+    </svg>
+    <!-- Moon icon (shown in light mode → switch to dark) -->
+    <svg id="sb-icon-moon" class="sb-theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>
+    </svg>
+    <span id="sb-theme-label">Theme</span>
   </button>
 </nav>
 
@@ -1254,21 +1313,54 @@
 </main>
 
 <script>
-  // Highlight current nav item based on scroll
-  const sections = document.querySelectorAll('[id]');
-  const navLinks = document.querySelectorAll('.sb-nav a');
+  // ── Theme toggle ────────────────────────────────────
+  const themeBtn = document.getElementById('sb-theme-btn');
+  const iconSun  = document.getElementById('sb-icon-sun');
+  const iconMoon = document.getElementById('sb-icon-moon');
+  const themeLabel = document.getElementById('sb-theme-label');
 
-  const obs = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
+  function applyThemeUI() {
+    const isDark = document.documentElement.dataset.theme === 'dark';
+    // Sun is "switch to light" hint — show it when dark
+    iconSun.style.display  = isDark ? '' : 'none';
+    iconMoon.style.display = isDark ? 'none' : '';
+    themeLabel.textContent = isDark ? 'Light' : 'Dark';
+    themeBtn.setAttribute('aria-pressed', String(isDark));
+  }
+
+  themeBtn.addEventListener('click', function () {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('artemis-sb-theme', next);
+    applyThemeUI();
+  });
+
+  // Sync icons on first paint (theme was set by the FOUC script in <head>)
+  applyThemeUI();
+
+  // Watch OS theme changes when no manual override is stored
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
+    if (!localStorage.getItem('artemis-sb-theme')) {
+      document.documentElement.dataset.theme = e.matches ? 'dark' : 'light';
+      applyThemeUI();
+    }
+  });
+
+  // ── Active nav link on scroll ───────────────────────
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.sb-nav a[href^="#"]');
+
+  const obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
       if (entry.isIntersecting) {
-        navLinks.forEach(a => a.style.borderBottomColor = '');
-        const link = document.querySelector(`.sb-nav a[href="#${entry.target.id}"]`);
-        if (link) link.style.borderBottomColor = 'var(--accent)';
+        navLinks.forEach(function (a) { a.classList.remove('active'); });
+        const link = document.querySelector('.sb-nav a[href="#' + entry.target.id + '"]');
+        if (link) link.classList.add('active');
       }
     });
   }, { rootMargin: '-52px 0px -70% 0px' });
 
-  sections.forEach(s => obs.observe(s));
+  sections.forEach(function (s) { obs.observe(s); });
 </script>
 </body>
 </html>
