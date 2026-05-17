@@ -33,7 +33,6 @@ from artemis.floating_artemis.tools.marketing import register_marketing_tools
 from artemis.floating_artemis.tools.okr import register_okr_tools
 from artemis.floating_artemis.tools.system import register_system_tools
 from artemis.floating_artemis.tools.writing_rules import register_writing_rules_tools
-from artemis.integrations.gcal.tools import register_gcal_tools
 from artemis.integrations.slack.tools import register_slack_tools
 from artemis.routes.status import get_status
 from artemis.ws.manager import ws_manager
@@ -120,7 +119,6 @@ def _build_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry
     if "marketing-os" in available_surfaces or "signal-queue" in available_surfaces:
         register_marketing_tools(registry)
     register_slack_tools(registry)
-    register_gcal_tools(registry)
     return registry
 
 

@@ -18,6 +18,7 @@ Coverage:
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -108,7 +109,7 @@ async def test_spawn_subagent_creates_ephemeral_agent_run() -> None:
         patch("artemis.builders.repository.set_agent_run_completed", new=mock_set_completed),
         patch("artemis.db.SessionLocal", return_value=mock_cm),
     ):
-        result_str = await _spawn_subagent({"task": "audit signal #42"})
+        await _spawn_subagent({"task": "audit signal #42"})
 
     # Verify at least one create_agent_run call had is_ephemeral=True
     assert any(run.get("is_ephemeral") is True for run in captured_runs), (
@@ -134,8 +135,13 @@ async def test_spawn_subagent_returns_json_with_ok_and_run_id() -> None:
 
     with (
         patch("artemis.agent.client.AnthropicAdapter", return_value=fake_adapter),
-        patch("artemis.builders.repository.create_agent_run", new=AsyncMock(return_value=MagicMock())),
-        patch("artemis.builders.repository.set_agent_run_completed", new=AsyncMock(return_value=MagicMock())),
+        patch(
+            "artemis.builders.repository.create_agent_run", new=AsyncMock(return_value=MagicMock())
+        ),
+        patch(
+            "artemis.builders.repository.set_agent_run_completed",
+            new=AsyncMock(return_value=MagicMock()),
+        ),
         patch("artemis.db.SessionLocal", return_value=mock_cm),
     ):
         result_str = await _spawn_subagent({"task": "summarize board minutes"})
@@ -204,27 +210,29 @@ def test_agent_run_read_schema_has_is_ephemeral() -> None:
 
 
 def test_agent_run_read_is_ephemeral_defaults_false() -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from artemis.builders.schemas import AgentRunRead
 
-    now = datetime(2026, 5, 17, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 17, tzinfo=UTC)
     # Use model_validate with a dict (avoids from_attributes issues with MagicMock)
-    read = AgentRunRead.model_validate({
-        "id": 1,
-        "runId": "test-run-id",
-        "agentId": None,
-        "status": "completed",
-        "userMessage": "hello",
-        "sharedContext": None,
-        "startedAt": now,
-        "completedAt": None,
-        "costInputTokens": 0,
-        "costOutputTokens": 0,
-        "error": None,
-        "ownerUserId": None,
-        "isEphemeral": False,
-    })
+    read = AgentRunRead.model_validate(
+        {
+            "id": 1,
+            "runId": "test-run-id",
+            "agentId": None,
+            "status": "completed",
+            "userMessage": "hello",
+            "sharedContext": None,
+            "startedAt": now,
+            "completedAt": None,
+            "costInputTokens": 0,
+            "costOutputTokens": 0,
+            "error": None,
+            "ownerUserId": None,
+            "isEphemeral": False,
+        }
+    )
     assert read.is_ephemeral is False
 
 

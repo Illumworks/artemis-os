@@ -163,6 +163,7 @@ def test_register_core_tools_all_registered() -> None:
         "read_file",
         "propose_edit",
         "set_pref",
+        "spawn_subagent",
     }
     registered = {e.tool.name for e in reg.all_entries()}
     assert expected == registered
