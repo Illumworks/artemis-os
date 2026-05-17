@@ -39,6 +39,7 @@ from artemis.routes.builders import (
 )
 from artemis.routes.floating_artemis import router as fa_router
 from artemis.routes.floating_artemis import ws_router as fa_ws_router
+from artemis.routes.integrations import router as integrations_router
 from artemis.ws.routes import router as ws_router
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
@@ -137,6 +138,9 @@ app.include_router(writing_rules.router)
 # Phase G1 — Floating Artemis backend (sessions, tools, authority, chat)
 app.include_router(fa_router)
 app.include_router(fa_ws_router)
+
+# Phase J1 — Slack integration (OAuth, CRUD, events)
+app.include_router(integrations_router)
 
 # Mount static frontend AFTER all API routes.
 # html=True makes GET / serve public/index.html.

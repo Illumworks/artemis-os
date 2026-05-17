@@ -22,6 +22,7 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "playwright>=1.59.0",
     "pypdfium2>=5.8.0",
+    "cryptography>=48.0.0",
 ]
 
 [dependency-groups]
