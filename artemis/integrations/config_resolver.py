@@ -67,3 +67,35 @@ async def resolve_slack_config(session: AsyncSession) -> SlackConfig:
         client_secret=client_secret,
         signing_secret=signing_secret,
     )
+
+
+@dataclass(frozen=True)
+class GCalConfig:
+    client_id: str
+    client_secret: str
+
+
+async def resolve_gcal_config(session: AsyncSession) -> GCalConfig:
+    """Resolve GCal credentials: DB per-field, then env per-field fallback.
+
+    Raises MissingProviderConfigError if any required field is absent from both sources.
+    """
+    stored = await repo.get_provider_config(session, "gcal") or {}
+
+    client_id = str(stored.get("client_id") or "") or os.environ.get("GCAL_CLIENT_ID", "")
+    client_secret = str(stored.get("client_secret") or "") or os.environ.get(
+        "GCAL_CLIENT_SECRET", ""
+    )
+
+    missing = [
+        name
+        for name, val in [
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ]
+        if not val
+    ]
+    if missing:
+        raise MissingProviderConfigError("gcal", missing)
+
+    return GCalConfig(client_id=client_id, client_secret=client_secret)

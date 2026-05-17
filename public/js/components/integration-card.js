@@ -13,6 +13,10 @@ const _PROVIDER_FIELDS = {
     { key: 'client_secret', label: 'Client Secret', helper: 'Keep this secret — never share it.', sensitive: true },
     { key: 'signing_secret', label: 'Signing Secret', helper: 'Used to verify incoming event payloads from Slack.', sensitive: true },
   ],
+  gcal: [
+    { key: 'client_id', label: 'Client ID', helper: 'From Google Cloud Console → APIs & Services → Credentials.', sensitive: true },
+    { key: 'client_secret', label: 'Client Secret', helper: 'Keep this secret — never share it.', sensitive: true },
+  ],
 };
 
 function _formatDate(isoString) {
