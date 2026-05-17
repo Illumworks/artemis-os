@@ -1,25 +1,22 @@
-"""Gemini adapter — non-streaming completions via the Generative Language REST API.
+"""Gemini adapter -- completions and SSE streaming via the Generative Language REST API.
 
 Design language: fluidity, simplicity, purposefulness, naturalness, spacious, open.
-Applied here as: one clear ``complete()`` method, no nested option objects,
-no magic parameter inference. The adapter does exactly one thing per call and
-surfaces errors as typed exceptions so callers can branch cleanly.
 
 Notes
 -----
-- ``cache_system`` / ``cache_tools`` from CompletionRequest are **ignored**.
-  Gemini does not support Anthropic-style prompt caching; the fields are
-  part of the shared protocol but have no effect on this adapter.
-- Streaming is out of scope for V1. This adapter calls ``generateContent``
-  (non-streaming). SSE streaming is a separate future slice.
+- ``complete()`` calls ``generateContent`` (non-streaming) and is untouched.
+- ``stream()`` calls ``streamGenerateContent?alt=sse`` and yields ``StreamEvent`` objects.
 - Tool-use is supported via Gemini function-calling (``functionDeclarations``).
+- ``cache_system`` / ``cache_tools`` are ignored; Gemini has no Anthropic-style caching.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -28,10 +25,17 @@ from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.agent.types import Message, TextBlock, ToolResultBlock, ToolUseBlock, Usage
 from artemis.providers.errors import MissingApiKeyError, ProviderAPIError
 from artemis.providers.gemini.models import GEMINI_DEFAULT_MODEL, estimate_cost, resolve_model
+from artemis.providers.streaming import (
+    StreamEvent,
+    StreamMessageStop,
+    StreamTextDelta,
+    StreamToolUseDelta,
+    StreamToolUseStart,
+    StreamUsage,
+)
 
 _GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
-# Gemini finish_reason -> Artemis stop_reason
 _FINISH_REASON_MAP: dict[str, str] = {
     "STOP": "end_turn",
     "MAX_TOKENS": "max_tokens",
@@ -40,11 +44,7 @@ _FINISH_REASON_MAP: dict[str, str] = {
 
 
 class GeminiAdapter:
-    """Conforms to the ModelAdapter Protocol.
-
-    Calls the Gemini ``generateContent`` REST endpoint (non-streaming).
-    API key is read from ``GEMINI_API_KEY`` env var unless overridden.
-    """
+    """Conforms to the ModelAdapter and SupportsStreaming protocols."""
 
     def __init__(
         self,
@@ -62,14 +62,7 @@ class GeminiAdapter:
         self._default_model = resolve_model(default_model or GEMINI_DEFAULT_MODEL)
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
-        """Send a single non-streaming completion request to Gemini.
-
-        Resolves model, translates messages to Gemini ``contents[]`` format,
-        POSTs to generateContent, and returns a typed CompletionResponse.
-
-        ``cache_system`` and ``cache_tools`` in the request are ignored —
-        Gemini does not support Anthropic-style prompt caching.
-        """
+        """Send a single non-streaming completion request to Gemini."""
         model = resolve_model(request.model) if request.model else self._default_model
 
         url = f"{_GEMINI_API_BASE}/models/{model}:generateContent?key={self._api_key}"
@@ -89,7 +82,98 @@ class GeminiAdapter:
         data = response.json()
         return self._parse_response(data, model)
 
-    # ── private helpers ────────────────────────────────────────────────────
+    async def stream(
+        self,
+        request: CompletionRequest,
+        *,
+        cancel: asyncio.Event | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream via ``streamGenerateContent?alt=sse``."""
+        return self._stream_impl(request, cancel=cancel)
+
+    async def _stream_impl(
+        self,
+        request: CompletionRequest,
+        *,
+        cancel: asyncio.Event | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        model = resolve_model(request.model) if request.model else self._default_model
+        url = f"{_GEMINI_API_BASE}/models/{model}:streamGenerateContent?alt=sse&key={self._api_key}"
+        body = self._build_body(request, model)
+
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                url,
+                json=body,
+                headers={"Content-Type": "application/json"},
+                timeout=120.0,
+            ) as response,
+        ):
+            if not response.is_success:
+                error_text = await response.aread()
+                raise ProviderAPIError(response.status_code, error_text.decode())
+
+            input_tokens = 0
+            output_tokens = 0
+            finish_reason_seen: str | None = None
+            buffer = ""
+
+            async for raw_chunk in response.aiter_text():
+                if cancel is not None and cancel.is_set():
+                    break
+
+                buffer += raw_chunk
+                while "\n\n" in buffer:
+                    event_block, buffer = buffer.split("\n\n", 1)
+                    for line in event_block.splitlines():
+                        if not line.startswith("data:"):
+                            continue
+                        json_str = line[5:].strip()
+                        if not json_str or json_str == "[DONE]":
+                            continue
+
+                        try:
+                            parsed: dict[str, Any] = json.loads(json_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        candidate = (parsed.get("candidates") or [{}])[0]
+                        parts: list[dict[str, Any]] = (
+                            candidate.get("content", {}).get("parts") or []
+                        )
+
+                        for part in parts:
+                            if cancel is not None and cancel.is_set():
+                                break
+                            if "text" in part:
+                                yield StreamTextDelta(text=part["text"])
+                            elif "functionCall" in part:
+                                fc = part["functionCall"]
+                                tool_id = str(uuid.uuid4())
+                                yield StreamToolUseStart(id=tool_id, name=fc.get("name", ""))
+                                yield StreamToolUseDelta(
+                                    id=tool_id,
+                                    partial_json=json.dumps(fc.get("args", {})),
+                                )
+
+                        fr = candidate.get("finishReason")
+                        if fr and fr != "FINISH_REASON_UNSPECIFIED":
+                            finish_reason_seen = fr
+
+                        usage_meta = parsed.get("usageMetadata")
+                        if usage_meta:
+                            input_tokens = int(usage_meta.get("promptTokenCount", 0))
+                            output_tokens = int(usage_meta.get("candidatesTokenCount", 0))
+
+            stop_reason = _FINISH_REASON_MAP.get(
+                finish_reason_seen or "STOP",
+                (finish_reason_seen or "STOP").lower(),
+            )
+            yield StreamMessageStop(stop_reason=stop_reason)
+            cost = estimate_cost(model, input_tokens, output_tokens)
+            yield StreamUsage(input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost)
 
     def _build_body(self, request: CompletionRequest, model: str) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -129,16 +213,8 @@ class GeminiAdapter:
                 if isinstance(block, TextBlock):
                     parts.append({"text": block.text})
                 elif isinstance(block, ToolUseBlock):
-                    parts.append(
-                        {
-                            "functionCall": {
-                                "name": block.name,
-                                "args": block.input,
-                            }
-                        }
-                    )
+                    parts.append({"functionCall": {"name": block.name, "args": block.input}})
                 elif isinstance(block, ToolResultBlock):
-                    # Tool results come back as user-role functionResponse parts
                     content_value: Any
                     try:
                         content_value = json.loads(block.content)
@@ -178,12 +254,10 @@ class GeminiAdapter:
                     )
                 )
 
-        # Parse token usage
         usage_meta = data.get("usageMetadata", {})
         input_tokens = int(usage_meta.get("promptTokenCount", 0))
         output_tokens = int(usage_meta.get("candidatesTokenCount", 0))
 
-        # Compute cost from built-in pricing table
         cost_usd = estimate_cost(model, input_tokens, output_tokens)
 
         usage = Usage(
@@ -193,13 +267,9 @@ class GeminiAdapter:
             cache_read_input_tokens=0,
         )
 
-        # Map finish_reason to Artemis stop_reason
         finish_reason = candidate.get("finishReason", "STOP")
         stop_reason = _FINISH_REASON_MAP.get(finish_reason, finish_reason.lower())
 
-        # Surface cost as metadata on usage via a dynamic attr — Usage is a
-        # slots=True dataclass so we store it separately in a wrapper dict.
-        # Callers that need cost_usd should use the CompletionResponse metadata.
         return _GeminiCompletionResponse(
             message=Message(role="assistant", content=blocks),
             stop_reason=stop_reason,
@@ -209,14 +279,8 @@ class GeminiAdapter:
 
 
 class _GeminiCompletionResponse(CompletionResponse):
-    """CompletionResponse extended with Gemini-specific cost estimate.
+    """CompletionResponse extended with Gemini-specific cost estimate."""
 
-    ``cost_usd`` is the estimated USD cost for this completion based on
-    the pricing table in ``artemis.providers.gemini.models``.
-    """
-
-    # CompletionResponse uses slots=True dataclass; we cannot add a field
-    # via inheritance through dataclass machinery, so we use __init__ + __slots__.
     __slots__ = ("cost_usd",)
 
     def __init__(
@@ -227,8 +291,6 @@ class _GeminiCompletionResponse(CompletionResponse):
         usage: Usage,
         cost_usd: float,
     ) -> None:
-        # Call grandparent object.__init__ — CompletionResponse is a dataclass
-        # so we set fields directly.
         object.__setattr__(self, "message", message)
         object.__setattr__(self, "stop_reason", stop_reason)
         object.__setattr__(self, "usage", usage)

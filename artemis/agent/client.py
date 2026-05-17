@@ -15,9 +15,11 @@ Two design choices worth highlighting:
 
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from artemis.agent.types import (
     Message,
@@ -26,6 +28,9 @@ from artemis.agent.types import (
     ToolUseBlock,
     Usage,
 )
+
+if TYPE_CHECKING:
+    from artemis.providers.streaming import StreamEvent
 
 # Default model — Anthropic's "latest and most capable" per the system prompt
 # guidance. Switch via the `model` argument or `ARTEMIS_AGENT_MODEL` env var.
@@ -59,11 +64,44 @@ class ModelAdapter(Protocol):
     async def complete(self, request: CompletionRequest) -> CompletionResponse: ...
 
 
+@runtime_checkable
+class SupportsStreaming(Protocol):
+    """Optional capability protocol -- adapters that support token streaming.
+
+    Separate from ``ModelAdapter`` so that the loop can probe with
+    ``isinstance(adapter, SupportsStreaming)`` rather than duck-typing or
+    adding an optional method to the base protocol (which mypy dislikes).
+
+    Adapters that implement this
+    ----------------------------
+    - ``GeminiAdapter`` -- SSE via ``streamGenerateContent?alt=sse``
+    - ``OpenRouterAdapter`` -- OpenAI-format SSE via ``stream: true``
+
+    NOT in scope (separate slice)
+    ------------------------------
+    - ``AnthropicAdapter`` -- Anthropic SDK has its own streaming helpers
+      (``client.messages.stream()``); wiring those is a dedicated future slice
+      to keep the streaming surface consistent with SDK idioms.
+    """
+
+    async def stream(
+        self,
+        request: CompletionRequest,
+        *,
+        cancel: asyncio.Event | None = None,
+    ) -> AsyncIterator[StreamEvent]: ...
+
+
 class AnthropicAdapter:
     """Default adapter — calls the real Anthropic API.
 
     Reads `ANTHROPIC_API_KEY` from env (via the SDK default). Construction is
     cheap; the underlying httpx client is lazy.
+
+    Streaming is intentionally out of scope for this adapter.  The Anthropic
+    SDK exposes ``client.messages.stream()`` with its own async context manager
+    idiom; wiring that into ``SupportsStreaming`` is a separate future slice so
+    the surface stays consistent with SDK best practices.
     """
 
     def __init__(self, *, default_model: str | None = None) -> None:
