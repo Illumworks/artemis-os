@@ -5,6 +5,7 @@ Callers own commit/rollback. Raise ValueError for not-found conditions.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,7 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.integrations.models import Integration, SlackInboundMessage
+from artemis.integrations.models import Integration, IntegrationConfig, SlackInboundMessage
 
 
 async def upsert_integration(
@@ -114,6 +115,92 @@ async def mark_verified(session: AsyncSession, integration_id: int) -> None:
         update(Integration)
         .where(Integration.id == integration_id)
         .values(last_verified_at=datetime.now(UTC))
+    )
+
+
+# ── Provider config (J1b) ────────────────────────────────────────────────────
+
+
+async def upsert_provider_config(
+    session: AsyncSession,
+    provider: str,
+    payload_dict: dict[str, object],
+) -> None:
+    """Merge payload_dict into existing config for provider, encrypt, upsert.
+
+    Only non-empty values from payload_dict overwrite existing keys; blank
+    values are treated as "leave as is" so partial updates are safe.
+    """
+    from artemis.integrations.crypto import encrypt_credentials
+
+    existing: dict[str, object] = {}
+    with contextlib.suppress(Exception):
+        existing = await get_provider_config(session, provider) or {}
+
+    updates = {k: v for k, v in payload_dict.items() if v and str(v).strip()}
+    merged = {**existing, **updates}
+    encrypted = encrypt_credentials(merged)
+
+    stmt = (
+        pg_insert(IntegrationConfig)
+        .values(
+            provider=provider,
+            encrypted_payload=encrypted,
+            updated_at=datetime.now(UTC),
+        )
+        .on_conflict_do_update(
+            index_elements=["provider"],
+            set_={
+                "encrypted_payload": encrypted,
+                "updated_at": datetime.now(UTC),
+            },
+        )
+    )
+    await session.execute(stmt)
+
+
+async def get_provider_config(
+    session: AsyncSession,
+    provider: str,
+) -> dict[str, object] | None:
+    """Return decrypted credential dict for provider, or None if not stored."""
+    from artemis.integrations.crypto import decrypt_credentials
+
+    result = await session.execute(
+        select(IntegrationConfig).where(IntegrationConfig.provider == provider)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    try:
+        return decrypt_credentials(bytes(row.encrypted_payload))
+    except Exception:
+        return None
+
+
+async def get_provider_config_status(
+    session: AsyncSession,
+    provider: str,
+) -> dict[str, bool]:
+    """Return {key: True/False} for each stored key (boolean only, never values).
+
+    Returns an empty dict if no config row exists for provider.
+    """
+    config = await get_provider_config(session, provider)
+    if config is None:
+        return {}
+    return {k: bool(v and str(v).strip()) for k, v in config.items()}
+
+
+async def delete_provider_config(
+    session: AsyncSession,
+    provider: str,
+) -> None:
+    """Remove all stored credentials for provider."""
+    from sqlalchemy import delete as sa_delete
+
+    await session.execute(
+        sa_delete(IntegrationConfig).where(IntegrationConfig.provider == provider)
     )
 
 

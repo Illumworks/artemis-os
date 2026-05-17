@@ -3,6 +3,17 @@
 //
 // Provider shape:   { id: string, name: string, tagline: string }
 // ConnectedData:    null | { id: number, workspace_name: string | null, connected_at: string }
+// ConfigStatus:     null | { ever_configured: boolean, configured_keys: Record<string, boolean> }
+
+import { openCredentialEntryModal } from './credential-entry-modal.js';
+
+const _PROVIDER_FIELDS = {
+  slack: [
+    { key: 'client_id', label: 'Client ID', helper: 'From your Slack app's Basic Information page.', sensitive: true },
+    { key: 'client_secret', label: 'Client Secret', helper: 'Keep this secret — never share it.', sensitive: true },
+    { key: 'signing_secret', label: 'Signing Secret', helper: 'Used to verify incoming event payloads from Slack.', sensitive: true },
+  ],
+};
 
 function _formatDate(isoString) {
   if (!isoString) return '';
@@ -66,8 +77,9 @@ async function _verifyProvider(provider, testResultSpan) {
  * @param {HTMLElement} container
  * @param {{ id: string, name: string, tagline: string }} provider
  * @param {{ id: number, workspace_name: string|null, connected_at: string }|null} connectedData
+ * @param {{ ever_configured: boolean, configured_keys: Record<string,boolean> }|null} [configStatus]
  */
-export function renderIntegrationCard(container, provider, connectedData) {
+export function renderIntegrationCard(container, provider, connectedData, configStatus = null) {
   container.innerHTML = '';
 
   const card = document.createElement('div');
@@ -99,7 +111,28 @@ export function renderIntegrationCard(container, provider, connectedData) {
     pill.className = 'integration-card__status';
     pill.innerHTML = '<span class="integration-card__status-dot" aria-hidden="true"></span>Connected';
     header.appendChild(pill);
+  } else if (configStatus !== null && !configStatus.ever_configured) {
+    const needsPill = document.createElement('div');
+    needsPill.className = 'integration-card__needs-setup';
+    needsPill.textContent = 'Needs setup';
+    header.appendChild(needsPill);
   }
+
+  // Gear button — visible in both states; opens credential-entry modal
+  const gearBtn = document.createElement('button');
+  gearBtn.type = 'button';
+  gearBtn.className = 'integration-card__gear-btn';
+  gearBtn.setAttribute('aria-label', `Configure ${provider.name} credentials`);
+  gearBtn.innerHTML = '&#9881;';
+  gearBtn.addEventListener('click', () => {
+    const fields = _PROVIDER_FIELDS[provider.id] || [];
+    openCredentialEntryModal({
+      provider: provider.id,
+      fields,
+      onSaved: () => renderIntegrationCard(container, provider, connectedData, null),
+    });
+  });
+  header.appendChild(gearBtn);
 
   card.appendChild(header);
 
@@ -160,6 +193,11 @@ export function renderIntegrationCard(container, provider, connectedData) {
     connectBtn.type = 'button';
     connectBtn.className = 'integration-card__connect-btn';
     connectBtn.textContent = `Connect ${provider.name}`;
+    const notConfigured = configStatus !== null && !configStatus.ever_configured;
+    if (notConfigured) {
+      connectBtn.disabled = true;
+      connectBtn.title = 'Enter credentials via the ⚙ gear button first.';
+    }
     connectBtn.addEventListener('click', async () => {
       connectBtn.disabled = true;
       connectBtn.textContent = 'Redirecting…';

@@ -11,6 +11,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from artemis.db import Base
 
+_KNOWN_PROVIDERS = frozenset({"slack", "gcal", "gmail", "jira", "granola"})
+
 
 class Integration(Base):
     __tablename__ = "integrations"
@@ -31,6 +33,20 @@ class Integration(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="'{}'::jsonb"
     )
+
+
+class IntegrationConfig(Base):
+    """Per-provider encrypted credential store. DB value wins over env vars."""
+
+    __tablename__ = "integration_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    encrypted_payload: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_by: Mapped[str | None] = mapped_column(Text)
 
 
 class SlackInboundMessage(Base):

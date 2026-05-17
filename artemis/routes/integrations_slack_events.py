@@ -34,9 +34,10 @@ _BOT_MENTION_RE = re.compile(r"^<@[A-Z0-9]+>\s*", re.IGNORECASE)
 # ── HMAC verification ─────────────────────────────────────────────────────────
 
 
-def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
+def _verify_slack_signature(
+    body: bytes, timestamp: str, signature: str, signing_secret: str
+) -> bool:
     """Return True iff the Slack HMAC-SHA256 signature is valid and the timestamp is fresh."""
-    signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
     if not signing_secret:
         return False
     try:
@@ -195,14 +196,24 @@ async def slack_events(
         challenge = payload.get("challenge", "")
         return JSONResponse(status_code=200, content={"challenge": challenge})
 
-    # ── 3. All other types require HMAC verification ──────────────────────────
+    # ── 3. Resolve signing secret (DB first, env fallback) ───────────────────
+    signing_secret = ""
+    try:
+        from artemis.integrations.config_resolver import resolve_slack_config
+
+        slack_cfg = await resolve_slack_config(session)
+        signing_secret = slack_cfg.signing_secret
+    except Exception:
+        signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
+
+    # ── 4. HMAC verification ──────────────────────────────────────────────────
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
     signature = request.headers.get("X-Slack-Signature", "")
 
-    if not _verify_slack_signature(raw_body, timestamp, signature):
+    if not _verify_slack_signature(raw_body, timestamp, signature, signing_secret):
         return JSONResponse(status_code=401, content={"error": "invalid signature"})
 
-    # ── 4. Dispatch by type ───────────────────────────────────────────────────
+    # ── 5. Dispatch by type ───────────────────────────────────────────────────
     if event_type == "event_callback":
         event: dict[str, object] = payload.get("event", {})  # type: ignore[assignment]
         if not isinstance(event, dict):

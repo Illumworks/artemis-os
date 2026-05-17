@@ -44,7 +44,9 @@ artemis.db.SessionLocal = __import__(
     class_=AsyncSession,
 )
 
-_TRUNCATE_SQL = text("TRUNCATE integrations RESTART IDENTITY CASCADE")
+_TRUNCATE_SQL = text(
+    "TRUNCATE integration_configs, integrations, slack_inbound_messages RESTART IDENTITY CASCADE"
+)
 
 
 @pytest.fixture
@@ -116,10 +118,11 @@ async def test_slack_oauth_start_without_credentials(
 async def test_slack_oauth_start_with_credentials(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """GET /api/integrations/slack/oauth/start with SLACK_CLIENT_ID set → 200, url contains slack.com."""
+    """GET /api/integrations/slack/oauth/start with all creds set → 200, url contains slack.com."""
     env_patch = {
         "SLACK_CLIENT_ID": "test_client_id",
         "SLACK_CLIENT_SECRET": "test_client_secret",
+        "SLACK_SIGNING_SECRET": "test_signing_secret",
     }
     with patch.dict(os.environ, env_patch):
         response = await client.get("/api/integrations/slack/oauth/start")

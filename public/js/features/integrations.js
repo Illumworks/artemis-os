@@ -96,7 +96,7 @@ async function _loadAndRender() {
     // Non-fatal: render as disconnected
   }
 
-  // Render a card per known provider
+  // Render a card per known provider (fetch configStatus alongside)
   for (const provider of PROVIDERS) {
     const cardContainer = document.createElement('div');
     grid.appendChild(cardContainer);
@@ -110,6 +110,14 @@ async function _loadAndRender() {
         }
       : null;
 
-    renderIntegrationCard(cardContainer, provider, connectedData);
+    let configStatus = null;
+    try {
+      const cfgRes = await fetch(`/api/integrations/providers/${provider.id}/config`);
+      if (cfgRes.ok) configStatus = await cfgRes.json();
+    } catch {
+      // non-fatal
+    }
+
+    renderIntegrationCard(cardContainer, provider, connectedData, configStatus);
   }
 }

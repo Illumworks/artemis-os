@@ -230,10 +230,295 @@
   color: var(--error);
 }
 
+/* ── Gear button ──────────────────────────────────────── */
+
+.integration-card__gear-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
+  margin-left: auto;
+}
+
+.integration-card__gear-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+/* ── "Needs setup" pill ───────────────────────────────── */
+
+.integration-card__needs-setup {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* ── Dark mode adjustments ─────────────────────────────── */
 /* The app uses html[data-theme="dark"] — variables already handle most of it.
    Only logo needs a nudge in dark mode since it uses accent-dim which is warm. */
 
 html[data-theme="dark"] .integration-card__logo {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ── Credential Entry Modal ───────────────────────────── */
+
+.credential-entry-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes credModalEnter {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.credential-entry-modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--surface-outline);
+  border-radius: 16px;
+  width: 440px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg), 0 0 40px rgba(0,0,0,0.06);
+  animation: credModalEnter 0.22s ease;
+  position: relative;
+}
+
+/* Accent top rule */
+.credential-entry-modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 16px 16px 0 0;
+  background: linear-gradient(90deg, var(--accent), transparent);
+  opacity: 0.5;
+}
+
+/* ── Modal header ─────────────────────────────────────── */
+
+.credential-entry-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 24px 0;
+}
+
+.credential-entry-modal__title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+.credential-entry-modal__close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s;
+  padding: 0;
+  line-height: 1;
+}
+
+.credential-entry-modal__close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+/* ── Modal form ───────────────────────────────────────── */
+
+.credential-entry-modal__form {
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.credential-entry-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.credential-entry-modal__label {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.03em;
+}
+
+.credential-entry-modal__input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.credential-entry-modal__input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  background: var(--input-fill);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  transition: border-color 0.14s, background 0.14s, box-shadow 0.14s;
+  outline: none;
+}
+
+.credential-entry-modal__input:focus {
+  background: var(--input-fill-focus);
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
+}
+
+.credential-entry-modal__input::placeholder {
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.credential-entry-modal__show-toggle {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.13s, color 0.13s, background 0.13s;
+  white-space: nowrap;
+}
+
+.credential-entry-modal__show-toggle:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.credential-entry-modal__helper {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ── Modal actions ────────────────────────────────────── */
+
+.credential-entry-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.credential-entry-modal__save-btn {
+  padding: 9px 20px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--btn-primary-text);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.credential-entry-modal__save-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.credential-entry-modal__save-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.credential-entry-modal__cancel-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.13s, color 0.13s, background 0.13s;
+  white-space: nowrap;
+}
+
+.credential-entry-modal__cancel-btn:hover {
+  border-color: var(--surface-outline-strong);
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.credential-entry-modal__error {
+  font-size: 11px;
+  color: var(--error);
+  flex: 1;
+  margin: 0;
+}
+
+.credential-entry-modal__error.hidden {
+  display: none;
+}
+
+/* ── Dark mode ────────────────────────────────────────── */
+
+html[data-theme="dark"] .credential-entry-modal {
+  background: var(--bg-secondary);
+}
+
+html[data-theme="dark"] .credential-entry-modal__input {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }

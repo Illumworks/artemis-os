@@ -17,12 +17,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
 from artemis.integrations import repository as repo
-from artemis.integrations.models import Integration
+from artemis.integrations.config_resolver import MissingProviderConfigError, resolve_slack_config
+from artemis.integrations.models import _KNOWN_PROVIDERS, Integration
 from artemis.integrations.slack.provider import SlackProvider
 
 logger = logging.getLogger(__name__)
@@ -44,20 +45,26 @@ class IntegrationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-def _slack_provider() -> SlackProvider:
-    client_id = os.environ.get("SLACK_CLIENT_ID", "")
-    client_secret = os.environ.get("SLACK_CLIENT_SECRET", "")
-    redirect_uri = os.environ.get(
+def _redirect_uri() -> str:
+    return os.environ.get(
         "SLACK_REDIRECT_URI",
         "https://app.artemisos.me/api/integrations/slack/oauth/callback",
     )
-    if not client_id or not client_secret:
+
+
+async def _slack_provider_from_session(session: AsyncSession) -> SlackProvider:
+    """Build a SlackProvider using DB-resolved credentials (env fallback)."""
+    try:
+        cfg = await resolve_slack_config(session)
+    except MissingProviderConfigError as exc:
         raise HTTPException(
             status_code=503,
-            detail="Slack app credentials not configured (SLACK_CLIENT_ID / SLACK_CLIENT_SECRET).",
-        )
+            detail=f"Slack credentials incomplete: {', '.join(exc.missing_fields)} not configured.",
+        ) from exc
     return SlackProvider(
-        client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri
+        client_id=cfg.client_id,
+        client_secret=cfg.client_secret,
+        redirect_uri=_redirect_uri(),
     )
 
 
@@ -83,8 +90,8 @@ async def revoke_integration(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     if integration.provider == "slack":
-        provider = _slack_provider()
         try:
+            provider = await _slack_provider_from_session(session)
             await provider.revoke(integration)
         except Exception:
             logger.warning("Slack revoke call failed; marking revoked locally anyway")
@@ -94,14 +101,16 @@ async def revoke_integration(
 
 
 @router.get("/slack/oauth/start")
-async def slack_oauth_start() -> dict[str, str]:
-    client_id = os.environ.get("SLACK_CLIENT_ID", "")
-    redirect_uri = os.environ.get(
-        "SLACK_REDIRECT_URI",
-        "https://app.artemisos.me/api/integrations/slack/oauth/callback",
-    )
-    if not client_id:
-        raise HTTPException(status_code=503, detail="SLACK_CLIENT_ID not configured.")
+async def slack_oauth_start(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, str]:
+    try:
+        cfg = await resolve_slack_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Slack credentials incomplete: {', '.join(exc.missing_fields)} not configured.",
+        ) from exc
 
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = "pending"
@@ -124,9 +133,9 @@ async def slack_oauth_start() -> dict[str, str]:
     )
     url = (
         f"https://slack.com/oauth/v2/authorize"
-        f"?client_id={client_id}"
+        f"?client_id={cfg.client_id}"
         f"&scope={scopes}"
-        f"&redirect_uri={redirect_uri}"
+        f"&redirect_uri={_redirect_uri()}"
         f"&state={state}"
     )
     return {"url": url}
@@ -142,7 +151,7 @@ async def slack_oauth_callback(
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
     del _oauth_states[state]
 
-    provider = _slack_provider()
+    provider = await _slack_provider_from_session(session)
     try:
         integration_row = await provider.connect(code)
     except ValueError as exc:
@@ -176,9 +185,72 @@ async def slack_verify(
         raise HTTPException(status_code=404, detail="No active Slack integration.")
 
     integration = rows[0]
-    provider = _slack_provider()
+    provider = await _slack_provider_from_session(session)
     ok = await provider.verify(integration)
     if ok:
         await repo.mark_verified(session, integration.id)
         await session.commit()
     return {"ok": ok, "workspace": integration.display_name or integration.workspace_id}
+
+
+# ── Provider credential config (J1b) ─────────────────────────────────────────
+
+
+class ProviderConfigOut(BaseModel):
+    provider: str
+    configured_keys: dict[str, bool]
+    ever_configured: bool
+
+
+class ProviderConfigIn(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+@router.get("/providers/{provider}/config", response_model=ProviderConfigOut)
+async def get_provider_config(
+    provider: str,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> ProviderConfigOut:
+    if provider not in _KNOWN_PROVIDERS:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider!r}")
+    config = await repo.get_provider_config(session, provider)
+    ever_configured = config is not None
+    configured_keys = {k: bool(v and str(v).strip()) for k, v in (config or {}).items()}
+    return ProviderConfigOut(
+        provider=provider,
+        configured_keys=configured_keys,
+        ever_configured=ever_configured,
+    )
+
+
+@router.post("/providers/{provider}/config", response_model=ProviderConfigOut)
+async def set_provider_config(
+    provider: str,
+    body: ProviderConfigIn,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> ProviderConfigOut:
+    if provider not in _KNOWN_PROVIDERS:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider!r}")
+    payload: dict[str, object] = dict(body.model_extra or {})
+    if not payload:
+        raise HTTPException(status_code=422, detail="Request body must contain at least one field.")
+    await repo.upsert_provider_config(session, provider, payload)
+    await session.commit()
+    config = await repo.get_provider_config(session, provider)
+    configured_keys = {k: bool(v and str(v).strip()) for k, v in (config or {}).items()}
+    return ProviderConfigOut(
+        provider=provider,
+        configured_keys=configured_keys,
+        ever_configured=True,
+    )
+
+
+@router.delete("/providers/{provider}/config", status_code=204)
+async def delete_provider_config(
+    provider: str,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> None:
+    if provider not in _KNOWN_PROVIDERS:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider!r}")
+    await repo.delete_provider_config(session, provider)
+    await session.commit()
