@@ -30,6 +30,11 @@ const PROVIDERS = [
     name: 'Jira',
     tagline: 'Browse issues, log work, and create tickets.',
   },
+  {
+    id: 'granola',
+    name: 'Granola',
+    tagline: 'Meeting transcripts and notes.',
+  },
 ];
 
 // ── Toast helper ──────────────────────────────────────────────────────────────
@@ -58,6 +63,14 @@ function _checkConnectionToast() {
   }
   if (params.get('jira_connected') === '1') {
     _showToast('Jira connected successfully.');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+  if (params.get('granola_connected') === '1') {
+    _showToast('Granola connected successfully.');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+  if (params.get('granola_error')) {
+    _showToast(`Granola connection failed: ${params.get('granola_error')}`, true);
     window.history.replaceState({}, '', window.location.pathname);
   }
 }

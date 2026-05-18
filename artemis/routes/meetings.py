@@ -1,16 +1,31 @@
 """Meetings router — /api/meetings.
 
 Endpoints:
-  GET  /api/meetings/overview  — meeting summary (Granola-backed; not yet connected)
+  GET  /api/meetings/overview         — yesterday's + today's past meetings (Focus data)
+  GET  /api/meetings/list             — date-range list
+  GET  /api/meetings/{id}             — full transcript + attendees
+
+All return {"status": "not_connected"} if no active Granola integration.
+Granola integration is provided by J6a — GranolaClient + GranolaProvider.
 """
 
 from __future__ import annotations
 
+import logging
+import time
+from datetime import UTC, date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import artemis.db as db
+from artemis.integrations import repository as repo
+from artemis.integrations.crypto import decrypt_credentials
+from artemis.integrations.granola.client import GranolaAPIError, GranolaClient
 from artemis.marketing.routes._auth import require_token
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/meetings",
@@ -18,11 +33,164 @@ router = APIRouter(
     dependencies=[Depends(require_token)],
 )
 
+_NOT_CONNECTED: dict[str, Any] = {"status": "not_connected", "provider": "granola"}
+
+
+async def _get_granola_client(session: AsyncSession) -> GranolaClient | None:
+    """Return a configured GranolaClient for the active integration, or None."""
+    rows = await repo.list_active(session, provider="granola")
+    if not rows:
+        return None
+    integration = rows[0]
+    try:
+        creds = decrypt_credentials(bytes(integration.encrypted_credentials))
+    except Exception:
+        logger.warning("Failed to decrypt Granola credentials")
+        return None
+
+    return GranolaClient(
+        access_token=str(creds.get("access_token", "")),
+        refresh_token=str(creds.get("refresh_token", "")),
+        client_id=str(creds.get("client_id", "")),
+        client_secret=str(creds.get("client_secret", "")),
+        expires_at=float(str(creds.get("expires_at") or 0)),
+    )
+
+
+def _meeting_to_dict(meeting: Any) -> dict[str, Any]:
+    return {
+        "id": meeting.id,
+        "title": meeting.title,
+        "date": meeting.date_raw,
+        "date_ms": meeting.date_ms,
+        "participants": meeting.participants,
+    }
+
 
 @router.get("/overview")
-async def get_meetings_overview() -> dict[str, Any]:
-    """Return meetings overview.
+async def get_meetings_overview(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return yesterday's and today's past meetings with summaries.
 
-    Granola integration is scheduled for J5. Always returns not_connected for now.
+    This is the data the Focus page needs: what happened yesterday and
+    what has already happened today. Sorted by start time ascending.
     """
-    return {"status": "not_connected", "provider": "granola"}
+    client = await _get_granola_client(session)
+    if client is None:
+        return _NOT_CONNECTED
+
+    try:
+        # Use last_7_days to capture both yesterday and today
+        meetings = await client.list_meetings(time_range="last_7_days")
+    except GranolaAPIError as exc:
+        if exc.status == 401:
+            return {"status": "not_connected", "provider": "granola", "reason": "auth_expired"}
+        logger.warning("Granola list_meetings error: %s", exc)
+        return {"status": "error", "error": str(exc)}
+    except Exception as exc:
+        logger.warning("Granola overview error: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+    now_ms = int(time.time() * 1000)
+    today_start = int(
+        datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=UTC).timestamp() * 1000
+    )
+    yesterday_start = today_start - 86_400_000
+
+    # Yesterday: full day; Today: only past meetings (start <= now)
+    relevant = [
+        m
+        for m in meetings
+        if (yesterday_start <= m.date_ms < today_start)  # yesterday
+        or (today_start <= m.date_ms <= now_ms)  # today so far
+    ]
+    relevant.sort(key=lambda m: m.date_ms)
+
+    return {
+        "status": "connected",
+        "provider": "granola",
+        "meetings": [_meeting_to_dict(m) for m in relevant],
+        "date": date.today().isoformat(),
+    }
+
+
+@router.get("/list")
+async def list_meetings(
+    from_date: str | None = Query(default=None, alias="from"),
+    to_date: str | None = Query(default=None, alias="to"),
+    limit: int = Query(default=50, le=200),
+    time_range: str = Query(default="last_30_days"),
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return a date-range list of meetings.
+
+    If from/to are not provided, time_range is used (last_30_days, last_7_days, this_week).
+    """
+    client = await _get_granola_client(session)
+    if client is None:
+        return _NOT_CONNECTED
+
+    valid_ranges = {"last_30_days", "last_7_days", "this_week"}
+    if time_range not in valid_ranges:
+        time_range = "last_30_days"
+
+    try:
+        meetings = await client.list_meetings(time_range=time_range, limit=limit)
+    except GranolaAPIError as exc:
+        if exc.status == 401:
+            return {"status": "not_connected", "provider": "granola", "reason": "auth_expired"}
+        return {"status": "error", "error": str(exc)}
+    except Exception as exc:
+        logger.warning("Granola list_meetings error: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+    # Optional client-side date filtering when from/to supplied
+    result = meetings
+    if from_date:
+        try:
+            from_ms = int(datetime.fromisoformat(from_date).timestamp() * 1000)
+            result = [m for m in result if m.date_ms >= from_ms]
+        except ValueError:
+            pass
+    if to_date:
+        try:
+            to_ms = int(datetime.fromisoformat(to_date).timestamp() * 1000)
+            result = [m for m in result if m.date_ms <= to_ms]
+        except ValueError:
+            pass
+
+    return {
+        "status": "connected",
+        "provider": "granola",
+        "meetings": [_meeting_to_dict(m) for m in result],
+        "count": len(result),
+    }
+
+
+@router.get("/{meeting_id}")
+async def get_meeting(
+    meeting_id: str,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return full transcript and attendees for a single meeting."""
+    client = await _get_granola_client(session)
+    if client is None:
+        return _NOT_CONNECTED
+
+    try:
+        detail = await client.get_meeting(meeting_id)
+    except GranolaAPIError as exc:
+        if exc.status == 401:
+            return {"status": "not_connected", "provider": "granola", "reason": "auth_expired"}
+        if exc.status == 404:
+            return {"status": "not_found", "meeting_id": meeting_id}
+        return {"status": "error", "error": str(exc)}
+    except Exception as exc:
+        logger.warning("Granola get_meeting error: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+    if not detail:
+        return {"status": "not_found", "meeting_id": meeting_id}
+
+    return {"status": "connected", "provider": "granola", "meeting_id": meeting_id, **detail}
