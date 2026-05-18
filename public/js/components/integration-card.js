@@ -9,7 +9,7 @@ import { openCredentialEntryModal } from './credential-entry-modal.js';
 
 const _PROVIDER_FIELDS = {
   slack: [
-    { key: 'client_id', label: 'Client ID', helper: 'From your Slack app's Basic Information page.', sensitive: true },
+    { key: 'client_id', label: 'Client ID', helper: "From your Slack app's Basic Information page.", sensitive: true },
     { key: 'client_secret', label: 'Client Secret', helper: 'Keep this secret — never share it.', sensitive: true },
     { key: 'signing_secret', label: 'Signing Secret', helper: 'Used to verify incoming event payloads from Slack.', sensitive: true },
   ],
