@@ -126,11 +126,13 @@ async def get_calendar_event(
         raise HTTPException(status_code=502, detail=f"Calendar fetch failed: {exc}") from exc
 
     return {
-        "id": event.id,
-        "summary": event.summary,
+        "uid": event.id,
+        "title": event.summary or "Untitled event",
         "start": event.start.date_time or event.start.date,
         "end": event.end.date_time or event.end.date,
         "description": event.description,
+        "location": getattr(event, "location", None),
+        "status": "scheduled",
         "attendees": [
             {"email": a.email, "responseStatus": a.response_status}
             for a in (event.attendees or [])
@@ -171,13 +173,17 @@ async def get_calendar_events(
 
     out: list[dict[str, Any]] = []
     for event in events:
+        # Map to the shape the frontend renderer expects (Node-era contract):
+        # uid, title, start, end, description, location, status.
         out.append(
             {
-                "id": event.id,
-                "summary": event.summary,
+                "uid": event.id,
+                "title": event.summary or "Untitled event",
                 "start": event.start.date_time or event.start.date,
                 "end": event.end.date_time or event.end.date,
                 "description": event.description,
+                "location": getattr(event, "location", None),
+                "status": "scheduled",
             }
         )
     return out
