@@ -30,6 +30,7 @@ from artemis.marketing.routes import (
 )
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
+from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
 from artemis.routes import calendar as calendar_routes
 from artemis.routes import health, okr, parallel, status, writing_rules
 from artemis.routes import jira as jira_routes
@@ -60,12 +61,16 @@ PUBLIC_DIR = Path(__file__).parent.parent / "public"
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Subscribe the Writing Studio adapter to draft lifecycle events.
     ws_adapter.init_adapter()
+    # Start the meeting auto-summarizer scheduler.
+    start_meeting_scheduler()
     try:
         yield
     finally:
         # Unsubscribe the adapter on shutdown so tests / restarts start clean.
         ws_adapter.reset_adapter()
         ws_events.clear_subscribers()
+        # Stop the scheduler before process exit.
+        stop_meeting_scheduler()
 
 
 app = FastAPI(
