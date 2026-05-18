@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  me.artemisos.memory-drill.plist
+  Monthly recovery drill for artemis_os memory durability.
+
+  Runs on the 1st of every month at 02:00 local time.
+  Output JSON is written to ~/.artemis/drill-reports/YYYY-MM-DD.json.
+
+  Install:
+      cp launchd/me.artemisos.memory-drill.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/me.artemisos.memory-drill.plist
+
+  Uninstall:
+      launchctl unload ~/Library/LaunchAgents/me.artemisos.memory-drill.plist
+      rm ~/Library/LaunchAgents/me.artemisos.memory-drill.plist
+
+  Trigger manually (for testing):
+      launchctl start me.artemisos.memory-drill
+
+  Check last exit status:
+      launchctl list me.artemisos.memory-drill
+
+  Read logs:
+      cat ~/.artemis/logs/memory-drill.log
+      cat ~/.artemis/logs/memory-drill.err.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.artemisos.memory-drill</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Absolute path to uv from Homebrew (adjust if uv lives elsewhere). -->
+        <string>/opt/homebrew/bin/uv</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>scripts.memory_drill</string>
+    </array>
+
+    <!-- Working directory = repo root so relative imports resolve. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/artemis/Desktop/Artemis/artemis-os</string>
+
+    <!-- Monthly: 1st of the month at 02:00 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Stdout / stderr go to dated log files. -->
+    <key>StandardOutPath</key>
+    <string>/Users/artemis/.artemis/logs/memory-drill.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/artemis/.artemis/logs/memory-drill.err.log</string>
+
+    <!-- Environment variables (edit to match your setup). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ARTEMIS_DB_URL</key>
+        <string>postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os</string>
+        <key>ARTEMIS_HOME</key>
+        <string>/Users/artemis/.artemis</string>
+        <!-- PATH must include postgres bin dir for pg_dump/pg_restore/psql. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/opt/postgresql@16/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Retry if the machine was asleep when the job was scheduled. -->
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
