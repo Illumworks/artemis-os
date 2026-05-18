@@ -32,7 +32,14 @@ import artemis.marketing.models  # noqa: F401 — registers all marketing models
 from artemis.config import settings
 from artemis.db import attach_pgvector_codec
 
-_db_url = os.environ.get("ARTEMIS_TEST_DB_URL", settings.db_url)
+# Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
+# if ARTEMIS_DB_URL does not contain "artemis_test", refuse to load.
+_db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
+if "artemis_test" not in _db_url:
+    raise RuntimeError(
+        f"REFUSING TO LOAD {__name__}: db_url={_db_url!r} is not the test database. "
+        "TRUNCATE on the live DB would destroy production data. Set ARTEMIS_DB_URL=...artemis_test."
+    )
 
 # Replace the main app engine with a NullPool engine at import time.
 # This prevents "Future attached to a different loop" errors when the ASGI
