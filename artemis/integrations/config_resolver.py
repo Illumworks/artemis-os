@@ -101,6 +101,50 @@ async def resolve_gcal_config(session: AsyncSession) -> GCalConfig:
     return GCalConfig(client_id=client_id, client_secret=client_secret)
 
 
+@dataclass(frozen=True)
+class JiraConfig:
+    site_url: str
+    email: str
+    api_token: str
+    project_key: str
+    max_items_per_column: int
+    team_members: tuple[str, ...]
+
+
+async def resolve_jira_config(session: AsyncSession) -> JiraConfig:
+    """Resolve Jira credentials: DB per-field, then env per-field fallback.
+
+    Raises MissingProviderConfigError if any required field is absent from both sources.
+    """
+    stored = await repo.get_provider_config(session, "jira") or {}
+
+    site_url = str(stored.get("site_url") or "") or os.environ.get("JIRA_SITE_URL", "")
+    email = str(stored.get("email") or "") or os.environ.get("JIRA_EMAIL", "")
+    api_token = str(stored.get("api_token") or "") or os.environ.get("JIRA_API_TOKEN", "")
+    project_key = str(stored.get("project_key") or "") or os.environ.get("JIRA_PROJECT_KEY", "")
+    _max_raw = stored.get("max_items_per_column")
+    max_items = int(_max_raw) if isinstance(_max_raw, (int, float, str)) else 20
+    _members_raw = stored.get("team_members")
+    team_members = tuple(str(m) for m in _members_raw if m) if isinstance(_members_raw, list) else ()
+
+    missing = [
+        name
+        for name, val in [("site_url", site_url), ("email", email), ("api_token", api_token)]
+        if not val
+    ]
+    if missing:
+        raise MissingProviderConfigError("jira", missing)
+
+    return JiraConfig(
+        site_url=site_url,
+        email=email,
+        api_token=api_token,
+        project_key=project_key,
+        max_items_per_column=max_items,
+        team_members=team_members,
+    )
+
+
 # ── LLM provider resolvers (DB-first, env fallback) ──────────────────────────
 
 

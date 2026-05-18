@@ -35,6 +35,8 @@ _AVAILABLE_SURFACES = {
     "floating-artemis",
     # Phase J1 — Integrations (Slack live; Cal/Gmail/Jira/Granola pending)
     "integrations",
+    # Phase J5 — Jira board backend ported
+    "jira-board",
 }
 _UNAVAILABLE_SURFACES = {
     # Node-only surfaces — backends not ported yet.
@@ -43,7 +45,6 @@ _UNAVAILABLE_SURFACES = {
     "chat",
     "memory-shell",
     # "okr-studio" removed — superseded by "okr" surface above
-    "jira-board",
     "dags",
     "voice",
     "telegram",

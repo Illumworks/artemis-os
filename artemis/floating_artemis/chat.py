@@ -32,6 +32,7 @@ from artemis.floating_artemis.personality import PERSONALITY_PROFILE, select_voi
 from artemis.floating_artemis.schemas import MemoryObservationDigest, MemoryReadEvent
 from artemis.floating_artemis.tools.builders import register_builders_tools
 from artemis.floating_artemis.tools.core import register_core_tools
+from artemis.floating_artemis.tools.jira_tools import register_jira_tools
 from artemis.floating_artemis.tools.marketing import register_marketing_tools
 from artemis.floating_artemis.tools.okr import register_okr_tools
 from artemis.floating_artemis.tools.system import register_system_tools
@@ -142,6 +143,8 @@ def _build_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry
         register_marketing_tools(registry)
     register_slack_tools(registry)
     register_gcal_tools(registry)
+    if "jira-board" in available_surfaces:
+        register_jira_tools(registry)
     return registry
 
 
