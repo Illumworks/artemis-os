@@ -168,6 +168,43 @@ async def list_meetings(
     }
 
 
+@router.get("/{granola_id}/summary")
+async def get_meeting_summary(
+    granola_id: str,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return the stored post-meeting summary for a Granola meeting ID.
+
+    Returns 404 if no summary has been generated yet. The J6c Actions tab
+    reads from here first (instant) and falls back to live extraction if missing.
+    """
+    from sqlalchemy import select as sa_select
+
+    from artemis.meetings.models import MeetingSummary
+
+    result = await session.execute(
+        sa_select(MeetingSummary).where(MeetingSummary.granola_id == granola_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "summary_not_found", "granola_id": granola_id},
+        )
+
+    return {
+        "granola_id": row.granola_id,
+        "gcal_event_id": row.gcal_event_id,
+        "title": row.title,
+        "summary": row.summary,
+        "action_items": row.action_items or [],
+        "raw_input_id": row.raw_input_id,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
 @router.get("/{meeting_id}")
 async def get_meeting(
     meeting_id: str,

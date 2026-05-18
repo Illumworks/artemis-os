@@ -92,6 +92,7 @@ def _build_system_prompt(
     voice_samples: list[str],
     page_context: str | None,
     available_surfaces: list[str],
+    recent_meeting_context: str | None = None,
     session_id: str = "",
 ) -> str:
     # Lead with the high-priority distilled persona rules.
@@ -116,6 +117,10 @@ def _build_system_prompt(
         surfaces_str = ", ".join(sorted(available_surfaces))
         parts.append(f"## Available surfaces (your tools are gated by these)\n{surfaces_str}")
 
+    # Recent meeting context (J6d): inject if a meeting ended within the last 4 hours.
+    if recent_meeting_context:
+        parts.append(f"## Recent meetings\n{recent_meeting_context}")
+
     # Slack-originated session: establish the conversational context.
     if session_id.startswith("slack-"):
         parts.append(
@@ -126,6 +131,41 @@ def _build_system_prompt(
         )
 
     return "\n\n".join(parts)
+
+
+async def _get_recent_meeting_context(db_session: Any | None) -> str | None:
+    """Return a one-liner summary of meetings ended in the last 4 hours, or None.
+
+    Used by handle_turn to inject meeting context into the system prompt so
+    Artemis is aware of what Jon just finished without being told.
+    """
+    try:
+        import artemis.db as _db
+        from artemis.meetings.summarizer import get_recent_summaries
+
+        if db_session is not None:
+            rows = await get_recent_summaries(db_session, hours=4)
+        else:
+            async with _db.SessionLocal() as session:
+                rows = await get_recent_summaries(session, hours=4)
+
+        if not rows:
+            return None
+
+        lines: list[str] = []
+        for row in rows:
+            # Take the first 3 bullets from the stored summary text.
+            bullet_lines = [
+                line.strip()
+                for line in row.summary.splitlines()
+                if line.strip().startswith("-")
+            ][:3]
+            bullets_short = " ".join(bullet_lines) if bullet_lines else row.summary[:200]
+            lines.append(f"You just finished \"{row.title}\". Summary: {bullets_short}")
+        return "\n".join(lines)
+    except Exception:
+        logger.debug("Failed to fetch recent meeting context", exc_info=True)
+        return None
 
 
 # ── Tool registry factory ─────────────────────────────────────────────────────
@@ -370,10 +410,12 @@ async def handle_turn(
     # Use the profile-sourced voice corpus (deterministic per session_id).
     voice_samples = select_voice_samples(session_id=session_id, k=4)
     page_context_text = await _get_page_context_text(session_id=session_id, db_session=db_session)
+    recent_meeting_ctx = await _get_recent_meeting_context(db_session)
     system_prompt = _build_system_prompt(
         voice_samples=voice_samples,
         page_context=page_context_text,
         available_surfaces=sorted(available_surfaces),
+        recent_meeting_context=recent_meeting_ctx,
         session_id=session_id,
     )
 
