@@ -75,3 +75,36 @@ class SlackClient:
         )
         channels: list[dict[str, object]] = data.get("channels", [])  # type: ignore[assignment]
         return channels
+
+    async def list_users(
+        self, query: str | None = None, limit: int = 200
+    ) -> list[dict[str, object]]:
+        """Return workspace members, optionally pre-filtered by name/email prefix.
+
+        Slack's users.list does not support server-side search, so we fetch up
+        to ``limit`` members and filter client-side.  Bots and deleted accounts
+        are excluded.
+        """
+        data = await self._post("users.list", limit=limit)
+        members: list[dict[str, object]] = data.get("members", [])  # type: ignore[assignment]
+
+        # Strip bots and deleted accounts up-front.
+        members = [
+            m
+            for m in members
+            if not m.get("is_bot") and not m.get("deleted") and m.get("id") != "USLACKBOT"
+        ]
+
+        if not query:
+            return members
+
+        q = query.lower()
+        filtered: list[dict[str, object]] = []
+        for m in members:
+            profile: dict[str, object] = m.get("profile", {})  # type: ignore[assignment]
+            real_name = str(m.get("real_name", "")).lower()
+            display_name = str(profile.get("display_name", "")).lower()
+            email = str(profile.get("email", "")).lower()
+            if q in real_name or q in display_name or q in email:
+                filtered.append(m)
+        return filtered
