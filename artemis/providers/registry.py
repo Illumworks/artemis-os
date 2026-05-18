@@ -12,11 +12,13 @@ from collections.abc import Callable
 from artemis.agent.client import AnthropicAdapter, ModelAdapter
 from artemis.providers.errors import UnknownProviderError
 from artemis.providers.gemini.adapter import GeminiAdapter
+from artemis.providers.openai.adapter import OpenAIAdapter
 from artemis.providers.openrouter.adapter import OpenRouterAdapter
 
 _BUILDERS: dict[str, Callable[..., ModelAdapter]] = {
     "anthropic": lambda **kw: AnthropicAdapter(**kw),
     "gemini": lambda **kw: GeminiAdapter(**kw),
+    "openai": lambda **kw: OpenAIAdapter(**kw),
     "openrouter": lambda **kw: OpenRouterAdapter(**kw),
 }
 
