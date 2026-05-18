@@ -223,7 +223,7 @@ async def _resolve_adapter(
                 row = await get_session_by_id(session, session_id)
 
         if getattr(row, "provider", None):
-            provider_id = row.provider  # type: ignore[assignment]
+            provider_id = row.provider
         if getattr(row, "model", None):
             model_id = row.model
     except Exception:

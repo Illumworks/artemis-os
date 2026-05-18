@@ -222,28 +222,24 @@ def test_session_model_update_schema_defaults_to_none() -> None:
 # ── chat._resolve_adapter ─────────────────────────────────────────────────────
 
 
-async def test_resolve_adapter_no_provider_returns_anthropic() -> None:
-    """When session has no provider, falls back to AnthropicAdapter."""
-    from artemis.agent.client import AnthropicAdapter
+async def test_resolve_adapter_no_provider_prefers_claude_code() -> None:
+    """When session has no provider, fallback chain tries claude-code first."""
     from artemis.floating_artemis.chat import _resolve_adapter
 
     row = _make_session_row(provider=None, model=None)
+    mock_adapter = MagicMock()
 
-    # _resolve_adapter imports get_session_by_id inside the function from the repo module;
-    # patch it at the source so all callers see the mock.
     with (
         patch(
             "artemis.floating_artemis.repository.get_session_by_id", new=AsyncMock(return_value=row)
         ),
-        patch("artemis.floating_artemis.chat.get_adapter") as mock_get_adapter,
+        patch("artemis.floating_artemis.chat.get_adapter", return_value=mock_adapter) as mock_ga,
     ):
-        mock_get_adapter.return_value = AnthropicAdapter.__new__(AnthropicAdapter)
         await _resolve_adapter(session_id="test-s1", db_session=MagicMock())
 
-    # get_adapter called with "anthropic"
-    mock_get_adapter.assert_called_once()
-    call_args = mock_get_adapter.call_args
-    assert call_args[0][0] == "anthropic"
+    # First call in the fallback chain is claude-code (subscription, no key needed)
+    mock_ga.assert_called_once()
+    assert mock_ga.call_args[0][0] == "claude-code"
 
 
 async def test_resolve_adapter_gemini_calls_get_adapter_with_gemini() -> None:
@@ -266,8 +262,8 @@ async def test_resolve_adapter_gemini_calls_get_adapter_with_gemini() -> None:
     mock_ga.assert_called_once_with("gemini", default_model="gemini-2.5-flash")
 
 
-async def test_resolve_adapter_missing_api_key_returns_str_error() -> None:
-    """MissingApiKeyError from get_adapter is caught; returns str error message."""
+async def test_resolve_adapter_returns_str_when_all_providers_fail() -> None:
+    """When every provider in the fallback chain fails, returns a str error message."""
     from artemis.floating_artemis.chat import _resolve_adapter
     from artemis.providers.errors import MissingApiKeyError
 
@@ -279,13 +275,13 @@ async def test_resolve_adapter_missing_api_key_returns_str_error() -> None:
         ),
         patch(
             "artemis.floating_artemis.chat.get_adapter",
-            side_effect=MissingApiKeyError("GOOGLE_API_KEY missing"),
+            side_effect=MissingApiKeyError("everything missing"),
         ),
     ):
         result = await _resolve_adapter(session_id="test-s1", db_session=MagicMock())
 
     assert isinstance(result, str)
-    assert "gemini" in result.lower() or "configuration" in result.lower()
+    assert "provider" in result.lower() or "integrations" in result.lower()
 
 
 async def test_handle_turn_broadcasts_failed_on_provider_error() -> None:
