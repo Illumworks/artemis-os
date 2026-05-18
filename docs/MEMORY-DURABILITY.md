@@ -1,186 +1,210 @@
-# Memory Durability — Operator Guide
+# Memory Durability
+
+> "The operator should be able to recover from disaster in five minutes following a single document."
+
+This document is that document.
+
+---
 
 ## Three-layer durability model
 
-Artemis OS memory is lossless by structural guarantee across three tiers:
+The memory system runs three concentric tiers of protection.
 
-| Tier | What it is | Where | Retention |
-|------|-----------|-------|-----------|
-| **raw_inputs** (hot) | Every memory write source, verbatim | Postgres | 90 days active + placeholder row forever |
-| **Cold archive** | Gzipped JSONL, one file per month per archiving run | `~/.artemis/archive/` | Indefinite |
-| **pg_dump backup** | Full Postgres dump, custom format | `~/.artemis/backups/` | 30 days rolling |
+| Tier | Location | Updated | Retained |
+|------|----------|---------|----------|
+| **Live** | `artemis_os` Postgres | Real-time | Lossless — rows are never deleted |
+| **Nightly backup** | `~/.artemis/backups/` | Daily via launchd | 7 days (configurable) |
+| **Cold archive** | `~/.artemis/cold-archive/` | Monthly via `memory_archive_cold.py` | Indefinitely |
 
-Derived tables (`memory_observations`, `memory_drawers`, entities, relations) FK back
-to `raw_inputs` via `raw_input_id`. Even if all derived tables are truncated by a bug,
-the raw source survives in `raw_inputs` and the cold archive.
+**Lossless rule (from the memory keystone architecture):** `memory_drawers` and `memory_observations` are never `DELETE`-d from the live database. Observations leave active retrieval via `superseded_by` — a forward pointer to the newer row — not deletion. This means the live database is itself a complete audit trail.
 
----
-
-## How the hash chain works
-
-Every row in `raw_inputs` includes:
-
-- **`payload_hash`** — SHA-256 of the canonical JSON of the payload. Preserved when the
-  row is archived (payload is NULLed; hash stays).
-- **`prev_hash`** — the `this_hash` of the immediately preceding row (NULL on the first row).
-- **`this_hash`** — SHA-256 of the canonical serialization of the entire row, including
-  `prev_hash`.
-
-This forms a tamper-evident chain: if any past row is modified, every subsequent row's
-`this_hash` becomes invalid. A single walk of the table detects the first break.
-
-**Canonical serialization recipe (frozen — never change without a migration):**
-
-```
-json.dumps({
-    "actor": ...,
-    "created_at_iso": "<ISO 8601 with UTC offset>",
-    "payload": ...,
-    "prev_hash": ...,
-    "scope_id": ...,
-    "scope_kind": ...,
-    "source_id": ...,
-    "source_kind": ...,
-}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-```
-
-SHA-256 of UTF-8 encoding of the above string.
+**Backup safety model:** The backup script uses a create-verify-THEN-prune order:
+1. Dump to a new timestamped file.
+2. Verify the new file with `pg_restore --list`.
+3. Only after verification succeeds, prune files older than `--keep-days`.
+4. Refuse to prune if the live DB has 0 rows across critical tables (anomaly guard).
+5. Never delete the last remaining backup.
 
 ---
 
-## Verifying chain integrity
+## How the observation supersession chain works
 
-```bash
-# Full global chain
-python -m scripts.memory_verify_chain
+Every memory observation has an optional `superseded_by` column that points to a newer row. When consolidation produces a better synthesis of the evidence, it writes a new observation and sets the old one's `superseded_by` to the new ID. The old row remains permanently.
 
-# Scoped (checks hash correctness for those rows only)
-python -m scripts.memory_verify_chain --scope-kind project --scope-id proj-123
+```sql
+-- Two observations: obs #1 superseded by obs #2
+SELECT id, content, superseded_by FROM memory_observations ORDER BY id;
+
+  id |          content          | superseded_by
+-----+---------------------------+---------------
+   1 | "Jon prefers Slack DMs."  |             2   ← retired; still here
+   2 | "Jon prefers Slack DMs;   |          NULL   ← active; this is what retrieval reads
+       verified 2026-05-18."     |
 ```
 
-Exit 0 = intact. Exit 1 = break detected (stderr shows first_break_id).
+`memory_verify_chain.py` walks every non-null `superseded_by` link and checks for:
+- **Dangling FKs**: a `superseded_by` pointing to a non-existent row.
+- **Cycles**: a → b → a (would cause infinite loops in chain walkers).
+
+The chain is not a cryptographic hash chain; the integrity guarantee is structural (referential integrity + no cycles), not cryptographic.
 
 ---
 
-## How to restore from a backup
+## Restore drill — the five-minute procedure
 
-### Step 1 — Take or locate a backup
-
-```bash
-# Take a fresh backup now
-python -m scripts.memory_backup
-
-# List existing backups
-ls -lht ~/.artemis/backups/
-```
-
-### Step 2 — Verify the backup is readable
+Use this when you need to verify that a specific backup is restorable. This creates a temporary `artemis_restore` database and drops it when you're done.
 
 ```bash
-pg_restore --list ~/.artemis/backups/<TIMESTAMP>.pg_dump | head -20
+# 1. Find the backup you want to test
+ls -lh ~/.artemis/backups/
+
+# 2. Restore to a throwaway DB
+uv run python -m scripts.memory_restore \
+    ~/.artemis/backups/artemis_os_20260518T020000Z.pgdump.gz \
+    --target artemis_restore \
+    --drop-before-restore
+
+# 3. Verify the chain on the restored DB
+uv run python -m scripts.memory_verify_chain --db artemis_restore
+
+# 4. Spot-check row counts
+psql -h localhost -U artemis -d artemis_restore \
+    -c "SELECT COUNT(*) FROM memory_observations;"
+
+# 5. Drop the restore DB when satisfied
+psql -h localhost -U artemis -d postgres \
+    -c "DROP DATABASE IF EXISTS artemis_restore;"
 ```
 
-### Step 3 — Restore to a scratch database
-
-```bash
-python -m scripts.memory_restore ~/.artemis/backups/<TIMESTAMP>.pg_dump
-# → restores to artemis_os_restore
-```
-
-### Step 4 — Verify the restored data
-
-```bash
-psql -h localhost -U artemis artemis_os_restore -c "SELECT count(*) FROM raw_inputs;"
-psql -h localhost -U artemis artemis_os_restore -c "SELECT count(*) FROM memory_observations;"
-
-# Optionally run chain verify on the restored DB
-ARTEMIS_DB_URL=postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os_restore \
-    python -m scripts.memory_verify_chain
-```
-
-### Step 5 — Swap (only after verifying)
-
-```bash
-# Stop the app first
-# Then:
-psql -h localhost -U artemis postgres -c \
-    "ALTER DATABASE artemis_os RENAME TO artemis_os_old;"
-psql -h localhost -U artemis postgres -c \
-    "ALTER DATABASE artemis_os_restore RENAME TO artemis_os;"
-# Restart the app
-# Once satisfied:
-psql -h localhost -U artemis postgres -c "DROP DATABASE artemis_os_old;"
-```
+Expected total time: 2–4 minutes for a 50 MB backup on local Postgres.
 
 ---
 
-## Monthly drill checklist
+## Monthly drill — automated
 
-Run this drill on the first Monday of each month. Document results.
+`scripts/memory_drill.py` runs the full dance (backup → verify → restore → chain check → row count comparison → cleanup) and writes a structured JSON report.
 
-- [ ] Take backup: `python -m scripts.memory_backup`
-- [ ] Verify dump: `pg_restore --list ~/.artemis/backups/$(ls -t ~/.artemis/backups | head -1)`
-- [ ] Restore to scratch: `python -m scripts.memory_restore ~/.artemis/backups/$(ls -t ~/.artemis/backups | head -1)`
-- [ ] Verify chain on restore: `ARTEMIS_DB_URL=postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os_restore python -m scripts.memory_verify_chain`
-- [ ] Verify row counts match between artemis_os and artemis_os_restore
-- [ ] Drop scratch: `dropdb --if-exists -h localhost -U artemis artemis_os_restore`
-- [ ] Document any issues in this file or in `../claudeck-artemis/PROJECT_LOG.md`
-
----
-
-## Configuration
-
-All paths and parameters are configurable via environment variables (prefix: `ARTEMIS_`):
-
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `ARTEMIS_ARCHIVE_DIR` | `~/.artemis/archive` | Root for cold archive JSONL files |
-| `ARTEMIS_BACKUP_DIR` | `~/.artemis/backups` | Root for pg_dump files |
-| `ARTEMIS_BACKUP_PG_HOST` | `localhost` | Postgres host for pg_dump |
-| `ARTEMIS_BACKUP_PG_PORT` | `5432` | Postgres port |
-| `ARTEMIS_BACKUP_PG_USER` | `artemis` | Postgres user |
-| `ARTEMIS_BACKUP_PG_DBNAME` | `artemis_os` | Database to back up |
-| `ARTEMIS_BACKUP_RETAIN_DAYS` | `30` | Days to keep pg_dump files |
-| `ARTEMIS_ARCHIVE_AGE_DAYS` | `90` | Archive rows older than this many days |
-
----
-
-## Launchd timer setup (macOS)
-
-Plists are in `launchd/` in the repo. To install:
+**Install the launchd job (runs on the 1st of each month at 02:00):**
 
 ```bash
-# Create log dir
-mkdir -p ~/.artemis/logs
+# 1. Create the log directory
+mkdir -p ~/.artemis/logs ~/.artemis/drill-reports
 
-# Install plists
-cp launchd/me.artemisos.memory-archive.plist ~/Library/LaunchAgents/
-cp launchd/me.artemisos.memory-backup.plist ~/Library/LaunchAgents/
+# 2. Copy the plist
+cp launchd/me.artemisos.memory-drill.plist ~/Library/LaunchAgents/
 
-# Load (runs at 3am and 4am daily)
-launchctl load ~/Library/LaunchAgents/me.artemisos.memory-archive.plist
-launchctl load ~/Library/LaunchAgents/me.artemisos.memory-backup.plist
+# 3. Load it
+launchctl load ~/Library/LaunchAgents/me.artemisos.memory-drill.plist
 
-# Verify loaded
-launchctl list | grep artemisos
+# 4. Trigger a test run immediately
+launchctl start me.artemisos.memory-drill
 
-# To run manually (test):
-launchctl start me.artemisos.memory-archive
-launchctl start me.artemisos.memory-backup
+# 5. Read the report
+cat ~/.artemis/drill-reports/$(date +%Y-%m-%d).json | python -m json.tool
 ```
 
-To unload: `launchctl unload ~/Library/LaunchAgents/me.artemisos.memory-archive.plist`
+**Where reports live:** `~/.artemis/drill-reports/YYYY-MM-DD.json`
 
-Logs: `~/.artemis/logs/memory-archive.log` and `memory-backup.log`.
+**What a passing report looks like:**
+```json
+{
+  "pass": true,
+  "run_at": "2026-06-01T02:03:47.123456+00:00",
+  "steps": [
+    {"name": "backup",              "ok": true,  "duration_ms": 1200, "detail": "wrote artemis_os_20260601T020347Z.pgdump.gz"},
+    {"name": "verify_backup",       "ok": true,  "duration_ms":  340, "detail": "214 TOC entries"},
+    {"name": "live_row_counts",     "ok": true,  "duration_ms":   80, "detail": "total across critical tables: 1847"},
+    {"name": "restore_to_drill_db", "ok": true,  "duration_ms": 3100, "detail": "restored to artemis_drill, 214 TOC entries"},
+    {"name": "verify_chain",        "ok": true,  "duration_ms":  420, "detail": "ok — 0 links checked, 1847 active observations"},
+    {"name": "row_count_comparison","ok": true,  "duration_ms":  190, "detail": "all 7 tables match"},
+    {"name": "cleanup_drill_db",    "ok": true,  "duration_ms":  110, "detail": "dropped artemis_drill"}
+  ],
+  "notes": []
+}
+```
+
+**What a failing report looks like** (chain broken):
+```json
+{
+  "pass": false,
+  "steps": [
+    ...
+    {"name": "verify_chain", "ok": false, "detail": "Chain broken: 1 issue(s). First: {'id': 42, 'superseded_by': 99, 'reason': 'superseded_by=99 does not exist'}"}
+  ],
+  "notes": ["broken chain: id=42 reason=superseded_by=99 does not exist"]
+}
+```
+
+A non-zero exit code from `memory_drill.py` means a step failed. Wire this to a Slack alert in your on-call rotation.
 
 ---
 
-## What to do if you suspect data corruption
+## What to do if you suspect corruption
 
-1. **Do not restart the app** — the corrupted state is in Postgres; restarting won't help.
-2. Run `python -m scripts.memory_verify_chain` — note the `first_break_id`.
-3. Check the archive: if rows are archived, `python -m scripts.memory_rehydrate --ids <id>` to restore payload.
-4. If the chain break is in a derived table (observations, entities), not raw_inputs — the raw source
-   is still intact. Re-derive from raw_inputs.
-5. If raw_inputs itself is corrupted, restore from the latest pg_dump (Step 3 above).
-6. Document the incident in `../claudeck-artemis/PROJECT_LOG.md`.
+**1. Run the chain verifier first:**
+```bash
+uv run python -m scripts.memory_verify_chain --db artemis_os --json
+```
+
+If `"ok": true` with no broken links, the logical structure is intact. The issue may be in data quality, not corruption.
+
+**2. If the chain is broken:**
+```bash
+# Find the last known-good backup
+ls -lt ~/.artemis/backups/
+
+# Restore it to a side database and re-verify
+uv run python -m scripts.memory_restore \
+    ~/.artemis/backups/<last-good>.pgdump.gz \
+    --target artemis_recovery \
+    --drop-before-restore
+
+uv run python -m scripts.memory_verify_chain --db artemis_recovery
+```
+
+**3. Swap the live DB (drastic — only if the live DB is unrecoverable):**
+```bash
+# Stop the artemis server first
+# Then in psql as a superuser:
+psql -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'artemis_os';"
+psql -U postgres -c "ALTER DATABASE artemis_os RENAME TO artemis_os_corrupted_$(date +%Y%m%d);"
+psql -U postgres -c "ALTER DATABASE artemis_recovery RENAME TO artemis_os;"
+# Restart the server
+```
+
+Document the swap in `docs/WORKLOG.md` with the date, backup used, and reason.
+
+---
+
+## Environment variables that affect memory durability
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ARTEMIS_DB_URL` | `postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os` | SQLAlchemy async URL for the live DB. Used by all scripts for connection params. |
+| `ARTEMIS_HOME` | `~/.artemis` | Root data directory. Backups go to `$ARTEMIS_HOME/backups/`, drill reports to `$ARTEMIS_HOME/drill-reports/`, logs to `$ARTEMIS_HOME/logs/`. |
+
+The launchd plist sets both variables explicitly. If you change the DB host or credentials, update the plist and reload it.
+
+---
+
+## For AI maintainers
+
+This section is addressed to the next AI (Claude, Codex, or successor) maintaining this system.
+
+**Lines you must not cross:**
+
+1. **Never `DELETE FROM memory_drawers` or `DELETE FROM memory_observations` on the production database.** These tables are the evidence floor. Observations are retired via `superseded_by`, never deleted. If you find a migration that does this, refuse and escalate.
+
+2. **Never run `alembic downgrade` on `artemis_os` without taking a verified backup first.** The sequence is: `memory_backup.py` → confirm the new `.pgdump.gz` is readable → then downgrade. No exceptions.
+
+3. **Never prune backups programmatically unless the new backup has been verified.** The `memory_backup.py` script enforces this. If you're editing that script, preserve the create-verify-THEN-prune order.
+
+4. **Never restore to `artemis_os` (the live database) without the two-layer guard** (`--force` + `--i-understand-this-overwrites-live-data`). The `memory_restore.py` script enforces this. If you're editing that script, preserve both flags as required conditions.
+
+5. **The `artemis_drill` database is ephemeral.** It is created and dropped by the monthly drill. Never treat it as persistent or use it for anything else.
+
+6. **If the monthly drill has been failing for more than one cycle,** that is a P1 incident. Do not silently note it — surface it to the human operator immediately.
+
+7. **Off-site backup sync is explicitly out of scope (local-only, per Jon 2026-05-18).** Do not add cloud sync, S3 upload, or any remote transfer to these scripts without a new explicit decision.
+
+8. **Encrypted backups are deferred to a future hardening pass.** Do not add encryption unless a new decision authorizes it.

@@ -1,68 +1,118 @@
-"""Move raw_inputs rows older than the retention window to cold archive.
+"""memory_archive_cold.py — Cold-tier archive of old backup files.
+
+Moves backups older than --cold-after-days from the hot backup directory
+to a cold archive directory. Cold archives are not automatically pruned —
+they are meant to be retained indefinitely (or managed manually).
+
+This is the third tier in the three-layer durability model:
+  Live DB → nightly backup (hot) → cold archive (long-term)
 
 Usage:
-    python -m scripts.memory_archive_cold [--age-days N] [--archive-dir PATH]
+    uv run python -m scripts.memory_archive_cold
+    uv run python -m scripts.memory_archive_cold \\
+        --backup-dir ~/.artemis/backups \\
+        --cold-dir ~/.artemis/cold-archive \\
+        --cold-after-days 30
 
-Defaults from ARTEMIS_ARCHIVE_AGE_DAYS and ARTEMIS_ARCHIVE_DIR.
-
-Exit codes:
-    0  success (may have archived 0 rows)
-    1  unexpected error
+Environment:
+    ARTEMIS_HOME — root data dir; defaults to ~/.artemis
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
+import logging
+import os
+import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
+_logger = logging.getLogger("artemis.memory_archive_cold")
 
-async def _main(age_days: int, archive_dir: Path) -> int:
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-    from sqlalchemy.pool import NullPool
-
-    from artemis.config import settings
-    from artemis.db import attach_pgvector_codec
-    from artemis.memory.archive import archive_cold
-
-    engine = create_async_engine(settings.db_url, echo=False, poolclass=NullPool)
-    attach_pgvector_codec(engine)
-
-    async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
-        count = await archive_cold(session, archive_age_days=age_days, archive_dir=archive_dir)
-
-    await engine.dispose()
-    print(f"Archived {count} rows to {archive_dir}")
-    return 0
+_DEFAULT_COLD_AFTER_DAYS = 30
 
 
-def main() -> None:
-    from artemis.config import settings
+def _default_backup_dir() -> Path:
+    home = os.environ.get("ARTEMIS_HOME", os.path.expanduser("~/.artemis"))
+    return Path(home) / "backups"
 
-    parser = argparse.ArgumentParser(description="Cold-archive old raw_inputs rows.")
+
+def _default_cold_dir() -> Path:
+    home = os.environ.get("ARTEMIS_HOME", os.path.expanduser("~/.artemis"))
+    return Path(home) / "cold-archive"
+
+
+def run_cold_archive(
+    backup_dir: Path | None = None,
+    cold_dir: Path | None = None,
+    cold_after_days: int = _DEFAULT_COLD_AFTER_DAYS,
+    dry_run: bool = False,
+) -> list[Path]:
+    """Move hot backups older than cold_after_days to cold_dir.
+
+    Returns list of moved paths.
+    """
+    if backup_dir is None:
+        backup_dir = _default_backup_dir()
+    if cold_dir is None:
+        cold_dir = _default_cold_dir()
+
+    if not backup_dir.exists():
+        _logger.warning("Backup dir does not exist: %s", backup_dir)
+        return []
+
+    cold_dir.mkdir(parents=True, exist_ok=True)
+    cutoff = datetime.now(UTC).timestamp() - cold_after_days * 86400
+    moved: list[Path] = []
+
+    pattern = "artemis_os_*.pgdump"
+    all_backups = sorted(backup_dir.glob(pattern), key=lambda p: p.stat().st_mtime)
+
+    # Always keep the newest backup in hot storage regardless of age.
+    for path in all_backups[:-1]:
+        if path.stat().st_mtime < cutoff:
+            dest = cold_dir / path.name
+            if dry_run:
+                _logger.info("[dry-run] Would move %s → %s", path.name, cold_dir)
+            else:
+                shutil.move(str(path), dest)
+                # Also move the companion JSON manifest if present.
+                manifest = path.with_suffix("").with_suffix(".json")
+                if manifest.exists():
+                    shutil.move(str(manifest), cold_dir / manifest.name)
+                _logger.info("Archived %s → %s", path.name, cold_dir)
+            moved.append(path)
+
+    if not moved:
+        _logger.info("No backups to archive (cold_after_days=%d).", cold_after_days)
+
+    return moved
+
+
+def _cli() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description="Move old backups to cold archive.")
+    parser.add_argument("--backup-dir", type=Path, default=None)
+    parser.add_argument("--cold-dir", type=Path, default=None)
     parser.add_argument(
-        "--age-days",
+        "--cold-after-days",
         type=int,
-        default=settings.archive_age_days,
-        help="Archive rows older than N days (default: %(default)s).",
+        default=_DEFAULT_COLD_AFTER_DAYS,
+        help=f"Age in days before a backup is moved to cold storage (default: {_DEFAULT_COLD_AFTER_DAYS}).",
     )
-    parser.add_argument(
-        "--archive-dir",
-        type=Path,
-        default=settings.archive_dir,
-        help="Root archive directory (default: %(default)s).",
-    )
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    try:
-        code = asyncio.run(_main(args.age_days, args.archive_dir))
-    except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        code = 1
-
-    sys.exit(code)
+    moved = run_cold_archive(
+        backup_dir=args.backup_dir,
+        cold_dir=args.cold_dir,
+        cold_after_days=args.cold_after_days,
+        dry_run=args.dry_run,
+    )
+    print(f"Archived {len(moved)} file(s) to cold storage.")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
-    main()
+    _cli()
