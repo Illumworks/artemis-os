@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+from unittest.mock import patch
+
+from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+from artemis.providers.errors import MissingApiKeyError, MissingCliBinaryError, UnknownProviderError
 from artemis.providers.gemini.adapter import GeminiAdapter
+from artemis.providers.lm_studio.adapter import LMStudioAdapter
 from artemis.providers.openrouter.adapter import OpenRouterAdapter
 from artemis.providers.registry import get_adapter, list_providers
 
@@ -17,11 +21,10 @@ def test_list_providers_sorted() -> None:
     assert providers == sorted(providers)
 
 
-def test_list_providers_contains_all_three() -> None:
+def test_list_providers_contains_all_providers() -> None:
     providers = list_providers()
-    assert "anthropic" in providers
-    assert "gemini" in providers
-    assert "openrouter" in providers
+    for expected in ("anthropic", "claude-code", "codex", "gemini", "lm-studio", "openai", "openrouter"):
+        assert expected in providers, f"{expected!r} missing from list_providers()"
 
 
 # ── get_adapter ────────────────────────────────────────────────────────────
@@ -80,6 +83,39 @@ def test_get_adapter_openrouter_passes_kwargs() -> None:
     assert isinstance(adapter, OpenRouterAdapter)
     assert adapter._api_key == "my-key"
     assert adapter._default_model == "openai/gpt-4o"
+
+
+def test_get_adapter_claude_code_raises_when_binary_missing() -> None:
+    with (
+        patch("artemis.providers.claude_code.adapter.find_cli_binary", return_value=None),
+        pytest.raises(MissingCliBinaryError),
+    ):
+        get_adapter("claude-code")
+
+
+def test_get_adapter_claude_code_returns_adapter_when_binary_found(
+    tmp_path: "Path",
+) -> None:
+    import stat
+    from pathlib import Path
+    binary = tmp_path / "claude"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
+    adapter = get_adapter("claude-code", binary_path=str(binary))
+    assert isinstance(adapter, ClaudeCodeAdapter)
+
+
+def test_get_adapter_lm_studio_returns_lm_studio_adapter() -> None:
+    adapter = get_adapter("lm-studio")
+    assert isinstance(adapter, LMStudioAdapter)
+
+
+def test_get_adapter_codex_raises_when_binary_missing() -> None:
+    with (
+        patch("artemis.providers.codex.adapter.find_cli_binary", return_value=None),
+        pytest.raises(MissingCliBinaryError),
+    ):
+        get_adapter("codex")
 
 
 # ── ModelAdapter protocol conformance ──────────────────────────────────────

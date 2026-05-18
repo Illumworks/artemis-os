@@ -30,3 +30,25 @@ class ProviderAPIError(Exception):
         super().__init__(f"Provider API error {status_code}: {body}")
         self.status_code = status_code
         self.body = body
+
+
+class MissingCliBinaryError(Exception):
+    """Raised at adapter construction time when the required CLI binary is absent.
+
+    Attributes
+    ----------
+    provider : str
+        The provider ID (e.g. ``"claude-code"``).
+    binary_name : str
+        The binary that was searched for (e.g. ``"claude"``).
+    """
+
+    def __init__(self, provider: str, binary_name: str) -> None:
+        self.provider = provider
+        self.binary_name = binary_name
+        env_hint = f"{binary_name.upper().replace('-', '_')}_BIN"
+        super().__init__(
+            f"Provider {provider!r} requires the {binary_name!r} binary, "
+            "which was not found on PATH or in common install locations. "
+            f"Install it and ensure it is executable, or override via {env_hint}."
+        )

@@ -49,6 +49,7 @@ from artemis.floating_artemis.schemas import (
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
 from artemis.providers import list_providers
+from artemis.providers._bin_path import find_cli_binary
 from artemis.providers.gemini.models import GEMINI_DEFAULT_MODEL, GEMINI_MODEL_MAP
 from artemis.providers.openrouter.models import OPENROUTER_DEFAULT_MODEL, OPENROUTER_MODEL_MAP
 from artemis.ws.manager import ws_manager
@@ -284,11 +285,17 @@ _ANTHROPIC_PICKER_MODELS = [
 ]
 
 
+_SUBSCRIPTION_MODEL_LIST = [{"id": "default", "label": "Subscription default", "default": True}]
+_LOCAL_MODEL_LIST = [{"id": "default", "label": "Loaded model", "default": True}]
+
+
 def _build_provider_model_list() -> list[dict[str, Any]]:
     """Build the {providers: [...]} payload consumed by the picker UI.
 
     Gemini and OpenRouter models come from their alias maps; Anthropic is
-    a fixed short list (the adapter does not expose its own map).
+    a fixed short list; CLI / local providers expose a single "default" entry.
+    Each provider entry gains a ``configured`` bool so the UI can grey out
+    providers whose binary / server is absent without a round-trip.
     """
     gemini_default_alias = GEMINI_DEFAULT_MODEL  # e.g. "gemini-2.5-flash"
     gemini_models = [
@@ -305,9 +312,32 @@ def _build_provider_model_list() -> list[dict[str, Any]]:
         for alias in OPENROUTER_MODEL_MAP
     ]
 
+    claude_code_configured = find_cli_binary("claude") is not None
+    codex_configured = find_cli_binary("codex") is not None
+
     return [
         {"id": "anthropic", "name": "Anthropic", "models": _ANTHROPIC_PICKER_MODELS},
+        {
+            "id": "claude-code",
+            "name": "Claude Code CLI",
+            "configured": claude_code_configured,
+            "subscriptionOrLocal": True,
+            "models": _SUBSCRIPTION_MODEL_LIST,
+        },
+        {
+            "id": "codex",
+            "name": "Codex CLI",
+            "configured": codex_configured,
+            "subscriptionOrLocal": True,
+            "models": _SUBSCRIPTION_MODEL_LIST,
+        },
         {"id": "gemini", "name": "Google Gemini", "models": gemini_models},
+        {
+            "id": "lm-studio",
+            "name": "LM Studio",
+            "subscriptionOrLocal": True,
+            "models": _LOCAL_MODEL_LIST,
+        },
         {"id": "openrouter", "name": "OpenRouter", "models": openrouter_models},
     ]
 

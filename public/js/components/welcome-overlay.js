@@ -28,6 +28,22 @@ const _PROVIDERS = [
     primary: true,
   },
   {
+    id: 'claude-code',
+    name: 'Claude Code CLI',
+    description: 'Use your Claude Max subscription — no API key needed.',
+    subscriptionOrLocal: true,
+    installHint: 'Install: npm install -g @anthropic-ai/claude-code',
+    primary: false,
+  },
+  {
+    id: 'codex',
+    name: 'Codex CLI',
+    description: 'Use your ChatGPT Plus subscription — no API key needed.',
+    subscriptionOrLocal: true,
+    installHint: 'Install: npm install -g @openai/codex',
+    primary: false,
+  },
+  {
     id: 'gemini',
     name: 'Gemini',
     description: 'Google\'s Gemini models — Flash and Pro variants.',
@@ -39,6 +55,14 @@ const _PROVIDERS = [
         sensitive: true,
       },
     ],
+    primary: false,
+  },
+  {
+    id: 'lm-studio',
+    name: 'LM Studio',
+    description: 'Run any open model locally — no cloud, no key.',
+    subscriptionOrLocal: true,
+    installHint: 'Download LM Studio at lmstudio.ai and start the local server.',
     primary: false,
   },
   {
@@ -126,11 +150,29 @@ class WelcomeOverlay extends HTMLElement {
 
   _providerCardHTML(provider) {
     const badgeId = `welcome-badge-${provider.id}`;
-    const btnId = `welcome-add-${provider.id}`;
     const cardClass = provider.primary
       ? 'welcome-provider-card welcome-provider-card--primary'
       : 'welcome-provider-card';
 
+    // Subscription / local providers (no API key): show install hint instead
+    // of an "Add key" button. Badge updates live via _markConfigured().
+    if (provider.subscriptionOrLocal) {
+      return `
+<div class="${cardClass}" data-provider="${provider.id}">
+  <div class="welcome-provider-info">
+    <div class="welcome-provider-name">${_escHtml(provider.name)}</div>
+    <div class="welcome-provider-desc">${_escHtml(provider.description)}</div>
+    <div class="welcome-provider-hint">${_escHtml(provider.installHint || '')}</div>
+  </div>
+  <div class="welcome-provider-actions">
+    <span id="${badgeId}" class="welcome-provider-badge welcome-provider-badge--unconfigured" aria-live="polite">
+      Not detected
+    </span>
+  </div>
+</div>`;
+    }
+
+    const btnId = `welcome-add-${provider.id}`;
     return `
 <div class="${cardClass}" data-provider="${provider.id}">
   <div class="welcome-provider-info">
@@ -202,16 +244,20 @@ class WelcomeOverlay extends HTMLElement {
   _markConfigured(providerId) {
     this._configuredSet.add(providerId);
 
+    const providerDef = _PROVIDERS.find((p) => p.id === providerId);
     const badge = this.querySelector(`#welcome-badge-${providerId}`);
     if (badge) {
-      badge.textContent = 'Configured';
+      badge.textContent = providerDef?.subscriptionOrLocal ? 'Detected' : 'Configured';
       badge.classList.remove('welcome-provider-badge--unconfigured');
       badge.classList.add('welcome-provider-badge--configured');
     }
 
-    const btn = this.querySelector(`#welcome-add-${providerId}`);
-    if (btn) {
-      btn.textContent = 'Update key';
+    // Only key-based providers have an "Add key" button
+    if (!providerDef?.subscriptionOrLocal) {
+      const btn = this.querySelector(`#welcome-add-${providerId}`);
+      if (btn) {
+        btn.textContent = 'Update key';
+      }
     }
 
     this._refreshContinueBtn();

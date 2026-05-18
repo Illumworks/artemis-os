@@ -61,15 +61,15 @@ async def _make_client() -> Any:
 # ── GET /api/floating-artemis/models ─────────────────────────────────────────
 
 
-async def test_list_models_returns_all_three_providers() -> None:
-    """GET /models returns anthropic, gemini, openrouter."""
+async def test_list_models_returns_all_providers() -> None:
+    """GET /models returns all six provider entries."""
     async with await _make_client() as client:
         resp = await client.get("/api/floating-artemis/models")
     assert resp.status_code == 200
     data = resp.json()
     assert "providers" in data
     provider_ids = {p["id"] for p in data["providers"]}
-    assert provider_ids == {"anthropic", "gemini", "openrouter"}
+    assert {"anthropic", "gemini", "openrouter", "claude-code", "codex", "lm-studio"} <= provider_ids
 
 
 async def test_list_models_anthropic_has_expected_models() -> None:
