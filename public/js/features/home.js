@@ -26,6 +26,7 @@ import {
   normalizeAppView,
 } from '../core/navigation.js';
 import { loadLegacyDashboard } from './dashboard-home.js';
+import { openIntegrationsModal } from '../components/integrations-modal.js';
 import {
   fetchAnalytics,
   fetchCalendarOverviewApi,
@@ -203,16 +204,11 @@ onState('view', (view) => {
     } else if (normalizedView === MARKETING_SCOUT_RUNS_VIEW) {
       loadMarketingScoutRuns(appShellContent);
     } else if (normalizedView === 'integrations') {
-      loadIntegrationsShell();
+      // Integrations is now a modal — open it and stay on the current view
+      openIntegrationsModal();
     }
   }
 });
-
-async function loadIntegrationsShell() {
-  if (!appShellContent) return;
-  const mod = await import('./integrations.js');
-  await mod.init(appShellContent);
-}
 
 onState('sessionId', (id) => {
   if (id) setState('view', 'chat');

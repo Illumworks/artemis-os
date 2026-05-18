@@ -522,3 +522,131 @@ html[data-theme="dark"] .credential-entry-modal__input {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.1);
 }
+
+/* ═══════════════════════════════════════════════════════
+   Integrations Modal
+   Design: fluidity, simplicity, purposefulness, naturalness, spacious, open.
+   Centred lightbox — backdrop dims, generous padding, card grid breathes.
+   ═══════════════════════════════════════════════════════ */
+
+@keyframes integrationsOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes integrationsModalIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+@keyframes integrationsOverlayOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.integrations-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 180;
+  animation: integrationsOverlayIn 0.18s ease;
+  padding: 24px;
+}
+
+.integrations-modal-overlay--out {
+  animation: integrationsOverlayOut 0.2s ease forwards;
+}
+
+.integrations-modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--surface-outline);
+  border-radius: 18px;
+  width: 560px;
+  max-width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg), 0 0 60px rgba(0, 0, 0, 0.08);
+  animation: integrationsModalIn 0.22s ease;
+  position: relative;
+}
+
+/* Accent top rule — same style as credential-entry-modal */
+.integrations-modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(90deg, var(--accent), transparent);
+  opacity: 0.45;
+}
+
+/* ── Header ───────────────────────────────────────────── */
+
+.integrations-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28px 28px 0;
+}
+
+.integrations-modal__title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+.integrations-modal__close {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 20px;
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.integrations-modal__close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+/* ── Body ─────────────────────────────────────────────── */
+
+.integrations-modal__body {
+  padding: 24px 28px 4px;
+}
+
+/* ── Footer ───────────────────────────────────────────── */
+
+.integrations-modal__footer {
+  padding: 16px 28px 26px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ── Dark mode ────────────────────────────────────────── */
+
+html[data-theme="dark"] .integrations-modal {
+  background: var(--bg-secondary);
+}

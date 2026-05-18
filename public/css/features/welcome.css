@@ -244,6 +244,23 @@
   font-weight: 500;
 }
 
+.welcome-footer-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.13s;
+}
+
+.welcome-footer-link:hover {
+  color: var(--accent-hover, var(--accent));
+}
+
 /* ── Animations ───────────────────────────────────────── */
 @keyframes welcomeFadeIn {
   from {

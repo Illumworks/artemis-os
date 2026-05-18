@@ -1,5 +1,6 @@
 import { $ } from '../core/dom.js';
 import * as api from '../core/api.js';
+import { openIntegrationsModal } from '../components/integrations-modal.js';
 
 function timeAgo(timestamp) {
   const diff = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
@@ -128,7 +129,7 @@ function renderPopover(model) {
           ? `<div class="status-pop-row">
               <span class="status-pop-row-dot warn"></span>
               <span class="status-pop-row-name">None connected</span>
-              <span class="status-pop-row-status warn">Open Integrations</span>
+              <button class="status-pop-row-action status-pop-open-integrations" type="button">Open Integrations</button>
             </div>`
           : model.connectorRows.map((row) => `
               <div class="status-pop-row">
@@ -144,6 +145,15 @@ function renderPopover(model) {
       <span class="status-pop-foot-hint">Updated just now</span>
     </div>
   `;
+
+  // Wire the "Open Integrations" button (rendered only when no connectors are active)
+  const openIntegBtn = $.statusPopover.querySelector('.status-pop-open-integrations');
+  if (openIntegBtn) {
+    openIntegBtn.addEventListener('click', () => {
+      closeStatusPopover();
+      openIntegrationsModal();
+    });
+  }
 }
 
 function applyOrbState(summary, issueCount) {
