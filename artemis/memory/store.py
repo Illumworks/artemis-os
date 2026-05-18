@@ -22,7 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -192,15 +192,40 @@ async def write_observation(
     valid_until: datetime | None = None,
     owner_user_id: int | None = None,
     embedding_provider: EmbeddingProvider | None = None,
+    raw_payload: dict[str, Any] | None = None,
+    raw_source_kind: str = "agent_observation",
+    raw_source_id: str | None = None,
+    raw_actor: str | None = None,
 ) -> Observation:
     """Write an observation, deduplicating by content hash within the scope.
 
     Idempotent: if an observation with identical content already exists in this
     scope, the existing observation is returned without modification.
 
+    When raw_payload is provided, a raw_inputs row is written first and the
+    resulting raw_input_id is stored on the observation. This is the preferred
+    call path — callers that pass raw_payload participate in the M1 lossless
+    invariant. Callers that omit it still work (backward compat) but their
+    observations have no verbatim source record.
+
     Embeds content in the same transaction (best-effort; failure is logged and
     the row is queued for backfill — it never blocks the write).
     """
+    from artemis.memory.raw_inputs import insert_raw_input
+
+    raw_input_id: int | None = None
+    if raw_payload is not None:
+        raw_row = await insert_raw_input(
+            session,
+            source_kind=raw_source_kind,
+            source_id=raw_source_id,
+            actor=raw_actor,
+            scope_kind=scope.scope_kind,
+            scope_id=scope.scope_id,
+            payload=raw_payload,
+        )
+        raw_input_id = raw_row.id
+
     content_hash = _content_hash(scope.scope_kind, scope.scope_id, content)
     await _ensure_scope(session, scope)
     stmt = (
@@ -215,6 +240,7 @@ async def write_observation(
             valid_from=valid_from,
             valid_until=valid_until,
             owner_user_id=owner_user_id,
+            raw_input_id=raw_input_id,
         )
         .on_conflict_do_nothing(constraint="uq_obs_scope_hash")
     )

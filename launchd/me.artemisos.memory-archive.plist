@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.artemisos.memory-archive</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/uv</string>
+        <string>run</string>
+        <string>--project</string>
+        <string>/Users/artemis/Desktop/Artemis/artemis-os</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>scripts.memory_archive_cold</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/artemis/Desktop/Artemis/artemis-os</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/artemis/.artemis/logs/memory-archive.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/artemis/.artemis/logs/memory-archive.err.log</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
