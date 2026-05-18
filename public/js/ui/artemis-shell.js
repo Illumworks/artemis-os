@@ -28,6 +28,7 @@ import {
   MARKETING_APPROVALS_VIEW,
   isShellView,
 } from '../core/navigation.js';
+import { openIntegrationsModal } from '../components/integrations-modal.js';
 
 // data-nav (from index.html rail markup) → view id understood by home.js
 // view listener. Keep in sync with SECONDARY_NAV_DESTINATIONS.
@@ -44,7 +45,6 @@ const RAIL_NAV_VIEW_MAP = {
   agents: 'agents',
   workflows: 'workflows',
   memory: MEMORY_VIEW,
-  integrations: 'integrations',
   'marketing-dashboard': MARKETING_DASHBOARD_VIEW,
   'marketing-campaigns': MARKETING_CAMPAIGNS_VIEW,
   'marketing-signals': MARKETING_SIGNALS_VIEW,
@@ -619,8 +619,8 @@ function initProfilePopover() {
         break;
       }
       case 'connectors': {
-        // Navigate to the Integrations view (replaces dead Connectors modal)
-        setState('view', 'integrations');
+        // Open the Integrations modal (rail page removed — modal is the only surface)
+        openIntegrationsModal();
         break;
       }
       case 'account': {

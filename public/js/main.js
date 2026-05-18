@@ -30,6 +30,7 @@ import './components/jira-new-issue-modal.js';
 import './components/calendar-event-drawer.js';
 import './components/calendar-new-event-modal.js';
 import './components/status-bar.js';
+import './components/integrations-modal.js';
 
 import './core/store.js';
 import './core/dom.js';

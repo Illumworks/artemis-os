@@ -9,6 +9,7 @@
 // "Continue" becomes enabled once at least one provider is configured.
 
 import { openCredentialEntryModal } from './credential-entry-modal.js';
+import { openIntegrationsModal } from './integrations-modal.js';
 
 // ── Provider definitions ──────────────────────────────────────────────────────
 
@@ -139,7 +140,8 @@ class WelcomeOverlay extends HTMLElement {
 
     <p class="welcome-footer-note">
       Keys are optional for first launch — Artemis can run with the keys already
-      in your environment. Manage everything in <strong>Settings → Integrations</strong>.
+      in your environment. Manage everything in
+      <button id="welcome-open-integrations" class="welcome-footer-link" type="button">Integrations</button>.
     </p>
 
   </div>
@@ -221,6 +223,16 @@ class WelcomeOverlay extends HTMLElement {
     const skipBtn = this.querySelector('#welcome-skip');
     if (skipBtn) {
       skipBtn.addEventListener('click', () => this.hide());
+    }
+
+    // Footer "Integrations" link — dismiss overlay then open modal
+    const integrationsLink = this.querySelector('#welcome-open-integrations');
+    if (integrationsLink) {
+      integrationsLink.addEventListener('click', () => {
+        this.hide();
+        // Small delay so the overlay fade-out starts before the modal enters
+        setTimeout(() => openIntegrationsModal(), 120);
+      });
     }
 
     // Keyboard shortcut: Escape always dismisses, Enter dismisses if any configured
