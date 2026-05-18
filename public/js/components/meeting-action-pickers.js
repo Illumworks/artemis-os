@@ -167,7 +167,7 @@ class ArtemisMeetingOkrPicker extends HTMLElement {
       const data = await fetch('/api/okr/overview').then((r) => r.json());
       const krs = [];
       for (const obj of (data.objectives || [])) {
-        for (const kr of (obj.keyResults || obj.key_results || [])) {
+        for (const kr of (obj.krs || obj.keyResults || obj.key_results || [])) {
           krs.push({ id: kr.id, label: `${obj.title} — ${kr.title}` });
         }
       }
