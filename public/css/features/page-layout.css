@@ -32,6 +32,35 @@
   box-shadow: var(--surface-shadow-soft);
 }
 
+/* Slim variant for "always-on" surfaces like Meetings post-meeting mode —
+   compact stats live inline with the title row, no lede, no buttons. */
+.page-hero--slim {
+  padding: 16px 24px 14px;
+  gap: 8px 24px;
+}
+.page-hero--slim h1 {
+  font-size: 22px;
+  line-height: 1.15;
+  margin: 0;
+}
+.page-hero--slim .page-hero-eyebrow-row {
+  gap: 10px 14px;
+}
+
+/* Post-meeting detail panel sub-sections (Summary / Action items / Transcript). */
+.meetings-detail-section { margin-top: 16px; }
+.meetings-detail-section:first-of-type { margin-top: 8px; }
+.meetings-detail-heading {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 0 0 6px;
+}
+.meetings-detail-body { font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+.meetings-detail-list { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+.meetings-detail-list li { margin-bottom: 4px; }
+
 .page-hero-titleblock {
   min-width: 0;
   display: flex;

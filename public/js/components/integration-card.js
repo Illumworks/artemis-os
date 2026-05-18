@@ -71,12 +71,13 @@ async function _connectProvider(provider) {
       return;
     }
     // Local failed — fall through to OAuth start
+    // Wire shape is flat ({error, fallback}) because main.py unwraps
+    // HTTPException.detail when it's a dict. Nested shape kept for compat.
     const errBody = await localRes.json().catch(() => ({}));
-    const detail = errBody?.detail;
-    const detailObj = typeof detail === 'object' ? detail : {};
-    if (detailObj.fallback !== 'oauth') {
-      // Not an expected fallback — surface as error
-      throw new Error(detailObj.error || `HTTP ${localRes.status}`);
+    const nested = typeof errBody?.detail === 'object' && errBody.detail !== null ? errBody.detail : {};
+    const fallback = errBody?.fallback ?? nested.fallback;
+    if (fallback !== 'oauth') {
+      throw new Error(errBody?.error ?? nested.error ?? `HTTP ${localRes.status}`);
     }
     // Fall through to OAuth
     const oauthRes = await fetch('/api/integrations/granola/oauth/start');

@@ -172,6 +172,7 @@ app.include_router(slack_events_router)
 # Phase J3b — Calendar + Meetings overview endpoints
 app.include_router(calendar_routes.router)
 app.include_router(meetings_routes.router)
+app.include_router(meetings_routes.granola_compat_router)
 
 # People search — merged Google Contacts + Slack users (attendee autocomplete)
 app.include_router(people_routes.router)

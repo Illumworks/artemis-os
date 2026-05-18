@@ -194,3 +194,107 @@ async def get_meeting(
         return {"status": "not_found", "meeting_id": meeting_id}
 
     return {"status": "connected", "provider": "granola", "meeting_id": meeting_id, **detail}
+
+
+# ── Legacy /api/granola/* compat ──────────────────────────────────────────────
+# The frontend (`public/js/core/api.js`) still calls Node-era paths. Rather than
+# touch a wide swath of frontend code, expose thin aliases that re-shape J6a
+# responses into the `{connected: true, meetings: [...]}` envelope the UI wants.
+# Long-term cleanup: migrate frontend to /api/meetings/* + delete this section.
+
+granola_compat_router = APIRouter(
+    prefix="/api/granola",
+    tags=["granola-compat"],
+    dependencies=[Depends(require_token)],
+)
+
+
+def _ok_envelope(meetings_payload: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"connected": True, "meetings": meetings_payload}
+
+
+def _disconnected_envelope(reason: str = "not_connected") -> dict[str, Any]:
+    return {"connected": False, "reason": reason, "meetings": []}
+
+
+@granola_compat_router.get("/meetings")
+async def granola_meetings(
+    range: str = Query(default="last_30_days", alias="range"),
+    limit: int = Query(default=50, le=200),
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Legacy alias for /api/meetings/list with the {connected,meetings} shape."""
+    client = await _get_granola_client(session)
+    if client is None:
+        return _disconnected_envelope()
+
+    valid = {"last_30_days", "last_7_days", "this_week"}
+    if range not in valid:
+        range = "last_30_days"
+
+    try:
+        meetings = await client.list_meetings(time_range=range, limit=limit)
+    except GranolaAPIError as exc:
+        if exc.status == 401:
+            return _disconnected_envelope("auth_expired")
+        return _disconnected_envelope(f"error: {exc}")
+    except Exception as exc:
+        logger.warning("Granola meetings compat error: %s", exc)
+        return _disconnected_envelope(f"error: {exc}")
+
+    return _ok_envelope([_meeting_to_dict(m) for m in meetings])
+
+
+@granola_compat_router.get("/transcript/{meeting_id}")
+async def granola_transcript(
+    meeting_id: str,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Legacy alias for /api/meetings/{id}."""
+    client = await _get_granola_client(session)
+    if client is None:
+        return {"connected": False, "reason": "not_connected"}
+    try:
+        detail = await client.get_meeting(meeting_id)
+    except GranolaAPIError as exc:
+        if exc.status == 401:
+            return {"connected": False, "reason": "auth_expired"}
+        if exc.status == 404:
+            return {"connected": True, "found": False, "meeting_id": meeting_id}
+        return {"connected": True, "error": str(exc)}
+    if not detail:
+        return {"connected": True, "found": False, "meeting_id": meeting_id}
+    return {"connected": True, "found": True, "meeting_id": meeting_id, **detail}
+
+
+@granola_compat_router.post("/search")
+async def granola_search(
+    payload: dict[str, Any],
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Semantic search over meetings — returns raw result text with citations."""
+    client = await _get_granola_client(session)
+    if client is None:
+        return {"connected": False, "result": ""}
+    query = str(payload.get("query", "")).strip()
+    if not query:
+        return {"connected": True, "result": ""}
+    try:
+        text = await client.query_meetings(query)
+    except GranolaAPIError as exc:
+        if exc.status == 401:
+            return {"connected": False, "reason": "auth_expired"}
+        return {"connected": True, "error": str(exc), "result": ""}
+    return {"connected": True, "result": text}
+
+
+@granola_compat_router.post("/oauth-disconnect")
+async def granola_oauth_disconnect(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Legacy disconnect — deletes the active Granola integration row."""
+    rows = await repo.list_active(session, provider="granola")
+    for r in rows:
+        await session.delete(r)
+    await session.commit()
+    return {"ok": True, "removed": len(rows)}

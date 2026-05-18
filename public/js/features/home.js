@@ -1238,7 +1238,7 @@ async function loadMeetingsShell() {
 
     const timeReality = readTimeReality();
     const granolaConnected = granolaOverview?.connected === true;
-    const viewModel = buildMeetingsModuleViewModel({ timeReality, meetingsOverview, granolaConnected });
+    const viewModel = buildMeetingsModuleViewModel({ timeReality, meetingsOverview, granolaConnected, granolaOverview });
     appShellContent.innerHTML = renderMeetingsShell(viewModel);
 
     if (granolaConnected) {
@@ -2863,6 +2863,35 @@ function handleMeetingsTabSwitch(tab) {
   tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
 }
 
+// Best-effort action-item extraction from Granola's summary/transcript text.
+// Granola's notes often contain markdown bullets, "Action items:" headers,
+// or "TODO:"-style prefixes. We grab any line that looks like an action.
+function extractActionItemsFromText(text) {
+  if (!text || typeof text !== 'string') return [];
+  const items = [];
+  const lines = text.split(/\r?\n/);
+  let inActionBlock = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { inActionBlock = false; continue; }
+    if (/^#{1,6}\s*(action items?|next steps?|todos?|follow[- ]?ups?)\b/i.test(line)) {
+      inActionBlock = true;
+      continue;
+    }
+    // bullet line
+    const bullet = line.match(/^[-*•]\s+(.+)$/);
+    if (bullet && (inActionBlock || /\b(todo|action|follow up|will|should|owner)\b/i.test(bullet[1]))) {
+      items.push(bullet[1].replace(/\s+/g, ' ').trim());
+      continue;
+    }
+    // explicit prefix
+    const prefixed = line.match(/^(?:todo|action(?: item)?|follow[- ]?up)\s*[:–-]\s*(.+)$/i);
+    if (prefixed) items.push(prefixed[1].trim());
+  }
+  // Dedupe + cap
+  return Array.from(new Set(items)).slice(0, 20);
+}
+
 async function handleMeetingsRowClick(meetingId, meetingTitle) {
   if (!meetingId || !appShellContent) return;
 
@@ -2873,15 +2902,61 @@ async function handleMeetingsRowClick(meetingId, meetingTitle) {
 
   try {
     const result = await fetchGranolaTranscriptApi(meetingId);
-    if (!result.connected || !result.transcript) {
-      panel.innerHTML = `<div class="page-section-footnote">${result.notFound ? 'No transcript available for this meeting.' : 'Could not load transcript.'}</div>`;
+    if (!result.connected) {
+      panel.innerHTML = `<div class="page-section-footnote">Could not load this meeting.</div>`;
       return;
     }
+    if (result.found === false) {
+      panel.innerHTML = `<div class="page-section-footnote">No transcript available for this meeting.</div>`;
+      return;
+    }
+
+    // Granola payload shape varies; surface what we have. Action items are
+    // sometimes a structured array, sometimes embedded in summary text.
+    const summary = result.summary || result.notes || '';
+    const transcript = result.transcript || '';
+    const actionItems = Array.isArray(result.action_items)
+      ? result.action_items
+      : extractActionItemsFromText(summary || transcript);
+    const attendees = Array.isArray(result.attendees) ? result.attendees.join(', ') : '';
+
+    const sectionsHtml = [];
+    if (summary) {
+      sectionsHtml.push(`
+        <section class="meetings-detail-section">
+          <h4 class="meetings-detail-heading">Summary</h4>
+          <div class="meetings-detail-body">${escapeHtml(summary)}</div>
+        </section>
+      `);
+    }
+    if (actionItems.length) {
+      sectionsHtml.push(`
+        <section class="meetings-detail-section">
+          <h4 class="meetings-detail-heading">Action items</h4>
+          <ul class="meetings-detail-list">
+            ${actionItems.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+          </ul>
+        </section>
+      `);
+    }
+    if (transcript) {
+      sectionsHtml.push(`
+        <section class="meetings-detail-section">
+          <h4 class="meetings-detail-heading">Transcript</h4>
+          <pre class="meetings-transcript-body">${escapeHtml(transcript)}</pre>
+        </section>
+      `);
+    }
+    if (!sectionsHtml.length) {
+      sectionsHtml.push(`<div class="page-section-footnote">No transcript or notes captured for this meeting yet.</div>`);
+    }
+
     panel.innerHTML = `
       <div class="meetings-transcript-header">
-        <strong>${escapeHtml(meetingTitle || 'Transcript')}</strong>
+        <strong>${escapeHtml(meetingTitle || 'Meeting')}</strong>
+        ${attendees ? `<div class="page-section-meta">${escapeHtml(attendees)}</div>` : ''}
       </div>
-      <pre class="meetings-transcript-body">${escapeHtml(result.transcript)}</pre>
+      ${sectionsHtml.join('')}
     `;
   } catch {
     panel.innerHTML = `<div class="page-section-footnote">Failed to load transcript.</div>`;
@@ -3035,6 +3110,39 @@ function renderMeetingsShell(viewModel) {
   `).join('');
 
   const granolaConnected = viewModel.granolaConnected === true;
+  const granolaTodayMode = viewModel.granolaTodayMode === true;
+
+  // Granola post-meeting mode: slim header (no lede, no hero buttons),
+  // compact stats inline with the title row, and a dedicated Today canvas
+  // that mirrors Past (list + transcript/actions panel).
+  if (granolaTodayMode) {
+    const compactStats = (viewModel.summary || [])
+      .map((item) => `<span class="page-section-meta">${escapeHtml(item.label)}: <strong>${escapeHtml(item.value)}</strong></span>`)
+      .join('');
+    return `
+      <section class="page-hero page-hero--slim">
+        <div class="page-hero-titleblock">
+          <div class="page-hero-eyebrow-row">
+            <span class="page-hero-eyebrow">Meetings</span>
+            <span class="page-hero-status" data-tone="${statusTone}">${escapeHtml(viewModel.badge || 'Live')}</span>
+            ${viewModel.dateLabel ? `<span class="page-section-meta">${escapeHtml(viewModel.dateLabel)}</span>` : ''}
+            ${compactStats}
+          </div>
+          <h1>Meetings</h1>
+        </div>
+      </section>
+      <nav class="meetings-tab-strip">
+        <button type="button" class="meetings-tab-btn active" data-shell-action="meetings-tab-switch" data-tab="today" data-meetings-tab-btn>Today</button>
+        <button type="button" class="meetings-tab-btn" data-shell-action="meetings-tab-switch" data-tab="past" data-meetings-tab-btn>Past</button>
+      </nav>
+      <div data-meetings-canvas="today">
+        ${renderMeetingsGranolaTodayCanvas(viewModel)}
+      </div>
+      <div data-meetings-canvas="past" class="hidden">
+        ${renderMeetingsPastCanvas(granolaConnected)}
+      </div>
+    `;
+  }
 
   return `
     <section class="page-hero">
@@ -3060,6 +3168,50 @@ function renderMeetingsShell(viewModel) {
     <div data-meetings-canvas="past" class="hidden">
       ${renderMeetingsPastCanvas(granolaConnected)}
     </div>
+  `;
+}
+
+// Today canvas for the Granola post-meeting workflow. Layout mirrors Past
+// (4-col clickable list + 8-col transcript/actions panel) but with rows
+// filtered to today and presented in chronological order.
+function renderMeetingsGranolaTodayCanvas(viewModel) {
+  const meetings = viewModel.todayMeetings || [];
+  const list = meetings.length
+    ? meetings.map((m) => `
+        <div class="page-list-row meetings-past-row"
+             data-meeting-id="${escapeAttribute(m.id || '')}"
+             data-meeting-title="${escapeAttribute(m.title || '')}"
+             data-meeting-status="${escapeAttribute(m.status || 'scheduled')}">
+          <span class="meetings-past-row-date">${escapeHtml(m.startLabel || '')}</span>
+          <span class="meetings-past-row-title">${escapeHtml(m.title || 'Untitled meeting')}</span>
+          ${m.location ? `<span class="meetings-past-row-participants">${escapeHtml(m.location)}</span>` : ''}
+        </div>
+      `).join('')
+    : `<div class="page-empty-state"><p>No meetings on the calendar for today.</p></div>`;
+
+  return `
+    <section class="page-canvas meetings-past-canvas">
+      <article class="page-section col-span-4" data-page-section="meetings-today-list">
+        <div class="page-section-header">
+          <div>
+            <div class="page-section-eyebrow">Today · ${escapeHtml(String(meetings.length))} total</div>
+            <h3 class="page-section-title">Meetings</h3>
+          </div>
+        </div>
+        <div class="page-list" data-meetings-today-list>${list}</div>
+      </article>
+      <article class="page-section col-span-8" data-page-section="meetings-transcript">
+        <div class="page-section-header">
+          <div>
+            <div class="page-section-eyebrow">Post-meeting</div>
+            <h3 class="page-section-title">Select a meeting</h3>
+          </div>
+        </div>
+        <div class="meetings-transcript-panel" data-meetings-transcript-panel>
+          <div class="page-section-footnote">Click a meeting to view its summary, action items, and transcript.</div>
+        </div>
+      </article>
+    </section>
   `;
 }
 
@@ -5835,12 +5987,19 @@ function buildMeetingsModuleViewModel({
   timeReality,
   meetingsOverview = null,
   granolaConnected = false,
+  granolaOverview = null,
 }) {
   if (meetingsOverview?.status === 'ready') {
     return { ...buildLiveMeetingsModuleViewModel(meetingsOverview, timeReality), granolaConnected };
   }
   if (meetingsOverview?.status === 'not_configured' || meetingsOverview?.status === 'source_error') {
     return { ...buildMeetingsSetupViewModel(meetingsOverview, timeReality), granolaConnected };
+  }
+  // J6a path: /api/meetings/overview no longer emits the Node-era 'ready'
+  // shape, but Granola is connected and has real meeting data. Surface a
+  // Live view filtered to today's meetings.
+  if (granolaConnected) {
+    return buildGranolaLiveMeetingsViewModel({ granolaOverview, timeReality });
   }
 
   return {
@@ -5860,6 +6019,69 @@ function buildMeetingsModuleViewModel({
       { label: 'Prep a Meeting', intent: 'Help me prep for today\'s most important meeting.' },
       { label: 'Sort Follow-Up', intent: 'Help me turn today\'s meeting follow-up into a compact action list.' },
       { label: 'Reframe the Day', intent: 'Help me reorganize today around my meeting load and hard stop.' },
+    ],
+  };
+}
+
+// Build a Live-style viewmodel from Granola's meeting list. Filters to today
+// using either `date_ms` (preferred) or by parsing `date` text.
+function buildGranolaLiveMeetingsViewModel({ granolaOverview, timeReality }) {
+  const all = Array.isArray(granolaOverview?.meetings) ? granolaOverview.meetings : [];
+  const now = new Date();
+  const sod = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const eod = sod + 86_400_000;
+
+  const meetingMs = (m) => {
+    if (typeof m.date_ms === 'number' && m.date_ms > 0) return m.date_ms;
+    const parsed = m.date ? Date.parse(m.date) : NaN;
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const todayMeetings = all
+    .map((m) => ({ m, ts: meetingMs(m) }))
+    .filter(({ ts }) => ts >= sod && ts < eod)
+    .sort((a, b) => a.ts - b.ts)
+    .map(({ m, ts }) => {
+      const d = ts > 0 ? new Date(ts) : null;
+      const startLabel = d
+        ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+        : (m.date || '');
+      return {
+        id: m.id,
+        title: m.title || 'Untitled meeting',
+        startLabel,
+        endLabel: '',
+        location: (m.participants || []).join(', '),
+        status: ts < Date.now() ? 'past' : 'scheduled',
+      };
+    });
+
+  const nextUpcoming = todayMeetings.find((m) => m.status === 'scheduled');
+  const nextLabel = nextUpcoming
+    ? `${nextUpcoming.startLabel} · ${nextUpcoming.title}`
+    : (todayMeetings.length ? 'All today\'s meetings done' : 'No meetings today');
+
+  return {
+    badge: 'Live',
+    statusTone: 'live',
+    granolaConnected: true,
+    granolaTodayMode: true,
+    dateLabel: now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }),
+    sourceLabel: 'Granola',
+    nextMeetingLabel: nextLabel,
+    todayMeetings,
+    summary: [
+      { label: 'Today', value: `${todayMeetings.length} meeting${todayMeetings.length === 1 ? '' : 's'}` },
+      { label: 'Next', value: nextLabel },
+      { label: 'Source', value: 'Granola' },
+    ],
+    readinessNotes: [],
+    prepLens: [],
+    followUpPressure: [],
+    actions: [
+      { label: 'Prep a Meeting', intent: 'Help me prep for today\'s next meeting using my Granola schedule.' },
+      { label: 'Sort Follow-Up', intent: 'Help me turn today\'s meeting follow-up into a compact action list.' },
+      { label: 'Reframe the Day', intent: 'Help me reorganize today around my Granola meetings.' },
     ],
   };
 }

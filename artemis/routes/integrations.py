@@ -494,7 +494,10 @@ def _granola_redirect_uri(request: Request) -> str:
         request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost:8000"
     )
     port_match = _re.search(r":(\d+)$", host_header)
-    port = f":{port_match.group(1)}" if port_match else ""
+    # Always include an explicit port. When accessed via a tunnel host (no
+    # port in Host), default to :8000 — the local uvicorn port — so the
+    # OAuth callback lands on the running server, not port 80.
+    port = f":{port_match.group(1)}" if port_match else ":8000"
     return f"http://localhost{port}/api/integrations/granola/oauth/callback"
 
 
