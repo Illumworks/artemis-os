@@ -287,11 +287,19 @@ async def jira_oauth_start_compat(
         site_url=cfg.site_url, email=cfg.email, api_token=cfg.api_token
     )
     try:
-        # Cheap probe — empty result is fine, any auth failure raises.
-        await client.search_issues(query="created >= -1d", max_results=1)
+        # Use the strict /myself endpoint — Atlassian Cloud sometimes returns
+        # 200-empty from search/jql for limited/unauthenticated callers, so a
+        # successful search isn't a reliable signal of valid creds.
+        await client.get_overview(project_key="", max_items=1)
     except JiraAPIError as exc:
         raise HTTPException(
-            status_code=400, detail=f"Jira credentials rejected: {exc}"
+            status_code=400,
+            detail=(
+                f"Jira rejected your credentials ({exc}). "
+                "Double-check: (1) the Site URL is the exact Atlassian domain you "
+                "see in your browser, (2) the Email is the account that created the "
+                "API Token, (3) the Token hasn't expired."
+            ),
         ) from exc
 
     creds_blob = crypto.encrypt_credentials(
