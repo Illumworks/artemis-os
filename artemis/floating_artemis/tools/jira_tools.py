@@ -83,10 +83,9 @@ async def _list_jira_assignable_users(inp: dict[str, Any]) -> str:
         key = project or cfg.project_key
         if not key:
             return "Error: project key required — pass project param or set projectKey in config"
-        users = await JiraClient(cfg.site_url, cfg.email, cfg.api_token).get_assignable_users(key)
-        if cfg.team_members:
-            member_set = set(cfg.team_members)
-            users = [u for u in users if u["accountId"] in member_set]
+        users = await JiraClient(cfg.site_url, cfg.email, cfg.api_token).get_assignable_users(
+            key, team_filter=list(cfg.team_members) if cfg.team_members else None
+        )
         if not users:
             return "No assignable users found"
         lines = [f"{u['accountId']}: {u['displayName']}" for u in users]
@@ -299,7 +298,10 @@ def register_jira_tools(registry: AuthorizedToolRegistry) -> None:
                         "type": "string",
                         "description": "Project key (falls back to configured default)",
                     },
-                    "description": {"type": "string", "description": "Issue description (plain text)"},
+                    "description": {
+                        "type": "string",
+                        "description": "Issue description (plain text)",
+                    },
                     "assignee_account_id": {
                         "type": "string",
                         "description": "Assignee accountId",

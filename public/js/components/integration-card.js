@@ -6,6 +6,7 @@
 // ConfigStatus:     null | { ever_configured: boolean, configured_keys: Record<string, boolean> }
 
 import { openCredentialEntryModal } from './credential-entry-modal.js';
+import { openJiraTeamPicker } from './jira-team-picker.js';
 
 const _PROVIDER_FIELDS = {
   slack: [
@@ -22,6 +23,9 @@ const _PROVIDER_FIELDS = {
     { key: 'email', label: 'Email', helper: 'The email tied to your Atlassian account.', sensitive: false },
     { key: 'api_token', label: 'API Token', helper: 'Get one at id.atlassian.com → API tokens.', sensitive: true },
   ],
+  // Granola has no inline credential fields — the Connect button reads the
+  // local Granola.app state first; OAuth is the fallback.
+  granola: [],
 };
 
 function _formatDate(isoString) {
@@ -54,6 +58,33 @@ function _showTestResult(span, ok) {
 }
 
 async function _connectProvider(provider) {
+  // Granola: try local desktop-app path first; fall back to OAuth if unavailable.
+  if (provider.id === 'granola') {
+    const localRes = await fetch('/api/integrations/granola/connect-local', { method: 'POST' });
+    if (localRes.ok) {
+      // Local connect succeeded — reload page so the card shows as connected.
+      window.location.href = '/?granola_connected=1';
+      return;
+    }
+    // Local failed — fall through to OAuth start
+    const errBody = await localRes.json().catch(() => ({}));
+    const detail = errBody?.detail;
+    const detailObj = typeof detail === 'object' ? detail : {};
+    if (detailObj.fallback !== 'oauth') {
+      // Not an expected fallback — surface as error
+      throw new Error(detailObj.error || `HTTP ${localRes.status}`);
+    }
+    // Fall through to OAuth
+    const oauthRes = await fetch('/api/integrations/granola/oauth/start');
+    if (!oauthRes.ok) {
+      const ob = await oauthRes.json().catch(() => ({}));
+      throw new Error(ob.detail || ob.error || `OAuth start failed: HTTP ${oauthRes.status}`);
+    }
+    const { url } = await oauthRes.json();
+    window.location.href = url;
+    return;
+  }
+
   const res = await fetch(`/api/integrations/${provider.id}/oauth/start`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -192,6 +223,16 @@ export function renderIntegrationCard(container, provider, connectedData, config
     actions.appendChild(disconnectBtn);
     actions.appendChild(testLink);
     actions.appendChild(testResultSpan);
+
+    if (provider.id === 'jira') {
+      const manageTeamBtn = document.createElement('button');
+      manageTeamBtn.type = 'button';
+      manageTeamBtn.className = 'integration-card__manage-team-btn';
+      manageTeamBtn.textContent = 'Manage team';
+      manageTeamBtn.addEventListener('click', () => openJiraTeamPicker());
+      actions.appendChild(manageTeamBtn);
+    }
+
     card.appendChild(actions);
   } else {
     // Disconnected state

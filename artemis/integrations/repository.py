@@ -142,7 +142,11 @@ async def upsert_provider_config(
     with contextlib.suppress(Exception):
         existing = await get_provider_config(session, provider) or {}
 
-    updates = {k: v for k, v in payload_dict.items() if v and str(v).strip()}
+    # Lists (e.g. team_members=[]) are valid even when empty — keep them.
+    # Other values: skip blanks so partial updates don't clobber existing data.
+    updates = {
+        k: v for k, v in payload_dict.items() if isinstance(v, list) or (v and str(v).strip())
+    }
     merged = {**existing, **updates}
     encrypted = encrypt_credentials(merged)
 
