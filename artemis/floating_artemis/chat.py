@@ -28,6 +28,7 @@ from artemis.floating_artemis.authority import (
 )
 from artemis.floating_artemis.intent import IntentKind, classify_intent, handle_observability_intent
 from artemis.floating_artemis.memory_read_cache import put as cache_put
+from artemis.floating_artemis.personality import PERSONALITY_PROFILE, select_voice_samples
 from artemis.floating_artemis.schemas import MemoryObservationDigest, MemoryReadEvent
 from artemis.floating_artemis.tools.builders import register_builders_tools
 from artemis.floating_artemis.tools.core import register_core_tools
@@ -89,14 +90,21 @@ def _build_system_prompt(
     voice_samples: list[str],
     page_context: str | None,
     available_surfaces: list[str],
+    session_id: str = "",
 ) -> str:
+    # Lead with the high-priority distilled persona rules.
     parts = [_PERSONA_CORE]
+
+    # Append the full personality profile as richer background detail.
+    if PERSONALITY_PROFILE:
+        parts.append("## Full personality profile (background reference)\n" + PERSONALITY_PROFILE)
 
     if voice_samples:
         samples_text = "\n".join(f'- "{line}"' for line in voice_samples)
         parts.append(
-            f"## Characteristic phrases (sample from your voice corpus)\n"
-            f"Use these sparingly, when they naturally fit:\n{samples_text}"
+            "## Characteristic phrases (use sparingly)\n"
+            "These are drawn from your voice corpus. Use them when they naturally fit — "
+            "never force them:\n" + samples_text
         )
 
     if page_context:
@@ -105,6 +113,15 @@ def _build_system_prompt(
     if available_surfaces:
         surfaces_str = ", ".join(sorted(available_surfaces))
         parts.append(f"## Available surfaces (your tools are gated by these)\n{surfaces_str}")
+
+    # Slack-originated session: establish the conversational context.
+    if session_id.startswith("slack-"):
+        parts.append(
+            "**You are responding in Slack.** The operator @-mentioned you directly. "
+            "**Assume they are addressing you and respond on-topic.** "
+            'Do not ask "Are you talking to me?" — they are. '
+            "Be concise; Slack rewards short replies."
+        )
 
     return "\n\n".join(parts)
 
@@ -236,7 +253,9 @@ async def _resolve_adapter(
     candidates: list[str] = []
     if provider_id:
         candidates.append(provider_id)
-    candidates += [p for p in ("claude-code", "codex", "lm-studio", "anthropic") if p not in candidates]
+    candidates += [
+        p for p in ("claude-code", "codex", "lm-studio", "anthropic") if p not in candidates
+    ]
 
     last_error: Exception | None = None
     for candidate in candidates:
@@ -342,12 +361,14 @@ async def handle_turn(
         available_surfaces = set()
 
     # ── 3. Build system prompt ────────────────────────────────────────────────
-    voice_samples = await _get_voice_samples(session_id=session_id, db_session=db_session)
+    # Use the profile-sourced voice corpus (deterministic per session_id).
+    voice_samples = select_voice_samples(session_id=session_id, k=4)
     page_context_text = await _get_page_context_text(session_id=session_id, db_session=db_session)
     system_prompt = _build_system_prompt(
         voice_samples=voice_samples,
         page_context=page_context_text,
         available_surfaces=sorted(available_surfaces),
+        session_id=session_id,
     )
 
     # ── 4. Load history ───────────────────────────────────────────────────────
