@@ -175,6 +175,7 @@ app.include_router(sessions_routes.router)
 app.include_router(notifications_routes.router)
 app.include_router(stats_routes.router)
 
+
 # Mount static frontend AFTER all API routes.
 # html=True makes GET / serve public/index.html.
 app.mount("/", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="static")
