@@ -88,7 +88,9 @@ async def jira_overview(
     try:
         result = await client.get_overview(
             project_key=str(raw.get("project_key") or ""),
-            max_items=int(_m) if (_m := raw.get("max_items_per_column")) and isinstance(_m, (int, float, str)) else 20,
+            max_items=int(_m)
+            if (_m := raw.get("max_items_per_column")) and isinstance(_m, (int, float, str))
+            else 20,
             column_map=raw.get("column_map"),  # type: ignore[arg-type]
         )
         result["savedConfig"] = saved_config
@@ -111,11 +113,7 @@ async def jira_config(
     _: None = Depends(require_token),  # noqa: B008
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, bool]:
-    payload = {
-        snake: body[camel]
-        for camel, snake in _CONFIG_FIELD_MAP.items()
-        if camel in body
-    }
+    payload = {snake: body[camel] for camel, snake in _CONFIG_FIELD_MAP.items() if camel in body}
     if not payload:
         raise HTTPException(status_code=400, detail="No valid fields provided")
     await repo.upsert_provider_config(session, "jira", payload)
@@ -207,13 +205,74 @@ async def jira_assignable_users(
         )
     client = JiraClient(cfg.site_url, cfg.email, cfg.api_token)
     try:
-        users = await client.get_assignable_users(key)
+        return await client.get_assignable_users(
+            key, team_filter=list(cfg.team_members) if cfg.team_members else None
+        )
     except JiraAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    if cfg.team_members:
-        member_set = set(cfg.team_members)
-        users = [u for u in users if u["accountId"] in member_set]
-    return users
+
+
+@router.get("/team-members")
+async def jira_get_team_members(
+    _: None = Depends(require_token),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    raw = await repo.get_provider_config(session, "jira") or {}
+    site_url = str(raw.get("site_url") or "")
+    email = str(raw.get("email") or "")
+    api_token = str(raw.get("api_token") or "")
+    _tm = raw.get("team_members")
+    saved: list[str] = list(_tm) if isinstance(_tm, list) else []
+
+    if not (site_url and email and api_token):
+        return {"saved": saved, "all_assignable": []}
+
+    project_key = str(raw.get("project_key") or "")
+    if not project_key:
+        return {"saved": saved, "all_assignable": []}
+
+    client = JiraClient(site_url=site_url, email=email, api_token=api_token)
+    try:
+        all_assignable = await client.get_assignable_users(project_key)
+    except JiraAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"saved": saved, "all_assignable": all_assignable}
+
+
+@router.put("/team-members")
+async def jira_put_team_members(
+    body: dict[str, Any],
+    _: None = Depends(require_token),  # noqa: B008
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    members_raw = body.get("members")
+    if not isinstance(members_raw, list):
+        raise HTTPException(status_code=400, detail="members must be a list of accountId strings")
+    members: list[str] = [str(m) for m in members_raw if m]
+
+    if members:
+        raw = await repo.get_provider_config(session, "jira") or {}
+        site_url = str(raw.get("site_url") or "")
+        email = str(raw.get("email") or "")
+        api_token = str(raw.get("api_token") or "")
+        project_key = str(raw.get("project_key") or "")
+        if site_url and email and api_token and project_key:
+            client = JiraClient(site_url=site_url, email=email, api_token=api_token)
+            try:
+                all_users = await client.get_assignable_users(project_key)
+            except JiraAPIError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            valid_ids = {u["accountId"] for u in all_users}
+            unknown = [m for m in members if m not in valid_ids]
+            if unknown:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unknown accountIds (not assignable in project): {unknown}",
+                )
+
+    await repo.upsert_provider_config(session, "jira", {"team_members": members})
+    await session.commit()
+    return {"ok": True, "saved": members}
 
 
 # ── Write endpoints ───────────────────────────────────────────────────────────
@@ -236,9 +295,7 @@ async def jira_add_comment(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     client = JiraClient(cfg.site_url, cfg.email, cfg.api_token)
     try:
-        return await client.add_comment(
-            key, text, mentions if isinstance(mentions, list) else []
-        )
+        return await client.add_comment(key, text, mentions if isinstance(mentions, list) else [])
     except JiraAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -260,9 +317,7 @@ async def jira_add_worklog(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     client = JiraClient(cfg.site_url, cfg.email, cfg.api_token)
     try:
-        return await client.add_worklog(
-            key, float(hours_raw), str(note) if note else None
-        )
+        return await client.add_worklog(key, float(hours_raw), str(note) if note else None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except JiraAPIError as exc:

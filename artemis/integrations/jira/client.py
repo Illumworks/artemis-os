@@ -157,7 +157,9 @@ def _description_to_adf(text: str) -> dict[str, Any]:
 def _extract_sprint_name(field: Any) -> str:
     if not isinstance(field, list) or not field:
         return ""
-    active = next((s for s in field if isinstance(s, dict) and s.get("state") == "active"), field[-1])
+    active = next(
+        (s for s in field if isinstance(s, dict) and s.get("state") == "active"), field[-1]
+    )
     return str(active.get("name", "")) if isinstance(active, dict) else ""
 
 
@@ -241,22 +243,22 @@ class JiraClient:
             todo, prog, blocked, review = await asyncio.gather(
                 self._fetch_column(
                     client,
-                    f'status IN ({_status_in_clause(cm["todo"])}){project_clause} ORDER BY updated DESC',
+                    f"status IN ({_status_in_clause(cm['todo'])}){project_clause} ORDER BY updated DESC",
                     max_items,
                 ),
                 self._fetch_column(
                     client,
-                    f'status IN ({_status_in_clause(cm["prog"])}){project_clause} ORDER BY updated DESC',
+                    f"status IN ({_status_in_clause(cm['prog'])}){project_clause} ORDER BY updated DESC",
                     max_items,
                 ),
                 self._fetch_column(
                     client,
-                    f'status IN ({_status_in_clause(cm["blocked"])}){project_clause} ORDER BY updated DESC',
+                    f"status IN ({_status_in_clause(cm['blocked'])}){project_clause} ORDER BY updated DESC",
                     max_items,
                 ),
                 self._fetch_column(
                     client,
-                    f'status IN ({_status_in_clause(cm["review"])}){project_clause} ORDER BY updated DESC',
+                    f"status IN ({_status_in_clause(cm['review'])}){project_clause} ORDER BY updated DESC",
                     max_items,
                 ),
             )
@@ -375,7 +377,9 @@ class JiraClient:
             for item in items
         ]
 
-    async def get_assignable_users(self, project_key: str) -> list[dict[str, Any]]:
+    async def get_assignable_users(
+        self, project_key: str, team_filter: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         page_size = 200
         all_users: list[dict[str, Any]] = []
         start_at = 0
@@ -397,6 +401,9 @@ class JiraClient:
                 if len(page) < page_size:
                     break
                 start_at += len(page)
+        if team_filter:
+            filter_set = set(team_filter)
+            all_users = [u for u in all_users if u.get("accountId") in filter_set]
         return [
             {
                 "accountId": u["accountId"],
@@ -404,6 +411,7 @@ class JiraClient:
                 "avatarUrl": (u.get("avatarUrls") or {}).get("48x48")
                 or (u.get("avatarUrls") or {}).get("32x32")
                 or "",
+                "emailAddress": u.get("emailAddress") or "",
             }
             for u in all_users
         ]
