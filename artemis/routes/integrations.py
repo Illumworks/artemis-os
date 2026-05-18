@@ -322,6 +322,27 @@ class ProviderConfigIn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+# Env-var fallback: when a credential is already set in ~/.artemis/.env or the
+# project .env, the integration counts as configured even if the DB-stored row
+# doesn't exist yet. This keeps Connect buttons clickable for operators who
+# pasted secrets into env files directly (the original Node app's pattern).
+_PROVIDER_ENV_FIELDS: dict[str, dict[str, str]] = {
+    "slack": {
+        "client_id": "SLACK_CLIENT_ID",
+        "client_secret": "SLACK_CLIENT_SECRET",
+        "signing_secret": "SLACK_SIGNING_SECRET",
+    },
+    "gcal": {
+        "client_id": "GCAL_CLIENT_ID",
+        "client_secret": "GCAL_CLIENT_SECRET",
+    },
+    "anthropic": {"api_key": "ANTHROPIC_API_KEY"},
+    "openai": {"api_key": "OPENAI_API_KEY"},
+    "gemini": {"api_key": "GEMINI_API_KEY"},
+    "openrouter": {"api_key": "OPENROUTER_API_KEY"},
+}
+
+
 @router.get("/providers/{provider}/config", response_model=ProviderConfigOut)
 async def get_provider_config(
     provider: str,
@@ -330,8 +351,15 @@ async def get_provider_config(
     if provider not in _KNOWN_PROVIDERS:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider!r}")
     config = await repo.get_provider_config(session, provider)
-    ever_configured = config is not None
-    configured_keys = {k: bool(v and str(v).strip()) for k, v in (config or {}).items()}
+    configured_keys: dict[str, bool] = {
+        k: bool(v and str(v).strip()) for k, v in (config or {}).items()
+    }
+    # Merge env-var presence so DB-less but env-configured providers are
+    # reported as configured (Connect button stays clickable).
+    for field_name, env_var in _PROVIDER_ENV_FIELDS.get(provider, {}).items():
+        if os.environ.get(env_var):
+            configured_keys[field_name] = True
+    ever_configured = any(configured_keys.values())
     return ProviderConfigOut(
         provider=provider,
         configured_keys=configured_keys,
