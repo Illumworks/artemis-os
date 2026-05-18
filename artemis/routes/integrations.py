@@ -259,6 +259,57 @@ async def gcal_oauth_start(
     return {"url": url}
 
 
+@router.get("/jira/oauth/start")
+async def jira_oauth_start_compat(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, str]:
+    """Jira uses basic auth (site_url + email + api_token) — no OAuth dance.
+
+    The frontend Connect button hits this endpoint expecting an OAuth URL.
+    Instead we verify the saved credentials hit a real Atlassian site,
+    create the integration row, and return a redirect URL with
+    ?jira_connected=1 so the existing front-end flow Just Works for Jira
+    like it does for OAuth providers.
+    """
+    from artemis.integrations import crypto
+    from artemis.integrations.config_resolver import resolve_jira_config
+    from artemis.integrations.jira.client import JiraAPIError, JiraClient
+
+    try:
+        cfg = await resolve_jira_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Jira credentials incomplete: {', '.join(exc.missing_fields)}",
+        ) from exc
+
+    client = JiraClient(
+        site_url=cfg.site_url, email=cfg.email, api_token=cfg.api_token
+    )
+    try:
+        # Cheap probe — empty result is fine, any auth failure raises.
+        await client.search_issues(query="created >= -1d", max_results=1)
+    except JiraAPIError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Jira credentials rejected: {exc}"
+        ) from exc
+
+    creds_blob = crypto.encrypt_credentials(
+        {"site_url": cfg.site_url, "email": cfg.email, "api_token": cfg.api_token}
+    )
+    await repo.upsert_integration(
+        session,
+        provider="jira",
+        workspace_id=cfg.site_url,
+        display_name=cfg.site_url.replace("https://", "").rstrip("/"),
+        encrypted_credentials=creds_blob,
+        scopes=None,
+    )
+    await session.commit()
+
+    return {"url": "/?jira_connected=1"}
+
+
 @router.get("/gcal/oauth/callback")
 async def gcal_oauth_callback(
     code: str = Query(...),
