@@ -65,6 +65,13 @@ import {
   fetchLatestBriefApi,
   generateBriefApi,
 } from '../core/api.js';
+import {
+  handleMeetingsRowClick as _meetingsRowClick,
+  renderMeetingsPastList as _renderMeetingsPastList,
+  renderMeetingsGranolaTodayCanvas as _renderGranolaTodayCanvas,
+  renderMeetingsPastCanvas as _renderMeetingsPastCanvas,
+  clearMeetingCache,
+} from './meetings.js';
 import { loadAgents } from './agents.js';
 import { loadWorkflows } from './workflows.js';
 import { renderOperationsView, loadSkillsShell, loadAutomationsShell, loadCampaignOpsShell } from './operations-shell.js';
@@ -652,10 +659,10 @@ function renderAgentsShell(viewModel) {
 }
 
 async function handleShellActionClick(event) {
-  // Past meetings row click
+  // Past/Today meetings row click — delegated to meetings.js
   const meetingRow = event.target.closest('[data-meeting-id]');
   if (meetingRow) {
-    handleMeetingsRowClick(meetingRow.dataset.meetingId, meetingRow.dataset.meetingTitle || '');
+    _meetingsRowClick(meetingRow.dataset.meetingId, meetingRow.dataset.meetingTitle || '', appShellContent);
     return;
   }
 
@@ -1242,7 +1249,7 @@ async function loadMeetingsShell() {
     appShellContent.innerHTML = renderMeetingsShell(viewModel);
 
     if (granolaConnected) {
-      renderMeetingsPastList(granolaOverview.meetings || []);
+      _renderMeetingsPastList(granolaOverview.meetings || [], appShellContent);
     }
   } catch (error) {
     if (loadToken !== meetingsLoadToken || normalizeAppView(getState('view')) !== MEETINGS_VIEW) {
@@ -3022,6 +3029,11 @@ function renderMeetingsPastList(meetings) {
 }
 
 function renderMeetingsPastCanvas(granolaConnected) {
+  return _renderMeetingsPastCanvas(granolaConnected);
+}
+
+// LEGACY: kept for reference; replaced by meetings.js impl above.
+function _renderMeetingsPastCanvasLegacy(granolaConnected) {
   if (!granolaConnected) {
     return `
       <section class="page-canvas" data-meetings-canvas="past">
@@ -3171,48 +3183,9 @@ function renderMeetingsShell(viewModel) {
   `;
 }
 
-// Today canvas for the Granola post-meeting workflow. Layout mirrors Past
-// (4-col clickable list + 8-col transcript/actions panel) but with rows
-// filtered to today and presented in chronological order.
+// Today canvas for the Granola post-meeting workflow — delegated to meetings.js.
 function renderMeetingsGranolaTodayCanvas(viewModel) {
-  const meetings = viewModel.todayMeetings || [];
-  const list = meetings.length
-    ? meetings.map((m) => `
-        <div class="page-list-row meetings-past-row"
-             data-meeting-id="${escapeAttribute(m.id || '')}"
-             data-meeting-title="${escapeAttribute(m.title || '')}"
-             data-meeting-status="${escapeAttribute(m.status || 'scheduled')}">
-          <span class="meetings-past-row-date">${escapeHtml(m.startLabel || '')}</span>
-          <span class="meetings-past-row-title">${escapeHtml(m.title || 'Untitled meeting')}</span>
-          ${m.location ? `<span class="meetings-past-row-participants">${escapeHtml(m.location)}</span>` : ''}
-        </div>
-      `).join('')
-    : `<div class="page-empty-state"><p>No meetings on the calendar for today.</p></div>`;
-
-  return `
-    <section class="page-canvas meetings-past-canvas">
-      <article class="page-section col-span-4" data-page-section="meetings-today-list">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Today · ${escapeHtml(String(meetings.length))} total</div>
-            <h3 class="page-section-title">Meetings</h3>
-          </div>
-        </div>
-        <div class="page-list" data-meetings-today-list>${list}</div>
-      </article>
-      <article class="page-section col-span-8" data-page-section="meetings-transcript">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Post-meeting</div>
-            <h3 class="page-section-title">Select a meeting</h3>
-          </div>
-        </div>
-        <div class="meetings-transcript-panel" data-meetings-transcript-panel>
-          <div class="page-section-footnote">Click a meeting to view its summary, action items, and transcript.</div>
-        </div>
-      </article>
-    </section>
-  `;
+  return _renderGranolaTodayCanvas(viewModel);
 }
 
 function renderMeetingsLiveCanvas(viewModel) {
@@ -3252,8 +3225,9 @@ function renderMeetingsLiveCanvas(viewModel) {
       `).join('')
     : `<p class="page-section-footnote">Follow-up queue is empty.</p>`;
 
+  // Prep Lens and Follow-up Pressure columns removed (J6c — post-meeting surface only).
   return `
-    <section class="page-canvas">
+    <section class="page-canvas meetings-past-canvas">
       <article class="page-section col-span-4" data-page-section="meetings-today">
         <div class="page-section-header">
           <div>
@@ -3264,38 +3238,16 @@ function renderMeetingsLiveCanvas(viewModel) {
         </div>
         <div class="page-list">${meetingsList}</div>
       </article>
-      <article class="page-section col-span-5" data-page-section="meetings-prep">
+      <article class="page-section col-span-8" data-page-section="meetings-transcript">
         <div class="page-section-header">
           <div>
-            <div class="page-section-eyebrow">Readiness</div>
-            <h3 class="page-section-title">Prep Lens</h3>
+            <div class="page-section-eyebrow">Post-meeting</div>
+            <h3 class="page-section-title">Select a meeting</h3>
           </div>
         </div>
-        <div>
-          <div class="page-section-eyebrow" style="margin-bottom:6px">Notes</div>
-          ${readinessList}
+        <div class="meetings-transcript-panel" data-meetings-transcript-panel>
+          <div class="page-section-footnote">Click a meeting to view its action items and transcript.</div>
         </div>
-        <div>
-          <div class="page-section-eyebrow" style="margin-bottom:6px">Prep items</div>
-          <div class="page-list">${prepList}</div>
-        </div>
-        <div class="shell-actions">
-          ${(viewModel.actions || []).slice(0, 2).map((action) => `
-            <button type="button" class="shell-action-btn" data-shell-action="open-chat-from-shell" data-shell-intent="${escapeAttribute(action.intent)}">
-              ${escapeHtml(action.label)}
-            </button>
-          `).join('')}
-        </div>
-      </article>
-      <article class="page-section col-span-3" data-page-section="meetings-followup">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Follow-Up</div>
-            <h3 class="page-section-title">Pressure</h3>
-          </div>
-        </div>
-        <div class="page-list">${followUpList}</div>
-        <p class="page-section-footnote">${escapeHtml(viewModel.sourceNote || '')}</p>
       </article>
     </section>
   `;

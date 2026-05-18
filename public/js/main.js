@@ -31,6 +31,7 @@ import './components/calendar-event-drawer.js';
 import './components/calendar-new-event-modal.js';
 import './components/status-bar.js';
 import './components/integrations-modal.js';
+import './components/meeting-action-pickers.js';
 
 import './core/store.js';
 import './core/dom.js';

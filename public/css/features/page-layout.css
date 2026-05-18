@@ -709,3 +709,119 @@
   padding: 8px 0;
   font-style: italic;
 }
+
+/* ── J6c — Meetings action rows ─────────────────────────────────── */
+
+.meetings-actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.meetings-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface-alt, var(--surface));
+}
+
+.meetings-action-text {
+  flex: 1;
+  font-size: var(--text-sm, 13px);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.meetings-action-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.meeting-action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.meeting-action-pill a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.meetings-action-kebab {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.meetings-action-kebab:hover {
+  color: var(--text);
+  background: var(--surface-hover, rgba(0,0,0,0.06));
+}
+
+.meetings-action-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 200;
+  background: var(--surface);
+  border: 1px solid var(--surface-outline);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+  min-width: 180px;
+  padding: 4px 0;
+}
+
+.meetings-action-menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.meetings-action-menu-item:hover {
+  background: var(--surface-hover, rgba(0,0,0,0.06));
+}
+
+/* ── J6c — Ask composer ─────────────────────────────────────────── */
+
+.meetings-ask-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.meetings-ask-answer {
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+}

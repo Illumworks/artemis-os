@@ -173,6 +173,8 @@ app.include_router(slack_events_router)
 app.include_router(calendar_routes.router)
 app.include_router(meetings_routes.router)
 app.include_router(meetings_routes.granola_compat_router)
+# J6c — personal todos
+app.include_router(meetings_routes.todos_router)
 
 # People search — merged Google Contacts + Slack users (attendee autocomplete)
 app.include_router(people_routes.router)
