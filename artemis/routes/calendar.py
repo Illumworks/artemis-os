@@ -2,6 +2,7 @@
 
 Endpoints:
   GET  /api/calendar/overview  — today's event summary (GCal-backed)
+  GET  /api/calendar/events    — events in a date range (rangeStart, rangeEnd ISO8601)
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import logging
 from datetime import UTC, datetime, time
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
@@ -97,3 +98,48 @@ async def get_calendar_overview(
         "today": {"meetingsCount": meetings_count},
         "nextEvent": next_event,
     }
+
+
+@router.get("/events")
+async def get_calendar_events(
+    rangeStart: str = Query(..., description="ISO 8601 start of range, inclusive."),
+    rangeEnd: str = Query(..., description="ISO 8601 end of range, exclusive."),
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> list[dict[str, Any]]:
+    """List GCal events in a date range. 503 if GCal not connected."""
+    rows = await repo.list_active(session, provider="gcal")
+    if not rows:
+        raise HTTPException(status_code=503, detail="Google Calendar not connected.")
+    integration = rows[0]
+    try:
+        creds = decrypt_credentials(bytes(integration.encrypted_credentials))
+        client = GCalClient(
+            access_token=str(creds.get("access_token", "")),
+            refresh_token=str(creds.get("refresh_token", "")),
+            client_id=str(creds.get("client_id", "")),
+            client_secret=str(creds.get("client_secret", "")),
+        )
+        events = await client.list_events(
+            calendar_id="primary",
+            time_min=rangeStart,
+            time_max=rangeEnd,
+            max_results=250,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("GCal events fetch failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Calendar fetch failed: {exc}") from exc
+
+    out: list[dict[str, Any]] = []
+    for event in events:
+        out.append(
+            {
+                "id": event.id,
+                "summary": event.summary,
+                "start": event.start.date_time or event.start.date,
+                "end": event.end.date_time or event.end.date,
+                "description": event.description,
+            }
+        )
+    return out
