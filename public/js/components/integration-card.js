@@ -17,6 +17,11 @@ const _PROVIDER_FIELDS = {
     { key: 'client_id', label: 'Client ID', helper: 'From Google Cloud Console → APIs & Services → Credentials.', sensitive: true },
     { key: 'client_secret', label: 'Client Secret', helper: 'Keep this secret — never share it.', sensitive: true },
   ],
+  jira: [
+    { key: 'site_url', label: 'Atlassian Site URL', helper: 'e.g. https://yourorg.atlassian.net', sensitive: false },
+    { key: 'email', label: 'Email', helper: 'The email tied to your Atlassian account.', sensitive: false },
+    { key: 'api_token', label: 'API Token', helper: 'Get one at id.atlassian.com → API tokens.', sensitive: true },
+  ],
 };
 
 function _formatDate(isoString) {
