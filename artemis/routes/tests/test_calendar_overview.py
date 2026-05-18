@@ -39,7 +39,7 @@ def _make_event(
 
 async def _insert_gcal_integration(session: AsyncSession) -> None:
     """Insert an active gcal integration row using encrypt_credentials."""
-    creds = {
+    creds: dict[str, object] = {
         "access_token": "tok",
         "refresh_token": "ref",
         "client_id": "cid",

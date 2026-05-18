@@ -269,7 +269,7 @@ async def test_cost_usd_computed_for_gpt4o() -> None:
 
     assert hasattr(response, "cost_usd")
     expected = estimate_openai_cost("gpt-4o", 1000, 500)
-    assert abs(getattr(response, "cost_usd") - expected) < 1e-9
+    assert abs(response.cost_usd - expected) < 1e-9
 
 
 async def test_cost_usd_computed_for_gpt4o_mini() -> None:
@@ -285,7 +285,7 @@ async def test_cost_usd_computed_for_gpt4o_mini() -> None:
 
     assert hasattr(response, "cost_usd")
     expected = estimate_openai_cost("gpt-4o-mini", 2000, 300)
-    assert abs(getattr(response, "cost_usd") - expected) < 1e-9
+    assert abs(response.cost_usd - expected) < 1e-9
 
 
 # ── 8. max_tokens vs max_completion_tokens ────────────────────────────────
