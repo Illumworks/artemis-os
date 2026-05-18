@@ -11,7 +11,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from artemis.db import Base
 
-_KNOWN_PROVIDERS = frozenset({"slack", "gcal", "gmail", "jira", "granola"})
+_KNOWN_PROVIDERS = frozenset(
+    {"slack", "gcal", "gmail", "jira", "granola", "anthropic", "openai", "gemini"}
+)
 
 
 class Integration(Base):

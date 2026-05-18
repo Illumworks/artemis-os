@@ -99,3 +99,69 @@ async def resolve_gcal_config(session: AsyncSession) -> GCalConfig:
         raise MissingProviderConfigError("gcal", missing)
 
     return GCalConfig(client_id=client_id, client_secret=client_secret)
+
+
+# ── LLM provider resolvers (DB-first, env fallback) ──────────────────────────
+
+
+@dataclass(frozen=True)
+class AnthropicConfig:
+    api_key: str
+
+
+async def resolve_anthropic_config(session: AsyncSession) -> AnthropicConfig:
+    """Resolve Anthropic API key: DB first, then ANTHROPIC_API_KEY env var.
+
+    Returns AnthropicConfig with the key.  Raises MissingProviderConfigError
+    when absent from both sources.
+    """
+    stored = await repo.get_provider_config(session, "anthropic") or {}
+
+    api_key = str(stored.get("api_key") or "") or os.environ.get("ANTHROPIC_API_KEY", "")
+
+    if not api_key:
+        raise MissingProviderConfigError("anthropic", ["api_key"])
+
+    return AnthropicConfig(api_key=api_key)
+
+
+@dataclass(frozen=True)
+class OpenAIConfig:
+    api_key: str
+
+
+async def resolve_openai_config(session: AsyncSession) -> OpenAIConfig:
+    """Resolve OpenAI API key: DB first, then OPENAI_API_KEY env var.
+
+    Returns OpenAIConfig with the key.  Raises MissingProviderConfigError
+    when absent from both sources.
+    """
+    stored = await repo.get_provider_config(session, "openai") or {}
+
+    api_key = str(stored.get("api_key") or "") or os.environ.get("OPENAI_API_KEY", "")
+
+    if not api_key:
+        raise MissingProviderConfigError("openai", ["api_key"])
+
+    return OpenAIConfig(api_key=api_key)
+
+
+@dataclass(frozen=True)
+class GeminiProviderConfig:
+    api_key: str
+
+
+async def resolve_gemini_config(session: AsyncSession) -> GeminiProviderConfig:
+    """Resolve Gemini API key: DB first, then GEMINI_API_KEY env var.
+
+    Returns GeminiProviderConfig with the key.  Raises MissingProviderConfigError
+    when absent from both sources.
+    """
+    stored = await repo.get_provider_config(session, "gemini") or {}
+
+    api_key = str(stored.get("api_key") or "") or os.environ.get("GEMINI_API_KEY", "")
+
+    if not api_key:
+        raise MissingProviderConfigError("gemini", ["api_key"])
+
+    return GeminiProviderConfig(api_key=api_key)

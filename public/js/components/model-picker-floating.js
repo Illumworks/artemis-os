@@ -158,7 +158,23 @@ class ModelPickerFloating extends HTMLElement {
     `);
 
     for (const prov of this._providers) {
+      const hasKey = prov.configured !== false; // undefined = assume available; false = no key
       fragments.push(`<div class="mp-float-provider-hd">${_escHtml(prov.name)}</div>`);
+
+      if (!hasKey) {
+        // Provider has no key — show a single "Configure" row instead of model rows
+        fragments.push(`
+          <button class="mp-float-model-row mp-float-model-row--configure"
+            data-configure-provider="${_escHtml(prov.id)}"
+            role="option" aria-selected="false"
+            title="No API key configured for ${_escHtml(prov.name)}">
+            <span class="mp-float-model-name mp-float-model-name--dim">No key configured</span>
+            <span class="mp-float-configure-link">Configure &rarr;</span>
+          </button>
+        `);
+        continue;
+      }
+
       for (const m of prov.models) {
         const isActive = this._activeProvider === prov.id && this._activeModel === m.id;
         fragments.push(`
@@ -173,12 +189,20 @@ class ModelPickerFloating extends HTMLElement {
 
     list.innerHTML = fragments.join('');
 
-    // Wire clicks
-    list.querySelectorAll('.mp-float-model-row').forEach((btn) => {
+    // Wire clicks — selectable rows
+    list.querySelectorAll('.mp-float-model-row:not(.mp-float-model-row--configure)').forEach((btn) => {
       btn.addEventListener('click', () => {
         const p = btn.dataset.provider || null;
         const m = btn.dataset.model || null;
         this._selectModel(p, m);
+      });
+    });
+
+    // Wire clicks — configure rows (navigate to integrations view)
+    list.querySelectorAll('.mp-float-model-row--configure').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this._closeDropdown();
+        _navigateToIntegrations();
       });
     });
   }
@@ -247,6 +271,16 @@ function _modelShortLabel(id) {
     'llama-4-maverick-free': 'Llama 4 Maverick',
   };
   return known[id] ?? id;
+}
+
+/** Navigate to the integrations view via the SPA state router. */
+function _navigateToIntegrations() {
+  // Prefer the app's state router when available; fall back to hash navigation.
+  if (typeof setState === 'function') {
+    setState('view', 'integrations');
+  } else {
+    window.location.hash = '#integrations';
+  }
 }
 
 customElements.define('model-picker-floating', ModelPickerFloating);
