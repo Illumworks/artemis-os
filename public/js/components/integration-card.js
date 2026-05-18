@@ -248,7 +248,12 @@ export function renderIntegrationCard(container, provider, connectedData, config
     connectBtn.type = 'button';
     connectBtn.className = 'integration-card__connect-btn';
     connectBtn.textContent = `Connect ${provider.name}`;
-    const notConfigured = configStatus !== null && !configStatus.ever_configured;
+    // Zero-field providers (e.g. Granola — local-state / OAuth, no inline creds)
+    // skip the "needs setup" gate: their Connect button IS the setup. The
+    // gear is hidden for them too, so gating on ever_configured would dead-end.
+    const hasInlineFields = _fields.length > 0;
+    const notConfigured =
+      hasInlineFields && configStatus !== null && !configStatus.ever_configured;
     if (notConfigured) {
       connectBtn.disabled = true;
       connectBtn.title = 'Enter credentials via the ⚙ gear button first.';
