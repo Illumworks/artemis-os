@@ -205,7 +205,11 @@ async def _resolve_adapter(
     floating_artemis.failed event.
     Falls back to AnthropicAdapter when no provider is set on the session.
     """
-    provider_id = "anthropic"
+    # Default chain: try the session's chosen provider first, then fall back
+    # through subscription/local providers that don't need a key, so an
+    # operator with no API keys can still chat via Claude Max / ChatGPT Plus /
+    # LM Studio without seeing a 401.
+    provider_id: str | None = None
     model_id: str | None = None
 
     try:
@@ -223,22 +227,36 @@ async def _resolve_adapter(
         if getattr(row, "model", None):
             model_id = row.model
     except Exception:
-        # Session not found or DB error — fall back to Anthropic default
+        # Session not found or DB error — use the default chain
         pass
 
-    try:
-        kwargs: dict[str, Any] = {}
-        if model_id:
-            kwargs["default_model"] = model_id
-        return get_adapter(provider_id, **kwargs)
-    except MissingApiKeyError as exc:
-        return (
-            f"Provider '{provider_id}' needs configuration — "
-            f"add the API key in Integrations. ({exc})"
-        )
-    except UnknownProviderError as exc:
-        # Defense in depth: should be impossible after route validation
-        return f"Unknown provider '{provider_id}'. ({exc})"
+    # Provider preference order: session-chosen → claude-code → codex →
+    # lm-studio → anthropic (the original default; will raise if no API key
+    # so the operator-visible message points to Integrations).
+    candidates: list[str] = []
+    if provider_id:
+        candidates.append(provider_id)
+    candidates += [p for p in ("claude-code", "codex", "lm-studio", "anthropic") if p not in candidates]
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            kwargs: dict[str, Any] = {}
+            if model_id and candidate == provider_id:
+                kwargs["default_model"] = model_id
+            return get_adapter(candidate, **kwargs)
+        except (MissingApiKeyError, UnknownProviderError) as exc:
+            last_error = exc
+            continue
+        except Exception as exc:  # e.g. MissingCliBinaryError for CLI providers
+            last_error = exc
+            continue
+
+    return (
+        "No LLM provider is available. Open Integrations to add an API key, "
+        "or install the Claude Code or Codex CLI to chat with your subscription. "
+        f"(last error: {last_error})"
+    )
 
 
 # ── Turn result ───────────────────────────────────────────────────────────────
