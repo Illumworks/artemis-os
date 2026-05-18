@@ -21,39 +21,35 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-function getProviderStatusEntry(providerId, providerStatuses) {
-  const status = providerStatuses?.[providerId] || {};
-  if (status.available === false) {
-    return { label: 'Offline', tone: 'alert' };
-  }
-  if (status.connected === false) {
-    return { label: 'Needs sign-in', tone: 'warn' };
-  }
-  if (status.label && typeof status.label === 'string') {
-    return { label: status.label, tone: 'ready' };
-  }
-  return { label: 'Ready', tone: 'ready' };
-}
-
-function buildStatusModel(providerStatuses = {}, alerts = {}) {
-  const projectSelected = Boolean($.projectSelect?.value);
-  const providerRows = [
-    { name: 'Claude Code', ...getProviderStatusEntry('claude-code', providerStatuses) },
-    { name: 'Codex', ...getProviderStatusEntry('codex', providerStatuses) },
-    { name: 'Local · LM Studio', ...getProviderStatusEntry('local', providerStatuses) },
-  ];
+function buildStatusModel(providerStatuses = [], alerts = {}, integrations = []) {
+  // /api/stats/providers returns: [{provider_id, name, configured, healthy}]
+  const providerList = Array.isArray(providerStatuses) ? providerStatuses : [];
+  const providerRows = providerList.map((p) => ({
+    name: p.name || p.provider_id || 'Unknown',
+    label: p.configured ? 'Ready' : 'No key',
+    tone: p.configured ? 'ready' : 'warn',
+  }));
   const providerIssues = providerRows.filter((row) => row.tone !== 'ready').length;
-  const connectorTone = projectSelected ? 'ready' : 'warn';
-  const automationTone = projectSelected ? 'ready' : 'warn';
+
+  // /api/integrations returns active provider rows: [{provider, status, display_name, ...}]
+  const integrationList = Array.isArray(integrations) ? integrations : [];
+  const connectorRows = integrationList.map((row) => ({
+    name: row.display_name || row.provider,
+    label: row.status === 'active' ? 'Connected' : (row.status || 'Unknown'),
+    tone: row.status === 'active' ? 'ready' : 'warn',
+  }));
 
   const recentFailures = (alerts.providerFailures || []).slice(0, 3);
   const recentErrors = (alerts.runtimeErrors || []).slice(0, 3);
   const alertCount = recentFailures.length + recentErrors.length;
-  const issueCount = providerIssues + (projectSelected ? 0 : 1) + (alertCount > 0 ? 1 : 0);
+  const issueCount = providerIssues + (alertCount > 0 ? 1 : 0);
 
   let summary = 'All systems ready';
-  let subtitle = 'Providers, connectors, and automations are in a calm state.';
-  if (issueCount === 1) {
+  let subtitle = 'Providers and integrations are healthy.';
+  if (providerRows.length === 0) {
+    summary = 'Provider check pending';
+    subtitle = 'Waiting for provider status to load.';
+  } else if (issueCount === 1) {
     summary = '1 issue needs attention';
     subtitle = 'One surface needs a quick check before Artemis keeps going.';
   } else if (issueCount > 1) {
@@ -66,16 +62,7 @@ function buildStatusModel(providerStatuses = {}, alerts = {}) {
     subtitle,
     issueCount,
     providerRows,
-    connectorRow: {
-      name: 'Project workspace',
-      label: projectSelected ? 'Ready' : 'Select a project',
-      tone: connectorTone,
-    },
-    automationRow: {
-      name: 'Workflow bridge',
-      label: automationTone === 'ready' ? 'Ready' : 'Review',
-      tone: automationTone,
-    },
+    connectorRows,
     recentFailures,
     recentErrors,
   };
@@ -136,20 +123,20 @@ function renderPopover(model) {
         `).join('')}
       </div>
       <div class="status-pop-group">
-        <div class="status-pop-group-label">Connectors</div>
-        <div class="status-pop-row">
-          <span class="status-pop-row-dot ${escapeHtml(model.connectorRow.tone)}"></span>
-          <span class="status-pop-row-name">${escapeHtml(model.connectorRow.name)}</span>
-          <span class="status-pop-row-status ${escapeHtml(model.connectorRow.tone)}">${escapeHtml(model.connectorRow.label)}</span>
-        </div>
-      </div>
-      <div class="status-pop-group">
-        <div class="status-pop-group-label">Automations</div>
-        <div class="status-pop-row">
-          <span class="status-pop-row-dot ${escapeHtml(model.automationRow.tone)}"></span>
-          <span class="status-pop-row-name">${escapeHtml(model.automationRow.name)}</span>
-          <span class="status-pop-row-status ${escapeHtml(model.automationRow.tone)}">${escapeHtml(model.automationRow.label)}</span>
-        </div>
+        <div class="status-pop-group-label">Integrations</div>
+        ${model.connectorRows.length === 0
+          ? `<div class="status-pop-row">
+              <span class="status-pop-row-dot warn"></span>
+              <span class="status-pop-row-name">None connected</span>
+              <span class="status-pop-row-status warn">Open Integrations</span>
+            </div>`
+          : model.connectorRows.map((row) => `
+              <div class="status-pop-row">
+                <span class="status-pop-row-dot ${escapeHtml(row.tone)}"></span>
+                <span class="status-pop-row-name">${escapeHtml(row.name)}</span>
+                <span class="status-pop-row-status ${escapeHtml(row.tone)}">${escapeHtml(row.label)}</span>
+              </div>
+            `).join('')}
       </div>
       ${alertsGroup}
     </div>
@@ -176,18 +163,20 @@ function applyOrbState(summary, issueCount) {
 async function refreshStatusPopover({ open = false } = {}) {
   if (!$.statusPopover || !$.statusOrbBtn) return;
 
-  let providerStatuses = {};
+  let providerStatuses = [];
   let alerts = {};
+  let integrations = [];
   try {
-    [providerStatuses, alerts] = await Promise.all([
-      api.fetchProviderStatuses().catch(() => ({})),
+    [providerStatuses, alerts, integrations] = await Promise.all([
+      api.fetchProviderStatuses().catch(() => []),
       api.fetchSystemAlerts().catch(() => ({})),
+      fetch('/api/integrations').then((r) => (r.ok ? r.json() : [])).catch(() => []),
     ]);
   } catch {
     /* leave defaults */
   }
 
-  const model = buildStatusModel(providerStatuses, alerts);
+  const model = buildStatusModel(providerStatuses, alerts, integrations);
   renderPopover(model);
   applyOrbState(model.summary, model.issueCount);
 
