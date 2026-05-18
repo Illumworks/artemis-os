@@ -31,6 +31,7 @@ from artemis.marketing.routes import (
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.routes import calendar as calendar_routes
+from artemis.routes import dev_projects as dev_projects_routes
 from artemis.routes import health, okr, parallel, status, writing_rules
 from artemis.routes import jira as jira_routes
 from artemis.routes import meetings as meetings_routes
@@ -164,6 +165,8 @@ app.include_router(writing_rules.router)
 app.include_router(fa_router)
 app.include_router(fa_ws_router)
 app.include_router(parallel.router)  # B6 — parallel chat pane session allocation
+app.include_router(dev_projects_routes.router)
+app.include_router(dev_projects_routes.ws_router)
 
 # Phase J1 — Slack integration (OAuth, CRUD, events)
 app.include_router(integrations_router)
