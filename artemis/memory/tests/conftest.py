@@ -38,7 +38,9 @@ _TRUNCATE_SQL = text(
     "memory_entity_mentions, memory_entity_aliases, memory_entities, "
     # B1/B2 tables
     "memory_embeddings, memory_evidence, memory_observations, "
-    "memory_drawers, memory_scopes RESTART IDENTITY CASCADE"
+    "memory_drawers, memory_scopes, "
+    # M1: raw_inputs (observations FK to it; CASCADE handles raw_input_id → SET NULL)
+    "raw_inputs RESTART IDENTITY CASCADE"
 )
 
 

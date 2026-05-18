@@ -166,6 +166,13 @@ class MemoryObservation(Base):
         nullable=True,
         deferred=True,
     )
+    # M1: FK to raw_inputs — nullable for backward compat; every new observation gets one.
+    raw_input_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("raw_inputs.id", name="fk_obs_raw_input", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Graph extraction tracking (B4 additive columns)
     graph_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     graph_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
