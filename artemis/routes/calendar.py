@@ -140,8 +140,8 @@ async def get_calendar_event(
 
 @router.get("/events")
 async def get_calendar_events(
-    rangeStart: str = Query(..., description="ISO 8601 start of range, inclusive."),
-    rangeEnd: str = Query(..., description="ISO 8601 end of range, exclusive."),
+    range_start: str = Query(..., alias="rangeStart", description="ISO 8601 start, inclusive."),
+    range_end: str = Query(..., alias="rangeEnd", description="ISO 8601 end, exclusive."),
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
 ) -> list[dict[str, Any]]:
     """List GCal events in a date range. 503 if GCal not connected."""
@@ -159,8 +159,8 @@ async def get_calendar_events(
         )
         events = await client.list_events(
             calendar_id="primary",
-            time_min=rangeStart,
-            time_max=rangeEnd,
+            time_min=range_start,
+            time_max=range_end,
             max_results=250,
         )
     except HTTPException:
