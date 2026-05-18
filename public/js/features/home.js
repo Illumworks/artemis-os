@@ -70,7 +70,6 @@ import {
   renderMeetingsPastList as _renderMeetingsPastList,
   renderMeetingsGranolaTodayCanvas as _renderGranolaTodayCanvas,
   renderMeetingsPastCanvas as _renderMeetingsPastCanvas,
-  clearMeetingCache,
 } from './meetings.js';
 import { loadAgents } from './agents.js';
 import { loadWorkflows } from './workflows.js';
@@ -3030,61 +3029,6 @@ function renderMeetingsPastList(meetings) {
 
 function renderMeetingsPastCanvas(granolaConnected) {
   return _renderMeetingsPastCanvas(granolaConnected);
-}
-
-// LEGACY: kept for reference; replaced by meetings.js impl above.
-function _renderMeetingsPastCanvasLegacy(granolaConnected) {
-  if (!granolaConnected) {
-    return `
-      <section class="page-canvas" data-meetings-canvas="past">
-        <article class="page-section col-span-12">
-          <div class="page-empty-state">
-            <h3>Connect Granola to browse past meetings</h3>
-            <p>Past meeting transcripts are pulled from Granola. Connect it through the Connectors hub.</p>
-            <button type="button" class="shell-action-btn" data-shell-action="open-connectors" data-connector-scope="meetings">Open Connectors</button>
-          </div>
-        </article>
-      </section>
-    `;
-  }
-
-  return `
-    <section class="page-canvas meetings-past-canvas" data-meetings-canvas="past">
-      <article class="page-section col-span-4" data-page-section="meetings-past-list-col">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Last 30 days</div>
-            <h3 class="page-section-title">Past Meetings</h3>
-          </div>
-        </div>
-        <div class="meetings-search-row">
-          <input
-            type="search"
-            class="meetings-search-input"
-            placeholder="Search meetings…"
-            data-meetings-search-input
-            aria-label="Search meetings"
-          />
-          <button type="button" class="shell-action-btn" data-shell-action="meetings-search-submit">Search</button>
-        </div>
-        <div data-meetings-search-results class="meetings-search-results hidden"></div>
-        <div class="page-list" data-meetings-past-list>
-          <div class="meetings-transcript-loading">Loading meetings…</div>
-        </div>
-      </article>
-      <article class="page-section col-span-8" data-page-section="meetings-transcript">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Transcript</div>
-            <h3 class="page-section-title">Select a meeting</h3>
-          </div>
-        </div>
-        <div class="meetings-transcript-panel" data-meetings-transcript-panel>
-          <div class="page-section-footnote">Click a meeting to view its transcript.</div>
-        </div>
-      </article>
-    </section>
-  `;
 }
 
 function renderMeetingsShell(viewModel) {
