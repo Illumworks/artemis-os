@@ -10,14 +10,20 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from artemis.agent.client import AnthropicAdapter, ModelAdapter
+from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+from artemis.providers.codex.adapter import CodexAdapter
 from artemis.providers.errors import UnknownProviderError
 from artemis.providers.gemini.adapter import GeminiAdapter
+from artemis.providers.lm_studio.adapter import LMStudioAdapter
 from artemis.providers.openai.adapter import OpenAIAdapter
 from artemis.providers.openrouter.adapter import OpenRouterAdapter
 
 _BUILDERS: dict[str, Callable[..., ModelAdapter]] = {
     "anthropic": lambda **kw: AnthropicAdapter(**kw),
+    "claude-code": lambda **kw: ClaudeCodeAdapter(**kw),
+    "codex": lambda **kw: CodexAdapter(**kw),
     "gemini": lambda **kw: GeminiAdapter(**kw),
+    "lm-studio": lambda **kw: LMStudioAdapter(**kw),
     "openai": lambda **kw: OpenAIAdapter(**kw),
     "openrouter": lambda **kw: OpenRouterAdapter(**kw),
 }

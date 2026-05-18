@@ -7,6 +7,10 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import os
+
+import httpx
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,22 +25,57 @@ from artemis.integrations.config_resolver import (
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.providers import list_providers
+from artemis.providers._bin_path import find_cli_binary
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 _PROVIDER_NAMES: dict[str, str] = {
     "anthropic": "Anthropic",
+    "claude-code": "Claude Code CLI",
+    "codex": "Codex CLI",
     "gemini": "Gemini",
+    "lm-studio": "LM Studio",
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
 }
+
+_LM_STUDIO_MODELS_URL = os.environ.get(
+    "LM_STUDIO_BASE_URL", "http://localhost:1234/v1"
+) + "/models"
+
+
+async def _lm_studio_is_reachable() -> bool:
+    """Return True if the LM Studio local server responds within 500 ms."""
+    base_url = os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+    url = f"{base_url}/models"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await asyncio.wait_for(
+                client.get(url, timeout=0.5),
+                timeout=1.0,
+            )
+        return resp.is_success
+    except Exception:
+        return False
 
 
 async def _provider_is_configured(session: AsyncSession, provider_id: str) -> bool:
     """A provider counts as configured if the resolver can produce a key —
     either from the DB-stored credential_configs row or from the env var
     (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, etc.).
+
+    CLI providers (claude-code, codex) are configured if the binary is found.
+    LM Studio is configured if the local server is reachable.
     """
+    # CLI subscription providers — binary presence = configured
+    if provider_id == "claude-code":
+        return find_cli_binary("claude") is not None
+    if provider_id == "codex":
+        return find_cli_binary("codex") is not None
+    # LM Studio — local server reachability = configured
+    if provider_id == "lm-studio":
+        return await _lm_studio_is_reachable()
+
     try:
         if provider_id == "anthropic":
             await resolve_anthropic_config(session)

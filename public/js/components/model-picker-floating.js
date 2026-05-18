@@ -162,14 +162,20 @@ class ModelPickerFloating extends HTMLElement {
       fragments.push(`<div class="mp-float-provider-hd">${_escHtml(prov.name)}</div>`);
 
       if (!hasKey) {
-        // Provider has no key — show a single "Configure" row instead of model rows
+        const isLocal = prov.subscriptionOrLocal === true;
+        const dimLabel = isLocal ? 'Not detected' : 'No key configured';
+        const actionLabel = isLocal ? 'Install &rarr;' : 'Configure &rarr;';
+        const titleAttr = isLocal
+          ? `${_escHtml(prov.name)} binary or server not found`
+          : `No API key configured for ${_escHtml(prov.name)}`;
+        // Show a single action row; clicking navigates to integrations for both cases
         fragments.push(`
           <button class="mp-float-model-row mp-float-model-row--configure"
             data-configure-provider="${_escHtml(prov.id)}"
             role="option" aria-selected="false"
-            title="No API key configured for ${_escHtml(prov.name)}">
-            <span class="mp-float-model-name mp-float-model-name--dim">No key configured</span>
-            <span class="mp-float-configure-link">Configure &rarr;</span>
+            title="${titleAttr}">
+            <span class="mp-float-model-name mp-float-model-name--dim">${dimLabel}</span>
+            <span class="mp-float-configure-link">${actionLabel}</span>
           </button>
         `);
         continue;
@@ -253,7 +259,14 @@ function _escHtml(str) {
 }
 
 function _providerShortName(id) {
-  const MAP = { anthropic: 'Anthropic', gemini: 'Gemini', openrouter: 'OpenRouter' };
+  const MAP = {
+    anthropic: 'Anthropic',
+    'claude-code': 'Claude CLI',
+    codex: 'Codex CLI',
+    gemini: 'Gemini',
+    'lm-studio': 'LM Studio',
+    openrouter: 'OpenRouter',
+  };
   return MAP[id] ?? id;
 }
 

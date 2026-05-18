@@ -12,6 +12,9 @@ Streaming types are re-exported here for convenience:
     from artemis.providers import StreamEvent, StreamTextDelta, ...
 """
 
+from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+from artemis.providers.codex.adapter import CodexAdapter
+from artemis.providers.lm_studio.adapter import LMStudioAdapter
 from artemis.providers.openai.adapter import OpenAIAdapter
 from artemis.providers.registry import get_adapter, list_providers
 from artemis.providers.streaming import (
@@ -26,6 +29,9 @@ from artemis.providers.streaming import (
 __all__ = [
     "get_adapter",
     "list_providers",
+    "ClaudeCodeAdapter",
+    "CodexAdapter",
+    "LMStudioAdapter",
     "OpenAIAdapter",
     "StreamEvent",
     "StreamTextDelta",

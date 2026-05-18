@@ -60,6 +60,7 @@ class OpenAIAdapter:
         *,
         default_model: str | None = None,
         api_key: str | None = None,
+        _base_url: str | None = None,
     ) -> None:
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         if not resolved_key:
@@ -69,6 +70,7 @@ class OpenAIAdapter:
             )
         self._api_key = resolved_key
         self._default_model = resolve_openai_model(default_model or OPENAI_DEFAULT_MODEL)
+        self._base_url = _base_url or _OPENAI_API_BASE
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
         """Send a single non-streaming completion request to OpenAI."""
@@ -82,7 +84,7 @@ class OpenAIAdapter:
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{_OPENAI_API_BASE}/chat/completions",
+                f"{self._base_url}/chat/completions",
                 json=body,
                 headers=headers,
                 timeout=120.0,
@@ -126,7 +128,7 @@ class OpenAIAdapter:
             httpx.AsyncClient() as client,
             client.stream(
                 "POST",
-                f"{_OPENAI_API_BASE}/chat/completions",
+                f"{self._base_url}/chat/completions",
                 json=body,
                 headers=headers,
                 timeout=120.0,
