@@ -135,6 +135,57 @@ async def test_permission_approved_resumes_loop(client: AsyncClient, tmp_path: P
     assert messages[-1]["role"] == "assistant"
 
 
+async def test_message_send_is_background_and_non_blocking(
+    client: AsyncClient, tmp_path: Path
+) -> None:
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    project = await _create_project(client, tmp_path)
+    session = await _create_session(client, project["id"])
+
+    response = await client.post(
+        f"/api/dev-projects/sessions/{session['id']}/messages",
+        json={"text": "list the files in this directory"},
+    )
+    assert response.status_code == 202
+    assert response.json() == {"accepted": True, "session_id": session["id"]}
+
+    permission_id = await _wait_for_tool_id(session["id"])
+    assert await decide_permission(
+        session_id=session["id"], permission_id=permission_id, approved=False
+    )
+
+
+async def test_session_detail_resumes_persisted_history_and_annotations(
+    client: AsyncClient, tmp_path: Path
+) -> None:
+    project = await _create_project(client, tmp_path)
+    session = await _create_session(client, project["id"])
+    async with SessionLocal() as db:
+        await db.execute(
+            text(
+                "INSERT INTO dev_messages(session_id, role, content) VALUES "
+                '(:sid, \'user\', \'[{"type":"text","text":"first turn"}]\'::jsonb),'
+                '(:sid, \'assistant\', \'[{"type":"text","text":"answer"}]\'::jsonb)'
+            ),
+            {"sid": session["id"]},
+        )
+        await db.execute(
+            text(
+                "INSERT INTO dev_annotations(session_id, url, note) "
+                "VALUES (:sid, 'http://localhost:3000', 'point at the hero')"
+            ),
+            {"sid": session["id"]},
+        )
+        await db.commit()
+
+    detail = await client.get(f"/api/dev-projects/sessions/{session['id']}")
+    assert detail.status_code == 200
+    data = detail.json()
+    assert [message["role"] for message in data["messages"]] == ["user", "assistant"]
+    assert data["messages"][0]["content"][0]["text"] == "first turn"
+    assert data["annotations"][0]["note"] == "point at the hero"
+
+
 async def test_fork_at_message_copies_history(client: AsyncClient, tmp_path: Path) -> None:
     project = await _create_project(client, tmp_path)
     session = await _create_session(client, project["id"])
