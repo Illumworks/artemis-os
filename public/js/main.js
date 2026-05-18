@@ -75,6 +75,7 @@ import './features/welcome.js';
 import './features/home.js';
 import './features/writing-studio.js';
 import './features/chat.js';
+import './features/dev_projects.js';
 
 import { loadOptionalModules } from './core/optional-modules.js';
 loadOptionalModules();
