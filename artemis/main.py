@@ -35,6 +35,7 @@ from artemis.routes import health, okr, parallel, status, writing_rules
 from artemis.routes import jira as jira_routes
 from artemis.routes import meetings as meetings_routes
 from artemis.routes import notifications as notifications_routes
+from artemis.routes import people as people_routes
 from artemis.routes import sessions as sessions_routes
 from artemis.routes import stats as stats_routes
 from artemis.routes.builders import (
@@ -171,6 +172,9 @@ app.include_router(slack_events_router)
 # Phase J3b — Calendar + Meetings overview endpoints
 app.include_router(calendar_routes.router)
 app.include_router(meetings_routes.router)
+
+# People search — merged Google Contacts + Slack users (attendee autocomplete)
+app.include_router(people_routes.router)
 
 # J3c stubs — Jira overview, sessions, notifications, stats
 app.include_router(jira_routes.router)

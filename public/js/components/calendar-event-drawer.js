@@ -5,6 +5,39 @@ import {
   respondToCalendarEventApi,
 } from '../core/api.js';
 
+// ---------------------------------------------------------------------------
+// People search autocomplete helpers
+// ---------------------------------------------------------------------------
+
+let _peopleDebounceTimer = null;
+
+/**
+ * Fetch people matching `q` from /api/people/search.
+ * Returns [] on any network / parse error so the UI never crashes.
+ */
+async function _searchPeople(q, limit = 8) {
+  if (!q || q.trim().length < 2) return [];
+  try {
+    const params = new URLSearchParams({ q: q.trim(), limit: String(limit) });
+    const resp = await fetch(`/api/people/search?${params}`);
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Render a source pill string.
+ */
+function _sourcePill(source) {
+  const labels = { gcal: 'Google', slack: 'Slack', both: 'Both' };
+  const colors = { gcal: '#4285F4', slack: '#611f69', both: '#1a7f5a' };
+  const label = labels[source] || source;
+  const color = colors[source] || '#666';
+  return `<span style="font-size:9.5px;padding:1px 5px;border-radius:9px;background:${color}18;color:${color};font-weight:600;letter-spacing:.3px;flex-shrink:0">${_esc(label)}</span>`;
+}
+
 function _isValidEmail(v) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 }
@@ -195,9 +228,21 @@ class ArtemisCalendarEventDrawer extends HTMLElement {
         <div class="drawer-section">
           <div class="drawer-section-label">Attendees (<span id="ced-attendee-count">${Array.isArray(ev.attendees) ? ev.attendees.length : 0}</span>)</div>
           <div class="cal-attendees-list" id="ced-attendees-list">${attendeeRows}</div>
-          <div style="display:flex;gap:6px;margin-top:8px">
-            <input id="ced-attendee-input" class="cal-field-input" type="email"
-                   placeholder="name@example.com" autocomplete="email" name="attendee_email" style="flex:1">
+          <div style="display:flex;gap:6px;margin-top:8px;position:relative">
+            <div style="flex:1;position:relative">
+              <input id="ced-attendee-input" class="cal-field-input" type="text"
+                     placeholder="Name or email…" autocomplete="off" name="attendee_email" style="width:100%;box-sizing:border-box">
+              <ul id="ced-people-dropdown"
+                  role="listbox"
+                  style="display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;
+                         margin:0;padding:4px 0;list-style:none;
+                         background:var(--surface-2,#fff);
+                         border:1px solid var(--border-soft,#e0e0e0);
+                         border-radius:var(--r-md,8px);
+                         box-shadow:0 4px 16px rgba(0,0,0,.10);
+                         z-index:200;max-height:260px;overflow-y:auto">
+              </ul>
+            </div>
             <button type="button" id="ced-attendee-add" class="btn btn-outline btn-sm">Add</button>
           </div>
           <div id="ced-attendee-err" style="font-size:11.5px;color:var(--danger);margin-top:4px;display:none"></div>
@@ -273,13 +318,76 @@ class ArtemisCalendarEventDrawer extends HTMLElement {
 
     [titleEl, startEl, endEl, locationEl, descEl].forEach((el) => el?.addEventListener('input', markDirty));
 
-    // Attendee chip-input
+    // Attendee chip-input with people-search autocomplete
     const attendeeInput = this.querySelector('#ced-attendee-input');
     const attendeeAddBtn = this.querySelector('#ced-attendee-add');
     const attendeeErr = this.querySelector('#ced-attendee-err');
+    const dropdown = this.querySelector('#ced-people-dropdown');
 
-    const tryAddAttendee = () => {
-      const val = attendeeInput.value.trim();
+    // --- Autocomplete state ---
+    let _acResults = [];      // current result list
+    let _acIndex = -1;        // keyboard-highlighted index
+
+    const _closeDropdown = () => {
+      dropdown.style.display = 'none';
+      _acResults = [];
+      _acIndex = -1;
+    };
+
+    const _renderDropdown = (results) => {
+      _acResults = results;
+      _acIndex = -1;
+      if (!results.length) { _closeDropdown(); return; }
+
+      dropdown.innerHTML = results.map((p, i) => `
+        <li role="option"
+            data-ac-idx="${i}"
+            style="display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;
+                   font-size:13px;line-height:1.3;transition:background .1s">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(p.name || p.email)}</div>
+            <div style="font-size:11.5px;color:var(--ink-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(p.email)}</div>
+          </div>
+          ${_sourcePill(p.source)}
+        </li>
+      `).join('');
+
+      dropdown.style.display = 'block';
+
+      // Hover highlight
+      dropdown.querySelectorAll('li').forEach((li) => {
+        li.addEventListener('mouseenter', () => {
+          dropdown.querySelectorAll('li').forEach((l) => l.style.background = '');
+          li.style.background = 'var(--surface-3, #f5f5f5)';
+          _acIndex = Number(li.dataset.acIdx);
+        });
+        li.addEventListener('mouseleave', () => { li.style.background = ''; });
+        li.addEventListener('mousedown', (e) => {
+          // mousedown fires before blur, so we can act before the input loses focus
+          e.preventDefault();
+          _selectResult(Number(li.dataset.acIdx));
+        });
+      });
+    };
+
+    const _highlightItem = (idx) => {
+      dropdown.querySelectorAll('li').forEach((li, i) => {
+        li.style.background = i === idx ? 'var(--surface-3, #f5f5f5)' : '';
+      });
+    };
+
+    const _selectResult = (idx) => {
+      const person = _acResults[idx];
+      if (!person) return;
+      attendeeInput.value = person.email;
+      _closeDropdown();
+      // Auto-add the selected person
+      _doAddAttendee(person.email, person.name || undefined);
+    };
+
+    // Core add logic (shared between autocomplete-select and manual add)
+    const _doAddAttendee = (email, displayName) => {
+      const val = email.trim().toLowerCase();
       attendeeErr.style.display = 'none';
       if (!val) return;
       if (!_isValidEmail(val)) {
@@ -287,21 +395,73 @@ class ArtemisCalendarEventDrawer extends HTMLElement {
         attendeeErr.style.display = '';
         return;
       }
-      if (this._attendees.some((a) => a.email === val)) {
+      if (this._attendees.some((a) => a.email.toLowerCase() === val)) {
         attendeeErr.textContent = 'Already added.';
         attendeeErr.style.display = '';
         return;
       }
-      this._attendees.push({ email: val, responseStatus: 'needsAction' });
+      const entry = { email: val, responseStatus: 'needsAction' };
+      if (displayName) entry.displayName = displayName;
+      this._attendees.push(entry);
       attendeeInput.value = '';
+      _closeDropdown();
       this._refreshAttendeeList();
       markDirty();
     };
 
-    attendeeAddBtn.addEventListener('click', tryAddAttendee);
-    attendeeInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); tryAddAttendee(); }
+    const tryAddAttendee = () => {
+      _doAddAttendee(attendeeInput.value);
+    };
+
+    // Debounced input → search
+    attendeeInput.addEventListener('input', () => {
+      clearTimeout(_peopleDebounceTimer);
+      const q = attendeeInput.value.trim();
+      if (q.length < 2) { _closeDropdown(); return; }
+      _peopleDebounceTimer = setTimeout(async () => {
+        const results = await _searchPeople(q, 8);
+        _renderDropdown(results);
+      }, 200);
     });
+
+    // Keyboard navigation
+    attendeeInput.addEventListener('keydown', (e) => {
+      if (dropdown.style.display !== 'none') {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          _acIndex = Math.min(_acIndex + 1, _acResults.length - 1);
+          _highlightItem(_acIndex);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          _acIndex = Math.max(_acIndex - 1, -1);
+          _highlightItem(_acIndex);
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (_acIndex >= 0) { _selectResult(_acIndex); } else { tryAddAttendee(); }
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          _closeDropdown();
+          return;
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        tryAddAttendee();
+      }
+    });
+
+    // Close dropdown when focus leaves the input
+    attendeeInput.addEventListener('blur', () => {
+      // Small delay so mousedown on a list item fires first
+      setTimeout(_closeDropdown, 150);
+    });
+
+    attendeeAddBtn.addEventListener('click', tryAddAttendee);
 
     // Remove attendee via delegated click on the list
     const listEl = this.querySelector('#ced-attendees-list');
