@@ -73,7 +73,9 @@ async def route_inbound(event_data: dict[str, object]) -> None:
     # Stable session key — one FA session per Slack thread (or channel if not threaded)
     bucket = str(thread_ts) if thread_ts else "_"
     session_id = f"slack-{team_id}-{channel_id}-{bucket}"
-    reply_thread_ts = str(thread_ts) if thread_ts else ts
+    # Reply in-thread ONLY when the source was already a thread reply.
+    # Top-level mentions get top-level replies (no thread spam).
+    reply_thread_ts = str(thread_ts) if thread_ts else None
 
     import artemis.db as _db
     from artemis.floating_artemis import repository as fa_repo

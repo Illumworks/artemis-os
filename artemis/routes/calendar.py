@@ -100,6 +100,44 @@ async def get_calendar_overview(
     }
 
 
+@router.get("/event/{event_id}")
+async def get_calendar_event(
+    event_id: str,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return one GCal event by ID."""
+    rows = await repo.list_active(session, provider="gcal")
+    if not rows:
+        raise HTTPException(status_code=503, detail="Google Calendar not connected.")
+    integration = rows[0]
+    try:
+        creds = decrypt_credentials(bytes(integration.encrypted_credentials))
+        client = GCalClient(
+            access_token=str(creds.get("access_token", "")),
+            refresh_token=str(creds.get("refresh_token", "")),
+            client_id=str(creds.get("client_id", "")),
+            client_secret=str(creds.get("client_secret", "")),
+        )
+        event = await client.get_event(calendar_id="primary", event_id=event_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("GCal event fetch failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Calendar fetch failed: {exc}") from exc
+
+    return {
+        "id": event.id,
+        "summary": event.summary,
+        "start": event.start.date_time or event.start.date,
+        "end": event.end.date_time or event.end.date,
+        "description": event.description,
+        "attendees": [
+            {"email": a.email, "responseStatus": a.response_status}
+            for a in (event.attendees or [])
+        ],
+    }
+
+
 @router.get("/events")
 async def get_calendar_events(
     rangeStart: str = Query(..., description="ISO 8601 start of range, inclusive."),
