@@ -197,7 +197,7 @@ class ArtemisCalendarEventDrawer extends HTMLElement {
           <div class="cal-attendees-list" id="ced-attendees-list">${attendeeRows}</div>
           <div style="display:flex;gap:6px;margin-top:8px">
             <input id="ced-attendee-input" class="cal-field-input" type="email"
-                   placeholder="name@example.com" autocomplete="off" style="flex:1">
+                   placeholder="name@example.com" autocomplete="email" name="attendee_email" style="flex:1">
             <button type="button" id="ced-attendee-add" class="btn btn-outline btn-sm">Add</button>
           </div>
           <div id="ced-attendee-err" style="font-size:11.5px;color:var(--danger);margin-top:4px;display:none"></div>
