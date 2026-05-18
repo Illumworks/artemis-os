@@ -1,6 +1,7 @@
 import { $ } from '../core/dom.js';
 import { on as onState, setState, getState } from '../core/store.js';
 import { emit } from '../core/events.js';
+import { swr } from '../core/swr-cache.js';
 import {
   DEFAULT_APP_VIEW,
   DASHBOARD_VIEW,
@@ -248,7 +249,12 @@ function _getOrCreateCalendarDrawer() {
     _calendarEventDrawer = document.createElement('artemis-calendar-event-drawer');
     document.body.appendChild(_calendarEventDrawer);
     _calendarEventDrawer.addEventListener('change', () => {
-      if (normalizeAppView(getState('view')) === CALENDAR_VIEW) loadCalendarShell();
+      if (normalizeAppView(getState('view')) === CALENDAR_VIEW) {
+        swr.invalidate(SWR_CAL_OVERVIEW_KEY);
+        // invalidate all events keys (we don't know exact range, so clear by prefix)
+        _swrInvalidateCalendarEvents();
+        loadCalendarShell();
+      }
     });
   }
   return _calendarEventDrawer;
@@ -262,6 +268,8 @@ function _getOrCreateCalendarNewEventModal() {
     document.body.appendChild(_calendarNewEventModal);
     _calendarNewEventModal.addEventListener('created', (e) => {
       if (normalizeAppView(getState('view')) === CALENDAR_VIEW) {
+        swr.invalidate(SWR_CAL_OVERVIEW_KEY);
+        _swrInvalidateCalendarEvents();
         loadCalendarShell().then(() => {
           const eventId = e.detail?.event?.id;
           if (eventId) _getOrCreateCalendarDrawer().open(eventId);
@@ -1105,51 +1113,116 @@ async function loadModulesShell() {
   }
 }
 
+// SWR cache keys for calendar data
+const SWR_CAL_OVERVIEW_KEY = 'calendar:overview';
+function _swrCalEventsKey(rangeStart, rangeEnd) {
+  return `calendar:events:${rangeStart.toISOString()}:${rangeEnd.toISOString()}`;
+}
+// Drop all range-scoped calendar event entries (used after any mutation)
+function _swrInvalidateCalendarEvents() {
+  swr.invalidatePrefix('calendar:events:');
+}
+
+// Attach a transient "Updated just now" pill to the calendar toolbar.
+// Fades out after 3 s so it's informative but never intrusive.
+function _calShowUpdatedPill() {
+  const toolbar = appShellContent?.querySelector('.cal-toolbar, .cal-header, [data-cal-nav]');
+  if (!toolbar) return;
+  const existing = appShellContent.querySelector('.swr-updated-pill');
+  if (existing) existing.remove();
+  const pill = document.createElement('span');
+  pill.className = 'swr-updated-pill';
+  pill.textContent = 'Updated just now';
+  pill.style.cssText = [
+    'display:inline-block',
+    'margin-left:10px',
+    'font-size:11px',
+    'opacity:0.6',
+    'transition:opacity 1s ease',
+    'pointer-events:none',
+  ].join(';');
+  toolbar.closest('[data-cal-nav]')
+    ? toolbar.after(pill)
+    : toolbar.append(pill);
+  requestAnimationFrame(() => {
+    setTimeout(() => { pill.style.opacity = '0'; }, 2800);
+    setTimeout(() => { pill.remove(); }, 3800);
+  });
+}
+
 async function loadCalendarShell() {
   if (!appShellContent) return;
   const loadToken = ++calendarLoadToken;
 
-  appShellContent.innerHTML = renderCalendarShellLoading();
+  // ── Phase 1: try to render from SWR cache immediately ───────────────────
+  const overviewResult = await swr(
+    SWR_CAL_OVERVIEW_KEY,
+    () => fetchCalendarOverviewApi().catch(() => null),
+  );
+  const calendarOverview = overviewResult.data;
+  const overviewFromCache = overviewResult.source === 'cache';
 
-  try {
-    const calendarOverview = await fetchCalendarOverviewApi().catch(() => null);
+  if (loadToken !== calendarLoadToken || normalizeAppView(getState('view')) !== CALENDAR_VIEW) return;
 
+  // Not connected or error → fall back to setup/error view (existing flow)
+  if (!calendarOverview || calendarOverview.status !== 'ready') {
+    if (!overviewFromCache) {
+      // Only show loading skeleton if we have no cached data at all
+      appShellContent.innerHTML = renderCalendarShellLoading();
+    }
+    const notifications = await fetchNotificationHistory({ limit: 12, unreadOnly: true }).catch(() => []);
     if (loadToken !== calendarLoadToken || normalizeAppView(getState('view')) !== CALENDAR_VIEW) return;
+    const timeReality = readTimeReality();
+    const viewModel = buildCalendarModuleViewModel({ notifications, timeReality, calendarOverview });
+    appShellContent.innerHTML = renderCalendarShell(viewModel);
+    return;
+  }
 
-    // Not connected or error → fall back to setup/error view (existing flow)
-    if (!calendarOverview || calendarOverview.status !== 'ready') {
-      const notifications = await fetchNotificationHistory({ limit: 12, unreadOnly: true }).catch(() => []);
-      if (loadToken !== calendarLoadToken || normalizeAppView(getState('view')) !== CALENDAR_VIEW) return;
-      const timeReality = readTimeReality();
-      const viewModel = buildCalendarModuleViewModel({ notifications, timeReality, calendarOverview });
-      appShellContent.innerHTML = renderCalendarShell(viewModel);
+  // Google connected — read view state from localStorage
+  const view = _calValidateView(localStorage.getItem(CAL_VIEW_STORAGE_KEY));
+  const focusDate = _calParseFocusDate(localStorage.getItem(CAL_FOCUS_DATE_STORAGE_KEY));
+  const { rangeStart, rangeEnd } = _calComputeRange(focusDate, view);
+  const eventsKey = _swrCalEventsKey(rangeStart, rangeEnd);
+
+  // Show loading skeleton only if we have nothing cached
+  const cachedEvents = swr.peek(eventsKey);
+  if (!cachedEvents) {
+    appShellContent.innerHTML = renderCalendarShellLoading();
+  }
+
+  let events = [];
+  let fetchError = null;
+  try {
+    const eventsResult = await swr(
+      eventsKey,
+      () => fetchCalendarEventsApi(rangeStart, rangeEnd),
+    );
+    events = eventsResult.data ?? [];
+  } catch (err) {
+    fetchError = err;
+    console.error('Calendar events fetch failed:', err);
+  }
+
+  if (loadToken !== calendarLoadToken || normalizeAppView(getState('view')) !== CALENDAR_VIEW) return;
+
+  appShellContent.innerHTML = renderCalendarInteractivePage(events, focusDate, view, fetchError);
+  _wireCalendarPage(events, focusDate, view);
+
+  // ── Phase 2: subscribe to background SWR refresh for this render ─────────
+  // When a background revalidation completes, swap the events in place.
+  function _onSwrFresh(e) {
+    if (e.detail.key !== eventsKey) return;
+    if (loadToken !== calendarLoadToken || normalizeAppView(getState('view')) !== CALENDAR_VIEW) {
+      document.removeEventListener('swr:fresh', _onSwrFresh);
       return;
     }
-
-    // Google connected — read view state from localStorage
-    const view = _calValidateView(localStorage.getItem(CAL_VIEW_STORAGE_KEY));
-    const focusDate = _calParseFocusDate(localStorage.getItem(CAL_FOCUS_DATE_STORAGE_KEY));
-    const { rangeStart, rangeEnd } = _calComputeRange(focusDate, view);
-
-    let events = [];
-    let fetchError = null;
-    try {
-      events = await fetchCalendarEventsApi(rangeStart, rangeEnd);
-    } catch (err) {
-      fetchError = err;
-      console.error('Calendar events fetch failed:', err);
-    }
-
-    if (loadToken !== calendarLoadToken || normalizeAppView(getState('view')) !== CALENDAR_VIEW) return;
-
-    appShellContent.innerHTML = renderCalendarInteractivePage(events, focusDate, view, fetchError);
-    _wireCalendarPage(events, focusDate, view);
-
-  } catch (error) {
-    if (loadToken !== calendarLoadToken || normalizeAppView(getState('view')) !== CALENDAR_VIEW) return;
-    appShellContent.innerHTML = renderCalendarShellError();
-    console.error('Failed to load calendar shell:', error);
+    const freshEvents = e.detail.data ?? [];
+    appShellContent.innerHTML = renderCalendarInteractivePage(freshEvents, focusDate, view, null);
+    _wireCalendarPage(freshEvents, focusDate, view);
+    _calShowUpdatedPill();
+    document.removeEventListener('swr:fresh', _onSwrFresh);
   }
+  document.addEventListener('swr:fresh', _onSwrFresh);
 }
 
 async function loadMeetingsShell() {
@@ -1208,14 +1281,28 @@ async function loadJiraShell() {
   }
 }
 
+// SWR cache key for OKR overview
+const SWR_OKR_OVERVIEW_KEY = 'okr:overview';
+
 async function loadOkrShell() {
   if (!appShellContent) return;
   const loadToken = ++okrLoadToken;
 
+  // Show loading skeleton only if nothing is cached
+  const hasCachedOkr = swr.peek(SWR_OKR_OVERVIEW_KEY) !== null;
+  if (!hasCachedOkr) {
+    appShellContent.innerHTML = renderOkrShellLoading();
+  }
+
   try {
     if (loadToken !== okrLoadToken || normalizeAppView(getState('view')) !== OKR_VIEW) return;
 
-    const overview = await fetchOkrOverviewApi().catch(() => null);
+    // ── Phase 1: render from SWR cache immediately ──────────────────────────
+    const overviewResult = await swr(
+      SWR_OKR_OVERVIEW_KEY,
+      () => fetchOkrOverviewApi().catch(() => null),
+    );
+    const overview = overviewResult.data;
 
     if (loadToken !== okrLoadToken || normalizeAppView(getState('view')) !== OKR_VIEW) return;
 
@@ -1225,6 +1312,42 @@ async function loadOkrShell() {
     }
     appShellContent.innerHTML = renderOkrShell(overview);
     _wireOkrInteractions(appShellContent);
+
+    // ── Phase 2: subscribe to background SWR refresh ────────────────────────
+    function _onSwrFreshOkr(e) {
+      if (e.detail.key !== SWR_OKR_OVERVIEW_KEY) return;
+      if (loadToken !== okrLoadToken || normalizeAppView(getState('view')) !== OKR_VIEW) {
+        document.removeEventListener('swr:fresh', _onSwrFreshOkr);
+        return;
+      }
+      const freshOverview = e.detail.data;
+      if (!freshOverview) return;
+      appShellContent.innerHTML = renderOkrShell(freshOverview);
+      _wireOkrInteractions(appShellContent);
+      // Surface a subtle "updated" signal via page title tag if one exists
+      const titleEl = appShellContent.querySelector('.okr-section-title, h2');
+      if (titleEl) {
+        const pill = document.createElement('span');
+        pill.className = 'swr-updated-pill';
+        pill.textContent = 'Updated';
+        pill.style.cssText = [
+          'display:inline-block',
+          'margin-left:8px',
+          'font-size:11px',
+          'opacity:0.55',
+          'transition:opacity 1s ease',
+          'pointer-events:none',
+        ].join(';');
+        titleEl.append(pill);
+        requestAnimationFrame(() => {
+          setTimeout(() => { pill.style.opacity = '0'; }, 2500);
+          setTimeout(() => { pill.remove(); }, 3500);
+        });
+      }
+      document.removeEventListener('swr:fresh', _onSwrFreshOkr);
+    }
+    document.addEventListener('swr:fresh', _onSwrFreshOkr);
+
   } catch (error) {
     if (loadToken !== okrLoadToken || normalizeAppView(getState('view')) !== OKR_VIEW) return;
     appShellContent.innerHTML = renderOkrShellError();
@@ -1340,6 +1463,7 @@ function _wireOkrInteractions(container) {
       saveBtn.textContent = 'Saving…';
       saveBtn.disabled = true;
       updateOkrKrApi(id, { prog, status, note, target_text: targetText }).then(() => {
+        swr.invalidate(SWR_OKR_OVERVIEW_KEY);
         _applyKrDomUpdate(krEl, status, prog, note);
         _applyKrTargetDomUpdate(krEl, targetText);
         saveBtn.textContent = 'Saved ✓';
@@ -1473,6 +1597,7 @@ function _wireOkrInteractions(container) {
     const text = activityInput.value.trim();
     activityInput.value = '';
     logOkrActivityApi(text).then((entry) => {
+      swr.invalidate(SWR_OKR_OVERVIEW_KEY);
       if (!activityFeed) return;
       const el = document.createElement('div');
       el.className = 'okr-activity-feed-entry';
@@ -2704,9 +2829,13 @@ function _wireCalendarPage(events, focusDate, view) {
     _wireCalendarPage(updatedEvents, focusDate, view);
 
     updateCalendarEventApi(eventId, patch)
-      .then(() => loadCalendarShell())
+      .then(() => {
+        _swrInvalidateCalendarEvents();
+        loadCalendarShell();
+      })
       .catch((err) => {
         console.error('Drag reschedule failed, rolling back:', err);
+        _swrInvalidateCalendarEvents();
         loadCalendarShell();
       });
   }
