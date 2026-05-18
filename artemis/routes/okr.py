@@ -1,6 +1,8 @@
 """OKR Studio router — /api/okr.
 
 Endpoints:
+  GET    /api/okr/overview                     — aggregated overview for the shell
+
   GET    /api/okr/objectives                   — list objectives (with KRs)
   POST   /api/okr/objectives                   — create objective
   GET    /api/okr/objectives/{id}              — get objective + KRs
@@ -24,12 +26,17 @@ Endpoints:
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
 from artemis.marketing.routes._auth import require_token
 from artemis.okr import repository as repo
+from artemis.okr.models import OkrActivity
 from artemis.okr.schemas import (
     OkrActivityCreate,
     OkrActivityRead,
@@ -56,6 +63,132 @@ def _not_found(label: str) -> HTTPException:
         status_code=404,
         detail={"error": f"{label} not found", "code": "not_found"},
     )
+
+
+def _current_quarter_label() -> str:
+    """Return e.g. 'Q2 2026' derived from today's date."""
+    now = datetime.now()
+    quarter = (now.month - 1) // 3 + 1
+    return f"Q{quarter} {now.year}"
+
+
+# ── Overview ──────────────────────────────────────────────────────────────────
+
+
+@router.get("/overview")
+async def get_overview(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Aggregated overview for the OKR shell UI.
+
+    Returns objectives (with krs), stats chips, recent activity, evidence
+    placeholder, next-up items, and the current quarter label.
+    """
+    # --- 1. Objectives with eager-loaded key results (archived filtered out) ---
+    objectives = await repo.list_objectives(session, include_archived=False)
+
+    # --- 2. Evidence counts per KR (single aggregate query, no N+1) -----------
+    count_rows = await session.execute(
+        select(OkrActivity.kr_id, func.count(OkrActivity.id).label("cnt"))
+        .where(OkrActivity.kr_id.is_not(None))
+        .group_by(OkrActivity.kr_id)
+    )
+    evidence_counts: dict[int, int] = {row.kr_id: row.cnt for row in count_rows}
+
+    # --- 3. Build objectives payload ------------------------------------------
+    objectives_out: list[dict[str, Any]] = []
+    total_krs = 0
+    atrisk_count = 0
+
+    for obj in objectives:
+        krs_out: list[dict[str, Any]] = []
+        for kr in obj.key_results:
+            if kr.archived_at is not None:
+                continue
+            total_krs += 1
+            if kr.status == "atrisk":
+                atrisk_count += 1
+            krs_out.append(
+                {
+                    "id": kr.id,
+                    "title": kr.title,
+                    "prog": kr.prog,
+                    "status": kr.status,
+                    "note": kr.note,
+                    "evidence_count": evidence_counts.get(kr.id, 0),
+                    "done_bullets": kr.done_bullets if kr.done_bullets else [],
+                    "gaps_bullets": kr.gaps_bullets if kr.gaps_bullets else [],
+                    "target_text": kr.target_text,
+                }
+            )
+        objectives_out.append(
+            {
+                "id": obj.id,
+                "title": obj.title,
+                "progress": obj.progress,
+                "tone": obj.tone,
+                "cycle": obj.cycle,
+                "krs": krs_out,
+            }
+        )
+
+    # --- 4. Stats chips -------------------------------------------------------
+    n_objectives = len(objectives_out)
+    stats: list[dict[str, Any]] = [
+        {
+            "n": n_objectives,
+            "suffix": "",
+            "tone": "zero" if n_objectives == 0 else "sage",
+            "label": "Objectives",
+        },
+        {
+            "n": total_krs,
+            "suffix": "",
+            "tone": "zero" if total_krs == 0 else "sage",
+            "label": "Key Results",
+        },
+        {
+            "n": atrisk_count,
+            "suffix": "",
+            "tone": "zero" if atrisk_count == 0 else "warn",
+            "label": "At risk",
+        },
+    ]
+
+    # --- 5. Recent activity (newest-first, limit 10) --------------------------
+    activity_rows = await repo.list_activity(session, limit=10)
+    activity_out: list[dict[str, Any]] = [
+        {
+            "id": a.id,
+            "text": a.text,
+            "kr_id": a.kr_id,
+            "kr_label": a.kr_label,
+            "created_at": a.created_at.isoformat(),
+        }
+        for a in activity_rows
+    ]
+
+    # --- 6. Next-up (undismissed, ordered by sort_order) ----------------------
+    next_up_rows = await repo.list_next_up(session, include_dismissed=False)
+    next_up_out: list[dict[str, Any]] = [
+        {
+            "id": n.id,
+            "ref": n.ref,
+            "text": n.text,
+            "prio": n.prio,
+        }
+        for n in next_up_rows
+    ]
+
+    return {
+        "status": "ok",
+        "objectives": objectives_out,
+        "stats": stats,
+        "activity": activity_out,
+        "evidence": [],
+        "nextUp": next_up_out,
+        "quarter": {"label": _current_quarter_label()},
+    }
 
 
 # ── Objectives ────────────────────────────────────────────────────────────────

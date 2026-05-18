@@ -1040,9 +1040,9 @@ async function loadCommandCenter() {
   try {
     const projectPath = getActiveProjectPath();
     const [analytics, notifications, sessions, calendarOverview, meetingsOverview, jiraOverview, okrOverview, slackSignals, briefResult] = await Promise.all([
-      fetchAnalytics(projectPath || undefined),
-      fetchNotificationHistory({ limit: 12, unreadOnly: true }),
-      fetchSessions(projectPath || undefined),
+      fetchAnalytics(projectPath || undefined).catch(() => ({})),
+      fetchNotificationHistory({ limit: 12, unreadOnly: true }).catch(() => []),
+      fetchSessions(projectPath || undefined).catch(() => []),
       fetchCalendarOverviewApi().catch(() => ({ status: 'error', today: {} })),
       fetchMeetingsOverviewApi().catch(() => ({ status: 'error', today: {} })),
       fetchJiraOverviewApi().catch(() => null),
@@ -1088,9 +1088,9 @@ async function loadModulesShell() {
   try {
     const projectPath = getActiveProjectPath();
     const [analytics, providerStatuses, notifications] = await Promise.all([
-      fetchAnalytics(projectPath || undefined),
-      fetchProviderStatuses(),
-      fetchNotificationHistory({ limit: 12, unreadOnly: true }),
+      fetchAnalytics(projectPath || undefined).catch(() => ({})),
+      fetchProviderStatuses().catch(() => []),
+      fetchNotificationHistory({ limit: 12, unreadOnly: true }).catch(() => []),
     ]);
 
     if (loadToken !== modulesLoadToken || normalizeAppView(getState('view')) !== WORKSPACE_VIEW) {
@@ -1219,10 +1219,14 @@ async function loadOkrShell() {
   try {
     if (loadToken !== okrLoadToken || normalizeAppView(getState('view')) !== OKR_VIEW) return;
 
-    const overview = await fetchOkrOverviewApi();
+    const overview = await fetchOkrOverviewApi().catch(() => null);
 
     if (loadToken !== okrLoadToken || normalizeAppView(getState('view')) !== OKR_VIEW) return;
 
+    if (!overview) {
+      appShellContent.innerHTML = renderOkrShellError();
+      return;
+    }
     appShellContent.innerHTML = renderOkrShell(overview);
     _wireOkrInteractions(appShellContent);
   } catch (error) {
@@ -3807,7 +3811,7 @@ function renderOkrSplitView(objectives = []) {
       <div class="okr-empty-board">
         ${objectives.length
           ? objectives.map((obj) => `<div class="okr-empty-objective"><strong>${escapeHtml(obj.title)}</strong><span>No active KRs found.</span></div>`).join('')
-          : 'No active KRs found.'}
+          : '<p>No objectives yet. Add your first objective to start tracking progress.</p>'}
       </div>`;
   }
   return `

@@ -12,6 +12,7 @@ Streaming types are re-exported here for convenience:
     from artemis.providers import StreamEvent, StreamTextDelta, ...
 """
 
+from artemis.providers.openai.adapter import OpenAIAdapter
 from artemis.providers.registry import get_adapter, list_providers
 from artemis.providers.streaming import (
     StreamEvent,
@@ -25,6 +26,7 @@ from artemis.providers.streaming import (
 __all__ = [
     "get_adapter",
     "list_providers",
+    "OpenAIAdapter",
     "StreamEvent",
     "StreamTextDelta",
     "StreamToolUseStart",

@@ -37,10 +37,13 @@ async def upsert_integration(
         "scopes": scopes,
         "status": "active",
         "connected_at": datetime.now(UTC),
+        # NOTE: use "metadata" (DB column name) not "metadata_" (ORM attr).
+        # pg_insert must target Integration.__table__ to avoid SQLAlchemy
+        # confusing "metadata" with Base.metadata when resolving ORM attrs.
         "metadata": metadata or {},
     }
     stmt = (
-        pg_insert(Integration)
+        pg_insert(Integration.__table__)  # type: ignore[arg-type]
         .values(**values)
         .on_conflict_do_update(
             index_elements=["provider", "workspace_id"],
@@ -50,11 +53,13 @@ async def upsert_integration(
                 if k not in ("provider", "workspace_id", "connected_at")
             },
         )
-        .returning(Integration)
+        .returning(Integration.__table__.c.id)
     )
     result = await session.execute(stmt)
-    row = result.scalar_one()
-    return row
+    row_id: int = result.scalar_one()
+    # Re-fetch as ORM object so callers receive a fully-mapped Integration.
+    orm_result = await session.execute(select(Integration).where(Integration.id == row_id))
+    return orm_result.scalar_one()
 
 
 async def get_by_provider_and_workspace(
