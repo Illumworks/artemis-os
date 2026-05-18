@@ -23,7 +23,6 @@ import './components/permission-modal.js';
 import './features/claude-md-modal.js';
 import './components/telegram-modal.js';
 import './components/mcp-modal.js';
-import './components/connectors-modal.js';
 import './components/settings-modal.js';
 import './components/help-modal.js';
 import './components/add-project-modal.js';

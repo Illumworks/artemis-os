@@ -619,10 +619,8 @@ function initProfilePopover() {
         break;
       }
       case 'connectors': {
-        const modal = document.querySelector('artemis-connectors-modal')
-          || document.querySelector('artemis-mcp-modal');
-        if (modal && typeof modal.open === 'function') return modal.open();
-        document.getElementById('mcp-toggle-btn')?.click();
+        // Navigate to the Integrations view (replaces dead Connectors modal)
+        setState('view', 'integrations');
         break;
       }
       case 'account': {
