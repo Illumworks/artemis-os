@@ -108,10 +108,14 @@ class WelcomeOverlay extends HTMLElement {
       <button id="welcome-continue" class="welcome-btn-primary" disabled>
         Continue
       </button>
+      <button id="welcome-skip" class="welcome-btn-secondary" type="button">
+        Skip — set up later
+      </button>
     </div>
 
     <p class="welcome-footer-note">
-      You can manage these later in <strong>Settings → Integrations</strong>.
+      Keys are optional for first launch — Artemis can run with the keys already
+      in your environment. Manage everything in <strong>Settings → Integrations</strong>.
     </p>
 
   </div>
@@ -171,7 +175,13 @@ class WelcomeOverlay extends HTMLElement {
       continueBtn.addEventListener('click', () => this.hide());
     }
 
-    // Keyboard shortcut: Enter or Escape to continue (if at least one configured)
+    // Skip button — always dismissable; keys are optional
+    const skipBtn = this.querySelector('#welcome-skip');
+    if (skipBtn) {
+      skipBtn.addEventListener('click', () => this.hide());
+    }
+
+    // Keyboard shortcut: Escape always dismisses, Enter dismisses if any configured
     document.addEventListener('keydown', this._onKeyDown.bind(this));
   }
 
@@ -179,7 +189,9 @@ class WelcomeOverlay extends HTMLElement {
     const overlay = this.querySelector('.welcome-overlay');
     if (!overlay || overlay.classList.contains('hidden')) return;
 
-    if ((e.key === 'Enter' || e.key === 'Escape') && this._configuredSet.size > 0) {
+    if (e.key === 'Escape') {
+      this.hide();
+    } else if (e.key === 'Enter' && this._configuredSet.size > 0) {
       this.hide();
     }
   }
@@ -211,25 +223,29 @@ class WelcomeOverlay extends HTMLElement {
     continueBtn.disabled = this._configuredSet.size === 0;
   }
 
-  /** On mount, silently check which providers are already configured (e.g. via env var). */
+  /** On mount, check which providers are already configured.
+   * /api/stats/providers reflects both DB-stored keys AND env vars
+   * (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY) so anything Artemis
+   * can already authenticate with counts as configured — no need to re-paste.
+   */
   async _checkAllProviders() {
-    await Promise.all(
-      _PROVIDERS.map(async (p) => {
-        try {
-          const res = await fetch(`/api/integrations/providers/${p.id}/config`);
-          if (!res.ok) return;
-          const data = await res.json();
-          if (data?.ever_configured || data?.configured_keys?.api_key) {
-            this._markConfigured(p.id);
-          }
-        } catch {
-          // non-fatal — badge stays "Not configured"
+    try {
+      const res = await fetch('/api/stats/providers');
+      if (!res.ok) return;
+      const rows = await res.json();
+      if (!Array.isArray(rows)) return;
+      for (const row of rows) {
+        if (row?.configured) {
+          this._markConfigured(row.provider_id);
         }
-      }),
-    );
+      }
+    } catch {
+      // non-fatal — badges stay "Not configured", user can skip
+    }
 
-    // If everything is already set, hide immediately — this is a returning user
-    if (this._configuredSet.size === _PROVIDERS.length) {
+    // If at least one provider is already wired (typical case — Anthropic via
+    // env var), self-dismiss so the operator doesn't see the welcome at all.
+    if (this._configuredSet.size > 0) {
       this.hide();
     }
   }

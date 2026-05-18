@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
 from artemis.integrations import repository as repo
+from artemis.integrations.config_resolver import (
+    MissingProviderConfigError,
+    resolve_anthropic_config,
+    resolve_gemini_config,
+    resolve_openai_config,
+)
 from artemis.marketing.routes._auth import require_token
 from artemis.providers import list_providers
 
@@ -21,8 +27,31 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 _PROVIDER_NAMES: dict[str, str] = {
     "anthropic": "Anthropic",
     "gemini": "Gemini",
+    "openai": "OpenAI",
     "openrouter": "OpenRouter",
 }
+
+
+async def _provider_is_configured(session: AsyncSession, provider_id: str) -> bool:
+    """A provider counts as configured if the resolver can produce a key —
+    either from the DB-stored credential_configs row or from the env var
+    (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, etc.).
+    """
+    try:
+        if provider_id == "anthropic":
+            await resolve_anthropic_config(session)
+            return True
+        if provider_id == "gemini":
+            await resolve_gemini_config(session)
+            return True
+        if provider_id == "openai":
+            await resolve_openai_config(session)
+            return True
+    except MissingProviderConfigError:
+        return False
+    # Fallback for providers without a dedicated resolver: just check DB.
+    config = await repo.get_provider_config(session, provider_id)
+    return bool(config and any(v and str(v).strip() for v in config.values()))
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -72,8 +101,7 @@ async def stats_providers(
     """Return LLM provider configuration status from DB."""
     results: list[ProviderStatusOut] = []
     for provider_id in list_providers():
-        config = await repo.get_provider_config(session, provider_id)
-        configured = bool(config and any(v and str(v).strip() for v in config.values()))
+        configured = await _provider_is_configured(session, provider_id)
         results.append(
             ProviderStatusOut(
                 provider_id=provider_id,
