@@ -227,13 +227,28 @@ async def jira_get_team_members(
     if not (site_url and email and api_token):
         return {"saved": saved, "all_assignable": []}
 
-    project_key = str(raw.get("project_key") or "")
-    if not project_key:
-        return {"saved": saved, "all_assignable": []}
-
     client = JiraClient(site_url=site_url, email=email, api_token=api_token)
+    project_key = str(raw.get("project_key") or "")
+
     try:
-        all_assignable = await client.get_assignable_users(project_key)
+        if project_key:
+            all_assignable = await client.get_assignable_users(project_key)
+        else:
+            # No project configured — enumerate all accessible projects and
+            # merge their assignables. Dedupe on accountId.
+            projects = await client.list_projects()
+            seen: dict[str, dict[str, Any]] = {}
+            for proj in projects[:10]:  # cap at 10 projects to bound latency
+                key = proj.get("key")
+                if not key:
+                    continue
+                try:
+                    for user in await client.get_assignable_users(key):
+                        if (acc_id := user.get("accountId")):
+                            seen.setdefault(acc_id, user)
+                except JiraAPIError:
+                    continue  # skip projects we can't query
+            all_assignable = list(seen.values())
     except JiraAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"saved": saved, "all_assignable": all_assignable}

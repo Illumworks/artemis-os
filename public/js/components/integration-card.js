@@ -158,21 +158,26 @@ export function renderIntegrationCard(container, provider, connectedData, config
     header.appendChild(needsPill);
   }
 
-  // Gear button — visible in both states; opens credential-entry modal
-  const gearBtn = document.createElement('button');
-  gearBtn.type = 'button';
-  gearBtn.className = 'integration-card__gear-btn';
-  gearBtn.setAttribute('aria-label', `Configure ${provider.name} credentials`);
-  gearBtn.innerHTML = '&#9881;';
-  gearBtn.addEventListener('click', () => {
-    const fields = _PROVIDER_FIELDS[provider.id] || [];
-    openCredentialEntryModal({
-      provider: provider.id,
-      fields,
-      onSaved: () => renderIntegrationCard(container, provider, connectedData, null),
+  // Gear button — visible only when the provider HAS inline credential fields.
+  // Granola (and other zero-field providers) hide the gear since clicking it
+  // would show an empty modal — confusing. Those providers configure via
+  // the Connect button directly (local-state or OAuth bounce).
+  const _fields = _PROVIDER_FIELDS[provider.id] || [];
+  if (_fields.length > 0) {
+    const gearBtn = document.createElement('button');
+    gearBtn.type = 'button';
+    gearBtn.className = 'integration-card__gear-btn';
+    gearBtn.setAttribute('aria-label', `Configure ${provider.name} credentials`);
+    gearBtn.innerHTML = '&#9881;';
+    gearBtn.addEventListener('click', () => {
+      openCredentialEntryModal({
+        provider: provider.id,
+        fields: _fields,
+        onSaved: () => renderIntegrationCard(container, provider, connectedData, null),
+      });
     });
-  });
-  header.appendChild(gearBtn);
+    header.appendChild(gearBtn);
+  }
 
   card.appendChild(header);
 

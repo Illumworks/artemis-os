@@ -282,6 +282,25 @@ class JiraClient:
             ],
         }
 
+    async def list_projects(self) -> list[dict[str, Any]]:
+        """List all projects accessible to the authenticated user.
+
+        Used by the team-members picker when no project_key is configured —
+        enumerates so we can merge assignables across the user's accessible
+        scope. Each entry has at least {key, name}.
+        """
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                f"{self._base}/rest/api/3/project/search",
+                headers=self._headers(),
+                params={"maxResults": 100},
+            )
+            if not resp.is_success:
+                raise JiraAPIError("project/search", resp.status_code, resp.text[:200])
+            data = resp.json()
+            values = data.get("values") if isinstance(data, dict) else None
+            return list(values or [])
+
     async def get_issue(self, key: str) -> dict[str, Any]:
         enc = quote(key, safe="")
         async with httpx.AsyncClient(timeout=20) as client:
