@@ -23,9 +23,13 @@ const _PROVIDER_FIELDS = {
     { key: 'email', label: 'Email', helper: 'The email tied to your Atlassian account.', sensitive: false },
     { key: 'api_token', label: 'API Token', helper: 'Get one at id.atlassian.com → API tokens.', sensitive: true },
   ],
-  // Granola has no inline credential fields — the Connect button reads the
-  // local Granola.app state first; OAuth is the fallback.
-  granola: [],
+  // Granola: Connect button reads local Granola.app state first; OAuth is
+  // the fallback for users without the desktop app. Both OAuth fields optional —
+  // leave blank if Granola.app is installed and signed in.
+  granola: [
+    { key: 'client_id', label: 'OAuth Client ID', helper: 'Optional — only if Granola.app is not installed. Register at mcp-auth.granola.ai.', sensitive: false },
+    { key: 'client_secret', label: 'OAuth Client Secret', helper: 'Optional — only if Granola.app is not installed.', sensitive: true },
+  ],
 };
 
 function _formatDate(isoString) {
