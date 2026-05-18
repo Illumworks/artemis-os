@@ -232,12 +232,37 @@
   font: inherit;
 }
 
+.dev-preview-wrap {
+  position: relative;
+  min-height: 180px;
+}
+
 .dev-preview-frame {
   width: 100%;
   height: 100%;
   border: 1px solid var(--line-2);
   border-radius: 8px;
   background: #fff;
+}
+
+.dev-target-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--ink-4);
+  border-radius: 8px;
+  background: rgba(20, 24, 30, 0.22);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: crosshair;
+  font: inherit;
+  font-weight: 650;
+}
+
+.dev-target-overlay.hidden {
+  display: none;
 }
 
 .dev-note-input {
@@ -288,4 +313,3 @@
   padding: 12px;
   color: var(--ink-5);
 }
-

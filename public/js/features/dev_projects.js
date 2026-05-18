@@ -16,6 +16,7 @@ const state = {
   activeSession: null,
   annotations: [],
   ws: null,
+  suppressPickerSave: false,
 };
 
 const els = {};
@@ -109,6 +110,7 @@ async function loadModels() {
 }
 
 async function saveSessionModel() {
+  if (state.suppressPickerSave) return;
   if (!state.activeSessionId) return;
   const provider = $("dev-provider-select")?.value || "claude-code";
   const model = $("dev-model-select")?.value || null;
@@ -117,6 +119,22 @@ async function saveSessionModel() {
     body: JSON.stringify({ provider, model }),
   });
   state.activeSession = session;
+  await saveProjectModelDefault(provider, model);
+}
+
+async function saveProjectModelDefault(provider, model) {
+  const project = getActiveProject();
+  if (!project) return;
+  const metadata = {
+    ...(project.metadata || {}),
+    default_provider: provider,
+    default_model: model,
+  };
+  const updated = await request(`/projects/${project.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ metadata }),
+  });
+  project.metadata = updated.metadata || metadata;
 }
 
 async function loadProjects() {
@@ -130,13 +148,17 @@ async function loadProjects() {
 function renderProjects() {
   const list = $("dev-project-list");
   if (list) list.innerHTML = renderProjectOptions(state.projects, state.activeProjectId);
-  const active = state.projects.find((p) => Number(p.id) === Number(state.activeProjectId));
+  const active = getActiveProject();
   const name = active?.name || "Select a project";
   const path = active?.path || "No project selected";
   if (els.projectName) els.projectName.textContent = name;
   if (els.projectPath) els.projectPath.textContent = path;
   if (els.railProjectName) els.railProjectName.textContent = name;
   if (els.railProjectSub) els.railProjectSub.textContent = active ? path : "—";
+}
+
+function getActiveProject() {
+  return state.projects.find((p) => Number(p.id) === Number(state.activeProjectId));
 }
 
 async function loadSessions(projectId) {
@@ -187,9 +209,11 @@ function syncPickerFromSession() {
   const providerSelect = $("dev-provider-select");
   const modelSelect = $("dev-model-select");
   if (!state.activeSession || !providerSelect || !modelSelect) return;
+  state.suppressPickerSave = true;
   providerSelect.value = state.activeSession.provider || "claude-code";
   providerSelect.dispatchEvent(new Event("change"));
   if (state.activeSession.model) modelSelect.value = state.activeSession.model;
+  state.suppressPickerSave = false;
 }
 
 function connectWs(sessionId) {
@@ -248,8 +272,9 @@ async function sendCurrent() {
 
 async function createSession() {
   if (!state.activeProjectId) return;
-  const provider = $("dev-provider-select")?.value || "claude-code";
-  const model = $("dev-model-select")?.value || null;
+  const defaults = getActiveProject()?.metadata || {};
+  const provider = $("dev-provider-select")?.value || defaults.default_provider || "claude-code";
+  const model = $("dev-model-select")?.value || defaults.default_model || null;
   const session = await request(`/projects/${state.activeProjectId}/sessions`, {
     method: "POST",
     body: JSON.stringify({ provider, model }),
@@ -348,6 +373,10 @@ function bindEvents() {
     $("dev-preview-frame").src = event.target.value;
   });
   $("dev-note-send")?.addEventListener("click", sendAnnotation);
+  $("dev-target-pick")?.addEventListener("click", () => {
+    $("dev-target-overlay")?.classList.remove("hidden");
+  });
+  $("dev-target-overlay")?.addEventListener("click", pickPreviewTarget);
   $("dev-annotation-list")?.addEventListener("click", (event) => {
     const item = event.target.closest(".dev-annotation-item");
     if (!item) return;
@@ -359,6 +388,38 @@ function bindEvents() {
   document.querySelectorAll(".dp-parallel-seg-btn").forEach((btn) => {
     btn.addEventListener("click", () => enterDevParallel(Number(btn.dataset.parallel || 1)));
   });
+}
+
+function pickPreviewTarget(event) {
+  const overlay = $("dev-target-overlay");
+  const frame = $("dev-preview-frame");
+  const url = $("dev-rail-url")?.value.trim() || frame?.src || "preview";
+  overlay?.classList.add("hidden");
+  if (!frame) return;
+
+  const rect = frame.getBoundingClientRect();
+  const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+  let target = `visual target at ${Math.round(x * 100)}%, ${Math.round(y * 100)}%`;
+
+  try {
+    const doc = frame.contentDocument;
+    const element = doc?.elementFromPoint(x * rect.width, y * rect.height);
+    if (element) {
+      const label = element.getAttribute("aria-label") || element.textContent?.trim().slice(0, 60);
+      const id = element.id ? `#${element.id}` : "";
+      const classes = element.className && typeof element.className === "string"
+        ? `.${element.className.trim().split(/\s+/).slice(0, 2).join(".")}`
+        : "";
+      target = `${element.tagName.toLowerCase()}${id}${classes}${label ? ` (${label})` : ""}`;
+    }
+  } catch {
+    // Cross-origin previews cannot expose DOM details; the visual coordinate is still useful.
+  }
+
+  els.input.value = `Re: ${url} — ${target}: `;
+  els.input.focus();
+  els.input.dispatchEvent(new Event("input"));
 }
 
 async function enterDevParallel(count) {

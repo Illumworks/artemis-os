@@ -186,6 +186,25 @@ async def test_provider_switch_mid_session(client: AsyncClient, tmp_path: Path) 
     assert response.json()["model"] == "gpt-5.4"
 
 
+async def test_project_model_defaults_apply_to_new_sessions(
+    client: AsyncClient, tmp_path: Path
+) -> None:
+    project = await _create_project(client, tmp_path)
+    update = await client.patch(
+        f"/api/dev-projects/projects/{project['id']}",
+        json={"metadata": {"default_provider": "codex", "default_model": "gpt-5.4"}},
+    )
+    assert update.status_code == 200
+
+    response = await client.post(
+        f"/api/dev-projects/projects/{project['id']}/sessions",
+        json={},
+    )
+    assert response.status_code == 201
+    assert response.json()["provider"] == "codex"
+    assert response.json()["model"] == "gpt-5.4"
+
+
 async def test_project_file_search(client: AsyncClient, tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.py").write_text("x = 1", encoding="utf-8")

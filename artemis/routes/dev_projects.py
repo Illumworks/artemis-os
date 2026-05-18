@@ -137,14 +137,21 @@ async def create_project_session(
     body: DevSessionCreate,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    if body.provider not in list_providers():
-        raise bad_request(f"Unknown provider {body.provider!r}", "unknown_provider")
+    try:
+        project = await repo.get_project(session, project_id)
+    except ValueError:
+        raise not_found(f"Project {project_id} not found", "project_not_found")  # noqa: B904
+    defaults = project.metadata_ or {}
+    provider = body.provider or str(defaults.get("default_provider") or "claude-code")
+    model = body.model if body.model is not None else defaults.get("default_model")
+    if provider not in list_providers():
+        raise bad_request(f"Unknown provider {provider!r}", "unknown_provider")
     try:
         row = await repo.create_session(
             session,
             project_id=project_id,
-            provider=body.provider,
-            model=body.model,
+            provider=provider,
+            model=str(model) if model else None,
             title=body.title,
         )
     except ValueError:

@@ -31,7 +31,7 @@ class DevProjectRead(BaseModel):
 
 
 class DevSessionCreate(BaseModel):
-    provider: str = "claude-code"
+    provider: str | None = None
     model: str | None = None
     title: str | None = None
 

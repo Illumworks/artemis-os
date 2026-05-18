@@ -8,7 +8,13 @@ export function railMarkup() {
         <button class="dev-icon-btn" id="dev-rail-close" title="Close" aria-label="Close">×</button>
       </div>
       <input class="dev-url-input" id="dev-rail-url" placeholder="http://localhost:3000">
-      <iframe class="dev-preview-frame" id="dev-preview-frame" title="Project preview"></iframe>
+      <div class="dev-preview-wrap" id="dev-preview-wrap">
+        <iframe class="dev-preview-frame" id="dev-preview-frame" title="Project preview"></iframe>
+        <button class="dev-target-overlay hidden" id="dev-target-overlay" type="button">
+          <span>Click the page area you mean</span>
+        </button>
+      </div>
+      <button class="dev-btn" id="dev-target-pick" type="button">Pick page target</button>
       <textarea class="dev-note-input" id="dev-note-input" rows="4" placeholder="Annotate this page..."></textarea>
       <button class="dev-btn primary" id="dev-note-send">Send to chat</button>
       <div class="dev-annotation-list" id="dev-annotation-list"></div>
@@ -25,4 +31,3 @@ export function renderAnnotations(annotations) {
     </button>
   `).join("");
 }
-
