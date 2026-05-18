@@ -1,4 +1,7 @@
-"""Tests for J3c stub endpoints: jira, sessions, notifications, stats."""
+"""Tests for J3c stub endpoints: sessions, notifications, stats.
+
+The jira overview stub was replaced by the real J5 implementation.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +14,8 @@ async def test_jira_overview_not_connected(client: AsyncClient) -> None:
     resp = await client.get("/api/jira/overview")
     assert resp.status_code == 200
     data = resp.json()
-    assert data == {"status": "not_connected", "provider": "jira"}
+    assert data["connected"] is False
+    assert "savedConfig" in data
 
 
 @pytest.mark.anyio
