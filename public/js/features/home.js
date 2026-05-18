@@ -700,18 +700,15 @@ async function handleShellActionClick(event) {
     return;
   }
   if (action === 'open-connectors') {
-    const requested = button.dataset.connectorScope || '';
-    const modal = document.querySelector('artemis-connectors-modal');
-    if (modal && typeof modal.open === 'function') {
-      modal.open(requested);
-      return;
-    }
-    const mcp = document.querySelector('artemis-mcp-modal');
-    if (mcp) {
-      mcp.querySelector('#mcp-modal')?.classList.remove('hidden');
-    } else {
-      document.getElementById('mcp-toggle-btn')?.click();
-    }
+    // J3b-B removed the old artemis-connectors-modal; route to the new
+    // integrations modal instead. Falls back to the MCP modal only if the
+    // integrations module fails to load.
+    import('../components/integrations-modal.js')
+      .then((mod) => mod.openIntegrationsModal())
+      .catch(() => {
+        const mcp = document.querySelector('artemis-mcp-modal');
+        if (mcp) mcp.querySelector('#mcp-modal')?.classList.remove('hidden');
+      });
     return;
   }
   if (action === 'open-memory') {

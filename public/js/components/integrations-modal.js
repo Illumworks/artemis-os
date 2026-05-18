@@ -25,6 +25,11 @@ const PROVIDERS = [
     name: 'Google Calendar',
     tagline: 'Read your calendar; create, update, and remove events.',
   },
+  {
+    id: 'jira',
+    name: 'Jira',
+    tagline: 'Browse issues, log work, and create tickets.',
+  },
 ];
 
 // ── Toast helper ──────────────────────────────────────────────────────────────
