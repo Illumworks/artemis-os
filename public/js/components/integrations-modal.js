@@ -56,6 +56,10 @@ function _checkConnectionToast() {
     _showToast('Google Calendar connected successfully.');
     window.history.replaceState({}, '', window.location.pathname);
   }
+  if (params.get('jira_connected') === '1') {
+    _showToast('Jira connected successfully.');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
 }
 
 // ── Card rendering (extracted from integrations.js _loadAndRender) ────────────
