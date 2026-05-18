@@ -125,7 +125,9 @@ async def resolve_jira_config(session: AsyncSession) -> JiraConfig:
     _max_raw = stored.get("max_items_per_column")
     max_items = int(_max_raw) if isinstance(_max_raw, (int, float, str)) else 20
     _members_raw = stored.get("team_members")
-    team_members = tuple(str(m) for m in _members_raw if m) if isinstance(_members_raw, list) else ()
+    team_members = (
+        tuple(str(m) for m in _members_raw if m) if isinstance(_members_raw, list) else ()
+    )
 
     missing = [
         name
@@ -143,6 +145,35 @@ async def resolve_jira_config(session: AsyncSession) -> JiraConfig:
         max_items_per_column=max_items,
         team_members=team_members,
     )
+
+
+@dataclass(frozen=True)
+class GranolaConfig:
+    """Granola OAuth client credentials.
+
+    For local-state mode (desktop app), client_id and client_secret may be
+    empty strings — connect_local() does not require them.
+    """
+
+    client_id: str
+    client_secret: str
+
+
+async def resolve_granola_config(session: AsyncSession) -> GranolaConfig:
+    """Resolve Granola credentials: DB per-field, then env per-field fallback.
+
+    Unlike other providers, missing credentials do NOT raise — Granola works
+    without OAuth creds via the local-state path. Callers must check whether
+    client_id is populated before starting an OAuth flow.
+    """
+    stored = await repo.get_provider_config(session, "granola") or {}
+
+    client_id = str(stored.get("client_id") or "") or os.environ.get("GRANOLA_CLIENT_ID", "")
+    client_secret = str(stored.get("client_secret") or "") or os.environ.get(
+        "GRANOLA_CLIENT_SECRET", ""
+    )
+
+    return GranolaConfig(client_id=client_id, client_secret=client_secret)
 
 
 # ── LLM provider resolvers (DB-first, env fallback) ──────────────────────────

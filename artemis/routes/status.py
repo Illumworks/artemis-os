@@ -37,6 +37,8 @@ _AVAILABLE_SURFACES = {
     "integrations",
     # Phase J5 — Jira board backend ported
     "jira-board",
+    # Phase J6a — Granola meeting notes integration
+    "meetings",
 }
 _UNAVAILABLE_SURFACES = {
     # Node-only surfaces — backends not ported yet.
