@@ -6,7 +6,6 @@ await loadStatus();
 
 // Web Components — must load before dom.js so getElementById finds their elements
 import './components/welcome-overlay.js';
-import './components/setup-overlay.js';
 import './components/orchestrate-modal.js';
 import './components/agent-monitor-modal.js';
 import './components/dag-editor-modal.js';
@@ -70,7 +69,6 @@ import './ui/shortcuts.js';
 import './ui/sidebar-toggle.js';
 import './ui/artemis-shell.js';
 import './features/voice-input.js';
-import './features/setup.js';
 import './features/welcome.js';
 import './features/home.js';
 import './features/writing-studio.js';
