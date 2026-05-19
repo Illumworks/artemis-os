@@ -1,8 +1,62 @@
 /* Dev Projects rebuild */
 .dev-projects-ready .dp-shell {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* v3 port: scroll area anchors to bottom; composer is pinned to the viewport
+   bottom. The empty-state UX is the composer's placeholder copy — no
+   centered watermark, no seed chips, no project-aware empty-state block. */
+.dev-projects-ready .dp-main {
+  position: relative;
+  min-height: 0;
+}
+.dev-projects-ready #messages.dp-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.dev-projects-ready .dp-composer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+}
+
+/* When the right rail is open, inset the main column so the rail can sit at
+   the right edge without overlapping the composer card. */
+.dev-projects-ready .dp-shell.rail-open .dp-main {
+  margin-right: 360px;
+}
+.dev-projects-ready .dp-shell.rail-open .dp-header {
+  margin-right: 360px;
+}
+
+/* v3 top bar: thin and information-dense (~44px tall), sticky to the top of
+   the scroll area. Trims the v2 padding which was 20px 36px 16px. */
+.dev-projects-ready .dp-header {
+  padding: 6px 16px;
+  min-height: 44px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-base, transparent);
+  z-index: 4;
+}
+.dev-projects-ready .dp-project-title {
+  padding: 4px 8px;
+  max-width: none;
+}
+.dev-projects-ready .dp-project-title-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.dev-projects-ready .dp-project-title-row {
+  font-size: 14px;
+}
+.dev-projects-ready .dp-project-title-meta {
+  font-size: 11px;
 }
 
 .dev-project-panel {
@@ -106,71 +160,97 @@
   background: var(--ink-6);
 }
 
-.dev-model-picker {
+/* v3 Top-bar model picker — small button + dropdown matching Claude Desktop. */
+.dp-model-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-/* Provider/Model state is owned by the Session Config tray. Hide the legacy
-   <select>s but keep them in the DOM so syncPickerFromSession still drives state. */
-.dev-model-picker--hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-/* Annotation rail toggle (chat-bubble icon) in chrome — subtle until rail is open */
-.dev-rail-toggle-btn {
-  width: 28px;
-  height: 28px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  height: 30px;
+  padding: 0 10px;
   background: transparent;
-  color: var(--ink-5);
+  border: 1px solid var(--rule, var(--line-2));
+  border-radius: var(--r-full, 999px);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
   transition: background 120ms, border-color 120ms, color 120ms;
 }
-.dev-rail-toggle-btn:hover { background: var(--surface-sunken); color: var(--ink-2); }
-.dev-rail-toggle-btn.active {
+.dp-model-btn:hover { background: var(--surface-sunken); color: var(--ink); }
+.dp-model-btn[aria-expanded="true"] {
   background: var(--surface-sunken);
-  border-color: var(--line-2);
-  color: var(--ink-1);
+  color: var(--ink);
 }
+.dp-model-btn-label {
+  font-family: var(--font-mono, inherit);
+  font-size: 12px;
+  letter-spacing: -0.005em;
+}
+.dp-model-btn-caret { color: var(--ink-4); flex-shrink: 0; }
 
-/* Empty-state suggestion chips */
-.dp-chat-empty-chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 16px;
+.dp-model-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 20px;
+  z-index: 50;
+  min-width: 220px;
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--rule, rgba(0,0,0,0.08));
+  border-radius: var(--r-lg, 12px);
+  padding: 6px;
+  box-shadow: 0 18px 40px -18px rgba(0,0,0,0.22), 0 3px 8px -3px rgba(0,0,0,0.08);
 }
-.dp-chat-empty-chip {
-  border: 1px solid var(--line-2);
-  background: var(--surface-0);
-  color: var(--ink-2);
-  border-radius: 999px;
-  padding: 6px 14px;
+.dp-model-menu.hidden { display: none; }
+.dp-model-menu-group + .dp-model-menu-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule-2, rgba(0,0,0,0.05));
+}
+.dp-model-menu-group-label {
+  font-family: var(--font-mono, inherit);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  padding: 4px 8px;
+}
+.dp-model-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--ink, var(--ink-2));
+  padding: 7px 10px;
+  border-radius: 8px;
   font: inherit;
   font-size: 13px;
   cursor: pointer;
-  transition: background 120ms, border-color 120ms;
 }
-.dp-chat-empty-chip:hover {
+.dp-model-menu-item:hover {
   background: var(--surface-sunken);
-  border-color: var(--ink-5);
 }
 
-.dev-model-picker select,
+/* Right-rail toggle — subtle icon button in the top-bar's icon row. */
+.dev-rail-toggle-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--r-full, 999px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.dev-rail-toggle-btn:hover { background: var(--surface-sunken); color: var(--ink); }
+.dev-rail-toggle-btn.active {
+  background: var(--surface-sunken);
+  border-color: var(--rule, var(--line-2));
+  color: var(--ink);
+}
+
 .dev-url-input,
 .dev-note-input {
   border: 1px solid var(--line-2);
@@ -684,29 +764,40 @@ html[data-theme="dark"] .dev-small-dialog .dev-btn {
   margin-top: 10px;
 }
 
-.dev-annotation-rail {
+/* v3 Right preview rail — slides in from the right when toggle is opened.
+   Width matches Claude Desktop (~360px). Single-session only (parallel mode
+   hides the toggle and prevents opening). */
+.dp-rail {
   position: absolute;
-  inset: 52px 0 0 auto;
-  width: min(420px, 38vw);
-  min-width: 320px;
-  background: var(--surface-0);
-  border-left: 1px solid var(--line-2);
-  box-shadow: -12px 0 30px rgba(0, 0, 0, 0.08);
-  display: none;
-  grid-template-rows: auto auto minmax(180px, 1fr) auto auto minmax(120px, 0.7fr);
+  top: 0; right: 0; bottom: 0;
+  width: 360px;
+  background: var(--surface-raised, var(--surface-0));
+  border-left: 1px solid var(--rule, var(--line-2));
+  box-shadow: -12px 0 30px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  padding: 12px;
+  padding: 14px 16px;
   z-index: 5;
+  transform: translateX(100%);
+  transition: transform 180ms cubic-bezier(.22,.9,.3,1.08);
 }
 
-.rail-open .dev-annotation-rail {
-  display: grid;
+.rail-open .dp-rail {
+  transform: translateX(0);
 }
 
-.dev-rail-header {
+.dp-rail-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.dp-rail-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink, var(--ink-1));
+  letter-spacing: -0.005em;
 }
 
 .dev-icon-btn {
@@ -715,22 +806,67 @@ html[data-theme="dark"] .dev-small-dialog .dev-btn {
   color: var(--ink-4);
   cursor: pointer;
   font: inherit;
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+}
+.dev-icon-btn:hover { background: var(--surface-sunken); color: var(--ink); }
+
+.dp-rail-body {
+  flex: 1;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.dp-rail-body[data-empty="true"] {
+  align-content: center;
+  justify-items: center;
 }
 
-.dev-preview-wrap {
+.dp-rail-empty {
+  color: var(--ink-4);
+  font-size: 12.5px;
+  text-align: center;
+  max-width: 240px;
+  line-height: 1.55;
+  padding: 24px 8px;
+}
+
+.dp-rail-tools {
+  display: grid;
+  gap: 8px;
+}
+.dp-rail-tools[hidden] { display: none; }
+
+.dp-rail-url {
+  border: 1px solid var(--rule, var(--line-2));
+  background: var(--surface-0);
+  color: var(--ink-1);
+  border-radius: 7px;
+  min-height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.dp-rail-preview {
   position: relative;
-  min-height: 180px;
+  min-height: 160px;
 }
 
-.dev-preview-frame {
+.dp-rail-frame {
   width: 100%;
   height: 100%;
-  border: 1px solid var(--line-2);
+  min-height: 160px;
+  border: 1px solid var(--rule, var(--line-2));
   border-radius: 8px;
   background: #fff;
 }
 
-.dev-target-overlay {
+.dp-rail-target-overlay {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -745,33 +881,41 @@ html[data-theme="dark"] .dev-small-dialog .dev-btn {
   font: inherit;
   font-weight: 650;
 }
+.dp-rail-target-overlay.hidden { display: none; }
 
-.dev-target-overlay.hidden {
-  display: none;
-}
-
-.dev-note-input {
+.dp-rail-note {
   padding: 8px;
   resize: vertical;
+  border: 1px solid var(--rule, var(--line-2));
+  background: var(--surface-0);
+  color: var(--ink-1);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
 }
 
-.dev-annotation-list {
-  overflow: auto;
-  display: grid;
-  gap: 8px;
+.dp-rail-tool-row {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .dev-annotation-item {
   display: grid;
   gap: 3px;
-  padding: 8px;
-  border: 1px solid var(--line-2);
+  padding: 8px 10px;
+  border: 1px solid var(--rule, var(--line-2));
   border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
 }
-
+.dev-annotation-item:hover {
+  background: var(--surface-sunken);
+}
 .dev-annotation-item span {
-  color: var(--ink-5);
-  font-size: 12px;
+  color: var(--ink-4);
+  font-size: 11.5px;
 }
 
 .dev-parallel-grid {

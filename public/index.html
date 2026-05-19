@@ -314,36 +314,12 @@
             </div>
 
             <div class="dp-header-actions">
-              <!-- Parallel segmented control -->
-              <div class="dp-parallel-seg" role="radiogroup" aria-label="Run in parallel">
-                <span class="dp-parallel-seg-label">Run in parallel</span>
-                <div class="dp-parallel-seg-track">
-                  <button type="button" role="radio" aria-checked="true" class="dp-parallel-seg-btn active" data-parallel="1" title="Single">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                  <button type="button" role="radio" aria-checked="false" class="dp-parallel-seg-btn" data-parallel="2" title="Pair">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="5.25" height="12" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="1" width="5.25" height="12" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                  <button type="button" role="radio" aria-checked="false" class="dp-parallel-seg-btn" data-parallel="3" title="Trio">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="5.25" height="12" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="1" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="7.75" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                  <button type="button" role="radio" aria-checked="false" class="dp-parallel-seg-btn" data-parallel="4" title="Quad">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="1" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="1" y="7.75" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="7.75" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                </div>
-              </div>
-
-              <!-- CLAUDE.md editor button -->
-              <button type="button" class="dp-cfg-btn" id="claude-md-btn" title="Edit CLAUDE.md">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                  <polyline points="10 9 9 9 8 9"/>
-                </svg>
-                <span class="dp-cfg-btn-label">CLAUDE.md</span>
+              <!-- Model picker button (v3 port — replaces hidden <select>s) -->
+              <button type="button" class="dp-model-btn" id="dev-model-btn" title="Model" aria-haspopup="menu" aria-expanded="false">
+                <span class="dp-model-btn-label" id="dev-model-btn-label">Opus 4.7</span>
+                <svg class="dp-model-btn-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
+              <div class="dp-model-menu hidden" id="dev-model-menu" role="menu"></div>
 
               <!-- Session Config button -->
               <button type="button" class="dp-cfg-btn" id="header-project-pill-btn" title="Session Config">
@@ -370,16 +346,8 @@
 
           <!-- Chat main area -->
           <main class="dp-main">
-            <!-- Empty state: centered mark + prompt -->
-            <div class="dp-chat-empty" id="dp-chat-empty">
-              <div class="dp-chat-empty-center">
-                <img src="/icons/artemis-mark.png" alt="Artemis" class="dp-chat-mark"/>
-                <div class="dp-chat-empty-sub dp-chat-empty-sub--state">Start a conversation, or pick up where you left off.</div>
-              </div>
-            </div>
-
-            <!-- Messages (populated when session active) -->
-            <div id="messages" class="messages dp-chat-scroll hidden"></div>
+            <!-- Messages scroll area — empty state is the composer's placeholder. -->
+            <div id="messages" class="messages dp-chat-scroll"></div>
 
             <!-- Image preview strip -->
             <div id="image-preview-strip" class="image-preview-strip hidden"></div>
@@ -392,7 +360,7 @@
 
             <!-- Composer -->
             <div class="dp-composer" id="dp-composer">
-              <textarea id="message-input" class="dp-composer-input" rows="1" placeholder="Ask a question, plan a task, or start a repo change..."></textarea>
+              <textarea id="message-input" class="dp-composer-input" rows="1" placeholder="Ask a question, plan a task, or start a repo change…"></textarea>
               <div class="dp-composer-bar">
                 <div class="dp-composer-bar-left">
                   <button type="button" class="dp-composer-plus" id="composer-plus-btn" title="Add…" aria-haspopup="menu" aria-expanded="false">
