@@ -3,6 +3,7 @@ import { appendPermission, renderMessages } from "../components/dev-projects-cha
 import { bindComposer } from "../components/dev-projects-composer.js";
 import { renderProjectModal } from "../components/dev-projects-project-modal.js";
 import { renderDevProjectsRail } from "../components/dev-projects-sidebar.js";
+import { setState } from "../core/store.js";
 import { escapeHtml } from "../core/utils.js";
 import { enterParallelMode, exitParallelMode } from "../ui/parallel.js";
 
@@ -242,6 +243,7 @@ async function loadSession(sessionId) {
   state.annotations = data.annotations || [];
   state.expandedProjectIds.add(Number(data.session.project_id));
   localStorage.setItem(STORAGE.activeSession, String(data.session.id));
+  setState("view", "chat");
   renderProjects();
   renderChat(data.messages || []);
   renderRail();
