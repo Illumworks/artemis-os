@@ -7,6 +7,7 @@ All HTTP is done via httpx.AsyncClient; a single Retry-After 429 is honoured.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 
@@ -25,14 +26,30 @@ class SlackClient:
         self._token = token
 
     async def _post(self, method: str, **kwargs: object) -> dict[str, object]:
-        headers = {"Authorization": f"Bearer {self._token}"}
+        # Slack's Web API requires application/x-www-form-urlencoded for many
+        # read-style endpoints (e.g. conversations.info, users.info). JSON
+        # bodies silently fail with "missing required field" / invalid_arguments
+        # on those methods. Form-encoding works universally; non-scalar values
+        # (lists/dicts like ``blocks``) must be JSON-stringified per Slack docs.
+        form: dict[str, str] = {}
+        for k, v in kwargs.items():
+            if isinstance(v, (list, dict)):
+                form[k] = json.dumps(v)
+            elif isinstance(v, bool):
+                form[k] = "true" if v else "false"
+            else:
+                form[k] = str(v)
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        }
         url = f"{_SLACK_API_BASE}/{method}"
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(url, headers=headers, json=kwargs)
+            resp = await client.post(url, headers=headers, data=form)
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", "1"))
                 await asyncio.sleep(retry_after)
-                resp = await client.post(url, headers=headers, json=kwargs)
+                resp = await client.post(url, headers=headers, data=form)
             resp.raise_for_status()
         data: dict[str, object] = resp.json()
         if not data.get("ok"):
