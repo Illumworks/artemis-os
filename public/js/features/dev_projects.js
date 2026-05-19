@@ -786,24 +786,56 @@ function openProjectSwitcher(anchor) {
     openContextMenu(anchor, [{ label: "New project…", action: openProjectModal }]);
     return;
   }
-  const items = projects.map((project) => ({
-    label: `${Number(project.id) === Number(state.activeProjectId) ? "● " : "○ "}${project.name}`,
-    action: async () => {
-      state.activeProjectId = Number(project.id);
-      state.expandedProjectIds.add(Number(project.id));
-      const sessions = (state.sessionsByProject.get(Number(project.id)) || []).filter((s) => !s.archived_at);
-      const first = sessions[0];
-      if (first) await loadSession(first.id);
-      else {
-        state.activeSessionId = null;
-        localStorage.removeItem(STORAGE.activeSession);
-        renderProjects();
-        clearChat();
-      }
-    },
-  }));
-  items.push({ label: "New project…", action: openProjectModal });
-  openContextMenu(anchor, items);
+  const root = $("dev-context-root");
+  const rect = anchor.getBoundingClientRect();
+  const width = 320;
+  const left = Math.min(rect.left, window.innerWidth - width - 12);
+  const pickProject = async (project) => {
+    state.activeProjectId = Number(project.id);
+    state.expandedProjectIds.add(Number(project.id));
+    const sessions = (state.sessionsByProject.get(Number(project.id)) || []).filter((s) => !s.archived_at);
+    const first = sessions[0];
+    if (first) await loadSession(first.id);
+    else {
+      state.activeSessionId = null;
+      localStorage.removeItem(STORAGE.activeSession);
+      renderProjects();
+      clearChat();
+    }
+  };
+  const rows = projects.map((project, index) => {
+    const active = Number(project.id) === Number(state.activeProjectId);
+    return `
+      <button type="button" class="dp-proj-row${active ? " is-active" : ""}" data-proj-index="${index}">
+        <span class="dp-proj-row-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+        </span>
+        <span class="dp-proj-row-text">
+          <span class="dp-proj-row-name">${escapeHtml(project.name || "Untitled")}</span>
+          <span class="dp-proj-row-path">${escapeHtml(project.path || "")}</span>
+        </span>
+        ${active ? '<span class="dp-proj-row-dot" aria-label="active"></span>' : ""}
+      </button>`;
+  }).join("");
+  root.innerHTML = `
+    <div class="dev-menu-backdrop" data-close-menu></div>
+    <div class="dev-context-menu dp-proj-switcher" style="left:${left}px;top:${rect.bottom + 4}px;width:${width}px">
+      <div class="dp-proj-rows">${rows}</div>
+      <button type="button" class="dp-proj-new" data-proj-new>+ New project…</button>
+    </div>
+  `;
+  root.querySelector("[data-close-menu]")?.addEventListener("click", () => { root.innerHTML = ""; });
+  root.querySelectorAll("[data-proj-index]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const project = projects[Number(btn.dataset.projIndex)];
+      root.innerHTML = "";
+      await pickProject(project);
+    });
+  });
+  root.querySelector("[data-proj-new]")?.addEventListener("click", () => {
+    root.innerHTML = "";
+    openProjectModal();
+  });
 }
 
 function bindEvents() {

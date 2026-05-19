@@ -41,6 +41,11 @@
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  /* Subtle edge fade: content fades into view at the top of the messages
+     list and fades out just above the composer. Scoped to the inner scroll
+     container so the sticky .dp-header (a sibling) is never masked. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
 }
 .dev-projects-ready .dp-composer {
   position: sticky;
@@ -68,7 +73,7 @@
   min-height: 44px;
   position: sticky;
   top: 0;
-  background: var(--bg-base, transparent);
+  background: transparent;
   z-index: 4;
 }
 .dev-projects-ready .dp-project-title {
@@ -1011,3 +1016,61 @@ body.dp-rail-resizing .dp-rail {
   padding: 12px;
   color: var(--ink-5);
 }
+
+/* ── Rich project switcher popover ─────────────────────────────────── */
+.dp-proj-switcher { padding: 6px; gap: 0; }
+.dp-proj-rows { display: grid; }
+.dp-proj-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.dp-proj-row + .dp-proj-row { border-top: 1px solid var(--line-2, rgba(0,0,0,0.06)); border-radius: 0; }
+.dp-proj-row:first-child { border-top-left-radius: 8px; border-top-right-radius: 8px; }
+.dp-proj-row:last-child { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+.dp-proj-row:hover { background: var(--glass-fill-heavy, rgba(255,255,255,0.55)); }
+.dp-proj-row-icon {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  display: grid; place-items: center;
+  background: var(--surface-sunken, rgba(0,0,0,0.05));
+  color: var(--ink-3, #6b6660);
+}
+.dp-proj-row-text { display: grid; gap: 2px; min-width: 0; }
+.dp-proj-row-name { font-weight: 600; font-size: 13px; color: var(--ink, #1a1a18); line-height: 1.2; }
+.dp-proj-row-path {
+  font-size: 11px; color: var(--ink-4, #8a857d);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left;
+}
+.dp-proj-row-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent, #d4891a);
+  box-shadow: 0 0 0 3px rgba(212,137,26,0.15);
+}
+.dp-proj-new {
+  margin-top: 4px;
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--accent, #d4891a);
+  font: inherit; font-size: 12px; font-weight: 600;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border-top: 1px solid var(--line-2, rgba(0,0,0,0.08));
+}
+.dp-proj-new:hover { background: var(--glass-fill-heavy, rgba(255,255,255,0.55)); }
+html[data-theme="dark"] .dp-proj-row-icon { background: rgba(255,255,255,0.06); color: #d8cdb9; }
+html[data-theme="dark"] .dp-proj-row-name { color: #f2e8d9; }
+html[data-theme="dark"] .dp-proj-row-path { color: #9e958a; }
+html[data-theme="dark"] .dp-proj-row + .dp-proj-row,
+html[data-theme="dark"] .dp-proj-new { border-color: rgba(255,255,255,0.08); }
