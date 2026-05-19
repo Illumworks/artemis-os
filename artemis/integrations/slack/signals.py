@@ -76,22 +76,25 @@ async def _compute(session: AsyncSession) -> dict[str, object]:
     window_start = datetime.now(UTC) - timedelta(hours=_WINDOW_H)
     reply_cutoff = datetime.now(UTC) - timedelta(hours=_REPLY_LAG_H)
 
-    # missedMentions: unrouted inbound rows within 48 h window
+    # missedMentions: unrouted, unresolved inbound rows within 48 h window
+    # J9: also filter resolved_at IS NULL so resolved items disappear from count.
     missed_result = await session.execute(
         select(func.count(SlackInboundMessage.event_id)).where(
             SlackInboundMessage.received_at >= window_start,
             SlackInboundMessage.routed_to_session_id.is_(None),
+            SlackInboundMessage.resolved_at.is_(None),
         )
     )
     missed_mentions: int = missed_result.scalar_one() or 0
 
-    # replyNeededThreads: thread messages older than 4 h and not yet routed
+    # replyNeededThreads: thread messages older than 4 h, not yet routed/resolved
     reply_result = await session.execute(
         select(func.count(SlackInboundMessage.event_id)).where(
             SlackInboundMessage.thread_ts.is_not(None),
             SlackInboundMessage.received_at >= window_start,
             SlackInboundMessage.received_at < reply_cutoff,
             SlackInboundMessage.routed_to_session_id.is_(None),
+            SlackInboundMessage.resolved_at.is_(None),
         )
     )
     reply_needed: int = reply_result.scalar_one() or 0
