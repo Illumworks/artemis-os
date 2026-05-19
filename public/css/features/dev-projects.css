@@ -27,6 +27,16 @@
   display: none !important;
   content: none !important;
 }
+/* v3 port: artemis-design.css attaches a top/bottom fade mask-image to
+   .canvas-scroll (linear-gradient(transparent 0, black 32px, ...)). Inside
+   the Dev Projects shell the .dp-header is sticky to the top of that scroll
+   container, so the 32px top fade cuts straight through the header and
+   reads as a hazy gradient on the top bar. Scoped to .dev-projects-ready
+   so other canvases keep their fade. */
+.chat-area.dev-projects-ready > .canvas-scroll {
+  -webkit-mask-image: none !important;
+          mask-image: none !important;
+}
 .dev-projects-ready #messages.dp-chat-scroll {
   flex: 1;
   overflow-y: auto;

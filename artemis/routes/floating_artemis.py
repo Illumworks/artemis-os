@@ -288,6 +288,17 @@ _ANTHROPIC_PICKER_MODELS = [
 _SUBSCRIPTION_MODEL_LIST = [{"id": "default", "label": "Subscription default", "default": True}]
 _LOCAL_MODEL_LIST = [{"id": "default", "label": "Loaded model", "default": True}]
 
+# Claude Code CLI accepts the same model identifiers as the Anthropic API
+# (forwarded via `claude --model <id>` in claude_code/adapter.py). Expose the
+# same short list as the Anthropic picker so users can pick Opus/Sonnet/Haiku
+# under their Claude Max subscription. Default mirrors _DEFAULT_MODEL in the
+# adapter (claude-sonnet-4-6).
+_CLAUDE_CODE_MODEL_LIST = [
+    {"id": "claude-opus-4-7", "label": "Opus 4.7", "default": False},
+    {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "default": True},
+    {"id": "claude-haiku-4-5", "label": "Haiku 4.5", "default": False},
+]
+
 
 def _build_provider_model_list() -> list[dict[str, Any]]:
     """Build the {providers: [...]} payload consumed by the picker UI.
@@ -322,7 +333,7 @@ def _build_provider_model_list() -> list[dict[str, Any]]:
             "name": "Claude Code CLI",
             "configured": claude_code_configured,
             "subscriptionOrLocal": True,
-            "models": _SUBSCRIPTION_MODEL_LIST,
+            "models": _CLAUDE_CODE_MODEL_LIST,
         },
         {
             "id": "codex",

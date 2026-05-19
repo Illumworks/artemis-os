@@ -17,7 +17,11 @@ const STORAGE = {
 };
 
 const RAIL_MIN = 280;
-const RAIL_MAX = 600;
+// Cap rail at 60% of viewport width (with a 600px floor for narrow displays)
+// so users on wider monitors can drag the preview rail far wider than the
+// previous fixed 600px ceiling. Recomputed on each clamp call so resizing the
+// window stays consistent. Persistence in localStorage is unchanged.
+const railMax = () => Math.max(600, Math.round((typeof window !== "undefined" ? window.innerWidth : 1600) * 0.6));
 const RAIL_DEFAULT = 360;
 
 const state = {
@@ -33,7 +37,7 @@ const state = {
   showArchived: localStorage.getItem(STORAGE.showArchived) === "true",
   sortMode: localStorage.getItem(STORAGE.sortMode) || "recent",
   railOpen: localStorage.getItem(STORAGE.railOpen) === "true",
-  railWidth: Math.min(RAIL_MAX, Math.max(RAIL_MIN, Number(localStorage.getItem(STORAGE.railWidth)) || RAIL_DEFAULT)),
+  railWidth: Math.min(railMax(), Math.max(RAIL_MIN, Number(localStorage.getItem(STORAGE.railWidth)) || RAIL_DEFAULT)),
   providers: [],
   modal: {
     open: false,
@@ -136,6 +140,10 @@ async function loadModels() {
   }
   state.providers = providers.filter((p) => ["claude-code", "codex", "anthropic", "openai", "gemini", "lm-studio"].includes(p.id));
   renderModelMenu();
+  // Reflect persisted Session Config selection (or provider default) in the
+  // composer button label immediately on page load, rather than waiting for
+  // a session to load and overwriting the hardcoded HTML default.
+  syncModelButtonLabel();
 }
 
 function getCurrentProviderId() {
@@ -170,10 +178,16 @@ function renderModelMenu() {
 function syncModelButtonLabel() {
   if (!els.modelBtnLabel) return;
   const provider = getCurrentProviderId();
-  const modelId = state.activeSession?.model || "";
+  // Fall back to the Session Config select / localStorage when no session is
+  // active yet, so the button reflects what the user picked in the cog tray
+  // even before a session exists.
+  let modelId = state.activeSession?.model || "";
+  if (!modelId) {
+    try { modelId = $("model-select")?.value || localStorage.getItem("artemis-model") || ""; } catch { /* noop */ }
+  }
   const providerDef = state.providers.find((p) => p.id === provider);
   const modelDef = providerDef?.models?.find((m) => (m.id === "default" ? "" : (m.id || "")) === modelId);
-  els.modelBtnLabel.textContent = modelDef?.label || providerDef?.models?.[0]?.label || providerDef?.name || "Model";
+  els.modelBtnLabel.textContent = modelDef?.label || providerDef?.models?.find((m) => m.default)?.label || providerDef?.models?.[0]?.label || providerDef?.name || "Model";
 }
 
 function openModelMenu() {
@@ -357,7 +371,7 @@ function applyRailState() {
 
 function applyRailWidth() {
   if (!els.dpShell) return;
-  const w = Math.min(RAIL_MAX, Math.max(RAIL_MIN, state.railWidth || RAIL_DEFAULT));
+  const w = Math.min(railMax(), Math.max(RAIL_MIN, state.railWidth || RAIL_DEFAULT));
   els.dpShell.style.setProperty("--dp-rail-width", `${w}px`);
 }
 
@@ -369,7 +383,7 @@ function bindRailResize() {
   let startW = state.railWidth;
   const onMove = (event) => {
     const dx = startX - event.clientX; // drag left = wider rail
-    const next = Math.min(RAIL_MAX, Math.max(RAIL_MIN, startW + dx));
+    const next = Math.min(railMax(), Math.max(RAIL_MIN, startW + dx));
     state.railWidth = next;
     applyRailWidth();
   };
