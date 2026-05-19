@@ -597,6 +597,20 @@
   align-items: start;
 }
 
+/* Override the .page-canvas col-span cascade so the two-column meetings
+ * layout stays side-by-side at narrower widths (the generic responsive
+ * rule collapses col-span-4/col-span-8 onto their own rows). */
+.meetings-past-canvas > .col-span-4,
+.meetings-past-canvas > .col-span-8 {
+  grid-column: auto;
+}
+
+@media (max-width: 720px) {
+  .meetings-past-canvas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .meetings-past-row {
   cursor: pointer;
   display: grid;

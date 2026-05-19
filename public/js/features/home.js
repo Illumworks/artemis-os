@@ -1283,6 +1283,19 @@ async function loadMeetingsShell() {
     if (granolaConnected) {
       _renderMeetingsPastList(granolaOverview.meetings || [], appShellContent);
     }
+
+    // Auto-select the most recent meeting so the right detail panel has
+    // content on page load. Prefer today's first meeting if any, else the
+    // most recent past meeting from the granola overview.
+    if (granolaConnected) {
+      const todayList = Array.isArray(viewModel.todayMeetings) ? viewModel.todayMeetings : [];
+      const all = Array.isArray(granolaOverview?.meetings) ? granolaOverview.meetings : [];
+      const recentPast = all.slice().sort((a, b) => (b.date_ms || 0) - (a.date_ms || 0))[0];
+      const pick = todayList[0] || recentPast;
+      if (pick && pick.id) {
+        _meetingsRowClick(pick.id, pick.title || '', appShellContent);
+      }
+    }
   } catch (error) {
     if (loadToken !== meetingsLoadToken || normalizeAppView(getState('view')) !== MEETINGS_VIEW) {
       return;
