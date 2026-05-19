@@ -106,9 +106,7 @@ async def find_recently_ended_meetings(
 
     # Fetch already-summarized event IDs so we skip them without hitting Granola.
     existing_result = await session.execute(
-        select(MeetingSummary.gcal_event_id).where(
-            MeetingSummary.gcal_event_id.isnot(None)
-        )
+        select(MeetingSummary.gcal_event_id).where(MeetingSummary.gcal_event_id.isnot(None))
     )
     summarized_gcal_ids: set[str] = {r for (r,) in existing_result.all()}
 
@@ -200,6 +198,7 @@ async def find_granola_match(
 
     # Tiebreak by proximity: pick candidate closest to gcal_end.
     if gcal_end is not None and len(candidates) > 1:
+
         def proximity(pair: tuple[Meeting, str]) -> float:
             m = pair[0]
             if not m.date_ms:
@@ -455,6 +454,16 @@ async def _process_event(
         )
         return
 
+    # Extract plain-text transcript for storage.
+    transcript_text: str | None = None
+    if isinstance(transcript_data, dict):
+        if "transcript" in transcript_data:
+            transcript_text = str(transcript_data["transcript"])
+        elif "notes" in transcript_data:
+            transcript_text = str(transcript_data["notes"])
+    if not transcript_text:
+        transcript_text = None
+
     # Summarize via LLM.
     summary_text, action_items = await _llm_summarize(gcal_title, transcript_data)
 
@@ -488,6 +497,7 @@ async def _process_event(
                 title=gcal_title,
                 summary=summary_text,
                 action_items=action_items,
+                transcript=transcript_text,
                 raw_input_id=raw.id,
                 created_at=datetime.now(UTC),
             )

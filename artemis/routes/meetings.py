@@ -184,8 +184,13 @@ async def get_meeting_summary(
 
     Returns 404 if no summary has been generated yet. The J6c Actions tab
     reads from here first (instant) and falls back to live extraction if missing.
+
+    Lazy backfill: if summary exists but transcript is NULL, fetches the
+    transcript from Granola and persists it so the next call is instant.
+    Idempotent: only fills when transcript IS NULL.
     """
     from sqlalchemy import select as sa_select
+    from sqlalchemy import update as sa_update
 
     from artemis.meetings.models import MeetingSummary
 
@@ -194,12 +199,35 @@ async def get_meeting_summary(
     )
     row = result.scalar_one_or_none()
     if row is None:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=404,
             detail={"error": "summary_not_found", "granola_id": granola_id},
         )
+
+    # Lazy backfill: fetch transcript from Granola when NULL.
+    if row.transcript is None:
+        granola = await _get_granola_client(session)
+        if granola is not None:
+            try:
+                detail = await granola.get_meeting(granola_id)
+                if detail:
+                    transcript_text: str | None = None
+                    if "transcript" in detail:
+                        transcript_text = str(detail["transcript"])
+                    elif "notes" in detail:
+                        transcript_text = str(detail["notes"])
+                    if transcript_text:
+                        await session.execute(
+                            sa_update(MeetingSummary)
+                            .where(MeetingSummary.granola_id == granola_id)
+                            .values(transcript=transcript_text)
+                        )
+                        await session.commit()
+                        row.transcript = transcript_text
+            except Exception:
+                logger.warning(
+                    "Lazy transcript backfill failed for granola_id=%s", granola_id, exc_info=True
+                )
 
     return {
         "granola_id": row.granola_id,
@@ -207,6 +235,7 @@ async def get_meeting_summary(
         "title": row.title,
         "summary": row.summary,
         "action_items": row.action_items or [],
+        "transcript": row.transcript,
         "raw_input_id": row.raw_input_id,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
@@ -317,7 +346,9 @@ async def route_action_to_jira(
     try:
         jira_cfg = await resolve_jira_config(session)
     except MissingProviderConfigError as exc:
-        raise HTTPException(status_code=503, detail={"error": str(exc), "code": "jira_not_configured"}) from exc
+        raise HTTPException(
+            status_code=503, detail={"error": str(exc), "code": "jira_not_configured"}
+        ) from exc
 
     client = JiraClient(
         site_url=jira_cfg.site_url,
@@ -348,7 +379,9 @@ async def route_action_to_jira(
             description=description,
         )
     except JiraAPIError as exc:
-        raise HTTPException(status_code=502, detail={"error": str(exc), "code": "jira_error"}) from exc
+        raise HTTPException(
+            status_code=502, detail={"error": str(exc), "code": "jira_error"}
+        ) from exc
 
     issue_key = result["key"]
     issue_url = f"{jira_cfg.site_url.rstrip('/')}/browse/{issue_key}"
@@ -443,17 +476,24 @@ async def route_action_to_slack(
     # Resolve Slack token from active integration row
     rows = await repo.list_active(session, provider="slack")
     if not rows:
-        raise HTTPException(status_code=503, detail={"error": "Slack not connected", "code": "slack_not_connected"})
+        raise HTTPException(
+            status_code=503, detail={"error": "Slack not connected", "code": "slack_not_connected"}
+        )
 
     integration = rows[0]
     try:
         creds = decrypt_credentials(bytes(integration.encrypted_credentials))
     except Exception as exc:
-        raise HTTPException(status_code=503, detail={"error": "Cannot decrypt Slack credentials"}) from exc
+        raise HTTPException(
+            status_code=503, detail={"error": "Cannot decrypt Slack credentials"}
+        ) from exc
 
     token = str(creds.get("access_token", ""))
     if not token:
-        raise HTTPException(status_code=503, detail={"error": "No Slack access_token", "code": "slack_not_configured"})
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "No Slack access_token", "code": "slack_not_configured"},
+        )
 
     from artemis.integrations.slack.client import SlackAPIError, SlackClient
 
@@ -470,7 +510,9 @@ async def route_action_to_slack(
     if not authed_user:
         channel = str(creds.get("incoming_webhook_channel_id", ""))
         if not channel:
-            raise HTTPException(status_code=503, detail={"error": "Cannot determine Slack recipient"})
+            raise HTTPException(
+                status_code=503, detail={"error": "Cannot determine Slack recipient"}
+            )
     else:
         channel = authed_user
 
@@ -487,7 +529,9 @@ async def route_action_to_slack(
     try:
         await client.post_message(channel=channel, text=text_msg)
     except SlackAPIError as exc:
-        raise HTTPException(status_code=502, detail={"error": str(exc), "code": "slack_error"}) from exc
+        raise HTTPException(
+            status_code=502, detail={"error": str(exc), "code": "slack_error"}
+        ) from exc
 
     await _insert_routing(
         session,
@@ -612,7 +656,9 @@ async def ask_about_meeting(
         response = await adapter.complete(request)
     except Exception as exc:
         logger.warning("ask_about_meeting LLM error: %s", exc)
-        raise HTTPException(status_code=502, detail={"error": "LLM call failed", "detail": str(exc)}) from exc
+        raise HTTPException(
+            status_code=502, detail={"error": "LLM call failed", "detail": str(exc)}
+        ) from exc
 
     # Extract text from response
     answer_text = ""
@@ -670,9 +716,7 @@ async def list_todos(
     """Return personal todos, newest first."""
     base = "SELECT id, text, source, done, created_at FROM personal_todos"
     where = "" if include_done else " WHERE done = false"
-    result = await session.execute(
-        text(base + where + " ORDER BY created_at DESC")
-    )
+    result = await session.execute(text(base + where + " ORDER BY created_at DESC"))
     rows = result.fetchall()
     return {
         "todos": [

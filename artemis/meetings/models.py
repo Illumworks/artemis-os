@@ -27,6 +27,7 @@ class MeetingSummary(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     action_items: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_input_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
