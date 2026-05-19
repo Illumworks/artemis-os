@@ -3,9 +3,8 @@ import { appendPermission, renderMessages } from "../components/dev-projects-cha
 import { bindComposer } from "../components/dev-projects-composer.js";
 import { renderProjectModal } from "../components/dev-projects-project-modal.js";
 import { renderDevProjectsRail } from "../components/dev-projects-sidebar.js";
-import { setState } from "../core/store.js";
+import { getState, setState, on as onStore } from "../core/store.js";
 import { escapeHtml } from "../core/utils.js";
-import { enterParallelMode, exitParallelMode } from "../ui/parallel.js";
 
 const API = "/api/dev-projects";
 const STORAGE = {
@@ -13,6 +12,7 @@ const STORAGE = {
   expanded: "artemis.devProjects.expandedProjects",
   showArchived: "artemis.devProjects.showArchived",
   sortMode: "artemis.devProjects.sortMode",
+  railOpen: "artemis.devProjects.railOpen",
 };
 
 const state = {
@@ -25,9 +25,10 @@ const state = {
   activeSession: null,
   annotations: [],
   ws: null,
-  suppressPickerSave: false,
   showArchived: localStorage.getItem(STORAGE.showArchived) === "true",
   sortMode: localStorage.getItem(STORAGE.sortMode) || "recent",
+  railOpen: localStorage.getItem(STORAGE.railOpen) === "true",
+  providers: [],
   modal: {
     open: false,
     currentPath: "",
@@ -66,7 +67,6 @@ function $(id) {
 
 function ensureShell() {
   els.messages = $("messages");
-  els.empty = $("dp-chat-empty");
   els.input = $("message-input");
   els.send = $("send-btn");
   els.sessionList = $("session-list");
@@ -79,6 +79,9 @@ function ensureShell() {
   els.dpShell = document.querySelector(".dp-shell");
   els.rail = document.querySelector(".rail-dev-friendly");
   els.projectTitleBtn = $("header-project-title-btn");
+  els.modelBtn = $("dev-model-btn");
+  els.modelBtnLabel = $("dev-model-btn-label");
+  els.modelMenu = $("dev-model-menu");
 
   if (!els.dpShell || $("dev-project-panel")) return Boolean(els.dpShell);
 
@@ -102,26 +105,16 @@ function ensureShell() {
   `;
   els.rail?.prepend(panel);
 
-  // Provider/Model state is owned by the Session Config tray (right side cog).
-  // We keep hidden <select>s for legacy code paths (loadModels/syncPickerFromSession)
-  // but no longer render a visible duplicate next to Session Config.
-  const modelPicker = document.createElement("div");
-  modelPicker.className = "dev-model-picker dev-model-picker--hidden";
-  modelPicker.innerHTML = `
-    <select id="dev-provider-select" title="Provider" aria-hidden="true" tabindex="-1"></select>
-    <select id="dev-model-select" title="Model" aria-hidden="true" tabindex="-1"></select>
-  `;
-  els.headerActions?.prepend(modelPicker);
-
-  // Annotation rail toggle lives alongside Session Config / bell so users can
-  // open the on-demand preview rail. Hidden until a session is loaded.
+  // Right-rail toggle: lives alongside Session Config / bell so users can
+  // open the on-demand preview rail. Hidden in parallel mode (single-session
+  // only, per spec). Hidden until a session is loaded.
   const railToggle = document.createElement("button");
   railToggle.type = "button";
   railToggle.className = "dp-icon-btn dev-rail-toggle-btn hidden";
   railToggle.id = "dev-rail-toggle";
-  railToggle.title = "Annotations";
-  railToggle.setAttribute("aria-label", "Annotations");
-  railToggle.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>`;
+  railToggle.title = "Preview rail";
+  railToggle.setAttribute("aria-label", "Preview rail");
+  railToggle.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>`;
   els.headerActions?.appendChild(railToggle);
 
   els.dpShell.insertAdjacentHTML("beforeend", railMarkup());
@@ -131,39 +124,64 @@ function ensureShell() {
 
 async function loadModels() {
   const data = await fetch("/api/floating-artemis/models").then((res) => res.json());
-  const providerSelect = $("dev-provider-select");
-  const modelSelect = $("dev-model-select");
-  if (!providerSelect || !modelSelect) return;
   const providers = [...(data.providers || [])];
   if (!providers.some((provider) => provider.id === "openai")) {
     providers.push({ id: "openai", name: "OpenAI API", models: [{ id: "", label: "Default" }] });
   }
-  providerSelect.innerHTML = providers
-    .filter((p) => ["claude-code", "codex", "anthropic", "openai", "gemini", "lm-studio"].includes(p.id))
-    .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`)
-    .join("");
-  const syncModels = () => {
-    const provider = providers.find((p) => p.id === providerSelect.value);
-    modelSelect.innerHTML = (provider?.models || [{ id: "", label: "Default" }])
-      .map((m) => `<option value="${escapeHtml(m.id === "default" ? "" : m.id)}">${escapeHtml(m.label || m.id || "Default")}</option>`)
-      .join("");
-  };
-  providerSelect.addEventListener("change", async () => {
-    syncModels();
-    await saveSessionModel();
-  });
-  modelSelect.addEventListener("change", saveSessionModel);
-  syncModels();
+  state.providers = providers.filter((p) => ["claude-code", "codex", "anthropic", "openai", "gemini", "lm-studio"].includes(p.id));
+  renderModelMenu();
 }
 
-async function saveSessionModel() {
-  if (state.suppressPickerSave || !state.activeSessionId) return;
-  const provider = $("dev-provider-select")?.value || "claude-code";
-  const model = $("dev-model-select")?.value || null;
+function renderModelMenu() {
+  if (!els.modelMenu) return;
+  const html = state.providers.map((provider) => {
+    const models = provider.models?.length ? provider.models : [{ id: "", label: "Default" }];
+    const items = models.map((m) => {
+      const modelId = m.id === "default" ? "" : (m.id || "");
+      const label = escapeHtml(m.label || m.id || "Default");
+      return `<button type="button" class="dp-model-menu-item" role="menuitem" data-provider="${escapeHtml(provider.id)}" data-model="${escapeHtml(modelId)}">${label}</button>`;
+    }).join("");
+    return `<div class="dp-model-menu-group"><div class="dp-model-menu-group-label">${escapeHtml(provider.name || provider.id)}</div>${items}</div>`;
+  }).join("");
+  els.modelMenu.innerHTML = html;
+}
+
+function syncModelButtonLabel() {
+  if (!els.modelBtnLabel) return;
+  const provider = state.activeSession?.provider || "claude-code";
+  const modelId = state.activeSession?.model || "";
+  const providerDef = state.providers.find((p) => p.id === provider);
+  const modelDef = providerDef?.models?.find((m) => (m.id === "default" ? "" : (m.id || "")) === modelId);
+  els.modelBtnLabel.textContent = modelDef?.label || providerDef?.name || "Model";
+}
+
+function openModelMenu() {
+  if (!els.modelMenu || !els.modelBtn) return;
+  if (!state.providers.length) return;
+  els.modelMenu.classList.remove("hidden");
+  els.modelBtn.setAttribute("aria-expanded", "true");
+}
+
+function closeModelMenu() {
+  els.modelMenu?.classList.add("hidden");
+  els.modelBtn?.setAttribute("aria-expanded", "false");
+}
+
+async function selectModel(provider, model) {
+  closeModelMenu();
+  if (!state.activeSessionId) {
+    // No active session yet — stash defaults via the project, so the next
+    // session created via the composer picks them up.
+    state.activeSession = { ...(state.activeSession || {}), provider, model };
+    syncModelButtonLabel();
+    await saveProjectModelDefault(provider, model);
+    return;
+  }
   state.activeSession = await request(`/sessions/${state.activeSessionId}`, {
     method: "PATCH",
     body: JSON.stringify({ provider, model }),
   });
+  syncModelButtonLabel();
   await saveProjectModelDefault(provider, model);
 }
 
@@ -188,7 +206,7 @@ async function loadProjects() {
   restoreActivePointers();
   renderProjects();
   if (state.activeSessionId) await loadSession(state.activeSessionId);
-  else renderEmptyChat();
+  else clearChat();
 }
 
 function restoreActivePointers() {
@@ -253,83 +271,72 @@ async function loadSession(sessionId) {
   state.activeProjectId = data.session.project_id;
   state.activeSession = data.session;
   state.annotations = data.annotations || [];
-  state.dpShellRailAutoOpened = false;
-  els.dpShell?.classList.remove("rail-open");
-  $("dev-rail-toggle")?.classList.remove("active");
   state.expandedProjectIds.add(Number(data.session.project_id));
   localStorage.setItem(STORAGE.activeSession, String(data.session.id));
   setState("view", "chat");
   renderProjects();
   renderChat(data.messages || []);
   renderRail();
-  syncPickerFromSession();
+  applyRailState();
+  syncModelButtonLabel();
   connectWs(data.session.id);
 }
 
-function renderEmptyChat() {
-  syncEmptyStateForProject();
-  els.messages?.classList.add("hidden");
-  els.empty?.classList.remove("hidden");
-}
-
-function syncEmptyStateForProject() {
-  const sub = els.empty?.querySelector(".dp-chat-empty-sub--state");
-  if (!sub) return;
-  const project = getActiveProject();
-  sub.textContent = project
-    ? `Ask anything about ${project.name}, or pick up where you left off.`
-    : "Start a conversation, or pick up where you left off.";
-  // Render suggestion chips once
-  const center = els.empty.querySelector(".dp-chat-empty-center");
-  if (center && !center.querySelector(".dp-chat-empty-chips")) {
-    const chips = document.createElement("div");
-    chips.className = "dp-chat-empty-chips";
-    chips.innerHTML = [
-      "Plan a feature",
-      "Debug an error",
-      "Review the codebase",
-    ].map((label) => `<button type="button" class="dp-chat-empty-chip" data-seed-prompt="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join("");
-    center.appendChild(chips);
-  }
+function clearChat() {
+  // v3 port: no empty-state block. The composer placeholder is the empty-state
+  // UX. The scroll area just stays empty.
+  if (els.messages) els.messages.innerHTML = "";
 }
 
 function renderChat(messages) {
+  if (!els.messages) return;
   if (!messages || messages.length === 0) {
-    if (els.messages) els.messages.innerHTML = "";
-    renderEmptyChat();
+    els.messages.innerHTML = "";
     return;
   }
-  els.empty?.classList.add("hidden");
-  els.messages?.classList.remove("hidden");
-  if (els.messages) {
-    els.messages.innerHTML = renderMessages(messages);
-    els.messages.scrollTop = els.messages.scrollHeight;
-    window.hljs?.highlightAll?.();
-    window.mermaid?.run?.({ querySelector: ".language-mermaid" }).catch?.(() => {});
-  }
+  els.messages.innerHTML = renderMessages(messages);
+  scrollToBottom();
+  window.hljs?.highlightAll?.();
+  window.mermaid?.run?.({ querySelector: ".language-mermaid" }).catch?.(() => {});
+}
+
+function scrollToBottom() {
+  if (!els.messages) return;
+  els.messages.scrollTop = els.messages.scrollHeight;
 }
 
 function renderRail() {
   const list = $("dev-annotation-list");
-  if (list) list.innerHTML = renderAnnotations(state.annotations);
-  const toggle = $("dev-rail-toggle");
-  toggle?.classList.remove("hidden");
-  if (state.annotations.length > 0 && !state.dpShellRailAutoOpened) {
-    state.dpShellRailAutoOpened = true;
-    els.dpShell?.classList.add("rail-open");
-    toggle?.classList.add("active");
+  if (list) {
+    list.innerHTML = renderAnnotations(state.annotations);
+    list.dataset.empty = state.annotations.length === 0 ? "true" : "false";
+  }
+  const tools = $("dev-rail-tools");
+  if (tools) tools.hidden = state.annotations.length === 0;
+  // The rail toggle is only available in single-session mode. Parallel mode
+  // replaces .dp-main wholesale, so the toggle stays hidden until exit.
+  if (!getState("parallelMode")) {
+    $("dev-rail-toggle")?.classList.remove("hidden");
+  } else {
+    $("dev-rail-toggle")?.classList.add("hidden");
   }
 }
 
-function syncPickerFromSession() {
-  const providerSelect = $("dev-provider-select");
-  const modelSelect = $("dev-model-select");
-  if (!state.activeSession || !providerSelect || !modelSelect) return;
-  state.suppressPickerSave = true;
-  providerSelect.value = state.activeSession.provider || "claude-code";
-  providerSelect.dispatchEvent(new Event("change"));
-  if (state.activeSession.model) modelSelect.value = state.activeSession.model;
-  state.suppressPickerSave = false;
+function applyRailState() {
+  const toggle = $("dev-rail-toggle");
+  if (state.railOpen) {
+    els.dpShell?.classList.add("rail-open");
+    toggle?.classList.add("active");
+  } else {
+    els.dpShell?.classList.remove("rail-open");
+    toggle?.classList.remove("active");
+  }
+}
+
+function setRailOpen(open) {
+  state.railOpen = open;
+  localStorage.setItem(STORAGE.railOpen, String(open));
+  applyRailState();
 }
 
 function connectWs(sessionId) {
@@ -339,30 +346,25 @@ function connectWs(sessionId) {
   state.ws.onmessage = (event) => handleWs(JSON.parse(event.data));
 }
 
-function revealMessagesArea() {
-  if (els.empty && !els.empty.classList.contains("hidden")) els.empty.classList.add("hidden");
-  if (els.messages?.classList.contains("hidden")) els.messages.classList.remove("hidden");
-}
-
 function handleWs(event) {
   if (event.type === "dev_projects.message" || event.type === "dev_projects.message_complete") {
     if (event.message) {
-      revealMessagesArea();
       els.messages?.insertAdjacentHTML("beforeend", renderMessages([event.message]));
-      els.messages.scrollTop = els.messages.scrollHeight;
+      scrollToBottom();
       window.hljs?.highlightAll?.();
     }
   } else if (event.type === "dev_projects.token") {
-    revealMessagesArea();
     ensureStreamingBubble().querySelector(".dev-message-text").textContent += event.token || "";
-    els.messages.scrollTop = els.messages.scrollHeight;
+    scrollToBottom();
   } else if (event.type === "dev_projects.permission_required") {
-    revealMessagesArea();
     appendPermission(els.messages, event);
   } else if (event.type === "dev_projects.annotation") {
     state.annotations.unshift(event.annotation);
-    state.dpShellRailAutoOpened = true;
-    els.dpShell?.classList.add("rail-open");
+    // Auto-open the rail when an annotation is created (per spec: only on
+    // explicit user actions or annotation creation, not every render).
+    if (!getState("parallelMode")) {
+      setRailOpen(true);
+    }
     renderRail();
   } else if (event.type === "dev_projects.session_updated" && event.session) {
     upsertSession(event.session);
@@ -411,8 +413,8 @@ async function createSession(projectId = state.activeProjectId) {
   if (!projectId) return;
   const project = state.projects.find((item) => Number(item.id) === Number(projectId));
   const defaults = project?.metadata || {};
-  const provider = $("dev-provider-select")?.value || defaults.default_provider || "claude-code";
-  const model = $("dev-model-select")?.value || defaults.default_model || null;
+  const provider = state.activeSession?.provider || defaults.default_provider || "claude-code";
+  const model = state.activeSession?.model || defaults.default_model || null;
   const session = await request(`/projects/${projectId}/sessions`, {
     method: "POST",
     body: JSON.stringify({ provider, model, title: "New session" }),
@@ -629,7 +631,7 @@ function openSessionMenu(anchor, sessionId) {
       if (Number(state.activeSessionId) === Number(session.id)) {
         state.activeSessionId = null;
         localStorage.removeItem(STORAGE.activeSession);
-        renderEmptyChat();
+        clearChat();
       }
       await refreshProjectSessions(session.project_id);
     } },
@@ -724,7 +726,7 @@ function openProjectSwitcher(anchor) {
         state.activeSessionId = null;
         localStorage.removeItem(STORAGE.activeSession);
         renderProjects();
-        renderEmptyChat();
+        clearChat();
       }
     },
   }));
@@ -735,11 +737,13 @@ function openProjectSwitcher(anchor) {
 function bindEvents() {
   bindComposer(els.input, els.send, sendCurrent);
 
+  // Project breadcrumb opens the v3 switcher. Use capture + stopImmediatePropagation
+  // so the legacy projects.js click handler on the same element can't double-fire.
   els.projectTitleBtn?.addEventListener("click", (event) => {
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     openProjectSwitcher(els.projectTitleBtn);
-  });
+  }, true);
 
   document.addEventListener("click", async (event) => {
     const target = event.target;
@@ -879,22 +883,28 @@ function bindEvents() {
   });
 
   $("dev-rail-toggle")?.addEventListener("click", () => {
-    const open = els.dpShell.classList.toggle("rail-open");
-    $("dev-rail-toggle")?.classList.toggle("active", open);
+    if (getState("parallelMode")) return; // gate: single-session only
+    setRailOpen(!state.railOpen);
   });
-  $("dev-rail-close")?.addEventListener("click", () => {
-    els.dpShell.classList.remove("rail-open");
-    $("dev-rail-toggle")?.classList.remove("active");
+  $("dev-rail-close")?.addEventListener("click", () => setRailOpen(false));
+
+  // Model picker — open/close menu and apply selection
+  els.modelBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (els.modelMenu?.classList.contains("hidden")) openModelMenu();
+    else closeModelMenu();
+  });
+  els.modelMenu?.addEventListener("click", async (event) => {
+    const item = event.target.closest?.("[data-provider]");
+    if (!item) return;
+    await selectModel(item.dataset.provider, item.dataset.model || null);
+  });
+  document.addEventListener("click", (event) => {
+    if (!els.modelMenu || els.modelMenu.classList.contains("hidden")) return;
+    if (els.modelMenu.contains(event.target) || els.modelBtn?.contains(event.target)) return;
+    closeModelMenu();
   });
 
-  // Seed-prompt chips on the empty state
-  els.empty?.addEventListener("click", (event) => {
-    const chip = event.target.closest?.("[data-seed-prompt]");
-    if (!chip || !els.input) return;
-    els.input.value = chip.dataset.seedPrompt;
-    els.input.focus();
-    els.input.dispatchEvent(new Event("input"));
-  });
   $("dev-rail-url")?.addEventListener("change", (event) => { $("dev-preview-frame").src = event.target.value; });
   $("dev-note-send")?.addEventListener("click", sendAnnotation);
   $("dev-target-pick")?.addEventListener("click", () => $("dev-target-overlay")?.classList.remove("hidden"));
@@ -905,10 +915,6 @@ function bindEvents() {
     $("dev-rail-url").value = item.dataset.url || "";
     $("dev-preview-frame").src = item.dataset.url || "about:blank";
     $("dev-note-input").value = item.dataset.note || "";
-  });
-
-  document.querySelectorAll(".dp-parallel-seg-btn").forEach((btn) => {
-    btn.addEventListener("click", () => enterDevParallel(Number(btn.dataset.parallel || 1)));
   });
 }
 
@@ -944,24 +950,23 @@ function pickPreviewTarget(event) {
   els.input.dispatchEvent(new Event("input"));
 }
 
-async function enterDevParallel(count) {
-  document.querySelectorAll(".dp-parallel-seg-btn").forEach((btn) => {
-    const active = Number(btn.dataset.parallel) === count;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-checked", String(active));
-  });
-  if (count === 1) {
-    exitParallelMode();
-    await loadProjects();
-    return;
-  }
-  await enterParallelMode(count);
-}
-
 export async function bootDevProjects() {
   if (!ensureShell()) return;
   await loadModels();
   bindEvents();
+  // Re-sync rail toggle visibility on parallel-mode transitions. In parallel
+  // mode the rail can't be opened (single-session-only per spec).
+  onStore("parallelMode", (isParallel) => {
+    const toggle = $("dev-rail-toggle");
+    if (isParallel) {
+      toggle?.classList.add("hidden");
+      // Close the rail since dp-main was replaced and the toggle is hidden.
+      els.dpShell?.classList.remove("rail-open");
+    } else if (state.activeSessionId) {
+      toggle?.classList.remove("hidden");
+      applyRailState();
+    }
+  });
   await loadProjects();
 }
 
