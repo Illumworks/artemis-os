@@ -43,6 +43,7 @@ class DevSession(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False, default="claude-code")
     model: Mapped[str | None] = mapped_column(Text)
     bypass_permissions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     notes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, server_default="[]")
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
