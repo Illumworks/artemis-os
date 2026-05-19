@@ -15,6 +15,12 @@ _KNOWN_PROVIDERS = frozenset(
     {"slack", "gcal", "gmail", "jira", "granola", "anthropic", "openai", "gemini"}
 )
 
+# Status string constants. The `status` column is free-form Text — no enum
+# migration is required — but referencing these constants prevents typos.
+STATUS_ACTIVE = "active"
+STATUS_NEEDS_REAUTH = "needs_reauth"
+STATUS_REVOKED = "revoked"
+
 
 class Integration(Base):
     __tablename__ = "integrations"
@@ -31,6 +37,7 @@ class Integration(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
     last_verified_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_refresh_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="'active'")
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="'{}'::jsonb"

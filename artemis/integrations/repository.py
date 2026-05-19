@@ -129,6 +129,55 @@ async def mark_verified(session: AsyncSession, integration_id: int) -> None:
     )
 
 
+# ── Token-refresh persistence (J10e) ──────────────────────────────────────────
+
+
+async def persist_refreshed_credentials(
+    session: AsyncSession,
+    *,
+    integration_id: int,
+    new_creds: dict[str, object],
+) -> None:
+    """Re-encrypt new_creds and update the row's credentials + verification stamps.
+
+    Caller owns commit. Used after a successful proactive token refresh.
+    """
+    from artemis.integrations.crypto import encrypt_credentials
+
+    encrypted = encrypt_credentials(new_creds)
+    now = datetime.now(UTC)
+    await session.execute(
+        update(Integration)
+        .where(Integration.id == integration_id)
+        .values(
+            encrypted_credentials=encrypted,
+            last_verified_at=now,
+            last_refresh_attempt_at=now,
+        )
+    )
+
+
+async def mark_needs_reauth(session: AsyncSession, integration_id: int) -> None:
+    """Mark the integration as needing user reauth; leave creds untouched."""
+    await session.execute(
+        update(Integration)
+        .where(Integration.id == integration_id)
+        .values(status="needs_reauth", last_refresh_attempt_at=datetime.now(UTC))
+    )
+
+
+async def mark_refresh_attempted(session: AsyncSession, integration_id: int) -> None:
+    """Bump last_refresh_attempt_at without touching status or creds.
+
+    Used on transient failure to ensure the cooldown guard triggers next tick.
+    """
+    await session.execute(
+        update(Integration)
+        .where(Integration.id == integration_id)
+        .values(last_refresh_attempt_at=datetime.now(UTC))
+    )
+
+
 # ── Provider config (J1b) ────────────────────────────────────────────────────
 
 

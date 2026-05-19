@@ -18,6 +18,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from artemis import __version__
+from artemis.integrations.token_refresh.scheduler import (
+    start_token_refresh_scheduler,
+    stop_token_refresh_scheduler,
+)
 from artemis.marketing.routes import (
     approvals,
     campaign_deliverables,
@@ -66,14 +70,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ws_adapter.init_adapter()
     # Start the meeting auto-summarizer scheduler.
     start_meeting_scheduler()
+    # Start the proactive OAuth token refresh scheduler (J10e).
+    start_token_refresh_scheduler()
     try:
         yield
     finally:
         # Unsubscribe the adapter on shutdown so tests / restarts start clean.
         ws_adapter.reset_adapter()
         ws_events.clear_subscribers()
-        # Stop the scheduler before process exit.
+        # Stop the schedulers before process exit.
         stop_meeting_scheduler()
+        stop_token_refresh_scheduler()
 
 
 app = FastAPI(
