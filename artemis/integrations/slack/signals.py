@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
-from artemis.integrations.models import SlackInboundMessage
+from artemis.integrations.models import SlackInboundMessage, SlackUser
 from artemis.integrations.slack.client import SlackAPIError, SlackClient
 
 # TTL mirrors Node's SLACK_SIGNAL_CACHE_TTL_MS = 60_000
@@ -80,8 +80,12 @@ async def _compute(session: AsyncSession) -> dict[str, object]:
     # J9: resolved_at IS NULL so resolved items disappear from count.
     # J9b: also filter to direct-type mentions only (or NULL for legacy rows),
     # so @channel / @here broadcasts don't inflate the personal reply count.
+    # Exclude bot-authored rows (e.g. Artemis's own outbound messages) so the
+    # Focus-rail count matches the triage list users actually see.
     missed_result = await session.execute(
-        select(func.count(SlackInboundMessage.event_id)).where(
+        select(func.count(SlackInboundMessage.event_id))
+        .outerjoin(SlackUser, SlackUser.id == SlackInboundMessage.user_id)
+        .where(
             SlackInboundMessage.received_at >= window_start,
             SlackInboundMessage.routed_to_session_id.is_(None),
             SlackInboundMessage.resolved_at.is_(None),
@@ -89,6 +93,7 @@ async def _compute(session: AsyncSession) -> dict[str, object]:
                 SlackInboundMessage.mention_type == "direct",
                 SlackInboundMessage.mention_type.is_(None),
             ),
+            or_(SlackUser.is_bot.is_(False), SlackUser.id.is_(None)),
         )
     )
     missed_mentions: int = missed_result.scalar_one() or 0

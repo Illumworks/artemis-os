@@ -11,6 +11,7 @@ Provides coroutines consumed by the /api/slack/signals/mentions routes:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -18,7 +19,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.integrations import repository as repo
-from artemis.integrations.models import SlackInboundMessage
+from artemis.integrations.models import SlackInboundMessage, SlackUser
 from artemis.integrations.slack.client import SlackAPIError, SlackClient
 
 logger = logging.getLogger(__name__)
@@ -180,14 +181,23 @@ async def resolve_channel(
 # ── Permalink helper ───────────────────────────────────────────────────────────
 
 
-def _make_permalink(channel_id: str, ts: str) -> str:
-    """Build a Slack universal-format deep link for a message.
+def _make_permalink(channel_id: str, ts: str, subdomain: str | None = None) -> str:
+    """Build a Slack deep link for a message.
 
-    https://slack.com/archives/<C123>/p<ts_no_dot>
-    Works without knowing the workspace subdomain; Slack redirects to the correct
-    workspace for any authenticated user.
+    When ``subdomain`` is provided (or SLACK_WORKSPACE_SUBDOMAIN env is set),
+    we link directly to the workspace: https://<sub>.slack.com/archives/<C>/p<ts>.
+    The workspace-direct form avoids Slack's redirector adding ``?name=…&perma=…``
+    tracking params that produce a "glitch" page on DMs.
+
+    Falls back to the universal form (https://slack.com/archives/<C>/p<ts>) when
+    no subdomain is known — Slack redirects to the correct workspace.
+
+    Either form ends without any query string.
     """
     ts_nodot = ts.replace(".", "")
+    sub = subdomain or os.environ.get("SLACK_WORKSPACE_SUBDOMAIN", "").strip()
+    if sub:
+        return f"https://{sub}.slack.com/archives/{channel_id}/p{ts_nodot}"
     return f"https://slack.com/archives/{channel_id}/p{ts_nodot}"
 
 
@@ -220,21 +230,34 @@ async def list_unresolved_mentions(
         SlackInboundMessage.mention_type.is_(None),
     )
 
+    # Bot-author filter: exclude rows whose sender is a known bot in slack_users.
+    # LEFT OUTER JOIN so unresolved senders (no slack_users row yet) still appear;
+    # they'll be filtered next pass once resolve_user() caches their is_bot flag.
+    bot_filter = or_(SlackUser.is_bot.is_(False), SlackUser.id.is_(None))
+
     rows_result = await session.execute(
         select(SlackInboundMessage)
-        .where(SlackInboundMessage.resolved_at.is_(None), type_filter)
+        .outerjoin(SlackUser, SlackUser.id == SlackInboundMessage.user_id)
+        .where(SlackInboundMessage.resolved_at.is_(None), type_filter, bot_filter)
         .order_by(SlackInboundMessage.ts.desc())
         .limit(limit)
     )
     rows = list(rows_result.scalars().all())
 
     count_result = await session.execute(
-        select(func.count(SlackInboundMessage.event_id)).where(
+        select(func.count(SlackInboundMessage.event_id))
+        .outerjoin(SlackUser, SlackUser.id == SlackInboundMessage.user_id)
+        .where(
             SlackInboundMessage.resolved_at.is_(None),
             type_filter,
+            bot_filter,
         )
     )
     total: int = count_result.scalar_one() or 0
+
+    # Resolve workspace subdomain once per request (env override, else None →
+    # universal slack.com URL). Avoids per-row env reads.
+    subdomain = os.environ.get("SLACK_WORKSPACE_SUBDOMAIN", "").strip() or None
 
     mentions = []
     for row in rows:
@@ -252,7 +275,7 @@ async def list_unresolved_mentions(
                 "channel": channel,
                 "ts": row.ts,
                 "text": row.text,
-                "permalink": _make_permalink(row.channel_id, row.ts),
+                "permalink": _make_permalink(row.channel_id, row.ts, subdomain),
                 "mention_type": row.mention_type or "direct",
             }
         )
@@ -286,14 +309,18 @@ async def resolve_mention(
         )
         await session.commit()
 
-    # Recount after potential update — only direct / null rows (same filter as list)
+    # Recount after potential update — only direct / null rows (same filter as list),
+    # and exclude bot-authored rows so the count matches the visible queue.
     count_result = await session.execute(
-        select(func.count(SlackInboundMessage.event_id)).where(
+        select(func.count(SlackInboundMessage.event_id))
+        .outerjoin(SlackUser, SlackUser.id == SlackInboundMessage.user_id)
+        .where(
             SlackInboundMessage.resolved_at.is_(None),
             or_(
                 SlackInboundMessage.mention_type == "direct",
                 SlackInboundMessage.mention_type.is_(None),
             ),
+            or_(SlackUser.is_bot.is_(False), SlackUser.id.is_(None)),
         )
     )
     new_total: int = count_result.scalar_one() or 0

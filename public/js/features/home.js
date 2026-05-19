@@ -1001,7 +1001,13 @@ async function handleShellActionClick(event) {
     if (!mentionId) return;
     // Optimistic removal: hide the row immediately, then POST to persist.
     const row = button.closest('[data-mention-id]');
+    const group = row ? row.closest('.slack-triage-group') : null;
     if (row) row.remove();
+    // If the parent group card is now empty of sub-rows, remove the whole card
+    // so a stale header doesn't linger after the last message in a group is resolved.
+    if (group && !group.querySelector('.slack-triage-sub-row')) {
+      group.remove();
+    }
     // Update the header count if the counter element is present.
     const countEl = document.getElementById('slack-triage-count');
     if (countEl) {
