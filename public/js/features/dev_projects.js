@@ -78,6 +78,7 @@ function ensureShell() {
   els.headerActions = document.querySelector(".dp-header-actions");
   els.dpShell = document.querySelector(".dp-shell");
   els.rail = document.querySelector(".rail-dev-friendly");
+  els.projectTitleBtn = $("header-project-title-btn");
 
   if (!els.dpShell || $("dev-project-panel")) return Boolean(els.dpShell);
 
@@ -101,16 +102,27 @@ function ensureShell() {
   `;
   els.rail?.prepend(panel);
 
+  // Provider/Model state is owned by the Session Config tray (right side cog).
+  // We keep hidden <select>s for legacy code paths (loadModels/syncPickerFromSession)
+  // but no longer render a visible duplicate next to Session Config.
   const modelPicker = document.createElement("div");
-  modelPicker.className = "dev-model-picker";
+  modelPicker.className = "dev-model-picker dev-model-picker--hidden";
   modelPicker.innerHTML = `
-    <select id="dev-provider-select" title="Provider"></select>
-    <select id="dev-model-select" title="Model"></select>
-    <button class="dp-icon-btn" id="dev-rail-toggle" title="Annotations" aria-label="Annotations">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
-    </button>
+    <select id="dev-provider-select" title="Provider" aria-hidden="true" tabindex="-1"></select>
+    <select id="dev-model-select" title="Model" aria-hidden="true" tabindex="-1"></select>
   `;
   els.headerActions?.prepend(modelPicker);
+
+  // Annotation rail toggle lives alongside Session Config / bell so users can
+  // open the on-demand preview rail. Hidden until a session is loaded.
+  const railToggle = document.createElement("button");
+  railToggle.type = "button";
+  railToggle.className = "dp-icon-btn dev-rail-toggle-btn hidden";
+  railToggle.id = "dev-rail-toggle";
+  railToggle.title = "Annotations";
+  railToggle.setAttribute("aria-label", "Annotations");
+  railToggle.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>`;
+  els.headerActions?.appendChild(railToggle);
 
   els.dpShell.insertAdjacentHTML("beforeend", railMarkup());
   document.querySelector(".chat-area")?.classList.add("dev-projects-ready");
@@ -241,6 +253,9 @@ async function loadSession(sessionId) {
   state.activeProjectId = data.session.project_id;
   state.activeSession = data.session;
   state.annotations = data.annotations || [];
+  state.dpShellRailAutoOpened = false;
+  els.dpShell?.classList.remove("rail-open");
+  $("dev-rail-toggle")?.classList.remove("active");
   state.expandedProjectIds.add(Number(data.session.project_id));
   localStorage.setItem(STORAGE.activeSession, String(data.session.id));
   setState("view", "chat");
@@ -252,11 +267,38 @@ async function loadSession(sessionId) {
 }
 
 function renderEmptyChat() {
+  syncEmptyStateForProject();
   els.messages?.classList.add("hidden");
   els.empty?.classList.remove("hidden");
 }
 
+function syncEmptyStateForProject() {
+  const sub = els.empty?.querySelector(".dp-chat-empty-sub--state");
+  if (!sub) return;
+  const project = getActiveProject();
+  sub.textContent = project
+    ? `Ask anything about ${project.name}, or pick up where you left off.`
+    : "Start a conversation, or pick up where you left off.";
+  // Render suggestion chips once
+  const center = els.empty.querySelector(".dp-chat-empty-center");
+  if (center && !center.querySelector(".dp-chat-empty-chips")) {
+    const chips = document.createElement("div");
+    chips.className = "dp-chat-empty-chips";
+    chips.innerHTML = [
+      "Plan a feature",
+      "Debug an error",
+      "Review the codebase",
+    ].map((label) => `<button type="button" class="dp-chat-empty-chip" data-seed-prompt="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join("");
+    center.appendChild(chips);
+  }
+}
+
 function renderChat(messages) {
+  if (!messages || messages.length === 0) {
+    if (els.messages) els.messages.innerHTML = "";
+    renderEmptyChat();
+    return;
+  }
   els.empty?.classList.add("hidden");
   els.messages?.classList.remove("hidden");
   if (els.messages) {
@@ -270,6 +312,13 @@ function renderChat(messages) {
 function renderRail() {
   const list = $("dev-annotation-list");
   if (list) list.innerHTML = renderAnnotations(state.annotations);
+  const toggle = $("dev-rail-toggle");
+  toggle?.classList.remove("hidden");
+  if (state.annotations.length > 0 && !state.dpShellRailAutoOpened) {
+    state.dpShellRailAutoOpened = true;
+    els.dpShell?.classList.add("rail-open");
+    toggle?.classList.add("active");
+  }
 }
 
 function syncPickerFromSession() {
@@ -290,20 +339,30 @@ function connectWs(sessionId) {
   state.ws.onmessage = (event) => handleWs(JSON.parse(event.data));
 }
 
+function revealMessagesArea() {
+  if (els.empty && !els.empty.classList.contains("hidden")) els.empty.classList.add("hidden");
+  if (els.messages?.classList.contains("hidden")) els.messages.classList.remove("hidden");
+}
+
 function handleWs(event) {
   if (event.type === "dev_projects.message" || event.type === "dev_projects.message_complete") {
     if (event.message) {
+      revealMessagesArea();
       els.messages?.insertAdjacentHTML("beforeend", renderMessages([event.message]));
       els.messages.scrollTop = els.messages.scrollHeight;
       window.hljs?.highlightAll?.();
     }
   } else if (event.type === "dev_projects.token") {
+    revealMessagesArea();
     ensureStreamingBubble().querySelector(".dev-message-text").textContent += event.token || "";
     els.messages.scrollTop = els.messages.scrollHeight;
   } else if (event.type === "dev_projects.permission_required") {
+    revealMessagesArea();
     appendPermission(els.messages, event);
   } else if (event.type === "dev_projects.annotation") {
     state.annotations.unshift(event.annotation);
+    state.dpShellRailAutoOpened = true;
+    els.dpShell?.classList.add("rail-open");
     renderRail();
   } else if (event.type === "dev_projects.session_updated" && event.session) {
     upsertSession(event.session);
@@ -647,8 +706,40 @@ function askText(title, value) {
   });
 }
 
+function openProjectSwitcher(anchor) {
+  const projects = state.projects.filter((p) => !p.archived_at);
+  if (!projects.length) {
+    openContextMenu(anchor, [{ label: "New project…", action: openProjectModal }]);
+    return;
+  }
+  const items = projects.map((project) => ({
+    label: `${Number(project.id) === Number(state.activeProjectId) ? "● " : "○ "}${project.name}`,
+    action: async () => {
+      state.activeProjectId = Number(project.id);
+      state.expandedProjectIds.add(Number(project.id));
+      const sessions = (state.sessionsByProject.get(Number(project.id)) || []).filter((s) => !s.archived_at);
+      const first = sessions[0];
+      if (first) await loadSession(first.id);
+      else {
+        state.activeSessionId = null;
+        localStorage.removeItem(STORAGE.activeSession);
+        renderProjects();
+        renderEmptyChat();
+      }
+    },
+  }));
+  items.push({ label: "New project…", action: openProjectModal });
+  openContextMenu(anchor, items);
+}
+
 function bindEvents() {
   bindComposer(els.input, els.send, sendCurrent);
+
+  els.projectTitleBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openProjectSwitcher(els.projectTitleBtn);
+  });
 
   document.addEventListener("click", async (event) => {
     const target = event.target;
@@ -787,8 +878,23 @@ function bindEvents() {
     }
   });
 
-  $("dev-rail-toggle")?.addEventListener("click", () => els.dpShell.classList.toggle("rail-open"));
-  $("dev-rail-close")?.addEventListener("click", () => els.dpShell.classList.remove("rail-open"));
+  $("dev-rail-toggle")?.addEventListener("click", () => {
+    const open = els.dpShell.classList.toggle("rail-open");
+    $("dev-rail-toggle")?.classList.toggle("active", open);
+  });
+  $("dev-rail-close")?.addEventListener("click", () => {
+    els.dpShell.classList.remove("rail-open");
+    $("dev-rail-toggle")?.classList.remove("active");
+  });
+
+  // Seed-prompt chips on the empty state
+  els.empty?.addEventListener("click", (event) => {
+    const chip = event.target.closest?.("[data-seed-prompt]");
+    if (!chip || !els.input) return;
+    els.input.value = chip.dataset.seedPrompt;
+    els.input.focus();
+    els.input.dispatchEvent(new Event("input"));
+  });
   $("dev-rail-url")?.addEventListener("change", (event) => { $("dev-preview-frame").src = event.target.value; });
   $("dev-note-send")?.addEventListener("click", sendAnnotation);
   $("dev-target-pick")?.addEventListener("click", () => $("dev-target-overlay")?.classList.remove("hidden"));

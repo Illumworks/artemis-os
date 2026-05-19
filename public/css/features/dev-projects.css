@@ -112,6 +112,64 @@
   gap: 6px;
 }
 
+/* Provider/Model state is owned by the Session Config tray. Hide the legacy
+   <select>s but keep them in the DOM so syncPickerFromSession still drives state. */
+.dev-model-picker--hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Annotation rail toggle (chat-bubble icon) in chrome — subtle until rail is open */
+.dev-rail-toggle-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-5);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.dev-rail-toggle-btn:hover { background: var(--surface-sunken); color: var(--ink-2); }
+.dev-rail-toggle-btn.active {
+  background: var(--surface-sunken);
+  border-color: var(--line-2);
+  color: var(--ink-1);
+}
+
+/* Empty-state suggestion chips */
+.dp-chat-empty-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dp-chat-empty-chip {
+  border: 1px solid var(--line-2);
+  background: var(--surface-0);
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.dp-chat-empty-chip:hover {
+  background: var(--surface-sunken);
+  border-color: var(--ink-5);
+}
+
 .dev-model-picker select,
 .dev-url-input,
 .dev-note-input {
