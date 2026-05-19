@@ -41,6 +41,7 @@ class DevSessionUpdate(BaseModel):
     provider: str | None = None
     model: str | None = None
     bypass_permissions: bool | None = None
+    pinned: bool | None = None
     archived: bool | None = None
 
 
@@ -53,6 +54,7 @@ class DevSessionRead(BaseModel):
     provider: str
     model: str | None
     bypass_permissions: bool
+    pinned: bool
     notes: list[dict[str, Any]]
     started_at: datetime
     last_active_at: datetime

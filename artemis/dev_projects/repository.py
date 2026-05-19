@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.dev_projects.models import DevAnnotation, DevMessage, DevProject, DevSession
@@ -82,6 +82,11 @@ async def archive_project(session: AsyncSession, project_id: int) -> DevProject:
     return await update_project(session, project_id, archived=True)
 
 
+async def delete_project(session: AsyncSession, project_id: int) -> None:
+    row = await get_project(session, project_id)
+    await session.delete(row)
+
+
 async def create_session(
     session: AsyncSession,
     *,
@@ -123,7 +128,11 @@ async def list_sessions(session: AsyncSession, project_id: int) -> list[tuple[De
         .outerjoin(DevMessage, DevMessage.session_id == DevSession.id)
         .where(DevSession.project_id == project_id)
         .group_by(DevSession.id)
-        .order_by(DevSession.archived_at.is_not(None), DevSession.last_active_at.desc())
+        .order_by(
+            DevSession.archived_at.is_not(None),
+            DevSession.pinned.desc(),
+            DevSession.last_active_at.desc(),
+        )
     )
     return [(row[0], int(row[1] or 0)) for row in result.all()]
 
@@ -136,6 +145,7 @@ async def update_session(
     provider: str | None = None,
     model: str | None = None,
     bypass_permissions: bool | None = None,
+    pinned: bool | None = None,
     archived: bool | None = None,
 ) -> DevSession:
     row = await get_session(session, session_id)
@@ -147,6 +157,14 @@ async def update_session(
         row.model = model
     if bypass_permissions is not None:
         row.bypass_permissions = bypass_permissions
+    if pinned is not None:
+        if pinned:
+            await session.execute(
+                update(DevSession)
+                .where(DevSession.project_id == row.project_id, DevSession.id != row.id)
+                .values(pinned=False)
+            )
+        row.pinned = pinned
     if archived is not None:
         row.archived_at = _now() if archived else None
     row.last_active_at = _now()
@@ -157,6 +175,11 @@ async def update_session(
 
 async def archive_session(session: AsyncSession, session_id: int) -> DevSession:
     return await update_session(session, session_id, archived=True)
+
+
+async def delete_session(session: AsyncSession, session_id: int) -> None:
+    row = await get_session(session, session_id)
+    await session.delete(row)
 
 
 async def touch_session(session: AsyncSession, session_id: int) -> None:

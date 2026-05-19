@@ -256,6 +256,111 @@ async def test_project_model_defaults_apply_to_new_sessions(
     assert response.json()["model"] == "gpt-5.4"
 
 
+async def test_browse_and_validate_project_folders(client: AsyncClient, tmp_path: Path) -> None:
+    (tmp_path / "zeta").mkdir()
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "alpha" / ".git").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "file.txt").write_text("not a directory", encoding="utf-8")
+
+    browse = await client.get(
+        "/api/dev-projects/browse",
+        params={"path": str(tmp_path)},
+    )
+    assert browse.status_code == 200
+    assert [item["name"] for item in browse.json()["entries"]] == ["alpha", "zeta"]
+    assert browse.json()["entries"][0]["is_git_repo"] is True
+    assert browse.json()["entries"][1]["is_git_repo"] is False
+    assert browse.json()["resolved_path"] == str(tmp_path.resolve())
+    assert browse.json()["parent_path"] == str(tmp_path.parent.resolve())
+
+    missing = await client.get(
+        "/api/dev-projects/browse",
+        params={"path": str(tmp_path / "missing")},
+    )
+    assert missing.status_code == 400
+    assert missing.json()["code"] == "path_not_found"
+
+    valid = await client.post(
+        "/api/dev-projects/projects/validate-path",
+        json={"path": str(tmp_path / "alpha")},
+    )
+    assert valid.status_code == 200
+    assert valid.json()["ok"] is True
+
+    invalid = await client.post(
+        "/api/dev-projects/projects/validate-path",
+        json={"path": str(tmp_path / "file.txt")},
+    )
+    assert invalid.status_code == 200
+    assert invalid.json()["ok"] is False
+    assert invalid.json()["error"] == "Not a directory"
+
+
+async def test_pin_archive_and_permanent_delete_session(
+    client: AsyncClient, tmp_path: Path
+) -> None:
+    project = await _create_project(client, tmp_path)
+    older = await _create_session(client, project["id"])
+    pinned = await _create_session(client, project["id"])
+
+    pin_response = await client.patch(
+        f"/api/dev-projects/sessions/{older['id']}",
+        json={"pinned": True},
+    )
+    assert pin_response.status_code == 200
+    assert pin_response.json()["pinned"] is True
+
+    sessions = await client.get(f"/api/dev-projects/projects/{project['id']}/sessions")
+    assert [item["id"] for item in sessions.json()["sessions"][:2]] == [older["id"], pinned["id"]]
+
+    archive = await client.delete(f"/api/dev-projects/sessions/{older['id']}")
+    assert archive.status_code == 204
+    archived = await client.get(f"/api/dev-projects/projects/{project['id']}/sessions")
+    assert archived.json()["sessions"][-1]["id"] == older["id"]
+    assert archived.json()["sessions"][-1]["archived_at"] is not None
+
+    delete = await client.delete(f"/api/dev-projects/sessions/{older['id']}/permanent")
+    assert delete.status_code == 204
+    remaining = await client.get(f"/api/dev-projects/projects/{project['id']}/sessions")
+    assert [item["id"] for item in remaining.json()["sessions"]] == [pinned["id"]]
+
+
+async def test_pinning_session_unpins_project_siblings(client: AsyncClient, tmp_path: Path) -> None:
+    project = await _create_project(client, tmp_path)
+    first = await _create_session(client, project["id"])
+    second = await _create_session(client, project["id"])
+
+    await client.patch(f"/api/dev-projects/sessions/{first['id']}", json={"pinned": True})
+    await client.patch(f"/api/dev-projects/sessions/{second['id']}", json={"pinned": True})
+
+    sessions = await client.get(f"/api/dev-projects/projects/{project['id']}/sessions")
+    by_id = {item["id"]: item for item in sessions.json()["sessions"]}
+    assert by_id[first["id"]]["pinned"] is False
+    assert by_id[second["id"]]["pinned"] is True
+
+
+async def test_open_project_folder_invokes_local_opener(
+    client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = await _create_project(client, tmp_path)
+    calls: list[list[str]] = []
+
+    class FakeProcess:
+        pass
+
+    def fake_popen(command: list[str], **_: Any) -> FakeProcess:
+        calls.append(command)
+        return FakeProcess()
+
+    monkeypatch.setattr("artemis.routes.dev_projects.subprocess.Popen", fake_popen)
+    response = await client.post(f"/api/dev-projects/projects/{project['id']}/open")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert calls == [["open", str(tmp_path.resolve())]]
+
+
 async def test_project_file_search(client: AsyncClient, tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.py").write_text("x = 1", encoding="utf-8")

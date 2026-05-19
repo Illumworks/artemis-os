@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +64,7 @@ def _session_read(row: Any, message_count: int = 0) -> dict[str, Any]:
         provider=row.provider,
         model=row.model,
         bypass_permissions=row.bypass_permissions,
+        pinned=row.pinned,
         notes=row.notes or [],
         started_at=row.started_at,
         last_active_at=row.last_active_at,
@@ -75,6 +79,81 @@ def _session_read(row: Any, message_count: int = 0) -> dict[str, Any]:
 async def list_projects(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:  # noqa: B008
     rows = await repo.list_projects(session)
     return {"projects": [_project_read(row) for row in rows]}
+
+
+@router.get("/browse")
+async def browse_directories(path: str = Query(default="~")) -> dict[str, Any]:
+    """List local subdirectories for the project-folder picker.
+
+    (codex) Local-only directory browsing is intentionally backend-driven
+    because browser-native directory handles cannot expose absolute paths.
+    """
+    try:
+        resolved = Path(path).expanduser().resolve(strict=True)
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Path does not exist: {path}", "code": "path_not_found"},
+        ) from exc
+
+    if not resolved.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Not a directory: {resolved}", "code": "not_a_directory"},
+        )
+
+    entries = []
+    try:
+        for entry in sorted(resolved.iterdir(), key=lambda item: item.name.casefold()):
+            if entry.name.startswith(".") and not resolved.name.startswith("."):
+                continue
+            try:
+                if not entry.is_dir():
+                    continue
+                entries.append(
+                    {
+                        "name": entry.name,
+                        "path": str(entry.resolve()),
+                        "is_git_repo": (entry / ".git").exists(),
+                    }
+                )
+            except OSError:
+                continue
+    except PermissionError:
+        entries = []
+
+    parent = str(resolved.parent) if resolved.parent != resolved else None
+    return {"resolved_path": str(resolved), "parent_path": parent, "entries": entries}
+
+
+@router.get("/projects/browse")
+async def browse_project_folders(dir: str | None = Query(default=None)) -> dict[str, Any]:
+    """Compatibility wrapper for older in-app folder browser callers."""
+    data = await browse_directories(dir or "~")
+    return {
+        "current": data["resolved_path"],
+        "parent": data["parent_path"],
+        "dirs": data["entries"],
+    }
+
+
+@router.post("/projects/validate-path")
+async def validate_project_path(body: dict[str, Any]) -> dict[str, Any]:
+    raw_path = str(body.get("path") or "").strip()
+    if not raw_path:
+        return {"ok": False, "exists": False, "is_dir": False, "error": "Path is required"}
+    path = Path(raw_path).expanduser()
+    exists = path.exists()
+    is_dir = path.is_dir()
+    return {
+        "ok": exists and is_dir,
+        "exists": exists,
+        "is_dir": is_dir,
+        "path": str(path.resolve()) if exists else str(path),
+        "error": None
+        if exists and is_dir
+        else ("Path does not exist" if not exists else "Not a directory"),
+    }
 
 
 @router.post("/projects", status_code=201)
@@ -117,6 +196,35 @@ async def archive_project(
     except ValueError:
         raise not_found(f"Project {project_id} not found", "project_not_found")  # noqa: B904
     await session.commit()
+
+
+@router.delete("/projects/{project_id}/permanent", status_code=204)
+async def delete_project_permanently(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> None:
+    try:
+        await repo.delete_project(session, project_id)
+    except ValueError:
+        raise not_found(f"Project {project_id} not found", "project_not_found")  # noqa: B904
+    await session.commit()
+
+
+@router.post("/projects/{project_id}/open")
+async def open_project_folder(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    try:
+        project = await repo.get_project(session, project_id)
+    except ValueError:
+        raise not_found(f"Project {project_id} not found", "project_not_found")  # noqa: B904
+    path = Path(project.path)
+    if not path.is_dir():
+        raise bad_request("Project folder does not exist", "project_path_missing")
+    opener = "open" if os.uname().sysname == "Darwin" else "xdg-open"
+    subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"ok": True, "path": str(path)}
 
 
 @router.get("/projects/{project_id}/sessions")
@@ -195,6 +303,7 @@ async def update_project_session(
             provider=body.provider,
             model=body.model,
             bypass_permissions=body.bypass_permissions,
+            pinned=body.pinned,
             archived=body.archived,
         )
     except ValueError:
@@ -217,6 +326,19 @@ async def archive_project_session(
         raise not_found(f"Session {session_id} not found", "session_not_found")  # noqa: B904
     await session.commit()
     await broadcast(session_id, {"type": "dev_projects.session_archived", "session_id": session_id})
+
+
+@router.delete("/sessions/{session_id}/permanent", status_code=204)
+async def delete_project_session_permanently(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> None:
+    try:
+        await repo.delete_session(session, session_id)
+    except ValueError:
+        raise not_found(f"Session {session_id} not found", "session_not_found")  # noqa: B904
+    await session.commit()
+    await broadcast(session_id, {"type": "dev_projects.session_deleted", "session_id": session_id})
 
 
 @router.post("/sessions/{session_id}/fork", status_code=201)
