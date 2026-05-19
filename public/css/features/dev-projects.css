@@ -13,6 +13,19 @@
   position: relative;
   min-height: 0;
 }
+
+/* v3 port: suppress the legacy iMessage-style chat-area fade.
+   liquid-glass-overrides.css attaches a position:fixed, z-index:400 gradient
+   to .chat-area::before/::after that was designed to fade content under the
+   old translucent top bar. The v3 .dp-header is opaque and sticky, so the
+   fade now overlays the chat scroll area as a hazy gradient mask. Hide both
+   pseudos on the Dev Projects surface — the clean empty scroll area
+   matches Claude Code Desktop. */
+.chat-area.dev-projects-ready::before,
+.chat-area.dev-projects-ready::after {
+  display: none !important;
+  content: none !important;
+}
 .dev-projects-ready #messages.dp-chat-scroll {
   flex: 1;
   overflow-y: auto;
