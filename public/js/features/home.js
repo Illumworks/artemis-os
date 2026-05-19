@@ -62,6 +62,8 @@ import {
   fetchCalendarEventsApi,
   updateCalendarEventApi,
   fetchSlackSignalsApi,
+  fetchSlackMentionsApi,
+  resolveSlackMentionApi,
   fetchLatestBriefApi,
   generateBriefApi,
 } from '../core/api.js';
@@ -994,6 +996,29 @@ async function handleShellActionClick(event) {
       queueMicrotask(() => applyStoredOperationsFocus());
     }
   }
+  if (action === 'slack-mention-resolve') {
+    const mentionId = button.dataset.mentionId;
+    if (!mentionId) return;
+    // Optimistic removal: hide the row immediately, then POST to persist.
+    const row = button.closest('[data-mention-id]');
+    if (row) row.remove();
+    // Update the header count if the counter element is present.
+    const countEl = document.getElementById('slack-triage-count');
+    if (countEl) {
+      const current = parseInt(countEl.textContent.replace(/\D/g, ''), 10) || 0;
+      const next = Math.max(0, current - 1);
+      countEl.textContent = `(${next} unresolved)`;
+    }
+    // Check if the list is now empty and show the empty state.
+    const listEl = document.getElementById('slack-triage-list');
+    if (listEl && !listEl.querySelector('[data-mention-id]')) {
+      listEl.innerHTML = '<p class="slack-triage-empty">Slack queue clear. Nicely done.</p>';
+    }
+    resolveSlackMentionApi(mentionId).catch((err) => {
+      console.warn('slack-mention-resolve failed, will sync on next reload', err);
+    });
+    return;
+  }
   if (action === 'meetings-tab-switch') {
     const tab = button.dataset.tab;
     handleMeetingsTabSwitch(tab);
@@ -1046,7 +1071,7 @@ async function loadCommandCenter() {
 
   try {
     const projectPath = getActiveProjectPath();
-    const [analytics, notifications, sessions, calendarOverview, meetingsOverview, jiraOverview, okrOverview, slackSignals, briefResult] = await Promise.all([
+    const [analytics, notifications, sessions, calendarOverview, meetingsOverview, jiraOverview, okrOverview, slackSignals, briefResult, slackMentions] = await Promise.all([
       fetchAnalytics(projectPath || undefined).catch(() => ({})),
       fetchNotificationHistory({ limit: 12, unreadOnly: true }).catch(() => []),
       fetchSessions(projectPath || undefined).catch(() => []),
@@ -1056,6 +1081,7 @@ async function loadCommandCenter() {
       fetchOkrOverviewApi().catch(() => null),
       fetchSlackSignalsApi().catch(() => ({ connected: false, status: 'unavailable' })),
       fetchLatestBriefApi().catch(() => ({ brief: null, exists: false })),
+      fetchSlackMentionsApi().catch(() => ({ mentions: [], total_unresolved: 0 })),
     ]);
 
     if (loadToken !== commandCenterLoadToken || normalizeAppView(getState('view')) !== DEFAULT_APP_VIEW) {
@@ -1074,6 +1100,7 @@ async function loadCommandCenter() {
       jiraOverview,
       okrOverview,
       slackSignals,
+      slackMentions,
       brief: briefResult?.brief ?? null,
     });
     appShellContent.innerHTML = renderCommandCenter(viewModel);
@@ -5163,12 +5190,13 @@ function buildCommandCenterViewModel({
   jiraOverview = null,
   okrOverview = null,
   slackSignals = null,
+  slackMentions = null,
   brief = null,
 }) {
   const timeReality = readTimeReality();
   const jiraToday = buildDashboardJiraTodayModel(jiraOverview, timeReality);
   const okrThisWeek = buildDashboardOkrWeekModel(okrOverview, timeReality);
-  const replyWork = buildDashboardReplyWorkModel(notifications, slackSignals);
+  const replyWork = buildDashboardReplyWorkModel(notifications, slackSignals, slackMentions);
   const resumeWork = buildResumeWorkModel({
     analytics,
     sessions,
@@ -5300,8 +5328,102 @@ function renderResumeWork(resumeWork) {
   `;
 }
 
+function _renderSlackMentionRow(mention) {
+  const senderLabel = mention.sender_name || mention.sender_user_id || 'someone';
+  const channelLabel = mention.channel_name || mention.channel_id || 'unknown';
+  const snippet = mention.text ? mention.text.slice(0, 120) + (mention.text.length > 120 ? '…' : '') : '';
+  const tsNum = parseFloat(mention.ts || '0');
+  const timeLabel = tsNum > 0 ? _slackTsAgo(tsNum) : '';
+  const headerLine = [senderLabel, '#' + channelLabel, timeLabel].filter(Boolean).join(' · ');
+
+  // Draft reply seed prompt (visible in chat history per J9 spec)
+  const draftIntent = `Help me draft a short Slack reply to ${senderLabel} in #${channelLabel}. They said: '${mention.text || ''}'. Match my voice (concise, direct, lowercase). Don't invent context — if I haven't given you enough info, ask me.`;
+
+  return `
+    <article class="slack-triage-row" data-mention-id="${escapeAttribute(mention.id)}">
+      <div class="slack-triage-meta">${escapeHtml(headerLine)}</div>
+      ${snippet ? `<p class="slack-triage-snippet">${escapeHtml(snippet)}</p>` : ''}
+      <div class="shell-actions slack-triage-actions">
+        <button
+          type="button"
+          class="shell-action-btn shell-action-btn-xs"
+          data-shell-action="open-chat-from-shell"
+          data-shell-intent="${escapeAttribute(draftIntent)}"
+        >Draft reply</button>
+        <a
+          href="${escapeAttribute(mention.permalink || '#')}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="shell-action-btn shell-action-btn-xs shell-action-btn-secondary"
+        >Open in Slack</a>
+        <button
+          type="button"
+          class="shell-action-btn shell-action-btn-xs shell-action-btn-secondary"
+          data-shell-action="slack-mention-resolve"
+          data-mention-id="${escapeAttribute(mention.id)}"
+        >Mark resolved</button>
+      </div>
+    </article>
+  `;
+}
+
+function _slackTsAgo(tsSeconds) {
+  const diffMs = Date.now() - tsSeconds * 1000;
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function _buildTriageChatIntent(mentionItems) {
+  const top5 = mentionItems.slice(0, 5);
+  const bullets = top5.map((m) => {
+    const sender = m.sender_name || m.sender_user_id || 'someone';
+    const channel = m.channel_name || m.channel_id || 'unknown';
+    const snippet = m.text ? m.text.slice(0, 80) + (m.text.length > 80 ? '…' : '') : '';
+    return `- ${sender} in #${channel}: ${snippet}`;
+  }).join('\n');
+  return `Help me triage these Slack mentions. Here are the top ${top5.length}:\n${bullets}\nWhich need a reply now, which can wait, what's the fastest response?`;
+}
+
 function renderNeedsYourReply(radar) {
   const cards = Array.isArray(radar?.cards) ? radar.cards : [];
+  const mentionItems = Array.isArray(radar?.slackMentionItems) ? radar.slackMentionItems : [];
+  const totalUnresolved = radar?.slackTotalUnresolved ?? 0;
+
+  const slackQueueSection = (() => {
+    const headerCount = totalUnresolved > 0
+      ? `Slack mentions <span class="slack-triage-count" id="slack-triage-count">(${totalUnresolved} unresolved)</span>`
+      : 'Slack mentions';
+    const triageChatIntent = mentionItems.length > 0 ? _buildTriageChatIntent(mentionItems) : '';
+
+    const listHtml = mentionItems.length > 0
+      ? mentionItems.map(_renderSlackMentionRow).join('')
+      : '<p class="slack-triage-empty">Slack queue clear. Nicely done.</p>';
+
+    return `
+      <div class="command-subsection" id="slack-triage-section">
+        <div class="command-subsection-title command-subsection-title-flex">
+          <span>${headerCount}</span>
+          ${triageChatIntent ? `
+            <button
+              type="button"
+              class="shell-action-btn shell-action-btn-xs"
+              data-shell-action="open-chat-from-shell"
+              data-shell-intent="${escapeAttribute(triageChatIntent)}"
+            >Triage in Chat</button>
+          ` : ''}
+        </div>
+        <div class="slack-triage-list" id="slack-triage-list">
+          ${listHtml}
+        </div>
+      </div>
+    `;
+  })();
+
   return `
     <article class="shell-card command-card dashboard-card dashboard-card-radar">
       <div class="command-card-header">
@@ -5311,26 +5433,7 @@ function renderNeedsYourReply(radar) {
         </div>
         <span class="command-card-badge">Personal</span>
       </div>
-      ${radar?.topSlackFollowup ? `
-        <div class="command-subsection">
-          <div class="command-subsection-title">Top Slack Signal</div>
-          <article class="dashboard-radar-item">
-            <div class="shell-eyebrow dashboard-radar-eyebrow">${escapeHtml(radar.topSlackFollowup.eyebrow || 'Slack')}</div>
-            <h4>${escapeHtml(radar.topSlackFollowup.title || '')}</h4>
-            <p>${escapeHtml(radar.topSlackFollowup.detail || '')}</p>
-            <div class="shell-actions dashboard-radar-actions">
-              <button
-                type="button"
-                class="shell-action-btn"
-                data-shell-action="open-chat-from-shell"
-                data-shell-intent="${escapeAttribute(radar.topSlackFollowup.intent || '')}"
-              >
-                ${escapeHtml(radar.topSlackFollowup.actionLabel || 'Ask Artemis')}
-              </button>
-            </div>
-          </article>
-        </div>
-      ` : ''}
+      ${slackQueueSection}
       <div class="dashboard-radar-grid">
         ${cards.map((card) => `
           <article class="dashboard-radar-item">
@@ -7822,7 +7925,7 @@ function saveDashboardCaptureLocalNote(text) {
   }
 }
 
-function buildDashboardReplyWorkModel(notifications = [], slackSignals = null) {
+function buildDashboardReplyWorkModel(notifications = [], slackSignals = null, slackMentions = null) {
   const approvalItems = notifications
     .filter((item) => item.type === 'approval' && !item.read_at)
     .slice(0, 3)
@@ -7890,9 +7993,15 @@ function buildDashboardReplyWorkModel(notifications = [], slackSignals = null) {
         connectorScope: 'slack',
       }];
 
+  // J9: attach the raw mentions list so renderNeedsYourReply can render the triage queue.
+  const mentionItems = Array.isArray(slackMentions?.mentions) ? slackMentions.mentions.slice(0, 5) : [];
+  const totalUnresolved = typeof slackMentions?.total_unresolved === 'number' ? slackMentions.total_unresolved : 0;
+
   return {
     cards,
     topSlackFollowup,
+    slackMentionItems: mentionItems,
+    slackTotalUnresolved: totalUnresolved,
     footnote: approvalItems.length || slackCards.length
       ? 'Keep this section focused on things waiting on you directly, not general system noise.'
       : 'If the reply queue is quiet, use Capture today\'s work to route progress into Jira, OKRs, or a saved note.',

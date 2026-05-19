@@ -477,6 +477,20 @@ export async function fetchSlackSignalsApi() {
   return _readJsonOrThrow(res, "Failed to load Slack signals");
 }
 
+export async function fetchSlackMentionsApi() {
+  const res = await fetch("/api/slack/signals/mentions");
+  return _readJsonOrThrow(res, "Failed to load Slack mentions");
+}
+
+export async function resolveSlackMentionApi(eventId) {
+  const res = await fetch(`/api/slack/signals/mentions/${encodeURIComponent(eventId)}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  return _readJsonOrThrow(res, "Failed to resolve Slack mention");
+}
+
 // ── Daily Brief ───────────────────────────────────────────────────────────────
 
 export async function fetchLatestBriefApi() {
