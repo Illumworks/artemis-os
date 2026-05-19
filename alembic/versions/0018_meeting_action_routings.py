@@ -1,7 +1,7 @@
 """meeting_action_routings + personal_todos tables.
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0018
+Revises: 0017
 Create Date: 2026-05-18
 
 J6c post-meeting workflow:
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0017"
-down_revision: str = "0016"
+revision: str = "0018"
+down_revision: str = "0017"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

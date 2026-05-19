@@ -1,7 +1,7 @@
 """dev_projects — project-scoped coding sessions.
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0019
+Revises: 0018
 Create Date: 2026-05-18
 """
 
@@ -12,8 +12,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "0017"
-down_revision: str = "0016"
+revision: str = "0019"
+down_revision: str = "0018"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
