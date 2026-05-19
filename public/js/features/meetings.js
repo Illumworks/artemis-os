@@ -172,15 +172,67 @@ export function renderMeetingPanel(activeTab = 'actions') {
 
 // ── Load meeting detail ─────────────────────────────────────────────────────
 
+/**
+ * Render summary/action items/transcript sections from a cached summary row.
+ * Mirrors the home.js single-column renderer but populates _meetingCache so
+ * the panel tabs (Actions / Transcript) work correctly.
+ */
+function _renderSummaryDetail(panelEl, meetingId, meetingTitle, summaryData, routings) {
+  const summary = summaryData.summary || '';
+  const transcript = summaryData.transcript || '';
+  const rawItems = summaryData.action_items;
+  const actionItems = Array.isArray(rawItems) && rawItems.length
+    ? rawItems.map((item) => (typeof item === 'string' ? item : (item.text || '')))
+    : extractActionItemsFromText(summary || transcript);
+
+  _meetingCache = {
+    meetingId,
+    title: meetingTitle || summaryData.title || 'Meeting',
+    summary,
+    transcript,
+    actionItems,
+    attendees: '',
+    routings,
+  };
+
+  panelEl.innerHTML = renderMeetingPanel('actions');
+  _wirePanel(panelEl, meetingId);
+}
+
 export async function loadMeetingDetail(meetingId, meetingTitle, panelEl) {
   if (!meetingId || !panelEl) return;
 
   panelEl.innerHTML = `<div class="meetings-transcript-loading">Loading…</div>`;
 
+  // Always load routings in parallel regardless of transcript source.
+  const routingsPromise = fetch(`/api/meetings/${encodeURIComponent(meetingId)}/routings`)
+    .then((r) => r.json())
+    .catch(() => ({ routings: [] }));
+
   try {
+    // 1. Try cached summary first (instant, survives token expiry).
+    const summaryRes = await fetch(`/api/meetings/${encodeURIComponent(meetingId)}/summary`);
+    if (summaryRes.ok) {
+      const [summaryData, routingsRes] = await Promise.all([
+        summaryRes.json(),
+        routingsPromise,
+      ]);
+      const routings = routingsRes.routings || [];
+      _renderSummaryDetail(panelEl, meetingId, meetingTitle, summaryData, routings);
+      return;
+    }
+
+    // 2. Cache miss (404) — fall back to live Granola fetch.
+    if (summaryRes.status !== 404) {
+      // Unexpected error from summary endpoint; log and fall through to live.
+      console.warn(`meetings: summary endpoint returned ${summaryRes.status} for ${meetingId}`);
+    } else {
+      console.warn(`meetings: no cached summary for ${meetingId}, fetching live from Granola`);
+    }
+
     const [detailRes, routingsRes] = await Promise.all([
       fetch(`/api/granola/transcript/${encodeURIComponent(meetingId)}`).then((r) => r.json()),
-      fetch(`/api/meetings/${encodeURIComponent(meetingId)}/routings`).then((r) => r.json()).catch(() => ({ routings: [] })),
+      routingsPromise,
     ]);
 
     if (!detailRes.connected) {
@@ -194,8 +246,9 @@ export async function loadMeetingDetail(meetingId, meetingTitle, panelEl) {
 
     const summary = detailRes.summary || detailRes.notes || '';
     const transcript = detailRes.transcript || '';
-    const actionItems = Array.isArray(detailRes.action_items)
-      ? detailRes.action_items
+    const rawItems = detailRes.action_items;
+    const actionItems = Array.isArray(rawItems) && rawItems.length
+      ? rawItems.map((item) => (typeof item === 'string' ? item : (item.text || '')))
       : extractActionItemsFromText(summary || transcript);
     const attendees = Array.isArray(detailRes.attendees)
       ? detailRes.attendees.join(', ')
