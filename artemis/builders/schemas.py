@@ -9,9 +9,13 @@ populate_by_name=True means tests can pass either style.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Allowed values for agent package policy fields (enforced at Pydantic boundary).
+MemoryPolicy = Literal["session_scoped", "agent_scoped", "user_scoped", "none"]
+PermissionMode = Literal["ask", "auto_approve", "dry_run"]
 
 
 class _Base(BaseModel):
@@ -37,6 +41,12 @@ class AgentCreate(_Base):
     provider: str = "anthropic"
     max_iterations: int = Field(default=10, alias="maxIterations")
     owner_user_id: int | None = Field(default=None, alias="ownerUserId")
+    # J11 package policy fields
+    fallback_provider: str | None = Field(default=None, alias="fallbackProvider")
+    fallback_model: str | None = Field(default=None, alias="fallbackModel")
+    memory_policy: MemoryPolicy = Field(default="session_scoped", alias="memoryPolicy")
+    permission_mode: PermissionMode = Field(default="ask", alias="permissionMode")
+    output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
 
 
 class AgentRead(_Base):
@@ -51,6 +61,12 @@ class AgentRead(_Base):
     provider: str
     max_iterations: int = Field(alias="maxIterations")
     owner_user_id: int | None = Field(default=None, alias="ownerUserId")
+    # J11 package policy fields
+    fallback_provider: str | None = Field(default=None, alias="fallbackProvider")
+    fallback_model: str | None = Field(default=None, alias="fallbackModel")
+    memory_policy: str = Field(default="session_scoped", alias="memoryPolicy")
+    permission_mode: str = Field(default="ask", alias="permissionMode")
+    output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
 
@@ -64,6 +80,12 @@ class AgentUpdate(_Base):
     model: str | None = None
     provider: str | None = None
     max_iterations: int | None = Field(default=None, alias="maxIterations")
+    # J11 package policy fields
+    fallback_provider: str | None = Field(default=None, alias="fallbackProvider")
+    fallback_model: str | None = Field(default=None, alias="fallbackModel")
+    memory_policy: MemoryPolicy | None = Field(default=None, alias="memoryPolicy")
+    permission_mode: PermissionMode | None = Field(default=None, alias="permissionMode")
+    output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

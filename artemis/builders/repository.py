@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builders.models import (
@@ -22,6 +22,7 @@ from artemis.builders.models import (
     AgentContext,
     AgentDag,
     AgentRun,
+    AgentSkill,
     Skill,
     Workflow,
     WorkflowRun,
@@ -489,3 +490,93 @@ async def delete_agent_dag(session: AsyncSession, dag_id: str) -> None:
     dag = await get_agent_dag(session, dag_id)
     await session.delete(dag)
     await session.flush()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent Skills (J11)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def list_skills_for_agent(session: AsyncSession, agent_db_id: int) -> list[Skill]:
+    """Return all skills assigned to an agent, ordered by slug."""
+    result = await session.execute(
+        select(Skill)
+        .join(AgentSkill, AgentSkill.skill_slug == Skill.slug)
+        .where(AgentSkill.agent_id == agent_db_id)
+        .order_by(Skill.slug.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def assign_skill_to_agent(
+    session: AsyncSession, agent_db_id: int, skill_slug: str
+) -> AgentSkill:
+    """Assign a skill to an agent. Idempotent — returns existing row if already assigned."""
+    result = await session.execute(
+        select(AgentSkill)
+        .where(AgentSkill.agent_id == agent_db_id, AgentSkill.skill_slug == skill_slug)
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing is not None:
+        return existing
+    row = AgentSkill(agent_id=agent_db_id, skill_slug=skill_slug)
+    session.add(row)
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
+async def unassign_skill_from_agent(
+    session: AsyncSession, agent_db_id: int, skill_slug: str
+) -> None:
+    """Remove a skill assignment. No-op if not assigned."""
+    result = await session.execute(
+        select(AgentSkill)
+        .where(AgentSkill.agent_id == agent_db_id, AgentSkill.skill_slug == skill_slug)
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is not None:
+        await session.delete(row)
+        await session.flush()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Run observability helpers (J11)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def list_active_agent_runs(session: AsyncSession) -> list[AgentRun]:
+    """Return runs with status 'running' or 'pending', ordered by started_at DESC."""
+    result = await session.execute(
+        select(AgentRun)
+        .where(or_(AgentRun.status == "running", AgentRun.status == "pending"))
+        .order_by(AgentRun.started_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def list_recent_agent_runs(session: AsyncSession, *, limit: int = 50) -> list[AgentRun]:
+    """Return the most recent N runs across all agents, ordered by started_at DESC."""
+    result = await session.execute(
+        select(AgentRun).order_by(AgentRun.started_at.desc()).limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def search_agent_runs(session: AsyncSession, q: str, *, limit: int = 100) -> list[AgentRun]:
+    """Substring match against user_message and error columns, ordered by started_at DESC."""
+    pattern = f"%{q}%"
+    result = await session.execute(
+        select(AgentRun)
+        .where(
+            or_(
+                AgentRun.user_message.ilike(pattern),
+                AgentRun.error.ilike(pattern),
+            )
+        )
+        .order_by(AgentRun.started_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
