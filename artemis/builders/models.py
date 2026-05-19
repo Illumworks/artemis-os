@@ -4,6 +4,7 @@ Tables (all Postgres, all TIMESTAMPTZ timestamps, all JSONB blobs):
   agents         — agent definitions (slug, prompt, tools, model)
   agent_runs     — execution run records (queued → running → completed/failed)
   agent_context  — per-run key/value store for inter-step data passing
+  agent_skills   — many-to-many join: agents ↔ skills (J11)
   skills         — user/builtin/plugin skill definitions
   workflows      — step-based sequential workflow definitions
   workflow_runs  — workflow execution run records
@@ -52,10 +53,41 @@ class Agent(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False, server_default="anthropic")
     max_iterations: Mapped[int] = mapped_column(Integer, nullable=False, server_default="10")
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # J11 — package policy fields
+    fallback_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fallback_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    memory_policy: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="session_scoped"
+    )
+    permission_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="ask")
+    output_contract: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AgentSkill(Base):
+    """Many-to-many join: agents ↔ skills. Added in J11."""
+
+    __tablename__ = "agent_skills"
+    __table_args__ = (Index("ix_agent_skills_skill_slug", "skill_slug"),)
+
+    agent_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("agents.id", name="fk_agent_skills_agent", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    skill_slug: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("skills.slug", name="fk_agent_skills_skill", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    assigned_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
 

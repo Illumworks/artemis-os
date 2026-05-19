@@ -1,4 +1,7 @@
-"""Skills router — /api/skills."""
+"""Skills router — /api/skills.
+
+Slice D (J11): POST /api/skills/{slug}/assign and /unassign for agent-skill linking.
+"""
 
 from __future__ import annotations
 
@@ -95,3 +98,65 @@ async def delete_skill(
     except ValueError:
         raise not_found(f"Skill '{slug}' not found", "skill_not_found")  # noqa: B904
     await session.commit()
+
+
+# ─── Slice D: Skill assignment ─────────────────────────────────────────────────
+
+
+@router.post("/{slug}/assign", status_code=200)
+async def assign_skill(
+    slug: str,
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Assign a skill to an agent. Idempotent — no error if already assigned.
+
+    Body: {"agent_id": <int>}  (the agents.id primary key, not agent_id slug)
+    """
+    agent_db_id = body.get("agent_id")
+    if not isinstance(agent_db_id, int):
+        raise bad_request("Field 'agent_id' must be an integer (agents.id PK)", "invalid_agent_id")
+
+    # Verify skill exists
+    try:
+        await repo.get_skill(session, slug)
+    except ValueError:
+        raise not_found(f"Skill '{slug}' not found", "skill_not_found")  # noqa: B904
+
+    # Verify agent exists by PK
+    from sqlalchemy import select
+
+    from artemis.builders.models import Agent
+
+    result = await session.execute(select(Agent).where(Agent.id == agent_db_id).limit(1))
+    if result.scalar_one_or_none() is None:
+        raise not_found(f"Agent with id={agent_db_id} not found", "agent_not_found")
+
+    await repo.assign_skill_to_agent(session, agent_db_id, slug)
+    await session.commit()
+    return {"ok": True, "agentId": agent_db_id, "skillSlug": slug}
+
+
+@router.post("/{slug}/unassign", status_code=200)
+async def unassign_skill(
+    slug: str,
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Remove a skill assignment from an agent. No-op if not assigned.
+
+    Body: {"agent_id": <int>}  (the agents.id primary key, not agent_id slug)
+    """
+    agent_db_id = body.get("agent_id")
+    if not isinstance(agent_db_id, int):
+        raise bad_request("Field 'agent_id' must be an integer (agents.id PK)", "invalid_agent_id")
+
+    # Verify skill exists
+    try:
+        await repo.get_skill(session, slug)
+    except ValueError:
+        raise not_found(f"Skill '{slug}' not found", "skill_not_found")  # noqa: B904
+
+    await repo.unassign_skill_from_agent(session, agent_db_id, slug)
+    await session.commit()
+    return {"ok": True, "agentId": agent_db_id, "skillSlug": slug}
