@@ -7,6 +7,7 @@ import { escapeHtml } from "../core/utils.js";
 export function railMarkup() {
   return `
     <aside class="dp-rail" id="dev-annotation-rail" aria-label="Preview rail">
+      <div class="dp-rail-resize" id="dev-rail-resize" role="separator" aria-orientation="vertical" aria-label="Resize preview rail" title="Drag to resize"></div>
       <div class="dp-rail-header">
         <strong class="dp-rail-title">Preview</strong>
         <button class="dp-icon-btn" id="dev-rail-close" title="Close" aria-label="Close">

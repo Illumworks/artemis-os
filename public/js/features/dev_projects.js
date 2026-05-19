@@ -13,7 +13,12 @@ const STORAGE = {
   showArchived: "artemis.devProjects.showArchived",
   sortMode: "artemis.devProjects.sortMode",
   railOpen: "artemis.devProjects.railOpen",
+  railWidth: "artemis.devProjects.railWidth",
 };
+
+const RAIL_MIN = 280;
+const RAIL_MAX = 600;
+const RAIL_DEFAULT = 360;
 
 const state = {
   projects: [],
@@ -28,6 +33,7 @@ const state = {
   showArchived: localStorage.getItem(STORAGE.showArchived) === "true",
   sortMode: localStorage.getItem(STORAGE.sortMode) || "recent",
   railOpen: localStorage.getItem(STORAGE.railOpen) === "true",
+  railWidth: Math.min(RAIL_MAX, Math.max(RAIL_MIN, Number(localStorage.getItem(STORAGE.railWidth)) || RAIL_DEFAULT)),
   providers: [],
   modal: {
     open: false,
@@ -140,16 +146,25 @@ function getCurrentProviderId() {
 
 function renderModelMenu() {
   if (!els.modelMenu) return;
-  const providerId = getCurrentProviderId();
-  const provider = state.providers.find((p) => p.id === providerId) || state.providers[0];
-  if (!provider) { els.modelMenu.innerHTML = ""; return; }
-  const models = provider.models?.length ? provider.models : [{ id: "", label: "Default" }];
-  const items = models.map((m) => {
-    const modelId = m.id === "default" ? "" : (m.id || "");
-    const label = escapeHtml(m.label || m.id || "Default");
-    return `<button type="button" class="dp-model-menu-item" role="menuitem" data-provider="${escapeHtml(provider.id)}" data-model="${escapeHtml(modelId)}">${label}</button>`;
+  if (!state.providers.length) { els.modelMenu.innerHTML = ""; return; }
+  const activeProvider = getCurrentProviderId();
+  const activeModel = state.activeSession?.model || "";
+  // Render every configured provider as its own group so the picker always
+  // shows the full catalog (3-5+ options across providers), not just whatever
+  // single-model CLI is currently selected.
+  const groups = state.providers.map((provider) => {
+    const models = provider.models?.length ? provider.models : [{ id: "", label: "Default" }];
+    const items = models.map((m) => {
+      const modelId = m.id === "default" ? "" : (m.id || "");
+      const label = escapeHtml(m.label || m.id || "Default");
+      const isActive = provider.id === activeProvider && modelId === activeModel;
+      const cls = isActive ? "dp-model-menu-item is-active" : "dp-model-menu-item";
+      return `<button type="button" class="${cls}" role="menuitem" data-provider="${escapeHtml(provider.id)}" data-model="${escapeHtml(modelId)}">${label}</button>`;
+    }).join("");
+    const groupLabel = escapeHtml(provider.name || provider.id);
+    return `<div class="dp-model-menu-group"><div class="dp-model-menu-group-label">${groupLabel}</div>${items}</div>`;
   }).join("");
-  els.modelMenu.innerHTML = `<div class="dp-model-menu-group">${items}</div>`;
+  els.modelMenu.innerHTML = groups;
 }
 
 function syncModelButtonLabel() {
@@ -337,6 +352,43 @@ function applyRailState() {
     els.dpShell?.classList.remove("rail-open");
     toggle?.classList.remove("active");
   }
+  applyRailWidth();
+}
+
+function applyRailWidth() {
+  if (!els.dpShell) return;
+  const w = Math.min(RAIL_MAX, Math.max(RAIL_MIN, state.railWidth || RAIL_DEFAULT));
+  els.dpShell.style.setProperty("--dp-rail-width", `${w}px`);
+}
+
+function bindRailResize() {
+  const handle = $("dev-rail-resize");
+  if (!handle || handle.dataset.bound === "1") return;
+  handle.dataset.bound = "1";
+  let startX = 0;
+  let startW = state.railWidth;
+  const onMove = (event) => {
+    const dx = startX - event.clientX; // drag left = wider rail
+    const next = Math.min(RAIL_MAX, Math.max(RAIL_MIN, startW + dx));
+    state.railWidth = next;
+    applyRailWidth();
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    document.body.classList.remove("dp-rail-resizing");
+    handle.classList.remove("is-dragging");
+    try { localStorage.setItem(STORAGE.railWidth, String(state.railWidth)); } catch {}
+  };
+  handle.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    startX = event.clientX;
+    startW = state.railWidth;
+    handle.classList.add("is-dragging");
+    document.body.classList.add("dp-rail-resizing");
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
 }
 
 function setRailOpen(open) {
@@ -971,6 +1023,8 @@ function pickPreviewTarget(event) {
 
 export async function bootDevProjects() {
   if (!ensureShell()) return;
+  applyRailWidth();
+  bindRailResize();
   await loadModels();
   bindEvents();
   // Re-sync rail toggle visibility on parallel-mode transitions. In parallel

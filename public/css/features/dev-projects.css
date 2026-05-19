@@ -14,13 +14,14 @@
   min-height: 0;
 }
 
-/* v3 port: suppress the legacy iMessage-style chat-area fade.
-   liquid-glass-overrides.css attaches a position:fixed, z-index:400 gradient
-   to .chat-area::before/::after that was designed to fade content under the
-   old translucent top bar. The v3 .dp-header is opaque and sticky, so the
-   fade now overlays the chat scroll area as a hazy gradient mask. Hide both
-   pseudos on the Dev Projects surface — the clean empty scroll area
-   matches Claude Code Desktop. */
+/* v3 port: suppress the canvas atmospheric aura on the Dev Projects surface.
+   artemis-design.css attaches a radial-gradient aura via .canvas::before
+   (inset:-15%, blur 50px) that bleeds through the sticky dp-header and reads
+   as a hazy gradient mask over the chat scroll area. The v3 surface is
+   opaque/sticky throughout, so the aura adds nothing here. Hidden only on
+   .dev-projects-ready, so other canvases (home, workspace, ops) keep theirs.
+   (Also kill any legacy .chat-area::before/::after fade for older shells.) */
+.canvas.dev-projects-ready::before,
 .chat-area.dev-projects-ready::before,
 .chat-area.dev-projects-ready::after {
   display: none !important;
@@ -38,12 +39,16 @@
 }
 
 /* When the right rail is open, inset the main column so the rail can sit at
-   the right edge without overlapping the composer card. */
+   the right edge without overlapping the composer card. Width is driven by
+   --dp-rail-width (set inline on .dp-shell by JS; default 360px). */
+.dev-projects-ready .dp-shell {
+  --dp-rail-width: 360px;
+}
 .dev-projects-ready .dp-shell.rail-open .dp-main {
-  margin-right: 360px;
+  margin-right: var(--dp-rail-width);
 }
 .dev-projects-ready .dp-shell.rail-open .dp-header {
-  margin-right: 360px;
+  margin-right: var(--dp-rail-width);
 }
 
 /* v3 top bar: thin and information-dense (~44px tall), sticky to the top of
@@ -242,6 +247,11 @@
 }
 .dp-model-menu-item:hover {
   background: var(--surface-sunken);
+}
+.dp-model-menu-item.is-active {
+  color: var(--amber-ink, var(--ink-1));
+  font-weight: 600;
+  background: var(--amber-wash, var(--surface-sunken));
 }
 
 /* Composer-footer variant — picker sits next to mic/send; menu opens upward. */
@@ -794,7 +804,7 @@ html[data-theme="dark"] .dev-small-dialog .dev-btn {
 .dp-rail {
   position: absolute;
   top: 0; right: 0; bottom: 0;
-  width: 360px;
+  width: var(--dp-rail-width, 360px);
   background: var(--surface-raised, var(--surface-0));
   border-left: 1px solid var(--rule, var(--line-2));
   box-shadow: -12px 0 30px rgba(0, 0, 0, 0.06);
@@ -809,6 +819,31 @@ html[data-theme="dark"] .dev-small-dialog .dev-btn {
 
 .rail-open .dp-rail {
   transform: translateX(0);
+}
+
+/* Resize handle — thin invisible strip on the left edge; widens to a soft
+   amber tick on hover/drag. Same pattern as VSCode / Claude Desktop. */
+.dp-rail-resize {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 6;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.dp-rail-resize:hover,
+.dp-rail-resize.is-dragging {
+  background: var(--amber-soft, rgba(0,0,0,0.08));
+}
+body.dp-rail-resizing {
+  cursor: ew-resize !important;
+  user-select: none;
+}
+body.dp-rail-resizing .dp-rail {
+  transition: none;
 }
 
 .dp-rail-header {
