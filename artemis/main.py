@@ -32,6 +32,7 @@ from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
 from artemis.routes import calendar as calendar_routes
+from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
 from artemis.routes import health, okr, parallel, status, writing_rules
 from artemis.routes import jira as jira_routes
@@ -186,6 +187,9 @@ app.include_router(meetings_routes.todos_router)
 
 # People search — merged Google Contacts + Slack users (attendee autocomplete)
 app.include_router(people_routes.router)
+
+# J7 — Daily brief
+app.include_router(daily_brief_routes.router)
 
 # J3c stubs — Jira overview, sessions, notifications, stats
 app.include_router(jira_routes.router)
