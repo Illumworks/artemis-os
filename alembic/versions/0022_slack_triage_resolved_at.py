@@ -1,7 +1,7 @@
 """slack_triage_resolved_at — add resolved_at column to slack_inbound_messages.
 
-Revision ID: 0021
-Revises: 0020
+Revision ID: 0022
+Revises: 0021
 Create Date: 2026-05-19
 
 J9: Slack triage workflow. resolved_at persists resolution state so resolved
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0021"
-down_revision: str = "0020"
+revision: str = "0022"
+down_revision: str = "0021"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
