@@ -314,13 +314,6 @@
             </div>
 
             <div class="dp-header-actions">
-              <!-- Model picker button (v3 port — replaces hidden <select>s) -->
-              <button type="button" class="dp-model-btn" id="dev-model-btn" title="Model" aria-haspopup="menu" aria-expanded="false">
-                <span class="dp-model-btn-label" id="dev-model-btn-label">Opus 4.7</span>
-                <svg class="dp-model-btn-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="dp-model-menu hidden" id="dev-model-menu" role="menu"></div>
-
               <!-- Session Config button -->
               <button type="button" class="dp-cfg-btn" id="header-project-pill-btn" title="Session Config">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -437,6 +430,11 @@
                       <button class="cgp-cta hidden" id="cgp-cta" type="button">New session →</button>
                     </div>
                   </span>
+                  <button type="button" class="dp-model-btn dp-composer-model-btn" id="composer-model-btn" title="Model" aria-haspopup="menu" aria-expanded="false">
+                    <span class="dp-model-btn-label" id="composer-model-btn-label">Opus 4.7</span>
+                    <svg class="dp-model-btn-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                  <div class="dp-model-menu dp-composer-model-menu hidden" id="composer-model-menu" role="menu"></div>
                   <button type="button" class="dp-composer-mic" id="mic-btn" title="Dictate" aria-label="Dictate">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                       <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/>

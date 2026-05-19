@@ -79,9 +79,9 @@ function ensureShell() {
   els.dpShell = document.querySelector(".dp-shell");
   els.rail = document.querySelector(".rail-dev-friendly");
   els.projectTitleBtn = $("header-project-title-btn");
-  els.modelBtn = $("dev-model-btn");
-  els.modelBtnLabel = $("dev-model-btn-label");
-  els.modelMenu = $("dev-model-menu");
+  els.modelBtn = $("composer-model-btn");
+  els.modelBtnLabel = $("composer-model-btn-label");
+  els.modelMenu = $("composer-model-menu");
 
   if (!els.dpShell || $("dev-project-panel")) return Boolean(els.dpShell);
 
@@ -132,27 +132,33 @@ async function loadModels() {
   renderModelMenu();
 }
 
+function getCurrentProviderId() {
+  return state.activeSession?.provider
+    || (() => { try { return localStorage.getItem("artemis-provider-source"); } catch { return null; } })()
+    || "claude-code";
+}
+
 function renderModelMenu() {
   if (!els.modelMenu) return;
-  const html = state.providers.map((provider) => {
-    const models = provider.models?.length ? provider.models : [{ id: "", label: "Default" }];
-    const items = models.map((m) => {
-      const modelId = m.id === "default" ? "" : (m.id || "");
-      const label = escapeHtml(m.label || m.id || "Default");
-      return `<button type="button" class="dp-model-menu-item" role="menuitem" data-provider="${escapeHtml(provider.id)}" data-model="${escapeHtml(modelId)}">${label}</button>`;
-    }).join("");
-    return `<div class="dp-model-menu-group"><div class="dp-model-menu-group-label">${escapeHtml(provider.name || provider.id)}</div>${items}</div>`;
+  const providerId = getCurrentProviderId();
+  const provider = state.providers.find((p) => p.id === providerId) || state.providers[0];
+  if (!provider) { els.modelMenu.innerHTML = ""; return; }
+  const models = provider.models?.length ? provider.models : [{ id: "", label: "Default" }];
+  const items = models.map((m) => {
+    const modelId = m.id === "default" ? "" : (m.id || "");
+    const label = escapeHtml(m.label || m.id || "Default");
+    return `<button type="button" class="dp-model-menu-item" role="menuitem" data-provider="${escapeHtml(provider.id)}" data-model="${escapeHtml(modelId)}">${label}</button>`;
   }).join("");
-  els.modelMenu.innerHTML = html;
+  els.modelMenu.innerHTML = `<div class="dp-model-menu-group">${items}</div>`;
 }
 
 function syncModelButtonLabel() {
   if (!els.modelBtnLabel) return;
-  const provider = state.activeSession?.provider || "claude-code";
+  const provider = getCurrentProviderId();
   const modelId = state.activeSession?.model || "";
   const providerDef = state.providers.find((p) => p.id === provider);
   const modelDef = providerDef?.models?.find((m) => (m.id === "default" ? "" : (m.id || "")) === modelId);
-  els.modelBtnLabel.textContent = modelDef?.label || providerDef?.name || "Model";
+  els.modelBtnLabel.textContent = modelDef?.label || providerDef?.models?.[0]?.label || providerDef?.name || "Model";
 }
 
 function openModelMenu() {
@@ -903,6 +909,19 @@ function bindEvents() {
     if (!els.modelMenu || els.modelMenu.classList.contains("hidden")) return;
     if (els.modelMenu.contains(event.target) || els.modelBtn?.contains(event.target)) return;
     closeModelMenu();
+  });
+
+  // Session Config (cog) changes provider via #source-select; keep composer
+  // picker in sync — refresh model list + label to match the new provider.
+  $("source-select")?.addEventListener("change", (event) => {
+    const newProvider = event.target.value;
+    if (state.activeSession) state.activeSession = { ...state.activeSession, provider: newProvider, model: "" };
+    renderModelMenu();
+    syncModelButtonLabel();
+  });
+  $("model-select")?.addEventListener("change", (event) => {
+    if (state.activeSession) state.activeSession = { ...state.activeSession, model: event.target.value };
+    syncModelButtonLabel();
   });
 
   $("dev-rail-url")?.addEventListener("change", (event) => { $("dev-preview-frame").src = event.target.value; });

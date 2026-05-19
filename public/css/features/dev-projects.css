@@ -244,6 +244,17 @@
   background: var(--surface-sunken);
 }
 
+/* Composer-footer variant — picker sits next to mic/send; menu opens upward. */
+.dp-composer-bar-right { position: relative; }
+.dp-composer-model-btn { height: 28px; padding: 0 8px; font-size: 11.5px; }
+.dp-composer-model-btn .dp-model-btn-label { font-size: 11.5px; }
+.dp-composer-model-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+}
+
 /* Right-rail toggle — subtle icon button in the top-bar's icon row. */
 .dev-rail-toggle-btn {
   width: 30px;
