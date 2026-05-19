@@ -8031,28 +8031,33 @@ function buildDashboardReplyWorkModel(notifications = [], slackSignals = null, s
     }
   }
 
-  const cards = approvalItems.length || slackCards.length
-    ? approvalItems.concat(slackCards).slice(0, 3)
-    : [{
-        eyebrow: 'Slack',
-        title: 'No urgent replies right now',
-        detail: slackSignals?.connected
-          ? 'Slack is connected, but no missed mentions, unread DMs, or reply-needed threads were elevated into this reply lane.'
-          : 'Slack follow-up is available when connected, but no missed mentions, unread DMs, or reply-needed threads are being elevated here yet. Use Connectors if you want to verify the link.',
-        primaryAction: 'Open Connectors',
-        connectorScope: 'slack',
-      }];
-
   // J9: attach the raw mentions list so renderNeedsYourReply can render the triage queue.
   const mentionItems = Array.isArray(slackMentions?.mentions) ? slackMentions.mentions.slice(0, 5) : [];
   const totalUnresolved = typeof slackMentions?.total_unresolved === 'number' ? slackMentions.total_unresolved : 0;
+
+  // J9c: when the Slack mentions triage queue above is non-empty, skip the
+  // "No urgent replies right now" fallback card — it contradicts the populated queue.
+  const hasMentionTriage = mentionItems.length > 0 || totalUnresolved > 0;
+  const cards = approvalItems.length || slackCards.length
+    ? approvalItems.concat(slackCards).slice(0, 3)
+    : hasMentionTriage
+      ? []
+      : [{
+          eyebrow: 'Slack',
+          title: 'No urgent replies right now',
+          detail: slackSignals?.connected
+            ? 'Slack is connected, but no missed mentions, unread DMs, or reply-needed threads were elevated into this reply lane.'
+            : 'Slack follow-up is available when connected, but no missed mentions, unread DMs, or reply-needed threads are being elevated here yet. Use Connectors if you want to verify the link.',
+          primaryAction: 'Open Connectors',
+          connectorScope: 'slack',
+        }];
 
   return {
     cards,
     topSlackFollowup,
     slackMentionItems: mentionItems,
     slackTotalUnresolved: totalUnresolved,
-    footnote: approvalItems.length || slackCards.length
+    footnote: approvalItems.length || slackCards.length || hasMentionTriage
       ? 'Keep this section focused on things waiting on you directly, not general system noise.'
       : 'If the reply queue is quiet, use Capture today\'s work to route progress into Jira, OKRs, or a saved note.',
   };
