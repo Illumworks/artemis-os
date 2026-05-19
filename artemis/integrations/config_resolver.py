@@ -33,12 +33,19 @@ class SlackConfig:
     client_id: str
     client_secret: str
     signing_secret: str
+    # J9b: Jon's personal Slack user ID, used to classify direct-mention events.
+    # Stored as SLACK_AUTHED_USER_ID env var or in integration_configs under
+    # the "slack" provider key "authed_user_id".  May be empty string when not
+    # configured — callers must check before using.
+    authed_user_id: str
 
 
 async def resolve_slack_config(session: AsyncSession) -> SlackConfig:
     """Resolve Slack credentials: DB per-field, then env per-field fallback.
 
     Raises MissingProviderConfigError if any required field is absent from both sources.
+
+    authed_user_id is optional — no error is raised when absent; callers receive "".
     """
     stored = await repo.get_provider_config(session, "slack") or {}
 
@@ -48,6 +55,11 @@ async def resolve_slack_config(session: AsyncSession) -> SlackConfig:
     )
     signing_secret = str(stored.get("signing_secret") or "") or os.environ.get(
         "SLACK_SIGNING_SECRET", ""
+    )
+    # Jon's personal Slack user ID — stored in integration_configs["slack"]["authed_user_id"]
+    # or SLACK_AUTHED_USER_ID env var.  Used by J9b mention-type classifier.
+    authed_user_id = str(stored.get("authed_user_id") or "") or os.environ.get(
+        "SLACK_AUTHED_USER_ID", ""
     )
 
     missing = [
@@ -66,6 +78,7 @@ async def resolve_slack_config(session: AsyncSession) -> SlackConfig:
         client_id=client_id,
         client_secret=client_secret,
         signing_secret=signing_secret,
+        authed_user_id=authed_user_id,
     )
 
 

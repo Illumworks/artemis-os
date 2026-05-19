@@ -63,7 +63,6 @@ async def route_inbound(event_data: dict[str, object]) -> None:
     team_id = str(event_data.get("team_id", ""))
     channel_id = str(event_data.get("channel", ""))
     thread_ts = event_data.get("thread_ts")
-    ts = str(event_data.get("ts", ""))
     text = str(event_data.get("text", ""))
 
     if not team_id or not channel_id or not text:
@@ -135,6 +134,8 @@ async def _handle_mentionable_event(
     session: AsyncSession,
 ) -> None:
     """Dedupe and background-dispatch a mentionable event (app_mention / im message)."""
+    from artemis.integrations.slack.triage import classify_mention_type
+
     event_id: str = str(payload.get("event_id", ""))
     team_id: str = str(payload.get("team_id", ""))
     channel_id: str = str(event.get("channel", ""))
@@ -146,6 +147,19 @@ async def _handle_mentionable_event(
     # Strip bot-mention prefix from app_mention messages
     text: str | None = _BOT_MENTION_RE.sub("", raw_text).strip() if raw_text else raw_text
 
+    # J9b: classify mention type at ingest time.
+    # Fetch authed_user_id from config (DB or env); fall back to "" if unavailable.
+    authed_user_id = ""
+    try:
+        from artemis.integrations.config_resolver import resolve_slack_config
+
+        slack_cfg = await resolve_slack_config(session)
+        authed_user_id = slack_cfg.authed_user_id
+    except Exception:
+        authed_user_id = os.environ.get("SLACK_AUTHED_USER_ID", "")
+
+    mention_type = classify_mention_type(text or "", authed_user_id)
+
     is_new = await repo.upsert_slack_inbound(
         session,
         event_id=event_id,
@@ -155,6 +169,7 @@ async def _handle_mentionable_event(
         text=text,
         ts=ts,
         thread_ts=thread_ts,
+        mention_type=mention_type,
     )
     await session.commit()
 

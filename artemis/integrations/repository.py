@@ -13,7 +13,13 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.integrations.models import Integration, IntegrationConfig, SlackInboundMessage
+from artemis.integrations.models import (
+    Integration,
+    IntegrationConfig,
+    SlackChannel,
+    SlackInboundMessage,
+    SlackUser,
+)
 
 
 async def upsert_integration(
@@ -223,6 +229,7 @@ async def upsert_slack_inbound(
     text: str | None,
     ts: str,
     thread_ts: str | None = None,
+    mention_type: str | None = None,
 ) -> bool:
     """Insert event; return True if newly inserted, False if duplicate."""
     stmt = (
@@ -235,8 +242,93 @@ async def upsert_slack_inbound(
             text=text,
             ts=ts,
             thread_ts=thread_ts,
+            mention_type=mention_type,
         )
         .on_conflict_do_nothing(index_elements=["event_id"])
     )
     result = await session.execute(stmt)
     return bool(getattr(result, "rowcount", 0))
+
+
+# ── Slack user / channel name caches (J9b) ────────────────────────────────────
+
+
+async def upsert_slack_user(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    name: str,
+    real_name: str | None = None,
+    is_bot: bool = False,
+) -> SlackUser:
+    """Cache a resolved Slack user; update name fields if already stored."""
+    now = datetime.now(UTC)
+    stmt = (
+        pg_insert(SlackUser)
+        .values(
+            id=user_id,
+            name=name,
+            real_name=real_name,
+            is_bot=is_bot,
+            fetched_at=now,
+        )
+        .on_conflict_do_update(
+            index_elements=["id"],
+            set_={"name": name, "real_name": real_name, "is_bot": is_bot, "fetched_at": now},
+        )
+    )
+    await session.execute(stmt)
+    result = await session.execute(select(SlackUser).where(SlackUser.id == user_id))
+    return result.scalar_one()
+
+
+async def get_slack_user(
+    session: AsyncSession,
+    user_id: str,
+) -> SlackUser | None:
+    """Return the cached SlackUser row, or None if not cached."""
+    result = await session.execute(select(SlackUser).where(SlackUser.id == user_id))
+    return result.scalar_one_or_none()
+
+
+async def upsert_slack_channel(
+    session: AsyncSession,
+    *,
+    channel_id: str,
+    name: str,
+    is_im: bool = False,
+    is_private: bool = False,
+) -> SlackChannel:
+    """Cache a resolved Slack channel; update name fields if already stored."""
+    now = datetime.now(UTC)
+    stmt = (
+        pg_insert(SlackChannel)
+        .values(
+            id=channel_id,
+            name=name,
+            is_im=is_im,
+            is_private=is_private,
+            fetched_at=now,
+        )
+        .on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "name": name,
+                "is_im": is_im,
+                "is_private": is_private,
+                "fetched_at": now,
+            },
+        )
+    )
+    await session.execute(stmt)
+    result = await session.execute(select(SlackChannel).where(SlackChannel.id == channel_id))
+    return result.scalar_one()
+
+
+async def get_slack_channel(
+    session: AsyncSession,
+    channel_id: str,
+) -> SlackChannel | None:
+    """Return the cached SlackChannel row, or None if not cached."""
+    result = await session.execute(select(SlackChannel).where(SlackChannel.id == channel_id))
+    return result.scalar_one_or_none()

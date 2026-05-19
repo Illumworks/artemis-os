@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.integrations import repository as repo
@@ -76,13 +76,19 @@ async def _compute(session: AsyncSession) -> dict[str, object]:
     window_start = datetime.now(UTC) - timedelta(hours=_WINDOW_H)
     reply_cutoff = datetime.now(UTC) - timedelta(hours=_REPLY_LAG_H)
 
-    # missedMentions: unrouted, unresolved inbound rows within 48 h window
-    # J9: also filter resolved_at IS NULL so resolved items disappear from count.
+    # missedMentions: unrouted, unresolved inbound rows within 48 h window.
+    # J9: resolved_at IS NULL so resolved items disappear from count.
+    # J9b: also filter to direct-type mentions only (or NULL for legacy rows),
+    # so @channel / @here broadcasts don't inflate the personal reply count.
     missed_result = await session.execute(
         select(func.count(SlackInboundMessage.event_id)).where(
             SlackInboundMessage.received_at >= window_start,
             SlackInboundMessage.routed_to_session_id.is_(None),
             SlackInboundMessage.resolved_at.is_(None),
+            or_(
+                SlackInboundMessage.mention_type == "direct",
+                SlackInboundMessage.mention_type.is_(None),
+            ),
         )
     )
     missed_mentions: int = missed_result.scalar_one() or 0

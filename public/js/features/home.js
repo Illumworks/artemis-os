@@ -5328,22 +5328,47 @@ function renderResumeWork(resumeWork) {
   `;
 }
 
-function _renderSlackMentionRow(mention) {
-  const senderLabel = mention.sender_name || mention.sender_user_id || 'someone';
-  const channelLabel = mention.channel_name || mention.channel_id || 'unknown';
-  const snippet = mention.text ? mention.text.slice(0, 120) + (mention.text.length > 120 ? '…' : '') : '';
-  const tsNum = parseFloat(mention.ts || '0');
-  const timeLabel = tsNum > 0 ? _slackTsAgo(tsNum) : '';
-  const headerLine = [senderLabel, '#' + channelLabel, timeLabel].filter(Boolean).join(' · ');
+function _slackTsAgo(tsSeconds) {
+  const diffMs = Date.now() - tsSeconds * 1000;
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
 
-  // Draft reply seed prompt (visible in chat history per J9 spec)
-  const draftIntent = `Help me draft a short Slack reply to ${senderLabel} in #${channelLabel}. They said: '${mention.text || ''}'. Match my voice (concise, direct, lowercase). Don't invent context — if I haven't given you enough info, ask me.`;
+/** Resolve sender name from J9b API shape (mention.sender.name) or legacy flat fields. */
+function _mentionSenderLabel(mention) {
+  if (mention.sender && mention.sender.name) return mention.sender.name;
+  return mention.sender_name || mention.sender_user_id || 'someone';
+}
+
+/** Resolve channel label from J9b API shape (mention.channel.name/is_im) or legacy flat fields. */
+function _mentionChannelLabel(mention) {
+  if (mention.channel) {
+    if (mention.channel.is_im) return 'DM';
+    return '#' + (mention.channel.name || mention.channel.id || 'unknown');
+  }
+  const rawId = mention.channel_name || mention.channel_id || 'unknown';
+  return '#' + rawId;
+}
+
+/** Render a single message sub-row inside a grouped sender card. */
+function _renderSlackMentionSubRow(mention) {
+  const senderLabel = _mentionSenderLabel(mention);
+  const channelLabel = _mentionChannelLabel(mention);
+  const snippet = mention.text
+    ? mention.text.slice(0, 120) + (mention.text.length > 120 ? '…' : '')
+    : '';
+
+  const draftIntent = `Help me draft a short Slack reply to ${senderLabel} in ${channelLabel}. They said: '${mention.text || ''}'. Match my voice (concise, direct, lowercase). Don't invent context — if I haven't given you enough info, ask me.`;
 
   return `
-    <article class="slack-triage-row" data-mention-id="${escapeAttribute(mention.id)}">
-      <div class="slack-triage-meta">${escapeHtml(headerLine)}</div>
-      ${snippet ? `<p class="slack-triage-snippet">${escapeHtml(snippet)}</p>` : ''}
-      <div class="shell-actions slack-triage-actions">
+    <div class="slack-triage-sub-row" data-mention-id="${escapeAttribute(mention.id)}">
+      ${snippet ? `<p class="slack-triage-snippet">• ${escapeHtml(snippet)}</p>` : ''}
+      <div class="slack-triage-actions">
         <button
           type="button"
           class="shell-action-btn shell-action-btn-xs"
@@ -5363,28 +5388,62 @@ function _renderSlackMentionRow(mention) {
           data-mention-id="${escapeAttribute(mention.id)}"
         >Mark resolved</button>
       </div>
-    </article>
+    </div>
   `;
 }
 
-function _slackTsAgo(tsSeconds) {
-  const diffMs = Date.now() - tsSeconds * 1000;
-  const mins = Math.round(diffMs / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
+/**
+ * Group consecutive mentions by sender+channel and render as grouped cards.
+ *
+ * Mentions from the same sender+channel that appear consecutively are collapsed
+ * into a single card with one header row and individual sub-rows per message.
+ */
+function _renderSlackMentionList(mentions) {
+  if (!mentions.length) return '';
+
+  // Build groups: consecutive runs with the same (sender.id, channel.id) key
+  const groups = [];
+  let currentKey = null;
+  let currentGroup = null;
+
+  for (const m of mentions) {
+    const senderId = (m.sender && m.sender.id) || m.sender_user_id || '';
+    const channelId = (m.channel && m.channel.id) || m.channel_id || '';
+    const key = `${senderId}::${channelId}`;
+
+    if (key !== currentKey) {
+      if (currentGroup) groups.push(currentGroup);
+      currentGroup = { key, mentions: [m], first: m };
+      currentKey = key;
+    } else {
+      currentGroup.mentions.push(m);
+    }
+  }
+  if (currentGroup) groups.push(currentGroup);
+
+  return groups.map(({ first, mentions: groupMentions }) => {
+    const senderLabel = _mentionSenderLabel(first);
+    const channelLabel = _mentionChannelLabel(first);
+    const tsNum = parseFloat(first.ts || '0');
+    const timeLabel = tsNum > 0 ? _slackTsAgo(tsNum) : '';
+    const headerParts = [senderLabel, channelLabel, timeLabel].filter(Boolean);
+
+    return `
+      <article class="slack-triage-group">
+        <div class="slack-triage-meta">${escapeHtml(headerParts.join(' · '))}</div>
+        ${groupMentions.map(_renderSlackMentionSubRow).join('')}
+      </article>
+    `;
+  }).join('');
 }
 
 function _buildTriageChatIntent(mentionItems) {
   const top5 = mentionItems.slice(0, 5);
   const bullets = top5.map((m) => {
-    const sender = m.sender_name || m.sender_user_id || 'someone';
-    const channel = m.channel_name || m.channel_id || 'unknown';
+    const sender = _mentionSenderLabel(m);
+    const channel = _mentionChannelLabel(m);
     const snippet = m.text ? m.text.slice(0, 80) + (m.text.length > 80 ? '…' : '') : '';
-    return `- ${sender} in #${channel}: ${snippet}`;
+    return `- ${sender} in ${channel}: ${snippet}`;
   }).join('\n');
   return `Help me triage these Slack mentions. Here are the top ${top5.length}:\n${bullets}\nWhich need a reply now, which can wait, what's the fastest response?`;
 }
@@ -5401,7 +5460,7 @@ function renderNeedsYourReply(radar) {
     const triageChatIntent = mentionItems.length > 0 ? _buildTriageChatIntent(mentionItems) : '';
 
     const listHtml = mentionItems.length > 0
-      ? mentionItems.map(_renderSlackMentionRow).join('')
+      ? _renderSlackMentionList(mentionItems)
       : '<p class="slack-triage-empty">Slack queue clear. Nicely done.</p>';
 
     return `
@@ -7943,18 +8002,9 @@ function buildDashboardReplyWorkModel(notifications = [], slackSignals = null, s
   const topSlackFollowup = buildTopSlackFollowup(slackSignals);
   const slackCards = [];
   if (slackSignals?.connected) {
-    if (safePositiveNumber(slackSignals.missedMentions)) {
-      slackCards.push({
-        eyebrow: 'Slack mentions',
-        title: `${slackSignals.missedMentions} missed mention${slackSignals.missedMentions === 1 ? '' : 's'}`,
-        detail: 'Direct mentions are now surfacing here so Slack can feed follow-up without becoming the center of the product.',
-        primaryAction: 'Ask Artemis',
-        secondaryIntent: buildAttentionIntent(
-          `${slackSignals.missedMentions} missed Slack mention${slackSignals.missedMentions === 1 ? '' : 's'}`,
-          'Help me triage the missed mentions and decide which ones need a reply now.',
-        ),
-      });
-    }
+    // J9b: missedMentions is now surfaced directly in the triage queue above
+    // the cards grid, so we skip the redundant "N missed mentions" card here.
+    // Only unread DMs and reply-needed threads get their own cards.
     if (safePositiveNumber(slackSignals.unreadDMs)) {
       slackCards.push({
         eyebrow: 'Slack DMs',
