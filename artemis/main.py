@@ -53,6 +53,7 @@ from artemis.routes.floating_artemis import router as fa_router
 from artemis.routes.floating_artemis import ws_router as fa_ws_router
 from artemis.routes.integrations import router as integrations_router
 from artemis.routes.integrations_slack_events import router as slack_events_router
+from artemis.routes.slack import router as slack_router
 from artemis.ws.routes import router as ws_router
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
@@ -176,6 +177,9 @@ app.include_router(dev_projects_routes.ws_router)
 # Phase J1 — Slack integration (OAuth, CRUD, events)
 app.include_router(integrations_router)
 app.include_router(slack_events_router)
+
+# J8 — Slack signals (Focus Rail card)
+app.include_router(slack_router)
 
 # Phase J3b — Calendar + Meetings overview endpoints
 app.include_router(calendar_routes.router)
