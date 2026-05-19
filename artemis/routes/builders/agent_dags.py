@@ -20,6 +20,7 @@ router = APIRouter(
 )
 
 
+@router.get("")
 @router.get("/")
 async def list_agent_dags(
     limit: int = Query(default=50, ge=1, le=200),

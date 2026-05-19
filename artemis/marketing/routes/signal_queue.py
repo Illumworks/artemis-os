@@ -161,6 +161,7 @@ async def intake(
 # ── List ──────────────────────────────────────────────────────────────────────
 
 
+@router.get("")
 @router.get("/")
 async def list_queue(
     status: str | None = Query(default=None),

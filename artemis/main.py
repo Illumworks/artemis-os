@@ -16,7 +16,6 @@ from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from artemis import __version__
 from artemis.marketing.routes import (
@@ -77,76 +76,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_meeting_scheduler()
 
 
-class TrailingSlashCompatMiddleware:
-    """ASGI middleware that retries /api/* requests with a trailing slash on 404.
-
-    Why: FastAPI's built-in ``redirect_slashes=True`` is inert here because the
-    ``StaticFiles(html=True)`` mount at ``/`` provides a full route match for
-    *every* HTTP path, so Starlette's redirect-slash logic (which only fires
-    when *no* route matches) is never reached.  This middleware fills the gap
-    for API paths without the overhead of a real HTTP redirect round-trip: the
-    retry is an in-process ASGI re-dispatch, so the browser/frontend sees a
-    direct 200 (or 422) with no extra network hop.
-
-    Only acts on GET requests to ``/api/*`` that lack a trailing slash and
-    return 404.  WebSocket upgrades, non-API paths, and already-slashed paths
-    are passed through untouched.
-    """
-
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if (
-            scope["type"] != "http"
-            or scope.get("method") not in ("GET", "HEAD")
-            or not scope.get("path", "").startswith("/api/")
-            or scope.get("path", "").endswith("/")
-        ):
-            await self.app(scope, receive, send)
-            return
-
-        # First attempt: capture the status code.
-        status_holder: list[int] = []
-        headers_holder: list[list[tuple[bytes, bytes]]] = []
-        body_parts: list[bytes] = []
-
-        async def capture_send(message: Message) -> None:
-            if message["type"] == "http.response.start":
-                status_holder.append(message["status"])
-                headers_holder.append(message.get("headers", []))
-            elif message["type"] == "http.response.body":
-                body_parts.append(message.get("body", b""))
-
-        await self.app(scope, receive, capture_send)
-
-        if status_holder and status_holder[0] != 404:
-            # Not a 404 — replay the captured response as-is.
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": status_holder[0],
-                    "headers": headers_holder[0] if headers_holder else [],
-                }
-            )
-            await send(
-                {
-                    "type": "http.response.body",
-                    "body": b"".join(body_parts),
-                }
-            )
-            return
-
-        # 404 on a /api/ path without trailing slash — retry with slash.
-        slashed_scope = dict(scope)
-        original_path: str = scope["path"]
-        slashed_scope["path"] = original_path + "/"
-        # raw_path must match path (bytes)
-        slashed_scope["raw_path"] = (original_path + "/").encode()
-
-        await self.app(slashed_scope, receive, send)
-
-
 app = FastAPI(
     title="Artemis OS",
     description="Marketing intelligence + campaign workflow system.",
@@ -192,11 +121,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Trailing-slash compatibility for /api/* list endpoints.
-# Must be added AFTER CORS so it sits closer to the transport layer and sees the
-# final status code from the inner app (CORS headers are added on the way out).
-app.add_middleware(TrailingSlashCompatMiddleware)
 
 
 # No-cache for HTML/JS/CSS/JSON during active development so Cloudflare and

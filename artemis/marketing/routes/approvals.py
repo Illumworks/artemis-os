@@ -33,6 +33,7 @@ router = APIRouter(
 _VALID_DECISIONS = {"approved", "rejected"}
 
 
+@router.get("")
 @router.get("/")
 async def list_approvals_route(
     status: str | None = Query(default=None),

@@ -22,6 +22,7 @@ router = APIRouter(
 )
 
 
+@router.get("")
 @router.get("/")
 async def list_workflows(
     limit: int = Query(default=50, ge=1, le=200),

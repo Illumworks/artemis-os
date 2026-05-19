@@ -20,6 +20,7 @@ router = APIRouter(
 )
 
 
+@router.get("")
 @router.get("/")
 async def list_skills(
     kind: str | None = Query(default=None),

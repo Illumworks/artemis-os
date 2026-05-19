@@ -95,6 +95,7 @@ async def delete_link(
 # ── Content Assets CRUD ───────────────────────────────────────────────────────
 
 
+@router.get("")
 @router.get("/")
 async def list_assets(
     status: str | None = Query(default=None),
