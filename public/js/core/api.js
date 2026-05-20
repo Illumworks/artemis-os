@@ -2289,3 +2289,104 @@ export async function runScoutHarnessApi(payload = {}) {
   if (!res.ok) throw new Error(body.error || "runScoutHarnessApi failed");
   return body;
 }
+
+// ── Builder API (O1) ──────────────────────────────────────────────────────────
+
+export async function builderFetchSessions({ status, limit } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (limit !== undefined) params.set("limit", String(limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/builder/sessions${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "builderFetchSessions failed");
+  }
+  return res.json();
+}
+
+export async function builderCreateSession({ builder_kind = "agent", target_id, user_id } = {}) {
+  const res = await fetch("/api/builder/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ builder_kind, target_id, user_id }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderCreateSession failed");
+  return body;
+}
+
+export async function builderGetSession(sessionId) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `builderGetSession(${sessionId}) failed`);
+  }
+  return res.json();
+}
+
+export async function builderSendMessage(sessionId, content) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderSendMessage failed");
+  return body;
+}
+
+export async function builderAbandonSession(sessionId) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+  if (res.status === 204) return;
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderAbandonSession failed");
+  return body;
+}
+
+export async function builderTestRun(sessionId, { prompt, allow_writes = false } = {}) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}/test-run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, allow_writes }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderTestRun failed");
+  return body;
+}
+
+export async function builderFetchProposals({ status = "pending", kind, limit } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (kind) params.set("kind", kind);
+  if (limit !== undefined) params.set("limit", String(limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/builder/proposals${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "builderFetchProposals failed");
+  }
+  return res.json();
+}
+
+export async function builderApproveProposal(proposalId) {
+  const res = await fetch(`/api/builder/proposals/${encodeURIComponent(proposalId)}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderApproveProposal failed");
+  return body;
+}
+
+export async function builderRejectProposal(proposalId) {
+  const res = await fetch(`/api/builder/proposals/${encodeURIComponent(proposalId)}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderRejectProposal failed");
+  return body;
+}
