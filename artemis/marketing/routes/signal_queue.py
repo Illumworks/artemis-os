@@ -17,12 +17,12 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import Ruleset, SignalQueue, TerritoryConfig
+from artemis.marketing.models import Ruleset, SignalQueue, SignalReasonCode, TerritoryConfig
 from artemis.marketing.qualifier import (
     RulesetInput,
     SignalInput,
@@ -93,12 +93,37 @@ async def intake(
     except ValueError as exc:
         validation_error = str(exc)
 
+    # FK validation: reject unknown reason codes against the registry (active only).
+    # Runs after normalization, on non-dry-run paths only (dry-run also checks).
+    unknown_codes: list[str] = []
+    if not validation_error and normalized is not None:
+        codes_in_payload = [
+            rc["code"] for rc in normalized.reason_codes if isinstance(rc.get("code"), str)
+        ]
+        if codes_in_payload:
+            result = await session.execute(
+                select(SignalReasonCode.code).where(
+                    SignalReasonCode.code.in_(codes_in_payload),
+                    SignalReasonCode.is_active.is_(True),
+                )
+            )
+            active_codes = set(result.scalars().all())
+            unknown_codes = [c for c in codes_in_payload if c not in active_codes]
+
     if dry_run:
         if validation_error:
             return {
                 "dryRun": True,
                 "valid": False,
                 "errors": [validation_error],
+                "wouldCreate": None,
+                "duplicate": None,
+            }
+        if unknown_codes:
+            return {
+                "dryRun": True,
+                "valid": False,
+                "errors": [f"unknown reason codes: {unknown_codes}"],
                 "wouldCreate": None,
                 "duplicate": None,
             }
@@ -117,6 +142,12 @@ async def intake(
 
     if validation_error:
         raise bad_request(validation_error)  # noqa: B904
+
+    if unknown_codes:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "unknown reason codes", "codes": unknown_codes},
+        )
 
     assert normalized is not None  # mypy: validation_error is None → normalized set
     dup = await find_signal_by_dedupe_key(

@@ -55,7 +55,8 @@ artemis.db.SessionLocal = __import__(
     class_=AsyncSession,
 )
 
-# Order matters: child tables first (FK constraints)
+# Order matters: child tables first (FK constraints).
+# signal_reason_codes has no FK children from marketing tables — safe to truncate last.
 _TRUNCATE_SQL = text(
     "TRUNCATE "
     "approvals, "
@@ -67,7 +68,8 @@ _TRUNCATE_SQL = text(
     "scout_runs, "
     "signal_queue, "
     "rulesets, "
-    "territory_config "
+    "territory_config, "
+    "signal_reason_codes "
     "RESTART IDENTITY CASCADE"
 )
 

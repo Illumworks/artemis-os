@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Float,
     ForeignKey,
     Index,
@@ -37,6 +38,29 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from artemis.db import Base
+
+
+class SignalReasonCode(Base):
+    """Registry of canonical signal reason codes (Josh spec v1).
+
+    Append-only: hard deletes are blocked by a DB trigger.
+    Soft-delete via is_active = False.
+    """
+
+    __tablename__ = "signal_reason_codes"
+
+    code: Mapped[str] = mapped_column(Text, primary_key=True)
+    domain: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    what_scout_looks_for: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_urgency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class SignalQueue(Base):
