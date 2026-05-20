@@ -87,15 +87,28 @@ J10-J11 closed the major transport blockers. Recent landings:
 - Workflows latest-run + background run parity (commit `3803592`)
 - **O1 Agent-Builder + Self-Improvement** (the jugular — replaces CRUD-form creation for all meta-objects). Empirical kill-criterion passed 2026-05-20.
 
-**In flight (Workers landing 2026-05-20):**
+**Merged 2026-05-20 (all live on `lead/j6a-granola-integration`):**
+- O1 Agent-Builder + Self-Improvement (`4ead96a`)
 - O1a refresh persistence bugs
-- O2+O3 Agent Card detail surface + persona/soul (+ ghostwriting frame)
-- O4 streaming SSE for Builder responses (closes "Failed to fetch" timeout class)
+- O2+O3 Agent Card detail surface + persona/soul
+- O4 streaming SSE for Builder responses
+- O5 Builder breadcrumb + nav polish (Codex, state-driven nav pattern)
+- M1 reason code registry (17 codes, FK validation in intake) — `7b1f5fa`
+- M3 campaign state machine (5 enums, transition(), audit table, soft CHECK) — `5fe78f1` / merge `79b4cf0`
+- M5 16 marketing agents seeded as DB fixtures — `215cd0b` / merge `bbf79d5`
+- Codex CLI effort/speed knobs — `014f9f4`
 
-**Queued:**
-- O5 Builder breadcrumb + nav polish
-- Memory HTTP routes (Lead-led architectural pass, ~1000 LOC — the substrate for M2-M6 visibility)
-- Automations port from Node (was deferred from the original Operations audit)
+**In flight 2026-05-20 (terminal-Lead Sonnet workers, isolated worktrees):**
+- M3a state sweep + enum completion + CHECK tighten (~450 LOC cap)
+- Memory-M2 validity windows + confidence + conflicts (~500 LOC cap)
+- M7 Writing Studio overview aggregator (~250 LOC cap)
+
+**Queued (paste-ready briefs on lead):**
+- M4 qualifier rule layer (Josh's §4 hard-skip / suppress / boost, 12 rules) — depends on M3a
+- M5b scout execution path (single runner + 9 stub adapters + APScheduler) — depends on M3a + M5
+- OP1 Automations registry port from Node (next Operations gap)
+- OP-cleanup stale test fixes (Slack permalink + migration test path)
+- start-app.sh hardcoded path fix
 
 ### Marketing seed (Artemis seed data) — planned, not started
 
@@ -123,14 +136,17 @@ The marketing agents are the first seed content for Artemis. **Canonical build t
 2. Qualifier boost/suppress/skip rules — `qualifier.py` is a faithful port of the deterministic scorer, but signal-spec §4's actual qualification *intelligence* has zero implementation.
 3. Campaign state machine — `/advance` is decoration. The 15-state machine is documented but not executed.
 
-**M-series brief sequence (revised for v1 scope, M6 already shipped):**
-- M1 — reason-code registry table + FK validation (S, sub-agent brief / Worker)
-- M2 — Layer 1 seed loader: territory_config + 17 reason codes + 3 rulesets YAML + scout_packages (M, Codex)
-- M3 — campaign state machine + decision-event log + workspace-state derivation port (L, Lead-led)
-- M4 — qualifier rule layer (boost/suppress/skip from signal-spec §4) + append-only qualifier_decisions (M, Worker)
-- M5 — 16 agent definition fixtures + system prompts under `seed/marketing/` referencing the per-agent files (M+ scope upgraded from 9 to 16 agents — Lead writes prompts in batches, Worker wires loader)
-- M5b — scout agent execution path (workflow runner + tool wiring + monitoring) — separate brief, follows M5
-- M7 — Writing Studio overview aggregator (L, Worker — independent of M1-M5)
+**M-series brief sequence (revised 2026-05-20 reflecting actual landings):**
+- ✅ **M1** reason-code registry — MERGED 2026-05-20 (581 LOC, 17 codes seeded, FK in intake)
+- ✅ **M3** campaign state machine — MERGED 2026-05-20 (5 enums, transition(), audit table, soft CHECK)
+- 🟡 **M3a** state sweep + enum completion + CHECK tighten — Worker in flight (~450 LOC cap)
+- 📋 **M4** qualifier rule layer — paste-ready brief, queued (depends on M3a)
+- ✅ **M5** 16-agent DB seed — MERGED 2026-05-20 (Codex, 324 LOC, persona JSONB populated)
+- 📋 **M5b** scout execution path — paste-ready brief, queued (depends on M3a + M5)
+- 🟡 **M7** Writing Studio overview — Worker in flight (~250 LOC cap)
+- 📋 **Memory-M2** validity windows + confidence + conflicts — Worker in flight (~500 LOC cap)
+
+Skipped from earlier sequence: original "M2 Layer 1 seed loader" was rolled into M1 (registry+loader) and M5 (agent fixtures), no longer a standalone brief.
 
 Source data:
 - **`docs/marketing-ops-v1/`** — the build spec (per-agent files in `agents/`, schemas in `schemas/`, services in `services/`, ruleset YAMLs in `rulesets/`)
@@ -300,7 +316,17 @@ A sub-agent reports "I copied the CSS rules verbatim" — but the numeric values
 
 For any future Claude session that boots cold on this project:
 
-> Read `docs/ARTEMIS-OS-MASTER-PLAN.md` first. Then `docs/HANDOFF.md` for the most recent session-end state. Then `docs/marketing-slab-grounding.md` if you're working on Marketing seed. Then `decisions/memory-v2-architecture.md` if memory work surfaces. The Master Plan defines what we're building and why. The Handoff defines what's currently in flight. Don't make architectural decisions without checking the Master Plan first; if a decision contradicts it, surface the contradiction.
+> Read `docs/ARTEMIS-OS-MASTER-PLAN.md` first. Then `git log --oneline lead/j6a-granola-integration | head -15` for current branch state. Then `decisions/campaign-signal-spec-v1.md` if working on Marketing seed. Then `decisions/memory-v2-architecture.md` if memory work surfaces. The Master Plan defines what we're building and why; recent merges define what's actually live. Don't make architectural decisions without checking the Master Plan first; if a decision contradicts it, surface the contradiction. Brief stack lives under `briefs/` — paste-ready briefs are the unit of work delegated to Sonnet Workers (via terminal-Lead Agent({isolation:"worktree"})) or Codex (mechanical-only).
+
+### State as of 2026-05-20 session-mid
+
+**Live in lead branch:** M1 (reason code registry), M3 (state machine), M5 (16 agent seed), O1-O5 (Agent-Builder + nav).
+
+**In flight (Sonnet Workers in isolated worktrees via terminal-Lead):** M3a (state sweep + CHECK tighten), Mem-M2 (validity + conflicts), M7 (Writing Studio overview).
+
+**Queued (paste-ready briefs in `briefs/`):** M4 (qualifier rules), M5b (scout execution), OP1 (Automations port), test cleanup, start-app fix.
+
+**Next concrete action when session resumes:** review Worker outputs as they land, FF-merge clean ships, draft follow-on briefs (M4 + M5b spawn prompts) once M3a merges.
 
 ---
 
