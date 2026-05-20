@@ -12,6 +12,10 @@
 import { escapeHtml } from "../core/utils.js";
 import * as api from "../core/api.js";
 
+// ── Persistence keys (mirror dev_projects.js STORAGE pattern) ─────────────────
+
+const BUILDER_SELECTED_SESSION_KEY = "artemis.builder.selectedSession";
+
 // ── State ──────────────────────────────────────────────────────────────────────
 
 let _sessions = [];
@@ -24,7 +28,9 @@ let _sending = false;
 
 async function fetchSessions() {
   const data = await api.builderFetchSessions();
-  _sessions = data.sessions || [];
+  // Filter abandoned sessions — backend is source of truth; don't surface
+  // sessions the user has already discarded (mirrors dev_projects.js archived filter).
+  _sessions = (data.sessions || []).filter((s) => s.status !== "abandoned");
 }
 
 async function createSession() {
@@ -371,6 +377,8 @@ async function _handleNewSession() {
     const sess = await createSession();
     _selectedSessionId = sess.id;
     _currentSession = sess;
+    // Persist so refresh keeps this session selected (Bug 1).
+    try { localStorage.setItem(BUILDER_SELECTED_SESSION_KEY, String(sess.id)); } catch {}
     _rerenderPage();
     _scrollToBottom();
   } catch (err) {
@@ -383,6 +391,9 @@ async function _handleSelectSession(sessionId) {
   if (_selectedSessionId === sessionId) return;
   try {
     _selectedSessionId = sessionId;
+    // Persist selection so refresh restores the same session (Bug 1 + Bug 3).
+    try { localStorage.setItem(BUILDER_SELECTED_SESSION_KEY, String(sessionId)); } catch {}
+    // Always hydrate from backend — conversation lives in response.conversation (Bug 3).
     const sess = await loadSession(sessionId);
     _currentSession = sess;
     await fetchPendingProposals(sessionId);
@@ -449,6 +460,11 @@ async function _handleAbandonSession(sessionId) {
   if (!window.confirm?.("Abandon this builder session? It will be marked as abandoned and can no longer receive messages.")) return;
   try {
     await abandonSession(sessionId);
+    // Clear persisted selection so refresh doesn't try to restore an abandoned session.
+    try {
+      const stored = Number(localStorage.getItem(BUILDER_SELECTED_SESSION_KEY));
+      if (stored === sessionId) localStorage.removeItem(BUILDER_SELECTED_SESSION_KEY);
+    } catch {}
     _rerenderPage();
   } catch (err) {
     console.error("builder: abandon failed", err);
@@ -509,12 +525,26 @@ function _showError(msg) {
 
 export async function initBuilderSurface() {
   try {
+    // Always re-fetch from backend — never trust a stale localStorage cache (Bug 2).
+    // fetchSessions() already filters abandoned sessions.
     await fetchSessions();
-    // Auto-select most recent active session
-    const active = _sessions.find((s) => s.status === "active");
-    if (active) {
-      _selectedSessionId = active.id;
-      _currentSession = await loadSession(active.id);
+
+    // Restore the previously-selected session if it still exists and is active.
+    // Falls back to the most-recent active session so first-time users still
+    // get a sensible default (mirrors dev_projects.js restoreActivePointers).
+    let storedId = null;
+    try { storedId = Number(localStorage.getItem(BUILDER_SELECTED_SESSION_KEY)) || null; } catch {}
+
+    const toRestore = storedId
+      ? _sessions.find((s) => s.id === storedId)
+      : null;
+    const target = toRestore || _sessions.find((s) => s.status === "active") || null;
+
+    if (target) {
+      _selectedSessionId = target.id;
+      // Hydrate full conversation from backend (Bug 3).
+      _currentSession = await loadSession(target.id);
+      try { localStorage.setItem(BUILDER_SELECTED_SESSION_KEY, String(target.id)); } catch {}
     }
   } catch (err) {
     console.error("builder: init failed", err);
