@@ -788,7 +788,7 @@ function openProjectSwitcher(anchor) {
   }
   const root = $("dev-context-root");
   const rect = anchor.getBoundingClientRect();
-  const width = 560;
+  const width = Math.min(360, window.innerWidth - 24);
   const left = Math.min(rect.left, window.innerWidth - width - 12);
   const pickProject = async (project) => {
     state.activeProjectId = Number(project.id);
@@ -803,13 +803,12 @@ function openProjectSwitcher(anchor) {
       clearChat();
     }
   };
+  const folderIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>`;
   const rows = projects.map((project, index) => {
     const active = Number(project.id) === Number(state.activeProjectId);
     return `
       <button type="button" class="dp-proj-row${active ? " is-active" : ""}" data-proj-index="${index}">
-        <span class="dp-proj-row-icon" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
-        </span>
+        <span class="dp-proj-row-icon" aria-hidden="true">${folderIcon}</span>
         <span class="dp-proj-row-text">
           <span class="dp-proj-row-name">${escapeHtml(project.name || "Untitled")}</span>
           <span class="dp-proj-row-path">${escapeHtml(project.path || "")}</span>
