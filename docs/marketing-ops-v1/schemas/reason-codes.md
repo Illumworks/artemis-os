@@ -15,109 +15,47 @@ This is the only way a new code enters the registry — never silently.
 
 Populate at DB initialization. Set `seeded = true` for all initial codes.
 
-### Original seed (Scout team baseline)
+These are Josh's canonical 17 codes from `decisions/campaign-signal-spec-v1.md §2`. No other codes are in the seed. The "Emitted by" column is conservative — listed scouts are expected to emit the code as primary emitters, not exhaustive.
 
-| Code | Source Scout | Description |
-|---|---|---|
-| `RFP_EFFICACY_LANGUAGE` | starbridge_researcher, procurement_scout | RFP mentions efficacy proof, measurable growth requirements |
-| `RFP_OUTCOMES_BASED_LANGUAGE` | starbridge_researcher, procurement_scout | RFP mentions performance guarantees, risk-share, contingent payment |
-| `STATE_OBC_LEGISLATION` | starbridge_researcher, legislative_scout | State has active OBC framework / legislation |
-| `STATE_DYSLEXIA_MANDATE` | starbridge_researcher, legislative_scout, state_doe_scout | State has dyslexia screener requirements |
-| `STATE_BILITERACY_INITIATIVE` | starbridge_researcher, legislative_scout, state_doe_scout | State has dual-language / biliteracy initiative |
-| `BOARD_BUDGET_PRESSURE` | regional_news_scout, board_minutes_scout | Board minutes reference budget constraints, ESSER cliff |
-| `BOARD_VENDOR_ACCOUNTABILITY` | regional_news_scout, board_minutes_scout | Board questioning ed-tech ROI, vendor performance |
-| `BOARD_OBC_DISCUSSION` | regional_news_scout, board_minutes_scout | Board discussing OBC concept (not yet RFP) |
-| `BOARD_OBC_RFP_APPROVED` | regional_news_scout, board_minutes_scout | Board approved an OBC-structured RFP |
-| `ESSER_CLIFF_REFERENCE` | starbridge_researcher, regional_news_scout, board_minutes_scout | District publicly referencing ESSER funding loss |
-| `SUPERINTENDENT_TRANSITION` | regional_news_scout, leadership_transition_scout | New supe announced, often with reading-program churn history |
-| `EXISTING_CUSTOMER_EXPANSION` | (multiple) | A school in district already seeing growth with Amira |
-| `LINKEDIN_LEADER_ENGAGEMENT` | linkedin_observer | Watched leader posts content matching campaign theme |
-
-### New — Legislative Scout (1.4)
-
-| Code | Description |
-|---|---|
-| `BILL_INTRODUCED` | Literacy / curriculum / assessment bill filed in legislature |
-| `BILL_PASSED_CHAMBER` | Bill passed one chamber, on the move |
-| `BILL_ENACTED` | Bill signed into law |
-
-### New — Federal Funding Scout (1.5)
-
-| Code | Description |
-|---|---|
-| `FEDERAL_GRANT_OPEN` | Federal grant window open with literacy / curriculum alignment |
-| `FEDERAL_GRANT_DEADLINE` | Deadline within 30 days, hot urgency |
-| `CLSD_ANNOUNCEMENT` | Comprehensive Literacy State Development grant news |
-
-### New — State DoE Scout (1.6)
-
-| Code | Description |
-|---|---|
-| `STATE_GUIDANCE_ISSUED` | Non-binding state DoE guidance document |
-| `STATE_MANDATE_ISSUED` | Binding state-level mandate, hot |
-| `GUBERNATORIAL_EO_LITERACY` | Governor signs EO related to literacy / curriculum |
-
-### New — Procurement Scout (1.7)
-
-| Code | Description |
-|---|---|
-| `RFP_LITERACY_POSTED` | Literacy / reading RFP posted to portal |
-| `RFP_ASSESSMENT_POSTED` | Assessment vendor RFP posted |
-| `RFP_TUTORING_POSTED` | Tutoring vendor RFP posted |
-| `RFP_DEADLINE_CRITICAL` | Days-to-close ≤ 14 |
-
-### New — Board Minutes Scout (1.8)
-
-| Code | Description |
-|---|---|
-| `BOARD_LITERACY_CURRICULUM_REVIEW` | Board discussing curriculum review |
-| `BOARD_VENDOR_REVIEW` | Board reviewing current vendor performance |
-| `BOARD_RFP_AUTHORIZATION` | Board votes to authorize an RFP |
-
-### New — Leadership Transition Scout (1.9)
-
-| Code | Description |
-|---|---|
-| `SUPE_SEARCH_ANNOUNCED` | Outgoing announced, search underway |
-| `SUPE_INTERIM_NAMED` | Interim supe appointed |
-| `SUPE_FORMAL_HIRE` | New supe hired and confirmed (hot — first 90 days buying window) |
-| `SENIOR_LEADER_TRANSITION` | Curriculum director, asst supe, or other senior role change |
+| Code | Plain-English trigger | What the scout looks for | Default urgency | Emitted by |
+|---|---|---|---|---|
+| `POLICY_LIT_MANDATE` | New state law passes requiring screening or literacy intervention | Bills with screening/intervention/dyslexia/structured-literacy keywords reaching INTRODUCED, PASSED_CHAMBER, or ENACTED in a priority state | hot at PASSED_CHAMBER or ENACTED; standard at INTRODUCED | starbridge_researcher, legislative_scout, state_doe_scout |
+| `POLICY_EDTECH_TIME_LIMIT` | Legislation reducing time on ed tech, or public dissatisfaction with screen-time on ed tech | Bills, news, or board commentary citing screen-time caps or ed-tech-time reduction; Amira positioned as low-time / high-impact | standard; hot if bill is statewide and includes K–3 | legislative_scout, regional_news_scout |
+| `FUNDING_LITERACY_GRANT` | State publishes a literacy grant or funding announcement for high-impact tutoring | Grants.gov, Federal Register, or state DoE press releases announcing literacy / tutoring / HIT funding | hot if deadline ≤ 30 days; standard if 30–90; enrichment otherwise | starbridge_researcher, federal_funding_scout, state_doe_scout |
+| `FUNDING_DEADLINE_NEAR` | State notification or selection deadline within 90 days | Any active funding signal where days_until ≤ 90 | hot ≤ 30 days, standard 30–90 | starbridge_researcher, federal_funding_scout, procurement_scout |
+| `FUNDING_HB2_ELIA` | District publicly discusses HB 2 Early Literacy Intervention Allotment ($250/student, K–3) spend | TX board minutes / budget docs referencing HB 2, ELIA, or Early Literacy Intervention Allotment | enrichment (context only — not a discrete event) | board_minutes_scout |
+| `VENDOR_APPROVED_LIST` | State adds Amira to an approved-vendor list | State DoE procurement / approved-vendor list pages mentioning Amira (or category Amira qualifies for) | hot | starbridge_researcher, state_doe_scout |
+| `VENDOR_DISSATISFACTION` | Public dissatisfaction with iReady, Lexia, UCSF Multitudes, or Amplify | News, board minutes, or LinkedIn posts naming the competitor with negative valence (efficacy, cost, fit, renewal) | standard; hot if board votes non-renewal or RFP follows | regional_news_scout, board_minutes_scout, linkedin_observer |
+| `DISTRICT_STRATEGIC_LITERACY` | District strategic plan names literacy as a top priority | Strategic plan PDFs, board adoption of plan with literacy as named pillar | standard | regional_news_scout, board_minutes_scout |
+| `DISTRICT_PROFICIENCY_GAP` | District publicly cites a literacy achievement gap or proficiency drop | Board minutes, press releases, or local news citing reading-proficiency decline, NAEP drop, or named gap | standard; hot if paired with vendor dissatisfaction or RFP | regional_news_scout, board_minutes_scout |
+| `DISTRICT_DLL_EXPANSION` | District announces bilingual or dual-language program expansion | Board votes, press releases, or strategic plan items naming DLL / dual-language / bilingual program expansion | standard | board_minutes_scout |
+| `DISTRICT_MTSS_STRAIN` | District announces MTSS or intervention staffing challenges | Board minutes or news citing intervention staffing shortages, MTSS gaps, Tier 2/3 capacity issues | standard | board_minutes_scout |
+| `PROCUREMENT_ELA_ADOPTION` | New core ELA adoption cycle opening | Adoption committee formation, public comment windows, ELA materials review on board agenda | standard; hot when RFP posts | procurement_scout, board_minutes_scout |
+| `PROCUREMENT_LITERACY_RFP` | Active literacy/assessment/curriculum RFP | RFPs/RFIs on statewide portals or district sites; literacy / reading / assessment / tutoring scope | hot if days_to_close ≤ 14; standard 15–45; reject > 45 unless strategic | starbridge_researcher, procurement_scout |
+| `TX_HB1416_WAIVER` | District pursues or is awarded an HB 1416 tutoring waiver | TEA waiver filings, board discussion of HB 1416 waiver, district press; Amira is TEA-approved for HB 1416 | hot | legislative_scout, board_minutes_scout |
+| `TX_HB3_DYSLEXIA_COMPLIANCE` | District flags HB 3 dyslexia reporting compliance challenges | Board minutes / TEA correspondence citing HB 3 dyslexia reporting friction; Amira is TEA-approved | hot | legislative_scout, board_minutes_scout |
+| `LEADER_TRANSITION_FORMAL` | New superintendent, CAO, or curriculum director formally hired | Two-source confirmed formal hire — board vote OR district press release | hot for 90 days post-hire | regional_news_scout, leadership_transition_scout |
+| `LEADER_TRANSITION_INTERIM` | Interim supe / CAO / curriculum lead named | Single-source interim announcement | standard | linkedin_observer, leadership_transition_scout |
 
 ## Seed SQL
 
 ```sql
 INSERT INTO reason_code_registry (code, description, source_scout, seeded) VALUES
-  ('RFP_EFFICACY_LANGUAGE', 'RFP mentions efficacy proof, measurable growth requirements', 'starbridge_researcher,procurement_scout', true),
-  ('RFP_OUTCOMES_BASED_LANGUAGE', 'RFP mentions performance guarantees, risk-share, contingent payment', 'starbridge_researcher,procurement_scout', true),
-  ('STATE_OBC_LEGISLATION', 'State has active OBC framework / legislation', 'starbridge_researcher,legislative_scout', true),
-  ('STATE_DYSLEXIA_MANDATE', 'State has dyslexia screener requirements', 'starbridge_researcher,legislative_scout,state_doe_scout', true),
-  ('STATE_BILITERACY_INITIATIVE', 'State has dual-language / biliteracy initiative', 'starbridge_researcher,legislative_scout,state_doe_scout', true),
-  ('BOARD_BUDGET_PRESSURE', 'Board minutes reference budget constraints, ESSER cliff', 'regional_news_scout,board_minutes_scout', true),
-  ('BOARD_VENDOR_ACCOUNTABILITY', 'Board questioning ed-tech ROI, vendor performance', 'regional_news_scout,board_minutes_scout', true),
-  ('BOARD_OBC_DISCUSSION', 'Board discussing OBC concept (not yet RFP)', 'regional_news_scout,board_minutes_scout', true),
-  ('BOARD_OBC_RFP_APPROVED', 'Board approved an OBC-structured RFP', 'regional_news_scout,board_minutes_scout', true),
-  ('ESSER_CLIFF_REFERENCE', 'District publicly referencing ESSER funding loss', 'starbridge_researcher,regional_news_scout,board_minutes_scout', true),
-  ('SUPERINTENDENT_TRANSITION', 'New supe announced, often with reading-program churn history', 'regional_news_scout,leadership_transition_scout', true),
-  ('EXISTING_CUSTOMER_EXPANSION', 'A school in district already seeing growth with Amira', NULL, true),
-  ('LINKEDIN_LEADER_ENGAGEMENT', 'Watched leader posts content matching campaign theme', 'linkedin_observer', true),
-  ('BILL_INTRODUCED', 'Literacy/curriculum/assessment bill filed in legislature', 'legislative_scout', true),
-  ('BILL_PASSED_CHAMBER', 'Bill passed one chamber, on the move', 'legislative_scout', true),
-  ('BILL_ENACTED', 'Bill signed into law', 'legislative_scout', true),
-  ('FEDERAL_GRANT_OPEN', 'Federal grant window open with literacy/curriculum alignment', 'federal_funding_scout', true),
-  ('FEDERAL_GRANT_DEADLINE', 'Deadline within 30 days, hot urgency', 'federal_funding_scout', true),
-  ('CLSD_ANNOUNCEMENT', 'Comprehensive Literacy State Development grant news', 'federal_funding_scout', true),
-  ('STATE_GUIDANCE_ISSUED', 'Non-binding state DoE guidance document', 'state_doe_scout', true),
-  ('STATE_MANDATE_ISSUED', 'Binding state-level mandate, hot', 'state_doe_scout', true),
-  ('GUBERNATORIAL_EO_LITERACY', 'Governor signs EO related to literacy/curriculum', 'state_doe_scout', true),
-  ('RFP_LITERACY_POSTED', 'Literacy/reading RFP posted to portal', 'procurement_scout', true),
-  ('RFP_ASSESSMENT_POSTED', 'Assessment vendor RFP posted', 'procurement_scout', true),
-  ('RFP_TUTORING_POSTED', 'Tutoring vendor RFP posted', 'procurement_scout', true),
-  ('RFP_DEADLINE_CRITICAL', 'Days-to-close <= 14', 'procurement_scout', true),
-  ('BOARD_LITERACY_CURRICULUM_REVIEW', 'Board discussing curriculum review', 'board_minutes_scout', true),
-  ('BOARD_VENDOR_REVIEW', 'Board reviewing current vendor performance', 'board_minutes_scout', true),
-  ('BOARD_RFP_AUTHORIZATION', 'Board votes to authorize an RFP', 'board_minutes_scout', true),
-  ('SUPE_SEARCH_ANNOUNCED', 'Outgoing announced, search underway', 'leadership_transition_scout', true),
-  ('SUPE_INTERIM_NAMED', 'Interim supe appointed', 'leadership_transition_scout', true),
-  ('SUPE_FORMAL_HIRE', 'New supe hired and confirmed (hot — first 90 days buying window)', 'leadership_transition_scout', true),
-  ('SENIOR_LEADER_TRANSITION', 'Curriculum director, asst supe, or other senior role change', 'leadership_transition_scout', true);
+  ('POLICY_LIT_MANDATE', 'New state law passes requiring screening or literacy intervention', 'starbridge_researcher,legislative_scout,state_doe_scout', true),
+  ('POLICY_EDTECH_TIME_LIMIT', 'Legislation reducing time on ed tech, or public dissatisfaction with screen-time on ed tech', 'legislative_scout,regional_news_scout', true),
+  ('FUNDING_LITERACY_GRANT', 'State publishes a literacy grant or funding announcement for high-impact tutoring', 'starbridge_researcher,federal_funding_scout,state_doe_scout', true),
+  ('FUNDING_DEADLINE_NEAR', 'State notification or selection deadline within 90 days', 'starbridge_researcher,federal_funding_scout,procurement_scout', true),
+  ('FUNDING_HB2_ELIA', 'District publicly discusses HB 2 Early Literacy Intervention Allotment ($250/student, K-3) spend', 'board_minutes_scout', true),
+  ('VENDOR_APPROVED_LIST', 'State adds Amira to an approved-vendor list', 'starbridge_researcher,state_doe_scout', true),
+  ('VENDOR_DISSATISFACTION', 'Public dissatisfaction with iReady, Lexia, UCSF Multitudes, or Amplify', 'regional_news_scout,board_minutes_scout,linkedin_observer', true),
+  ('DISTRICT_STRATEGIC_LITERACY', 'District strategic plan names literacy as a top priority', 'regional_news_scout,board_minutes_scout', true),
+  ('DISTRICT_PROFICIENCY_GAP', 'District publicly cites a literacy achievement gap or proficiency drop', 'regional_news_scout,board_minutes_scout', true),
+  ('DISTRICT_DLL_EXPANSION', 'District announces bilingual or dual-language program expansion', 'board_minutes_scout', true),
+  ('DISTRICT_MTSS_STRAIN', 'District announces MTSS or intervention staffing challenges', 'board_minutes_scout', true),
+  ('PROCUREMENT_ELA_ADOPTION', 'New core ELA adoption cycle opening', 'procurement_scout,board_minutes_scout', true),
+  ('PROCUREMENT_LITERACY_RFP', 'Active literacy/assessment/curriculum RFP', 'starbridge_researcher,procurement_scout', true),
+  ('TX_HB1416_WAIVER', 'District pursues or is awarded an HB 1416 tutoring waiver', 'legislative_scout,board_minutes_scout', true),
+  ('TX_HB3_DYSLEXIA_COMPLIANCE', 'District flags HB 3 dyslexia reporting compliance challenges', 'legislative_scout,board_minutes_scout', true),
+  ('LEADER_TRANSITION_FORMAL', 'New superintendent, CAO, or curriculum director formally hired', 'regional_news_scout,leadership_transition_scout', true),
+  ('LEADER_TRANSITION_INTERIM', 'Interim supe / CAO / curriculum lead named', 'linkedin_observer,leadership_transition_scout', true);
 ```
