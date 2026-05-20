@@ -78,6 +78,26 @@ async def test_complete_parses_single_json_line(tmp_path: Path) -> None:
     assert response.stop_reason == "end_turn"
 
 
+async def test_complete_forwards_effort_and_speed_flags(tmp_path: Path) -> None:
+    binary = _make_executable(tmp_path)
+    adapter = CodexAdapter(binary_path=str(binary))
+    line = json.dumps({"type": "result", "result": "ok"})
+    proc = _mock_proc(line.encode())
+    req = _simple_request("Hi")
+    req.model = "gpt-5.5"
+    req.reasoning_effort = "xhigh"
+    req.speed_tier = "fast"
+
+    create = AsyncMock(return_value=proc)
+    with patch("asyncio.create_subprocess_exec", new=create):
+        await adapter.complete(req)
+
+    args = create.await_args.args
+    pairs = list(zip(args, args[1:], strict=False))
+    assert ("-c", 'model_reasoning_effort="xhigh"') in pairs
+    assert ("-c", "service_tier=fast") in pairs
+
+
 async def test_complete_raises_on_nonzero_exit(tmp_path: Path) -> None:
     binary = _make_executable(tmp_path)
     adapter = CodexAdapter(binary_path=str(binary))

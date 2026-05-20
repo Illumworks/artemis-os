@@ -43,6 +43,8 @@ class CompletionRequest:
     system: str | None = None
     tools: list[Tool] | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
+    speed_tier: str | None = None
     max_tokens: int = 4096
     cache_system: bool = True
     cache_tools: bool = True

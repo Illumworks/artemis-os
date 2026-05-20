@@ -344,6 +344,8 @@ async def handle_turn(
     *,
     session_id: str,
     user_text: str,
+    reasoning_effort: str | None = None,
+    speed_tier: str | None = None,
     adapter: ModelAdapter | None = None,
     owner_user_id: int | None = None,
     db_session: Any | None = None,
@@ -506,6 +508,8 @@ async def handle_turn(
             messages=messages,
             tools=tool_registry,
             system=system_prompt,
+            reasoning_effort=reasoning_effort,
+            speed_tier=speed_tier,
             hooks=hooks,
         )
     except _PendingConfirmationError as pending_exc:

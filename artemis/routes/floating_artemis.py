@@ -188,7 +188,12 @@ async def send_message(
 
     # Fire and forget — client receives events over WebSocket
     asyncio.create_task(
-        handle_turn(session_id=session_id, user_text=body.message),
+        handle_turn(
+            session_id=session_id,
+            user_text=body.message,
+            reasoning_effort=body.reasoning_effort,
+            speed_tier=body.speed_tier,
+        ),
         name=f"fa_turn_{session_id}",
     )
     return {"accepted": True, "session_id": session_id}
@@ -311,6 +316,22 @@ _CODEX_MODEL_LIST = [
     {"id": "gpt-5.3-codex", "label": "GPT-5.3-Codex", "default": False},
     {"id": "gpt-5.2", "label": "GPT-5.2", "default": False},
 ]
+_CODEX_EFFORT = {
+    "label": "Effort",
+    "defaultValue": "medium",
+    "options": [
+        {"value": "low", "label": "Low"},
+        {"value": "medium", "label": "Medium"},
+        {"value": "high", "label": "High"},
+        {"value": "xhigh", "label": "Extra High"},
+    ],
+}
+_CODEX_SPEED = {
+    "label": "Speed",
+    "supportsSpeedFor": ["gpt-5.4", "gpt-5.5"],
+    "defaultValue": "standard",
+    "options": [{"value": "standard", "label": "Standard"}, {"value": "fast", "label": "Fast"}],
+}
 
 
 def _build_provider_model_list() -> list[dict[str, Any]]:
@@ -354,6 +375,8 @@ def _build_provider_model_list() -> list[dict[str, Any]]:
             "configured": codex_configured,
             "subscriptionOrLocal": True,
             "models": _CODEX_MODEL_LIST,
+            "effort": _CODEX_EFFORT,
+            "speed": _CODEX_SPEED,
         },
         {"id": "gemini", "name": "Google Gemini", "models": gemini_models},
         {
