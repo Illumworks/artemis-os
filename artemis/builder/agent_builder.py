@@ -154,8 +154,12 @@ AGENT_BUILDER_TOOL_SPECS: list[dict[str, Any]] = [
                 "citations": {
                     "type": "object",
                     "description": (
-                        "Self-improvement citations: {run_ids: [...], rationale: '...'}. "
-                        "Required when proposed_by is self-improvement."
+                        "Self-improvement citations. Shape: "
+                        "{run_ids: [int, ...], "
+                        "observations: [{run_id, what_stalled, what_was_missing, what_worked}], "
+                        "summary: str, pattern_label: str|null}. "
+                        "run_ids MUST be IDs returned by read_recent_runs in this session — "
+                        "never fabricate or guess IDs."
                     ),
                 },
             },
@@ -207,6 +211,10 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
 
     registry = ToolRegistry()
 
+    # Tracks run PKs returned by read_recent_runs so _propose can validate
+    # that the LLM is not fabricating run_ids it never saw.
+    _seen_run_ids: set[int] = set()
+
     async def _read_existing(inp: dict[str, Any]) -> str:
         import json
 
@@ -227,10 +235,27 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
         result = await engine.read_recent_runs(
             inp["agent_id"], db_session=db_session, limit=inp.get("limit", 10)
         )
+        # Record the PKs returned so _propose can validate membership.
+        for entry in result:
+            if "id" in entry:
+                _seen_run_ids.add(int(entry["id"]))
         return json.dumps(result, indent=2)
 
     async def _propose(inp: dict[str, Any]) -> str:
         import json
+
+        citations = inp.get("citations")
+        if citations:
+            cited_ids = [int(r) for r in citations.get("run_ids", [])]
+            bad_ids = [rid for rid in cited_ids if rid not in _seen_run_ids]
+            if bad_ids:
+                return json.dumps({
+                    "error": (
+                        "run_ids validation failed: the following IDs were not returned by "
+                        f"read_recent_runs in this session and cannot be cited: {bad_ids}. "
+                        "Only reference run IDs from the set read_recent_runs returned."
+                    )
+                })
 
         proposal_id = await engine.propose(
             inp["kind"],
@@ -239,7 +264,7 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
             builder_session_id=builder_session_id,
             target_id=inp.get("target_id"),
             proposed_by="builder",
-            citations=inp.get("citations"),
+            citations=citations,
         )
         await db_session.commit()
         return json.dumps({"proposal_id": proposal_id, "status": "pending"})
@@ -284,6 +309,63 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
     return registry
 
 
+async def build_edit_session_opener(
+    target_id: int,
+    *,
+    db_session: Any,
+) -> str | None:
+    """Return the opener text for an edit session on an existing agent.
+
+    Loads builder-context (recent runs + trajectory summaries) and returns a
+    plain-English summary the builder prepends to its first-turn system context.
+    Returns None if the agent has no runs yet.
+    """
+    from sqlalchemy import select as sa_select
+
+    from artemis.builder import engine
+    from artemis.builders.models import Agent
+
+    result = await db_session.execute(
+        sa_select(Agent).where(Agent.id == target_id).limit(1)
+    )
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        return None
+
+    runs = await engine.read_recent_runs(agent.agent_id, db_session=db_session, limit=10)
+    if not runs:
+        return None
+
+    with_summary = [r for r in runs if "trajectory" in r]
+    run_count = len(runs)
+    summary_lines = []
+    for r in with_summary[:5]:
+        traj = r["trajectory"]
+        parts = []
+        if traj.get("what_stalled"):
+            parts.append(f"stalled: {traj['what_stalled']}")
+        if traj.get("what_was_missing"):
+            parts.append(f"missing: {traj['what_was_missing']}")
+        if traj.get("what_worked"):
+            parts.append(f"worked: {traj['what_worked']}")
+        if parts:
+            summary_lines.append(f"  Run #{r['id']}: {'; '.join(parts)}")
+
+    intro = (
+        f"I've reviewed the last {run_count} run{'s' if run_count != 1 else ''} "
+        f"for agent '{agent.name}'."
+    )
+    if summary_lines:
+        intro += (
+            " Here's what I noticed:\n"
+            + "\n".join(summary_lines)
+            + "\n\nI'll propose definition changes based on these patterns."
+        )
+    else:
+        intro += " No trajectory summaries are available yet — I'll need a few runs to spot patterns."
+    return intro
+
+
 async def handle_turn(
     *,
     builder_session_id: int,
@@ -314,6 +396,14 @@ async def handle_turn(
     # Reconstruct conversation as Message objects
     messages = _rebuild_messages(session_row.conversation or [])
 
+    # Edit-session opener: on the first turn of an edit session, prepend a
+    # context block summarising recent runs so the builder leads with insight.
+    system = AGENT_BUILDER_SYSTEM_PROMPT
+    if session_row.target_id is not None and not messages:
+        opener = await build_edit_session_opener(session_row.target_id, db_session=db_session)
+        if opener:
+            system = AGENT_BUILDER_SYSTEM_PROMPT + "\n\n## Current edit-session context\n\n" + opener
+
     # Build tool registry scoped to this session
     tools = build_tool_registry(db_session=db_session, builder_session_id=builder_session_id)
 
@@ -324,7 +414,7 @@ async def handle_turn(
         adapter=adapter,
         messages=messages,
         tools=tools,
-        system=AGENT_BUILDER_SYSTEM_PROMPT,
+        system=system,
         max_tokens=2048,
         max_iterations=5,
         cache_system=True,

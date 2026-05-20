@@ -2371,6 +2371,15 @@ export async function builderFetchProposals({ status = "pending", kind, limit } 
   return res.json();
 }
 
+export async function builderGetAgentContext(agentId) {
+  const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/builder-context`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `builderGetAgentContext(${agentId}) failed`);
+  }
+  return res.json();
+}
+
 export async function builderApproveProposal(proposalId) {
   const res = await fetch(`/api/builder/proposals/${encodeURIComponent(proposalId)}/approve`, {
     method: "POST",

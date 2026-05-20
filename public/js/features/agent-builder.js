@@ -17,6 +17,7 @@ import * as api from "../core/api.js";
 let _sessions = [];
 let _selectedSessionId = null;
 let _currentSession = null; // { id, conversation, draft, status }
+let _pendingProposals = []; // proposals for the current session
 let _sending = false;
 
 // ── API helpers ────────────────────────────────────────────────────────────────
@@ -56,7 +57,15 @@ async function abandonSession(sessionId) {
   if (_selectedSessionId === sessionId) {
     _selectedSessionId = null;
     _currentSession = null;
+    _pendingProposals = [];
   }
+}
+
+async function fetchPendingProposals(sessionId) {
+  const data = await api.builderFetchProposals({ status: "pending" });
+  _pendingProposals = (data.proposals || []).filter(
+    (p) => p.builder_session_id === sessionId,
+  );
 }
 
 // ── Render helpers ─────────────────────────────────────────────────────────────
@@ -165,6 +174,70 @@ function renderDraftPanel(draft) {
   `;
 }
 
+function renderProposalCitations(citations) {
+  if (!citations) return "";
+  const summary = citations.summary || "";
+  const runIds = citations.run_ids || [];
+  const obs = citations.observations || [];
+
+  const runLinks = runIds.map(
+    (id) =>
+      `<a class="builder-citation-run-link" href="#" data-builder-action="view-run" data-run-id="${id}">Run #${escapeHtml(String(id))}</a>`,
+  );
+
+  const obsList = obs.length
+    ? obs
+        .map((o) => {
+          const parts = [];
+          if (o.what_stalled) parts.push(`Stalled: ${escapeHtml(String(o.what_stalled))}`);
+          if (o.what_was_missing)
+            parts.push(`Missing: ${escapeHtml(String(o.what_was_missing))}`);
+          if (o.what_worked) parts.push(`Worked: ${escapeHtml(String(o.what_worked))}`);
+          return parts.length
+            ? `<li class="builder-citation-obs"><strong>Run #${o.run_id}</strong>: ${parts.join(" · ")}</li>`
+            : "";
+        })
+        .filter(Boolean)
+        .join("")
+    : "";
+
+  return `
+    <div class="builder-citations">
+      <div class="builder-citations-label">Based on runs:</div>
+      <div class="builder-citations-runs">${runLinks.join(" ") || "—"}</div>
+      ${summary ? `<p class="builder-citations-summary">${escapeHtml(summary)}</p>` : ""}
+      ${obsList ? `<ul class="builder-citations-obs-list">${obsList}</ul>` : ""}
+    </div>
+  `;
+}
+
+function renderPendingProposals(proposals) {
+  if (!proposals || !proposals.length) return "";
+  return proposals
+    .map(
+      (p) => `
+      <div class="builder-proposal-card">
+        <div class="builder-proposal-card-header">
+          <span class="builder-proposal-kind">${escapeHtml(p.kind)}</span>
+          <span class="builder-proposal-status">Pending approval</span>
+        </div>
+        ${renderProposalCitations(p.citations)}
+        <div class="builder-proposal-actions">
+          <button type="button" class="ops-button ops-button-primary builder-proposal-approve"
+            data-builder-action="approve-proposal" data-proposal-id="${p.id}">
+            Approve
+          </button>
+          <button type="button" class="ops-button ops-button-ghost builder-proposal-reject"
+            data-builder-action="reject-proposal" data-proposal-id="${p.id}">
+            Reject
+          </button>
+        </div>
+      </div>
+    `,
+    )
+    .join("");
+}
+
 // ── Main render ────────────────────────────────────────────────────────────────
 
 export function renderAgentBuilderPage() {
@@ -239,13 +312,14 @@ export function renderAgentBuilderPage() {
         ` : ""}
       </main>
 
-      <!-- Right rail: draft preview -->
+      <!-- Right rail: draft preview + pending proposals -->
       <aside class="builder-draft-rail">
         <div class="builder-draft-head">
           <h3>Draft Definition</h3>
         </div>
         <div class="builder-draft-body">
           ${renderDraftPanel(draft)}
+          ${renderPendingProposals(_pendingProposals)}
         </div>
       </aside>
     </div>
@@ -311,6 +385,7 @@ async function _handleSelectSession(sessionId) {
     _selectedSessionId = sessionId;
     const sess = await loadSession(sessionId);
     _currentSession = sess;
+    await fetchPendingProposals(sessionId);
     _rerenderPage();
     _scrollToBottom();
   } catch (err) {
@@ -351,6 +426,8 @@ async function _handleSendMessage(sessionId) {
     const result = await sendMessage(sessionId, content);
     // Refresh full session to get updated conversation + draft
     _currentSession = await loadSession(sessionId);
+    // Refresh pending proposals (a new propose() call may have landed)
+    await fetchPendingProposals(sessionId);
     // Update session list entry
     const idx = _sessions.findIndex((s) => s.id === sessionId);
     if (idx !== -1) _sessions[idx] = { ..._sessions[idx], ..._currentSession };
@@ -384,6 +461,7 @@ async function _handleApproveProposal(proposalId) {
     await approveProposal(proposalId);
     if (_selectedSessionId) {
       _currentSession = await loadSession(_selectedSessionId);
+      await fetchPendingProposals(_selectedSessionId);
     }
     _rerenderPage();
   } catch (err) {
@@ -396,6 +474,7 @@ async function _handleRejectProposal(proposalId) {
     await rejectProposal(proposalId);
     if (_selectedSessionId) {
       _currentSession = await loadSession(_selectedSessionId);
+      await fetchPendingProposals(_selectedSessionId);
     }
     _rerenderPage();
   } catch (err) {
