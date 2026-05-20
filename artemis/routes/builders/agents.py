@@ -4,15 +4,19 @@ Slice A (J11): subresource routes for instruction file, supporting files, skills
 Slice B (J11): run-observability aliases (active, recent, search, run by ID, run context).
 Slice C (J11): enriched detail on GET /api/agents/{agent_id} (instructionFileExists,
                supportingFileCount, linkedSkills).
+O2/O3: persona PATCH, avatar upload/serve, enriched detail (linkedSkills,
+       supportingFiles, recentRuns).
 """
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builders import repository as repo
@@ -21,11 +25,16 @@ from artemis.builders.schemas import (
     AgentRead,
     AgentRunRead,
     AgentUpdate,
+    PersonaPatch,
     SkillRead,
 )
 from artemis.db import get_session
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
+
+# Maximum avatar upload size: 5 MB
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+_ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 router = APIRouter(
     prefix="/api/agents",
@@ -180,17 +189,35 @@ async def get_agent(
     files_dir = _files_dir(agent.id)
 
     instruction_file_exists = instr_path.exists()
-    supporting_file_count = (
-        sum(1 for f in files_dir.iterdir() if f.is_file()) if files_dir.exists() else 0
-    )
 
-    # Enrichment: linked skills from join table
+    # O2/O3: full file list with size + mtime for Agent Card detail
+    supporting_files: list[dict[str, Any]] = []
+    if files_dir.exists():
+        for f in sorted(files_dir.iterdir()):
+            if f.is_file():
+                st = f.stat()
+                supporting_files.append(
+                    {
+                        "filename": f.name,
+                        "sizeBytes": st.st_size,
+                        "modifiedAt": st.st_mtime,
+                    }
+                )
+
+    # Enrichment: linked skills from join table (now includes description)
     skills = await repo.list_skills_for_agent(session, agent.id)
-    linked_skills = [{"slug": s.slug, "name": s.name} for s in skills]
+    linked_skills = [
+        {"slug": s.slug, "name": s.name, "description": s.description} for s in skills
+    ]
+
+    # O2/O3: last 10 runs with trajectory summaries
+    recent_runs = await repo.list_recent_runs_with_trajectory(session, agent_id, limit=10)
 
     base["instructionFileExists"] = instruction_file_exists
-    base["supportingFileCount"] = supporting_file_count
+    base["supportingFileCount"] = len(supporting_files)
+    base["supportingFiles"] = supporting_files
     base["linkedSkills"] = linked_skills
+    base["recentRuns"] = recent_runs
     return base
 
 
@@ -323,3 +350,127 @@ async def list_agent_skills(
     agent = await _get_agent_or_404(session, agent_id)
     skills = await repo.list_skills_for_agent(session, agent.id)
     return {"skills": [SkillRead.model_validate(s).model_dump(by_alias=True) for s in skills]}
+
+
+# ─── O2/O3: Persona + Avatar routes ──────────────────────────────────────────
+
+
+@router.patch("/{agent_id}/persona")
+async def patch_persona(
+    agent_id: str,
+    body: PersonaPatch,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Merge-patch the agent's persona JSONB.
+
+    Sends only the fields that changed; existing keys not present in the body
+    are preserved. Returns the updated agent with the merged persona.
+    """
+    patch_data = body.model_dump(exclude_none=True, by_alias=False)
+    if not patch_data:
+        raise bad_request("No persona fields to update", "empty_persona_patch")
+
+    try:
+        agent = await repo.get_agent(session, agent_id)
+    except ValueError:
+        raise not_found(f"Agent '{agent_id}' not found", "agent_not_found")  # noqa: B904
+
+    # Merge-patch the existing persona dict
+    existing: dict[str, Any] = dict(agent.persona) if agent.persona else {}
+    existing.update(patch_data)
+    agent.persona = existing
+
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    agent.updated_at = datetime.now(UTC)
+    await session.flush()
+    await session.refresh(agent)
+    await session.commit()
+
+    return AgentRead.model_validate(agent).model_dump(by_alias=True)
+
+
+def _avatar_path(agent_db_id: int) -> Path:
+    return _agent_dir(agent_db_id) / "avatar.png"
+
+
+@router.post("/{agent_id}/avatar", status_code=201)
+async def upload_avatar(
+    agent_id: str,
+    file: UploadFile,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Upload a profile image for this agent.
+
+    Accepts JPEG, PNG, GIF, or WebP; max 5 MB. The image is stored at
+    ``~/.artemis/agents/{db_id}/avatar.png`` regardless of original extension.
+    The agent's persona.profile_image_path is updated to the serve URL.
+    """
+    agent = await _get_agent_or_404(session, agent_id)
+
+    # Content-type guard
+    content_type = file.content_type or ""
+    if not content_type:
+        # Fallback: sniff from filename
+        guessed, _ = mimetypes.guess_type(file.filename or "")
+        content_type = guessed or ""
+    if content_type not in _ALLOWED_IMAGE_TYPES:
+        raise bad_request(
+            f"Unsupported image type '{content_type}'. Allowed: jpeg, png, gif, webp",
+            "unsupported_image_type",
+        )
+
+    # Size guard — read in chunks
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _AVATAR_MAX_BYTES:
+            raise bad_request(
+                f"Image exceeds the {_AVATAR_MAX_BYTES // (1024 * 1024)} MB size limit",
+                "avatar_too_large",
+            )
+        chunks.append(chunk)
+
+    # Write to disk
+    dest = _avatar_path(agent.id)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"".join(chunks))
+
+    # Update persona.profile_image_path
+    serve_url = f"/api/agents/{agent_id}/avatar"
+    existing: dict[str, Any] = dict(agent.persona) if agent.persona else {}
+    existing["profile_image_path"] = serve_url
+    agent.persona = existing
+
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    agent.updated_at = datetime.now(UTC)
+    await session.flush()
+    await session.refresh(agent)
+    await session.commit()
+
+    return {"ok": True, "url": serve_url}
+
+
+@router.get("/{agent_id}/avatar")
+async def serve_avatar(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> FileResponse:
+    """Serve the agent's profile image with cache headers.
+
+    Returns 404 if no avatar has been uploaded.
+    """
+    agent = await _get_agent_or_404(session, agent_id)
+    path = _avatar_path(agent.id)
+    if not path.exists():
+        raise not_found(f"No avatar for agent '{agent_id}'", "avatar_not_found")
+    return FileResponse(
+        path=str(path),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
