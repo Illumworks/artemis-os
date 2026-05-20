@@ -107,7 +107,7 @@ async def test_agent_run_endpoint_unknown_agent(seeded_client: AsyncClient) -> N
 async def test_workflow_run_endpoint_happy_path(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """POST /api/workflows/{id}/run returns a completed WorkflowRun JSON."""
+    """POST /api/workflows/{id}/run?sync=true returns a completed WorkflowRun JSON."""
     async with db_session.begin():
         await repo.create_workflow(
             db_session,
@@ -119,7 +119,7 @@ async def test_workflow_run_endpoint_happy_path(
     adapter = _fake_adapter("workflow step done")
     with patch("artemis.builders.workflow_executor.AnthropicAdapter", return_value=adapter):
         resp = await client.post(
-            "/api/workflows/route-wf-1/run",
+            "/api/workflows/route-wf-1/run?sync=true",
             json={"initialMessage": "go"},
         )
 
@@ -128,6 +128,41 @@ async def test_workflow_run_endpoint_happy_path(
     assert data["status"] == "completed"
     assert data["workflowId"] == "route-wf-1"
     assert "runId" in data
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_endpoint_async_creates_pending_before_background(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /api/workflows/{id}/run returns 202 and leaves a pending run row."""
+    async with db_session.begin():
+        await repo.create_workflow(
+            db_session,
+            workflow_id="route-wf-async",
+            name="Route WF Async",
+            steps=[{"name": "step1", "prompt": "Do it"}],
+        )
+
+    scheduled: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(
+        "artemis.routes.builders.execution._schedule_workflow_background_run",
+        lambda workflow_id, run_id, initial_message: scheduled.append(
+            (workflow_id, run_id, initial_message)
+        ),
+    )
+
+    resp = await client.post(
+        "/api/workflows/route-wf-async/run",
+        json={"initialMessage": "go"},
+    )
+
+    assert resp.status_code == 202
+    run_id = resp.json()["runId"]
+    run = await repo.get_workflow_run(db_session, run_id)
+    assert run.status == "pending"
+    assert scheduled == [("route-wf-async", run_id, "go")]
 
 
 @pytest.mark.asyncio

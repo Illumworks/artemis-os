@@ -118,3 +118,37 @@ async def list_workflow_runs(
     result = await session.execute(q)
     runs = list(result.scalars().all())
     return {"runs": [WorkflowRunRead.model_validate(r).model_dump(by_alias=True) for r in runs]}
+
+
+@router.get("/{workflow_id}/runs/latest")
+async def get_latest_workflow_run(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(WorkflowRun)
+        .where(WorkflowRun.workflow_id == workflow_id)
+        .order_by(WorkflowRun.started_at.desc(), WorkflowRun.id.desc())
+        .limit(1)
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise not_found("No runs found", "no_runs")
+    return WorkflowRunRead.model_validate(run).model_dump(by_alias=True)
+
+
+@router.get("/{workflow_id}/runs/{run_id}")
+async def get_workflow_run(
+    workflow_id: str,
+    run_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(WorkflowRun)
+        .where(WorkflowRun.workflow_id == workflow_id, WorkflowRun.run_id == run_id)
+        .limit(1)
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise not_found("Workflow run not found", "workflow_run_not_found")
+    return WorkflowRunRead.model_validate(run).model_dump(by_alias=True)

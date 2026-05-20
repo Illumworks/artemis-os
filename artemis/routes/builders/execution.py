@@ -12,12 +12,18 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import artemis.db as db
+from artemis.builders import repository as repo
 from artemis.builders.chain_executor import run_chain
 from artemis.builders.dag_executor import run_dag_with_context
 from artemis.builders.executor import run_agent
@@ -31,6 +37,8 @@ router = APIRouter(
     tags=["builders-execution"],
     dependencies=[Depends(require_token)],
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,14 +103,32 @@ async def run_agent_endpoint(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@router.post("/api/workflows/{workflow_id}/run", status_code=200)
+@router.post("/api/workflows/{workflow_id}/run")
 async def run_workflow_endpoint(
     workflow_id: str,
-    body: WorkflowRunRequest,
+    response: Response,
+    body: WorkflowRunRequest | None = None,
+    sync: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Run a workflow synchronously. Returns the completed WorkflowRun row."""
+    """Start a workflow run. Async by default; ?sync=true preserves the old behavior."""
     try:
+        body = body or WorkflowRunRequest()
+        if not sync:
+            await repo.get_workflow(session, workflow_id)
+            run_id = str(uuid.uuid4())
+            await repo.create_workflow_run(
+                session,
+                run_id=run_id,
+                workflow_id=workflow_id,
+                status="pending",
+                current_step=0,
+            )
+            await session.commit()
+            _schedule_workflow_background_run(workflow_id, run_id, body.initial_message)
+            response.status_code = 202
+            return {"runId": run_id}
+
         run = await run_workflow(
             session=session,
             workflow_id=workflow_id,
@@ -114,6 +140,45 @@ async def run_workflow_endpoint(
         raise not_found(str(exc), "workflow_not_found")  # noqa: B904
     except Exception as exc:
         raise internal(f"Workflow run failed: {exc}")  # noqa: B904
+
+
+def _schedule_workflow_background_run(
+    workflow_id: str,
+    run_id: str,
+    initial_message: str | None,
+) -> None:
+    asyncio.create_task(_run_workflow_background(workflow_id, run_id, initial_message))
+
+
+async def _run_workflow_background(
+    workflow_id: str,
+    run_id: str,
+    initial_message: str | None,
+) -> None:
+    async with db.SessionLocal() as session:
+        try:
+            await run_workflow(
+                session=session,
+                workflow_id=workflow_id,
+                run_id=run_id,
+                initial_message=initial_message,
+            )
+            await session.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Background workflow run failed: workflow=%s run=%s", workflow_id, run_id
+            )
+            await session.rollback()
+            try:
+                await repo.update_workflow_run_status(
+                    session,
+                    run_id,
+                    "failed",
+                    completed_at=datetime.now(UTC),
+                )
+                await session.commit()
+            except Exception:
+                logger.exception("Failed to mark workflow run failed: run=%s", run_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

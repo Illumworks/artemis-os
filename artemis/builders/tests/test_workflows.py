@@ -177,3 +177,28 @@ async def test_list_workflow_runs_http(client: AsyncClient) -> None:
     resp = await client.get("/api/workflows/runs-wf/runs")
     assert resp.status_code == 200
     assert resp.json()["runs"] == []
+
+
+@pytest.mark.asyncio
+async def test_latest_workflow_run_not_found(client: AsyncClient) -> None:
+    resp = await client.get("/api/workflows/runs-wf/runs/latest")
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "no_runs"
+
+
+@pytest.mark.asyncio
+async def test_latest_workflow_run_http(client: AsyncClient, db_session: AsyncSession) -> None:
+    async with db_session.begin():
+        await repo.create_workflow(db_session, workflow_id="latest-wf", name="Latest", steps=_STEPS)
+        older = await repo.create_workflow_run(
+            db_session, run_id="older-run", workflow_id="latest-wf", status="completed"
+        )
+        latest = await repo.create_workflow_run(
+            db_session, run_id="latest-run", workflow_id="latest-wf", status="pending"
+        )
+    assert latest.id > older.id
+
+    resp = await client.get("/api/workflows/latest-wf/runs/latest")
+
+    assert resp.status_code == 200
+    assert resp.json()["runId"] == "latest-run"
