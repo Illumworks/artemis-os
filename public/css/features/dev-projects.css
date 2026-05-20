@@ -66,11 +66,12 @@
   margin-right: var(--dp-rail-width);
 }
 
-/* v3 top bar: thin and information-dense (~44px tall), sticky to the top of
-   the scroll area. Trims the v2 padding which was 20px 36px 16px. */
+/* v3 top bar: sticky to the top of the scroll area. Padding now mirrors
+   claudeck's base .dp-header rule (artemis-design.css:3633 — 20px 36px 16px)
+   verbatim; the prior v3 override of 6px 16px was visibly tighter than
+   claudeck side-by-side. */
 .dev-projects-ready .dp-header {
-  padding: 6px 16px;
-  min-height: 44px;
+  padding: 20px 36px 16px;
   position: sticky;
   top: 0;
   background: transparent;
@@ -1049,15 +1050,23 @@ body.dp-rail-resizing .dp-rail {
 }
 .dp-proj-row:last-child { border-bottom: 0; }
 .dp-proj-row:hover { background: var(--surface-sunken, rgba(250,244,232,0.5)); }
-.dp-proj-row.is-active { background: var(--amber-wash, rgba(199,126,43,0.08)); }
+/* Active row: amber-wash fill PLUS an inset amber ring for the "glow"
+   indicator. Mirrors the .rail-dev-session.active pattern in claudeck
+   (artemis-design.css:757) — border-color amber + 3px amber-wash halo,
+   adapted as inset shadows so the row keeps its flush left/right edges. */
+.dp-proj-row.is-active {
+  background: var(--amber-wash, rgba(199,126,43,0.08));
+  box-shadow:
+    inset 0 0 0 1px var(--amber, #C77E2B),
+    inset 0 0 0 3px var(--amber-wash, rgba(199,126,43,0.08));
+}
+/* Bare folder icon to match claudeck's rdf-dropdown-item rendering
+   (projects.js line 168: inline 13×13 svg with no surrounding mark box).
+   The previous boxed 26×26 icon was making rows ~6px taller than claudeck. */
 .dp-proj-row-icon {
-  width: 26px; height: 26px;
-  border-radius: 9px;
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
   color: var(--ink-4, #8F8576);
-  border: 1px solid color-mix(in srgb, var(--amber, #C77E2B) 16%, transparent);
-  background: color-mix(in srgb, var(--amber, #C77E2B) 8%, var(--surface-raised, #fff));
 }
 .dp-proj-row.is-active .dp-proj-row-icon { color: var(--amber-ink, #A46220); }
 .dp-proj-row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
