@@ -42,6 +42,16 @@ async def test_stats_analytics_stub(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_stats_agent_metrics_stub(client: AsyncClient) -> None:
+    resp = await client.get("/api/stats/agent-metrics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["overview"]["total_runs"] == 0
+    for key in ("agents", "byType", "daily", "recent"):
+        assert data[key] == []
+
+
+@pytest.mark.anyio
 async def test_stats_providers_shape(client: AsyncClient) -> None:
     resp = await client.get("/api/stats/providers")
     assert resp.status_code == 200

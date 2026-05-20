@@ -116,6 +116,24 @@ class ProviderStatusOut(BaseModel):
     healthy: bool | None
 
 
+class AgentMetricsOverview(BaseModel):
+    total_runs: int = 0
+    completed: int = 0
+    total_cost: float = 0.0
+    avg_duration: float = 0.0
+    avg_turns: float = 0.0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+
+
+class AgentMetricsOut(BaseModel):
+    overview: AgentMetricsOverview
+    agents: list[dict] = []
+    byType: list[dict] = []
+    daily: list[dict] = []
+    recent: list[dict] = []
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -130,6 +148,16 @@ async def stats_analytics(
         cost_today_usd=0.0,
         runs_today=0,
     )
+
+
+@router.get("/agent-metrics", response_model=AgentMetricsOut)
+async def stats_agent_metrics() -> AgentMetricsOut:
+    """Return empty-state agent metrics stub.
+
+    Shape matches frontend consumer in public/js/features/agent-monitor.js.
+    # TODO(J11-followup): wire real metrics from agent_runs table.
+    """
+    return AgentMetricsOut(overview=AgentMetricsOverview())
 
 
 @router.get("/providers", response_model=list[ProviderStatusOut])
