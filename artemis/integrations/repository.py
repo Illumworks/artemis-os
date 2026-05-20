@@ -108,6 +108,24 @@ async def list_active(session: AsyncSession, provider: str | None = None) -> lis
     return list(result.scalars().all())
 
 
+async def list_for_ui(session: AsyncSession, provider: str | None = None) -> list[Integration]:
+    """Return active + needs_reauth rows for the Connectors modal.
+
+    Unlike list_active (active-only, used by service callers), this function
+    returns all rows a user should see in the UI — including needs_reauth rows
+    so the modal can surface them with an amber reconnect CTA.
+    """
+    stmt = (
+        select(Integration)
+        .where(Integration.status.in_(["active", "needs_reauth"]))
+        .order_by(Integration.connected_at.desc())
+    )
+    if provider:
+        stmt = stmt.where(Integration.provider == provider)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def mark_revoked(session: AsyncSession, integration_id: int) -> Integration:
     result = await session.execute(
         update(Integration)
@@ -153,6 +171,9 @@ async def persist_refreshed_credentials(
             encrypted_credentials=encrypted,
             last_verified_at=now,
             last_refresh_attempt_at=now,
+            # A successful refresh means the integration is usable again —
+            # flip needs_reauth rows back to active.
+            status="active",
         )
     )
 

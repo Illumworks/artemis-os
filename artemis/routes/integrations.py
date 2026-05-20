@@ -48,6 +48,7 @@ class IntegrationOut(BaseModel):
     display_name: str | None
     connected_at: datetime
     status: str
+    last_refresh_attempt_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -83,7 +84,10 @@ async def list_integrations(
     provider: str | None = Query(default=None),
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
 ) -> list[Integration]:
-    return await repo.list_active(session, provider=provider)
+    # list_for_ui returns active + needs_reauth so the Connectors modal can
+    # surface needs_reauth rows with an amber reconnect CTA.  Service callers
+    # that need only usable rows should call repo.list_active() directly.
+    return await repo.list_for_ui(session, provider=provider)
 
 
 @router.post("/{integration_id}/refresh")

@@ -121,11 +121,13 @@ async function _verifyProvider(provider, testResultSpan) {
  *
  * @param {HTMLElement} container
  * @param {{ id: string, name: string, tagline: string }} provider
- * @param {{ id: number, workspace_name: string|null, connected_at: string }|null} connectedData
+ * @param {{ id: number, workspace_name: string|null, connected_at: string, status?: string, last_refresh_attempt_at?: string|null }|null} connectedData
  * @param {{ ever_configured: boolean, configured_keys: Record<string,boolean> }|null} [configStatus]
  */
 export function renderIntegrationCard(container, provider, connectedData, configStatus = null) {
   container.innerHTML = '';
+
+  const needsReauth = connectedData !== null && connectedData.status === 'needs_reauth';
 
   const card = document.createElement('div');
   card.className = 'integration-card';
@@ -151,7 +153,12 @@ export function renderIntegrationCard(container, provider, connectedData, config
   meta.appendChild(taglineEl);
   header.appendChild(meta);
 
-  if (connectedData) {
+  if (needsReauth) {
+    const pill = document.createElement('div');
+    pill.className = 'integration-card__status integration-card__status--reauth';
+    pill.innerHTML = '<span class="integration-card__status-dot integration-card__status-dot--reauth" aria-hidden="true"></span>Needs reconnect';
+    header.appendChild(pill);
+  } else if (connectedData) {
     const pill = document.createElement('div');
     pill.className = 'integration-card__status';
     pill.innerHTML = '<span class="integration-card__status-dot" aria-hidden="true"></span>Connected';
@@ -187,7 +194,97 @@ export function renderIntegrationCard(container, provider, connectedData, config
   card.appendChild(header);
 
   // ── Body ─────────────────────────────────────────────────────────────────────
-  if (connectedData) {
+  if (needsReauth) {
+    // Needs-reauth state — amber banner, reconnect CTA, optional try-refresh
+    const body = document.createElement('div');
+    body.className = 'integration-card__body integration-card__body--reauth';
+
+    const reauthMsg = document.createElement('div');
+    reauthMsg.className = 'integration-card__reauth-msg';
+    reauthMsg.textContent =
+      'The connection expired and needs to be re-authorized. Click Reconnect to refresh your access.';
+    body.appendChild(reauthMsg);
+
+    if (connectedData.last_refresh_attempt_at) {
+      const attemptEl = document.createElement('div');
+      attemptEl.className = 'integration-card__connected-since';
+      attemptEl.textContent = `Last refresh attempt: ${_formatDate(connectedData.last_refresh_attempt_at)}`;
+      body.appendChild(attemptEl);
+    }
+
+    card.appendChild(body);
+
+    // ── Actions ──────────────────────────────────────────────────────────────
+    const actions = document.createElement('div');
+    actions.className = 'integration-card__actions';
+
+    // Primary CTA — same OAuth flow as initial Connect
+    const reconnectBtn = document.createElement('button');
+    reconnectBtn.type = 'button';
+    reconnectBtn.className = 'integration-card__connect-btn integration-card__connect-btn--reauth';
+    reconnectBtn.textContent = 'Reconnect';
+    reconnectBtn.addEventListener('click', async () => {
+      reconnectBtn.disabled = true;
+      reconnectBtn.textContent = 'Redirecting…';
+      try {
+        await _connectProvider(provider);
+      } catch (err) {
+        reconnectBtn.disabled = false;
+        reconnectBtn.textContent = 'Reconnect';
+        const errEl = document.createElement('span');
+        errEl.className = 'integration-card__error';
+        errEl.textContent = err.message || 'Could not start reconnect.';
+        actions.appendChild(errEl);
+        setTimeout(() => errEl.remove(), 4000);
+      }
+    });
+
+    // Secondary affordance — try the refresh endpoint without a full OAuth dance
+    const tryRefreshBtn = document.createElement('button');
+    tryRefreshBtn.type = 'button';
+    tryRefreshBtn.className = 'integration-card__try-refresh-btn';
+    tryRefreshBtn.textContent = 'Try refresh';
+    const refreshResultSpan = document.createElement('span');
+    refreshResultSpan.className = 'integration-card__refresh-result hidden';
+    refreshResultSpan.setAttribute('aria-live', 'polite');
+
+    tryRefreshBtn.addEventListener('click', async () => {
+      tryRefreshBtn.disabled = true;
+      tryRefreshBtn.textContent = 'Trying…';
+      refreshResultSpan.textContent = '';
+      refreshResultSpan.className = 'integration-card__refresh-result hidden';
+      try {
+        const res = await fetch(`/api/integrations/${connectedData.id}/refresh`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (data.outcome === 'refreshed') {
+          // Re-render as active
+          renderIntegrationCard(container, provider, {
+            ...connectedData,
+            status: 'active',
+            last_refresh_attempt_at: null,
+          }, configStatus);
+          return;
+        }
+        // refresh_token_expired or anything else — stay in needs_reauth, show inline error
+        refreshResultSpan.textContent =
+          data.outcome === 'refresh_token_expired'
+            ? 'Refresh failed — full reconnect needed.'
+            : `Refresh failed (${data.outcome || 'unknown'}).`;
+        refreshResultSpan.className = 'integration-card__refresh-result integration-card__refresh-result--error';
+      } catch {
+        refreshResultSpan.textContent = 'Refresh request failed. Try again.';
+        refreshResultSpan.className = 'integration-card__refresh-result integration-card__refresh-result--error';
+      } finally {
+        tryRefreshBtn.disabled = false;
+        tryRefreshBtn.textContent = 'Try refresh';
+      }
+    });
+
+    actions.appendChild(reconnectBtn);
+    actions.appendChild(tryRefreshBtn);
+    actions.appendChild(refreshResultSpan);
+    card.appendChild(actions);
+  } else if (connectedData) {
     // Connected state
     const body = document.createElement('div');
     body.className = 'integration-card__body';

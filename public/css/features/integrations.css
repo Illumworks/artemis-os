@@ -107,6 +107,81 @@
   flex-shrink: 0;
 }
 
+/* ── Needs-reconnect pill (amber variant) ─────────────── */
+
+.integration-card__status--reauth {
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  color: var(--amber-ink);
+}
+
+.integration-card__status-dot--reauth {
+  background: var(--amber);
+}
+
+/* ── Reconnect button (amber primary) ────────────────── */
+
+.integration-card__connect-btn--reauth {
+  background: var(--amber);
+  color: var(--text);
+}
+
+.integration-card__connect-btn--reauth:hover:not(:disabled) {
+  background: var(--amber-ink);
+  color: var(--text);
+}
+
+/* ── Try refresh small text button ───────────────────── */
+
+.integration-card__try-refresh-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.12s;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.integration-card__try-refresh-btn:hover:not(:disabled) {
+  color: var(--text-secondary);
+}
+
+.integration-card__try-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Inline refresh result (briefly shown) */
+.integration-card__refresh-result {
+  font-size: 11px;
+  transition: opacity 0.2s;
+}
+
+.integration-card__refresh-result--error {
+  color: var(--error);
+}
+
+.integration-card__refresh-result.hidden {
+  display: none;
+}
+
+/* ── Reauth body (amber tint) ─────────────────────────── */
+
+.integration-card__body--reauth {
+  border-top-color: color-mix(in srgb, var(--amber) 25%, transparent);
+}
+
+.integration-card__reauth-msg {
+  font-size: 12px;
+  color: var(--amber-ink);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
 /* ── Body ─────────────────────────────────────────────── */
 
 .integration-card__body {
