@@ -788,7 +788,7 @@ function openProjectSwitcher(anchor) {
   }
   const root = $("dev-context-root");
   const rect = anchor.getBoundingClientRect();
-  const width = 320;
+  const width = 560;
   const left = Math.min(rect.left, window.innerWidth - width - 12);
   const pickProject = async (project) => {
     state.activeProjectId = Number(project.id);
