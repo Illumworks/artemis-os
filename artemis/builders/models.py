@@ -11,6 +11,11 @@ Tables (all Postgres, all TIMESTAMPTZ timestamps, all JSONB blobs):
   agent_chains   — sequential agent pipeline definitions
   agent_dags     — dependency-graph agent pipeline definitions
 
+O1 — Agent-Builder + Self-Improvement tables:
+  builder_sessions                  — in-flight builder conversations
+  definition_proposals              — proposed definitions awaiting approval
+  agent_run_trajectory_summaries    — per-run self-improvement input summaries
+
 Phase F2a: data layer only. Execution wiring (F2b) wires these to the F1 loop.
 """
 
@@ -271,5 +276,132 @@ class AgentDag(Base):
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ── O1 — Agent-Builder + Self-Improvement models ─────────────────────────────
+
+
+class BuilderSession(Base):
+    """In-flight builder conversation.
+
+    Tracks the full message history and current draft of a meta-object being
+    built via the conversational Agent-Builder interface.
+
+    builder_kind: 'agent' | 'skill' | 'workflow' | 'automation' (only 'agent' in v1)
+    target_id: non-null = edit session for an existing definition; null = new
+    status: 'active' | 'committed' | 'abandoned'
+    conversation: full message history as [{role, content}] for resumption
+    draft: current draft of the meta-object accumulating from the conversation
+    """
+
+    __tablename__ = "builder_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "builder_kind IN ('agent', 'skill', 'workflow', 'automation')",
+            name="ck_builder_sessions_kind",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'committed', 'abandoned')",
+            name="ck_builder_sessions_status",
+        ),
+        Index("idx_builder_sessions_status", "status"),
+        Index("idx_builder_sessions_user_id", "user_id"),
+        Index("idx_builder_sessions_kind", "builder_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    builder_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    conversation: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
+    draft: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DefinitionProposal(Base):
+    """Proposed definition awaiting user approval.
+
+    Records a draft definition from the builder or self-improvement loop.
+    The proposal state machine: pending → approved | rejected | superseded.
+
+    proposed_by: 'user' | 'builder' | 'self-improvement'
+    target_id: non-null = revision of existing; null = new
+    citations: e.g. {"run_ids": [47, 51, 53], "rationale": "..."}
+    """
+
+    __tablename__ = "definition_proposals"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('agent', 'skill', 'workflow', 'automation')",
+            name="ck_definition_proposals_kind",
+        ),
+        CheckConstraint(
+            "proposed_by IN ('user', 'builder', 'self-improvement')",
+            name="ck_definition_proposals_proposed_by",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'superseded')",
+            name="ck_definition_proposals_status",
+        ),
+        Index("idx_definition_proposals_status", "status"),
+        Index("idx_definition_proposals_session_id", "builder_session_id"),
+        Index("idx_definition_proposals_kind_target", "kind", "target_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    builder_session_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "builder_sessions.id",
+            name="fk_definition_proposals_session",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    proposed_by: Mapped[str] = mapped_column(Text, nullable=False)
+    proposed_definition: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    citations: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AgentRunTrajectorySummary(Base):
+    """Per-run trajectory summary — input to the self-improvement loop.
+
+    Written asynchronously after every agent run completes.
+    run_id is both the PK and the FK to agent_runs.id.
+    """
+
+    __tablename__ = "agent_run_trajectory_summaries"
+    __table_args__ = (
+        Index("idx_trajectory_summaries_generated_at", "generated_at"),
+    )
+
+    run_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "agent_runs.id",
+            name="fk_trajectory_summaries_run",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+        nullable=False,
+    )
+    what_worked: Mapped[str | None] = mapped_column(Text, nullable=True)
+    what_stalled: Mapped[str | None] = mapped_column(Text, nullable=True)
+    what_was_missing: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )

@@ -8,6 +8,11 @@ import {
 } from "../core/navigation.js";
 import * as api from "../core/api.js";
 import { renderSkillsGuideHTML } from "./skills-guide.js";
+import {
+  renderAgentBuilderPage,
+  handleBuilderAction,
+  initBuilderSurface,
+} from "./agent-builder.js";
 
 const SHELL_CONTENT_SELECTOR = "#app-shell-content";
 const AGENT_LOADING_THRESHOLD = 0;
@@ -496,6 +501,7 @@ function isOperationsSurfaceView(view) {
   const normalized = normalizeAppView(view);
   return normalized === OPERATIONS_VIEW
     || normalized === "agents"
+    || normalized === "agents/builder"
     || normalized === "skills"
     || normalized === "workflows"
     || normalized === "automations";
@@ -1410,7 +1416,7 @@ function renderAgentsPage() {
       "Who does work",
       "A roster for scanning, plus a dedicated main-canvas profile for policy, memory, skills, and runtime health.",
       agentChips,
-      [renderOpsSecondaryButton("New agent", "new-agent"), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
+      [renderOpsButton("Build with Agent-Builder", "open-shell-view", { "shell-view": "agents/builder" }), renderOpsSecondaryButton("New agent", "new-agent"), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
     )}
     <section class="ops-grid ops-agents-grid">
       <article class="ops-panel ops-list-panel">
@@ -2735,6 +2741,8 @@ function buildOperationsMarkup(view) {
       return renderOverviewPage();
     case "agents":
       return renderAgentsPage();
+    case "agents/builder":
+      return renderAgentBuilderPage();
     case "skills":
       return renderSkillsPage();
     case "workflows":
@@ -3237,6 +3245,14 @@ async function createCampaignWritingDraft(campaignId) {
 }
 
 function handleOperationsClick(event) {
+  // Delegate builder actions
+  const builderBtn = event.target.closest("[data-builder-action]");
+  if (builderBtn) {
+    const builderAction = builderBtn.dataset.builderAction || "";
+    handleBuilderAction(builderAction, builderBtn);
+    return;
+  }
+
   const button = event.target.closest("[data-ops-action]");
   if (!button) return;
 
@@ -3785,6 +3801,22 @@ onState("workflows", scheduleRender);
 onState("workflowsLoaded", scheduleRender);
 onState("workflowsLoading", scheduleRender);
 onState("workflowsError", scheduleRender);
+
+// Init Agent-Builder surface when the view switches to "agents/builder"
+let _builderInitialized = false;
+onState("view", (view) => {
+  if (normalizeAppView(view) === "agents/builder" && !_builderInitialized) {
+    _builderInitialized = true;
+    void initBuilderSurface().then(() => renderOperationsView("agents/builder")).catch(() => {});
+  }
+});
+
+// Re-render when the builder triggers an internal state change
+document.addEventListener("builder:rerender", () => {
+  if (normalizeAppView(getState("view")) === "agents/builder") {
+    renderOperationsView("agents/builder");
+  }
+});
 
 const shellContent = getShellContent();
 shellContent?.addEventListener("click", handleOperationsClick);

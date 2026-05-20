@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+import artemis.builder.repository  # noqa: F401 — ensure O1 models are registered
 import artemis.builders.models  # noqa: F401 — registers all builder models on Base.metadata
 import artemis.db
 from artemis.db import attach_pgvector_codec
@@ -44,10 +45,14 @@ artemis.db.SessionLocal = __import__(
     class_=AsyncSession,
 )
 
-# Child tables first (FK constraints)
+# Child tables first (FK constraints).
+# O1 tables (agent_run_trajectory_summaries, definition_proposals, builder_sessions)
+# are included so builder tests start with a clean state too.
 _TRUNCATE_SQL = text(
     "TRUNCATE "
     "agent_context, "
+    "agent_run_trajectory_summaries, "
+    "definition_proposals, "
     "agent_runs, "
     "agent_skills, "
     "workflow_runs, "
@@ -55,7 +60,8 @@ _TRUNCATE_SQL = text(
     "skills, "
     "workflows, "
     "agent_chains, "
-    "agent_dags "
+    "agent_dags, "
+    "builder_sessions "
     "RESTART IDENTITY CASCADE"
 )
 

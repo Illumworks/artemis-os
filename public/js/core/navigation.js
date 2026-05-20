@@ -219,6 +219,7 @@ const KNOWN_VIEWS = new Set([
   WRITING_STUDIO_VIEW,
   LEGACY_DASHBOARD_VIEW,
   INTEGRATIONS_VIEW,
+  "agents/builder",
   ...PRIMARY_NAV_DESTINATIONS.map((item) => item.id),
   ...SECONDARY_NAV_DESTINATIONS.map((item) => item.id),
 ]);
@@ -266,6 +267,7 @@ export function isShellView(view) {
     || normalizedView === WRITING_STUDIO_VIEW
     || normalizedView === "workflows"
     || normalizedView === "agents"
+    || normalizedView === "agents/builder"
     || normalizedView === "skills"
     || normalizedView === "automations"
     || normalizedView === MARKETING_OS_VIEW

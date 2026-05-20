@@ -18,6 +18,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from artemis import __version__
+from artemis.builder.routes import agents_subresource_router as builder_agents_router
+from artemis.builder.routes import router as builder_router
 from artemis.integrations.token_refresh.scheduler import (
     start_token_refresh_scheduler,
     stop_token_refresh_scheduler,
@@ -167,6 +169,10 @@ app.include_router(agent_dags.router)
 
 # Phase F2b — Execution wiring (run agents / workflows / chains / DAGs)
 app.include_router(execution.router)
+
+# O1 — Agent-Builder + Self-Improvement
+app.include_router(builder_router)
+app.include_router(builder_agents_router)
 
 # Phase E2 — WebSocket relay for live run streaming
 app.include_router(ws_router)
