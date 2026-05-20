@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
 from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
-from artemis.providers.lm_studio.adapter import LMStudioAdapter, _LM_STUDIO_DEFAULT_BASE
+from artemis.providers.lm_studio.adapter import _LM_STUDIO_DEFAULT_BASE, LMStudioAdapter
 from artemis.providers.openai.adapter import OpenAIAdapter
 
 pytestmark = pytest.mark.asyncio
@@ -79,7 +79,10 @@ async def test_complete_posts_to_correct_base_url() -> None:
                 200,
                 json={
                     "choices": [
-                        {"message": {"content": "pong", "role": "assistant"}, "finish_reason": "stop"}
+                        {
+                            "message": {"content": "pong", "role": "assistant"},
+                            "finish_reason": "stop",
+                        }
                     ],
                     "usage": {"prompt_tokens": 5, "completion_tokens": 3},
                 },
