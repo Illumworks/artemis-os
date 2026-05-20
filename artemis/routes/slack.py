@@ -60,7 +60,9 @@ async def get_mentions(
     except Exception:
         logger.debug("get_mentions: could not resolve Slack token for name lookup")
 
-    return await list_unresolved_mentions(session, limit=limit, include_types=include_types, token=token)
+    return await list_unresolved_mentions(
+        session, limit=limit, include_types=include_types, token=token
+    )
 
 
 @router.post("/signals/mentions/{event_id}/resolve")

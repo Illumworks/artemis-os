@@ -124,9 +124,7 @@ async def test_signal_legal_edges(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("frm,to", _BRIEF_EDGES)
-async def test_brief_legal_edges(
-    frm: BriefState, to: BriefState, db_session: AsyncSession
-) -> None:
+async def test_brief_legal_edges(frm: BriefState, to: BriefState, db_session: AsyncSession) -> None:
     cand = await _cand(db_session, decision_state=frm.value)
     updated = await transition(db_session, "brief", cand.id, to)
     assert updated.decision_state == to.value
@@ -161,8 +159,9 @@ async def test_deliverable_legal_edges(
 @pytest.mark.asyncio
 async def test_audit_from_state_correct(db_session: AsyncSession) -> None:
     sig = await _sig(db_session)
-    await transition(db_session, "signal", sig.id, SignalState.qualified,
-                     actor="a@b.com", reason="ok")
+    await transition(
+        db_session, "signal", sig.id, SignalState.qualified, actor="a@b.com", reason="ok"
+    )
     r = await db_session.execute(
         select(CampaignStateTransition).where(CampaignStateTransition.entity_id == sig.id)
     )

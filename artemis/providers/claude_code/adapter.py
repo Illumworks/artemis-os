@@ -41,9 +41,8 @@ class ClaudeCodeAdapter:
         if not resolved:
             raise MissingCliBinaryError("claude-code", "claude")
         self._binary = resolved
-        self._default_model = (
-            default_model
-            or os.environ.get("CLAUDE_CODE_DEFAULT_MODEL", _DEFAULT_MODEL)
+        self._default_model = default_model or os.environ.get(
+            "CLAUDE_CODE_DEFAULT_MODEL", _DEFAULT_MODEL
         )
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
@@ -54,8 +53,10 @@ class ClaudeCodeAdapter:
         cmd = [
             self._binary,
             "--print",
-            "--output-format", "json",
-            "--model", model,
+            "--output-format",
+            "json",
+            "--model",
+            model,
         ]
 
         proc = await asyncio.create_subprocess_exec(

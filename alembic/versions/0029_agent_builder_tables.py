@@ -100,9 +100,7 @@ def upgrade() -> None:
         "definition_proposals",
         "status IN ('pending', 'approved', 'rejected', 'superseded')",
     )
-    op.create_index(
-        "idx_definition_proposals_status", "definition_proposals", ["status"]
-    )
+    op.create_index("idx_definition_proposals_status", "definition_proposals", ["status"])
     op.create_index(
         "idx_definition_proposals_session_id",
         "definition_proposals",

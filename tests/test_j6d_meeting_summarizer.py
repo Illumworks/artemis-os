@@ -180,7 +180,9 @@ async def test_find_recently_ended_gcal_not_connected() -> None:
 
     mock_session = AsyncMock()
 
-    with patch("artemis.integrations.repository.list_active", new_callable=AsyncMock, return_value=[]):
+    with patch(
+        "artemis.integrations.repository.list_active", new_callable=AsyncMock, return_value=[]
+    ):
         result = await find_recently_ended_meetings(mock_session)
 
     assert result == []
@@ -260,6 +262,7 @@ async def test_summarizer_tick_no_events_is_noop() -> None:
         mock_sl.return_value = mock_session
 
         from artemis.meetings.summarizer import run_summarizer_tick
+
         await run_summarizer_tick()
 
     # Granola was never called (no events)
@@ -340,6 +343,7 @@ async def test_summarizer_tick_skips_already_summarized_granola_id() -> None:
         mock_sl.return_value = mock_session_ctx
 
         from artemis.meetings.summarizer import run_summarizer_tick
+
         await run_summarizer_tick()
 
     # No MeetingMatchLog row added for "summarized" (skipped) — only for new summaries.
@@ -387,9 +391,7 @@ async def test_summarizer_writes_raw_input_and_summary() -> None:
     mock_execute_result.rowcount = 1
 
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(
-        side_effect=[mock_db_result_no_existing, mock_execute_result]
-    )
+    mock_session.execute = AsyncMock(side_effect=[mock_db_result_no_existing, mock_execute_result])
     mock_session.commit = AsyncMock()
     mock_session.rollback = AsyncMock()
 
@@ -432,6 +434,7 @@ async def test_summarizer_writes_raw_input_and_summary() -> None:
         ),
     ):
         from artemis.meetings.summarizer import _process_event
+
         await _process_event(mock_session, event, mock_granola, [granola_meeting])
 
     # insert_raw_input was called with correct source/scope (M1 lossless rule).
@@ -958,10 +961,12 @@ async def test_llm_summarize_happy_path() -> None:
     from artemis.agent.types import Message, TextBlock, Usage
     from artemis.meetings.summarizer import _llm_summarize
 
-    llm_json = json.dumps({
-        "bullets": ["Discussed roadmap", "Agreed on timeline", "Next steps defined"],
-        "action_items": [{"text": "Ship J6d", "owner": "Jon", "due": "Friday"}],
-    })
+    llm_json = json.dumps(
+        {
+            "bullets": ["Discussed roadmap", "Agreed on timeline", "Next steps defined"],
+            "action_items": [{"text": "Ship J6d", "owner": "Jon", "due": "Friday"}],
+        }
+    )
     good_response = CompletionResponse(
         message=Message(role="assistant", content=[TextBlock(text=llm_json)]),
         stop_reason="end_turn",

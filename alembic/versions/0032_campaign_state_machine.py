@@ -157,10 +157,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Drop CHECK constraints
-    op.execute(
-        "ALTER TABLE signal_queue "
-        "DROP CONSTRAINT IF EXISTS ck_signal_queue_signal_status"
-    )
+    op.execute("ALTER TABLE signal_queue DROP CONSTRAINT IF EXISTS ck_signal_queue_signal_status")
     op.execute(
         "ALTER TABLE campaign_candidates "
         "DROP CONSTRAINT IF EXISTS ck_campaign_candidates_decision_state"

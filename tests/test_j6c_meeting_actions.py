@@ -68,7 +68,14 @@ async def test_route_action_to_jira_happy() -> None:
 
         Cfg = make_dataclass(  # noqa: N806
             "Cfg",
-            ["site_url", "email", "api_token", "project_key", "max_items_per_column", "team_members"],
+            [
+                "site_url",
+                "email",
+                "api_token",
+                "project_key",
+                "max_items_per_column",
+                "team_members",
+            ],
         )
         mock_cfg.return_value = Cfg(
             site_url="https://istation.atlassian.net",
@@ -231,11 +238,14 @@ async def test_route_action_to_slack_not_connected() -> None:
 
     session = _make_session(fetchone_val=None)
 
-    with patch(
-        "artemis.integrations.repository.list_active",
-        new_callable=AsyncMock,
-        return_value=[],
-    ), pytest.raises(HTTPException) as exc_info:
+    with (
+        patch(
+            "artemis.integrations.repository.list_active",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
         await route_action_to_slack(
             meeting_id="meet-1",
             body={"action_text": "Send the deck"},
@@ -257,9 +267,9 @@ async def test_route_action_to_todo_happy() -> None:
     # Call sequence: _get_routing → None; INSERT RETURNING → (55,); _insert_routing → None
     session.execute = AsyncMock(
         side_effect=[
-            _sync_result(fetchone_val=None),    # _get_routing: no existing row
-            _sync_result(fetchone_val=(55,)),   # INSERT INTO personal_todos RETURNING id
-            _sync_result(fetchone_val=None),    # _insert_routing ON CONFLICT
+            _sync_result(fetchone_val=None),  # _get_routing: no existing row
+            _sync_result(fetchone_val=(55,)),  # INSERT INTO personal_todos RETURNING id
+            _sync_result(fetchone_val=None),  # _insert_routing ON CONFLICT
         ]
     )
 
@@ -347,11 +357,14 @@ async def test_ask_about_meeting_no_granola() -> None:
 
     session = _make_session()
 
-    with patch(
-        "artemis.routes.meetings._get_granola_client",
-        new_callable=AsyncMock,
-        return_value=None,
-    ), pytest.raises(HTTPException) as exc_info:
+    with (
+        patch(
+            "artemis.routes.meetings._get_granola_client",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
         await ask_about_meeting(
             meeting_id="meet-1",
             body={"question": "What did we decide?"},

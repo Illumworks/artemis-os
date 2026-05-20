@@ -60,10 +60,10 @@ def _extract_result_text(result: dict[str, Any] | None) -> str:
 
 
 _GRANOLA_DATE_FORMATS = (
-    "%Y-%m-%dT%H:%M:%S",        # ISO (legacy)
-    "%b %d, %Y %I:%M %p %Z",    # "May 18, 2026 11:45 AM EDT"
-    "%b %d, %Y %I:%M %p",       # without tz
-    "%B %d, %Y %I:%M %p %Z",    # full month name
+    "%Y-%m-%dT%H:%M:%S",  # ISO (legacy)
+    "%b %d, %Y %I:%M %p %Z",  # "May 18, 2026 11:45 AM EDT"
+    "%b %d, %Y %I:%M %p",  # without tz
+    "%B %d, %Y %I:%M %p %Z",  # full month name
     "%B %d, %Y %I:%M %p",
 )
 

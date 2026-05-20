@@ -34,14 +34,8 @@ def upgrade() -> None:
             CONSTRAINT uq_integrations_provider_workspace UNIQUE (provider, workspace_id)
         )
     """)
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_integrations_provider "
-        "ON integrations (provider)"
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_integrations_status "
-        "ON integrations (status)"
-    )
+    op.execute("CREATE INDEX IF NOT EXISTS idx_integrations_provider ON integrations (provider)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_integrations_status ON integrations (status)")
 
     op.execute("""
         CREATE TABLE IF NOT EXISTS slack_inbound_messages (

@@ -156,12 +156,10 @@ async def _get_recent_meeting_context(db_session: Any | None) -> str | None:
         for row in rows:
             # Take the first 3 bullets from the stored summary text.
             bullet_lines = [
-                line.strip()
-                for line in row.summary.splitlines()
-                if line.strip().startswith("-")
+                line.strip() for line in row.summary.splitlines() if line.strip().startswith("-")
             ][:3]
             bullets_short = " ".join(bullet_lines) if bullet_lines else row.summary[:200]
-            lines.append(f"You just finished \"{row.title}\". Summary: {bullets_short}")
+            lines.append(f'You just finished "{row.title}". Summary: {bullets_short}')
         return "\n".join(lines)
     except Exception:
         logger.debug("Failed to fetch recent meeting context", exc_info=True)

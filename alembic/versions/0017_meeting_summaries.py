@@ -92,7 +92,5 @@ def downgrade() -> None:
     op.drop_table("meeting_match_log")
 
     op.drop_index("ix_meeting_summaries_created_at", table_name="meeting_summaries")
-    op.drop_constraint(
-        "fk_meeting_summaries_raw_input", "meeting_summaries", type_="foreignkey"
-    )
+    op.drop_constraint("fk_meeting_summaries_raw_input", "meeting_summaries", type_="foreignkey")
     op.drop_table("meeting_summaries")

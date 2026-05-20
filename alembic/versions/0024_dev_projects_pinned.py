@@ -17,8 +17,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.execute(
-        "ALTER TABLE dev_sessions "
-        "ADD COLUMN IF NOT EXISTS pinned boolean NOT NULL DEFAULT false"
+        "ALTER TABLE dev_sessions ADD COLUMN IF NOT EXISTS pinned boolean NOT NULL DEFAULT false"
     )
 
 

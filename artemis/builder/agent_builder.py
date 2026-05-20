@@ -36,8 +36,14 @@ logger = logging.getLogger(__name__)
 # ── Streaming event types ──────────────────────────────────────────────────────
 
 BuilderEventType = Literal[
-    "turn_start", "tool_call", "tool_result", "assistant_token",
-    "proposal_staged", "heartbeat", "turn_complete", "error",
+    "turn_start",
+    "tool_call",
+    "tool_result",
+    "assistant_token",
+    "proposal_staged",
+    "heartbeat",
+    "turn_complete",
+    "error",
 ]
 
 
@@ -48,6 +54,7 @@ class BuilderEvent:
 
     def to_sse(self) -> str:
         return f"event: {self.type}\ndata: {json.dumps(self.payload)}\n\n"
+
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
@@ -270,13 +277,15 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
             cited_ids = [int(r) for r in citations.get("run_ids", [])]
             bad_ids = [rid for rid in cited_ids if rid not in _seen_run_ids]
             if bad_ids:
-                return json.dumps({
-                    "error": (
-                        "run_ids validation failed: the following IDs were not returned by "
-                        f"read_recent_runs in this session and cannot be cited: {bad_ids}. "
-                        "Only reference run IDs from the set read_recent_runs returned."
-                    )
-                })
+                return json.dumps(
+                    {
+                        "error": (
+                            "run_ids validation failed: the following IDs were not returned by "
+                            f"read_recent_runs in this session and cannot be cited: {bad_ids}. "
+                            "Only reference run IDs from the set read_recent_runs returned."
+                        )
+                    }
+                )
 
         proposal_id = await engine.propose(
             inp["kind"],
@@ -350,9 +359,7 @@ async def build_edit_session_opener(
     from artemis.builder import engine
     from artemis.builders.models import Agent
 
-    result = await db_session.execute(
-        sa_select(Agent).where(Agent.id == target_id).limit(1)
-    )
+    result = await db_session.execute(sa_select(Agent).where(Agent.id == target_id).limit(1))
     agent = result.scalar_one_or_none()
     if agent is None:
         return None
@@ -387,7 +394,9 @@ async def build_edit_session_opener(
             + "\n\nI'll propose definition changes based on these patterns."
         )
     else:
-        intro += " No trajectory summaries are available yet — I'll need a few runs to spot patterns."
+        intro += (
+            " No trajectory summaries are available yet — I'll need a few runs to spot patterns."
+        )
     return intro
 
 
@@ -420,7 +429,9 @@ async def handle_turn_stream(
     if session_row.target_id is not None and not messages:
         opener = await build_edit_session_opener(session_row.target_id, db_session=db_session)
         if opener:
-            system = AGENT_BUILDER_SYSTEM_PROMPT + "\n\n## Current edit-session context\n\n" + opener
+            system = (
+                AGENT_BUILDER_SYSTEM_PROMPT + "\n\n## Current edit-session context\n\n" + opener
+            )
 
     tools = build_tool_registry(db_session=db_session, builder_session_id=builder_session_id)
     tool_specs = tools.specs()
@@ -518,6 +529,7 @@ async def handle_turn_stream(
                 )
 
             from artemis.agent.types import Message as AgentMessage
+
             conversation.append(AgentMessage(role="user", content=list(result_blocks)))
 
         else:
@@ -531,7 +543,9 @@ async def handle_turn_stream(
         # Persist whatever completed so far before re-raising
         if assistant_text:
             await append_builder_message(db_session, builder_session_id, "user", user_text)
-            await append_builder_message(db_session, builder_session_id, "assistant", assistant_text)
+            await append_builder_message(
+                db_session, builder_session_id, "assistant", assistant_text
+            )
             await db_session.commit()
         raise
     except Exception as exc:
@@ -590,9 +604,7 @@ def _rebuild_messages(conversation: list[dict[str, Any]]) -> list[Message]:
     messages: list[Message] = []
     for entry in conversation:
         raw_role = entry.get("role", "user")
-        role: Role = cast(
-            Role, raw_role if raw_role in ("user", "assistant", "system") else "user"
-        )
+        role: Role = cast(Role, raw_role if raw_role in ("user", "assistant", "system") else "user")
         content = entry.get("content", "")
         if isinstance(content, str):
             messages.append(Message(role=role, content=[TextBlock(text=content)]))

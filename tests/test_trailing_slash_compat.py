@@ -79,10 +79,9 @@ async def test_slash_parity(client: AsyncClient, slashed_path: str) -> None:
     r_yes = await client.get(slashed_path)
 
     assert r_no.status_code != 404, (
-        f"no-slash form {no_slash!r} returned 404 — missing `@router.get(\"\")` "
+        f'no-slash form {no_slash!r} returned 404 — missing `@router.get("")` '
         f"alias on the handler for {slashed_path!r}"
     )
     assert r_no.status_code == r_yes.status_code, (
-        f"{no_slash!r} → {r_no.status_code} but "
-        f"{slashed_path!r} → {r_yes.status_code}"
+        f"{no_slash!r} → {r_no.status_code} but {slashed_path!r} → {r_yes.status_code}"
     )

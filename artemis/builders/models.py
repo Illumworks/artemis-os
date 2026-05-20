@@ -387,9 +387,7 @@ class AgentRunTrajectorySummary(Base):
     """
 
     __tablename__ = "agent_run_trajectory_summaries"
-    __table_args__ = (
-        Index("idx_trajectory_summaries_generated_at", "generated_at"),
-    )
+    __table_args__ = (Index("idx_trajectory_summaries_generated_at", "generated_at"),)
 
     run_id: Mapped[int] = mapped_column(
         BigInteger,

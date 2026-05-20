@@ -80,7 +80,10 @@ SIGNAL_TRANSITIONS: dict[SignalState, set[SignalState]] = {
 BRIEF_TRANSITIONS: dict[BriefState, set[BriefState]] = {
     BriefState.created: {BriefState.in_inbox},
     BriefState.in_inbox: {
-        BriefState.approved, BriefState.rejected, BriefState.snoozed, BriefState.asked
+        BriefState.approved,
+        BriefState.rejected,
+        BriefState.snoozed,
+        BriefState.asked,
     },
     BriefState.approved: set(),
     BriefState.rejected: set(),
@@ -100,11 +103,11 @@ WORKSPACE_TRANSITIONS: dict[WorkspaceState, set[WorkspaceState]] = {
 
 DELIVERABLE_TRANSITIONS: dict[DeliverableState, set[DeliverableState]] = {
     DeliverableState.queued: {DeliverableState.generating},
-    DeliverableState.generating: {
-        DeliverableState.draft_ready, DeliverableState.generation_failed
-    },
+    DeliverableState.generating: {DeliverableState.draft_ready, DeliverableState.generation_failed},
     DeliverableState.draft_ready: {
-        DeliverableState.approved, DeliverableState.revised, DeliverableState.rejected
+        DeliverableState.approved,
+        DeliverableState.revised,
+        DeliverableState.rejected,
     },
     DeliverableState.approved: set(),
     DeliverableState.revised: {DeliverableState.generating},

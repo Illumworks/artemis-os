@@ -38,7 +38,9 @@ def _make_tool_response(tool_id: str, tool_name: str, inputs: dict[str, Any]) ->
     from artemis.agent.types import Message, ToolUseBlock, Usage
 
     return CompletionResponse(
-        message=Message(role="assistant", content=[ToolUseBlock(id=tool_id, name=tool_name, input=inputs)]),
+        message=Message(
+            role="assistant", content=[ToolUseBlock(id=tool_id, name=tool_name, input=inputs)]
+        ),
         stop_reason="tool_use",
         usage=Usage(),
     )
@@ -110,10 +112,12 @@ async def test_stream_tool_call_sequence() -> None:
     from artemis.builder.agent_builder import handle_turn_stream
 
     adapter = MagicMock()
-    adapter.complete = AsyncMock(side_effect=[
-        _make_tool_response("tc1", "read_existing", {"kind": "agent"}),
-        _make_text_response("I found 0 existing agents."),
-    ])
+    adapter.complete = AsyncMock(
+        side_effect=[
+            _make_tool_response("tc1", "read_existing", {"kind": "agent"}),
+            _make_text_response("I found 0 existing agents."),
+        ]
+    )
 
     session_row = _fake_session_row()
     mock_db = AsyncMock()

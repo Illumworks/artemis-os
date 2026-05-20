@@ -152,9 +152,7 @@ async def list_definition_proposals(
     kind: str | None = None,
     limit: int = 50,
 ) -> list[DefinitionProposal]:
-    stmt = (
-        select(DefinitionProposal).order_by(DefinitionProposal.created_at.desc()).limit(limit)
-    )
+    stmt = select(DefinitionProposal).order_by(DefinitionProposal.created_at.desc()).limit(limit)
     if status is not None:
         stmt = stmt.where(DefinitionProposal.status == status)
     if kind is not None:
@@ -247,8 +245,6 @@ async def get_trajectory_summary(
     session: AsyncSession, run_id: int
 ) -> AgentRunTrajectorySummary | None:
     result = await session.execute(
-        select(AgentRunTrajectorySummary)
-        .where(AgentRunTrajectorySummary.run_id == run_id)
-        .limit(1)
+        select(AgentRunTrajectorySummary).where(AgentRunTrajectorySummary.run_id == run_id).limit(1)
     )
     return result.scalar_one_or_none()

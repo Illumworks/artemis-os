@@ -227,7 +227,9 @@ async def test_get_agent_enriched_linked_skills(
 ) -> None:
     """linkedSkills appears in enriched response after skill assignment."""
     agent = await repo.create_agent(db_session, agent_id="enriched-skills", name="Skilled")
-    skill = await repo.create_skill(db_session, slug="extract-blockers", name="Extract Blockers", description="Finds blockers")
+    skill = await repo.create_skill(
+        db_session, slug="extract-blockers", name="Extract Blockers", description="Finds blockers"
+    )
     await repo.assign_skill_to_agent(db_session, agent.id, skill.slug)
     await db_session.commit()
 
