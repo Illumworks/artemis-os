@@ -42,6 +42,30 @@ from artemis.marketing.routes._errors import bad_request, not_found
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER_CASCADE = ("claude-code", "codex", "lm-studio", "anthropic")
+
+
+def _resolve_builder_adapter() -> Any:
+    """Walk provider cascade and return the first available adapter.
+
+    Chain: claude-code → codex → lm-studio → anthropic
+    Raises HTTPException(503) if nothing is available.
+    """
+    from artemis.providers import get_adapter
+    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+
+    for candidate in _PROVIDER_CASCADE:
+        try:
+            return get_adapter(candidate)
+        except (MissingApiKeyError, UnknownProviderError):
+            continue
+        except Exception:
+            continue
+    raise bad_request(
+        "No LLM provider is available. Add an API key in Integrations.",
+        "no_provider",
+    )
+
 router = APIRouter(
     prefix="/api/builder",
     tags=["builder"],
@@ -120,8 +144,6 @@ async def send_message(
     """
     from artemis.builder.agent_builder import handle_turn
     from artemis.builder.repository import get_builder_session
-    from artemis.providers import get_adapter
-    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 
     # Verify session exists
     try:
@@ -135,17 +157,7 @@ async def send_message(
             "builder_session_not_active",
         )
 
-    # Resolve adapter
-    try:
-        adapter = get_adapter("anthropic")
-    except (MissingApiKeyError, UnknownProviderError):
-        try:
-            adapter = get_adapter("claude-code")
-        except Exception:
-            raise bad_request(  # noqa: B904
-                "No LLM provider is available. Add an API key in Integrations.",
-                "no_provider",
-            )
+    adapter = _resolve_builder_adapter()
 
     result = await handle_turn(
         builder_session_id=session_id,
@@ -205,8 +217,6 @@ async def create_test_run(
     """
     from artemis.builder.engine import sandbox_run as test_run  # API name kept as test-run in HTTP
     from artemis.builder.repository import get_builder_session
-    from artemis.providers import get_adapter
-    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 
     # Verify session + get current draft
     try:
@@ -229,17 +239,7 @@ async def create_test_run(
             "no_draft",
         )
 
-    # Resolve adapter
-    try:
-        adapter = get_adapter("anthropic")
-    except (MissingApiKeyError, UnknownProviderError):
-        try:
-            adapter = get_adapter("claude-code")
-        except Exception:
-            raise bad_request(  # noqa: B904
-                "No LLM provider is available. Add an API key in Integrations.",
-                "no_provider",
-            )
+    adapter = _resolve_builder_adapter()
 
     try:
         result = await test_run(

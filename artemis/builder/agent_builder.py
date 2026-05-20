@@ -275,13 +275,17 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
         from artemis.providers import get_adapter
         from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 
-        try:
-            _adapter = get_adapter("anthropic")
-        except (MissingApiKeyError, UnknownProviderError):
+        _adapter = None
+        for _candidate in ("claude-code", "codex", "lm-studio", "anthropic"):
             try:
-                _adapter = get_adapter("claude-code")
+                _adapter = get_adapter(_candidate)
+                break
+            except (MissingApiKeyError, UnknownProviderError):
+                continue
             except Exception:
-                return json.dumps({"error": "No LLM provider available for test_run."})
+                continue
+        if _adapter is None:
+            return json.dumps({"error": "No LLM provider available for test_run."})
 
         result = await engine.sandbox_run(
             inp["definition"],

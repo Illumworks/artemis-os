@@ -84,13 +84,20 @@ async def summarize(
     from artemis.builder.repository import create_trajectory_summary, get_trajectory_summary
     from artemis.builders.models import AgentRun
 
-    # Resolve adapter
+    # Resolve adapter via provider cascade (claude-code → codex → lm-studio → anthropic)
     if adapter is None:
-        try:
-            from artemis.providers import get_adapter
+        from artemis.providers import get_adapter
+        from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 
-            adapter = get_adapter("anthropic")
-        except Exception:
+        for _candidate in ("claude-code", "codex", "lm-studio", "anthropic"):
+            try:
+                adapter = get_adapter(_candidate)
+                break
+            except (MissingApiKeyError, UnknownProviderError):
+                continue
+            except Exception:
+                continue
+        if adapter is None:
             adapter = AnthropicAdapter()
 
     async def _do_summarize(session: Any) -> None:
