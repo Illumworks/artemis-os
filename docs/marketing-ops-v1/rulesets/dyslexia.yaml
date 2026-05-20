@@ -1,0 +1,104 @@
+ruleset_id: dyslexia
+version: 1
+description: |
+  Dyslexia screening and intervention campaign qualification.
+  Targets districts under state dyslexia screening mandates, OR districts
+  actively reviewing dyslexia identification / intervention processes.
+focus_areas:
+  - State dyslexia mandates (screening requirements)
+  - District-level dyslexia screening adoption
+  - Science of Reading alignment
+  - Universal screening conversations
+
+hard_filters:
+  - id: priority_state
+    type: deterministic
+    check: signal.geography.state IN territory_config.priority_states
+    fail_action: reject_signal
+
+  - id: district_min_enrollment
+    type: deterministic
+    check: district.enrollment >= 5000
+    fail_action: reject_signal
+
+  - id: has_contact_or_stub
+    type: deterministic
+    check: contact_db_stub.has_contact(signal.geography.district_id)
+    fail_action: reject_signal
+
+weighted_signals:
+  - id: dys_w1
+    description: State has active dyslexia mandate
+    check: signal_has_reason_code('STATE_DYSLEXIA_MANDATE')
+    weight: 0.30
+
+  - id: dys_w2
+    description: State guidance recently issued related to dyslexia
+    check: |
+      signal_has_reason_code('STATE_GUIDANCE_ISSUED')
+      AND signal_has_reason_code('STATE_DYSLEXIA_MANDATE')
+    weight: 0.15
+
+  - id: dys_w3
+    description: State mandate (binding) recently issued
+    check: signal_has_reason_code('STATE_MANDATE_ISSUED')
+    weight: 0.20
+
+  - id: dys_w4
+    description: Bill enacted related to dyslexia screening
+    check: |
+      signal_has_reason_code('BILL_ENACTED')
+      AND signal_has_reason_code('STATE_DYSLEXIA_MANDATE')
+    weight: 0.25
+
+  - id: dys_w5
+    description: Board literacy curriculum review with reading-focused scope
+    check: signal_has_reason_code('BOARD_LITERACY_CURRICULUM_REVIEW')
+    weight: 0.15
+
+  - id: dys_w6
+    description: RFP for assessment posted in priority state with dyslexia mandate
+    check: |
+      signal_has_reason_code('RFP_ASSESSMENT_POSTED')
+      AND EXISTS (SELECT 1 FROM signal_queue
+                  WHERE signal->'geography'->>'state' = :state
+                    AND signal->'reason_codes' @> '[{"code": "STATE_DYSLEXIA_MANDATE"}]')
+    weight: 0.20
+
+qualitative_rubrics:
+  - id: dys_q1
+    description: Evidence explicitly references universal screening, dyslexia identification, or science-of-reading-aligned screener selection
+    prompt: |
+      You are evaluating one qualitative rubric against one signal's evidence.
+      Apply strictly — do not stretch interpretation.
+
+      Rubric: "District or state is actively discussing universal dyslexia screening,
+      dyslexia identification processes, OR selection of a science-of-reading-aligned
+      screening tool. Generic references to 'literacy' or 'reading instruction' alone
+      do NOT qualify — this rubric is specific to screening / identification."
+
+      Evidence:
+      {{signal.source.verbatim_snippet}}
+
+      Speaker: {{signal.source.speaker_attribution}}
+
+      Return JSON: { "applies": true|false, "confidence": 0.0-1.0, "reasoning": "..." }
+    fires_when: applies == true AND confidence > 0.7
+    weight_when_fires: 0.30
+
+fit_score_formula: |
+  fit_score = min(1.0,
+    sum(weight for each weighted_signal that fired)
+    + sum(weight_when_fires for each qualitative_rubric that fired)
+  )
+
+routing:
+  primary_threshold: 0.7
+  secondary_threshold: 0.6
+  redundancy_check: []
+
+author: seed
+notes: |
+  Light seed for v1. Dyslexia signals concentrate in mandate states (most of
+  our priority list already has mandates). The rubric is intentionally strict
+  to avoid false positives on generic literacy signals.

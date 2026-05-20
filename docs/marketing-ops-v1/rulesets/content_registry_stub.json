@@ -1,0 +1,79 @@
+[
+  {
+    "asset_id": "obc_one_pager_2026q1",
+    "title": "Outcomes-Based Contract: Performance Guarantees",
+    "format": "one_pager",
+    "url": "https://internal.amiralearning.com/assets/obc_one_pager_2026q1.pdf",
+    "campaign_types": ["OBC"],
+    "tags": ["OBC", "RFP_EFFICACY_LANGUAGE", "RFP_OUTCOMES_BASED_LANGUAGE", "efficacy_data", "performance_guarantee"],
+    "description": "One-pager explaining Amira's OBC framework with performance guarantees tied to ARM growth. References pilot district outcomes.",
+    "freshness_date": "2026-03-15",
+    "approval_status": "approved"
+  },
+  {
+    "asset_id": "obc_case_study_florida_2025",
+    "title": "Case Study: Florida District OBC Implementation",
+    "format": "case_study",
+    "url": "https://internal.amiralearning.com/assets/obc_case_study_florida_2025.pdf",
+    "campaign_types": ["OBC", "general_growth"],
+    "tags": ["case_study", "florida_district", "growth_outcomes", "OBC", "RFP_EFFICACY_LANGUAGE"],
+    "description": "Case study of a 25k-enrollment Florida district under an OBC contract showing 1.7 weeks-of-growth average above expected.",
+    "freshness_date": "2025-11-02",
+    "approval_status": "approved"
+  },
+  {
+    "asset_id": "general_growth_overview_2026",
+    "title": "Amira Learning: Growth & Outcomes Overview",
+    "format": "one_pager",
+    "url": "https://internal.amiralearning.com/assets/general_growth_overview_2026.pdf",
+    "campaign_types": ["general_growth", "OBC", "biliteracy", "dyslexia"],
+    "tags": ["general", "growth", "overview"],
+    "description": "Overview one-pager covering Amira's Learning Agent and growth measurement framework. Generic, use as supporting asset only.",
+    "freshness_date": "2026-01-15",
+    "approval_status": "approved"
+  },
+  {
+    "asset_id": "biliteracy_dual_language_one_pager",
+    "title": "Biliteracy & Dual-Language Programs: Growth Measurement",
+    "format": "one_pager",
+    "url": "https://internal.amiralearning.com/assets/biliteracy_one_pager_2026.pdf",
+    "campaign_types": ["biliteracy"],
+    "tags": ["biliteracy", "STATE_BILITERACY_INITIATIVE", "dual_language", "spanish"],
+    "description": "One-pager on Amira's Spanish reading assessment capability and dual-language program support.",
+    "freshness_date": "2026-02-20",
+    "approval_status": "approved"
+  },
+  {
+    "asset_id": "dyslexia_screening_one_pager_2026",
+    "title": "Dyslexia Screening with Amira",
+    "format": "one_pager",
+    "url": "https://internal.amiralearning.com/assets/dyslexia_screening_2026.pdf",
+    "campaign_types": ["dyslexia"],
+    "tags": ["dyslexia", "STATE_DYSLEXIA_MANDATE", "screening", "universal_screener", "science_of_reading"],
+    "description": "One-pager on Amira's dyslexia screening alignment with state mandates, including SOR-aligned screener positioning.",
+    "freshness_date": "2026-04-01",
+    "approval_status": "approved"
+  },
+  {
+    "asset_id": "dyslexia_case_study_indiana_2025",
+    "title": "Case Study: Indiana Dyslexia Screening Implementation",
+    "format": "case_study",
+    "url": "https://internal.amiralearning.com/assets/dyslexia_case_study_indiana_2025.pdf",
+    "campaign_types": ["dyslexia", "general_growth"],
+    "tags": ["case_study", "indiana_district", "dyslexia", "screening", "STATE_DYSLEXIA_MANDATE"],
+    "description": "Case study from a 15k-enrollment Indiana district adopting Amira for universal dyslexia screening under IN mandate.",
+    "freshness_date": "2025-09-15",
+    "approval_status": "approved"
+  },
+  {
+    "asset_id": "esser_cliff_brief_2026",
+    "title": "Navigating the ESSER Cliff: Sustainable Literacy Investment",
+    "format": "brief",
+    "url": "https://internal.amiralearning.com/assets/esser_cliff_brief_2026.pdf",
+    "campaign_types": ["OBC", "general_growth"],
+    "tags": ["ESSER_CLIFF_REFERENCE", "budget", "sustainability", "OBC"],
+    "description": "Brief on how OBC structure addresses budget sustainability concerns post-ESSER. Positions Amira as fiscally responsible choice.",
+    "freshness_date": "2026-02-10",
+    "approval_status": "approved"
+  }
+]
