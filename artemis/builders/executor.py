@@ -235,6 +235,12 @@ async def run_agent(
         )
 
     await session.flush()
+
+    # Fire-and-forget trajectory summary — does not block or affect run status.
+    from artemis.builder.trajectory_summarizer import summarize_async
+
+    await summarize_async(run.id)
+
     return run
 
 

@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("target_id", sa.Integer(), nullable=True),
         sa.Column("user_id", sa.Text(), nullable=True),
         sa.Column("status", sa.Text(), nullable=False, server_default="active"),
-        sa.Column("conversation", JSONB(), nullable=False, server_default="'[]'"),
+        sa.Column("conversation", JSONB(), nullable=False, server_default=sa.text("'[]'")),
         sa.Column("draft", JSONB(), nullable=True),
         sa.Column(
             "created_at",
