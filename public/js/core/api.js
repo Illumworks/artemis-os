@@ -2059,6 +2059,35 @@ export async function listAgentSkillsApi(id) {
   return res.json();
 }
 
+// O2/O3 — persona PATCH
+export async function patchAgentPersonaApi(id, patch) {
+  const res = await fetch(`/api/agents/${encodeURIComponent(id)}/persona`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "patchAgentPersonaApi failed");
+  }
+  return res.json();
+}
+
+// O2/O3 — avatar upload
+export async function uploadAgentAvatarApi(id, file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`/api/agents/${encodeURIComponent(id)}/avatar`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "uploadAgentAvatarApi failed");
+  }
+  return res.json();
+}
+
 // ── Signal Criteria / Scout Ruleset Lite ──────────────────────────────────
 
 export async function listReasonCodesApi({ includeRetired = false } = {}) {

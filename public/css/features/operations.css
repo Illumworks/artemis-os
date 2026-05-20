@@ -1359,3 +1359,178 @@ button.ops-run-row {
   margin-bottom: 4px;
   display: block;
 }
+
+/* ── O2/O3 — Agent catalog cards ─────────────────────────────────── */
+
+.ops-agent-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+}
+
+.ops-agent-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms;
+}
+
+.ops-agent-card:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--surface-outline));
+}
+
+.ops-agent-card.active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--surface-outline));
+}
+
+.ops-agent-card-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-panel-soft));
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ops-agent-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ops-agent-avatar-placeholder {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.ops-agent-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ops-agent-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ops-agent-card-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.ops-agent-no-persona {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.ops-agent-card-model {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ops-agent-card-purpose {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ops-agent-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.ops-agent-meta-chip {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-outline) 40%, transparent);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.ops-agent-meta-run {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+/* ── O2/O3 — Persona section ─────────────────────────────────────── */
+
+.ops-persona-card {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* ── O2/O3 — Supporting files list ──────────────────────────────── */
+
+.ops-supporting-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ops-supporting-file-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+}
+
+.ops-supporting-file-name {
+  font-size: 13px;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-supporting-file-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

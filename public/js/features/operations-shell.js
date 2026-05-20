@@ -733,6 +733,11 @@ function buildAgentProfile(agent) {
   // Real linked skills from DB — fall back to hardcoded profile chips for display only.
   const linkedSkills = enriched?.linkedSkills ?? profile.linkedSkills;
 
+  // O2/O3: persona, supportingFiles list, and recentRuns from enriched API response
+  const persona = (enriched ?? agent).persona || null;
+  const supportingFiles = enriched?.supportingFiles ?? [];
+  const recentRunsFromDb = Array.isArray(enriched?.recentRuns) ? enriched.recentRuns : [];
+
   return {
     ...agent,
     // Policy fields from real agent config (enriched or raw agent record).
@@ -745,6 +750,9 @@ function buildAgentProfile(agent) {
     outputContract: (enriched ?? agent).outputContract || null,
     instructionFileExists: enriched?.instructionFileExists ?? false,
     supportingFileCount: enriched?.supportingFileCount ?? 0,
+    persona,
+    supportingFiles,
+    recentRunsFromDb,
     linkedSkills,
     // Cosmetic display-only fields from hardcoded profile (not runtime-active).
     memorySummary: profile.memorySummary,
@@ -1416,7 +1424,7 @@ function renderAgentsPage() {
       "Who does work",
       "A roster for scanning, plus a dedicated main-canvas profile for policy, memory, skills, and runtime health.",
       agentChips,
-      [renderOpsButton("Build with Agent-Builder", "open-shell-view", { "shell-view": "agents/builder" }), renderOpsSecondaryButton("New agent", "new-agent"), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
+      [renderOpsButton("Build with Agent-Builder", "open-shell-view", { "shell-view": "agents/builder" }), renderOpsSecondaryButton("New agent", "new-agent"), ...(selectedAgent ? [renderOpsSecondaryButton("Edit with Builder", "edit-agent-with-builder", { "agent-id": selectedAgent.id })] : []), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
     )}
     <section class="ops-grid ops-agents-grid">
       <article class="ops-panel ops-list-panel">
@@ -1428,37 +1436,47 @@ function renderAgentsPage() {
           </div>
           <span class="ops-pill">${escapeHtml(String(agents.length))} rostered</span>
         </div>
-        <div class="ops-table">
-          <div class="ops-table-head">
-            <span>Agent</span>
-            <span>Provider</span>
-            <span>Runs</span>
-            <span>Success</span>
-            <span>Status</span>
-          </div>
-          <div class="ops-table-body">
-            ${agents.map((agent) => {
-              const profile = buildAgentProfile(agent);
-              const active = agent.id === selectedAgent?.id;
-              return `
-                <button
-                  type="button"
-                  class="ops-row ops-agent-row${active ? " active" : ""}"
-                  data-ops-action="select-agent"
-                  data-agent-id="${escapeAttr(agent.id)}"
-                >
-                  <span class="ops-row-main">
-                    <span class="ops-row-title">${escapeHtml(agent.title)}</span>
-                    <span class="ops-row-sub">${escapeHtml(agent.description || agent.goal || "Reusable worker")}</span>
-                  </span>
-                  <span class="ops-row-value">${escapeHtml(profile.preferredProvider)}</span>
-                  <span class="ops-row-value">${escapeHtml(String(profile.metrics.runs))}</span>
-                  <span class="ops-row-value">${escapeHtml(formatPercent(profile.metrics.successRate))}</span>
-                  <span class="ops-row-value"><span class="ops-pill ${profile.metrics.health === "Healthy" ? "ops-pill-success" : "ops-pill-warn"}">${escapeHtml(profile.metrics.health)}</span></span>
-                </button>
-              `;
-            }).join("")}
-          </div>
+        <div class="ops-agent-catalog">
+          ${agents.map((agent) => {
+            const profile = buildAgentProfile(agent);
+            const active = agent.id === selectedAgent?.id;
+            const persona = profile.persona;
+            const displayName = persona?.name || agent.title || agent.name || agent.agentId || "Unnamed";
+            const purpose = persona?.purpose || agent.description || agent.goal || null;
+            const avatarUrl = persona?.profile_image_path || null;
+            const skillCount = Array.isArray(profile.linkedSkills) ? profile.linkedSkills.length : 0;
+            const fileCount = profile.supportingFileCount || 0;
+            const toolCount = Array.isArray(agent.tools) ? agent.tools.length : 0;
+            const lastRun = profile.metrics.lastRun || "never";
+            const hasPersona = Boolean(persona?.name || persona?.purpose);
+            return `
+              <button
+                type="button"
+                class="ops-agent-card${active ? " active" : ""}"
+                data-ops-action="select-agent"
+                data-agent-id="${escapeAttr(agent.id)}"
+              >
+                <div class="ops-agent-card-avatar">
+                  ${avatarUrl
+                    ? `<img src="${escapeAttr(avatarUrl)}" alt="${escapeAttr(displayName)} avatar" class="ops-agent-avatar-img">`
+                    : `<span class="ops-agent-avatar-placeholder">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>`}
+                </div>
+                <div class="ops-agent-card-body">
+                  <div class="ops-agent-card-top">
+                    <span class="ops-agent-card-name">${escapeHtml(displayName)}${!hasPersona ? ` <span class="ops-agent-no-persona">(no persona set)</span>` : ""}</span>
+                    <span class="ops-agent-card-model">${escapeHtml(profile.model || profile.provider || "")}</span>
+                  </div>
+                  ${purpose ? `<div class="ops-agent-card-purpose">${escapeHtml(purpose)}</div>` : ""}
+                  <div class="ops-agent-card-meta">
+                    ${toolCount ? `<span class="ops-agent-meta-chip">${toolCount} tool${toolCount !== 1 ? "s" : ""}</span>` : ""}
+                    ${fileCount ? `<span class="ops-agent-meta-chip">${fileCount} file${fileCount !== 1 ? "s" : ""}</span>` : ""}
+                    ${skillCount ? `<span class="ops-agent-meta-chip">${skillCount} skill${skillCount !== 1 ? "s" : ""}</span>` : ""}
+                    <span class="ops-agent-meta-run">Last run: ${escapeHtml(lastRun)}</span>
+                  </div>
+                </div>
+              </button>
+            `;
+          }).join("")}
         </div>
       </article>
       <article class="ops-panel ops-detail-panel">
@@ -1468,9 +1486,21 @@ function renderAgentsPage() {
   `;
 }
 
+function formatRelativeTime(epochSeconds) {
+  if (!epochSeconds) return "unknown";
+  const diff = Math.max(0, Math.floor(Date.now() / 1000 - Number(epochSeconds)));
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 function renderAgentDetail(agent) {
   const metricRow = getAgentMetricRow(agent);
-  const recentRuns = agent.recentRuns || [];
+  // Prefer real DB runs from the enriched endpoint (recentRunsFromDb), fall back to metrics runs.
+  const recentRuns = (agent.recentRunsFromDb && agent.recentRunsFromDb.length > 0)
+    ? agent.recentRunsFromDb
+    : (agent.recentRuns || []);
   const selectedRun = selectedAgentRunDetail && normalizeAgentId({ id: selectedAgentRunDetail.agent_id, title: selectedAgentRunDetail.agent_title }) === normalizeAgentId(agent)
     ? selectedAgentRunDetail
     : recentRuns.find((run) => run.run_id && run.run_id === selectedAgentRunId) || null;
@@ -1488,10 +1518,42 @@ function renderAgentDetail(agent) {
     </div>
 
     <div class="ops-detail-stack">
+      <section class="ops-mini-card ops-persona-card">
+        <div class="ops-mini-card-label">Persona / soul
+          ${agent.persona ? "" : `<span class="ops-pill" style="margin-left:6px;font-size:0.7rem">Not set</span>`}
+        </div>
+        <div class="ops-form-grid">
+          <label class="ops-field">
+            <span>Name</span>
+            <input type="text" value="${escapeAttr(agent.persona?.name || "")}" data-ops-field="persona-name" placeholder="e.g. Iris">
+          </label>
+          <label class="ops-field">
+            <span>Ghostwrite</span>
+            <select data-ops-field="persona-ghostwrite">
+              <option value=""${!agent.persona?.ghostwrite ? " selected" : ""}>No — agent speaks as itself</option>
+              <option value="true"${agent.persona?.ghostwrite ? " selected" : ""}>Yes — output framed as Jon</option>
+            </select>
+          </label>
+        </div>
+        <label class="ops-field">
+          <span>Purpose (one line)</span>
+          <input type="text" value="${escapeAttr(agent.persona?.purpose || "")}" data-ops-field="persona-purpose" placeholder="e.g. Watches my Jira board and brings morning insight">
+        </label>
+        <label class="ops-field">
+          <span>Voice notes</span>
+          <input type="text" value="${escapeAttr(agent.persona?.voice_notes || "")}" data-ops-field="persona-voice-notes" placeholder="e.g. lowercase, concise, no greetings">
+        </label>
+        <div class="ops-detail-actions" style="margin-top:10px">
+          ${renderOpsButton("Save persona", "save-persona")}
+          ${renderOpsSecondaryButton("Cancel", "reset-persona")}
+        </div>
+        ${agent.persona?.ghostwrite ? `<p class="ops-muted-copy" style="margin-top:8px">Ghostwrite is active — this agent's output is framed as if Jon wrote it. Voice samples from the personality profile are prepended to the system prompt at run-time.</p>` : ""}
+      </section>
+
       <section class="ops-mini-card">
         <div class="ops-mini-card-label">Identity / purpose</div>
-        <div class="ops-mini-card-title">${escapeHtml(agent.title || "Untitled agent")}</div>
-        <p>${escapeHtml(agent.description || "No description yet.")}</p>
+        <div class="ops-mini-card-title">${escapeHtml(agent.persona?.name || agent.title || "Untitled agent")}</div>
+        <p>${escapeHtml(agent.persona?.purpose || agent.description || "No description yet.")}</p>
       </section>
 
       <section class="ops-mini-card">
@@ -1659,12 +1721,17 @@ function renderAgentDetail(agent) {
       </section>
 
       <section class="ops-mini-card">
-        <div class="ops-mini-card-label">Supporting files <span class="ops-badge-coming">reserved for future context files</span></div>
-        ${_agentSupportingFiles.length > 0
-          ? `<div class="ops-chip-row" style="flex-wrap:wrap;gap:6px">
-              ${_agentSupportingFiles.map((f) => `<span class="ops-pill">${escapeHtml(f.name)} <span class="ops-muted-copy">${escapeHtml(formatFileSize(f.size))}</span></span>`).join("")}
+        <div class="ops-mini-card-label">Supporting files</div>
+        ${Array.isArray(agent.supportingFiles) && agent.supportingFiles.length > 0
+          ? `<div class="ops-supporting-files-list">
+              ${agent.supportingFiles.map((f) => `
+                <div class="ops-supporting-file-row">
+                  <span class="ops-supporting-file-name">${escapeHtml(f.filename || f.name || "")}</span>
+                  <span class="ops-supporting-file-meta">${escapeHtml(formatFileSize(f.sizeBytes ?? f.size))} · ${escapeHtml(formatRelativeTime(f.modifiedAt))}</span>
+                </div>
+              `).join("")}
             </div>`
-          : `<p class="ops-muted-copy">No supporting files. Files placed in the agent's workspace directory will be listed here in future slices.</p>`}
+          : `<p class="ops-muted-copy">No supporting files. Upload files via the avatar/files APIs or place files in the agent's workspace directory.</p>`}
       </section>
 
       <section class="ops-mini-card">
@@ -2907,6 +2974,28 @@ async function saveAgentDraft() {
   renderOperationsView("agents");
 }
 
+async function savePersonaDraft() {
+  if (!selectedAgentId) return;
+  const nameEl = document.querySelector("[data-ops-field='persona-name']");
+  const purposeEl = document.querySelector("[data-ops-field='persona-purpose']");
+  const voiceEl = document.querySelector("[data-ops-field='persona-voice-notes']");
+  const ghostwriteEl = document.querySelector("[data-ops-field='persona-ghostwrite']");
+  const patch = {};
+  if (nameEl && nameEl.value.trim()) patch.name = nameEl.value.trim();
+  if (purposeEl && purposeEl.value.trim()) patch.purpose = purposeEl.value.trim();
+  if (voiceEl && voiceEl.value.trim()) patch.voiceNotes = voiceEl.value.trim();
+  if (ghostwriteEl) patch.ghostwrite = ghostwriteEl.value === "true";
+  if (Object.keys(patch).length === 0) return;
+  try {
+    await api.patchAgentPersonaApi(selectedAgentId, patch);
+    _enrichedAgent = null;
+    await loadEnrichedAgent(selectedAgentId);
+    renderOperationsView("agents");
+  } catch (err) {
+    window.alert?.(`Failed to save persona: ${err?.message || String(err)}`);
+  }
+}
+
 async function saveWorkflowDraft() {
   if (!workflowDraft) return;
   const payload = {
@@ -3289,6 +3378,26 @@ function handleOperationsClick(event) {
   }
   if (action === "save-agent") {
     void saveAgentDraft();
+    return;
+  }
+  if (action === "save-persona") {
+    void savePersonaDraft();
+    return;
+  }
+  if (action === "reset-persona") {
+    // Re-render to discard unsaved persona edits
+    renderOperationsView("agents");
+    return;
+  }
+  if (action === "edit-agent-with-builder") {
+    const agentId = button.dataset.agentId || selectedAgentId;
+    if (agentId) {
+      // Store the target agent ID so the Builder can seed from it
+      writeStorage(OPS_AGENT_SELECTION_KEY, agentId);
+      setState("builderEditAgentId", agentId);
+    }
+    setState("view", "agents/builder");
+    renderOperationsView("agents/builder");
     return;
   }
   if (action === "generate-instruction-from-goal") {

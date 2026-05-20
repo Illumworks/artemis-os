@@ -22,6 +22,7 @@ from artemis.builders.models import (
     AgentContext,
     AgentDag,
     AgentRun,
+    AgentRunTrajectorySummary,
     AgentSkill,
     Skill,
     Workflow,
@@ -605,3 +606,64 @@ async def search_agent_runs(session: AsyncSession, q: str, *, limit: int = 100) 
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# O2/O3 — Recent runs with trajectory summaries for Agent Card detail
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def list_recent_runs_with_trajectory(
+    session: AsyncSession, agent_id: str, *, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Return the last N runs for an agent, with trajectory summary if available.
+
+    Returns a list of plain dicts ready for JSON serialisation:
+      {id, run_id, status, duration_s, started_at, trajectory_summary}
+    where trajectory_summary is a brief phrase from the most informative
+    trajectory column (what_worked / what_stalled / what_was_missing), or None.
+    """
+    result = await session.execute(
+        select(AgentRun)
+        .where(AgentRun.agent_id == agent_id, AgentRun.is_ephemeral.is_(False))
+        .order_by(AgentRun.started_at.desc())
+        .limit(limit)
+    )
+    runs = list(result.scalars().all())
+    if not runs:
+        return []
+
+    # Fetch trajectory summaries for these run IDs (integer PKs).
+    run_int_ids = [r.id for r in runs]
+    traj_result = await session.execute(
+        select(AgentRunTrajectorySummary).where(
+            AgentRunTrajectorySummary.run_id.in_(run_int_ids)
+        )
+    )
+    traj_by_id: dict[int, AgentRunTrajectorySummary] = {
+        t.run_id: t for t in traj_result.scalars().all()
+    }
+
+    out = []
+    for run in runs:
+        traj = traj_by_id.get(run.id)
+        summary = (
+            traj.what_stalled or traj.what_worked or traj.what_was_missing if traj else None
+        )
+
+        duration_s: float | None = None
+        if run.completed_at and run.started_at:
+            delta = run.completed_at - run.started_at
+            duration_s = round(delta.total_seconds(), 1)
+
+        out.append(
+            {
+                "id": run.id,
+                "run_id": run.run_id,
+                "status": run.status,
+                "duration_s": duration_s,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "trajectory_summary": summary,
+            }
+        )
+    return out

@@ -50,6 +50,16 @@ class AgentCreate(_Base):
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
 
 
+class PersonaData(_Base):
+    """Persona/soul for an agent — all fields optional to allow partial updates."""
+
+    name: str | None = None
+    purpose: str | None = None
+    voice_notes: str | None = Field(default=None, alias="voiceNotes")
+    ghostwrite: bool = False
+    profile_image_path: str | None = Field(default=None, alias="profileImagePath")
+
+
 class AgentRead(_Base):
     id: int
     agent_id: str = Field(alias="agentId")
@@ -68,6 +78,8 @@ class AgentRead(_Base):
     memory_policy: str = Field(default="session_scoped", alias="memoryPolicy")
     permission_mode: str = Field(default="ask", alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    # O2/O3 — persona/soul
+    persona: dict[str, Any] | None = None
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
 
@@ -87,6 +99,22 @@ class AgentUpdate(_Base):
     memory_policy: MemoryPolicy | None = Field(default=None, alias="memoryPolicy")
     permission_mode: PermissionMode | None = Field(default=None, alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    # O2/O3 — persona/soul
+    persona: dict[str, Any] | None = None
+
+
+class PersonaPatch(_Base):
+    """Body for PATCH /api/agents/{agent_id}/persona.
+
+    All fields optional — caller sends only what changed.
+    At least one field must be set (validated in the route handler).
+    """
+
+    name: str | None = None
+    purpose: str | None = None
+    voice_notes: str | None = Field(default=None, alias="voiceNotes")
+    ghostwrite: bool | None = None
+    profile_image_path: str | None = Field(default=None, alias="profileImagePath")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
