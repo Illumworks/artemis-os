@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # Allowed values for agent package policy fields (enforced at Pydantic boundary).
 MemoryPolicy = Literal["session_scoped", "agent_scoped", "user_scoped", "none"]
 PermissionMode = Literal["ask", "auto_approve", "dry_run"]
+SkillStatus = Literal["proposed", "approved", "archived"]
 
 
 class _Base(BaseModel):
@@ -131,6 +132,8 @@ class SkillCreate(_Base):
     slug: str
     name: str
     description: str | None = None
+    category: str | None = None
+    status: SkillStatus = "approved"
     instructions: str | None = None
     tools: list[Any] = Field(default_factory=list)
     kind: str = "user"
@@ -143,6 +146,8 @@ class SkillRead(_Base):
     slug: str
     name: str
     description: str | None = None
+    category: str | None = None
+    status: str
     instructions: str | None = None
     tools: list[Any] = Field(default_factory=list)
     kind: str
@@ -155,6 +160,8 @@ class SkillRead(_Base):
 class SkillUpdate(_Base):
     name: str | None = None
     description: str | None = None
+    category: str | None = None
+    status: SkillStatus | None = None
     instructions: str | None = None
     tools: list[Any] | None = None
     kind: str | None = None

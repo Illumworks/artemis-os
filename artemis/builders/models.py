@@ -22,6 +22,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
@@ -161,12 +162,22 @@ class Skill(Base):
     """Skill definition — user/builtin/plugin, holds instructions + tools."""
 
     __tablename__ = "skills"
-    __table_args__ = (Index("idx_skills_slug", "slug"),)
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('proposed', 'approved', 'archived')",
+            name="ck_skills_status",
+        ),
+        Index("idx_skills_slug", "slug"),
+        Index("idx_skills_status", "status"),
+        Index("idx_skills_category", "category"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     slug: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="approved")
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     tools: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
     kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="user")

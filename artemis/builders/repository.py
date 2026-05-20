@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builders.models import (
@@ -260,12 +260,18 @@ async def list_skills(
     session: AsyncSession,
     *,
     kind: str | None = None,
+    status: str | None = None,
+    category: str | None = None,
     limit: int = 50,
     cursor: int | None = None,
 ) -> list[Skill]:
     q = select(Skill).order_by(Skill.id.desc()).limit(limit)
     if kind is not None:
         q = q.where(Skill.kind == kind)
+    if status is not None:
+        q = q.where(Skill.status == status)
+    if category is not None:
+        q = q.where(Skill.category == category)
     if cursor is not None:
         q = q.where(Skill.id < cursor)
     result = await session.execute(q)
@@ -287,6 +293,25 @@ async def delete_skill(session: AsyncSession, slug: str) -> None:
     skill = await get_skill(session, slug)
     await session.delete(skill)
     await session.flush()
+
+
+async def set_skill_status(session: AsyncSession, slug: str, status: str) -> Skill:
+    skill = await get_skill(session, slug)
+    skill.status = status
+    skill.updated_at = datetime.now(UTC)
+    await session.flush()
+    await session.refresh(skill)
+    return skill
+
+
+async def list_skill_categories(session: AsyncSession) -> list[dict[str, Any]]:
+    result = await session.execute(
+        select(Skill.category, func.count(Skill.id).label("count"))
+        .where(Skill.status != "archived", Skill.category.is_not(None))
+        .group_by(Skill.category)
+        .order_by(Skill.category.asc())
+    )
+    return [{"category": category, "count": count} for category, count in result.all()]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

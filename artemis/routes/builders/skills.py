@@ -22,20 +22,49 @@ router = APIRouter(
     dependencies=[Depends(require_token)],
 )
 
+VALID_STATUSES = {"proposed", "approved", "archived"}
+
 
 @router.get("")
 @router.get("/")
 async def list_skills(
     kind: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    category: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = Query(default=None),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    skills = await repo.list_skills(session, kind=kind, limit=limit, cursor=cursor)
+    resolved_status = status
+    resolved_category = category
+    if kind in VALID_STATUSES:
+        resolved_status = kind
+        kind = None
+    elif kind is not None and category is None:
+        resolved_category = kind
+        kind = None
+    if resolved_status is not None and resolved_status not in VALID_STATUSES:
+        raise bad_request("Invalid skill status", "skill_invalid_status")
+    skills = await repo.list_skills(
+        session,
+        kind=kind,
+        status=resolved_status,
+        category=resolved_category,
+        limit=limit,
+        cursor=cursor,
+    )
     return {"skills": [SkillRead.model_validate(s).model_dump(by_alias=True) for s in skills]}
 
 
+@router.get("/categories")
+async def list_skill_categories(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[dict[str, Any]]:
+    return await repo.list_skill_categories(session)
+
+
 @router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_skill(
     body: SkillCreate,
     session: AsyncSession = Depends(get_session),  # noqa: B008
@@ -50,6 +79,8 @@ async def create_skill(
         slug=body.slug,
         name=body.name,
         description=body.description,
+        category=body.category,
+        status=body.status,
         instructions=body.instructions,
         tools=body.tools,
         kind=body.kind,
@@ -58,6 +89,14 @@ async def create_skill(
     )
     await session.commit()
     return SkillRead.model_validate(skill).model_dump(by_alias=True)
+
+
+@router.get("/slug/{slug}")
+async def get_skill_by_slug(
+    slug: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    return await get_skill(slug, session)
 
 
 @router.get("/{slug}")
@@ -70,6 +109,32 @@ async def get_skill(
     except ValueError:
         raise not_found(f"Skill '{slug}' not found", "skill_not_found")  # noqa: B904
     return SkillRead.model_validate(skill).model_dump(by_alias=True)
+
+
+@router.post("/{slug}/approve")
+async def approve_skill(
+    slug: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    try:
+        await repo.set_skill_status(session, slug, "approved")
+    except ValueError:
+        raise not_found(f"Skill '{slug}' not found", "skill_not_found")  # noqa: B904
+    await session.commit()
+    return {"ok": True}
+
+
+@router.post("/{slug}/archive")
+async def archive_skill(
+    slug: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    try:
+        await repo.set_skill_status(session, slug, "archived")
+    except ValueError:
+        raise not_found(f"Skill '{slug}' not found", "skill_not_found")  # noqa: B904
+    await session.commit()
+    return {"ok": True}
 
 
 @router.patch("/{slug}")
