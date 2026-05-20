@@ -20,10 +20,13 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -173,6 +176,85 @@ async def send_message(
         draft=result.get("draft"),
         stop_reason=result["stop_reason"],
     ).model_dump()
+
+
+@router.post("/sessions/{session_id}/messages/stream")
+async def send_message_stream(
+    session_id: int,
+    body: BuilderMessageCreate,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> StreamingResponse:
+    """Streaming SSE endpoint for Builder messages (O4).
+
+    Returns a text/event-stream response that emits turn_start, tool_call,
+    tool_result, assistant_token, proposal_staged, heartbeat, turn_complete,
+    and error events.  The existing synchronous POST /messages endpoint is
+    unaffected and remains the default for CLI/non-browser callers.
+    """
+    from artemis.builder.agent_builder import BuilderEvent, handle_turn_stream
+    from artemis.builder.repository import get_builder_session
+
+    try:
+        sess_row = await get_builder_session(session, session_id)
+    except ValueError:
+        raise not_found(f"BuilderSession {session_id} not found", "builder_session_not_found")  # noqa: B904
+
+    if sess_row.status != "active":
+        raise bad_request(
+            f"BuilderSession {session_id} is not active (status={sess_row.status!r})",
+            "builder_session_not_active",
+        )
+
+    adapter = _resolve_builder_adapter()
+
+    async def _event_stream() -> AsyncIterator[str]:
+        """Emit SSE events; heartbeat every 15 s during slow turns."""
+        import datetime
+
+        q: asyncio.Queue[BuilderEvent | None] = asyncio.Queue()
+
+        async def _drain() -> None:
+            try:
+                async for ev in handle_turn_stream(
+                    builder_session_id=session_id,
+                    user_text=body.content,
+                    adapter=adapter,
+                    db_session=session,
+                ):
+                    await q.put(ev)
+            finally:
+                await q.put(None)  # sentinel
+
+        task = asyncio.ensure_future(_drain())
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=15)
+                except TimeoutError:
+                    yield BuilderEvent("heartbeat", {"ts": datetime.datetime.now(datetime.UTC).isoformat()}).to_sse()
+                    continue
+                if ev is None:
+                    break
+                yield ev.to_sse()
+                if ev.type in ("turn_complete", "error"):
+                    break
+        except asyncio.CancelledError:
+            logger.info("builder SSE cancelled for session %s (client disconnect)", session_id)
+            task.cancel()
+        finally:
+            if not task.done():
+                task.cancel()
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

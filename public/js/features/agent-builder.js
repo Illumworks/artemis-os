@@ -414,11 +414,9 @@ async function _handleSendMessage(sessionId) {
   _sending = true;
   if (input) input.value = "";
 
-  // Optimistic append
   const msgArea = document.getElementById("builder-chat-messages");
   if (msgArea) {
     msgArea.insertAdjacentHTML("beforeend", renderMessage({ role: "user", content }));
-    // Thinking indicator
     msgArea.insertAdjacentHTML("beforeend", `
       <div class="builder-thinking" id="builder-thinking">
         <span class="builder-thinking-dot"></span>
@@ -429,24 +427,110 @@ async function _handleSendMessage(sessionId) {
     _scrollToBottom();
   }
 
-  // Disable send button
   const sendBtn = document.getElementById("builder-composer-send");
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = "Thinking..."; }
 
-  try {
-    const result = await sendMessage(sessionId, content);
-    // Refresh full session to get updated conversation + draft
-    _currentSession = await loadSession(sessionId);
-    // Refresh pending proposals (a new propose() call may have landed)
-    await fetchPendingProposals(sessionId);
-    // Update session list entry
-    const idx = _sessions.findIndex((s) => s.id === sessionId);
-    if (idx !== -1) _sessions[idx] = { ..._sessions[idx], ..._currentSession };
-    _rerenderPage();
+  // ── Streaming SSE via fetch + ReadableStream ───────────────────────────────
+  let assistantBubble = null;
+  let assistantText = "";
+
+  function _ensureBubble() {
+    if (assistantBubble) return;
+    document.getElementById("builder-thinking")?.remove();
+    if (msgArea) {
+      msgArea.insertAdjacentHTML("beforeend",
+        `<article class="builder-msg builder-msg-assistant" id="builder-stream-bubble">
+           <div class="builder-msg-role">Agent-Builder</div>
+           <div class="builder-msg-body" id="builder-stream-body"></div>
+         </article>`);
+      assistantBubble = document.getElementById("builder-stream-bubble");
+    }
+  }
+
+  function _appendToken(delta) {
+    _ensureBubble();
+    assistantText += delta;
+    const body = document.getElementById("builder-stream-body");
+    if (body) body.textContent = assistantText;
     _scrollToBottom();
+  }
+
+  function _addToolBreadcrumb(ev) {
+    _ensureBubble();
+    if (msgArea) {
+      const id = ev.tool_call_id;
+      msgArea.insertAdjacentHTML("beforeend",
+        `<details class="builder-tool-crumb" id="tool-${escapeHtml(id)}">
+           <summary>→ ${escapeHtml(ev.tool_name)}</summary>
+           <pre class="builder-tool-inputs">${escapeHtml(JSON.stringify(ev.inputs, null, 2))}</pre>
+         </details>`);
+      _scrollToBottom();
+    }
+  }
+
+  function _updateToolResult(ev) {
+    const el = document.getElementById(`tool-${ev.tool_call_id}`);
+    if (el) {
+      const sum = el.querySelector("summary");
+      if (sum) sum.textContent = `${ev.ok ? "✓" : "✗"} ${ev.tool_name} (${ev.duration_ms}ms)`;
+    }
+  }
+
+  function _updateDraftPanel(definition) {
+    const rail = document.querySelector(".builder-draft-body");
+    if (rail && definition) {
+      const node = rail.querySelector(".builder-draft-fields, .builder-draft-empty");
+      if (node) node.outerHTML = renderDraftPanel(definition);
+    }
+  }
+
+  // ~15-LOC SSE line parser
+  async function _parseSSEStream(reader) {
+    const decoder = new TextDecoder();
+    let buf = "";
+    let eventType = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) { eventType = line.slice(6).trim(); }
+        else if (line.startsWith("data:")) {
+          const payload = JSON.parse(line.slice(5).trim());
+          if (eventType === "assistant_token") { _appendToken(payload.delta); }
+          else if (eventType === "tool_call") { _addToolBreadcrumb(payload); }
+          else if (eventType === "tool_result") { _updateToolResult(payload); }
+          else if (eventType === "proposal_staged") { _updateDraftPanel(payload.definition_diff); }
+          else if (eventType === "turn_complete") {
+            _currentSession = await loadSession(sessionId);
+            await fetchPendingProposals(sessionId);
+            const idx = _sessions.findIndex((s) => s.id === sessionId);
+            if (idx !== -1) _sessions[idx] = { ..._sessions[idx], ..._currentSession };
+            _rerenderPage(); _scrollToBottom();
+            return;
+          }
+          else if (eventType === "error") {
+            _showError("Builder error: " + (payload.message || "unknown"));
+          }
+          eventType = "";
+        }
+      }
+    }
+  }
+
+  try {
+    const token = document.querySelector("meta[name='artemis-token']")?.content || "";
+    const resp = await fetch(`/api/builder/sessions/${sessionId}/messages/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Artemis-Token": token },
+      body: JSON.stringify({ content }),
+    });
+    if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+    await _parseSSEStream(resp.body.getReader());
   } catch (err) {
-    console.error("builder: send message failed", err);
-    // Remove thinking indicator and show error
+    console.error("builder: stream failed", err);
     document.getElementById("builder-thinking")?.remove();
     _showError("Failed to send: " + (err?.message || String(err)));
   } finally {

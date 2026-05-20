@@ -20,13 +20,34 @@ See also:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-from typing import Any
+import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from artemis.agent.tools import ToolRegistry
 from artemis.agent.types import Message, TextBlock
 
 logger = logging.getLogger(__name__)
+
+# ── Streaming event types ──────────────────────────────────────────────────────
+
+BuilderEventType = Literal[
+    "turn_start", "tool_call", "tool_result", "assistant_token",
+    "proposal_staged", "heartbeat", "turn_complete", "error",
+]
+
+
+@dataclass(slots=True)
+class BuilderEvent:
+    type: BuilderEventType
+    payload: dict[str, Any]
+
+    def to_sse(self) -> str:
+        return f"event: {self.type}\ndata: {json.dumps(self.payload)}\n\n"
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
@@ -370,6 +391,169 @@ async def build_edit_session_opener(
     return intro
 
 
+async def handle_turn_stream(
+    *,
+    builder_session_id: int,
+    user_text: str,
+    adapter: Any,
+    db_session: Any,
+) -> AsyncIterator[BuilderEvent]:
+    """Streaming async generator version of handle_turn.
+
+    Yields BuilderEvent objects at the natural seams of the F1 agent loop:
+      turn_start → (tool_call / tool_result)* → assistant_token* → turn_complete | error
+
+    Heartbeat events are NOT emitted here; the route wrapper injects them
+    by racing each yielded event against asyncio.sleep(15).
+    """
+    import datetime
+
+    from artemis.agent.client import CompletionRequest
+    from artemis.agent.loop import user_message as make_user_message
+    from artemis.agent.types import ToolResultBlock, ToolUseBlock
+    from artemis.builder.repository import append_builder_message, get_builder_session
+
+    session_row = await get_builder_session(db_session, builder_session_id)
+    messages = _rebuild_messages(session_row.conversation or [])
+
+    system = AGENT_BUILDER_SYSTEM_PROMPT
+    if session_row.target_id is not None and not messages:
+        opener = await build_edit_session_opener(session_row.target_id, db_session=db_session)
+        if opener:
+            system = AGENT_BUILDER_SYSTEM_PROMPT + "\n\n## Current edit-session context\n\n" + opener
+
+    tools = build_tool_registry(db_session=db_session, builder_session_id=builder_session_id)
+    tool_specs = tools.specs()
+    messages.append(make_user_message(user_text))
+
+    turn_id = f"{builder_session_id}-{int(time.time())}"
+    yield BuilderEvent(
+        type="turn_start",
+        payload={
+            "turn_id": turn_id,
+            "session_id": builder_session_id,
+            "started_at": datetime.datetime.now(datetime.UTC).isoformat(),
+        },
+    )
+
+    conversation = list(messages)
+    assistant_text = ""
+    stop_reason = "end_turn"
+
+    try:
+        for _iteration in range(5):
+            request = CompletionRequest(
+                messages=conversation,
+                system=system,
+                tools=tool_specs,
+                max_tokens=2048,
+                cache_system=True,
+                cache_tools=True,
+            )
+            response = await adapter.complete(request)
+            conversation.append(response.message)
+
+            # Emit assistant text tokens (chunk-granularity since AnthropicAdapter
+            # is non-streaming; yield the whole text as one token event).
+            for block in response.message.content:
+                if isinstance(block, TextBlock) and block.text:
+                    assistant_text += block.text
+                    yield BuilderEvent(type="assistant_token", payload={"delta": block.text})
+
+            if response.stop_reason != "tool_use":
+                stop_reason = response.stop_reason or "end_turn"
+                break
+
+            tool_uses = [b for b in response.message.content if isinstance(b, ToolUseBlock)]
+            if not tool_uses:
+                stop_reason = "end_turn"
+                break
+
+            result_blocks: list[ToolResultBlock] = []
+            for use in tool_uses:
+                yield BuilderEvent(
+                    type="tool_call",
+                    payload={"tool_call_id": use.id, "tool_name": use.name, "inputs": use.input},
+                )
+                t0 = time.monotonic()
+                is_error = False
+                try:
+                    entry = tools.get(use.name)
+                    if entry is None:
+                        raise KeyError(f"tool {use.name!r} not registered")
+                    content = await entry.impl(use.input)
+                    # Detect proposal_staged: _propose returns {"proposal_id": ..., "status": "pending"}
+                    if use.name == "propose":
+                        try:
+                            parsed = json.loads(content)
+                            if "proposal_id" in parsed:
+                                yield BuilderEvent(
+                                    type="proposal_staged",
+                                    payload={
+                                        "proposal_id": parsed["proposal_id"],
+                                        "kind": use.input.get("kind", ""),
+                                        "definition_diff": use.input.get("definition", {}),
+                                    },
+                                )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                except Exception as exc:
+                    logger.exception("tool %s raised during stream", use.name)
+                    content = f"{type(exc).__name__}: {exc}"
+                    is_error = True
+
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                yield BuilderEvent(
+                    type="tool_result",
+                    payload={
+                        "tool_call_id": use.id,
+                        "tool_name": use.name,
+                        "ok": not is_error,
+                        "result_preview": (content or "")[:200],
+                        "duration_ms": elapsed_ms,
+                    },
+                )
+                result_blocks.append(
+                    ToolResultBlock(tool_use_id=use.id, content=content, is_error=is_error)
+                )
+
+            from artemis.agent.types import Message as AgentMessage
+            conversation.append(AgentMessage(role="user", content=list(result_blocks)))
+
+        else:
+            stop_reason = "max_iterations"
+
+    except asyncio.CancelledError:
+        logger.info(
+            "builder stream cancelled (client disconnect) for session %s — stopping LLM call",
+            builder_session_id,
+        )
+        # Persist whatever completed so far before re-raising
+        if assistant_text:
+            await append_builder_message(db_session, builder_session_id, "user", user_text)
+            await append_builder_message(db_session, builder_session_id, "assistant", assistant_text)
+            await db_session.commit()
+        raise
+    except Exception as exc:
+        logger.exception("builder stream error for session %s", builder_session_id)
+        yield BuilderEvent(type="error", payload={"code": "stream_error", "message": str(exc)})
+        return
+
+    # Persist complete turns
+    await append_builder_message(db_session, builder_session_id, "user", user_text)
+    await append_builder_message(db_session, builder_session_id, "assistant", assistant_text)
+    await db_session.commit()
+
+    yield BuilderEvent(
+        type="turn_complete",
+        payload={
+            "assistant_text": assistant_text,
+            "draft": session_row.draft,
+            "stop_reason": stop_reason,
+        },
+    )
+
+
 async def handle_turn(
     *,
     builder_session_id: int,
@@ -377,72 +561,24 @@ async def handle_turn(
     adapter: Any,
     db_session: Any,
 ) -> dict[str, Any]:
-    """Process one user turn in an Agent-Builder session.
-
-    Loads conversation history, appends user message, runs the F1 agent loop
-    with the builder's system prompt and tools, persists the response, and
-    returns the assistant text + updated draft.
+    """Process one user turn — thin wrapper that drains handle_turn_stream.
 
     Returns:
-        {
-          "assistant_text": str,
-          "draft": dict | None,   # updated draft if the builder modified it
-          "stop_reason": str,
-        }
+        {"assistant_text": str, "draft": dict | None, "stop_reason": str}
     """
-    from artemis.agent.loop import run_turn
-    from artemis.agent.loop import user_message as make_user_message
-    from artemis.builder.repository import append_builder_message, get_builder_session
-
-    # Load session
-    session_row = await get_builder_session(db_session, builder_session_id)
-
-    # Reconstruct conversation as Message objects
-    messages = _rebuild_messages(session_row.conversation or [])
-
-    # Edit-session opener: on the first turn of an edit session, prepend a
-    # context block summarising recent runs so the builder leads with insight.
-    system = AGENT_BUILDER_SYSTEM_PROMPT
-    if session_row.target_id is not None and not messages:
-        opener = await build_edit_session_opener(session_row.target_id, db_session=db_session)
-        if opener:
-            system = AGENT_BUILDER_SYSTEM_PROMPT + "\n\n## Current edit-session context\n\n" + opener
-
-    # Build tool registry scoped to this session
-    tools = build_tool_registry(db_session=db_session, builder_session_id=builder_session_id)
-
-    # Append user turn
-    messages.append(make_user_message(user_text))
-
-    result = await run_turn(
+    final: dict[str, Any] | None = None
+    async for ev in handle_turn_stream(
+        builder_session_id=builder_session_id,
+        user_text=user_text,
         adapter=adapter,
-        messages=messages,
-        tools=tools,
-        system=system,
-        max_tokens=2048,
-        max_iterations=5,
-        cache_system=True,
-        cache_tools=True,
-    )
-
-    # Extract assistant text
-    assistant_text = ""
-    for msg in reversed(result.messages):
-        if msg.role == "assistant":
-            for block in msg.content:
-                if isinstance(block, TextBlock):
-                    assistant_text += block.text
-            break
-
-    # Persist turns
-    await append_builder_message(db_session, builder_session_id, "user", user_text)
-    await append_builder_message(db_session, builder_session_id, "assistant", assistant_text)
-
-    return {
-        "assistant_text": assistant_text,
-        "draft": session_row.draft,
-        "stop_reason": result.stop_reason,
-    }
+        db_session=db_session,
+    ):
+        if ev.type == "turn_complete":
+            final = ev.payload
+    if final is None:
+        # Error path: return a safe fallback so callers don't crash
+        return {"assistant_text": "", "draft": None, "stop_reason": "error"}
+    return final
 
 
 def _rebuild_messages(conversation: list[dict[str, Any]]) -> list[Message]:
