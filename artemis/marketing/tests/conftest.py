@@ -59,6 +59,7 @@ artemis.db.SessionLocal = __import__(
 # signal_reason_codes has no FK children from marketing tables — safe to truncate last.
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "campaign_state_transitions, "
     "approvals, "
     "campaign_deliverables, "
     "content_asset_links, "

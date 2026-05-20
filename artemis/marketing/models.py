@@ -402,3 +402,34 @@ class Approval(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class CampaignStateTransition(Base):
+    """Append-only audit log for every campaign lifecycle state transition.
+
+    One row per transition. Never deleted or updated — append-only by contract.
+    Indexed on (entity_type, entity_id, transitioned_at) for per-entity history.
+    """
+
+    __tablename__ = "campaign_state_transitions"
+    __table_args__ = (
+        Index(
+            "idx_cst_entity_type_id_at",
+            "entity_type",
+            "entity_id",
+            "transitioned_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    entity_type: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )  # signal | brief | workspace | deliverable
+    entity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    from_state: Mapped[str] = mapped_column(Text, nullable=False)
+    to_state: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transitioned_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
