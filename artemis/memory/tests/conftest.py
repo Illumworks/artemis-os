@@ -24,8 +24,7 @@ import pytest
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-import artemis.memory.models  # noqa: F401 — registers all models on Base.metadata
-from artemis.config import settings
+import artemis.memory.models  # noqa: F401 — registers all models on Base.metadata including MemoryConflict
 from artemis.db import attach_pgvector_codec
 
 # Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
@@ -40,8 +39,10 @@ _engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
 attach_pgvector_codec(_engine)
 
 _TRUNCATE_SQL = text(
-    # Graph tables first (depend on memory_entities + memory_observations)
-    "TRUNCATE memory_relation_rejections, memory_relations, "
+    # M2: conflicts depend on memory_observations; truncate first
+    "TRUNCATE memory_conflicts, "
+    # Graph tables (depend on memory_entities + memory_observations)
+    "memory_relation_rejections, memory_relations, "
     "memory_entity_mentions, memory_entity_aliases, memory_entities, "
     # B1/B2 tables
     "memory_embeddings, memory_evidence, memory_observations, "

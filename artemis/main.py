@@ -60,6 +60,7 @@ from artemis.routes.floating_artemis import router as fa_router
 from artemis.routes.floating_artemis import ws_router as fa_ws_router
 from artemis.routes.integrations import router as integrations_router
 from artemis.routes.integrations_slack_events import router as slack_events_router
+from artemis.routes.memory import router as memory_router
 from artemis.routes.slack import router as slack_router
 from artemis.ws.routes import router as ws_router
 
@@ -176,6 +177,9 @@ app.include_router(builder_agents_router)
 
 # Phase E2 — WebSocket relay for live run streaming
 app.include_router(ws_router)
+
+# Memory M2 — conflict management + observation history routes
+app.include_router(memory_router)
 
 # Phase H — OKR Studio + Writing Studio rules (dry-run + validator shipped; cutover pending)
 app.include_router(okr.router)
