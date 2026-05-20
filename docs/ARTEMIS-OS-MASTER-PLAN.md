@@ -99,26 +99,44 @@ J10-J11 closed the major transport blockers. Recent landings:
 
 ### Marketing seed (Artemis seed data) — planned, not started
 
-The marketing agents are the first seed content for Artemis. The plan landed 2026-05-20 in `docs/marketing-slab-grounding.md` after reconciling claudeck planning docs + Josh's signal spec + current Python state.
+The marketing agents are the first seed content for Artemis. **Canonical build target** as of 2026-05-20: `docs/marketing-ops-v1/` — a complete v1 build spec the team finalized (43 files, ~4,900 lines).
 
-**Three regressions Python migration silently dropped** (these are highest-priority fixes):
+**v1 scope (narrowed from earlier framing):**
+- 9 scout agents (1.1 Starbridge Researcher … 1.9 Leadership Transition Scout)
+- 4 qualifier-team agents (2.1 Cross-Reference, 2.2 Ruleset Manager, 2.3 Ruleset Compiler, 2.4 Brief Composer)
+- 3 content-team agents (5.1 Brief Assembler, 5.2 Asset Selector, 5.3 Writing Studio Adapter)
+- **Total: 16 agent definitions to seed**
+- 3 rulesets seeded (OBC, biliteracy, dyslexia) — narrowed from Josh's spec §3 which listed 5
+- 8 shared schemas (signal, brief, ruleset, asset bundle, etc.)
+- 6 services (signal queue, memory layer, ruleset storage, contact DB stub, territory config, PDF extractor)
+
+**v1 explicit out-of-scope:**
+- NO outreach / send orchestration (Artemis ends at Writing Studio queue)
+- NO Contact team / enrichment (stub returns True for priority districts)
+- NO Compliance team (brand voice lives in Writing Studio)
+- NO Track/Learn feedback loop (deferred)
+- LinkedIn Observer Mode A disabled (Mode B / Leader Monitor only)
+
+**Three regressions Python migration silently dropped** (highest-priority Layer 1 fixes — see `docs/marketing-slab-grounding.md` for full reconciliation):
 
 1. `signal_reason_codes` table — Node had it; Python kept the JSONB column but dropped the registry. Josh's 17-code spec has nowhere to land. Invariant I-10 unenforceable.
 2. Qualifier boost/suppress/skip rules — `qualifier.py` is a faithful port of the deterministic scorer, but signal-spec §4's actual qualification *intelligence* has zero implementation.
-3. Campaign state machine — `/advance` is decoration. The 15-state machine in BUILD_SPEC §5.2 is documented but not executed.
+3. Campaign state machine — `/advance` is decoration. The 15-state machine is documented but not executed.
 
-**Six briefs sequenced** (M6 already shipped via Codex):
-- M1 — reason-code registry (S, Worker)
-- M2 — Layer 1 seed loader (M, Codex)
-- M3 — campaign state machine (L, Lead-led)
-- M4 — qualifier rule layer (M, Worker)
-- M5 — 9 scout/qualifier agent seed (M, Lead writes prompts + Worker wires loader)
-- M7 — Writing Studio overview aggregator (L, Worker — independent)
+**M-series brief sequence (revised for v1 scope, M6 already shipped):**
+- M1 — reason-code registry table + FK validation (S, sub-agent brief / Worker)
+- M2 — Layer 1 seed loader: territory_config + 17 reason codes + 3 rulesets YAML + scout_packages (M, Codex)
+- M3 — campaign state machine + decision-event log + workspace-state derivation port (L, Lead-led)
+- M4 — qualifier rule layer (boost/suppress/skip from signal-spec §4) + append-only qualifier_decisions (M, Worker)
+- M5 — 16 agent definition fixtures + system prompts under `seed/marketing/` referencing the per-agent files (M+ scope upgraded from 9 to 16 agents — Lead writes prompts in batches, Worker wires loader)
+- M5b — scout agent execution path (workflow runner + tool wiring + monitoring) — separate brief, follows M5
+- M7 — Writing Studio overview aggregator (L, Worker — independent of M1-M5)
 
 Source data:
-- `claudeck-artemis/docs/MARKETING_WORKFLOW_BUILD_SPEC.md` — architecture
-- `decisions/campaign-signal-spec-v1.md` — Josh's seed (17 reason codes, territory config, qualifier rules, per-state nuance)
+- **`docs/marketing-ops-v1/`** — the build spec (per-agent files in `agents/`, schemas in `schemas/`, services in `services/`, ruleset YAMLs in `rulesets/`)
+- `decisions/campaign-signal-spec-v1.md` — Josh's seed (17 reason codes, territory config, qualifier rules, per-state nuance) — verbatim, do not edit
 - `docs/marketing-slab-grounding.md` — reconciliation between target + signal spec + current Python state
+- `claudeck-artemis/docs/MARKETING_WORKFLOW_BUILD_SPEC.md` — historical reference only (frozen)
 
 ### Memory v2 — M1 done, M2-M6 sequenced
 
