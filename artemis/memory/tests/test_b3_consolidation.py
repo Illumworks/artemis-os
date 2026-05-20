@@ -661,6 +661,8 @@ def test_composite_score_user_confirmed_boosts() -> None:
 def test_compute_final_score_uses_score_features() -> None:
     weights = RetrievalWeights(fts=0.0, semantic=0.0, recency=0.0, score=1.0)
     sf = ScoreFeatureWeights(relevance=0.0, hits=0.0, quality=1.0, confirmed=0.0)
+    # M2: pass confidence=1.0 and evidence_count=1 (log10(1)=0, boost=1.0)
+    # so the score channel result equals the pre-M2 expected value.
     score = _compute_final_score(
         0.0,
         0.0,
@@ -669,6 +671,8 @@ def test_compute_final_score_uses_score_features() -> None:
         weights,
         source_quality=0.8,
         score_features=sf,
+        confidence=1.0,
+        evidence_count=1,
     )
     assert score == pytest.approx(0.8, rel=0.01)
 

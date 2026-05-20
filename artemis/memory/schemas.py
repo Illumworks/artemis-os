@@ -86,6 +86,10 @@ class Observation(BaseModel):
     owner_user_id: int | None
     created_at: datetime
     accessed_at: datetime
+    # M2 fields
+    confidence: float = 0.5
+    supersedes: int | None = None
+    evidence_count: int = 1
 
 
 class Evidence(BaseModel):
@@ -120,6 +124,10 @@ class ScoredObservation(BaseModel):
     owner_user_id: int | None
     created_at: datetime
     accessed_at: datetime
+    # M2 fields
+    confidence: float = 0.5
+    supersedes: int | None = None
+    evidence_count: int = 1
     # Retrieval scores
     final_score: float
     fts_rank: float
@@ -181,3 +189,30 @@ class EntityNeighborhood(BaseModel):
 
     entity: EntityRead
     relations: list[RelationRead]
+
+
+# ── Memory M2 — Conflict DTOs ─────────────────────────────────────────────────
+
+
+class Conflict(BaseModel):
+    """A detected contradiction between two observations."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scope_id: str
+    observation_a_id: int
+    observation_b_id: int
+    conflict_type: str
+    detected_at: datetime
+    resolution: str | None
+    resolution_reason: str | None
+    resolved_at: datetime | None
+    resolved_by: str | None
+
+
+class ConflictResolveRequest(BaseModel):
+    """Body for POST /api/memory/conflicts/{id}/resolve."""
+
+    resolution: str  # a_wins | b_wins | both_valid_different_scope | manual_review_needed
+    reason: str | None = None

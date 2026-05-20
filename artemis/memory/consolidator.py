@@ -6,6 +6,26 @@ the store write API (lossless: new obs → supersede old → link evidence).
 
 LOSSLESS CONTRACT: consolidation never DELETEs rows. It creates new observations that
 supersede the old via superseded_by, then links evidence back to every source row.
+
+M2 — Confidence semantics (set at write time by the writer):
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Source                                          │ confidence     │
+  ├──────────────────────────────────────────────────────────────────┤
+  │ Direct user statement ("my email is X")         │ 0.95           │
+  │ Tool / API result (calendar, CRM)               │ 0.90           │
+  │ LLM inference from observed text                │ 0.50 – 0.70    │
+  │ LLM speculation without direct evidence         │ 0.30 – 0.50    │
+  └──────────────────────────────────────────────────────────────────┘
+
+Auto-resolution threshold: confidence delta > 0.3 AND (newer has > 2× evidence_count
+compared to existing) → old observation is automatically retired; a memory_conflicts
+row is written with resolution='auto'. Otherwise both observations persist and a
+memory_conflicts row is written with resolution=NULL for operator review.
+
+Corroboration formula: when a new raw_input restates the same claim,
+  evidence_count += 1
+  confidence = min(0.99, current + (1 - current) * 0.3)
+This is asymptotic toward 1.0 and never reaches it.
 """
 
 from __future__ import annotations
@@ -14,12 +34,16 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import anthropic
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.memory.conflict_detector import detect_conflicts
+from artemis.memory.models import MemoryConflict, MemoryObservation
 from artemis.memory.schemas import Observation, Scope
 from artemis.memory.store import link_evidence, supersede_observation, write_observation
 
@@ -255,3 +279,144 @@ async def apply_consolidation(
                         )
 
     return created
+
+
+# ── M2: confidence corroboration formula ──────────────────────────────────────
+
+
+def corroborate_confidence(current: float, current_count: int) -> tuple[float, int]:
+    """Apply the corroboration formula when a new raw_input restates the same claim.
+
+    Returns (new_confidence, new_evidence_count).
+    Formula: confidence = min(0.99, current + (1 - current) * 0.3)
+    Asymptotic toward 1.0, never reaching it.
+    """
+    new_confidence = min(0.99, current + (1.0 - current) * 0.3)
+    return new_confidence, current_count + 1
+
+
+# ── M2: conflict-aware observation writer ────────────────────────────────────
+
+_AUTO_RESOLVE_CONFIDENCE_DELTA = 0.3
+_AUTO_RESOLVE_EVIDENCE_RATIO = 2.0
+
+
+async def write_observation_with_conflict_check(
+    session: AsyncSession,
+    scope: Scope,
+    content: str,
+    category: str = "discovery",
+    confidence: float = 0.5,
+    source_quality: float = 0.5,
+    valid_from: datetime | None = None,
+    valid_until: datetime | None = None,
+    owner_user_id: int | None = None,
+) -> Observation:
+    """Write an observation and run M2 conflict detection in the same transaction.
+
+    1. Writes the new observation via write_observation().
+    2. Pre-fetches candidate observations in scope with active validity windows.
+    3. Runs detect_conflicts(new_obs, candidates).
+    4. For each conflict:
+       - Auto-resolvable (confidence delta > 0.3 AND new has > 2× evidence_count):
+         set old.valid_until=now, old.supersedes=new.id, write conflict row (resolution='auto').
+       - Otherwise: write conflict row (resolution=NULL) for operator review.
+    5. Sets confidence on the newly written observation.
+
+    All writes are inside the caller's transaction.
+    """
+    # Write the observation first (gets an id)
+    new_obs = await write_observation(
+        session,
+        scope,
+        content,
+        category=category,
+        source_quality=source_quality,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        owner_user_id=owner_user_id,
+    )
+
+    # Set M2 confidence on the new row
+    await session.execute(
+        update(MemoryObservation)
+        .where(MemoryObservation.id == new_obs.id)
+        .values(confidence=confidence)
+    )
+
+    # Pre-fetch active candidates in scope (exclude the just-written observation)
+    result = await session.execute(
+        select(MemoryObservation).where(
+            MemoryObservation.scope_kind == scope.scope_kind,
+            MemoryObservation.scope_id == scope.scope_id,
+            MemoryObservation.superseded_by.is_(None),
+            MemoryObservation.id != new_obs.id,
+        )
+    )
+    candidates_rows = list(result.scalars())
+    candidates = [Observation.model_validate(row) for row in candidates_rows]
+
+    # Attach M2 fields for the new observation
+    new_obs_with_m2 = new_obs.model_copy(
+        update={"confidence": confidence, "supersedes": None, "evidence_count": 1}
+    )
+
+    conflicts = detect_conflicts(new_obs_with_m2, candidates)
+    now = datetime.now(UTC)
+
+    for conflict_candidate in conflicts:
+        existing_id = conflict_candidate.existing_id
+        existing_row = next((r for r in candidates_rows if r.id == existing_id), None)
+        if existing_row is None:
+            continue
+
+        existing_confidence: float = getattr(existing_row, "confidence", 0.5)
+        existing_evidence: int = getattr(existing_row, "evidence_count", 1)
+
+        confidence_delta = confidence - existing_confidence
+        evidence_ratio = (
+            (new_obs.evidence_count or 1) / max(existing_evidence, 1)
+        )
+
+        auto_resolvable = (
+            confidence_delta > _AUTO_RESOLVE_CONFIDENCE_DELTA
+            and evidence_ratio > _AUTO_RESOLVE_EVIDENCE_RATIO
+        )
+
+        if auto_resolvable:
+            # Retire the existing observation
+            await session.execute(
+                update(MemoryObservation)
+                .where(
+                    MemoryObservation.id == existing_id,
+                    MemoryObservation.valid_until.is_(None),
+                )
+                .values(valid_until=now, supersedes=new_obs.id)
+            )
+            resolution = "auto"
+        else:
+            resolution = None
+
+        # Normalise pair: always store (min, max)
+        obs_a = min(new_obs.id, existing_id)
+        obs_b = max(new_obs.id, existing_id)
+
+        conflict_row = MemoryConflict(
+            scope_id=scope.scope_id,
+            observation_a_id=obs_a,
+            observation_b_id=obs_b,
+            conflict_type=conflict_candidate.conflict_type,
+            detected_at=now,
+            resolution=resolution,
+            resolved_at=now if auto_resolvable else None,
+            resolved_by="auto" if auto_resolvable else None,
+        )
+        session.add(conflict_row)
+
+    await session.flush()
+
+    # Re-read with updated confidence
+    refreshed = await session.execute(
+        select(MemoryObservation).where(MemoryObservation.id == new_obs.id)
+    )
+    return Observation.model_validate(refreshed.scalar_one())

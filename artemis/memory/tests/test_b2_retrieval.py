@@ -125,6 +125,7 @@ def test_compute_final_score_weights_applied() -> None:
     # confirmed). Saturating all four — `obs_score`, `hit_count` ≥ 10, max
     # `source_quality`, `user_confirmed=True` — recovers the pre-B3 "everything
     # at 1.0 → composite 1.0" behavior.
+    # M2: must also saturate confidence=1.0 and evidence_count=1 (log10(1)=0 → boost=1.0).
     score = _compute_final_score(
         fts_rank=1.0,
         semantic_sim=1.0,
@@ -134,6 +135,8 @@ def test_compute_final_score_weights_applied() -> None:
         hit_count=10,
         source_quality=1.0,
         user_confirmed=True,
+        confidence=1.0,
+        evidence_count=1,
     )
     assert score == pytest.approx(1.0)
 
