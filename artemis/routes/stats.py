@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -126,11 +127,11 @@ class AgentMetricsOverview(BaseModel):
 
 class AgentMetricsOut(BaseModel):
     overview: AgentMetricsOverview
-    agents: list[dict] = []
+    agents: list[dict[str, Any]] = []
     # Preserve the Node-compatible JSON wire shape for /api/stats/agent-metrics.
-    byType: list[dict] = []  # noqa: N815
-    daily: list[dict] = []
-    recent: list[dict] = []
+    byType: list[dict[str, Any]] = []  # noqa: N815
+    daily: list[dict[str, Any]] = []
+    recent: list[dict[str, Any]] = []
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

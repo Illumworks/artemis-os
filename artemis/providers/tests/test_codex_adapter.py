@@ -74,7 +74,9 @@ async def test_complete_parses_single_json_line(tmp_path: Path) -> None:
     with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
         response = await adapter.complete(_simple_request())
 
-    assert response.message.content[0].text == "print('hello')"
+    block = response.message.content[0]
+    assert isinstance(block, TextBlock)
+    assert block.text == "print('hello')"
     assert response.stop_reason == "end_turn"
 
 
@@ -92,6 +94,7 @@ async def test_complete_forwards_effort_and_speed_flags(tmp_path: Path) -> None:
     with patch("asyncio.create_subprocess_exec", new=create):
         await adapter.complete(req)
 
+    assert create.await_args is not None
     args = create.await_args.args
     pairs = list(zip(args, args[1:], strict=False))
     assert ("-c", 'model_reasoning_effort="xhigh"') in pairs
