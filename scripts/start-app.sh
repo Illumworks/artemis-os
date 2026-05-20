@@ -11,8 +11,9 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="/Users/artemis/Desktop/Artemis/artemis-os"
-cd "$PROJECT_ROOT"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
 
 # If port 8000 already has a listener, bail — don't double-start
 if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
@@ -22,8 +23,8 @@ fi
 
 # Start uvicorn detached. nohup + disown so it survives this shell exiting.
 nohup /opt/homebrew/bin/uv run uvicorn artemis.main:app --host 0.0.0.0 --port 8000 \
-  >> "$PROJECT_ROOT/.app.log" \
-  2>> "$PROJECT_ROOT/.app.err.log" \
+  >> "$REPO_ROOT/.app.log" \
+  2>> "$REPO_ROOT/.app.err.log" \
   < /dev/null &
 disown
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -32,6 +33,7 @@ from artemis.db import attach_pgvector_codec
 from artemis.integrations.slack.triage import classify_mention_type
 
 pytestmark = pytest.mark.asyncio
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # ── Test DB setup ──────────────────────────────────────────────────────────────
 
@@ -232,7 +234,7 @@ async def test_migration_0023_up_down_roundtrip() -> None:
         [sys.executable, "-m", "alembic", "upgrade", "0025"],
         capture_output=True,
         text=True,
-        cwd="/Users/artemis/Desktop/Artemis/artemis-os/.claude/worktrees/agent-a7da7a1d7b231bc89",
+        cwd=_REPO_ROOT,
     )
     # upgrade is expected to be a no-op if already at 0025 — either way OK.
     assert result.returncode == 0, f"alembic upgrade 0025 failed: {result.stderr}"
@@ -264,7 +266,7 @@ async def test_migration_0023_up_down_roundtrip() -> None:
         [sys.executable, "-m", "alembic", "downgrade", "0024"],
         capture_output=True,
         text=True,
-        cwd="/Users/artemis/Desktop/Artemis/artemis-os/.claude/worktrees/agent-a7da7a1d7b231bc89",
+        cwd=_REPO_ROOT,
     )
     assert result.returncode == 0, f"alembic downgrade 0024 failed: {result.stderr}"
 
@@ -294,5 +296,5 @@ async def test_migration_0023_up_down_roundtrip() -> None:
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         capture_output=True,
         text=True,
-        cwd="/Users/artemis/Desktop/Artemis/artemis-os/.claude/worktrees/agent-a7da7a1d7b231bc89",
+        cwd=_REPO_ROOT,
     )

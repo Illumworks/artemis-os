@@ -8,7 +8,7 @@ Covers:
   5. test_resolve_idempotent — POSTing resolve twice returns no error.
   6. test_resolve_404_on_unknown_id — unknown event_id returns 404.
   7. test_signals_missedmentions_excludes_resolved — J8 count filters resolved_at IS NULL.
-  8. test_triage_permalink_format — permalink uses standard slack.com/archives format.
+  8. test_triage_permalink_format — permalink uses workspace-direct archives format.
 """
 
 from __future__ import annotations
@@ -251,8 +251,8 @@ async def test_signals_missedmentions_excludes_resolved(
 
 
 async def test_triage_permalink_format(db_session: AsyncSession) -> None:
-    """Permalink uses standard slack.com/archives/<channel>/p<ts_nodot> format."""
+    """Permalink uses workspace-direct archives/<channel>/p<ts_nodot> format."""
     from artemis.integrations.slack.triage import _make_permalink
 
     link = _make_permalink("C123ABC", "1716000000.123456")
-    assert link == "https://slack.com/archives/C123ABC/p1716000000123456"
+    assert link == "https://amiralearning.slack.com/archives/C123ABC/p1716000000123456"
