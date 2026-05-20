@@ -299,6 +299,19 @@ _CLAUDE_CODE_MODEL_LIST = [
     {"id": "claude-haiku-4-5", "label": "Haiku 4.5", "default": False},
 ]
 
+# Codex CLI accepts `-m <model>` (see artemis/providers/codex/adapter.py).
+# Catalog mirrors the curated list shipped in the Node reference UI
+# (claudeck-artemis/public/js/ui/model-selector.js). Empty id means "Auto" —
+# let Codex pick its subscription default.
+_CODEX_MODEL_LIST = [
+    {"id": "", "label": "Auto", "default": False},
+    {"id": "gpt-5.5", "label": "GPT-5.5", "default": False},
+    {"id": "gpt-5.4", "label": "GPT-5.4", "default": True},
+    {"id": "gpt-5.4-mini", "label": "GPT-5.4-Mini", "default": False},
+    {"id": "gpt-5.3-codex", "label": "GPT-5.3-Codex", "default": False},
+    {"id": "gpt-5.2", "label": "GPT-5.2", "default": False},
+]
+
 
 def _build_provider_model_list() -> list[dict[str, Any]]:
     """Build the {providers: [...]} payload consumed by the picker UI.
@@ -340,7 +353,7 @@ def _build_provider_model_list() -> list[dict[str, Any]]:
             "name": "Codex CLI",
             "configured": codex_configured,
             "subscriptionOrLocal": True,
-            "models": _SUBSCRIPTION_MODEL_LIST,
+            "models": _CODEX_MODEL_LIST,
         },
         {"id": "gemini", "name": "Google Gemini", "models": gemini_models},
         {

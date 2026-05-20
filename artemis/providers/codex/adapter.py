@@ -43,6 +43,7 @@ class CodexAdapter:
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
         """Run a single completion via the codex CLI."""
+        model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
 
         cmd = [
@@ -52,8 +53,13 @@ class CodexAdapter:
             "--skip-git-repo-check",
             "--full-auto",
             "--quiet",
-            prompt,
         ]
+        # Codex CLI accepts `-m <model>` to pick the model. Empty string means
+        # "let Codex use its subscription default" — matches the Node reference
+        # (claudeck-artemis/server/providers/codex/index.js).
+        if model:
+            cmd.extend(["-m", model])
+        cmd.append(prompt)
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
