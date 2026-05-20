@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,8 +27,19 @@ router = APIRouter(
 )
 
 
-@router.get("/{candidate_id}")
+@router.get("")
 async def list_deliverables(
+    campaign_id: int | None = Query(default=None, alias="campaignId"),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[dict[str, Any]]:
+    """Compat: frontend calls ?campaignId= instead of the path candidate id."""
+    if campaign_id is None:
+        return []
+    return await list_deliverables_for_candidate(campaign_id, session)
+
+
+@router.get("/{candidate_id}")
+async def list_deliverables_for_candidate(
     candidate_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> list[dict[str, Any]]:

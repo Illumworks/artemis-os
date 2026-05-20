@@ -292,6 +292,17 @@ class TestSignalQueueIntake:
         assert body["dryRun"] is True
         assert body["valid"] is True
 
+    async def test_intake_root_alias_matches_intake_response_shape(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        payload = {"dryRun": True, "headline": "Big news", "campaignFamily": "obc"}
+
+        intake_resp = await client.post("/api/signal-queue/intake", json=payload)
+        alias_resp = await client.post("/api/signal-queue", json=payload)
+
+        assert alias_resp.status_code == intake_resp.status_code == 200
+        assert alias_resp.json() == intake_resp.json()
+
     async def test_intake_creates_signal(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -414,6 +425,25 @@ class TestSignalQueueActions:
         r = await client.post(f"/api/signal-queue/{signal.id}/ask")
         assert r.status_code == 200
         assert r.json()["signalStatus"] == "archived"
+
+    async def test_archive_alias_matches_ask_response_shape(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        ask_signal = await _make_signal(db_session, signal_status="in_inbox")
+        archive_signal = await _make_signal(
+            db_session,
+            signal_status="in_inbox",
+            headline="Archive alias",
+            source_url="http://example.com/archive-alias",
+        )
+        await db_session.commit()
+
+        ask = await client.post(f"/api/signal-queue/{ask_signal.id}/ask")
+        archive = await client.post(f"/api/signal-queue/{archive_signal.id}/archive")
+
+        assert archive.status_code == ask.status_code == 200
+        assert archive.json().keys() == ask.json().keys()
+        assert archive.json()["signalStatus"] == ask.json()["signalStatus"] == "archived"
 
     async def test_ask_already_archived(
         self, client: AsyncClient, db_session: AsyncSession
@@ -643,6 +673,30 @@ class TestCampaignDeliverables:
         assert r.status_code == 200
         assert r.json() == []
 
+    async def test_list_deliverables_query_alias_matches_path(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        signal = await _make_signal(db_session)
+        candidate = await _make_candidate(db_session, signal)
+        await db_session.commit()
+        await client.post(
+            "/api/campaign-deliverables/",
+            json={"candidateId": candidate.id, "status": "generating"},
+        )
+
+        path = await client.get(f"/api/campaign-deliverables/{candidate.id}")
+        alias = await client.get(f"/api/campaign-deliverables?campaignId={candidate.id}")
+
+        assert alias.status_code == 200
+        assert alias.json() == path.json()
+
+    async def test_list_deliverables_query_alias_without_campaign_returns_empty(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        r = await client.get("/api/campaign-deliverables")
+        assert r.status_code == 200
+        assert r.json() == []
+
     async def test_list_deliverables_candidate_not_found(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -815,6 +869,31 @@ class TestContentAssetLinks:
         assert body["assetId"] == asset.id
         assert body["linkRole"] == "reference"
 
+    async def test_list_links_query_alias_filters_by_campaign(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        signal = await _make_signal(db_session)
+        candidate = await _make_candidate(db_session, signal)
+        other = await _make_candidate(db_session, signal)
+        asset = await _make_asset(db_session)
+        other_asset = await _make_asset(db_session)
+        await db_session.commit()
+        created = await client.post(
+            "/api/content-assets/links",
+            json={"candidateId": candidate.id, "assetId": asset.id},
+        )
+        await client.post(
+            "/api/content-assets/links",
+            json={"candidateId": other.id, "assetId": other_asset.id},
+        )
+
+        alias = await client.get(f"/api/content-assets/links?campaignId={candidate.id}")
+        all_links = await client.get("/api/content-assets/links")
+
+        assert alias.status_code == 200
+        assert alias.json() == [created.json()]
+        assert len(all_links.json()) == 2
+
     async def test_create_link_duplicate_returns_409(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -852,6 +931,24 @@ class TestContentAssetLinks:
         link_id = r_create.json()["id"]
         r_delete = await client.delete(f"/api/content-assets/links/{link_id}")
         assert r_delete.status_code == 204
+
+    async def test_delete_link_campaign_asset_alias_matches_link_delete(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        signal = await _make_signal(db_session)
+        candidate = await _make_candidate(db_session, signal)
+        asset = await _make_asset(db_session)
+        await db_session.commit()
+        await client.post(
+            "/api/content-assets/links",
+            json={"candidateId": candidate.id, "assetId": asset.id},
+        )
+
+        r_delete = await client.delete(f"/api/content-assets/links/{candidate.id}/{asset.id}")
+        r_repeat = await client.delete(f"/api/content-assets/links/{candidate.id}/{asset.id}")
+
+        assert r_delete.status_code == 204
+        assert r_repeat.status_code == 204
 
 
 # ─────────────────────────────────────────────────────────────────────────────

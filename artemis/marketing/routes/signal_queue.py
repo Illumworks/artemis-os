@@ -158,6 +158,16 @@ async def intake(
     return {"signal": _serialize_signal(signal)}
 
 
+@router.post("")
+async def intake_compat(
+    body: dict[str, Any],
+    response: Response,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Any:
+    """Compat: frontend posts signal creation to /api/signal-queue."""
+    return await intake(body, response, session)
+
+
 # ── List ──────────────────────────────────────────────────────────────────────
 
 
@@ -377,15 +387,15 @@ async def snooze_signal(
     return _serialize_signal(updated)
 
 
-# ── Ask (archive) ─────────────────────────────────────────────────────────────
+# ── Archive ───────────────────────────────────────────────────────────────────
 
 
-@router.post("/{signal_id}/ask")
-async def ask_signal(
+@router.post("/{signal_id}/archive")
+async def archive_signal(
     signal_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Any:
-    """Archive a signal (maps to the Node /ask endpoint which archives signals)."""
+    """Archive a signal."""
     try:
         signal = await get_signal(session, signal_id)
     except ValueError:
@@ -398,6 +408,15 @@ async def ask_signal(
     await session.commit()
     await session.refresh(updated)
     return _serialize_signal(updated)
+
+
+@router.post("/{signal_id}/ask")
+async def ask_signal(
+    signal_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Any:
+    """Deprecated alias for /archive kept for one frontend release cycle."""
+    return await archive_signal(signal_id, session)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
