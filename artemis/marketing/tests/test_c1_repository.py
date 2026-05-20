@@ -120,7 +120,7 @@ class TestSignalQueueRoundTrip:
             )
             assert sig.id is not None
             assert sig.headline == "Indiana HB 1234 signed"
-            assert sig.signal_status == "in_inbox"
+            assert sig.signal_status == "pending_qualification"
             assert sig.reason_codes[0]["code"] == "dyslexia_screening_mandate"
 
     async def test_get_signal(self, db_session: AsyncSession) -> None:
@@ -180,9 +180,9 @@ class TestSignalQueueRoundTrip:
         async with db_session.begin():
             sig = await _make_signal(db_session)
             await update_signal(db_session, sig.id, signal_status="approved")
-            inbox = await list_signals(db_session, status="in_inbox")
+            pending = await list_signals(db_session, status="pending_qualification")
             approved = await list_signals(db_session, status="approved")
-            assert len(inbox) == 0
+            assert len(pending) == 0
             assert len(approved) == 1
 
 
@@ -213,7 +213,7 @@ class TestSignalDedupe:
                 headline="Pinellas RFP posted",
                 source_url="https://example.com/rfp",
             )
-            await update_signal(db_session, sig.id, signal_status="rejected")
+            await update_signal(db_session, sig.id, signal_status="rejected_at_gate_1")
             found = await find_signal_by_dedupe_key(
                 db_session, "https://example.com/rfp", "Pinellas RFP posted"
             )
@@ -297,8 +297,8 @@ class TestCampaignCandidateRoundTrip:
             )
             assert candidate.source_signal_id == sig.id
             assert candidate.campaign_family == "state_screener"
-            assert candidate.decision_state == "approved"
-            assert candidate.workspace_state == "created"
+            assert candidate.decision_state == "in_inbox"
+            assert candidate.workspace_state == "pending_content"
             assert candidate.ruleset_version_at_qualification == "v1"
 
     async def test_create_from_signal_not_found_raises(self, db_session: AsyncSession) -> None:

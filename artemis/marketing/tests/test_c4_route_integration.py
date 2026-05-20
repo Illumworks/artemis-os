@@ -224,7 +224,7 @@ class TestGate2EndToEnd:
             select(CampaignDeliverable).where(CampaignDeliverable.id == draft_id)
         )
         deliverable = result.scalar_one()
-        assert deliverable.status == "ready_for_review"
+        assert deliverable.status == "draft_ready"
 
         # 5. Post an 'approved' event back (simulates external WS webhook)
         event_resp = await client.post(f"/api/writing-studio/drafts/{external_id}/events/approved")
