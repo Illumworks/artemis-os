@@ -32,13 +32,18 @@ function buildStatusModel(providerStatuses = [], alerts = {}, integrations = [])
   }));
   const providerIssues = providerRows.filter((row) => row.tone !== 'ready').length;
 
-  // /api/integrations returns active provider rows: [{provider, status, display_name, ...}]
+  // /api/integrations returns active + needs_reauth rows: [{provider, status, display_name, ...}]
   const integrationList = Array.isArray(integrations) ? integrations : [];
-  const connectorRows = integrationList.map((row) => ({
-    name: row.display_name || row.provider,
-    label: row.status === 'active' ? 'Connected' : (row.status || 'Unknown'),
-    tone: row.status === 'active' ? 'ready' : 'warn',
-  }));
+  const connectorRows = integrationList.map((row) => {
+    let label = row.status || 'Unknown';
+    if (row.status === 'active') label = 'Connected';
+    else if (row.status === 'needs_reauth') label = 'Needs reconnect';
+    return {
+      name: row.display_name || row.provider,
+      label,
+      tone: row.status === 'active' ? 'ready' : 'warn',
+    };
+  });
 
   const recentFailures = (alerts.providerFailures || []).slice(0, 3);
   const recentErrors = (alerts.runtimeErrors || []).slice(0, 3);

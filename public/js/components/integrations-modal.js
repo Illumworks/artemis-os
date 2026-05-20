@@ -97,6 +97,8 @@ async function _populateGrid(grid) {
           id: match.id,
           workspace_name: match.display_name || null,
           connected_at: match.connected_at,
+          status: match.status,
+          last_refresh_attempt_at: match.last_refresh_attempt_at || null,
         }
       : null;
 
