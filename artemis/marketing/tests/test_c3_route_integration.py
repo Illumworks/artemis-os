@@ -169,7 +169,7 @@ async def test_approve_locks_ruleset_version_from_qualification_json(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     await _make_active_ruleset(db_session, version="v99")
-    signal = await _make_signal(db_session)
+    signal = await _make_signal(db_session, signal_status="qualified")
     # Manually set qualification_json with a known version
     signal.qualification_json = {
         "qualifiedAt": "2026-05-16T00:00:00Z",
@@ -192,7 +192,7 @@ async def test_approve_falls_back_to_active_version_when_no_qual_json(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     await _make_active_ruleset(db_session, version="v2")
-    signal = await _make_signal(db_session)
+    signal = await _make_signal(db_session, signal_status="qualified")
     # No qualification_json
     await db_session.commit()
 

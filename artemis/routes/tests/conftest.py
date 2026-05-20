@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 import artemis.db
 import artemis.integrations.models  # noqa: F401 — registers integration models on Base.metadata
-from artemis.config import settings
 from artemis.db import attach_pgvector_codec
 
 # Hard guard against live-DB destruction. This conftest TRUNCATEs tables;

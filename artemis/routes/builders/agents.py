@@ -206,9 +206,7 @@ async def get_agent(
 
     # Enrichment: linked skills from join table (now includes description)
     skills = await repo.list_skills_for_agent(session, agent.id)
-    linked_skills = [
-        {"slug": s.slug, "name": s.name, "description": s.description} for s in skills
-    ]
+    linked_skills = [{"slug": s.slug, "name": s.name, "description": s.description} for s in skills]
 
     # O2/O3: last 10 runs with trajectory summaries
     recent_runs = await repo.list_recent_runs_with_trajectory(session, agent_id, limit=10)

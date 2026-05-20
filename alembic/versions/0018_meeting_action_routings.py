@@ -40,7 +40,9 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.UniqueConstraint("meeting_id", "action_text", "routed_to", name="uq_mar_meeting_action_dest"),
+        sa.UniqueConstraint(
+            "meeting_id", "action_text", "routed_to", name="uq_mar_meeting_action_dest"
+        ),
     )
     op.create_index(
         "ix_mar_meeting_id",

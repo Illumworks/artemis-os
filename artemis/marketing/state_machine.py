@@ -1,4 +1,4 @@
-"""Campaign State Machine — M3.
+"""Campaign State Machine — M3 / M3a.
 
 Single source of truth for all 5 marketing lifecycle states and transitions.
 
@@ -9,7 +9,10 @@ Single source of truth for all 5 marketing lifecycle states and transitions.
   DraftState       → alias for DeliverableState (fully overlapping, deduplicated)
 
 Call transition(session, entity_type, entity_id, to_state) to mutate state.
-All other state writes are illegal after M3.
+All other state writes are illegal after M3a.
+
+LEGACY_STATUS_MAP maps (entity_type, legacy_value) → new enum member.
+Use it to convert stored legacy values before calling transition().
 """
 
 from __future__ import annotations
@@ -27,6 +30,15 @@ class SignalState(enum.StrEnum):
     rejected_hard_filter = "rejected_hard_filter"  # terminal
     suppressed_stale = "suppressed_stale"  # terminal
 
+    # These four members reflect Gate 1 outcomes currently written to
+    # signal_status. Long-term these belong on signal_briefs.status, not
+    # on signal lifecycle — see follow-up brief m3b-attribution-cleanup.
+    # For now, extending unblocks the sweep without lossy collapse.
+    APPROVED = "approved"
+    REJECTED_AT_GATE_1 = "rejected_at_gate_1"
+    SNOOZED = "snoozed"
+    ARCHIVED = "archived"
+
 
 class BriefState(enum.StrEnum):
     """campaign_candidates.decision_state lifecycle (Gate 1)."""
@@ -37,6 +49,8 @@ class BriefState(enum.StrEnum):
     rejected = "rejected"  # terminal
     snoozed = "snoozed"
     asked = "asked"
+    monitoring = "monitoring"
+    changes_requested = "changes_requested"
 
 
 class WorkspaceState(enum.StrEnum):
@@ -44,8 +58,11 @@ class WorkspaceState(enum.StrEnum):
 
     pending_content = "pending_content"
     in_content_preparation = "in_content_preparation"
-    sent_to_writing_studio = "sent_to_writing_studio"  # terminal
+    sent_to_writing_studio = "sent_to_writing_studio"
     content_preparation_failed = "content_preparation_failed"  # terminal
+    content_in_review = "content_in_review"
+    all_content_approved = "all_content_approved"  # terminal
+    revision_needed = "revision_needed"
 
 
 class DeliverableState(enum.StrEnum):
@@ -72,20 +89,36 @@ SIGNAL_TRANSITIONS: dict[SignalState, set[SignalState]] = {
         SignalState.rejected_hard_filter,
         SignalState.suppressed_stale,
     },
-    SignalState.qualified: set(),
+    SignalState.qualified: {
+        SignalState.APPROVED,
+        SignalState.REJECTED_AT_GATE_1,
+        SignalState.SNOOZED,
+        SignalState.ARCHIVED,
+    },
+    SignalState.SNOOZED: {SignalState.qualified},
     SignalState.rejected_hard_filter: set(),
     SignalState.suppressed_stale: set(),
+    SignalState.APPROVED: set(),
+    SignalState.REJECTED_AT_GATE_1: set(),
+    SignalState.ARCHIVED: set(),
 }
 
 BRIEF_TRANSITIONS: dict[BriefState, set[BriefState]] = {
     BriefState.created: {BriefState.in_inbox},
     BriefState.in_inbox: {
-        BriefState.approved, BriefState.rejected, BriefState.snoozed, BriefState.asked
+        BriefState.approved,
+        BriefState.rejected,
+        BriefState.snoozed,
+        BriefState.asked,
+        BriefState.monitoring,
+        BriefState.changes_requested,
     },
     BriefState.approved: set(),
     BriefState.rejected: set(),
     BriefState.snoozed: {BriefState.in_inbox},
     BriefState.asked: {BriefState.in_inbox},
+    BriefState.monitoring: {BriefState.in_inbox},
+    BriefState.changes_requested: {BriefState.in_inbox},
 }
 
 WORKSPACE_TRANSITIONS: dict[WorkspaceState, set[WorkspaceState]] = {
@@ -94,22 +127,48 @@ WORKSPACE_TRANSITIONS: dict[WorkspaceState, set[WorkspaceState]] = {
         WorkspaceState.sent_to_writing_studio,
         WorkspaceState.content_preparation_failed,
     },
-    WorkspaceState.sent_to_writing_studio: set(),
+    WorkspaceState.sent_to_writing_studio: {WorkspaceState.content_in_review},
     WorkspaceState.content_preparation_failed: set(),
+    WorkspaceState.content_in_review: {
+        WorkspaceState.all_content_approved,
+        WorkspaceState.revision_needed,
+    },
+    WorkspaceState.all_content_approved: set(),
+    WorkspaceState.revision_needed: {WorkspaceState.in_content_preparation},
 }
 
 DELIVERABLE_TRANSITIONS: dict[DeliverableState, set[DeliverableState]] = {
     DeliverableState.queued: {DeliverableState.generating},
-    DeliverableState.generating: {
-        DeliverableState.draft_ready, DeliverableState.generation_failed
-    },
+    DeliverableState.generating: {DeliverableState.draft_ready, DeliverableState.generation_failed},
     DeliverableState.draft_ready: {
-        DeliverableState.approved, DeliverableState.revised, DeliverableState.rejected
+        DeliverableState.approved,
+        DeliverableState.revised,
+        DeliverableState.rejected,
     },
     DeliverableState.approved: set(),
     DeliverableState.revised: {DeliverableState.generating},
-    DeliverableState.rejected: set(),
+    DeliverableState.rejected: {DeliverableState.draft_ready},  # revision after gate-2 rejection
     DeliverableState.generation_failed: set(),
+}
+
+# ── Legacy-value mapping table (M3a) ─────────────────────────────────────────
+# Single source of truth for converting pre-M3 status strings to enum members.
+# (entity_type, legacy_value) → new enum member.
+LEGACY_STATUS_MAP: dict[tuple[str, str], enum.Enum] = {
+    ("deliverable", "ready_for_review"): DeliverableState.draft_ready,
+    ("deliverable", "rejected_at_gate_2"): DeliverableState.rejected,
+    ("deliverable", "review_pending"): DeliverableState.draft_ready,
+    ("workspace", "content_in_progress"): WorkspaceState.in_content_preparation,
+    ("workspace", "content_in_review"): WorkspaceState.content_in_review,
+    ("workspace", "all_content_approved"): WorkspaceState.all_content_approved,
+    ("workspace", "revision_needed"): WorkspaceState.revision_needed,
+    ("workspace", "created"): WorkspaceState.pending_content,
+    ("brief", "monitoring"): BriefState.monitoring,
+    ("brief", "changes_requested"): BriefState.changes_requested,
+    ("signal", "approved"): SignalState.APPROVED,
+    ("signal", "rejected"): SignalState.REJECTED_AT_GATE_1,
+    ("signal", "snoozed"): SignalState.SNOOZED,
+    ("signal", "archived"): SignalState.ARCHIVED,
 }
 
 # Lazy entity-type registry — avoids circular imports at module load time.

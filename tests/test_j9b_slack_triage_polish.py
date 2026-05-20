@@ -160,9 +160,7 @@ def test_classify_mention_type_channel_beats_other_user_mention() -> None:
 # ── Route filter tests ─────────────────────────────────────────────────────────
 
 
-async def test_mentions_filters_direct_only(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_mentions_filters_direct_only(client: AsyncClient, db_session: AsyncSession) -> None:
     """GET /api/slack/signals/mentions returns only direct-type rows by default."""
     await _seed_message(db_session, "direct-1", mention_type="direct")
     await _seed_message(db_session, "channel-1", mention_type="channel")
@@ -173,7 +171,12 @@ async def test_mentions_filters_direct_only(
 
     original = triage_mod.list_unresolved_mentions
 
-    async def _patched(session: AsyncSession, limit: int = 20, include_types: list[str] | None = None, token: str | None = None) -> dict[str, object]:
+    async def _patched(
+        session: AsyncSession,
+        limit: int = 20,
+        include_types: list[str] | None = None,
+        token: str | None = None,
+    ) -> dict[str, object]:
         # Call real impl but without a token so no Slack API calls
         return await original(session, limit=limit, include_types=include_types, token=None)
 
@@ -188,9 +191,7 @@ async def test_mentions_filters_direct_only(
     assert "group-1" not in ids
 
 
-async def test_mentions_include_param_widens(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_mentions_include_param_widens(client: AsyncClient, db_session: AsyncSession) -> None:
     """?include=direct,channel returns both direct and channel rows."""
     await _seed_message(db_session, "direct-2", mention_type="direct")
     await _seed_message(db_session, "channel-2", mention_type="channel")
@@ -200,13 +201,16 @@ async def test_mentions_include_param_widens(
 
     original = triage_mod.list_unresolved_mentions
 
-    async def _patched(session: AsyncSession, limit: int = 20, include_types: list[str] | None = None, token: str | None = None) -> dict[str, object]:
+    async def _patched(
+        session: AsyncSession,
+        limit: int = 20,
+        include_types: list[str] | None = None,
+        token: str | None = None,
+    ) -> dict[str, object]:
         return await original(session, limit=limit, include_types=include_types, token=None)
 
     with patch.object(triage_mod, "list_unresolved_mentions", side_effect=_patched):
-        resp = await client.get(
-            "/api/slack/signals/mentions", params={"include": "direct,channel"}
-        )
+        resp = await client.get("/api/slack/signals/mentions", params={"include": "direct,channel"})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -247,14 +251,15 @@ async def test_migration_0023_up_down_roundtrip() -> None:
                 lambda sync_conn: inspect(sync_conn).get_table_names()
             )
         assert "slack_users" in table_names, "slack_users table should exist after upgrade 0023"
-        assert "slack_channels" in table_names, "slack_channels table should exist after upgrade 0023"
+        assert "slack_channels" in table_names, (
+            "slack_channels table should exist after upgrade 0023"
+        )
 
         # Check mention_type column exists
         async with engine.connect() as conn:
             cols = await conn.run_sync(
                 lambda sync_conn: [
-                    c["name"]
-                    for c in inspect(sync_conn).get_columns("slack_inbound_messages")
+                    c["name"] for c in inspect(sync_conn).get_columns("slack_inbound_messages")
                 ]
             )
         assert "mention_type" in cols, "mention_type column should exist after upgrade 0023"
@@ -278,16 +283,19 @@ async def test_migration_0023_up_down_roundtrip() -> None:
                 lambda sync_conn: inspect(sync_conn).get_table_names()
             )
         assert "slack_users" not in table_names_after, "slack_users should be gone after downgrade"
-        assert "slack_channels" not in table_names_after, "slack_channels should be gone after downgrade"
+        assert "slack_channels" not in table_names_after, (
+            "slack_channels should be gone after downgrade"
+        )
 
         async with engine2.connect() as conn:
             cols_after = await conn.run_sync(
                 lambda sync_conn: [
-                    c["name"]
-                    for c in inspect(sync_conn).get_columns("slack_inbound_messages")
+                    c["name"] for c in inspect(sync_conn).get_columns("slack_inbound_messages")
                 ]
             )
-        assert "mention_type" not in cols_after, "mention_type column should be gone after downgrade"
+        assert "mention_type" not in cols_after, (
+            "mention_type column should be gone after downgrade"
+        )
     finally:
         await engine2.dispose()
 

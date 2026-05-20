@@ -39,9 +39,7 @@ _PROVIDER_NAMES: dict[str, str] = {
     "openrouter": "OpenRouter",
 }
 
-_LM_STUDIO_MODELS_URL = os.environ.get(
-    "LM_STUDIO_BASE_URL", "http://localhost:1234/v1"
-) + "/models"
+_LM_STUDIO_MODELS_URL = os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1") + "/models"
 
 
 async def _lm_studio_is_reachable() -> bool:
@@ -129,7 +127,8 @@ class AgentMetricsOverview(BaseModel):
 class AgentMetricsOut(BaseModel):
     overview: AgentMetricsOverview
     agents: list[dict] = []
-    byType: list[dict] = []
+    # Preserve the Node-compatible JSON wire shape for /api/stats/agent-metrics.
+    byType: list[dict] = []  # noqa: N815
     daily: list[dict] = []
     recent: list[dict] = []
 

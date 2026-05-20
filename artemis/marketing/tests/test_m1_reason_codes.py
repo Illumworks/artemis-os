@@ -72,9 +72,7 @@ async def test_get_reason_codes_returns_17_sorted(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_post_reason_code_roundtrip(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_post_reason_code_roundtrip(client: AsyncClient, db_session: AsyncSession) -> None:
     resp = await client.post(
         "/api/signal-criteria/reason-codes",
         json={
@@ -181,9 +179,7 @@ async def test_seed_idempotent(db_session: AsyncSession) -> None:
     assert second["skipped"] == 17
 
     # Count rows
-    result = await db_session.execute(
-        text("SELECT COUNT(*) FROM signal_reason_codes")
-    )
+    result = await db_session.execute(text("SELECT COUNT(*) FROM signal_reason_codes"))
     assert result.scalar_one() == 17
 
 
@@ -192,9 +188,7 @@ async def test_seed_idempotent(db_session: AsyncSession) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_patch_code_immutable(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_patch_code_immutable(client: AsyncClient, db_session: AsyncSession) -> None:
     await _seed(db_session)
     resp = await client.patch(
         "/api/signal-criteria/reason-codes/POLICY_LIT_MANDATE",
@@ -210,9 +204,7 @@ async def test_patch_code_immutable(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_patch_domain_immutable(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_patch_domain_immutable(client: AsyncClient, db_session: AsyncSession) -> None:
     await _seed(db_session)
     resp = await client.patch(
         "/api/signal-criteria/reason-codes/POLICY_LIT_MANDATE",

@@ -110,9 +110,7 @@ async def summarize(
             return
 
         # Load the run record.
-        result = await session.execute(
-            sa_select(AgentRun).where(AgentRun.id == run_id).limit(1)
-        )
+        result = await session.execute(sa_select(AgentRun).where(AgentRun.id == run_id).limit(1))
         run = result.scalar_one_or_none()
         if run is None:
             logger.warning("trajectory_summarizer: run_id=%s not found", run_id)

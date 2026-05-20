@@ -216,7 +216,7 @@ class TestSubmitDraftForReview:
         stub = StubWritingStudio()
         await submit_draft_for_review(db_session, deliverable_id=deliverable.id, ws=stub)
         await db_session.refresh(deliverable)
-        assert deliverable.status == "ready_for_review"
+        assert deliverable.status == "draft_ready"
 
     async def test_approval_status_pending(self, db_session: AsyncSession) -> None:
         clear_subscribers()

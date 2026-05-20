@@ -39,6 +39,11 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = [
+    ".claude/worktrees",
+    ".clone",
+    ".sync",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM"]

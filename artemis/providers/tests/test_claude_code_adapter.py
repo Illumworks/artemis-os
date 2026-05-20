@@ -90,10 +90,12 @@ async def test_complete_parses_json_result(tmp_path: Path) -> None:
 async def test_complete_parses_json_result_with_usage(tmp_path: Path) -> None:
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
-    payload = json.dumps({
-        "result": "answer",
-        "usage": {"input_tokens": 42, "output_tokens": 17},
-    }).encode()
+    payload = json.dumps(
+        {
+            "result": "answer",
+            "usage": {"input_tokens": 42, "output_tokens": 17},
+        }
+    ).encode()
     proc = _mock_proc(payload)
 
     with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):

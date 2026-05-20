@@ -109,11 +109,11 @@ async def test_test_run_unknown_tools_denied() -> None:
 async def test_test_run_tools_skipped_is_correct_subset() -> None:
     """tools_skipped is exactly the complement of safe tools in the definition."""
     mixed = [
-        "jira.list_issues",      # safe
-        "jira.create_issue",     # write — blocked
-        "slack.search_messages", # safe
-        "slack.post_message",    # write — blocked
-        "memory.search",         # safe
+        "jira.list_issues",  # safe
+        "jira.create_issue",  # write — blocked
+        "slack.search_messages",  # safe
+        "slack.post_message",  # write — blocked
+        "memory.search",  # safe
     ]
     expected_skipped = {"jira.create_issue", "slack.post_message"}
     defn = {"system_prompt": "Testing.", "tools": mixed}

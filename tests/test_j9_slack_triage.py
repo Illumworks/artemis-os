@@ -179,9 +179,7 @@ async def test_list_mentions_limit(client: AsyncClient, db_session: AsyncSession
     assert body["total_unresolved"] == 5
 
 
-async def test_resolve_marks_row_resolved(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_resolve_marks_row_resolved(client: AsyncClient, db_session: AsyncSession) -> None:
     """POST /resolve sets resolved_at; returns ok=True and new_total_unresolved."""
     await _seed_message(db_session, "Ev-to-resolve", resolved=False)
     await _seed_message(db_session, "Ev-other", resolved=False)
@@ -216,9 +214,7 @@ async def test_resolve_idempotent(client: AsyncClient, db_session: AsyncSession)
     assert body2["new_total_unresolved"] == 0
 
 
-async def test_resolve_404_on_unknown_id(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_resolve_404_on_unknown_id(client: AsyncClient, db_session: AsyncSession) -> None:
     """Unknown event_id returns 404."""
     resp = await client.post("/api/slack/signals/mentions/no-such-event/resolve")
     assert resp.status_code == 404

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +31,7 @@ from artemis.marketing.repository import (
     get_campaign_brief,
     get_candidate,
 )
+from artemis.marketing.state_machine import DeliverableState, transition
 from artemis.marketing.writing_studio.events import publish as publish_event
 from artemis.marketing.writing_studio.external import ExternalDraft, get_writing_studio
 
@@ -311,9 +312,8 @@ async def submit_draft_for_review(
     )
     session.add(approval)
 
-    # Update deliverable status
-    deliverable.status = "ready_for_review"
-    deliverable.updated_at = datetime.now(tz=UTC)
+    # Update deliverable status via state machine
+    await transition(session, "deliverable", deliverable_id, DeliverableState.draft_ready)
 
     await session.flush()
     await session.refresh(approval)

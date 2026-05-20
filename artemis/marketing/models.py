@@ -91,7 +91,12 @@ class SignalQueue(Base):
     reason_codes: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
     provenance: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     qualification_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
-    signal_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="in_inbox")
+    signal_status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="pending_qualification",
+        server_default="pending_qualification",
+    )
     snoozed_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     rejected_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -155,9 +160,11 @@ class CampaignCandidate(Base):
     campaign_family: Mapped[str] = mapped_column(Text, nullable=False)
     stage: Mapped[str] = mapped_column(Text, nullable=False, server_default="human_gate_1")
     decision_state: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="pending_review"
+        Text, nullable=False, default="created", server_default="created"
     )
-    workspace_state: Mapped[str] = mapped_column(Text, nullable=False, server_default="created")
+    workspace_state: Mapped[str] = mapped_column(
+        Text, nullable=False, default="pending_content", server_default="pending_content"
+    )
     ruleset_version_at_qualification: Mapped[str | None] = mapped_column(Text, nullable=True)
     metrics_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     deliverables: Mapped[Any | None] = mapped_column(JSONB, nullable=True)

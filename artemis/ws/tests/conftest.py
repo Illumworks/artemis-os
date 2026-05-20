@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 import artemis.builders.models  # noqa: F401 — registers builder models on Base.metadata
 import artemis.db
-from artemis.config import settings
 from artemis.db import attach_pgvector_codec
 
 # Hard guard against live-DB destruction. This conftest TRUNCATEs tables;

@@ -69,6 +69,7 @@ def _resolve_builder_adapter() -> Any:
         "no_provider",
     )
 
+
 router = APIRouter(
     prefix="/api/builder",
     tags=["builder"],
@@ -96,9 +97,7 @@ async def list_sessions(
     from artemis.builder.repository import list_builder_sessions
 
     rows = await list_builder_sessions(session, status=status, limit=limit)
-    return {
-        "sessions": [BuilderSessionRead.model_validate(r).model_dump() for r in rows]
-    }
+    return {"sessions": [BuilderSessionRead.model_validate(r).model_dump() for r in rows]}
 
 
 @router.post("/sessions", status_code=201)
@@ -231,7 +230,9 @@ async def send_message_stream(
                 try:
                     ev = await asyncio.wait_for(q.get(), timeout=15)
                 except TimeoutError:
-                    yield BuilderEvent("heartbeat", {"ts": datetime.datetime.now(datetime.UTC).isoformat()}).to_sse()
+                    yield BuilderEvent(
+                        "heartbeat", {"ts": datetime.datetime.now(datetime.UTC).isoformat()}
+                    ).to_sse()
                     continue
                 if ev is None:
                     break
@@ -375,9 +376,7 @@ async def list_proposals(
     from artemis.builder.repository import list_definition_proposals
 
     rows = await list_definition_proposals(session, status=status, kind=kind, limit=limit)
-    return {
-        "proposals": [DefinitionProposalRead.model_validate(r).model_dump() for r in rows]
-    }
+    return {"proposals": [DefinitionProposalRead.model_validate(r).model_dump() for r in rows]}
 
 
 @router.get("/proposals/{proposal_id}")
@@ -460,9 +459,7 @@ async def get_agent_builder_context(
     from artemis.builders.schemas import AgentRunRead
 
     # Resolve the agent
-    result = await session.execute(
-        sa_select(Agent).where(Agent.agent_id == agent_id).limit(1)
-    )
+    result = await session.execute(sa_select(Agent).where(Agent.agent_id == agent_id).limit(1))
     agent = result.scalar_one_or_none()
     if agent is None:
         raise not_found(f"Agent '{agent_id}' not found", "agent_not_found")
@@ -481,9 +478,7 @@ async def get_agent_builder_context(
 
     # Trajectory summaries
     traj_rows = await get_trajectory_summaries_for_agent(session, agent_id, limit=10)
-    trajectory_summaries = [
-        TrajectorySummaryRead.model_validate(r).model_dump() for r in traj_rows
-    ]
+    trajectory_summaries = [TrajectorySummaryRead.model_validate(r).model_dump() for r in traj_rows]
 
     # Pending proposals targeting this agent
     from artemis.builders.models import DefinitionProposal

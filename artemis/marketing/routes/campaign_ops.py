@@ -35,6 +35,7 @@ from artemis.marketing.repository import (
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.state_machine import BriefState, transition
 
 router = APIRouter(
     prefix="/api/campaign-ops",
@@ -45,11 +46,11 @@ router = APIRouter(
 _VALID_ACTIONS = {"approve", "reject", "monitor", "request_changes"}
 
 # Decision state transitions (mirrors Node's applyCampaignCandidateAction)
-_ACTION_STATE_MAP = {
-    "approve": "approved",
-    "reject": "rejected",
-    "monitor": "monitoring",
-    "request_changes": "changes_requested",
+_ACTION_STATE_MAP: dict[str, BriefState] = {
+    "approve": BriefState.approved,
+    "reject": BriefState.rejected,
+    "monitor": BriefState.monitoring,
+    "request_changes": BriefState.changes_requested,
 }
 
 
@@ -220,13 +221,8 @@ async def advance_candidate(
         raise not_found("Campaign candidate not found", "campaign_ops_candidate_not_found")  # noqa: B904
 
     new_state = _ACTION_STATE_MAP[action]
-    candidate.decision_state = new_state
+    await transition(session, "brief", candidate_id, new_state)
 
-    from datetime import UTC, datetime
-
-    candidate.updated_at = datetime.now(tz=UTC)
-
-    await session.flush()
     await session.commit()
     await session.refresh(candidate)
     return _serialize_candidate(candidate)

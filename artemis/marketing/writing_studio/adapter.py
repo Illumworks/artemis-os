@@ -21,16 +21,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from artemis.marketing.state_machine import DeliverableState, WorkspaceState, transition
+
 logger = logging.getLogger(__name__)
 
 # ── State transitions per event type ──────────────────────────────────────────
 
-# Maps event type → target deliverable status.
+# Maps event type → target deliverable state (enum member).
 # None means the event is informational (no state change).
-_EVENT_TRANSITIONS: dict[str, str | None] = {
-    "draft.generated": "ready_for_review",
-    "draft.approved": "approved",
-    "draft.rejected": "rejected_at_gate_2",
+_EVENT_TRANSITIONS: dict[str, DeliverableState | None] = {
+    "draft.generated": DeliverableState.draft_ready,
+    "draft.approved": DeliverableState.approved,
+    "draft.rejected": DeliverableState.rejected,
     "draft.revised": None,  # handled conditionally (same as regenerated)
     "draft.regenerated": None,  # handled conditionally
     "draft.edited": None,  # informational only
@@ -92,22 +94,27 @@ async def _recompute_workspace_state(
 
     statuses = [d.status for d in deliverables]
 
-    if any(s == "rejected_at_gate_2" for s in statuses):
-        workspace_state = "revision_needed"
-    elif all(s == "approved" for s in statuses):
-        workspace_state = "all_content_approved"
-    elif any(s == "ready_for_review" for s in statuses):
-        workspace_state = "content_in_review"
+    if any(s == DeliverableState.rejected for s in statuses):
+        target_ws = WorkspaceState.revision_needed
+    elif all(s == DeliverableState.approved for s in statuses):
+        target_ws = WorkspaceState.all_content_approved
+    elif any(s == DeliverableState.draft_ready for s in statuses):
+        target_ws = WorkspaceState.content_in_review
     else:
-        workspace_state = "content_in_progress"
+        target_ws = WorkspaceState.in_content_preparation
 
     candidate = await session.get(CampaignCandidate, candidate_id)
-    if candidate is not None:
-        candidate.workspace_state = workspace_state
-        from datetime import UTC, datetime
+    if candidate is not None and candidate.workspace_state != target_ws.value:
+        from artemis.marketing.state_machine import IllegalTransition
 
-        candidate.updated_at = datetime.now(tz=UTC)
-        await session.flush()
+        try:
+            await transition(session, "workspace", candidate_id, target_ws)
+        except IllegalTransition as exc:
+            # Log but do not raise — workspace recomputation is advisory.
+            # In production the workspace should already be at a state that
+            # allows this transition; illegal transitions indicate test setup
+            # skipped intermediate states or a data inconsistency.
+            logger.warning("[writing-studio-adapter] workspace transition skipped: %s", exc)
 
 
 # ── Deliverable state update ───────────────────────────────────────────────────
@@ -122,8 +129,6 @@ async def _apply_deliverable_transition(
 
     Returns (deliverable.id, deliverable.candidate_id) or (None, None).
     """
-    from datetime import UTC, datetime
-
     from sqlalchemy import select
 
     from artemis.marketing.models import CampaignDeliverable
@@ -144,21 +149,19 @@ async def _apply_deliverable_transition(
     if target_state is None:
         return deliverable.id, deliverable.candidate_id
 
-    deliverable.status = target_state
-    deliverable.updated_at = datetime.now(tz=UTC)
-    await session.flush()
+    await transition(session, "deliverable", deliverable.id, target_state)
     return deliverable.id, deliverable.candidate_id
 
 
-def _resolve_target_state(event_type: str, current_state: str) -> str | None:
-    """Return the target deliverable status for the given event, or None for no-op."""
+def _resolve_target_state(event_type: str, current_state: str) -> DeliverableState | None:
+    """Return the target deliverable state for the given event, or None for no-op."""
     if event_type == "draft.edited":
         return None
 
     if event_type in ("draft.revised", "draft.regenerated"):
         # Only meaningful if currently rejected or still generating
-        if current_state in ("rejected_at_gate_2", "generating"):
-            return "ready_for_review"
+        if current_state in (DeliverableState.rejected, DeliverableState.generating):
+            return DeliverableState.draft_ready
         return None
 
     return _EVENT_TRANSITIONS.get(event_type)

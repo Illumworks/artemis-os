@@ -30,6 +30,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.state_machine import DeliverableState, transition
 from artemis.marketing.writing_studio.external import ExternalDraft, get_writing_studio
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -289,7 +290,6 @@ async def ingest_webhook(
 
     Does NOT commit — caller owns the transaction.
     """
-    from datetime import UTC
 
     from sqlalchemy import select
 
@@ -349,21 +349,20 @@ async def ingest_webhook(
 
     previous_status = deliverable.status
 
-    # Map external status to internal status
-    _status_map: dict[str, str] = {
-        "approved": "approved",
-        "rejected": "rejected_at_gate_2",
-        "ready_for_review": "ready_for_review",
-        "generating": "generating",
-        "draft": "generating",
-        "revised": "ready_for_review",
+    # Map external status to internal DeliverableState enum member.
+    _status_map: dict[str, DeliverableState] = {
+        "approved": DeliverableState.approved,
+        "rejected": DeliverableState.rejected,
+        "ready_for_review": DeliverableState.draft_ready,
+        "generating": DeliverableState.generating,
+        "draft": DeliverableState.generating,
+        "revised": DeliverableState.draft_ready,
     }
-    new_status = _status_map.get(new_status_raw, deliverable.status)
+    new_state = _status_map.get(new_status_raw)
+    new_status = new_state.value if new_state is not None else previous_status
 
-    if new_status != previous_status:
-        deliverable.status = new_status
-        deliverable.updated_at = datetime.now(tz=UTC)
-        await session.flush()
+    if new_state is not None and new_status != previous_status:
+        await transition(session, "deliverable", deliverable.id, new_state)
 
     # Emit internal event (non-fatal)
     with contextlib.suppress(Exception):

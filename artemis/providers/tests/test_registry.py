@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 from artemis.providers.errors import MissingApiKeyError, MissingCliBinaryError, UnknownProviderError
@@ -23,7 +24,15 @@ def test_list_providers_sorted() -> None:
 
 def test_list_providers_contains_all_providers() -> None:
     providers = list_providers()
-    for expected in ("anthropic", "claude-code", "codex", "gemini", "lm-studio", "openai", "openrouter"):
+    for expected in (
+        "anthropic",
+        "claude-code",
+        "codex",
+        "gemini",
+        "lm-studio",
+        "openai",
+        "openrouter",
+    ):
         assert expected in providers, f"{expected!r} missing from list_providers()"
 
 
@@ -94,10 +103,10 @@ def test_get_adapter_claude_code_raises_when_binary_missing() -> None:
 
 
 def test_get_adapter_claude_code_returns_adapter_when_binary_found(
-    tmp_path: "Path",
+    tmp_path: Path,
 ) -> None:
     import stat
-    from pathlib import Path
+
     binary = tmp_path / "claude"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(binary.stat().st_mode | stat.S_IEXEC)

@@ -636,9 +636,7 @@ async def list_recent_runs_with_trajectory(
     # Fetch trajectory summaries for these run IDs (integer PKs).
     run_int_ids = [r.id for r in runs]
     traj_result = await session.execute(
-        select(AgentRunTrajectorySummary).where(
-            AgentRunTrajectorySummary.run_id.in_(run_int_ids)
-        )
+        select(AgentRunTrajectorySummary).where(AgentRunTrajectorySummary.run_id.in_(run_int_ids))
     )
     traj_by_id: dict[int, AgentRunTrajectorySummary] = {
         t.run_id: t for t in traj_result.scalars().all()
@@ -647,9 +645,7 @@ async def list_recent_runs_with_trajectory(
     out = []
     for run in runs:
         traj = traj_by_id.get(run.id)
-        summary = (
-            traj.what_stalled or traj.what_worked or traj.what_was_missing if traj else None
-        )
+        summary = traj.what_stalled or traj.what_worked or traj.what_was_missing if traj else None
 
         duration_s: float | None = None
         if run.completed_at and run.started_at:

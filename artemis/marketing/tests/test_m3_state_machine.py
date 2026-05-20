@@ -82,6 +82,12 @@ _SIGNAL_EDGES = [
     (SignalState.pending_qualification, SignalState.qualified),
     (SignalState.pending_qualification, SignalState.rejected_hard_filter),
     (SignalState.pending_qualification, SignalState.suppressed_stale),
+    # M3a Gate-1 outcome edges
+    (SignalState.qualified, SignalState.APPROVED),
+    (SignalState.qualified, SignalState.REJECTED_AT_GATE_1),
+    (SignalState.qualified, SignalState.SNOOZED),
+    (SignalState.qualified, SignalState.ARCHIVED),
+    (SignalState.SNOOZED, SignalState.qualified),
 ]
 
 _BRIEF_EDGES = [
@@ -92,12 +98,22 @@ _BRIEF_EDGES = [
     (BriefState.in_inbox, BriefState.asked),
     (BriefState.snoozed, BriefState.in_inbox),
     (BriefState.asked, BriefState.in_inbox),
+    # M3a new members
+    (BriefState.in_inbox, BriefState.monitoring),
+    (BriefState.in_inbox, BriefState.changes_requested),
+    (BriefState.monitoring, BriefState.in_inbox),
+    (BriefState.changes_requested, BriefState.in_inbox),
 ]
 
 _WORKSPACE_EDGES = [
     (WorkspaceState.pending_content, WorkspaceState.in_content_preparation),
     (WorkspaceState.in_content_preparation, WorkspaceState.sent_to_writing_studio),
     (WorkspaceState.in_content_preparation, WorkspaceState.content_preparation_failed),
+    # M3a new members
+    (WorkspaceState.sent_to_writing_studio, WorkspaceState.content_in_review),
+    (WorkspaceState.content_in_review, WorkspaceState.all_content_approved),
+    (WorkspaceState.content_in_review, WorkspaceState.revision_needed),
+    (WorkspaceState.revision_needed, WorkspaceState.in_content_preparation),
 ]
 
 _DELIVERABLE_EDGES = [
@@ -108,6 +124,7 @@ _DELIVERABLE_EDGES = [
     (DeliverableState.draft_ready, DeliverableState.revised),
     (DeliverableState.draft_ready, DeliverableState.rejected),
     (DeliverableState.revised, DeliverableState.generating),
+    (DeliverableState.rejected, DeliverableState.draft_ready),  # revision after gate-2 rejection
 ]
 
 
@@ -124,9 +141,7 @@ async def test_signal_legal_edges(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("frm,to", _BRIEF_EDGES)
-async def test_brief_legal_edges(
-    frm: BriefState, to: BriefState, db_session: AsyncSession
-) -> None:
+async def test_brief_legal_edges(frm: BriefState, to: BriefState, db_session: AsyncSession) -> None:
     cand = await _cand(db_session, decision_state=frm.value)
     updated = await transition(db_session, "brief", cand.id, to)
     assert updated.decision_state == to.value
@@ -161,8 +176,9 @@ async def test_deliverable_legal_edges(
 @pytest.mark.asyncio
 async def test_audit_from_state_correct(db_session: AsyncSession) -> None:
     sig = await _sig(db_session)
-    await transition(db_session, "signal", sig.id, SignalState.qualified,
-                     actor="a@b.com", reason="ok")
+    await transition(
+        db_session, "signal", sig.id, SignalState.qualified, actor="a@b.com", reason="ok"
+    )
     r = await db_session.execute(
         select(CampaignStateTransition).where(CampaignStateTransition.entity_id == sig.id)
     )
@@ -201,10 +217,11 @@ _TERMINAL_CASES = [
     ("signal", "suppressed_stale", SignalState.qualified),
     ("brief", "approved", BriefState.in_inbox),
     ("brief", "rejected", BriefState.in_inbox),
-    ("workspace", "sent_to_writing_studio", WorkspaceState.in_content_preparation),
+    # sent_to_writing_studio is no longer terminal (M3a: → content_in_review)
     ("workspace", "content_preparation_failed", WorkspaceState.pending_content),
+    ("workspace", "all_content_approved", WorkspaceState.in_content_preparation),
     ("deliverable", "approved", DeliverableState.draft_ready),
-    ("deliverable", "rejected", DeliverableState.generating),
+    # rejected is no longer terminal (M3a: → draft_ready for gate-2 revision)
     ("deliverable", "generation_failed", DeliverableState.generating),
 ]
 
@@ -306,3 +323,84 @@ def test_workspace_transitions_covers_all_states() -> None:
 
 def test_deliverable_transitions_covers_all_states() -> None:
     assert set(DELIVERABLE_TRANSITIONS.keys()) == set(DeliverableState)
+
+
+# ── 9. WorkspaceState end-to-end multi-hop ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_workspace_sent_to_review_to_approved(db_session: AsyncSession) -> None:
+    """sent_to_writing_studio → content_in_review → all_content_approved round-trip.
+    Each hop writes an audit row.
+    """
+    cand = await _cand(db_session, workspace_state=WorkspaceState.sent_to_writing_studio.value)
+    await transition(db_session, "workspace", cand.id, WorkspaceState.content_in_review)
+    await transition(db_session, "workspace", cand.id, WorkspaceState.all_content_approved)
+    await db_session.refresh(cand)
+    assert cand.workspace_state == WorkspaceState.all_content_approved.value
+    assert await _audit(db_session, "workspace", cand.id) == 2
+
+
+@pytest.mark.asyncio
+async def test_workspace_revision_loop(db_session: AsyncSession) -> None:
+    """content_in_review → revision_needed → in_content_preparation round-trip."""
+    cand = await _cand(db_session, workspace_state=WorkspaceState.content_in_review.value)
+    await transition(db_session, "workspace", cand.id, WorkspaceState.revision_needed)
+    await transition(db_session, "workspace", cand.id, WorkspaceState.in_content_preparation)
+    await db_session.refresh(cand)
+    assert cand.workspace_state == WorkspaceState.in_content_preparation.value
+    assert await _audit(db_session, "workspace", cand.id) == 2
+
+
+# ── 10. BriefState monitoring / changes_requested loops ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_brief_monitoring_round_trip(db_session: AsyncSession) -> None:
+    """in_inbox → monitoring → in_inbox — audit rows written for both hops."""
+    cand = await _cand(db_session, decision_state=BriefState.in_inbox.value)
+    await transition(db_session, "brief", cand.id, BriefState.monitoring)
+    await transition(db_session, "brief", cand.id, BriefState.in_inbox)
+    await db_session.refresh(cand)
+    assert cand.decision_state == BriefState.in_inbox.value
+    assert await _audit(db_session, "brief", cand.id) == 2
+
+
+@pytest.mark.asyncio
+async def test_brief_changes_requested_round_trip(db_session: AsyncSession) -> None:
+    """in_inbox → changes_requested → in_inbox — audit rows written for both hops."""
+    cand = await _cand(db_session, decision_state=BriefState.in_inbox.value)
+    await transition(db_session, "brief", cand.id, BriefState.changes_requested)
+    await transition(db_session, "brief", cand.id, BriefState.in_inbox)
+    await db_session.refresh(cand)
+    assert cand.decision_state == BriefState.in_inbox.value
+    assert await _audit(db_session, "brief", cand.id) == 2
+
+
+# ── 11. LEGACY_STATUS_MAP completeness ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_legacy_status_map_all_targets_reachable(db_session: AsyncSession) -> None:
+    """Every value in LEGACY_STATUS_MAP is a valid state in its enum.
+
+    The test verifies that enum resolution succeeds for every mapped target
+    (i.e. no stale or misspelled enum member reference). It does not call
+    transition() directly because LEGACY_STATUS_MAP maps FROM legacy strings
+    that are not necessarily reachable from the initial fixture state; the
+    purpose is enum-completeness coverage only.
+    """
+    from artemis.marketing.state_machine import LEGACY_STATUS_MAP
+
+    for (entity_type, legacy_value), target_enum_member in LEGACY_STATUS_MAP.items():
+        assert isinstance(
+            target_enum_member, (SignalState, BriefState, WorkspaceState, DeliverableState)
+        ), (
+            f"LEGACY_STATUS_MAP[({entity_type!r}, {legacy_value!r})] is not a known state enum member: "
+            f"{target_enum_member!r}"
+        )
+        # The string value must round-trip through the enum
+        enum_cls = type(target_enum_member)
+        assert enum_cls(target_enum_member.value) is target_enum_member, (
+            f"Round-trip failed for {target_enum_member!r}"
+        )

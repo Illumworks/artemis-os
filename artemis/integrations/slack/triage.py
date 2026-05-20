@@ -53,9 +53,7 @@ def classify_mention_type(text: str, authed_user_id: str) -> str:
     """
     if authed_user_id:
         # Check for direct mention of authed user
-        pattern = re.compile(
-            r"<@" + re.escape(authed_user_id) + r"(?:\|[^>]*)?>", re.IGNORECASE
-        )
+        pattern = re.compile(r"<@" + re.escape(authed_user_id) + r"(?:\|[^>]*)?>", re.IGNORECASE)
         if pattern.search(text):
             return "direct"
     else:
@@ -169,9 +167,7 @@ async def resolve_channel(
             )
             await session.commit()
         else:
-            logger.warning(
-                "resolve_channel(%s): Slack API error %s", channel_id, exc.error
-            )
+            logger.warning("resolve_channel(%s): Slack API error %s", channel_id, exc.error)
         return {"id": channel_id, "name": channel_id, "is_im": False}
     except Exception:
         logger.exception("resolve_channel(%s): unexpected error", channel_id)

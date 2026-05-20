@@ -143,10 +143,12 @@ async def test_complete_raises_on_empty_output(tmp_path: Path) -> None:
 
 
 def test_parse_ndjson_concatenates_multiple_result_lines() -> None:
-    lines = "\n".join([
-        json.dumps({"type": "result", "result": "Part 1"}),
-        json.dumps({"type": "result", "result": "Part 2"}),
-    ])
+    lines = "\n".join(
+        [
+            json.dumps({"type": "result", "result": "Part 1"}),
+            json.dumps({"type": "result", "result": "Part 2"}),
+        ]
+    )
     text, usage = _parse_ndjson_output(lines)
     assert "Part 1" in text
     assert "Part 2" in text
@@ -154,10 +156,12 @@ def test_parse_ndjson_concatenates_multiple_result_lines() -> None:
 
 
 def test_parse_ndjson_reads_usage_from_last_usage_object() -> None:
-    lines = "\n".join([
-        json.dumps({"type": "result", "result": "text"}),
-        json.dumps({"usage": {"input_tokens": 100, "output_tokens": 50}}),
-    ])
+    lines = "\n".join(
+        [
+            json.dumps({"type": "result", "result": "text"}),
+            json.dumps({"usage": {"input_tokens": 100, "output_tokens": 50}}),
+        ]
+    )
     _, usage = _parse_ndjson_output(lines)
     assert usage.input_tokens == 100
     assert usage.output_tokens == 50

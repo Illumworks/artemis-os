@@ -187,9 +187,7 @@ async def test_delete_instruction(
 ) -> None:
     """DELETE /api/agents/{id}/instruction removes the file."""
     await _create_agent(db_session, "del-instr-agent")
-    await client.put(
-        "/api/agents/del-instr-agent/instruction", json={"content": "to be deleted"}
-    )
+    await client.put("/api/agents/del-instr-agent/instruction", json={"content": "to be deleted"})
     del_resp = await client.delete("/api/agents/del-instr-agent/instruction")
     assert del_resp.status_code == 204
 
@@ -280,9 +278,7 @@ async def test_list_agent_skills_after_assign(
     agent_resp = await client.get("/api/agents/assigned-skills-agent")
     agent_db_id = agent_resp.json()["id"]
 
-    assign_resp = await client.post(
-        "/api/skills/cool-skill/assign", json={"agent_id": agent_db_id}
-    )
+    assign_resp = await client.post("/api/skills/cool-skill/assign", json={"agent_id": agent_db_id})
     assert assign_resp.status_code == 200
 
     resp = await client.get("/api/agents/assigned-skills-agent/skills")

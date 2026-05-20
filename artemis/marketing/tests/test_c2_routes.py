@@ -27,6 +27,7 @@ from artemis.marketing.repository import (
     create_scout_run,
     create_signal,
 )
+from artemis.marketing.state_machine import SignalState
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -221,13 +222,13 @@ class TestSignalQueueList:
     async def test_list_filter_by_status(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        await _make_signal(db_session, signal_status="in_inbox")
-        await _make_signal(db_session, signal_status="approved")
+        await _make_signal(db_session, signal_status=SignalState.qualified.value)
+        await _make_signal(db_session, signal_status=SignalState.APPROVED.value)
         await db_session.commit()
-        r = await client.get("/api/signal-queue/?status=in_inbox")
+        r = await client.get(f"/api/signal-queue/?status={SignalState.qualified.value}")
         assert r.status_code == 200
         signals = r.json()["signals"]
-        assert all(s["signalStatus"] == "in_inbox" for s in signals)
+        assert all(s["signalStatus"] == SignalState.qualified.value for s in signals)
 
     async def test_list_invalid_status_returns_all(
         self, client: AsyncClient, db_session: AsyncSession
@@ -360,18 +361,18 @@ class TestSignalQueueActions:
     async def test_approve_wrong_status(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        signal = await _make_signal(db_session, signal_status="approved")
+        signal = await _make_signal(db_session, signal_status=SignalState.APPROVED.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/approve")
         assert r.status_code == 409
 
     async def test_approve_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/approve")
         assert r.status_code == 200
         body = r.json()
-        assert body["signal"]["signalStatus"] == "approved"
+        assert body["signal"]["signalStatus"] == SignalState.APPROVED.value
         assert "candidateId" in body
 
     async def test_reject_not_found(self, client: AsyncClient, db_session: AsyncSession) -> None:
@@ -379,13 +380,13 @@ class TestSignalQueueActions:
         assert r.status_code == 404
 
     async def test_reject_wrong_status(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="rejected")
+        signal = await _make_signal(db_session, signal_status=SignalState.REJECTED_AT_GATE_1.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/reject", json={})
         assert r.status_code == 409
 
     async def test_reject_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(
             f"/api/signal-queue/{signal.id}/reject",
@@ -393,7 +394,7 @@ class TestSignalQueueActions:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["signalStatus"] == "rejected"
+        assert body["signalStatus"] == SignalState.REJECTED_AT_GATE_1.value
         assert body["rejectedReason"] == "Not relevant"
 
     async def test_snooze_not_found(self, client: AsyncClient, db_session: AsyncSession) -> None:
@@ -401,18 +402,18 @@ class TestSignalQueueActions:
         assert r.status_code == 404
 
     async def test_snooze_invalid_days(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/snooze", json={"days": 0})
         assert r.status_code == 400
 
     async def test_snooze_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/snooze", json={"days": 7})
         assert r.status_code == 200
         body = r.json()
-        assert body["signalStatus"] == "snoozed"
+        assert body["signalStatus"] == SignalState.SNOOZED.value
         assert body["snoozedUntil"] is not None
 
     async def test_ask_not_found(self, client: AsyncClient, db_session: AsyncSession) -> None:
@@ -420,19 +421,19 @@ class TestSignalQueueActions:
         assert r.status_code == 404
 
     async def test_ask_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/ask")
         assert r.status_code == 200
-        assert r.json()["signalStatus"] == "archived"
+        assert r.json()["signalStatus"] == SignalState.ARCHIVED.value
 
     async def test_archive_alias_matches_ask_response_shape(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        ask_signal = await _make_signal(db_session, signal_status="in_inbox")
+        ask_signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         archive_signal = await _make_signal(
             db_session,
-            signal_status="in_inbox",
+            signal_status=SignalState.qualified.value,
             headline="Archive alias",
             source_url="http://example.com/archive-alias",
         )
@@ -443,12 +444,16 @@ class TestSignalQueueActions:
 
         assert archive.status_code == ask.status_code == 200
         assert archive.json().keys() == ask.json().keys()
-        assert archive.json()["signalStatus"] == ask.json()["signalStatus"] == "archived"
+        assert (
+            archive.json()["signalStatus"]
+            == ask.json()["signalStatus"]
+            == SignalState.ARCHIVED.value
+        )
 
     async def test_ask_already_archived(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        signal = await _make_signal(db_session, signal_status="archived")
+        signal = await _make_signal(db_session, signal_status=SignalState.ARCHIVED.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/ask")
         assert r.status_code == 409
@@ -755,7 +760,7 @@ class TestCampaignDeliverables:
             f"/api/campaign-deliverables/{deliverable_id}/submit-review", json={}
         )
         assert r2.status_code == 200
-        assert r2.json()["status"] == "review_pending"
+        assert r2.json()["status"] == "draft_ready"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

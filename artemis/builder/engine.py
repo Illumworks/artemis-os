@@ -101,8 +101,13 @@ async def read_existing(
             .limit(limit)
         )
         return [
-            {"id": r.id, "slug": r.slug, "name": r.name, "description": r.description,
-             "status": r.status}
+            {
+                "id": r.id,
+                "slug": r.slug,
+                "name": r.name,
+                "description": r.description,
+                "status": r.status,
+            }
             for r in result.all()
         ]
 
@@ -115,8 +120,7 @@ async def read_existing(
             .limit(limit)
         )
         return [
-            {"id": r.id, "workflow_id": r.workflow_id, "name": r.name,
-             "description": r.description}
+            {"id": r.id, "workflow_id": r.workflow_id, "name": r.name, "description": r.description}
             for r in result.all()
         ]
 
@@ -254,9 +258,7 @@ async def commit(
         # Already committed — idempotent return
         return {"status": "already_approved", "proposal_id": proposal_id}
     if proposal.status != "pending":
-        raise ValueError(
-            f"Cannot commit proposal {proposal_id}: status={proposal.status!r}"
-        )
+        raise ValueError(f"Cannot commit proposal {proposal_id}: status={proposal.status!r}")
 
     # Approve the record first
     await approve_proposal(db_session, proposal_id)
@@ -313,7 +315,9 @@ async def sandbox_run(
     from artemis.agent.tools import ToolRegistry
     from artemis.agent.types import TextBlock, Tool
 
-    tool_specs: list[dict[str, Any]] = definition.get("tools", []) if isinstance(definition.get("tools"), list) else []
+    tool_specs: list[dict[str, Any]] = (
+        definition.get("tools", []) if isinstance(definition.get("tools"), list) else []
+    )
     tools_requested = [t if isinstance(t, str) else t.get("name", "") for t in tool_specs]
 
     # Determine which tools are allowed
@@ -333,11 +337,11 @@ async def sandbox_run(
         async def _stub_tool(inp: dict[str, Any], _name: str = tool_name) -> str:
             nonlocal tool_call_count
             if tool_call_count >= _TEST_RUN_MAX_TOOL_CALLS:
-                return f'[TEST RUN — rate limit reached after {_TEST_RUN_MAX_TOOL_CALLS} calls]'
+                return f"[TEST RUN — rate limit reached after {_TEST_RUN_MAX_TOOL_CALLS} calls]"
             tool_call_count += 1
             return (
-                f'[TEST RUN] {_name} called with {list(inp.keys())}. '
-                f'Stub response — no real data returned in test mode.'
+                f"[TEST RUN] {_name} called with {list(inp.keys())}. "
+                f"Stub response — no real data returned in test mode."
             )
 
         tool = Tool(
@@ -349,10 +353,7 @@ async def sandbox_run(
 
     system_prompt = definition.get("system_prompt", "You are a helpful assistant.")
     if not allow_writes:
-        system_prompt = (
-            "[TEST RUN MODE — no real external writes will occur]\n\n"
-            + system_prompt
-        )
+        system_prompt = "[TEST RUN MODE — no real external writes will occur]\n\n" + system_prompt
 
     result = await run_turn(
         adapter=adapter,
@@ -399,14 +400,20 @@ async def _commit_agent(
 
     if target_id is not None:
         # Update existing
-        result = await db_session.execute(
-            sa_select(Agent).where(Agent.id == target_id).limit(1)
-        )
+        result = await db_session.execute(sa_select(Agent).where(Agent.id == target_id).limit(1))
         agent = result.scalar_one_or_none()
         if agent is None:
             raise ValueError(f"Agent with id={target_id} not found")
-        for key in ("name", "description", "goal", "system_prompt", "tools", "model",
-                    "provider", "max_iterations"):
+        for key in (
+            "name",
+            "description",
+            "goal",
+            "system_prompt",
+            "tools",
+            "model",
+            "provider",
+            "max_iterations",
+        ):
             if key in defn:
                 setattr(agent, key, defn[key])
         await db_session.flush()
@@ -428,8 +435,13 @@ async def _commit_agent(
     db_session.add(agent)
     await db_session.flush()
     await db_session.refresh(agent)
-    return {"status": "created", "kind": "agent", "id": agent.id,
-            "agent_id": agent.agent_id, "proposal_id": proposal_id}
+    return {
+        "status": "created",
+        "kind": "agent",
+        "id": agent.id,
+        "agent_id": agent.agent_id,
+        "proposal_id": proposal_id,
+    }
 
 
 async def _commit_skill(
@@ -446,9 +458,7 @@ async def _commit_skill(
     from artemis.builders.models import Skill
 
     if target_id is not None:
-        result = await db_session.execute(
-            sa_select(Skill).where(Skill.id == target_id).limit(1)
-        )
+        result = await db_session.execute(sa_select(Skill).where(Skill.id == target_id).limit(1))
         skill = result.scalar_one_or_none()
         if skill is None:
             raise ValueError(f"Skill with id={target_id} not found")
@@ -472,5 +482,10 @@ async def _commit_skill(
     db_session.add(skill)
     await db_session.flush()
     await db_session.refresh(skill)
-    return {"status": "created", "kind": "skill", "id": skill.id,
-            "slug": skill.slug, "proposal_id": proposal_id}
+    return {
+        "status": "created",
+        "kind": "skill",
+        "id": skill.id,
+        "slug": skill.slug,
+        "proposal_id": proposal_id,
+    }

@@ -27,6 +27,7 @@ from artemis.marketing.models import (
     SignalQueue,
     TerritoryConfig,
 )
+from artemis.marketing.state_machine import WorkspaceState
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Signal Queue
@@ -56,7 +57,7 @@ async def find_signal_by_dedupe_key(
         .where(
             SignalQueue.source_url == source_url,
             SignalQueue.headline == headline,
-            SignalQueue.signal_status.in_(["in_inbox", "approved"]),
+            SignalQueue.signal_status.in_(["pending_qualification", "qualified", "approved"]),
         )
         .limit(1)
     )
@@ -168,16 +169,17 @@ async def create_campaign_candidate_from_signal(
 ) -> CampaignCandidate:
     """Promote a qualified signal to a campaign candidate.
 
-    Sets decision_state='approved' and workspace_state='created' on creation
-    to match Node app's insertCandidateFromSignal behavior.
+    Sets decision_state='in_inbox' (awaiting Gate 1 decision) and
+    workspace_state='pending_content' on creation. Use transition() to
+    advance decision_state to approved/rejected/etc.
     """
     signal = await get_signal(session, signal_id)
     candidate = CampaignCandidate(
         source_signal_id=signal_id,
         campaign_family=signal.campaign_family,
         stage="human_gate_1",
-        decision_state="approved",
-        workspace_state="created",
+        decision_state="in_inbox",
+        workspace_state=WorkspaceState.pending_content,
         ruleset_version_at_qualification=ruleset_version_tag,
         metrics_json=qualification_summary,
     )

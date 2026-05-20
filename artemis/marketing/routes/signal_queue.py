@@ -42,6 +42,7 @@ from artemis.marketing.repository import (
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
 from artemis.marketing.scout_intake import normalize_intake_payload
+from artemis.marketing.state_machine import SignalState, transition
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ router = APIRouter(
     dependencies=[Depends(require_token)],
 )
 
-_VALID_STATUSES = {"in_inbox", "approved", "rejected", "snoozed", "archived", "expired"}
+_VALID_STATUSES = {s.value for s in SignalState}
 
 
 # ── Intake ────────────────────────────────────────────────────────────────────
@@ -267,6 +268,9 @@ async def qualify_signal_route(
             "No active rulesets found — cannot qualify signal",
             "no_active_rulesets",
         )
+    # Advance signal from pending_qualification → qualified if not already there
+    if signal.signal_status == SignalState.pending_qualification:
+        await transition(session, "signal", signal.id, SignalState.qualified)
     await session.commit()
     await session.refresh(signal)
     return result
@@ -286,7 +290,7 @@ async def approve_signal(
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
 
-    if signal.signal_status != "in_inbox":
+    if signal.signal_status != SignalState.qualified:
         raise conflict(
             "invalid_transition",
             code="invalid_transition",
@@ -330,12 +334,8 @@ async def approve_signal(
         qualification_summary=qualification_summary,
     )
 
-    # Update signal to approved
-    updated = await update_signal(
-        session,
-        signal_id,
-        signal_status="approved",
-    )
+    # Update signal to approved via state machine
+    updated = await transition(session, "signal", signal_id, SignalState.APPROVED)
     await session.commit()
     await session.refresh(updated)
     await session.refresh(candidate)
@@ -363,16 +363,13 @@ async def reject_signal(
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
 
-    if signal.signal_status != "in_inbox":
+    if signal.signal_status != SignalState.qualified:
         raise conflict("invalid_transition", code="invalid_transition")  # noqa: B904
 
     reason = body.get("reason") or body.get("trainingNotes")
-    updated = await update_signal(
-        session,
-        signal_id,
-        signal_status="rejected",
-        rejected_reason=reason,
-    )
+    if reason is not None:
+        await update_signal(session, signal_id, rejected_reason=reason)
+    updated = await transition(session, "signal", signal_id, SignalState.REJECTED_AT_GATE_1)
     await session.commit()
     await session.refresh(updated)
     return _serialize_signal(updated)
@@ -394,7 +391,7 @@ async def snooze_signal(
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
 
-    if signal.signal_status != "in_inbox":
+    if signal.signal_status != SignalState.qualified:
         raise conflict("invalid_transition", code="invalid_transition")  # noqa: B904
 
     days_raw = body.get("days", 14)
@@ -407,12 +404,8 @@ async def snooze_signal(
         raise bad_request("days must be an integer between 1 and 90")  # noqa: B904
 
     snoozed_until = datetime.now(UTC) + timedelta(days=days)
-    updated = await update_signal(
-        session,
-        signal_id,
-        signal_status="snoozed",
-        snoozed_until=snoozed_until,
-    )
+    await update_signal(session, signal_id, snoozed_until=snoozed_until)
+    updated = await transition(session, "signal", signal_id, SignalState.SNOOZED)
     await session.commit()
     await session.refresh(updated)
     return _serialize_signal(updated)
@@ -432,10 +425,10 @@ async def archive_signal(
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
 
-    if signal.signal_status == "archived":
+    if signal.signal_status == SignalState.ARCHIVED:
         raise conflict("invalid_transition", code="invalid_transition")  # noqa: B904
 
-    updated = await update_signal(session, signal_id, signal_status="archived")
+    updated = await transition(session, "signal", signal_id, SignalState.ARCHIVED)
     await session.commit()
     await session.refresh(updated)
     return _serialize_signal(updated)

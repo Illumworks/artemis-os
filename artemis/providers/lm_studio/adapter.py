@@ -36,10 +36,7 @@ class LMStudioAdapter(OpenAIAdapter):
         base_url: str | None = None,
         default_model: str | None = None,
     ) -> None:
-        resolved_base = (
-            base_url
-            or os.environ.get("LM_STUDIO_BASE_URL", _LM_STUDIO_DEFAULT_BASE)
-        )
+        resolved_base = base_url or os.environ.get("LM_STUDIO_BASE_URL", _LM_STUDIO_DEFAULT_BASE)
         resolved_model = default_model or os.environ.get(
             "LM_STUDIO_DEFAULT_MODEL", _LM_STUDIO_PLACEHOLDER_MODEL
         )
