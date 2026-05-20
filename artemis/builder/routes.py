@@ -7,8 +7,8 @@ Endpoints:
   POST   /api/builder/sessions/{id}/messages — send user message, get builder response
   DELETE /api/builder/sessions/{id}         — abandon session
 
-  POST   /api/builder/sessions/{id}/test-run   — STUB (pending Decision 2)
-  GET    /api/builder/sessions/{id}/test-run/{run_id} — STUB (pending Decision 2)
+  POST   /api/builder/sessions/{id}/test-run   — sandboxed trial run (Decision 2 Option A)
+  GET    /api/builder/sessions/{id}/test-run/{run_id} — poll test run result
 
   GET    /api/builder/proposals             — list pending proposals
   GET    /api/builder/proposals/{id}        — one proposal + diff
@@ -24,6 +24,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builder.schemas import (
@@ -177,27 +178,84 @@ async def abandon_session(
     await session.commit()
 
 
-# ── Test-run (stub — pending Decision 2) ─────────────────────────────────────
+# ── Test-run (Decision 2 — Option A whitelist) ────────────────────────────────
+
+
+class TestRunRequest(BaseModel):
+    """Body for POST /api/builder/sessions/{id}/test-run."""
+
+    prompt: str
+    allow_writes: bool = False
 
 
 @router.post("/sessions/{session_id}/test-run", status_code=202)
 async def create_test_run(
     session_id: int,
-    body: dict[str, Any],
+    body: TestRunRequest,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """STUB — test-run sandbox safety is pending Lead Decision 2.
+    """Run a sandboxed trial of the session's current draft definition.
 
-    Returns 202 Accepted with a not_implemented marker so the frontend
-    can detect the pending state.
+    Decision 2 Option A: tools are filtered through _TEST_RUN_SAFE_TOOLS.
+    Only read-only tools are permitted. Write tools appear in tools_skipped.
+    Total tool calls are capped at 20.
+
+    allow_writes=True bypasses the whitelist — use only for final pre-deployment
+    testing and only with explicit user confirmation in the UI.
     """
-    logger.info(
-        "test-run requested for session %s — pending Decision 2 (sandbox safety)", session_id
-    )
+    from artemis.builder.engine import sandbox_run as test_run  # API name kept as test-run in HTTP
+    from artemis.builder.repository import get_builder_session
+    from artemis.providers import get_adapter
+    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+
+    # Verify session + get current draft
+    try:
+        sess_row = await get_builder_session(session, session_id)
+    except ValueError:
+        raise not_found(  # noqa: B904
+            f"BuilderSession {session_id} not found", "builder_session_not_found"
+        )
+
+    if sess_row.status != "active":
+        raise bad_request(
+            f"BuilderSession {session_id} is not active (status={sess_row.status!r})",
+            "builder_session_not_active",
+        )
+
+    draft = sess_row.draft or {}
+    if not draft:
+        raise bad_request(
+            "No draft definition in this session yet — build a definition first.",
+            "no_draft",
+        )
+
+    # Resolve adapter
+    try:
+        adapter = get_adapter("anthropic")
+    except (MissingApiKeyError, UnknownProviderError):
+        try:
+            adapter = get_adapter("claude-code")
+        except Exception:
+            raise bad_request(  # noqa: B904
+                "No LLM provider is available. Add an API key in Integrations.",
+                "no_provider",
+            )
+
+    try:
+        result = await test_run(
+            draft,
+            body.prompt,
+            adapter=adapter,
+            allow_writes=body.allow_writes,
+        )
+    except Exception as exc:
+        logger.exception("test_run failed for session %s", session_id)
+        raise bad_request(str(exc), "test_run_failed")  # noqa: B904
+
     return {
-        "status": "not_implemented",
-        "reason": "test_run sandbox is pending Lead Decision 2 (safety review)",
         "session_id": session_id,
+        "status": "completed",
+        **result,
     }
 
 
@@ -207,12 +265,17 @@ async def get_test_run(
     run_id: str,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """STUB — pending Decision 2."""
+    """Placeholder poll endpoint — test-run is synchronous in v1.
+
+    The POST endpoint returns the full result synchronously (no background job).
+    This endpoint exists to fulfil the interface spec and will be upgraded to
+    a streaming/polling pattern if test runs become long-running.
+    """
     return {
-        "status": "not_implemented",
-        "reason": "test_run sandbox is pending Lead Decision 2 (safety review)",
         "session_id": session_id,
         "run_id": run_id,
+        "status": "not_applicable",
+        "note": "test-run is synchronous in v1; results are in the POST response.",
     }
 
 

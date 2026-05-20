@@ -8,9 +8,14 @@ during a conversation:
   read_recent_runs(agent_id, session) — for self-improvement context
   propose(kind, definition, session)  — stage a draft DefinitionProposal
   commit(proposal_id, session)        — graduate proposal to real definition tables
+  test_run(definition, prompt, ...)   — sandboxed trial run (Option A whitelist)
 
-test_run is intentionally absent from this stub pending Lead Decision 2
-(test-run sandbox safety). See routes.py for the stub endpoint.
+Decision 2 (test-run sandbox safety) resolved — Lead chose Option A:
+  - A static whitelist (_TEST_RUN_SAFE_TOOLS) lists allowed read-only tools.
+  - Deny-by-default: new tools must be explicitly added to the whitelist.
+  - Rate cap: max 20 tool calls per test_run regardless of whitelist.
+  - Result metadata includes tools_skipped: [...] for user visibility.
+  - Optional allow_writes flag (double-confirm) for final pre-deployment testing.
 
 NOTE: this module is intentionally kept thin. The Agent-Builder is the only
 caller in v1; the engine's job is to expose clean, testable primitives that
@@ -24,6 +29,40 @@ import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ── Test-run sandbox (Decision 2 — Option A whitelist) ───────────────────────
+
+# Single source of truth for tools permitted during test_run.
+# Deny-by-default: any tool NOT in this set is blocked.
+# Keys are canonical tool names matching the definition's tool_specs name field.
+_TEST_RUN_SAFE_TOOLS: frozenset[str] = frozenset(
+    [
+        # Jira — read-only
+        "jira.list_issues",
+        "jira.get_issue",
+        "jira.search_issues",
+        "jira.list_projects",
+        # Slack — read-only
+        "slack.search_messages",
+        "slack.list_channels",
+        "slack.get_channel_history",
+        # Google Calendar — read-only
+        "gcal.list_events",
+        "gcal.get_event",
+        # Memory — read-only
+        "memory.search",
+        "memory.get",
+        # Google Drive — read-only
+        "gdrive.list_files",
+        "gdrive.get_file",
+        # Confluence / docs — read-only
+        "confluence.search",
+        "confluence.get_page",
+    ]
+)
+
+# Max tool calls allowed in a single test_run regardless of whitelist.
+_TEST_RUN_MAX_TOOL_CALLS = 20
 
 
 async def read_existing(
@@ -232,6 +271,117 @@ async def commit(
 
     logger.warning("commit: kind=%r not yet implemented", kind)
     return {"status": "not_implemented", "kind": kind, "proposal_id": proposal_id}
+
+
+async def sandbox_run(
+    definition: dict[str, Any],
+    prompt: str,
+    *,
+    adapter: Any,
+    allow_writes: bool = False,
+) -> dict[str, Any]:
+    """Run a sandboxed trial of a draft definition.
+
+    Decision 2 Option A: tools are filtered against _TEST_RUN_SAFE_TOOLS before
+    the agent loop runs. Write-capable tools are skipped and listed in
+    result["tools_skipped"]. Total tool calls are capped at _TEST_RUN_MAX_TOOL_CALLS.
+
+    Parameters
+    ----------
+    definition:
+        The draft agent definition (same shape as proposed_definition in DefinitionProposal).
+    prompt:
+        The user-supplied test prompt to run against the draft agent.
+    adapter:
+        A ModelAdapter to use for the run (caller resolves provider).
+    allow_writes:
+        If True (double-confirmed by the user), bypass the whitelist and allow
+        all tools. Default False. Should only be used for final pre-deployment
+        validation.
+
+    Returns
+    -------
+    dict with:
+        output: str           — the agent's final text response
+        tool_calls: int       — total tool calls that actually ran
+        tools_skipped: list   — tool names filtered out by the whitelist
+        stop_reason: str      — why the loop stopped
+        test_mode: bool       — always True so callers can detect test context
+    """
+    from artemis.agent.loop import run_turn
+    from artemis.agent.loop import user_message as make_user_message
+    from artemis.agent.tools import ToolRegistry
+    from artemis.agent.types import TextBlock, Tool
+
+    tool_specs: list[dict[str, Any]] = definition.get("tools", []) if isinstance(definition.get("tools"), list) else []
+    tools_requested = [t if isinstance(t, str) else t.get("name", "") for t in tool_specs]
+
+    # Determine which tools are allowed
+    if allow_writes:
+        tools_allowed = tools_requested
+        tools_skipped: list[str] = []
+    else:
+        tools_allowed = [t for t in tools_requested if t in _TEST_RUN_SAFE_TOOLS]
+        tools_skipped = [t for t in tools_requested if t not in _TEST_RUN_SAFE_TOOLS]
+
+    # Build a counting tool registry with cap enforcement
+    tool_call_count = 0
+
+    registry = ToolRegistry()
+    for tool_name in tools_allowed:
+        # Stub implementation: returns a realistic placeholder response
+        async def _stub_tool(inp: dict[str, Any], _name: str = tool_name) -> str:
+            nonlocal tool_call_count
+            if tool_call_count >= _TEST_RUN_MAX_TOOL_CALLS:
+                return f'[TEST RUN — rate limit reached after {_TEST_RUN_MAX_TOOL_CALLS} calls]'
+            tool_call_count += 1
+            return (
+                f'[TEST RUN] {_name} called with {list(inp.keys())}. '
+                f'Stub response — no real data returned in test mode.'
+            )
+
+        tool = Tool(
+            name=tool_name,
+            description=f"Test-mode stub for {tool_name} (read-only, sandboxed).",
+            input_schema={"type": "object", "properties": {}, "required": []},
+        )
+        registry.register(tool, _stub_tool)
+
+    system_prompt = definition.get("system_prompt", "You are a helpful assistant.")
+    if not allow_writes:
+        system_prompt = (
+            "[TEST RUN MODE — no real external writes will occur]\n\n"
+            + system_prompt
+        )
+
+    result = await run_turn(
+        adapter=adapter,
+        messages=[make_user_message(prompt)],
+        tools=registry if tools_allowed else None,
+        system=system_prompt,
+        max_tokens=1024,
+        max_iterations=min(5, _TEST_RUN_MAX_TOOL_CALLS),
+        cache_system=False,
+        cache_tools=False,
+    )
+
+    # Extract assistant text
+    output = ""
+    for msg in reversed(result.messages):
+        if msg.role == "assistant":
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    output += block.text
+            break
+
+    return {
+        "output": output,
+        "tool_calls": tool_call_count,
+        "tools_skipped": tools_skipped,
+        "stop_reason": result.stop_reason,
+        "test_mode": True,
+        "allow_writes": allow_writes,
+    }
 
 
 async def _commit_agent(

@@ -63,7 +63,8 @@ If the user is opening an existing agent (edit session):
 - Call read_existing() before proposing to avoid duplicating existing agents/skills.
 - Call read_capabilities() once at the start of a new session.
 - Never call commit() directly — the HTTP approve endpoint owns commit.
-- The test_run tool is not available yet (pending safety review).
+- Call test_run() after producing a draft to validate it — show the user the output.
+  Note: test_run uses read-only tool stubs; tools_skipped lists what was blocked.
 
 ## Style rules
 - Ask one question at a time when clarifying — do not dump all questions at once.
@@ -161,6 +162,28 @@ AGENT_BUILDER_TOOL_SPECS: list[dict[str, Any]] = [
             "required": ["kind", "definition"],
         },
     },
+    {
+        "name": "test_run",
+        "description": (
+            "Fire a sandboxed trial run of the current draft definition against a test prompt. "
+            "Read-only tools only. Returns output + tools_skipped list. "
+            "Show the user the output and tools_skipped before asking if they want to proceed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "definition": {
+                    "type": "object",
+                    "description": "The draft agent definition to test.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The test prompt to run against the draft.",
+                },
+            },
+            "required": ["definition", "prompt"],
+        },
+    },
 ]
 
 
@@ -221,11 +244,34 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
         await db_session.commit()
         return json.dumps({"proposal_id": proposal_id, "status": "pending"})
 
+    async def _test_run(inp: dict[str, Any]) -> str:
+        import json
+
+        from artemis.providers import get_adapter
+        from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+
+        try:
+            _adapter = get_adapter("anthropic")
+        except (MissingApiKeyError, UnknownProviderError):
+            try:
+                _adapter = get_adapter("claude-code")
+            except Exception:
+                return json.dumps({"error": "No LLM provider available for test_run."})
+
+        result = await engine.sandbox_run(
+            inp["definition"],
+            inp["prompt"],
+            adapter=_adapter,
+            allow_writes=False,
+        )
+        return json.dumps(result, indent=2)
+
     impl_map = {
         "read_existing": _read_existing,
         "read_capabilities": _read_capabilities,
         "read_recent_runs": _read_recent_runs,
         "propose": _propose,
+        "test_run": _test_run,
     }
     for spec_dict in AGENT_BUILDER_TOOL_SPECS:
         tool = Tool(
