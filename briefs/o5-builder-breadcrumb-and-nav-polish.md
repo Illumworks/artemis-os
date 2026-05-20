@@ -1,41 +1,47 @@
-# O5 — Builder Breadcrumb + Nav Polish
+# O5 — Builder Breadcrumb + Nav Polish (REVISED 2026-05-20)
 
 **Owner:** Codex (paste-ready) OR Sonnet Worker — this is mechanical UI work, no judgment calls
 **Branch:** `worker/o5-builder-nav-polish` (or Codex paste branch)
 **LOC budget:** ~150 (full-diff insertions; cap at ~200 with headroom)
+**STOP CONDITION:** if you reach 150 insertions, STOP and ping Lead. Do not exceed without explicit approval.
 **Brief author:** Lead (Opus 4.7)
 **Depends on:** O1/O2/O3 (already merged at `4ead96a`). No other deps.
-**Grounded in:** Existing `public/js/features/agent-builder.js` (636 lines), `public/css/features/agent-builder.css` (449 lines), `public/js/features/agents.js` (1516 lines). Light DOM, Web Components pattern per CLAUDE.md.
+**Grounded in:** Existing `public/js/artemis-shell.js` (state-driven nav via `setState('view', ...)`), `public/js/home.js` (localStorage refresh restore around line 297), `public/js/operations-shell.js` (Builder mounted on `view === "agents/builder"` around lines 3399 + 3914), `public/js/features/agent-builder.js`, `public/css/features/agent-builder.css`. Light DOM per CLAUDE.md.
+
+## Revision history
+
+**2026-05-20:** First Codex attempt stopped per brief at LOC=0 because the original brief assumed hash routing (`#/builder/{agent_id}`). The codebase actually uses **state-driven SPA navigation** — `setState('view', 'agents/builder')` plus localStorage restore in `home.js`. Codex's flag was correct. This revision uses the existing state-driven pattern instead.
 
 ## Why this brief exists
 
-After O1/O2/O3 shipped, the Agent-Builder is a conversational surface and the Agent Card is a detail surface — but the navigation between them is bare. Today: clicking into the Builder loses the "back to agents list" affordance, the URL doesn't reflect which agent is being edited, and refreshing mid-edit drops the user back on a generic landing state. These are not big problems; they are the kind of small friction that makes the UI feel half-built. O5 closes that gap.
+After O1/O2/O3 shipped, the Agent-Builder is a conversational surface and the Agent Card is a detail surface — but the navigation between them is bare. Today: clicking into the Builder loses the "back to agents list" affordance, refreshing mid-edit drops the user back on a generic landing state, and the user can't tell at a glance which agent they're editing. These are not big problems; they are the kind of small friction that makes the UI feel half-built. O5 closes that gap **using the existing state-driven nav pattern, not hash routing.**
 
 ## Scope
 
 ### In scope
 
 1. **Breadcrumb bar at the top of the Builder surface.**
-   Structure (verbatim DOM):
+   Structure (verbatim DOM — anchor uses `data-view` not href, matching the existing state-driven nav):
    ```html
    <nav class="builder-breadcrumb" aria-label="Breadcrumb">
-     <a href="#/agents" class="builder-breadcrumb__crumb">Agents</a>
+     <button type="button" class="builder-breadcrumb__crumb builder-breadcrumb__crumb--link" data-view="agents">Agents</button>
      <span class="builder-breadcrumb__sep" aria-hidden="true">›</span>
      <span class="builder-breadcrumb__crumb builder-breadcrumb__crumb--current">{agentName || "New Agent"}</span>
      <span class="builder-breadcrumb__sep" aria-hidden="true">›</span>
      <span class="builder-breadcrumb__crumb builder-breadcrumb__crumb--current">Builder</span>
    </nav>
    ```
-   Mount inside the existing Builder root element, BEFORE the chat thread / card area. Do not create a new wrapper around the whole Builder — surgical insertion only.
+   Mount inside the existing Builder root element, BEFORE the chat thread / card area. Do not create a new wrapper around the whole Builder — surgical insertion only. The button uses `<button>` not `<a>` since the action is `setState('view', 'agents')`, not URL navigation.
 
-2. **"Back to Agents" affordance** — the first crumb is a real anchor (`href="#/agents"`). Clicking it returns to the agents list. If there's unsaved state in the Builder, intercept the click with `event.preventDefault()` and show a confirm dialog: `"Discard unsaved changes?"`. If confirmed, navigate; otherwise stay.
+2. **"Back to Agents" affordance** — clicking the first crumb calls `setState('view', 'agents')` via the existing artemis-shell handler. If there's unsaved state in the Builder, intercept the click and show a confirm dialog: `"Discard unsaved changes?"`. If confirmed, dispatch the state change; otherwise stay.
    - Detection of "unsaved state": if `builderSession.has_pending_changes === true` per the existing store state. If that field doesn't exist, look for `definition_proposals` with status `pending` for the current session. Worker picks the right hook; the criterion is "changes the user hasn't seen committed yet."
 
-3. **URL reflects current agent.**
-   - Builder URL becomes `#/builder/{agent_id}` (existing was probably `#/builder` or `#/agents/builder` — Worker confirms).
-   - Refreshing on `#/builder/marketing.scout.starbridge_researcher` lands the user back in the Builder for that agent, with the conversation history loaded.
-   - Use the existing routing pattern in `public/js/core/router.js` (or wherever the hash routing lives — survey first).
-   - New-agent flow stays at `#/builder` (no agent_id) until the first proposal materializes; then the URL updates without a page reload via `history.replaceState`.
+3. **Current-agent state slot.**
+   - Add a companion state slot `builderAgentId` (string | null) alongside the existing `view` slot. When the Builder loads an existing agent, call `setState('builderAgentId', agent_id)`. When the Builder is in new-agent mode, the slot is null.
+   - `home.js` localStorage-restore (around line 297) already serializes the SPA state on refresh. Confirm `builderAgentId` is included in that persistence set; if it isn't, add it (likely a one-line addition to the keys list).
+   - Refreshing while in the Builder for `marketing.scout.starbridge_researcher` restores both `view = "agents/builder"` AND `builderAgentId = "marketing.scout.starbridge_researcher"`, and the Builder mount logic in `operations-shell.js` (~line 3914) reads the slot to load the right conversation.
+   - The breadcrumb's "{agentName || 'New Agent'}" reads from the agent's row by ID (existing store lookup).
+   - **No hash URL changes.** The slot lives in state only.
 
 4. **Sticky breadcrumb** — `position: sticky; top: 0;` with appropriate background and z-index so it stays visible while scrolling long conversations. Match the existing app's sticky-header pattern (look at how the Daily Brief or Meetings overview does it; do not invent new visual treatment).
 
@@ -53,14 +59,14 @@ After O1/O2/O3 shipped, the Agent-Builder is a conversational surface and the Ag
 ## Why this is a Codex candidate
 
 This brief is **mechanical** by design:
-- Exact DOM structure is provided verbatim.
+- Exact DOM structure provided verbatim.
 - CSS uses existing tokens; no design judgment.
-- Routing pattern follows existing convention; no new architecture.
+- Pattern matches the existing state-driven nav (no new routing architecture).
 - Unsaved-state detection criterion is given.
 - No new API endpoints.
-- No new data shapes.
+- No new data shapes (one new state slot, in the existing state store).
 
-Codex can take this as a paste-ready brief and ship it without architectural calls. If Codex hits a judgment fork (e.g., "the existing routing pattern is inconsistent across modules"), stop and flag — don't choose.
+Codex can take this as a paste-ready brief and ship it without architectural calls. **If the existing localStorage persistence list in `home.js` does NOT include arbitrary state slots (i.e., it has a hardcoded allow-list), adding `builderAgentId` is a one-line addition — that's still in scope.** If you hit something genuinely architectural (e.g., the state store doesn't support adding new slots), stop and flag.
 
 If routed to a Sonnet Worker instead: same brief, no changes needed.
 
@@ -85,10 +91,10 @@ Total: ~170 LOC. Worker keeps it at or under 200.
 
 1. **No agent loaded:** crumb says `Agents › New Agent › Builder`.
 2. **Named agent loaded:** crumb says `Agents › Starbridge Researcher › Builder`.
-3. **Click "Agents" crumb with clean state:** navigates to `#/agents`.
-4. **Click "Agents" crumb with unsaved state:** confirm dialog appears; cancel → stays; confirm → navigates.
-5. **URL update on agent select:** loading an existing agent updates the URL to `#/builder/{agent_id}` without page reload.
-6. **Refresh persistence:** refresh on `#/builder/{agent_id}` re-renders the Builder for that agent.
+3. **Click "Agents" crumb with clean state:** calls `setState('view', 'agents')`; agents list renders.
+4. **Click "Agents" crumb with unsaved state:** confirm dialog appears; cancel → stays in Builder; confirm → `setState` fires.
+5. **State slot update on agent select:** loading an existing agent sets `builderAgentId` to that agent's id.
+6. **Refresh persistence:** with `view = "agents/builder"` and `builderAgentId = "marketing.scout.starbridge_researcher"`, refresh restores both; Builder re-mounts with that agent loaded.
 
 ## Invariants Worker/Codex must NOT regress
 
