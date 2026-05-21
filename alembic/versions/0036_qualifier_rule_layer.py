@@ -1,7 +1,7 @@
 """qualifier_rule_layer — audit table + skipped_signals visibility log.
 
-Revision ID: 0035
-Revises: 0034
+Revision ID: 0036
+Revises: 0035
 Create Date: 2026-05-20
 
 Creates:
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 
-revision: str = "0035"
-down_revision: str = "0034"
+revision: str = "0036"
+down_revision: str = "0035"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
