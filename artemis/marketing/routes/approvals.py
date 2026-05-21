@@ -8,10 +8,16 @@ Endpoints:
 The Python approvals schema is simpler than the Node's unified_approvals.
 Fields the Python schema doesn't have (target_type, approval_kind, payload)
 are not stored — the route returns null for those.
+
+OP1 approval-resume side effect: when an approval with kind='automation_run'
+is approved, and approval.subject_id matches an automation_run in
+awaiting_approval status, the run is dispatched in-process (no HTTP self-call).
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -23,6 +29,8 @@ from artemis.marketing.models import Approval
 from artemis.marketing.repository import decide_approval
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/approvals",
@@ -110,7 +118,34 @@ async def decide(
         decision_payload=decision_payload,
     )
     await session.commit()
+
+    # OP1 approval-resume side effect: if this approval is for an automation_run
+    # and it was just approved, dispatch the run in-process.
+    if decision == "approved" and approval.kind == "automation_run":
+        asyncio.create_task(_resume_automation_run(approval.subject_id))
+
     return _serialize(updated)
+
+
+async def _resume_automation_run(run_id: str) -> None:
+    """In-process callback: dispatch an automation_run that was awaiting approval."""
+    import artemis.db as _db
+    from artemis.automations import repository as auto_repo
+    from artemis.automations.dispatch import dispatch_automation_run
+
+    async with _db.SessionLocal() as session:
+        try:
+            run = await auto_repo.get_automation_run(session, run_id)
+            if run.status != "awaiting_approval":
+                return
+            auto = await auto_repo.get_automation(session, run.automation_id)
+            await auto_repo.update_automation_run(session, run_id, status="queued")
+            await session.flush()
+            await dispatch_automation_run(session, auto, run_id)
+            await session.commit()
+        except Exception:
+            logger.exception("approval-resume: dispatch failed for automation_run=%s", run_id)
+            await session.rollback()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

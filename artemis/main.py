@@ -18,6 +18,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from artemis import __version__
+from artemis.automations.routes import router as automations_router
+from artemis.automations.scheduler import (
+    start_automation_scheduler,
+    stop_automation_scheduler,
+)
 from artemis.builder.routes import agents_subresource_router as builder_agents_router
 from artemis.builder.routes import router as builder_router
 from artemis.integrations.token_refresh.scheduler import (
@@ -75,6 +80,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_meeting_scheduler()
     # Start the proactive OAuth token refresh scheduler (J10e).
     start_token_refresh_scheduler()
+    # Start the automation cron scheduler (OP1).
+    start_automation_scheduler()
     try:
         yield
     finally:
@@ -84,6 +91,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Stop the schedulers before process exit.
         stop_meeting_scheduler()
         stop_token_refresh_scheduler()
+        stop_automation_scheduler()
 
 
 app = FastAPI(
@@ -211,6 +219,9 @@ app.include_router(people_routes.router)
 
 # J7 — Daily brief
 app.include_router(daily_brief_routes.router)
+
+# OP1 — Automations registry
+app.include_router(automations_router)
 
 # J3c stubs — Jira overview, sessions, notifications, stats
 app.include_router(jira_routes.router)
