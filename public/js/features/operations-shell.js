@@ -15,6 +15,11 @@ import {
 } from "./agent-builder.js";
 import { initPipelinesPage } from "./pipelines.js";
 import { PROVIDER_LABELS, PROVIDER_PICKERS, getSourceModels } from "../ui/model-selector.js";
+import {
+  createAgentTreeView,
+  getAgentHealth,
+  getAgentTrigger,
+} from "../components/agent-tree.js";
 
 const SHELL_CONTENT_SELECTOR = "#app-shell-content";
 const AGENT_LOADING_THRESHOLD = 0;
@@ -27,6 +32,7 @@ const OPS_SKILL_TAB_KEY = "artemis-ops-skill-tab";
 const OPS_SKILL_SEARCH_KEY = "artemis-ops-skill-search";
 const OPS_AUTOMATION_SELECTION_KEY = "artemis-ops-selected-automation";
 const OPS_AGENT_DRAFT_KEY = "artemis-ops-agent-draft";
+const OPS_AGENT_TREE_COLLAPSED_KEY = "artemis.agents.tree.collapsed";
 const OPS_WORKFLOW_DRAFT_KEY = "artemis-ops-workflow-draft";
 const OPS_CAMPAIGN_NOTE_KEY = "artemis-ops-campaign-notes";
 const WRITING_STUDIO_HANDOFF_KEY = "artemis-writing-studio-handoff";
@@ -457,6 +463,10 @@ let selectedAgentRunId = "";
 let selectedAgentRunDetail = null;
 let selectedAgentRunLoading = false;
 let selectedAgentRunError = "";
+let agentTreeSearch = "";
+let agentTreeSort = "name";
+let agentTreeFilters = { statuses: [], triggers: [] };
+let agentTreeCollapsed = readStorage(OPS_AGENT_TREE_COLLAPSED_KEY, {});
 let workflowDraft = null;
 // Latest run data for the selected workflow, loaded on selection + refreshed on Run now.
 let _latestWorkflowRun = null;
@@ -947,6 +957,120 @@ function ensureAgentSelection(agents) {
   return agents.find((agent) => agent.id === selectedAgentId) || first;
 }
 
+function decorateAgentForTree(agent) {
+  const profile = buildAgentProfile(agent);
+  const persona = profile.persona;
+  const displayName = persona?.name || agent.title || agent.name || agent.agentId || "Unnamed";
+  return {
+    ...agent,
+    displayName,
+    description: persona?.purpose || agent.description || agent.goal || "",
+    health: profile.metrics.health,
+    lastRun: profile.metrics.lastRun || null,
+    lastRunAt: getAgentMetricRow(agent)?.last_run_at || agent.lastRunAt || agent.last_run_at || null,
+    modelLabel: profile.model || profile.provider || "",
+    avatarUrl: persona?.profile_image_path || null,
+  };
+}
+
+function isTreeCollapsed(kind, id) {
+  if (agentTreeSearch.trim()) return false;
+  return Boolean(agentTreeCollapsed[`${kind}:${id}`]);
+}
+
+function renderAgentTreeControls() {
+  const chips = [
+    ["status", "healthy", "Status: Healthy"],
+    ["status", "warning", "Status: Needs attention"],
+    ["status", "never", "Status: Never run"],
+    ["trigger", "manual", "Trigger: Manual"],
+    ["trigger", "scheduled", "Trigger: Scheduled"],
+  ];
+  return `
+    <div class="ops-agent-tree-controls">
+      <input class="ops-agent-tree-search" type="search" value="${escapeAttr(agentTreeSearch)}" placeholder="Search agents" aria-label="Search agents" data-ops-agent-tree-search>
+      <select class="ops-agent-tree-sort" aria-label="Sort agents" data-ops-agent-tree-sort>
+        <option value="name"${agentTreeSort === "name" ? " selected" : ""}>By name (A-Z)</option>
+        <option value="last_run"${agentTreeSort === "last_run" ? " selected" : ""}>By last run</option>
+        <option value="health"${agentTreeSort === "health" ? " selected" : ""}>By run health</option>
+      </select>
+      <div class="ops-agent-tree-filters" aria-label="Filter agents">
+        ${chips.map(([group, value, label]) => {
+          const active = group === "status"
+            ? agentTreeFilters.statuses.includes(value)
+            : agentTreeFilters.triggers.includes(value);
+          return `<button type="button" class="ops-agent-filter-chip${active ? " active" : ""}" data-ops-action="toggle-agent-filter" data-filter-group="${group}" data-filter-value="${value}">${escapeHtml(label)}</button>`;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderAgentTreeRow(agent, selectedAgent) {
+  const active = agent.id === selectedAgent?.id;
+  const health = getAgentHealth(agent);
+  const trigger = getAgentTrigger(agent);
+  const initial = (agent.displayName || "A").charAt(0).toUpperCase();
+  return `
+    <button type="button" class="ops-agent-tree-row${active ? " active" : ""}" data-ops-action="select-agent" data-agent-id="${escapeAttr(agent.id)}">
+      <span class="ops-agent-tree-avatar">
+        ${agent.avatarUrl ? `<img src="${escapeAttr(agent.avatarUrl)}" alt="${escapeAttr(agent.displayName)} avatar">` : escapeHtml(initial)}
+      </span>
+      <span class="ops-agent-tree-main">
+        <span class="ops-agent-tree-name">${escapeHtml(agent.displayName)}</span>
+        <span class="ops-agent-tree-id">${escapeHtml(agent.id || agent.agentId || "")}</span>
+      </span>
+      <span class="ops-agent-tree-side">
+        <span class="ops-agent-tree-model">${escapeHtml(agent.modelLabel || "default")}</span>
+        <span class="ops-agent-tree-run"><i class="ops-agent-dot ops-agent-dot-${escapeAttr(health)}"></i>${escapeHtml(agent.lastRun || "never")} &middot; ${escapeHtml(trigger)}</span>
+      </span>
+    </button>
+  `;
+}
+
+function renderAgentTree(agents, selectedAgent) {
+  const view = createAgentTreeView(agents, {
+    query: agentTreeSearch.trim(),
+    sort: agentTreeSort,
+    filters: agentTreeFilters,
+  });
+  return `
+    ${renderAgentTreeControls()}
+    <div class="ops-agent-tree" data-localstorage-key="${escapeAttr(OPS_AGENT_TREE_COLLAPSED_KEY)}">
+      ${view.map((domain) => {
+        const domainCollapsed = isTreeCollapsed("domain", domain.id);
+        return `
+          <section class="ops-agent-tree-domain">
+            <button type="button" class="ops-agent-tree-folder ops-agent-tree-folder-domain" data-ops-action="toggle-agent-tree" data-tree-kind="domain" data-tree-id="${escapeAttr(domain.id)}" aria-expanded="${domainCollapsed ? "false" : "true"}">
+              <span>${domainCollapsed ? ">" : "v"} ${escapeHtml(domain.label)}</span>
+              <span>${domain.total}</span>
+            </button>
+            <div class="ops-agent-tree-children${domainCollapsed ? " hidden" : ""}">
+              ${domain.subdomains.map((subdomain) => {
+                const subdomainKey = `${domain.id}/${subdomain.id}`;
+                const subdomainCollapsed = isTreeCollapsed("subdomain", subdomainKey);
+                return `
+                  <section class="ops-agent-tree-subdomain">
+                    <button type="button" class="ops-agent-tree-folder ops-agent-tree-folder-subdomain" data-ops-action="toggle-agent-tree" data-tree-kind="subdomain" data-tree-id="${escapeAttr(subdomainKey)}" aria-expanded="${subdomainCollapsed ? "false" : "true"}">
+                      <span>${subdomainCollapsed ? ">" : "v"} ${escapeHtml(subdomain.label)}</span>
+                      <span>${subdomain.agents.length}/${subdomain.total}</span>
+                    </button>
+                    <div class="ops-agent-tree-rows${subdomainCollapsed ? " hidden" : ""}">
+                      ${subdomain.agents.length
+                        ? subdomain.agents.map((item) => renderAgentTreeRow(item, selectedAgent)).join("")
+                        : `<div class="ops-agent-tree-empty">No agents matching filter.</div>`}
+                    </div>
+                  </section>
+                `;
+              }).join("")}
+            </div>
+          </section>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function ensureWorkflowSelection(workflows) {
   const first = workflows[0];
   if (!first) {
@@ -1428,6 +1552,7 @@ function renderAgentsPage() {
   // Ensure agentDraft is initialized for the selected agent (covers post-attach/detach re-renders).
   if (selectedAgent) getAgentDraft(selectedAgent);
   const selectedProfile = buildAgentProfile(selectedAgent);
+  const treeAgents = agents.map(decorateAgentForTree);
   const agentChips = [
     renderSummaryChip("Roster", `${agents.length} agents`),
     renderSummaryChip("Run health", selectedProfile.metrics.health),
@@ -1453,48 +1578,7 @@ function renderAgentsPage() {
           </div>
           <span class="ops-pill">${escapeHtml(String(agents.length))} rostered</span>
         </div>
-        <div class="ops-agent-catalog">
-          ${agents.map((agent) => {
-            const profile = buildAgentProfile(agent);
-            const active = agent.id === selectedAgent?.id;
-            const persona = profile.persona;
-            const displayName = persona?.name || agent.title || agent.name || agent.agentId || "Unnamed";
-            const purpose = persona?.purpose || agent.description || agent.goal || null;
-            const avatarUrl = persona?.profile_image_path || null;
-            const skillCount = Array.isArray(profile.linkedSkills) ? profile.linkedSkills.length : 0;
-            const fileCount = profile.supportingFileCount || 0;
-            const toolCount = Array.isArray(agent.tools) ? agent.tools.length : 0;
-            const lastRun = profile.metrics.lastRun || "never";
-            const hasPersona = Boolean(persona?.name || persona?.purpose);
-            return `
-              <button
-                type="button"
-                class="ops-agent-card${active ? " active" : ""}"
-                data-ops-action="select-agent"
-                data-agent-id="${escapeAttr(agent.id)}"
-              >
-                <div class="ops-agent-card-avatar">
-                  ${avatarUrl
-                    ? `<img src="${escapeAttr(avatarUrl)}" alt="${escapeAttr(displayName)} avatar" class="ops-agent-avatar-img">`
-                    : `<span class="ops-agent-avatar-placeholder">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>`}
-                </div>
-                <div class="ops-agent-card-body">
-                  <div class="ops-agent-card-top">
-                    <span class="ops-agent-card-name">${escapeHtml(displayName)}${!hasPersona ? ` <span class="ops-agent-no-persona">(no persona set)</span>` : ""}</span>
-                    <span class="ops-agent-card-model">${escapeHtml(profile.model || profile.provider || "")}</span>
-                  </div>
-                  ${purpose ? `<div class="ops-agent-card-purpose">${escapeHtml(purpose)}</div>` : ""}
-                  <div class="ops-agent-card-meta">
-                    ${toolCount ? `<span class="ops-agent-meta-chip">${toolCount} tool${toolCount !== 1 ? "s" : ""}</span>` : ""}
-                    ${fileCount ? `<span class="ops-agent-meta-chip">${fileCount} file${fileCount !== 1 ? "s" : ""}</span>` : ""}
-                    ${skillCount ? `<span class="ops-agent-meta-chip">${skillCount} skill${skillCount !== 1 ? "s" : ""}</span>` : ""}
-                    <span class="ops-agent-meta-run">Last run: ${escapeHtml(lastRun)}</span>
-                  </div>
-                </div>
-              </button>
-            `;
-          }).join("")}
-        </div>
+        ${renderAgentTree(treeAgents, selectedAgent)}
       </article>
       <article class="ops-panel ops-detail-panel">
         ${renderAgentDetail(selectedProfile)}
@@ -3384,6 +3468,25 @@ function handleOperationsClick(event) {
     loadEnrichedAgent(selectedAgentId).then(() => renderOperationsView("agents")).catch(() => {});
     return;
   }
+  if (action === "toggle-agent-tree") {
+    const key = `${button.dataset.treeKind}:${button.dataset.treeId}`;
+    agentTreeCollapsed = { ...agentTreeCollapsed, [key]: !agentTreeCollapsed[key] };
+    if (!agentTreeCollapsed[key]) delete agentTreeCollapsed[key];
+    writeStorage(OPS_AGENT_TREE_COLLAPSED_KEY, agentTreeCollapsed);
+    renderOperationsView("agents");
+    return;
+  }
+  if (action === "toggle-agent-filter") {
+    const group = button.dataset.filterGroup;
+    const value = button.dataset.filterValue;
+    const key = group === "status" ? "statuses" : "triggers";
+    const current = new Set(agentTreeFilters[key] || []);
+    if (current.has(value)) current.delete(value);
+    else current.add(value);
+    agentTreeFilters = { ...agentTreeFilters, [key]: [...current] };
+    renderOperationsView("agents");
+    return;
+  }
   if (action === "new-agent") {
     selectedAgentId = "";
     resetSelectedAgentRun();
@@ -3819,6 +3922,20 @@ function handleOperationsClick(event) {
 }
 
 function handleOperationsInput(event) {
+  const treeSearch = event.target.closest("[data-ops-agent-tree-search]");
+  if (treeSearch) {
+    agentTreeSearch = treeSearch.value;
+    renderOperationsView("agents");
+    requestAnimationFrame(() => {
+      const next = document.querySelector("[data-ops-agent-tree-search]");
+      if (next) {
+        next.focus();
+        next.setSelectionRange(agentTreeSearch.length, agentTreeSearch.length);
+      }
+    });
+    return;
+  }
+
   const input = event.target.closest("[data-ops-field]");
   if (!input) return;
 
@@ -3888,6 +4005,13 @@ function handleOperationsInput(event) {
 }
 
 function handleOperationsChange(event) {
+  const treeSort = event.target.closest("[data-ops-agent-tree-sort]");
+  if (treeSort) {
+    agentTreeSort = treeSort.value || "name";
+    renderOperationsView("agents");
+    return;
+  }
+
   const field = event.target.closest("[data-ops-field]");
   if (!field) return;
   const opsField = field.dataset.opsField || "";
@@ -3920,6 +4044,15 @@ function handleOperationsChange(event) {
       updateWorkflowDraftField(wfField, field.value);
     }
     return;
+  }
+}
+
+function handleOperationsKeydown(event) {
+  const treeSearch = event.target.closest("[data-ops-agent-tree-search]");
+  if (treeSearch && event.key === "Escape") {
+    agentTreeSearch = "";
+    treeSearch.value = "";
+    renderOperationsView("agents");
   }
 }
 
@@ -3956,6 +4089,7 @@ const shellContent = getShellContent();
 shellContent?.addEventListener("click", handleOperationsClick);
 shellContent?.addEventListener("input", handleOperationsInput);
 shellContent?.addEventListener("change", handleOperationsChange);
+shellContent?.addEventListener("keydown", handleOperationsKeydown);
 shellContent?.addEventListener("dragover", handleOperationsDragover);
 shellContent?.addEventListener("dragleave", handleOperationsDragleave);
 shellContent?.addEventListener("drop", handleOperationsDrop);

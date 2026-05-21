@@ -1492,6 +1492,218 @@ button.ops-run-row {
   margin-left: auto;
 }
 
+.ops-agent-tree-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ops-agent-tree-search,
+.ops-agent-tree-sort {
+  min-height: 34px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+.ops-agent-tree-filters {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ops-agent-filter-chip {
+  border: 1px solid var(--surface-outline);
+  border-radius: 999px;
+  background: var(--surface-panel-soft);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  padding: 5px 8px;
+}
+
+.ops-agent-filter-chip:hover,
+.ops-agent-filter-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-outline));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  color: var(--accent);
+}
+
+.ops-agent-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ops-agent-tree-domain,
+.ops-agent-tree-subdomain {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ops-agent-tree-folder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+  text-align: left;
+}
+
+.ops-agent-tree-folder-domain {
+  min-height: 36px;
+  padding: 0 2px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ops-agent-tree-folder-subdomain {
+  min-height: 32px;
+  padding: 0 0 0 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ops-agent-tree-folder span:last-child {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.ops-agent-tree-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 14px;
+}
+
+.ops-agent-tree-row {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 50px;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-panel) 94%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 9px;
+  text-align: left;
+}
+
+.ops-agent-tree-row:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--surface-outline));
+}
+
+.ops-agent-tree-row.active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--surface-outline));
+}
+
+.ops-agent-tree-row.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+.ops-agent-tree-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-panel-soft));
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 72%, transparent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.ops-agent-tree-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ops-agent-tree-main,
+.ops-agent-tree-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ops-agent-tree-name,
+.ops-agent-tree-model {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ops-agent-tree-name {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ops-agent-tree-id,
+.ops-agent-tree-run,
+.ops-agent-tree-model {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+.ops-agent-tree-side {
+  align-items: flex-end;
+}
+
+.ops-agent-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: var(--text-muted);
+}
+
+.ops-agent-dot-healthy { background: var(--success); }
+.ops-agent-dot-warning { background: var(--warning); }
+.ops-agent-dot-never { background: var(--text-muted); }
+
+.ops-agent-tree-empty {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding-left: 9px;
+}
+
 /* ── O2/O3 — Persona section ─────────────────────────────────────── */
 
 .ops-persona-card {
