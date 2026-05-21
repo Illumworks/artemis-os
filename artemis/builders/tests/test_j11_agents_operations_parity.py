@@ -94,6 +94,7 @@ async def test_create_agent_with_policy_fields(
     payload = {
         "agentId": "policy-create-agent",
         "name": "Policy Agent",
+        "provider": "claude-code",
         "memoryPolicy": "agent_scoped",
         "permissionMode": "auto_approve",
         "fallbackProvider": "openai",

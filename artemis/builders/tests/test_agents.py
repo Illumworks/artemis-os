@@ -8,6 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builders import repository as repo
 
+PROVIDER_FIELDS = {
+    "provider": "claude-code",
+    "model": "sonnet",
+    "fallbackProvider": "codex",
+    "fallbackModel": "gpt-5.4",
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Repository round-trip tests
 # ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +100,7 @@ async def test_create_agent_http(client: AsyncClient) -> None:
         "description": "Created via HTTP",
         "tools": ["bash"],
         "maxIterations": 8,
+        **PROVIDER_FIELDS,
     }
     resp = await client.post("/api/agents/", json=payload)
     assert resp.status_code == 201
@@ -106,7 +114,7 @@ async def test_create_agent_http(client: AsyncClient) -> None:
 async def test_get_agent_http(client: AsyncClient) -> None:
     await client.post(
         "/api/agents/",
-        json={"agentId": "get-test-agent", "name": "Get Test"},
+        json={"agentId": "get-test-agent", "name": "Get Test", **PROVIDER_FIELDS},
     )
     resp = await client.get("/api/agents/get-test-agent")
     assert resp.status_code == 200
@@ -122,7 +130,7 @@ async def test_get_agent_not_found_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_create_agent_duplicate_http(client: AsyncClient) -> None:
-    payload = {"agentId": "dup-agent", "name": "Dup"}
+    payload = {"agentId": "dup-agent", "name": "Dup", **PROVIDER_FIELDS}
     await client.post("/api/agents/", json=payload)
     resp = await client.post("/api/agents/", json=payload)
     assert resp.status_code == 409
@@ -131,7 +139,9 @@ async def test_create_agent_duplicate_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_agent_http(client: AsyncClient) -> None:
-    await client.post("/api/agents/", json={"agentId": "patch-me", "name": "Old"})
+    await client.post(
+        "/api/agents/", json={"agentId": "patch-me", "name": "Old", **PROVIDER_FIELDS}
+    )
     resp = await client.patch("/api/agents/patch-me", json={"name": "New"})
     assert resp.status_code == 200
     assert resp.json()["name"] == "New"
@@ -145,7 +155,9 @@ async def test_patch_agent_not_found_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_agent_http(client: AsyncClient) -> None:
-    await client.post("/api/agents/", json={"agentId": "rm-agent", "name": "Remove"})
+    await client.post(
+        "/api/agents/", json={"agentId": "rm-agent", "name": "Remove", **PROVIDER_FIELDS}
+    )
     resp = await client.delete("/api/agents/rm-agent")
     assert resp.status_code == 204
     resp2 = await client.get("/api/agents/rm-agent")
@@ -160,7 +172,9 @@ async def test_delete_agent_not_found_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_list_agent_runs_for_agent(client: AsyncClient) -> None:
-    await client.post("/api/agents/", json={"agentId": "run-agent", "name": "Runner"})
+    await client.post(
+        "/api/agents/", json={"agentId": "run-agent", "name": "Runner", **PROVIDER_FIELDS}
+    )
     resp = await client.get("/api/agents/run-agent/runs")
     assert resp.status_code == 200
     assert resp.json()["runs"] == []

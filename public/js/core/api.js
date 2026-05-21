@@ -1255,6 +1255,8 @@ export async function createAgent(agent) {
     tools: agent.tools || [],
     model: agent.model || "claude-sonnet-4-5",
     provider: agent.provider || "anthropic",
+    fallbackProvider: agent.fallbackProvider || agent.provider || "anthropic",
+    fallbackModel: agent.fallbackModel || agent.model || "claude-sonnet-4-5",
     max_iterations: agent.constraints?.maxTurns ?? agent.maxIterations ?? 50,
   };
   const res = await fetch("/api/agents", {
@@ -1279,6 +1281,8 @@ export async function updateAgent(id, agent) {
   if (agent.tools != null) payload.tools = agent.tools;
   if (agent.model != null) payload.model = agent.model;
   if (agent.provider != null) payload.provider = agent.provider;
+  if (agent.fallbackProvider != null) payload.fallbackProvider = agent.fallbackProvider;
+  if (agent.fallbackModel != null) payload.fallbackModel = agent.fallbackModel;
   if (agent.constraints?.maxTurns != null) payload.max_iterations = agent.constraints.maxTurns;
   const res = await fetch(`/api/agents/${encodeURIComponent(id)}`, {
     method: "PATCH",

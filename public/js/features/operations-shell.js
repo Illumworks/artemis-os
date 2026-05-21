@@ -14,6 +14,7 @@ import {
   initBuilderSurface,
 } from "./agent-builder.js";
 import { initPipelinesPage } from "./pipelines.js";
+import { PROVIDER_LABELS, PROVIDER_PICKERS, getSourceModels } from "../ui/model-selector.js";
 
 const SHELL_CONTENT_SELECTOR = "#app-shell-content";
 const AGENT_LOADING_THRESHOLD = 0;
@@ -482,6 +483,20 @@ function escapeAttr(value) {
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function providerOptions(selected, allowEmpty = false) {
+  const empty = allowEmpty ? '<option value="">Not set — required</option>' : "";
+  return empty + Object.keys(PROVIDER_PICKERS).map((id) =>
+    `<option value="${escapeAttr(id)}"${selected === id ? " selected" : ""}>${escapeHtml(PROVIDER_LABELS[id] || id)}</option>`
+  ).join("");
+}
+
+function modelOptions(provider, selected) {
+  const models = getSourceModels(provider || "claude-code");
+  return models.map((m) =>
+    `<option value="${escapeAttr(m.value)}"${selected === m.value ? " selected" : ""}>${escapeHtml(m.label)}</option>`
+  ).join("");
 }
 
 function readStorage(key, fallback) {
@@ -1625,24 +1640,24 @@ function renderAgentDetail(agent) {
           <label class="ops-field">
             <span>Preferred provider</span>
             <select data-ops-field="provider">
-              ${["", "claude-code", "codex", "gemini", "openrouter", "ollama"].map((p) =>
-                `<option value="${escapeAttr(p)}"${agent.provider === p ? " selected" : ""}>${escapeHtml(p || "— inherit from session —")}</option>`
-              ).join("")}
+              ${providerOptions(agent.provider || "claude-code")}
             </select>
           </label>
           <label class="ops-field">
             <span>Model</span>
-            <input type="text" value="${escapeAttr(agent.model || "")}" data-ops-field="model" placeholder="e.g. claude-sonnet-4-6">
+            <select data-ops-field="model">${modelOptions(agent.provider, agent.model || "")}</select>
           </label>
         </div>
         <div class="ops-form-grid" style="margin-top:8px">
           <div class="ops-field">
-            <span class="ops-field-label">Fallback provider <span class="ops-badge-coming">stored — runtime routing coming</span></span>
-            <input type="text" value="${escapeAttr(agent.fallbackProvider || "")}" data-ops-field="fallbackProvider" placeholder="e.g. claude-code">
+            <span class="ops-field-label">Fallback provider ${agent.fallbackProvider ? "" : '<span class="ops-pill ops-pill-warn">Not set — required</span>'}</span>
+            <select data-ops-field="fallbackProvider">
+              ${providerOptions(agent.fallbackProvider || "", true)}
+            </select>
           </div>
           <div class="ops-field">
-            <span class="ops-field-label">Fallback model <span class="ops-badge-coming">stored — runtime routing coming</span></span>
-            <input type="text" value="${escapeAttr(agent.fallbackModel || "")}" data-ops-field="fallbackModel" placeholder="e.g. claude-haiku-4-5-20251001">
+            <span class="ops-field-label">Fallback model</span>
+            <select data-ops-field="fallbackModel">${modelOptions(agent.fallbackProvider, agent.fallbackModel || "")}</select>
           </div>
         </div>
         ${agent.policyNote ? `<p class="ops-muted-copy" style="margin-top:8px">${escapeHtml(agent.policyNote)}</p>` : ""}
@@ -2953,6 +2968,10 @@ async function saveAgentDraft() {
     window.alert?.("Title and goal are required.");
     return;
   }
+  if (!payload.provider || !payload.fallbackProvider || !payload.fallbackModel) {
+    window.alert?.("Both preferred and fallback provider are required — these protect your agent from upstream outages.");
+    return;
+  }
   if (agentDraft.id) {
     await api.updateAgent(agentDraft.id, payload);
     selectedAgentId = agentDraft.id;
@@ -3880,6 +3899,7 @@ function handleOperationsChange(event) {
   // <select> elements fire "change" not "input" — mirror the policy-field logic from handleOperationsInput.
   if (["provider", "model", "fallbackProvider", "fallbackModel", "memoryScope", "permissionMode", "outputType"].includes(opsField)) {
     updateAgentDraftField(opsField, field.value);
+    if (opsField === "provider" || opsField === "fallbackProvider") renderOperationsView("agents");
     return;
   }
   // Workflow step selects and checkboxes: type/destination changes need a re-render.

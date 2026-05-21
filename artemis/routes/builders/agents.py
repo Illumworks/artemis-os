@@ -30,7 +30,7 @@ from artemis.builders.schemas import (
 )
 from artemis.db import get_session
 from artemis.marketing.routes._auth import require_token
-from artemis.marketing.routes._errors import bad_request, conflict, not_found
+from artemis.marketing.routes._errors import bad_request, conflict, not_found, validation_failed
 
 # Maximum avatar upload size: 5 MB
 _AVATAR_MAX_BYTES = 5 * 1024 * 1024
@@ -56,6 +56,25 @@ def _instruction_path(agent_db_id: int) -> Path:
 
 def _files_dir(agent_db_id: int) -> Path:
     return _agent_dir(agent_db_id) / "files"
+
+
+def _blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _provider_invariant_error(field: str) -> None:
+    label = "preferred provider" if field == "provider" else field
+    raise validation_failed({field: f"agent must have a {label} per D6 invariant"})
+
+
+def _check_agent_create_provider_invariant(body: AgentCreate) -> None:
+    fields = body.model_fields_set
+    if "provider" not in fields or _blank(body.provider):
+        _provider_invariant_error("provider")
+    if "fallback_provider" not in fields or _blank(body.fallback_provider):
+        _provider_invariant_error("fallback_provider")
+    if "fallback_model" not in fields or _blank(body.fallback_model):
+        _provider_invariant_error("fallback_model")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -145,6 +164,7 @@ async def create_agent(
     body: AgentCreate,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
+    _check_agent_create_provider_invariant(body)
     try:
         await repo.get_agent(session, body.agent_id)
         raise conflict(f"Agent '{body.agent_id}' already exists", "agent_exists")
@@ -226,8 +246,22 @@ async def update_agent(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
     update_data = body.model_dump(exclude_none=True, by_alias=False)
+    if "fallback_provider" in body.model_fields_set and _blank(body.fallback_provider):
+        _provider_invariant_error("fallback_provider")
+    if "fallback_model" in body.model_fields_set and _blank(body.fallback_model):
+        _provider_invariant_error("fallback_model")
     if not update_data:
         raise bad_request("No fields to update", "empty_update")
+    try:
+        current = await repo.get_agent(session, agent_id)
+    except ValueError:
+        raise not_found(f"Agent '{agent_id}' not found", "agent_not_found")  # noqa: B904
+    next_fallback_provider = update_data.get("fallback_provider", current.fallback_provider)
+    next_fallback_model = update_data.get("fallback_model", current.fallback_model)
+    if _blank(next_fallback_provider):
+        _provider_invariant_error("fallback_provider")
+    if _blank(next_fallback_model):
+        _provider_invariant_error("fallback_model")
     try:
         agent = await repo.update_agent(session, agent_id, **update_data)
     except ValueError:
