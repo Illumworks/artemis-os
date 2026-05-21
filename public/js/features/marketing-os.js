@@ -21,10 +21,27 @@ import {
   qualifySignalApi,
   listScoutRunsApi, listScoutPackagesApi,
 } from '../core/api.js';
+import {
+  filterSignals,
+  normalizeSignal,
+  readCollapsedSignalGroups,
+  readSignalGroupMode,
+  renderSignalInboxTree,
+  writeCollapsedSignalGroups,
+  writeSignalGroupMode,
+} from '../components/signal-tree.js';
 
 // ── Storage keys ──────────────────────────────────────────────────────────
 const MKT_CAMPAIGN_KEY = 'artemis-mkt-selected-campaign';
 const MKT_WORKSPACE_TAB_KEY = 'artemis-mkt-workspace-tab';
+const MKT_SIGNAL_TREE_STATE = {
+  signals: [],
+  mode: 'state',
+  sort: 'newest',
+  query: '',
+  filters: { urgencies: [], statuses: [], reasons: [], geographies: [] },
+  selectedId: null,
+};
 
 // ── Deliverables cache ─────────────────────────────────────────────────────
 // Keyed by campaignId. Populated lazily when the Assets tab opens for an API campaign.
@@ -1640,6 +1657,16 @@ function _signalCardHtml(signal) {
 }
 
 export function renderMarketingSignals(signals = [], isDemo = false) {
+  if (!isDemo) {
+    return renderSignalInboxTree(signals, {
+      mode: MKT_SIGNAL_TREE_STATE.mode,
+      sort: MKT_SIGNAL_TREE_STATE.sort,
+      query: MKT_SIGNAL_TREE_STATE.query,
+      filters: MKT_SIGNAL_TREE_STATE.filters,
+      selectedId: MKT_SIGNAL_TREE_STATE.selectedId,
+      collapsed: readCollapsedSignalGroups(),
+    });
+  }
   const items = signals.map((s) => _signalCardHtml(s)).join('');
   const demoBanner = isDemo ? `
     <div class="mkt-signals-demo-banner">
@@ -1902,22 +1929,80 @@ export async function loadMarketingSignals(container) {
   // Synchronous skeleton so the section appears immediately
   container.innerHTML = renderMarketingSignals(SIGNALS_MOCK.map(_convertMockSignal), true);
   _wireSignalActions(container);
+  MKT_SIGNAL_TREE_STATE.mode = readSignalGroupMode();
   try {
-    const result = await listSignalQueueApi({ status: 'in_inbox' });
+    const result = await listSignalQueueApi({ limit: 200 });
     const realSignals = result.signals || [];
-    if (realSignals.length > 0) {
-      container.innerHTML = renderMarketingSignals(realSignals, false);
-    } else {
-      container.innerHTML = renderMarketingSignals(SIGNALS_MOCK.map(_convertMockSignal), true);
-    }
-    _wireSignalActions(container);
+    MKT_SIGNAL_TREE_STATE.signals = realSignals;
+    MKT_SIGNAL_TREE_STATE.selectedId = realSignals[0]?.id || null;
+    container.innerHTML = renderMarketingSignals(realSignals, false);
   } catch {
     // API unavailable — keep the demo skeleton already rendered
   }
 }
 
+function _renderSignalTreeState(container) {
+  container.innerHTML = renderMarketingSignals(MKT_SIGNAL_TREE_STATE.signals, false);
+}
+
+async function _refreshSignalTree(container) {
+  const result = await listSignalQueueApi({ limit: 200 });
+  MKT_SIGNAL_TREE_STATE.signals = result.signals || [];
+  const visible = filterSignals(MKT_SIGNAL_TREE_STATE.signals.map(normalizeSignal), {
+    query: MKT_SIGNAL_TREE_STATE.query,
+    filters: MKT_SIGNAL_TREE_STATE.filters,
+  });
+  if (!visible.some((signal) => String(signal.id) === String(MKT_SIGNAL_TREE_STATE.selectedId))) {
+    MKT_SIGNAL_TREE_STATE.selectedId = visible[0]?.id || MKT_SIGNAL_TREE_STATE.signals[0]?.id || null;
+  }
+  _renderSignalTreeState(container);
+}
+
+function _toggleSignalFilter(category, value) {
+  const current = MKT_SIGNAL_TREE_STATE.filters[category] || [];
+  MKT_SIGNAL_TREE_STATE.filters[category] = current.includes(value)
+    ? current.filter((item) => item !== value)
+    : [...current, value];
+}
+
 function _wireSignalActions(container) {
+  if (container.dataset.signalsWired === 'true') return;
+  container.dataset.signalsWired = 'true';
   container.addEventListener('click', async (e) => {
+    const groupBtn = e.target.closest('[data-signal-group]');
+    if (groupBtn) {
+      MKT_SIGNAL_TREE_STATE.mode = groupBtn.dataset.signalGroup || 'state';
+      writeSignalGroupMode(MKT_SIGNAL_TREE_STATE.mode);
+      _renderSignalTreeState(container);
+      return;
+    }
+
+    const filterBtn = e.target.closest('[data-signal-filter]');
+    if (filterBtn) {
+      _toggleSignalFilter(filterBtn.dataset.signalFilter, filterBtn.dataset.filterValue);
+      MKT_SIGNAL_TREE_STATE.selectedId = null;
+      _renderSignalTreeState(container);
+      return;
+    }
+
+    const folderBtn = e.target.closest('[data-signal-folder-toggle]');
+    if (folderBtn) {
+      const key = folderBtn.dataset.signalFolderToggle;
+      const collapsed = readCollapsedSignalGroups();
+      collapsed[key] = !collapsed[key];
+      if (!collapsed[key]) delete collapsed[key];
+      writeCollapsedSignalGroups(collapsed);
+      _renderSignalTreeState(container);
+      return;
+    }
+
+    const row = e.target.closest('[data-signal-row]');
+    if (row) {
+      MKT_SIGNAL_TREE_STATE.selectedId = row.dataset.signalRow;
+      _renderSignalTreeState(container);
+      return;
+    }
+
     const btn = e.target.closest('[data-signal-action]');
     if (!btn) return;
     const action = btn.dataset.signalAction;
@@ -1952,9 +2037,7 @@ function _wireSignalActions(container) {
       btn.textContent = 'Adding…';
       try {
         await createSignalApi(payload);
-        const result = await listSignalQueueApi({ status: 'in_inbox' });
-        container.innerHTML = renderMarketingSignals(result.signals || [], false);
-        _wireSignalActions(container);
+        await _refreshSignalTree(container);
       } catch (err) {
         btn.disabled = false;
         btn.textContent = 'Add Signal';
@@ -1990,9 +2073,7 @@ function _wireSignalActions(container) {
       btn.disabled = true; btn.textContent = 'Approving…';
       try {
         const res = await approveSignalApi(signalId);
-        const result = await listSignalQueueApi({ status: 'in_inbox' });
-        container.innerHTML = renderMarketingSignals(result.signals || [], false);
-        _wireSignalActions(container);
+        await _refreshSignalTree(container);
         if (res.candidateId) {
           const toast = document.createElement('div');
           toast.className = 'mkt-signal-toast';
@@ -2018,9 +2099,7 @@ function _wireSignalActions(container) {
       btn.disabled = true; btn.textContent = 'Snoozing…';
       try {
         await snoozeSignalApi(signalId, { days, trainingNotes: notes });
-        const result = await listSignalQueueApi({ status: 'in_inbox' });
-        container.innerHTML = renderMarketingSignals(result.signals || [], false);
-        _wireSignalActions(container);
+        await _refreshSignalTree(container);
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Snooze';
         const errEl = document.createElement('p');
@@ -2038,9 +2117,7 @@ function _wireSignalActions(container) {
       btn.disabled = true; btn.textContent = 'Rejecting…';
       try {
         await rejectSignalApi(signalId, { trainingNotes: notes });
-        const result = await listSignalQueueApi({ status: 'in_inbox' });
-        container.innerHTML = renderMarketingSignals(result.signals || [], false);
-        _wireSignalActions(container);
+        await _refreshSignalTree(container);
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Reject signal';
         const errEl = document.createElement('p');
@@ -2063,8 +2140,6 @@ function _wireSignalActions(container) {
           tmpDiv.innerHTML = _qualificationBlockHtml(res.signal);
           const newBlock = tmpDiv.firstElementChild;
           if (newBlock) qualBlock.replaceWith(newBlock);
-          // Re-wire the new qualify button
-          _wireSignalActions(container);
         }
       } catch (err) {
         btn.disabled = false; btn.textContent = btn.dataset.origText || 'Qualify';
@@ -2076,6 +2151,42 @@ function _wireSignalActions(container) {
       }
       return;
     }
+
+    if (action === 'archive') {
+      btn.disabled = true; btn.textContent = 'Archiving…';
+      try {
+        await archiveSignalApi(signalId);
+        await _refreshSignalTree(container);
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Archive';
+        const errEl = document.createElement('p');
+        errEl.className = 'mkt-signal-inline-error';
+        errEl.textContent = err.message || 'Archive failed.';
+        btn.parentElement?.appendChild(errEl);
+        setTimeout(() => errEl.remove(), 4000);
+      }
+      return;
+    }
+  });
+
+  container.addEventListener('input', (e) => {
+    if (!e.target.matches('[data-signal-search]')) return;
+    MKT_SIGNAL_TREE_STATE.query = e.target.value || '';
+    MKT_SIGNAL_TREE_STATE.selectedId = null;
+    _renderSignalTreeState(container);
+  });
+
+  container.addEventListener('keydown', (e) => {
+    if (!e.target.matches('[data-signal-search]') || e.key !== 'Escape') return;
+    MKT_SIGNAL_TREE_STATE.query = '';
+    e.target.value = '';
+    _renderSignalTreeState(container);
+  });
+
+  container.addEventListener('change', (e) => {
+    if (!e.target.matches('[data-signal-sort]')) return;
+    MKT_SIGNAL_TREE_STATE.sort = e.target.value === 'urgency' ? 'urgency' : 'newest';
+    _renderSignalTreeState(container);
   });
 }
 
