@@ -398,3 +398,197 @@ button.pcv-palette-group-label:hover { background:var(--surface-hover,var(--surf
 .pcv-ctx-item:hover { background:var(--surface-hover,var(--surface-subtle)) }
 .pcv-ctx-item--danger { color:var(--error) }
 .pcv-ctx-item--danger:hover { background:color-mix(in srgb,var(--error) 10%,transparent) }
+
+/* ── PIPE3: Form/JSON view toggle ──────────────────────────────────────── */
+.pcv-drawer-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--surface-outline);
+  flex-shrink: 0;
+  background: var(--surface-card);
+}
+.pcv-view-btn {
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--surface-outline);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  line-height: 1.6;
+}
+.pcv-view-btn:first-child { border-radius: 5px 0 0 5px }
+.pcv-view-btn:last-child  { border-radius: 0 5px 5px 0; margin-left: -1px }
+.pcv-view-btn--active {
+  background: color-mix(in srgb,var(--accent) 14%,transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb,var(--accent) 45%,transparent);
+  z-index: 1;
+  position: relative;
+}
+.pcv-view-btn:hover:not(.pcv-view-btn--active) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* ── PIPE3: Node config forms (ncf) ────────────────────────────────────── */
+.ncf { display: flex;flex-direction: column;gap: 14px }
+.ncf-field { display: flex;flex-direction: column;gap: 4px }
+.ncf-field--half { flex: 1;min-width: 0 }
+.ncf-row { display: flex;gap: 10px }
+.ncf-label {
+  font-size: 11px;font-weight: 600;color: var(--text-dim);
+  text-transform: uppercase;letter-spacing: .04em;
+}
+.ncf-required::after { content: " *";color: var(--error) }
+.ncf-hint {
+  font-size: 11px;color: var(--text-dim);font-style: italic;line-height: 1.4;
+}
+.ncf-hint--err { color: var(--error);font-style: normal }
+.ncf-static-note {
+  font-size: 12px;color: var(--text-dim);
+  background: var(--surface-subtle);
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+.ncf-input {
+  padding: 6px 10px;
+  background: var(--surface-input,var(--surface-subtle));
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color .12s;
+}
+.ncf-input:focus { border-color: var(--accent);box-shadow: 0 0 0 2px color-mix(in srgb,var(--accent) 16%,transparent) }
+.ncf-select {
+  padding: 6px 10px;
+  background: var(--surface-input,var(--surface-subtle));
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  cursor: pointer;
+  transition: border-color .12s;
+}
+.ncf-select:focus { border-color: var(--accent) }
+
+/* ── Picker (agent / pipeline search) ─────────────────────────────── */
+.ncf-picker { position: relative }
+.ncf-search {
+  padding: 6px 10px;
+  background: var(--surface-input,var(--surface-subtle));
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color .12s;
+}
+.ncf-search:focus { border-color: var(--accent);box-shadow: 0 0 0 2px color-mix(in srgb,var(--accent) 16%,transparent) }
+.ncf-picker-results {
+  position: absolute;top: calc(100% + 3px);left: 0;right: 0;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  max-height: 180px;overflow-y: auto;
+  z-index: 200;
+}
+.ncf-picker-item {
+  display: flex;align-items: center;justify-content: space-between;gap: 8px;
+  width: 100%;padding: 7px 10px;
+  background: transparent;border: none;text-align: left;cursor: pointer;
+  font-size: 12px;color: var(--text);
+  transition: background .1s;
+}
+.ncf-picker-item:hover { background: var(--surface-hover,var(--surface-subtle)) }
+.ncf-picker-item--free { color: var(--accent) }
+.ncf-picker-name { flex: 1;font-weight: 500;overflow: hidden;text-overflow: ellipsis;white-space: nowrap }
+.ncf-picker-sub  { font-size: 10px;color: var(--text-dim);flex-shrink: 0;font-family: var(--font-mono) }
+.ncf-picker-empty { padding: 8px 10px;font-size: 12px;color: var(--text-dim);text-align: center }
+
+/* ── Multi-select (approvers) ──────────────────────────────────────── */
+.ncf-multiselect {
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  background: var(--surface-input,var(--surface-subtle));
+  padding: 5px 6px;
+  display: flex;flex-direction: column;gap: 4px;
+}
+.ncf-tags { display: flex;flex-wrap: wrap;gap: 4px }
+.ncf-tag {
+  display: inline-flex;align-items: center;gap: 4px;
+  padding: 2px 6px;border-radius: 999px;font-size: 11px;
+  background: color-mix(in srgb,var(--accent) 14%,transparent);
+  color: var(--accent);border: 1px solid color-mix(in srgb,var(--accent) 30%,transparent);
+}
+.ncf-tag-rm {
+  background: transparent;border: none;cursor: pointer;
+  font-size: 13px;line-height: 1;color: inherit;padding: 0;opacity: .7;
+}
+.ncf-tag-rm:hover { opacity: 1 }
+.ncf-ms-input-row { position: relative }
+.ncf-ms-search {
+  width: 100%;padding: 4px 6px;background: transparent;border: none;
+  outline: none;font-size: 12px;color: var(--text);
+}
+.ncf-ms-results {
+  position: absolute;top: calc(100% + 2px);left: 0;right: 0;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.14);
+  z-index: 200;max-height: 140px;overflow-y: auto;
+}
+
+/* ── Details/summary (collapsible sections) ────────────────────────── */
+.ncf-details {
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.ncf-summary {
+  padding: 7px 10px;font-size: 12px;font-weight: 500;color: var(--text-dim);
+  cursor: pointer;list-style: none;background: var(--surface-subtle);
+  transition: background .12s,color .12s;
+  user-select: none;
+}
+.ncf-summary:hover { background: var(--surface-hover);color: var(--text) }
+.ncf-summary::-webkit-details-marker { display: none }
+.ncf-summary::before { content: "▶ ";font-size: 9px;opacity: .5 }
+details[open] .ncf-summary::before { content: "▼ " }
+.ncf-details-body { padding: 10px;display: flex;flex-direction: column;gap: 12px }
+
+/* ── Conditional form extras ───────────────────────────────────────── */
+.ncf-toggle-row { display: flex;align-items: center;justify-content: space-between;gap: 8px }
+.ncf-inline-toggle {
+  display: inline-flex;align-items: center;gap: 5px;cursor: pointer;
+  font-size: 11px;color: var(--text-dim);
+}
+.ncf-inline-toggle input { accent-color: var(--accent) }
+.ncf-inline-toggle-label { line-height: 1 }
+.ncf-pred-row { display: flex;gap: 6px;flex-wrap: wrap }
+.ncf-pred-row .ncf-select { flex: 1;min-width: 80px }
+.ncf-pred-row .ncf-input  { flex: 1;min-width: 80px }
+.ncf-jsonlogic-raw {
+  width: 100%;box-sizing: border-box;
+  font-family: var(--font-mono);font-size: 11px;line-height: 1.5;
+  background: var(--surface-input,var(--surface-subtle));
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;color: var(--text);padding: 7px 9px;resize: vertical;outline: none;
+}
+.ncf-jsonlogic-raw:focus { border-color: var(--accent) }

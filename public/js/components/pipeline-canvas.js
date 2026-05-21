@@ -309,6 +309,7 @@ export class PipelineCanvas {
     workspace.appendChild(wrap);
 
     this._drawer = new PipelineConfigDrawer({
+      pipelineId: this._state.id ?? null,
       onSave: (nodeId, updates) => {
         pushUndo(this._state);
         const idx = this._state.nodes.findIndex((n) => n.id === nodeId);
