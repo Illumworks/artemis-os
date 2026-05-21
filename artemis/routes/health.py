@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import artemis
 from artemis.db import get_session
 
 router = APIRouter(tags=["health"])
@@ -31,3 +32,9 @@ async def readyz(
             detail=f"database unreachable: {exc}",
         ) from exc
     return {"ok": True, "db": "reachable"}
+
+
+@router.get("/api/version")
+async def version() -> dict[str, Any]:
+    """Return running application version."""
+    return {"version": artemis.__version__}

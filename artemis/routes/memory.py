@@ -108,3 +108,9 @@ async def observation_history(
             detail={"error": f"Observation {observation_id} not found", "code": "not_found"},
         )
     return chain
+
+
+@router.get("/embeddings/status")
+async def embeddings_status() -> dict[str, object]:
+    """Return embedding job queue status (stub — embedding pipeline not yet implemented)."""
+    return {"queued": 0, "processing": 0, "completed_today": 0, "last_error": None}

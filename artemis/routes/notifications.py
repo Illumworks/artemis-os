@@ -22,3 +22,9 @@ async def notifications_history(
 ) -> list[object]:
     """Return empty notification history (stub — no notifications table in V1)."""
     return []
+
+
+@router.get("/unread-count")
+async def unread_count() -> dict[str, int]:
+    """Return unread notification count (stub — always 0 until notifications system ships)."""
+    return {"count": 0}

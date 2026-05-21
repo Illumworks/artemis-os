@@ -178,3 +178,9 @@ async def stats_providers(
             )
         )
     return results
+
+
+@router.get("/alerts")
+async def stats_alerts() -> dict[str, object]:
+    """Return active alert list (stub — alert system not yet implemented)."""
+    return {"alerts": [], "count": 0}
