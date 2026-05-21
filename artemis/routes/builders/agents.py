@@ -257,12 +257,16 @@ async def update_agent(
         current = await repo.get_agent(session, agent_id)
     except ValueError:
         raise not_found(f"Agent '{agent_id}' not found", "agent_not_found")  # noqa: B904
-    next_fallback_provider = update_data.get("fallback_provider", current.fallback_provider)
-    next_fallback_model = update_data.get("fallback_model", current.fallback_model)
-    if _blank(next_fallback_provider):
-        _provider_invariant_error("fallback_provider")
-    if _blank(next_fallback_model):
-        _provider_invariant_error("fallback_model")
+    # Only enforce D6 invariant when the PATCH touches provider fields.
+    # Metadata-only drags (display_folder, etc.) must not be blocked by pre-D6 agents with null fallbacks.
+    _provider_fields = {"fallback_provider", "fallback_model", "provider", "model"}
+    if _provider_fields & update_data.keys():
+        next_fallback_provider = update_data.get("fallback_provider", current.fallback_provider)
+        next_fallback_model = update_data.get("fallback_model", current.fallback_model)
+        if _blank(next_fallback_provider):
+            _provider_invariant_error("fallback_provider")
+        if _blank(next_fallback_model):
+            _provider_invariant_error("fallback_model")
     try:
         agent = await repo.update_agent(session, agent_id, **update_data)
     except ValueError:

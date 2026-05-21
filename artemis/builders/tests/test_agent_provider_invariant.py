@@ -34,9 +34,11 @@ async def test_patch_null_fallback_provider_returns_422(client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
-async def test_patch_legacy_null_fallback_requires_population(
+async def test_patch_legacy_null_fallback_non_provider_fields_allowed(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    # Pre-D6 agents with null fallbacks must be patchable on metadata/name without
+    # being blocked by the D6 invariant — drag-to-folder and rename must work.
     async with db_session.begin():
         await repo.create_agent(
             db_session,
@@ -46,6 +48,27 @@ async def test_patch_legacy_null_fallback_requires_population(
             model="sonnet",
         )
     resp = await client.patch("/api/agents/legacy-null", json={"name": "Touched"})
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Touched"
+
+
+@pytest.mark.asyncio
+async def test_patch_legacy_null_fallback_provider_field_still_blocked(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # D6 invariant still fires when a PATCH explicitly touches provider fields on a legacy agent.
+    async with db_session.begin():
+        await repo.create_agent(
+            db_session,
+            agent_id="legacy-null-provider-touch",
+            name="Legacy Null Provider Touch",
+            provider="claude-code",
+            model="sonnet",
+        )
+    resp = await client.patch(
+        "/api/agents/legacy-null-provider-touch",
+        json={"model": "opus"},  # touches provider-adjacent fields without supplying fallback
+    )
     assert resp.status_code == 422
     assert "fallback_provider" in resp.text
 
