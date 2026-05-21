@@ -205,8 +205,12 @@ def _detect_incompatible_relational(
     new_content_upper = new_obs.content.upper()
 
     # Detect whether this observation is a positive or negative relational claim
-    is_new_positive = "RELATES_TO" in new_content_upper and "NOT_RELATES_TO" not in new_content_upper
-    is_new_negative = "NOT_RELATES_TO" in new_content_upper or "DOES_NOT_RELATE_TO" in new_content_upper
+    is_new_positive = (
+        "RELATES_TO" in new_content_upper and "NOT_RELATES_TO" not in new_content_upper
+    )
+    is_new_negative = (
+        "NOT_RELATES_TO" in new_content_upper or "DOES_NOT_RELATE_TO" in new_content_upper
+    )
 
     if not (is_new_positive or is_new_negative):
         return conflicts
@@ -221,12 +225,10 @@ def _detect_incompatible_relational(
 
         ex_content_upper = existing.content.upper()
         is_ex_positive = (
-            "RELATES_TO" in ex_content_upper
-            and "NOT_RELATES_TO" not in ex_content_upper
+            "RELATES_TO" in ex_content_upper and "NOT_RELATES_TO" not in ex_content_upper
         )
         is_ex_negative = (
-            "NOT_RELATES_TO" in ex_content_upper
-            or "DOES_NOT_RELATE_TO" in ex_content_upper
+            "NOT_RELATES_TO" in ex_content_upper or "DOES_NOT_RELATE_TO" in ex_content_upper
         )
 
         # Conflict: one positive, one negative, with overlapping windows

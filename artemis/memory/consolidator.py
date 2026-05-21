@@ -374,9 +374,7 @@ async def write_observation_with_conflict_check(
         existing_evidence: int = getattr(existing_row, "evidence_count", 1)
 
         confidence_delta = confidence - existing_confidence
-        evidence_ratio = (
-            (new_obs.evidence_count or 1) / max(existing_evidence, 1)
-        )
+        evidence_ratio = (new_obs.evidence_count or 1) / max(existing_evidence, 1)
 
         auto_resolvable = (
             confidence_delta > _AUTO_RESOLVE_CONFIDENCE_DELTA

@@ -322,9 +322,7 @@ class MemoryEntity(Base):
     # M2 additive columns
     valid_from: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    entity_evidence_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="1"
-    )
+    entity_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     entity_supersedes: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("memory_entities.id", name="fk_entity_supersedes", ondelete="SET NULL"),

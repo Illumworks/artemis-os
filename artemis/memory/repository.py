@@ -58,9 +58,7 @@ async def resolve_conflict(
     if resolution not in _VALID_RESOLUTIONS:
         raise ValueError(f"Unknown resolution: {resolution!r}")
 
-    result = await session.execute(
-        select(MemoryConflict).where(MemoryConflict.id == conflict_id)
-    )
+    result = await session.execute(select(MemoryConflict).where(MemoryConflict.id == conflict_id))
     conflict_row = result.scalar_one_or_none()
     if conflict_row is None:
         raise ValueError(f"Conflict {conflict_id} not found")

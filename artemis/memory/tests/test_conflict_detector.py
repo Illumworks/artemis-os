@@ -182,9 +182,7 @@ def test_detect_conflicts_deduplicates() -> None:
 def test_detect_conflicts_skips_superseded() -> None:
     """Already-superseded observations are not reported as conflicts."""
     new = _obs(3, "Jon Fila is the Chief Revenue Officer at Amira")
-    existing = _obs(
-        1, "Jon Fila is the Chief Revenue Strategy Officer at Amira", superseded_by=2
-    )
+    existing = _obs(1, "Jon Fila is the Chief Revenue Strategy Officer at Amira", superseded_by=2)
     results = detect_conflicts(new, [existing])
     assert results == []
 
@@ -194,8 +192,6 @@ def test_windows_overlap_helper() -> None:
     # Both open → overlap
     assert _windows_overlap(None, None, None, None)
     # A ends before B starts → no overlap
-    assert not _windows_overlap(
-        _PAST, _NOW - timedelta(days=1), _NOW, _FUTURE
-    )
+    assert not _windows_overlap(_PAST, _NOW - timedelta(days=1), _NOW, _FUTURE)
     # A open-ended, B starts in future → overlap (A still running)
     assert _windows_overlap(_PAST, None, _FUTURE, None)
