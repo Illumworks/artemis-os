@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime, timedelta
+from typing import TypedDict
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,14 @@ from artemis.memory.retrieval import (
 from artemis.memory.schemas import Scope
 from artemis.memory.store import write_observation
 from artemis.memory.tests.test_b2_embeddings import MockProvider
+
+
+class _ScoreParams(TypedDict):
+    fts_rank: float
+    semantic_sim: float
+    recency: float
+    obs_score: float
+
 
 _SCOPE = Scope(scope_kind="workspace", scope_id="ws-m2-ranking-test")
 _NOW = datetime.now(UTC)
@@ -59,7 +68,12 @@ def test_recency_score_decays_from_valid_until_when_expired() -> None:
 
 def test_confidence_multiplier_orders_scores() -> None:
     """High confidence observation should rank above low confidence, all else equal."""
-    base_params = dict(fts_rank=0.5, semantic_sim=0.5, recency=0.5, obs_score=0.5)
+    base_params: _ScoreParams = {
+        "fts_rank": 0.5,
+        "semantic_sim": 0.5,
+        "recency": 0.5,
+        "obs_score": 0.5,
+    }
     weights = RetrievalWeights(fts=0.30, semantic=0.40, recency=0.15, score=0.15)
 
     score_high = _compute_final_score(
@@ -73,7 +87,12 @@ def test_confidence_multiplier_orders_scores() -> None:
 
 def test_evidence_count_log_boost() -> None:
     """evidence_count=10 should rank above evidence_count=1, all else equal."""
-    base_params = dict(fts_rank=0.5, semantic_sim=0.5, recency=0.5, obs_score=0.5)
+    base_params: _ScoreParams = {
+        "fts_rank": 0.5,
+        "semantic_sim": 0.5,
+        "recency": 0.5,
+        "obs_score": 0.5,
+    }
     weights = RetrievalWeights(fts=0.30, semantic=0.40, recency=0.15, score=0.15)
 
     score_many = _compute_final_score(
@@ -145,7 +164,7 @@ async def test_ranking_three_observations_confidence_order(db_session: AsyncSess
     Since write_observation doesn't set confidence, we use _compute_final_score
     directly to verify ordering (DB layer doesn't yet wire confidence from write_observation).
     """
-    base = dict(fts_rank=0.5, semantic_sim=0.5, recency=0.5, obs_score=0.5)
+    base: _ScoreParams = {"fts_rank": 0.5, "semantic_sim": 0.5, "recency": 0.5, "obs_score": 0.5}
     weights = RetrievalWeights(fts=0.25, semantic=0.35, recency=0.25, score=0.15)
 
     s_high = _compute_final_score(**base, weights=weights, confidence=0.95, evidence_count=1)
@@ -157,7 +176,7 @@ async def test_ranking_three_observations_confidence_order(db_session: AsyncSess
 
 async def test_evidence_count_boost_db(db_session: AsyncSession) -> None:
     """Verify evidence_count=3 produces a higher score than evidence_count=1 via _compute_final_score."""
-    base = dict(fts_rank=0.4, semantic_sim=0.4, recency=0.6, obs_score=0.5)
+    base: _ScoreParams = {"fts_rank": 0.4, "semantic_sim": 0.4, "recency": 0.6, "obs_score": 0.5}
     weights = RetrievalWeights(fts=0.25, semantic=0.35, recency=0.25, score=0.15)
 
     s_corroborated = _compute_final_score(**base, weights=weights, confidence=0.7, evidence_count=3)
