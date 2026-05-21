@@ -26,6 +26,7 @@ from artemis.db import get_session
 from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.state_machine import LEGACY_STATUS_MAP, DeliverableState, transition
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio import invoke as ws_invoke
 from artemis.writing_rules import repository as wr_repo
@@ -231,7 +232,18 @@ async def update_draft(
         meta["folder_id"] = folder_id
 
     if "status" in body:
-        deliverable.status = str(body["status"])
+        status_str = str(body["status"])
+        target_state = LEGACY_STATUS_MAP.get(("deliverable", status_str))
+        if target_state is None:
+            target_state = DeliverableState(status_str)
+        await transition(
+            session,
+            "deliverable",
+            deliverable.id,
+            target_state,
+            actor="writing_studio_api",
+            reason="writing_studio_put_draft",
+        )
 
     if "content" in body:
         content_val = body["content"]
