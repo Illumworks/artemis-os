@@ -1982,6 +1982,97 @@ export async function listAutomationRunsApi(id, { limit = 20, cursor } = {}) {
   return res.json();
 }
 
+// ── Pipelines (PIPE1) ─────────────────────────────────────────────────────────
+
+export async function listPipelinesApi({ status, hasTrigger, limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (hasTrigger !== undefined) params.set("hasTrigger", String(hasTrigger));
+  if (limit !== 50) params.set("limit", String(limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/pipelines${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("listPipelinesApi failed");
+  return res.json();
+}
+
+export async function createPipelineApi(data) {
+  const res = await fetch("/api/pipelines/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "createPipelineApi failed");
+  }
+  return res.json();
+}
+
+export async function getPipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error("getPipelineApi failed");
+  return res.json();
+}
+
+export async function updatePipelineApi(id, data) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "updatePipelineApi failed");
+  }
+  return res.json();
+}
+
+export async function deletePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("deletePipelineApi failed");
+}
+
+export async function enablePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/enable`, { method: "POST" });
+  if (!res.ok) throw new Error("enablePipelineApi failed");
+  return res.json();
+}
+
+export async function disablePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/disable`, { method: "POST" });
+  if (!res.ok) throw new Error("disablePipelineApi failed");
+  return res.json();
+}
+
+export async function runPipelineApi(id, opts = {}) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "runPipelineApi failed");
+  }
+  return res.json();
+}
+
+export async function listPipelineRunsApi(id, { limit = 20, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", String(cursor));
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/runs?${params}`);
+  if (!res.ok) throw new Error("listPipelineRunsApi failed");
+  return res.json();
+}
+
+export async function cancelPipelineRunApi(runId) {
+  const res = await fetch(`/api/pipeline-runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("cancelPipelineRunApi failed");
+  return res.json();
+}
+
 // ── Approvals ─────────────────────────────────────────────────────────────────
 
 export async function listApprovalsApi({ status, targetType, limit = 50 } = {}) {

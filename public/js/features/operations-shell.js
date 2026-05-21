@@ -13,6 +13,7 @@ import {
   handleBuilderAction,
   initBuilderSurface,
 } from "./agent-builder.js";
+import { initPipelinesPage } from "./pipelines.js";
 
 const SHELL_CONTENT_SELECTOR = "#app-shell-content";
 const AGENT_LOADING_THRESHOLD = 0;
@@ -504,7 +505,8 @@ function isOperationsSurfaceView(view) {
     || normalized === "agents/builder"
     || normalized === "skills"
     || normalized === "workflows"
-    || normalized === "automations";
+    || normalized === "automations"
+    || normalized === "pipelines";
 }
 
 function scheduleRender() {
@@ -2792,6 +2794,12 @@ function renderOperationsError(title, message) {
   `;
 }
 
+function renderPipelinesPage() {
+  // Pipelines are rendered by the standalone pipelines.js module.
+  // We return a mount point and delegate rendering to initPipelinesPage.
+  return `<div id="pipelines-page-root"></div>`;
+}
+
 function buildOperationsMarkup(view) {
   const normalized = normalizeAppView(view);
   switch (normalized) {
@@ -2807,6 +2815,8 @@ function buildOperationsMarkup(view) {
       return renderWorkflowsPage();
     case "automations":
       return renderAutomationsPage();
+    case "pipelines":
+      return renderPipelinesPage();
     default:
       return "";
   }
@@ -2823,6 +2833,10 @@ export function renderOperationsView(view = getState("view")) {
   const shell = getShellContent();
   if (shell) {
     shell.innerHTML = markup;
+  }
+  // For the Pipelines sub-view, delegate to the pipelines module after DOM is set.
+  if (normalizeAppView(view) === "pipelines") {
+    initPipelinesPage();
   }
   return markup;
 }
@@ -3940,6 +3954,10 @@ export async function loadAutomationsShell() {
     await refreshAutomationsFromApi();
   }
   renderOperationsView("automations");
+}
+
+export function loadPipelinesShell() {
+  renderOperationsView("pipelines");
 }
 
 export async function loadCampaignOpsShell() {

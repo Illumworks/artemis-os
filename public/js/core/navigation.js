@@ -113,6 +113,15 @@ export const SECONDARY_NAV_DESTINATIONS = [
     focus: "workflows",
   },
   {
+    id: "pipelines",
+    label: "Pipelines",
+    shortLabel: "Pipelines",
+    description: "Unified orchestration primitives — nodes, edges, and trigger config. Visual canvas in PIPE2.",
+    section: "Operations",
+    view: "pipelines",
+    focus: "pipelines",
+  },
+  {
     id: "automations",
     label: "Automations",
     shortLabel: "Automations",
@@ -242,6 +251,7 @@ export function normalizeAppView(view) {
   if (view === "marketing-approvals") return MARKETING_APPROVALS_VIEW;
   if (view === "marketing-rulesets") return MARKETING_RULESETS_VIEW;
   if (view === "marketing-scout-runs") return MARKETING_SCOUT_RUNS_VIEW;
+  if (view === "pipelines") return "pipelines";
   if (view === "dev-projects") return "chat";
   if (view === "integrations") return INTEGRATIONS_VIEW;
   if (view === "command-center") return DEFAULT_APP_VIEW;
@@ -270,6 +280,7 @@ export function isShellView(view) {
     || normalizedView === "agents/builder"
     || normalizedView === "skills"
     || normalizedView === "automations"
+    || normalizedView === "pipelines"
     || normalizedView === MARKETING_OS_VIEW
     || normalizedView === MARKETING_DASHBOARD_VIEW
     || normalizedView === MARKETING_CAMPAIGNS_VIEW
