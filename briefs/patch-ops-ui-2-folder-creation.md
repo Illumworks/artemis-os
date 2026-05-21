@@ -44,6 +44,13 @@ Neither shipped. This patch adds both.
    - **Empty folders need to render** in the tree even with zero agents, until the user populates them. Add an `_empty_folders` localStorage list keyed by view session — when a folder is created via prompt but has no agents yet, it appears in the tree with an "Drop agent here" empty state.
    - Once a real agent is dragged in, the folder graduates from `_empty_folders` to natural (parsed from agent metadata). On reload, empty folders that still have zero agents disappear (cleaned from localStorage).
 
+4. **Save confirmation toast on Agent Card edits** (bonus fix, surfaced in walkthrough):
+   - Currently: clicking Save on the provider/model picker (or any agent detail-panel edit) persists correctly but provides no visual confirmation. Users don't know the save succeeded.
+   - Fix: after any successful PATCH from the Agent Card detail panel (provider/model, persona, instructions, etc.), call the existing branded `showToast()` helper (the one Codex 1 added in `patch-wave-walkthrough-bugs`) with title "Saved" and a subtle subtitle like "{Agent name} updated."
+   - Find every PATCH callsite in the agent detail-panel save handlers and add the toast call after `.then(...)` resolves.
+   - On error: toast with title "Save failed" + error message subtitle, using the same toast system but with warning color treatment.
+   - **Scope:** Agent Card panel only. Don't touch Pipeline canvas save (PIPE2 polish brief covers that) or Skill / other panels (out of scope).
+
 4. **Tests:**
    - Right-click on folder header → context menu appears
    - Click "Create subfolder" → prompt input → submit "Test" → folder appears (via empty-folders localStorage)
@@ -74,11 +81,11 @@ Neither shipped. This patch adds both.
 | File | LOC |
 |---|---|
 | `public/js/components/agent-tree.js` | ~60 delta (context menu logic, empty-folder rendering) |
-| `public/js/features/operations-shell.js` (or agents.js) | ~30 delta (context menu wiring, "+ New folder" button, "Add to folder" affordance on rows) |
+| `public/js/features/operations-shell.js` (or agents.js) | ~40 delta (context menu wiring, "+ New folder" button, "Add to folder" affordance on rows, save toast on agent PATCH callsites) |
 | `public/css/features/operations.css` (or agents.css) | ~30 delta (context menu styling, hover-affordance, empty-folder dropzone) |
 | `tests/unit/frontend/test_folder_creation.js` (new or appended) | ~30 |
 
-**Total: ~150 LOC.** Cap at 180.
+**Total: ~160 LOC.** Cap at 200 to accommodate the bonus save-toast fix.
 
 ## Test plan
 
