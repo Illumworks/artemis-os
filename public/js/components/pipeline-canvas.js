@@ -97,21 +97,19 @@ function edgePath(sx, sy, tx, ty) {
   return `M ${sx} ${sy} C ${sx + cp} ${sy}, ${tx - cp} ${ty}, ${tx} ${ty}`;
 }
 
+/**
+ * Return port center in local canvas-inner coordinate space.
+ * We use node.style.left/top (which are local-space px values) rather than
+ * getBoundingClientRect so the SVG paths — which also live inside the same
+ * canvas-inner transform container — are always in the same coordinate space
+ * as the nodes. This fixes the zoom+drag edge-break bug (Fix Path 1).
+ */
 function getPortCenter(nodeEl, port) {
-  const portEl = nodeEl.querySelector(`.pcv-port--${port}`);
-  if (!portEl) {
-    const r = nodeEl.getBoundingClientRect();
-    const cr = nodeEl.closest(".pcv-canvas-inner")?.getBoundingClientRect() || { left: 0, top: 0 };
-    return port === "out"
-      ? { x: parseFloat(nodeEl.style.left) + NODE_W, y: parseFloat(nodeEl.style.top) + NODE_H / 2 }
-      : { x: parseFloat(nodeEl.style.left),             y: parseFloat(nodeEl.style.top) + NODE_H / 2 };
-  }
-  const pr = portEl.getBoundingClientRect();
-  const cr = nodeEl.closest(".pcv-canvas-inner")?.getBoundingClientRect() || { left: 0, top: 0 };
-  return {
-    x: pr.left - cr.left + pr.width / 2,
-    y: pr.top  - cr.top  + pr.height / 2,
-  };
+  const x = parseFloat(nodeEl.style.left) || 0;
+  const y = parseFloat(nodeEl.style.top)  || 0;
+  return port === "out"
+    ? { x: x + NODE_W,      y: y + NODE_H / 2 }
+    : { x: x,               y: y + NODE_H / 2 };
 }
 
 // ── Auto-layout (simple topological left-to-right) ───────────────────────────
@@ -179,6 +177,19 @@ export class PipelineCanvas {
     this._palette = null;
     this._drawer = null;
     this.el = null;
+
+    // Pan state (view-only, not persisted to DB)
+    this._panX = 0;
+    this._panY = 0;
+    this._isPanning = false;
+    this._panStart = { x: 0, y: 0 };       // mouse position when pan began
+    this._panOrigin = { x: 0, y: 0 };      // _panX/_panY when pan began
+    this._spaceHeld = false;
+
+    // Performance: edge index by nodeId for O(connected) drag updates
+    this._edgeIndex = new Map(); // nodeId → Set<edgeId>
+    this._rafPending = false;    // requestAnimationFrame gate
+    this._dragPendingNode = null; // buffered drag state for RAF
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -195,8 +206,9 @@ export class PipelineCanvas {
 
   destroy() {
     document.removeEventListener("mousemove", this._onMouseMove);
-    document.removeEventListener("mouseup", this._onMouseUp);
-    document.removeEventListener("keydown", this._onKeyDown);
+    document.removeEventListener("mouseup",   this._onMouseUp);
+    document.removeEventListener("keydown",   this._onKeyDown);
+    document.removeEventListener("keyup",     this._onKeyUp);
     if (this.el) this.el.remove();
   }
 
@@ -363,7 +375,13 @@ export class PipelineCanvas {
     if (!g) return;
     g.innerHTML = "";
 
+    // Rebuild edge index for O(connected) drag updates
+    this._edgeIndex = new Map();
     for (const edge of this._state.edges) {
+      for (const nid of [edge.source_node_id, edge.target_node_id]) {
+        if (!this._edgeIndex.has(nid)) this._edgeIndex.set(nid, new Set());
+        this._edgeIndex.get(nid).add(edge.id);
+      }
       this._renderEdge(g, edge);
     }
   }
@@ -434,8 +452,16 @@ export class PipelineCanvas {
   _updateZoomLabel() {
     const lbl = this.el?.querySelector(".pcv-zoom-label");
     if (lbl) lbl.textContent = `${Math.round(this._state.zoom * 100)}%`;
+    this._applyTransform();
+  }
+
+  /** Apply combined pan + zoom transform to pcv-canvas-inner. */
+  _applyTransform() {
     const inner = this.el?.querySelector(".pcv-canvas-inner");
-    if (inner) inner.style.transform = `scale(${this._state.zoom})`;
+    if (inner) {
+      inner.style.transform =
+        `translate(${this._panX}px, ${this._panY}px) scale(${this._state.zoom})`;
+    }
   }
 
   _updateNodeSelections() {
@@ -518,11 +544,68 @@ export class PipelineCanvas {
       }
     });
 
+    // Wheel: ctrlKey → zoom; no ctrlKey → pan (trackpad two-finger scroll)
+    canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        // Zoom
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        this._state.zoom = Math.min(2.0, Math.max(0.25, this._state.zoom + delta));
+        this._updateZoomLabel();
+      } else {
+        // Pan (trackpad two-finger or horizontal scroll)
+        this._panX -= e.deltaX;
+        this._panY -= e.deltaY;
+        this._applyTransform();
+      }
+    }, { passive: false });
+
+    // Middle-mouse drag → pan (mousedown/up wired to document for capture)
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        // Middle-mouse pan only if no node drag is active
+        if (!this._draggingNodeId) {
+          this._startPan(e);
+        }
+      }
+    });
+
+    // Space+left-drag → pan; wired via _wireKeyboard + mousedown on canvas
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button === 0 && this._spaceHeld && !this._draggingNodeId) {
+        e.preventDefault();
+        e.stopPropagation();
+        this._startPan(e);
+      }
+    });
+
     // Mouse events for node drag + edge creation
     this._onMouseMove = this._handleMouseMove.bind(this);
     this._onMouseUp   = this._handleMouseUp.bind(this);
     document.addEventListener("mousemove", this._onMouseMove);
     document.addEventListener("mouseup",   this._onMouseUp);
+  }
+
+  _startPan(e) {
+    this._isPanning = true;
+    this._panStart  = { x: e.clientX, y: e.clientY };
+    this._panOrigin = { x: this._panX,  y: this._panY  };
+    this._updatePanCursor();
+  }
+
+  _updatePanCursor() {
+    const canvas = this.el?.querySelector(".pcv-canvas");
+    if (!canvas) return;
+    if (this._isPanning) {
+      canvas.classList.add("panning");
+      canvas.classList.remove("pan-ready");
+    } else if (this._spaceHeld) {
+      canvas.classList.remove("panning");
+      canvas.classList.add("pan-ready");
+    } else {
+      canvas.classList.remove("panning", "pan-ready");
+    }
   }
 
   _wireNodeCard(card, nodeId) {
@@ -584,27 +667,30 @@ export class PipelineCanvas {
   // ── Mouse handlers ────────────────────────────────────────────────────────
 
   _handleMouseMove(e) {
-    // Node drag
+    // Pan
+    if (this._isPanning) {
+      this._panX = this._panOrigin.x + (e.clientX - this._panStart.x);
+      this._panY = this._panOrigin.y + (e.clientY - this._panStart.y);
+      this._applyTransform();
+      return;
+    }
+
+    // Node drag — throttled via requestAnimationFrame
     if (this._draggingNodeId) {
       const inner = this.el?.querySelector(".pcv-canvas-inner");
       if (!inner) return;
       const rect = inner.getBoundingClientRect();
       const scale = this._state.zoom;
+      // Compute position in local canvas space (undo scale, undo pan-offset that
+      // getBoundingClientRect already includes after applyTransform)
       const x = (e.clientX - rect.left) / scale - this._dragOffset.x;
       const y = (e.clientY - rect.top)  / scale - this._dragOffset.y;
 
-      const node = this._state.nodes.find((n) => n.id === this._draggingNodeId);
-      if (node) {
-        if (!this._pushUndoForDrag) {
-          pushUndo(this._state);
-          this._pushUndoForDrag = true;
-        }
-        node.position.x = Math.max(0, x);
-        node.position.y = Math.max(0, y);
-        const el = this._nodeEls.get(this._draggingNodeId);
-        if (el) updateNodeCardPosition(el, node.position.x, node.position.y);
-        this._renderEdges();
-        this._markDirty();
+      // Buffer the drag update; RAF will flush it
+      this._dragPendingNode = { id: this._draggingNodeId, x: Math.max(0, x), y: Math.max(0, y) };
+      if (!this._rafPending) {
+        this._rafPending = true;
+        requestAnimationFrame(() => this._flushDrag());
       }
     }
 
@@ -628,8 +714,64 @@ export class PipelineCanvas {
     }
   }
 
+  /** Flush a buffered node drag update — called inside requestAnimationFrame. */
+  _flushDrag() {
+    this._rafPending = false;
+    const pending = this._dragPendingNode;
+    if (!pending) return;
+    this._dragPendingNode = null;
+
+    const node = this._state.nodes.find((n) => n.id === pending.id);
+    if (!node) return;
+
+    if (!this._pushUndoForDrag) {
+      pushUndo(this._state);
+      this._pushUndoForDrag = true;
+    }
+    node.position.x = pending.x;
+    node.position.y = pending.y;
+    const el = this._nodeEls.get(pending.id);
+    if (el) updateNodeCardPosition(el, node.position.x, node.position.y);
+
+    // Only update edges connected to the dragged node (O(connected) not O(all))
+    this._updateConnectedEdges(pending.id);
+    this._markDirty();
+  }
+
+  /** Recompute only the SVG paths for edges connected to a given node. */
+  _updateConnectedEdges(nodeId) {
+    const g = this.el?.querySelector(".pcv-edges-g");
+    if (!g) return;
+    const connectedEdgeIds = this._edgeIndex.get(nodeId);
+    if (!connectedEdgeIds || connectedEdgeIds.size === 0) return;
+
+    for (const edgeId of connectedEdgeIds) {
+      const edge = this._state.edges.find((e) => e.id === edgeId);
+      if (!edge) continue;
+      const srcEl = this._nodeEls.get(edge.source_node_id);
+      const tgtEl = this._nodeEls.get(edge.target_node_id);
+      if (!srcEl || !tgtEl) continue;
+
+      const src = getPortCenter(srcEl, "out");
+      const tgt = getPortCenter(tgtEl, "in");
+      const d   = edgePath(src.x, src.y, tgt.x, tgt.y);
+
+      // Update both the hit path and the visible path in-place
+      g.querySelectorAll(`[data-edge-id="${edgeId}"]`).forEach((el) => {
+        if (el.tagName === "path") el.setAttribute("d", d);
+      });
+    }
+  }
+
   _handleMouseUp(e) {
+    if (this._isPanning) {
+      this._isPanning = false;
+      this._updatePanCursor();
+      return;
+    }
     if (this._draggingNodeId) {
+      // Flush any buffered RAF drag so the final position is committed
+      if (this._dragPendingNode) this._flushDrag();
       const el = this._nodeEls.get(this._draggingNodeId);
       if (el) el.classList.remove("pcv-node--dragging");
       this._draggingNodeId = null;
@@ -867,6 +1009,14 @@ export class PipelineCanvas {
       const onCanvas = this.el?.contains(document.activeElement) || document.activeElement === document.body;
       if (!onCanvas) return;
 
+      // Space → pan-ready cursor (actual pan starts on mousedown)
+      if (e.key === " " && !e.target.matches("input,textarea,[contenteditable]")) {
+        e.preventDefault();
+        this._spaceHeld = true;
+        this._updatePanCursor();
+        return;
+      }
+
       const isMeta = e.metaKey || e.ctrlKey;
       if (isMeta && e.key === "s") { e.preventDefault(); this._save(); return; }
       if (isMeta && e.key === "z") { e.preventDefault(); this._undo(); return; }
@@ -877,7 +1027,18 @@ export class PipelineCanvas {
         this._deleteSelected();
       }
     };
+    this._onKeyUp = (e) => {
+      if (e.key === " ") {
+        this._spaceHeld = false;
+        // Cancel space-triggered pan if still panning (but not mid-drag)
+        if (this._isPanning) {
+          this._isPanning = false;
+        }
+        this._updatePanCursor();
+      }
+    };
     document.addEventListener("keydown", this._onKeyDown);
+    document.addEventListener("keyup",   this._onKeyUp);
   }
 
   // ── Undo / redo ───────────────────────────────────────────────────────────
@@ -1045,6 +1206,16 @@ export class PipelineCanvas {
 
   getNodeById(id) {
     return this._state.nodes.find((n) => n.id === id);
+  }
+
+  /** Returns view-only pan offset {x, y}. Not stored in pipeline data. */
+  getPan() {
+    return { x: this._panX, y: this._panY };
+  }
+
+  /** Returns current zoom level. */
+  getZoom() {
+    return this._state.zoom;
   }
 }
 
