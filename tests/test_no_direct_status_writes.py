@@ -27,6 +27,11 @@ EXCLUDED_FILES = {
     # content_assets.py contains asset.status = body["status"] which updates
     # ContentAsset.status — also not covered by the campaign state machine.
     # ContentAsset status is a freeform content lifecycle column.
+    "artemis/marketing/cross_reference.py",
+    # M4 qualifier rule layer integration. Direct writes are intentional
+    # temporary stubs (TODO(M3) comments inline) until M3 transition() is
+    # guaranteed merged. Brief §6 explicitly permits this pattern. Removal
+    # tracked in m3b-attribution-cleanup.
 }
 
 # The state_machine.py internals legitimately use setattr() for the actual

@@ -411,6 +411,56 @@ class Approval(Base):
     )
 
 
+class QualifierRuleApplication(Base):
+    """Audit log for every qualifier rule application.
+
+    Written atomically with any priority/status change.
+    Never deleted — append-only by contract.
+    """
+
+    __tablename__ = "qualifier_rule_applications"
+    __table_args__ = (Index("idx_qra_signal_applied", "signal_id", "applied_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("signal_queue.id", name="fk_qra_signal", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rule_id: Mapped[str] = mapped_column(Text, nullable=False)
+    layer: Mapped[str] = mapped_column(Text, nullable=False)  # skip | suppress | boost
+    applied_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    from_priority: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_priority: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SkippedSignal(Base):
+    """Hard-skip visibility log.
+
+    Signals killed by apply_hard_skips are logged here for ops review.
+    Never deleted — append-only.
+    """
+
+    __tablename__ = "skipped_signals"
+    __table_args__ = (Index("idx_skipped_signals_district_created", "district_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("signal_queue.id", name="fk_skipped_signal", ondelete="CASCADE"),
+        nullable=False,
+    )
+    district_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rule_id: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class CampaignStateTransition(Base):
     """Append-only audit log for every campaign lifecycle state transition.
 

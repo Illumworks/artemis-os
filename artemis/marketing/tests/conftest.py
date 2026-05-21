@@ -28,7 +28,7 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 import artemis.db
-import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata
+import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata (incl. QualifierRuleApplication, SkippedSignal)
 from artemis.db import attach_pgvector_codec
 
 # Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
@@ -66,6 +66,8 @@ _TRUNCATE_SQL = text(
     "campaign_briefs, "
     "campaign_candidates, "
     "scout_runs, "
+    "qualifier_rule_applications, "
+    "skipped_signals, "
     "signal_queue, "
     "rulesets, "
     "territory_config, "
