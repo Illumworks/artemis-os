@@ -37,6 +37,7 @@ const OPS_AGENT_DRAFT_KEY = "artemis-ops-agent-draft";
 const OPS_AGENT_TREE_COLLAPSED_KEY = "artemis.agents.tree.collapsed";
 const OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY = "artemis.agents.custom-tree.collapsed";
 const OPS_AGENT_VIEW_MODE_KEY = "artemis.agents.view-mode";
+const OPS_AGENT_EMPTY_FOLDERS_KEY = "artemis.agents.empty-folders";
 const OPS_WORKFLOW_DRAFT_KEY = "artemis-ops-workflow-draft";
 const OPS_CAMPAIGN_NOTE_KEY = "artemis-ops-campaign-notes";
 const WRITING_STUDIO_HANDOFF_KEY = "artemis-writing-studio-handoff";
@@ -80,14 +81,31 @@ function parseSkillFrontMatter(text) {
   return { meta, body: lines.slice(bodyStart).join("\n").trim() };
 }
 
-function showOpsImportToast(message, isError = false) {
+function showToast(label, title = "", { isError = false, ms = 4000 } = {}) {
   const container = document.getElementById("toast-container");
   if (!container) return;
   const toast = document.createElement("div");
-  toast.className = `toast${isError ? " error" : ""}`;
-  toast.textContent = message;
+  toast.className = `bg-toast${isError ? " toast-error" : ""}`;
+  toast.innerHTML = `
+    <span class="bg-toast-dot"></span>
+    <div class="bg-toast-body">
+      <div class="bg-toast-label"></div>
+      <div class="bg-toast-title"></div>
+    </div>
+    <button class="bg-toast-close" type="button" title="Dismiss">&times;</button>`;
+  toast.querySelector(".bg-toast-label").textContent = label;
+  toast.querySelector(".bg-toast-title").textContent = title;
+  const dismiss = () => {
+    toast.classList.add("toast-exit");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  };
+  toast.querySelector(".bg-toast-close")?.addEventListener("click", dismiss);
   container.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
+  setTimeout(() => { if (toast.parentNode) dismiss(); }, ms);
+}
+
+function showOpsImportToast(message, isError = false) {
+  showToast(isError ? "Action failed" : "Done", message, { isError });
 }
 
 function showOpsConfirm({ title, message, confirmLabel = "Delete", onConfirm }) {
@@ -473,6 +491,7 @@ let agentTreeFilters = { statuses: [], triggers: [] };
 let agentTreeCollapsed = readStorage(OPS_AGENT_TREE_COLLAPSED_KEY, {});
 let agentCustomTreeCollapsed = readStorage(OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY, {});
 let agentViewMode = readStorage(OPS_AGENT_VIEW_MODE_KEY, "slug") === "custom" ? "custom" : "slug";
+let agentEmptyFolders = readStorage(OPS_AGENT_EMPTY_FOLDERS_KEY, []);
 let workflowDraft = null;
 // Latest run data for the selected workflow, loaded on selection + refreshed on Run now.
 let _latestWorkflowRun = null;
@@ -992,8 +1011,30 @@ function isTreeCollapsed(kind, id) {
 }
 
 function getAgentFolders(agents = getAgents()) {
-  return [...new Set(agents.map((agent) => normalizeDisplayFolder(agent.metadata?.display_folder)).filter(Boolean))]
+  return [...new Set([
+    ...agents.map((agent) => normalizeDisplayFolder(agent.metadata?.display_folder)).filter(Boolean),
+    ...agentEmptyFolders.map((folder) => normalizeDisplayFolder(folder)).filter(Boolean),
+  ])]
     .sort((a, b) => a.localeCompare(b));
+}
+
+function persistEmptyFolders() {
+  const real = new Set(getAgents().map((agent) => normalizeDisplayFolder(agent.metadata?.display_folder)).filter(Boolean));
+  agentEmptyFolders = [...new Set(agentEmptyFolders.map(normalizeDisplayFolder).filter((folder) => folder && !real.has(folder)))]
+    .sort((a, b) => a.localeCompare(b));
+  writeStorage(OPS_AGENT_EMPTY_FOLDERS_KEY, agentEmptyFolders);
+}
+
+function createEmptyFolder(basePath = "") {
+  const base = normalizeDisplayFolder(basePath);
+  const name = normalizeDisplayFolder(window.prompt?.("New folder name") || "");
+  if (!name) return;
+  const path = normalizeDisplayFolder([base, name].filter(Boolean).join("/"));
+  agentEmptyFolders = [...new Set([...agentEmptyFolders, path])];
+  persistEmptyFolders();
+  agentViewMode = "custom";
+  writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+  renderOperationsView("agents");
 }
 
 function renderAgentViewToggle() {
@@ -1026,6 +1067,7 @@ function renderAgentTreeControls() {
         <option value="health"${agentTreeSort === "health" ? " selected" : ""}>By run health</option>
       </select>
       ${renderAgentViewToggle()}
+      ${agentViewMode === "custom" ? `<button type="button" class="ops-agent-new-folder" data-ops-action="create-agent-folder">+ New folder</button>` : ""}
       <div class="ops-agent-tree-filters" aria-label="Filter agents">
         ${chips.map(([group, value, label]) => {
           const active = group === "status"
@@ -1056,7 +1098,7 @@ function renderAgentTreeRow(agent, selectedAgent, { custom = false } = {}) {
         <span class="ops-agent-tree-model">${escapeHtml(agent.modelLabel || "default")}</span>
         <span class="ops-agent-tree-run"><i class="ops-agent-dot ops-agent-dot-${escapeAttr(health)}"></i>${escapeHtml(agent.lastRun || "never")} &middot; ${escapeHtml(trigger)}</span>
       </span>
-      ${!custom ? `<span class="ops-agent-folder-action" data-ops-action="add-agent-to-folder" data-agent-id="${escapeAttr(agent.id)}" title="Add to folder">+</span>` : ""}
+      <span class="ops-agent-folder-action" data-ops-action="add-agent-to-folder" data-agent-id="${escapeAttr(agent.id)}" title="Add to folder">+</span>
     </button>
   `;
 }
@@ -1079,7 +1121,7 @@ function renderCustomAgentNodes(nodes, selectedAgent) {
         <div class="ops-agent-tree-rows${collapsed ? " hidden" : ""}">
           ${node.agents.length ? node.agents.map((item) => renderAgentTreeRow(item, selectedAgent, { custom: true })).join("") : ""}
           ${node.children.length ? renderCustomAgentNodes(node.children, selectedAgent) : ""}
-          ${!node.agents.length && !node.children.length ? `<div class="ops-agent-tree-empty">No agents matching filter.</div>` : ""}
+          ${!node.agents.length && !node.children.length ? `<div class="ops-agent-tree-empty ops-agent-empty-dropzone">Drop agent here</div>` : ""}
         </div>
       </section>
     `;
@@ -1092,6 +1134,7 @@ function renderAgentTree(agents, selectedAgent) {
       query: agentTreeSearch.trim(),
       sort: agentTreeSort,
       filters: agentTreeFilters,
+      emptyFolders: agentEmptyFolders,
     });
     return `
       ${renderAgentTreeControls()}
@@ -1153,13 +1196,17 @@ async function patchAgentDisplayFolder(agentId, folderPath) {
 }
 
 async function moveAgentToFolder(agentId, folderPath, { flipView = true } = {}) {
+  const nextFolder = normalizeDisplayFolder(folderPath);
   await patchAgentDisplayFolder(agentId, folderPath);
+  agentEmptyFolders = agentEmptyFolders.filter((folder) => normalizeDisplayFolder(folder) !== nextFolder);
+  persistEmptyFolders();
   if (flipView) {
     agentViewMode = "custom";
     writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
   }
   await refreshAgentsFromApi();
   renderOperationsView("agents");
+  showToast("Moved", nextFolder ? `Moved to ${nextFolder}.` : "Moved to Unsorted.");
 }
 
 async function moveFolderToFolder(sourcePath, targetPath) {
@@ -1182,25 +1229,54 @@ async function moveFolderToFolder(sourcePath, targetPath) {
 }
 
 function promptFolderForAgent(agentId) {
+  document.querySelector(".ops-agent-folder-menu")?.remove();
+  const button = document.querySelector(`[data-ops-action="add-agent-to-folder"][data-agent-id="${CSS.escape(agentId)}"]`);
+  const rect = button?.getBoundingClientRect();
+  const menu = document.createElement("div");
+  menu.className = "ops-agent-folder-menu";
+  menu.style.left = `${Math.min(rect?.left || 16, window.innerWidth - 240)}px`;
+  menu.style.top = `${(rect?.bottom || 16) + 6}px`;
   const folders = getAgentFolders();
-  const choice = window.prompt?.(`Folder for ${agentId}\nExisting: ${folders.join(", ") || "none"}\nType a folder name, or leave blank for Unsorted.`);
-  if (choice == null) return;
-  void moveAgentToFolder(agentId, choice).catch((err) => showOpsImportToast(err.message || "Move failed", true));
+  menu.innerHTML = `
+    <div class="ops-agent-folder-menu-title">Add to folder</div>
+    ${folders.length ? folders.map((folder) => `<button type="button" data-folder="${escapeAttr(folder)}">${escapeHtml(folder)}</button>`).join("") : `<div class="ops-agent-folder-menu-empty">No folders yet</div>`}
+    <button type="button" data-folder="">Unsorted</button>
+    <hr>
+    <button type="button" data-new-folder>+ New folder...</button>
+  `;
+  menu.addEventListener("click", (event) => {
+    const item = event.target.closest("button");
+    if (!item) return;
+    event.stopPropagation();
+    menu.remove();
+    if (item.hasAttribute("data-new-folder")) {
+      const name = normalizeDisplayFolder(window.prompt?.("New folder name") || "");
+      if (name) void moveAgentToFolder(agentId, name).catch((err) => showToast("Move failed", err.message || "Could not move agent.", { isError: true }));
+      return;
+    }
+    void moveAgentToFolder(agentId, item.dataset.folder || "").catch((err) => showToast("Move failed", err.message || "Could not move agent.", { isError: true }));
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
 }
 
-function showFolderContextMenu(folderPath) {
+function showFolderContextMenu(folderPath, x = 16, y = 16) {
   const folder = normalizeDisplayFolder(folderPath);
-  if (!folder) return;
-  const action = window.prompt?.(`Folder: ${folder}\nType: create, rename, or delete`);
-  if (!action) return;
-  const normalized = action.trim().toLowerCase();
-  if (normalized === "create") {
-    const name = window.prompt?.("Subfolder name");
-    const agentId = name ? window.prompt?.(`Agent id to move into ${folder}/${name}`) : "";
-    if (agentId) void moveAgentToFolder(agentId, `${folder}/${name}`).catch((err) => showOpsImportToast(err.message || "Move failed", true));
-    return;
-  }
-  if (normalized === "rename") {
+  document.querySelector(".ops-agent-folder-menu")?.remove();
+  const menu = document.createElement("div");
+  menu.className = "ops-agent-folder-menu ops-agent-context-menu";
+  menu.style.left = `${Math.min(x, window.innerWidth - 240)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 160)}px`;
+  menu.innerHTML = `
+    <button type="button" data-folder-action="create">Create subfolder...</button>
+    ${folder ? `<button type="button" data-folder-action="rename">Rename folder...</button><button type="button" data-folder-action="delete">Delete folder...</button>` : ""}
+  `;
+  menu.addEventListener("click", (event) => {
+    const action = event.target.closest("button")?.dataset.folderAction || "";
+    if (!action) return;
+    menu.remove();
+    if (action === "create") { createEmptyFolder(folder); return; }
+    if (action === "rename") {
     const next = normalizeDisplayFolder(window.prompt?.("Rename folder to", folder));
     if (!next) return;
     const agents = getAgents().filter((agent) => {
@@ -1212,12 +1288,21 @@ function showFolderContextMenu(folderPath) {
       const suffix = current === folder ? "" : current.slice(folder.length + 1);
       return patchAgentDisplayFolder(agent.id, [next, suffix].filter(Boolean).join("/"));
     })).then(async () => {
+      agentEmptyFolders = agentEmptyFolders.map((item) => {
+        const current = normalizeDisplayFolder(item);
+        if (current === folder) return next;
+        if (current.startsWith(`${folder}/`)) return [next, current.slice(folder.length + 1)].filter(Boolean).join("/");
+        return current;
+      });
       await refreshAgentsFromApi();
+      persistEmptyFolders();
       renderOperationsView("agents");
-    }).catch((err) => showOpsImportToast(err.message || "Rename failed", true));
+      showToast("Saved", `Renamed to ${next}.`);
+    }).catch((err) => showToast("Save failed", err.message || "Rename failed.", { isError: true }));
     return;
   }
-  if (normalized === "delete") {
+    if (action === "delete") {
+    if (!window.confirm?.(`Delete "${folder}" and move agents to Unsorted?`)) return;
     const agents = getAgents().filter((agent) => {
       const current = normalizeDisplayFolder(agent.metadata?.display_folder);
       return current === folder || current.startsWith(`${folder}/`);
@@ -1225,10 +1310,19 @@ function showFolderContextMenu(folderPath) {
     void Promise.all(agents.map((agent) => patchAgentDisplayFolder(agent.id, "")))
       .then(async () => {
         await refreshAgentsFromApi();
+        agentEmptyFolders = agentEmptyFolders.filter((item) => {
+          const current = normalizeDisplayFolder(item);
+          return current !== folder && !current.startsWith(`${folder}/`);
+        });
+        persistEmptyFolders();
         renderOperationsView("agents");
+        showToast("Saved", `${folder} deleted.`);
       })
-      .catch((err) => showOpsImportToast(err.message || "Delete failed", true));
-  }
+      .catch((err) => showToast("Save failed", err.message || "Delete failed.", { isError: true }));
+    }
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
 }
 
 function ensureWorkflowSelection(workflows) {
@@ -3132,6 +3226,7 @@ async function refreshAgentsFromApi() {
   setState("agentDags", dags);
   setState("agentMetrics", metrics);
   setState("agentsLoaded", true);
+  persistEmptyFolders();
 }
 
 async function loadEnrichedAgent(agentId) {
@@ -3249,6 +3344,7 @@ async function saveAgentDraft() {
   await refreshAgentsFromApi();
   await loadEnrichedAgent(selectedAgentId);
   renderOperationsView("agents");
+  showToast("Saved", `${payload.title} updated.`);
 }
 
 async function savePersonaDraft() {
@@ -3268,8 +3364,10 @@ async function savePersonaDraft() {
     _enrichedAgent = null;
     await loadEnrichedAgent(selectedAgentId);
     renderOperationsView("agents");
+    const agent = getAgents().find((item) => item.id === selectedAgentId);
+    showToast("Saved", `${agent?.title || selectedAgentId} updated.`);
   } catch (err) {
-    window.alert?.(`Failed to save persona: ${err?.message || String(err)}`);
+    showToast("Save failed", err?.message || String(err), { isError: true });
   }
 }
 
@@ -3424,7 +3522,7 @@ function handleOperationsContextMenu(event) {
   const folder = event.target.closest(".ops-agent-custom-folder[data-folder-path]");
   if (!folder || agentViewMode !== "custom") return;
   event.preventDefault();
-  showFolderContextMenu(folder.dataset.folderPath || "");
+  showFolderContextMenu(folder.dataset.folderPath || "", event.clientX, event.clientY);
 }
 
 function handleOperationsDragover(event) {
@@ -3681,6 +3779,10 @@ function handleOperationsClick(event) {
     renderOperationsView("agents");
     return;
   }
+  if (action === "create-agent-folder") {
+    createEmptyFolder();
+    return;
+  }
   if (action === "add-agent-to-folder") {
     event.preventDefault();
     event.stopPropagation();
@@ -3730,11 +3832,11 @@ function handleOperationsClick(event) {
     return;
   }
   if (action === "save-agent") {
-    void saveAgentDraft();
+    void saveAgentDraft().catch((err) => showToast("Save failed", err.message || "Could not save agent.", { isError: true }));
     return;
   }
   if (action === "save-persona") {
-    void savePersonaDraft();
+    void savePersonaDraft().catch((err) => showToast("Save failed", err.message || "Could not save persona.", { isError: true }));
     return;
   }
   if (action === "reset-persona") {

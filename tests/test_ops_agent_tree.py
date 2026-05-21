@@ -102,11 +102,18 @@ def test_operations_shell_persists_collapse_namespace_and_compact_rows() -> None
     shell = OPS_SHELL.read_text()
     css = OPS_CSS.read_text()
     assert 'OPS_AGENT_TREE_COLLAPSED_KEY = "artemis.agents.tree.collapsed"' in shell
+    assert 'OPS_AGENT_EMPTY_FOLDERS_KEY = "artemis.agents.empty-folders"' in shell
     assert 'OPS_AGENT_VIEW_MODE_KEY = "artemis.agents.view-mode"' in shell
     assert 'data-ops-action="set-agent-view-mode"' in shell
     assert 'data-ops-action="add-agent-to-folder"' in shell
+    assert 'data-ops-action="create-agent-folder"' in shell
+    assert "ops-agent-folder-menu" in shell
+    assert "Create subfolder..." in shell
+    assert "+ New folder..." in shell
     assert 'data-ops-action="select-agent"' in shell
     assert "min-height: 50px;" in css
+    assert ".ops-agent-new-folder" in css
+    assert ".ops-agent-empty-dropzone" in css
 
 
 def test_custom_tree_groups_display_folders_and_unsorted_first() -> None:
@@ -134,3 +141,20 @@ def test_custom_tree_groups_display_folders_and_unsorted_first() -> None:
         "marketing.scout.board_minutes",
     ]
     assert data["normalized"] == "Team/Priority"
+
+
+def test_custom_tree_renders_empty_folder_placeholders() -> None:
+    data = run_tree_script(
+        """
+        const view = createCustomAgentTreeView(agents, { emptyFolders: ["Top Picks", "Marketing/Empty"] });
+        const marketing = view.find((node) => node.id === "Marketing");
+        console.log(JSON.stringify({
+          roots: view.map((node) => node.id),
+          topPicksTotal: view.find((node) => node.id === "Top Picks").total,
+          emptyChild: marketing.children.some((node) => node.id === "Marketing/Empty" && node.agents.length === 0),
+        }));
+        """
+    )
+    assert "Top Picks" in data["roots"]
+    assert data["topPicksTotal"] == 0
+    assert data["emptyChild"] is True

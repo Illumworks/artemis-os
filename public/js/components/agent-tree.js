@@ -146,6 +146,10 @@ export function createCustomAgentTreeView(agents = [], options = {}) {
       ensureCustomNode(roots, path).total += 1;
     }
   }
+  for (const folder of options.emptyFolders || []) {
+    const path = normalizeDisplayFolder(folder);
+    if (path) ensureCustomNode(roots, path);
+  }
   const sortNodes = (nodes) => nodes
     .sort((a, b) => (a.id === "Unsorted" ? -1 : b.id === "Unsorted" ? 1 : a.label.localeCompare(b.label)))
     .map((node) => ({
