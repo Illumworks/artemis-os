@@ -39,6 +39,7 @@ from artemis.marketing.routes import (
     signal_queue,
     writing_studio,
 )
+from artemis.marketing.scout_scheduler import start_scout_scheduler, stop_scout_scheduler
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
@@ -82,6 +83,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_token_refresh_scheduler()
     # Start the automation cron scheduler (OP1).
     start_automation_scheduler()
+    # Start the scout execution scheduler (M5b).
+    start_scout_scheduler()
     try:
         yield
     finally:
@@ -92,6 +95,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_meeting_scheduler()
         stop_token_refresh_scheduler()
         stop_automation_scheduler()
+        stop_scout_scheduler()
 
 
 app = FastAPI(

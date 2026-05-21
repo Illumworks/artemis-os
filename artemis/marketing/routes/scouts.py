@@ -1,10 +1,11 @@
 """Scouts router — /api/scouts.
 
 Endpoints:
-  GET  /packages        — list declarative scout package definitions
-  GET  /runs            — paginated run history
-  GET  /runs/{id}       — single run detail
-  POST /runs            — manual harness: dry-run or commit a batch of findings
+  GET  /packages                   — list declarative scout package definitions
+  GET  /runs                       — paginated run history
+  GET  /runs/{id}                  — single run detail
+  POST /runs                       — manual harness: dry-run or commit a batch of findings
+  POST /agents/{agent_id}/run      — M5b: trigger a scout run manually (returns ScoutRunResult)
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from artemis.marketing.repository import (
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.scout_runner import ScoutMode, ScoutRunResult, run_scout
 
 # ── Package catalogue ─────────────────────────────────────────────────────────
 
@@ -280,6 +282,36 @@ async def create_run(
         "skippedCount": len(validation_errors) + len(duplicates),
         "createdSignalIds": created_signal_ids,
         "errors": all_errors,
+    }
+
+
+@router.post("/agents/{agent_id}/run")
+async def manual_run_scout(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Trigger a scout run manually.
+
+    Returns ScoutRunResult JSON. Useful for testing and the UI's 'Run now' button.
+    Returns 404 if the agent_id is not found in the agents table.
+    """
+    try:
+        result: ScoutRunResult = await run_scout(session, agent_id, ScoutMode.manual)
+        await session.commit()
+    except ValueError as exc:
+        raise not_found(str(exc), "agent_not_found")  # noqa: B904
+    return {
+        "agentId": result.agent_id,
+        "runId": result.run_id,
+        "mode": result.mode,
+        "status": result.status,
+        "itemsProcessed": result.items_processed,
+        "signalsEmitted": result.signals_emitted,
+        "signalsRejected": result.signals_rejected,
+        "costUsd": result.cost_usd,
+        "errors": result.errors,
+        "startedAt": result.started_at.isoformat() if result.started_at else None,
+        "endedAt": result.ended_at.isoformat() if result.ended_at else None,
     }
 
 
