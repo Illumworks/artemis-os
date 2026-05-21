@@ -1019,9 +1019,6 @@ function getAgentFolders(agents = getAgents()) {
 }
 
 function persistEmptyFolders() {
-  const real = new Set(getAgents().map((agent) => normalizeDisplayFolder(agent.metadata?.display_folder)).filter(Boolean));
-  agentEmptyFolders = [...new Set(agentEmptyFolders.map(normalizeDisplayFolder).filter((folder) => folder && !real.has(folder)))]
-    .sort((a, b) => a.localeCompare(b));
   writeStorage(OPS_AGENT_EMPTY_FOLDERS_KEY, agentEmptyFolders);
 }
 
@@ -1198,8 +1195,6 @@ async function patchAgentDisplayFolder(agentId, folderPath) {
 async function moveAgentToFolder(agentId, folderPath, { flipView = true } = {}) {
   const nextFolder = normalizeDisplayFolder(folderPath);
   await patchAgentDisplayFolder(agentId, folderPath);
-  agentEmptyFolders = agentEmptyFolders.filter((folder) => normalizeDisplayFolder(folder) !== nextFolder);
-  persistEmptyFolders();
   if (flipView) {
     agentViewMode = "custom";
     writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
@@ -3226,7 +3221,6 @@ async function refreshAgentsFromApi() {
   setState("agentDags", dags);
   setState("agentMetrics", metrics);
   setState("agentsLoaded", true);
-  persistEmptyFolders();
 }
 
 async function loadEnrichedAgent(agentId) {
