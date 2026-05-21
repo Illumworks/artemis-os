@@ -1,9 +1,10 @@
 /**
- * Pipelines page — PIPE1
- * List + JSON editor. Visual canvas in PIPE2; execution in PIPE4.
+ * Pipelines page — PIPE1 + PIPE2
+ * List + visual canvas (default) + JSON editor (power-user fallback).
  */
 import { escapeHtml } from "../core/utils.js";
 import * as api from "../core/api.js";
+import { PipelineCanvas } from "../components/pipeline-canvas.js";
 
 let _pipelines = [];
 let _loaded = false;
@@ -14,6 +15,9 @@ let _editing = null;
 let _editJson = "";
 let _editErr = null;
 let _showNew = false;
+
+// PIPE2: active canvas instance
+let _canvas = null;
 
 const MOUNT = "#pipelines-page-root";
 const getRoot = () => document.querySelector(MOUNT);
@@ -100,8 +104,9 @@ function card(p) {
   const nodes = (p.nodes || []).length;
   const compact = nodes <= 1;
   const actions = `
+    <button class="pbtn pbtn-p popen-canvas" data-id="${p.id}">Open Canvas</button>
     <button class="pbtn pbtn-g pedit" data-id="${p.id}">Edit JSON</button>
-    <button class="pbtn pbtn-p prun" data-id="${p.id}">Run</button>`;
+    <button class="pbtn pbtn-g prun" data-id="${p.id}">Run</button>`;
   if (compact) {
     return `<div class="pcard pcard-c" data-pid="${p.id}">
       <div class="pcc">${dot(p.status)}<span class="pcn">${escapeHtml(p.name)}</span>
@@ -211,11 +216,58 @@ function wire(root) {
       await loadPipelines();
     } catch (e) { showToast("Run failed", e.message, { isError: true }); }
   }));
+  root.querySelectorAll(".popen-canvas").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const p = _pipelines.find((x) => x.id === b.dataset.id);
+    if (p) openCanvas(p);
+  }));
+}
+
+// ── PIPE2: Canvas view ─────────────────────────────────────────────────────
+
+let _canvasOverlay = null;
+
+function openCanvas(pipeline) {
+  // Tear down any existing canvas
+  closeCanvas();
+
+  _canvasOverlay = document.createElement("div");
+  _canvasOverlay.className = "pcv-overlay";
+
+  const header = document.createElement("div");
+  header.className = "pcv-overlay-header";
+  header.innerHTML = `
+    <span class="pcv-overlay-title">${escapeHtml(pipeline.name)}</span>
+    <button class="pbtn pbtn-g pcv-overlay-close" title="Back to pipeline list">✕ Close</button>
+  `;
+  _canvasOverlay.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "pcv-overlay-body";
+  _canvasOverlay.appendChild(body);
+
+  const root = getRoot();
+  if (root) root.appendChild(_canvasOverlay);
+
+  _canvas = new PipelineCanvas({
+    container: body,
+    pipeline,
+    onSaved: () => loadPipelines(),
+  });
+  _canvas.mount();
+
+  header.querySelector(".pcv-overlay-close")?.addEventListener("click", closeCanvas);
+}
+
+function closeCanvas() {
+  if (_canvas) { _canvas.destroy(); _canvas = null; }
+  if (_canvasOverlay) { _canvasOverlay.remove(); _canvasOverlay = null; }
 }
 
 export function initPipelinesPage() {
   _loaded = false; _error = null; _search = ""; _sortBy = "updated";
   _editing = null; _showNew = false;
+  closeCanvas();
   render();
   loadPipelines();
 }

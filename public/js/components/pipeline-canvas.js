@@ -1,0 +1,1055 @@
+/**
+ * pipeline-canvas.js — PIPE2
+ * Visual pipeline canvas: drag-drop nodes, Bezier edges, zoom, palette, config drawer.
+ * Light DOM only; no Shadow DOM.
+ *
+ * State shape mirrors PIPE1 PipelineNode + PipelineEdge TypedDicts:
+ *   nodes: [ { id, type, label, config, position: {x,y}, ...extra } ]
+ *   edges: [ { id, source_node_id, target_node_id, condition, data_shape, ...extra } ]
+ *
+ * Extra fields on nodes/edges are preserved (JSONB round-trip safe).
+ */
+
+import * as api from "../core/api.js";
+import { buildNodeCard, updateNodeCardPosition, setNodeCardSelected } from "./pipeline-node-card.js";
+import { PipelinePalette } from "./pipeline-palette.js";
+import { PipelineConfigDrawer } from "./pipeline-config-drawer.js";
+
+// ── Canvas store ──────────────────────────────────────────────────────────────
+
+function createStore(pipeline) {
+  return {
+    id: pipeline.id,
+    name: pipeline.name,
+    // Deep-clone so we own the data; extra fields preserved
+    nodes: (pipeline.nodes || []).map((n) => ({ ...n, position: { ...(n.position || { x: 0, y: 0 }) } })),
+    edges: (pipeline.edges || []).map((e) => ({ ...e })),
+    triggerConfig: pipeline.triggerConfig ?? null,
+    zoom: 1.0,
+    selectedNodeId: null,
+    selectedEdgeId: null,
+    dirty: false,
+    // Undo/redo stacks (each entry: { nodes, edges } snapshot)
+    undoStack: [],
+    redoStack: [],
+  };
+}
+
+function snapshot(state) {
+  return {
+    nodes: state.nodes.map((n) => ({ ...n, position: { ...n.position } })),
+    edges: state.edges.map((e) => ({ ...e })),
+  };
+}
+
+function pushUndo(state) {
+  state.undoStack.push(snapshot(state));
+  if (state.undoStack.length > 50) state.undoStack.shift();
+  state.redoStack = [];
+}
+
+// ── Unique ID generator ───────────────────────────────────────────────────────
+
+let _idCounter = Date.now();
+function genId(prefix = "node") {
+  return `${prefix}_${(_idCounter++).toString(36)}`;
+}
+
+// ── Default configs per node type ────────────────────────────────────────────
+
+function defaultConfig(type) {
+  switch (type) {
+    case "trigger_scheduled": return { cron: "0 */4 * * *", timezone: "UTC" };
+    case "trigger_webhook":   return { path: "/webhook" };
+    case "trigger_event":     return { event_type: "signal.created" };
+    case "agent_invocation":  return { agent_id: "", mode: "scheduled" };
+    case "skill_call":        return { skill_id: "" };
+    case "human_gate":        return { approval_kind: "manual", approvers: [], timeout_hours: 72 };
+    case "conditional":       return { expression: "" };
+    case "sub_pipeline":      return { pipeline_id: "" };
+    default:                  return {};
+  }
+}
+
+function defaultLabel(type) {
+  const m = {
+    trigger_manual:    "Manual Trigger",
+    trigger_scheduled: "Scheduled Trigger",
+    trigger_webhook:   "Webhook Trigger",
+    trigger_event:     "Event Trigger",
+    agent_invocation:  "Agent",
+    skill_call:        "Skill",
+    human_gate:        "Human Gate",
+    conditional:       "Conditional",
+    sub_pipeline:      "Sub-Pipeline",
+  };
+  return m[type] || type;
+}
+
+// ── Bezier edge path ──────────────────────────────────────────────────────────
+
+const NODE_W = 180;
+const NODE_H = 80;
+
+function edgePath(sx, sy, tx, ty) {
+  const dx = Math.abs(tx - sx);
+  const cp = Math.max(60, dx * 0.45);
+  return `M ${sx} ${sy} C ${sx + cp} ${sy}, ${tx - cp} ${ty}, ${tx} ${ty}`;
+}
+
+function getPortCenter(nodeEl, port) {
+  const portEl = nodeEl.querySelector(`.pcv-port--${port}`);
+  if (!portEl) {
+    const r = nodeEl.getBoundingClientRect();
+    const cr = nodeEl.closest(".pcv-canvas-inner")?.getBoundingClientRect() || { left: 0, top: 0 };
+    return port === "out"
+      ? { x: parseFloat(nodeEl.style.left) + NODE_W, y: parseFloat(nodeEl.style.top) + NODE_H / 2 }
+      : { x: parseFloat(nodeEl.style.left),             y: parseFloat(nodeEl.style.top) + NODE_H / 2 };
+  }
+  const pr = portEl.getBoundingClientRect();
+  const cr = nodeEl.closest(".pcv-canvas-inner")?.getBoundingClientRect() || { left: 0, top: 0 };
+  return {
+    x: pr.left - cr.left + pr.width / 2,
+    y: pr.top  - cr.top  + pr.height / 2,
+  };
+}
+
+// ── Auto-layout (simple topological left-to-right) ───────────────────────────
+
+function autoLayout(nodes, edges) {
+  // Build adjacency
+  const outEdges = {};
+  const inCount = {};
+  for (const n of nodes) { outEdges[n.id] = []; inCount[n.id] = 0; }
+  for (const e of edges) {
+    if (outEdges[e.source_node_id]) outEdges[e.source_node_id].push(e.target_node_id);
+    if (inCount[e.target_node_id] !== undefined) inCount[e.target_node_id]++;
+  }
+
+  // Topological sort (Kahn)
+  const queue = nodes.filter((n) => inCount[n.id] === 0).map((n) => n.id);
+  const order = [];
+  const rank = {};
+  for (const id of queue) rank[id] = 0;
+  while (queue.length) {
+    const id = queue.shift();
+    order.push(id);
+    for (const nextId of (outEdges[id] || [])) {
+      rank[nextId] = Math.max(rank[nextId] ?? 0, (rank[id] ?? 0) + 1);
+      inCount[nextId]--;
+      if (inCount[nextId] === 0) queue.push(nextId);
+    }
+  }
+  // Any remaining (cycles) — append with next rank
+  for (const n of nodes) {
+    if (!order.includes(n.id)) { order.push(n.id); rank[n.id] = rank[n.id] ?? order.length; }
+  }
+
+  // Assign positions by rank column
+  const cols = {};
+  for (const id of order) {
+    const r = rank[id] ?? 0;
+    cols[r] = (cols[r] || 0);
+    cols[r]++;
+  }
+  const colCount = {};
+  const XGAP = 240, YGAP = 120, XOFF = 60, YOFF = 60;
+  return nodes.map((n) => {
+    const r = rank[n.id] ?? 0;
+    colCount[r] = (colCount[r] ?? 0);
+    const row = colCount[r];
+    colCount[r]++;
+    return { ...n, position: { x: XOFF + r * XGAP, y: YOFF + row * YGAP } };
+  });
+}
+
+// ── Main PipelineCanvas class ─────────────────────────────────────────────────
+
+export class PipelineCanvas {
+  constructor({ container, pipeline, onSaved }) {
+    this._container = container;
+    this._onSaved = onSaved;
+    this._state = createStore(pipeline);
+    this._nodeEls = new Map(); // nodeId → DOM element
+    this._draggingNodeId = null;
+    this._dragOffset = { x: 0, y: 0 };
+    this._edgeDraft = null; // { sourceNodeId, svgLine }
+    this._showJson = false;
+    this._saveDebounce = null;
+    this._palette = null;
+    this._drawer = null;
+    this.el = null;
+  }
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
+  mount() {
+    this._buildShell();
+    this._mountPalette();
+    this._mountDrawer();
+    this._renderAll();
+    this._wireToolbar();
+    this._wireCanvasEvents();
+    this._wireKeyboard();
+  }
+
+  destroy() {
+    document.removeEventListener("mousemove", this._onMouseMove);
+    document.removeEventListener("mouseup", this._onMouseUp);
+    document.removeEventListener("keydown", this._onKeyDown);
+    if (this.el) this.el.remove();
+  }
+
+  // ── Shell construction ────────────────────────────────────────────────────
+
+  _buildShell() {
+    this.el = document.createElement("div");
+    this.el.className = "pcv-shell";
+    this.el.innerHTML = `
+      <div class="pcv-toolbar">
+        <div class="pcv-toolbar-left">
+          <button class="pbtn pbtn-p pcv-btn-save" title="Save (Cmd/Ctrl+S)">Save</button>
+          <button class="pbtn pbtn-g pcv-btn-run"  title="Run pipeline">Run</button>
+          <span class="pcv-dirty-dot" title="Unsaved changes" style="display:none">●</span>
+        </div>
+        <div class="pcv-toolbar-center">
+          <span class="pcv-pipeline-name"></span>
+        </div>
+        <div class="pcv-toolbar-right">
+          <button class="pbtn pbtn-g pcv-btn-layout" title="Auto-layout nodes">Layout</button>
+          <button class="pbtn pbtn-g pcv-btn-fit"    title="Fit all nodes in view">Fit</button>
+          <button class="pbtn pbtn-g pcv-btn-zoom-out" title="Zoom out">−</button>
+          <span class="pcv-zoom-label">100%</span>
+          <button class="pbtn pbtn-g pcv-btn-zoom-in" title="Zoom in">+</button>
+          <button class="pbtn pbtn-g pcv-btn-json" title="Toggle JSON editor">View JSON</button>
+        </div>
+      </div>
+
+      <div class="pcv-workspace">
+        <div class="pcv-canvas-wrap">
+          <div class="pcv-canvas" tabindex="0">
+            <div class="pcv-canvas-inner">
+              <svg class="pcv-edges-svg" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <marker id="pcv-arrow" markerWidth="8" markerHeight="8"
+                    refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L0,6 L8,3 z" class="pcv-arrow-head"/>
+                  </marker>
+                  <marker id="pcv-arrow-accent" markerWidth="8" markerHeight="8"
+                    refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L0,6 L8,3 z" class="pcv-arrow-head pcv-arrow-head--accent"/>
+                  </marker>
+                </defs>
+                <g class="pcv-edges-g"></g>
+                <line class="pcv-edge-draft" style="display:none" stroke-dasharray="6,4"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="pcv-json-panel" style="display:none">
+          <div class="pcv-json-hint">JSON editor — edit and toggle back to canvas to apply changes.</div>
+          <textarea class="pcv-json-textarea" spellcheck="false" rows="30"></textarea>
+          <div class="pcv-json-footer">
+            <button class="pbtn pbtn-p pcv-json-apply">Apply &amp; return to canvas</button>
+            <span class="pcv-json-err" style="display:none"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pcv-empty-state" style="display:none">
+        <div class="pcv-empty-text">
+          This pipeline is empty.<br/>
+          Drag a node from the left palette to get started.
+        </div>
+      </div>
+    `;
+
+    this._container.appendChild(this.el);
+
+    // Set pipeline name
+    this.el.querySelector(".pcv-pipeline-name").textContent = this._state.name || "";
+  }
+
+  // ── Palette ───────────────────────────────────────────────────────────────
+
+  _mountPalette() {
+    const wrap = document.createElement("div");
+    wrap.className = "pcv-palette-wrap";
+    // Insert before the canvas wrap
+    const workspace = this.el.querySelector(".pcv-workspace");
+    workspace.insertBefore(wrap, workspace.firstChild);
+
+    this._palette = new PipelinePalette({
+      onDragStart: (data, e) => {
+        // Store drag data for canvas drop
+        this._paletteDragData = data;
+      },
+    });
+    this._palette.mount(wrap);
+  }
+
+  // ── Drawer ────────────────────────────────────────────────────────────────
+
+  _mountDrawer() {
+    const wrap = document.createElement("div");
+    wrap.className = "pcv-drawer-wrap";
+    const workspace = this.el.querySelector(".pcv-workspace");
+    workspace.appendChild(wrap);
+
+    this._drawer = new PipelineConfigDrawer({
+      onSave: (nodeId, updates) => {
+        pushUndo(this._state);
+        const idx = this._state.nodes.findIndex((n) => n.id === nodeId);
+        if (idx >= 0) {
+          this._state.nodes[idx] = { ...this._state.nodes[idx], ...updates };
+          this._markDirty();
+          this._renderNodes();
+          this._renderEdges();
+        }
+      },
+      onDelete: (nodeId) => {
+        this._deleteNode(nodeId);
+      },
+      onClose: () => {
+        this._state.selectedNodeId = null;
+        this._updateNodeSelections();
+      },
+    });
+    this._drawer.mount(wrap);
+  }
+
+  // ── Full render ───────────────────────────────────────────────────────────
+
+  _renderAll() {
+    this._renderNodes();
+    this._renderEdges();
+    this._renderEmptyState();
+    this._updateZoomLabel();
+  }
+
+  _renderNodes() {
+    const inner = this.el.querySelector(".pcv-canvas-inner");
+    if (!inner) return;
+
+    // Remove stale node elements
+    const currentIds = new Set(this._state.nodes.map((n) => n.id));
+    for (const [id, el] of this._nodeEls) {
+      if (!currentIds.has(id)) { el.remove(); this._nodeEls.delete(id); }
+    }
+
+    // Add / update node cards
+    for (const node of this._state.nodes) {
+      const existing = this._nodeEls.get(node.id);
+      if (existing) {
+        updateNodeCardPosition(existing, node.position.x, node.position.y);
+        setNodeCardSelected(existing, this._state.selectedNodeId === node.id);
+        this._drawer.syncNode(node);
+      } else {
+        const card = buildNodeCard(node, {
+          selected: this._state.selectedNodeId === node.id,
+          hasError: false,
+        });
+        inner.appendChild(card);
+        this._nodeEls.set(node.id, card);
+        this._wireNodeCard(card, node.id);
+      }
+    }
+
+    this._renderEmptyState();
+  }
+
+  _renderEdges() {
+    const g = this.el?.querySelector(".pcv-edges-g");
+    if (!g) return;
+    g.innerHTML = "";
+
+    for (const edge of this._state.edges) {
+      this._renderEdge(g, edge);
+    }
+  }
+
+  _renderEdge(g, edge, opts = {}) {
+    const srcEl = this._nodeEls.get(edge.source_node_id);
+    const tgtEl = this._nodeEls.get(edge.target_node_id);
+    if (!srcEl || !tgtEl) return;
+
+    const src = getPortCenter(srcEl, "out");
+    const tgt = getPortCenter(tgtEl, "in");
+    const d = edgePath(src.x, src.y, tgt.x, tgt.y);
+
+    const selected = this._state.selectedEdgeId === edge.id;
+
+    // Invisible fat hit area
+    const hit = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    hit.setAttribute("d", d);
+    hit.setAttribute("class", "pcv-edge-hit");
+    hit.dataset.edgeId = edge.id;
+    g.appendChild(hit);
+
+    // Visible path
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", `pcv-edge-path${selected ? " pcv-edge-path--selected" : ""}`);
+    path.setAttribute("marker-end", selected ? "url(#pcv-arrow-accent)" : "url(#pcv-arrow)");
+    path.dataset.edgeId = edge.id;
+    g.appendChild(path);
+
+    // Mid-point delete button (appears on selection)
+    if (selected) {
+      const mx = (srcEl ? parseFloat(srcEl.style.left) + NODE_W : 0);
+      const mx2 = parseFloat(tgtEl.style.left);
+      const my = (src.y + tgt.y) / 2;
+      const midX = (src.x + tgt.x) / 2;
+      const midY = (src.y + tgt.y) / 2;
+
+      const fo = document.createElementNS("http://www.w3.org/2000/svg", "foreignObject");
+      fo.setAttribute("x", midX - 12);
+      fo.setAttribute("y", midY - 12);
+      fo.setAttribute("width", "24");
+      fo.setAttribute("height", "24");
+      fo.innerHTML = `<button class="pcv-edge-delete" data-edge-id="${edge.id}" title="Delete edge">×</button>`;
+      g.appendChild(fo);
+    }
+
+    // Click handler on hit area
+    hit.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._selectEdge(edge.id);
+    });
+    path.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._selectEdge(edge.id);
+    });
+  }
+
+  _renderEmptyState() {
+    const es = this.el?.querySelector(".pcv-empty-state");
+    if (es) es.style.display = this._state.nodes.length === 0 ? "" : "none";
+    // Also ensure palette is open when empty
+    if (this._state.nodes.length === 0 && this._palette) {
+      this._palette.setOpen(true);
+    }
+  }
+
+  _updateZoomLabel() {
+    const lbl = this.el?.querySelector(".pcv-zoom-label");
+    if (lbl) lbl.textContent = `${Math.round(this._state.zoom * 100)}%`;
+    const inner = this.el?.querySelector(".pcv-canvas-inner");
+    if (inner) inner.style.transform = `scale(${this._state.zoom})`;
+  }
+
+  _updateNodeSelections() {
+    for (const [id, el] of this._nodeEls) {
+      setNodeCardSelected(el, this._state.selectedNodeId === id);
+    }
+  }
+
+  _markDirty() {
+    this._state.dirty = true;
+    const dot = this.el?.querySelector(".pcv-dirty-dot");
+    if (dot) dot.style.display = "";
+  }
+
+  _clearDirty() {
+    this._state.dirty = false;
+    const dot = this.el?.querySelector(".pcv-dirty-dot");
+    if (dot) dot.style.display = "none";
+  }
+
+  // ── Toolbar wiring ────────────────────────────────────────────────────────
+
+  _wireToolbar() {
+    const tb = this.el.querySelector(".pcv-toolbar");
+
+    tb.querySelector(".pcv-btn-save")?.addEventListener("click", () => this._save());
+    tb.querySelector(".pcv-btn-run")?.addEventListener("click",  () => this._run());
+
+    tb.querySelector(".pcv-btn-zoom-in")?.addEventListener("click", () => {
+      this._state.zoom = Math.min(2.0, this._state.zoom + 0.1);
+      this._updateZoomLabel();
+    });
+    tb.querySelector(".pcv-btn-zoom-out")?.addEventListener("click", () => {
+      this._state.zoom = Math.max(0.25, this._state.zoom - 0.1);
+      this._updateZoomLabel();
+    });
+
+    tb.querySelector(".pcv-btn-fit")?.addEventListener("click", () => this._fitToView());
+    tb.querySelector(".pcv-btn-layout")?.addEventListener("click", () => this._autoLayout());
+    tb.querySelector(".pcv-btn-json")?.addEventListener("click", () => this._toggleJson());
+  }
+
+  // ── Canvas events ─────────────────────────────────────────────────────────
+
+  _wireCanvasEvents() {
+    const canvas = this.el.querySelector(".pcv-canvas");
+
+    // Click on canvas background → deselect
+    canvas.addEventListener("click", (e) => {
+      if (e.target === canvas || e.target.classList.contains("pcv-canvas-inner") ||
+          e.target.classList.contains("pcv-edges-svg")) {
+        this._deselectAll();
+      }
+    });
+
+    // Right-click context menu on canvas
+    canvas.addEventListener("contextmenu", (e) => {
+      if (e.target === canvas || e.target.classList.contains("pcv-canvas-inner")) {
+        e.preventDefault();
+        this._showCanvasContextMenu(e);
+      }
+    });
+
+    // Drag-drop from palette
+    canvas.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    canvas.addEventListener("drop", (e) => {
+      e.preventDefault();
+      this._handlePaletteDrop(e);
+    });
+
+    // Edge delete button (delegated)
+    this.el.querySelector(".pcv-edges-svg")?.addEventListener("click", (e) => {
+      const btn = e.target.closest?.(".pcv-edge-delete");
+      if (btn) {
+        e.stopPropagation();
+        this._deleteEdge(btn.dataset.edgeId);
+      }
+    });
+
+    // Mouse events for node drag + edge creation
+    this._onMouseMove = this._handleMouseMove.bind(this);
+    this._onMouseUp   = this._handleMouseUp.bind(this);
+    document.addEventListener("mousemove", this._onMouseMove);
+    document.addEventListener("mouseup",   this._onMouseUp);
+  }
+
+  _wireNodeCard(card, nodeId) {
+    // Click → select / open drawer
+    card.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._selectNode(nodeId);
+    });
+
+    // Right-click context menu
+    card.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._showNodeContextMenu(nodeId, e);
+    });
+
+    // Mousedown on card body → start node drag
+    card.addEventListener("mousedown", (e) => {
+      // Ignore if clicking a port
+      if (e.target.classList.contains("pcv-port")) return;
+      if (e.button !== 0) return;
+      e.stopPropagation();
+
+      const node = this._state.nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+
+      const inner = this.el.querySelector(".pcv-canvas-inner");
+      const rect = inner.getBoundingClientRect();
+      const scale = this._state.zoom;
+
+      this._draggingNodeId = nodeId;
+      this._dragOffset = {
+        x: (e.clientX - rect.left) / scale - node.position.x,
+        y: (e.clientY - rect.top)  / scale - node.position.y,
+      };
+      card.classList.add("pcv-node--dragging");
+      this._pushUndoForDrag = false; // push undo on first real move
+    });
+
+    // Mousedown on out-port → start edge drag
+    const outPort = card.querySelector(".pcv-port--out");
+    outPort?.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      this._startEdgeDraft(nodeId, e);
+    });
+
+    // Mouseup on in-port → complete edge drag
+    const inPort = card.querySelector(".pcv-port--in");
+    inPort?.addEventListener("mouseup", (e) => {
+      if (this._edgeDraft) {
+        e.stopPropagation();
+        this._finishEdgeDraft(nodeId);
+      }
+    });
+  }
+
+  // ── Mouse handlers ────────────────────────────────────────────────────────
+
+  _handleMouseMove(e) {
+    // Node drag
+    if (this._draggingNodeId) {
+      const inner = this.el?.querySelector(".pcv-canvas-inner");
+      if (!inner) return;
+      const rect = inner.getBoundingClientRect();
+      const scale = this._state.zoom;
+      const x = (e.clientX - rect.left) / scale - this._dragOffset.x;
+      const y = (e.clientY - rect.top)  / scale - this._dragOffset.y;
+
+      const node = this._state.nodes.find((n) => n.id === this._draggingNodeId);
+      if (node) {
+        if (!this._pushUndoForDrag) {
+          pushUndo(this._state);
+          this._pushUndoForDrag = true;
+        }
+        node.position.x = Math.max(0, x);
+        node.position.y = Math.max(0, y);
+        const el = this._nodeEls.get(this._draggingNodeId);
+        if (el) updateNodeCardPosition(el, node.position.x, node.position.y);
+        this._renderEdges();
+        this._markDirty();
+      }
+    }
+
+    // Edge draft
+    if (this._edgeDraft) {
+      const inner = this.el?.querySelector(".pcv-canvas-inner");
+      if (!inner) return;
+      const rect = inner.getBoundingClientRect();
+      const scale = this._state.zoom;
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top)  / scale;
+      const draftLine = this.el?.querySelector(".pcv-edge-draft");
+      if (draftLine) {
+        const src = this._edgeDraft.srcPos;
+        draftLine.setAttribute("x1", src.x);
+        draftLine.setAttribute("y1", src.y);
+        draftLine.setAttribute("x2", x);
+        draftLine.setAttribute("y2", y);
+        draftLine.style.display = "";
+      }
+    }
+  }
+
+  _handleMouseUp(e) {
+    if (this._draggingNodeId) {
+      const el = this._nodeEls.get(this._draggingNodeId);
+      if (el) el.classList.remove("pcv-node--dragging");
+      this._draggingNodeId = null;
+    }
+    if (this._edgeDraft) {
+      // If not finished on a port, cancel
+      this._cancelEdgeDraft();
+    }
+  }
+
+  // ── Edge drag ─────────────────────────────────────────────────────────────
+
+  _startEdgeDraft(sourceNodeId, e) {
+    const srcEl = this._nodeEls.get(sourceNodeId);
+    if (!srcEl) return;
+    const srcPos = getPortCenter(srcEl, "out");
+    this._edgeDraft = { sourceNodeId, srcPos };
+  }
+
+  _finishEdgeDraft(targetNodeId) {
+    if (!this._edgeDraft) return;
+    const { sourceNodeId } = this._edgeDraft;
+    this._cancelEdgeDraft();
+
+    if (sourceNodeId === targetNodeId) return;
+    // Check duplicate
+    const dup = this._state.edges.find(
+      (e) => e.source_node_id === sourceNodeId && e.target_node_id === targetNodeId
+    );
+    if (dup) return;
+
+    pushUndo(this._state);
+    this._state.edges.push({
+      id: genId("edge"),
+      source_node_id: sourceNodeId,
+      target_node_id: targetNodeId,
+      condition: null,
+      data_shape: null,
+    });
+    this._markDirty();
+    this._renderEdges();
+  }
+
+  _cancelEdgeDraft() {
+    this._edgeDraft = null;
+    const draftLine = this.el?.querySelector(".pcv-edge-draft");
+    if (draftLine) draftLine.style.display = "none";
+  }
+
+  // ── Selection ─────────────────────────────────────────────────────────────
+
+  _selectNode(nodeId) {
+    this._state.selectedNodeId = nodeId;
+    this._state.selectedEdgeId = null;
+    this._updateNodeSelections();
+    this._renderEdges();
+    const node = this._state.nodes.find((n) => n.id === nodeId);
+    if (node && this._drawer) this._drawer.open(node);
+  }
+
+  _selectEdge(edgeId) {
+    this._state.selectedEdgeId = edgeId;
+    this._state.selectedNodeId = null;
+    this._updateNodeSelections();
+    this._renderEdges();
+  }
+
+  _deselectAll() {
+    this._state.selectedNodeId = null;
+    this._state.selectedEdgeId = null;
+    this._updateNodeSelections();
+    this._renderEdges();
+  }
+
+  // ── Node / edge deletion ──────────────────────────────────────────────────
+
+  _deleteNode(nodeId) {
+    pushUndo(this._state);
+    this._state.nodes = this._state.nodes.filter((n) => n.id !== nodeId);
+    this._state.edges = this._state.edges.filter(
+      (e) => e.source_node_id !== nodeId && e.target_node_id !== nodeId
+    );
+    if (this._state.selectedNodeId === nodeId) this._state.selectedNodeId = null;
+    this._markDirty();
+    this._renderAll();
+  }
+
+  _deleteEdge(edgeId) {
+    pushUndo(this._state);
+    this._state.edges = this._state.edges.filter((e) => e.id !== edgeId);
+    if (this._state.selectedEdgeId === edgeId) this._state.selectedEdgeId = null;
+    this._markDirty();
+    this._renderEdges();
+  }
+
+  _deleteSelected() {
+    if (this._state.selectedNodeId) this._deleteNode(this._state.selectedNodeId);
+    else if (this._state.selectedEdgeId) this._deleteEdge(this._state.selectedEdgeId);
+  }
+
+  // ── Palette drop ──────────────────────────────────────────────────────────
+
+  _handlePaletteDrop(e) {
+    let data;
+    try {
+      const raw = e.dataTransfer.getData("text/plain");
+      data = JSON.parse(raw);
+    } catch {
+      data = this._paletteDragData;
+    }
+    if (!data?.type) return;
+
+    const inner = this.el?.querySelector(".pcv-canvas-inner");
+    if (!inner) return;
+    const rect = inner.getBoundingClientRect();
+    const scale = this._state.zoom;
+    const x = (e.clientX - rect.left) / scale;
+    const y = (e.clientY - rect.top)  / scale;
+
+    pushUndo(this._state);
+    const newNode = {
+      id: genId("node"),
+      type: data.type,
+      label: data.label || defaultLabel(data.type),
+      config: { ...defaultConfig(data.type), ...(data.config || {}) },
+      position: { x: Math.max(0, x - NODE_W / 2), y: Math.max(0, y - NODE_H / 2) },
+    };
+    this._state.nodes.push(newNode);
+    this._markDirty();
+    this._renderAll();
+    this._selectNode(newNode.id);
+  }
+
+  // ── Context menus ─────────────────────────────────────────────────────────
+
+  _showCanvasContextMenu(e) {
+    this._removeContextMenu();
+    const menu = document.createElement("div");
+    menu.className = "pcv-ctx-menu";
+    menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px`;
+
+    const NODE_TYPES = [
+      { type: "trigger_manual",    label: "Manual Trigger" },
+      { type: "trigger_scheduled", label: "Scheduled Trigger" },
+      { type: "agent_invocation",  label: "Agent" },
+      { type: "skill_call",        label: "Skill" },
+      { type: "human_gate",        label: "Human Gate" },
+      { type: "conditional",       label: "Conditional" },
+      { type: "sub_pipeline",      label: "Sub-Pipeline" },
+    ];
+
+    menu.innerHTML = `
+      <div class="pcv-ctx-menu-header">Add node…</div>
+      ${NODE_TYPES.map((t) =>
+        `<button class="pcv-ctx-item" data-type="${t.type}">${_esc(t.label)}</button>`
+      ).join("")}
+    `;
+
+    document.body.appendChild(menu);
+
+    const inner = this.el?.querySelector(".pcv-canvas-inner");
+    const rect = inner?.getBoundingClientRect() || { left: 0, top: 0 };
+    const scale = this._state.zoom;
+    const canvasX = (e.clientX - rect.left) / scale;
+    const canvasY = (e.clientY - rect.top)  / scale;
+
+    menu.querySelectorAll(".pcv-ctx-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        pushUndo(this._state);
+        const type = btn.dataset.type;
+        const newNode = {
+          id: genId("node"),
+          type,
+          label: defaultLabel(type),
+          config: defaultConfig(type),
+          position: { x: Math.max(0, canvasX - NODE_W / 2), y: Math.max(0, canvasY - NODE_H / 2) },
+        };
+        this._state.nodes.push(newNode);
+        this._markDirty();
+        this._renderAll();
+        this._selectNode(newNode.id);
+        this._removeContextMenu();
+      });
+    });
+
+    setTimeout(() => document.addEventListener("click", this._ctxDismiss = () => this._removeContextMenu(), { once: true }), 0);
+  }
+
+  _showNodeContextMenu(nodeId, e) {
+    this._removeContextMenu();
+    const menu = document.createElement("div");
+    menu.className = "pcv-ctx-menu";
+    menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px`;
+    menu.innerHTML = `
+      <button class="pcv-ctx-item" data-action="edit">Edit config</button>
+      <button class="pcv-ctx-item" data-action="duplicate">Duplicate</button>
+      <button class="pcv-ctx-item pcv-ctx-item--danger" data-action="delete">Delete</button>
+    `;
+    document.body.appendChild(menu);
+
+    menu.querySelector("[data-action='edit']")?.addEventListener("click", () => {
+      this._selectNode(nodeId);
+      this._removeContextMenu();
+    });
+    menu.querySelector("[data-action='duplicate']")?.addEventListener("click", () => {
+      const node = this._state.nodes.find((n) => n.id === nodeId);
+      if (node) {
+        pushUndo(this._state);
+        this._state.nodes.push({
+          ...node,
+          id: genId("node"),
+          position: { x: node.position.x + 220, y: node.position.y + 40 },
+        });
+        this._markDirty();
+        this._renderAll();
+      }
+      this._removeContextMenu();
+    });
+    menu.querySelector("[data-action='delete']")?.addEventListener("click", () => {
+      this._deleteNode(nodeId);
+      this._removeContextMenu();
+    });
+
+    setTimeout(() => document.addEventListener("click", this._ctxDismiss = () => this._removeContextMenu(), { once: true }), 0);
+  }
+
+  _removeContextMenu() {
+    document.querySelectorAll(".pcv-ctx-menu").forEach((m) => m.remove());
+  }
+
+  // ── Keyboard ──────────────────────────────────────────────────────────────
+
+  _wireKeyboard() {
+    this._onKeyDown = (e) => {
+      const onCanvas = this.el?.contains(document.activeElement) || document.activeElement === document.body;
+      if (!onCanvas) return;
+
+      const isMeta = e.metaKey || e.ctrlKey;
+      if (isMeta && e.key === "s") { e.preventDefault(); this._save(); return; }
+      if (isMeta && e.key === "z") { e.preventDefault(); this._undo(); return; }
+      if (isMeta && (e.key === "y" || (e.shiftKey && e.key === "z"))) {
+        e.preventDefault(); this._redo(); return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && !e.target.matches("input,textarea,[contenteditable]")) {
+        this._deleteSelected();
+      }
+    };
+    document.addEventListener("keydown", this._onKeyDown);
+  }
+
+  // ── Undo / redo ───────────────────────────────────────────────────────────
+
+  _undo() {
+    if (!this._state.undoStack.length) return;
+    this._state.redoStack.push(snapshot(this._state));
+    const prev = this._state.undoStack.pop();
+    this._state.nodes = prev.nodes;
+    this._state.edges = prev.edges;
+    this._state.selectedNodeId = null;
+    this._state.selectedEdgeId = null;
+    this._markDirty();
+    this._renderAll();
+  }
+
+  _redo() {
+    if (!this._state.redoStack.length) return;
+    this._state.undoStack.push(snapshot(this._state));
+    const next = this._state.redoStack.pop();
+    this._state.nodes = next.nodes;
+    this._state.edges = next.edges;
+    this._markDirty();
+    this._renderAll();
+  }
+
+  // ── Save ──────────────────────────────────────────────────────────────────
+
+  async _save() {
+    try {
+      await api.updatePipelineApi(this._state.id, {
+        nodes: this._state.nodes,
+        edges: this._state.edges,
+        triggerConfig: this._state.triggerConfig,
+      });
+      this._clearDirty();
+      if (this._onSaved) this._onSaved();
+      this._showToast("Saved");
+    } catch (err) {
+      this._showToast(`Save failed: ${err.message}`, true);
+    }
+  }
+
+  async _run() {
+    try {
+      await api.runPipelineApi(this._state.id);
+      this._showToast("Run queued — execution wired in PIPE4.");
+    } catch (err) {
+      this._showToast(`Run failed: ${err.message}`, true);
+    }
+  }
+
+  _showToast(msg, isError = false) {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+    const toast = document.createElement("div");
+    toast.className = `bg-toast${isError ? " toast-error" : ""}`;
+    toast.innerHTML = `
+      <span class="bg-toast-dot"></span>
+      <div class="bg-toast-body"><div class="bg-toast-label"></div></div>
+      <button class="bg-toast-close">&times;</button>`;
+    toast.querySelector(".bg-toast-label").textContent = msg;
+    const dismiss = () => {
+      toast.classList.add("toast-exit");
+      toast.addEventListener("animationend", () => toast.remove(), { once: true });
+    };
+    toast.querySelector(".bg-toast-close")?.addEventListener("click", dismiss);
+    container.appendChild(toast);
+    setTimeout(() => { if (toast.parentNode) dismiss(); }, 3000);
+  }
+
+  // ── JSON toggle ───────────────────────────────────────────────────────────
+
+  _toggleJson() {
+    this._showJson = !this._showJson;
+    const canvasWrap = this.el.querySelector(".pcv-canvas-wrap");
+    const jsonPanel  = this.el.querySelector(".pcv-json-panel");
+    const btn        = this.el.querySelector(".pcv-btn-json");
+
+    if (this._showJson) {
+      const jsonVal = JSON.stringify({ nodes: this._state.nodes, edges: this._state.edges }, null, 2);
+      jsonPanel.querySelector(".pcv-json-textarea").value = jsonVal;
+      jsonPanel.querySelector(".pcv-json-err").style.display = "none";
+      canvasWrap.style.display = "none";
+      jsonPanel.style.display = "";
+      btn.textContent = "View Canvas";
+      this._wireJsonPanel();
+    } else {
+      canvasWrap.style.display = "";
+      jsonPanel.style.display = "none";
+      btn.textContent = "View JSON";
+    }
+  }
+
+  _wireJsonPanel() {
+    const panel = this.el.querySelector(".pcv-json-panel");
+    panel.querySelector(".pcv-json-apply")?.addEventListener("click", () => {
+      const txt = panel.querySelector(".pcv-json-textarea").value;
+      const errEl = panel.querySelector(".pcv-json-err");
+      let parsed;
+      try { parsed = JSON.parse(txt); }
+      catch (err) {
+        errEl.textContent = `JSON error: ${err.message}`;
+        errEl.style.display = "";
+        return;
+      }
+      errEl.style.display = "none";
+      pushUndo(this._state);
+      this._state.nodes = (parsed.nodes || []).map((n) => ({
+        ...n,
+        position: n.position || { x: 0, y: 0 },
+      }));
+      this._state.edges = parsed.edges || [];
+      this._markDirty();
+      this._showJson = false;
+      this._toggleJson(); // switches display
+      this._renderAll();
+    });
+  }
+
+  // ── Zoom + fit ────────────────────────────────────────────────────────────
+
+  _fitToView() {
+    if (!this._state.nodes.length) return;
+    const canvas = this.el.querySelector(".pcv-canvas");
+    if (!canvas) return;
+
+    const xs = this._state.nodes.map((n) => n.position.x);
+    const ys = this._state.nodes.map((n) => n.position.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const maxX = Math.max(...xs) + NODE_W;
+    const maxY = Math.max(...ys) + NODE_H;
+
+    const W = canvas.clientWidth  || 800;
+    const H = canvas.clientHeight || 600;
+    const PADDING = 60;
+
+    const scaleX = (W - PADDING * 2) / (maxX - minX || 1);
+    const scaleY = (H - PADDING * 2) / (maxY - minY || 1);
+    this._state.zoom = Math.min(2.0, Math.max(0.25, Math.min(scaleX, scaleY)));
+
+    this._updateZoomLabel();
+    this._renderEdges();
+  }
+
+  // ── Auto-layout ───────────────────────────────────────────────────────────
+
+  _autoLayout() {
+    pushUndo(this._state);
+    this._state.nodes = autoLayout(this._state.nodes, this._state.edges);
+    this._markDirty();
+    this._renderAll();
+    this._fitToView();
+  }
+
+  // ── Accessors (for tests) ─────────────────────────────────────────────────
+
+  getState() {
+    return {
+      nodes: this._state.nodes,
+      edges: this._state.edges,
+    };
+  }
+
+  getNodeById(id) {
+    return this._state.nodes.find((n) => n.id === id);
+  }
+}
+
+function _esc(str) {
+  const d = document.createElement("div");
+  d.textContent = String(str ?? "");
+  return d.innerHTML;
+}

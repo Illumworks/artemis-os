@@ -69,3 +69,329 @@
 .plbl { font-size:12px;font-weight:500;color:var(--text-dim) }
 .pinp { padding:7px 12px;background:var(--surface-input,var(--surface-subtle));border:1px solid var(--surface-outline);border-radius:6px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box }
 .pinp:focus { outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent) }
+/* Danger button variant */
+.pbtn-danger { background:transparent;color:var(--error);border:1px solid color-mix(in srgb,var(--error) 35%,transparent) }
+.pbtn-danger:hover { background:color-mix(in srgb,var(--error) 10%,transparent) }
+
+/* ── PIPE2: Canvas overlay ──────────────────────────────────────────── */
+.pcv-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-card);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.pcv-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 18px;
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--surface-outline);
+  flex-shrink: 0;
+}
+.pcv-overlay-title { font-weight: 600;font-size: 15px;color: var(--text) }
+.pcv-overlay-body { flex: 1;overflow: hidden;display: flex;flex-direction: column;min-height: 0 }
+
+/* ── Shell ─────────────────────────────────────────────────────────── */
+.pcv-shell { display:flex;flex-direction:column;height:100%;min-height:0 }
+
+/* ── Toolbar ───────────────────────────────────────────────────────── */
+.pcv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--surface-outline);
+  background: var(--surface-card);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.pcv-toolbar-left,.pcv-toolbar-right { display:flex;align-items:center;gap:6px }
+.pcv-toolbar-center { flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+.pcv-pipeline-name { font-size:13px;font-weight:600;color:var(--text) }
+.pcv-dirty-dot { color:var(--warning);font-size:16px;line-height:1;margin-left:2px }
+.pcv-zoom-label { font-size:12px;color:var(--text-dim);min-width:38px;text-align:center }
+
+/* ── Workspace ─────────────────────────────────────────────────────── */
+.pcv-workspace {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Palette ───────────────────────────────────────────────────────── */
+.pcv-palette-wrap {
+  flex-shrink: 0;
+  display: flex;
+}
+.pcv-palette {
+  width: 200px;
+  background: var(--surface-card);
+  border-right: 1px solid var(--surface-outline);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width .2s ease;
+}
+.pcv-palette--collapsed { width: 36px }
+.pcv-palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--surface-outline);
+  flex-shrink: 0;
+}
+.pcv-palette-title { font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em }
+.pcv-palette-toggle {
+  background: transparent;border: none;cursor: pointer;
+  color: var(--text-dim);font-size: 11px;padding: 2px 4px;border-radius: 4px;
+  transition: color .15s,background .15s;
+}
+.pcv-palette-toggle:hover { color:var(--text);background:var(--surface-hover,var(--surface-subtle)) }
+.pcv-palette-body { flex:1;overflow-y:auto;padding:8px 0 }
+.pcv-palette-group { margin-bottom: 4px }
+.pcv-palette-group-label {
+  display: flex;align-items:center;justify-content:space-between;
+  padding: 5px 12px;font-size: 11px;font-weight: 600;
+  color: var(--text-dim);text-transform: uppercase;letter-spacing:.04em;
+}
+button.pcv-palette-group-label {
+  width:100%;border:none;background:transparent;cursor:pointer;text-align:left;
+  transition:background .15s;
+}
+button.pcv-palette-group-label:hover { background:var(--surface-hover,var(--surface-subtle));color:var(--text) }
+.pcv-palette-group-arrow { font-size:10px }
+.pcv-palette-group-body { padding: 4px 8px 4px }
+.pcv-palette-search {
+  width:100%;box-sizing:border-box;padding:5px 8px;font-size:11px;
+  border-radius:5px;border:1px solid var(--surface-outline);
+  background:var(--surface-subtle,var(--surface-card));color:var(--text);outline:none;
+  margin-bottom:4px;
+}
+.pcv-palette-search:focus { border-color:var(--accent) }
+.pcv-palette-items { display:flex;flex-direction:column;gap:3px }
+.pcv-palette-item {
+  display: flex;align-items:center;gap:8px;
+  padding: 7px 10px;border-radius: 7px;cursor: grab;
+  border: 1px solid transparent;
+  font-size: 12px;color: var(--text);
+  transition: background .15s,border-color .15s;
+  user-select: none;
+}
+.pcv-palette-item:hover { background:var(--accent-dim,color-mix(in srgb,var(--accent) 10%,transparent));border-color:var(--accent-border) }
+.pcv-palette-item:active { cursor:grabbing }
+.pcv-palette-item-icon { font-size:14px;flex-shrink:0;line-height:1 }
+.pcv-palette-item-label { flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+.pcv-palette-loading,.pcv-palette-empty { padding:6px 8px;font-size:11px;color:var(--text-dim) }
+
+/* ── Canvas ────────────────────────────────────────────────────────── */
+.pcv-canvas-wrap { flex:1;overflow:hidden;position:relative;background:var(--surface-subtle) }
+.pcv-canvas {
+  width: 100%;height: 100%;overflow: auto;position: relative;outline:none;
+  background:
+    linear-gradient(rgba(0,0,0,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+[data-theme="dark"] .pcv-canvas {
+  background:
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.pcv-canvas-inner {
+  position: relative;
+  width: 2400px;height: 1800px;
+  transform-origin: top left;
+  transition: transform .1s ease;
+}
+
+/* ── Nodes ─────────────────────────────────────────────────────────── */
+.pcv-node {
+  position: absolute;
+  width: 180px;min-height: 80px;
+  background: var(--surface-card);
+  border: 1.5px solid var(--surface-outline);
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow .15s ease, border-color .15s ease;
+  box-shadow: var(--shadow-sm,0 2px 8px rgba(0,0,0,.06));
+}
+.pcv-node:hover { box-shadow: var(--shadow-md,0 4px 16px rgba(0,0,0,.1));border-color:color-mix(in srgb,var(--accent) 35%,var(--surface-outline)) }
+.pcv-node--dragging { box-shadow:0 12px 32px rgba(0,0,0,.18);opacity:.92;cursor:grabbing;z-index:20 }
+.pcv-node--selected { border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 22%,transparent),0 4px 16px rgba(0,0,0,.1) }
+.pcv-node--error::after { content:"";position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--error) }
+
+/* Border variants by node type */
+.pcv-node--accent  { border-color:color-mix(in srgb,var(--accent) 50%,transparent) }
+.pcv-node--warning { border-color:color-mix(in srgb,var(--warning) 55%,transparent) }
+.pcv-node--strong  { border-width:2.5px }
+
+.pcv-node-inner { display:flex;align-items:flex-start;gap:8px;padding:12px 14px }
+.pcv-node-icon  { font-size:20px;line-height:1;flex-shrink:0;padding-top:2px }
+.pcv-node-body  { flex:1;min-width:0 }
+.pcv-node-label { font-size:13px;font-weight:600;color:var(--text);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+.pcv-node-type  { font-size:11px;color:var(--text-dim);margin-top:2px }
+.pcv-node-summary { font-size:10px;color:var(--text-dim);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono) }
+.pcv-node-errdot { position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--error) }
+
+/* Ports */
+.pcv-port {
+  position: absolute;top: 50%;transform: translateY(-50%);
+  width: 12px;height: 12px;border-radius: 50%;
+  background: var(--surface-card);
+  border: 2px solid var(--surface-outline);
+  cursor: crosshair;
+  transition: background .15s,border-color .15s,transform .15s;
+  z-index: 2;
+}
+.pcv-port:hover { background:var(--accent);border-color:var(--accent);transform:translateY(-50%) scale(1.3) }
+.pcv-port--in  { left: -7px }
+.pcv-port--out { right: -7px }
+
+/* ── Edges SVG ─────────────────────────────────────────────────────── */
+.pcv-edges-svg {
+  position: absolute;inset: 0;
+  width: 100%;height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.pcv-edges-g { pointer-events: all }
+.pcv-edge-path {
+  fill: none;
+  stroke: color-mix(in srgb,var(--text-dim) 50%,transparent);
+  stroke-width: 1.5;
+  transition: stroke .15s;
+  pointer-events: none;
+}
+.pcv-edge-path--selected {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.pcv-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  cursor: pointer;
+}
+.pcv-edge-hit:hover + .pcv-edge-path { stroke:var(--accent) }
+.pcv-edge-draft { stroke:var(--accent);stroke-width:1.5;stroke-dasharray:6,4;pointer-events:none }
+.pcv-arrow-head { fill:color-mix(in srgb,var(--text-dim) 50%,transparent) }
+.pcv-arrow-head--accent { fill:var(--accent) }
+
+/* Edge delete button */
+.pcv-edge-delete {
+  width: 22px;height: 22px;border-radius: 50%;
+  background: var(--surface-card);border: 1px solid var(--surface-outline);
+  color: var(--text-dim);font-size: 14px;line-height: 1;
+  cursor: pointer;display:flex;align-items:center;justify-content:center;
+  transition: background .15s,color .15s;
+}
+.pcv-edge-delete:hover { background:var(--error);color:#fff;border-color:var(--error) }
+
+/* ── Config drawer ─────────────────────────────────────────────────── */
+.pcv-drawer-wrap { position:relative;flex-shrink:0 }
+.pcv-drawer {
+  width: 300px;
+  background: var(--surface-card);
+  border-left: 1px solid var(--surface-outline);
+  display: flex;flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  transition: width .2s ease, opacity .15s ease;
+}
+.pcv-drawer--hidden { width:0;overflow:hidden;opacity:0;pointer-events:none }
+.pcv-drawer-header {
+  display: flex;align-items: flex-start;gap: 8px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--surface-outline);
+  flex-shrink: 0;
+}
+.pcv-drawer-header-body { flex:1;min-width:0 }
+.pcv-drawer-header-actions { display:flex;align-items:center;gap:6px;flex-shrink:0 }
+.pcv-drawer-label {
+  display: block;font-size: 14px;font-weight: 600;color: var(--text);
+  outline: none;border-radius: 4px;padding: 1px 3px;margin: -1px -3px;
+  white-space: nowrap;overflow: hidden;text-overflow: ellipsis;
+}
+.pcv-drawer-label:focus { background:var(--accent-dim,color-mix(in srgb,var(--accent) 10%,transparent));outline:none }
+.pcv-drawer-type { font-size:11px;color:var(--text-dim);margin-top:2px }
+.pcv-drawer-close {
+  background:transparent;border:none;cursor:pointer;
+  color:var(--text-dim);font-size:14px;padding:2px 6px;border-radius:4px;
+  transition:color .15s,background .15s;
+}
+.pcv-drawer-close:hover { color:var(--text);background:var(--surface-hover,var(--surface-subtle)) }
+.pcv-drawer-body { flex:1;overflow-y:auto;padding:14px }
+.pcv-drawer-section-label { display:block;font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:0 0 4px }
+.pcv-drawer-id { font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-bottom:12px;word-break:break-all }
+.pcv-drawer-hint { font-weight:400;font-size:10px;color:var(--text-dim);text-transform:none;letter-spacing:0 }
+.pcv-drawer-json {
+  width:100%;box-sizing:border-box;font-family:var(--font-mono);font-size:11px;line-height:1.5;
+  background:var(--surface-subtle,var(--surface-input));border:1px solid var(--surface-outline);
+  border-radius:6px;color:var(--text);padding:8px 10px;resize:vertical;outline:none;
+}
+.pcv-drawer-json:focus { border-color:var(--accent) }
+.pcv-drawer-err { font-size:11px;color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent);border-radius:5px;padding:5px 8px;margin-bottom:6px }
+.pcv-drawer-footer {
+  display: flex;gap: 8px;justify-content:flex-end;
+  padding: 10px 14px;border-top: 1px solid var(--surface-outline);
+  flex-shrink: 0;
+}
+
+/* ── JSON panel (toggle fallback) ──────────────────────────────────── */
+.pcv-json-panel {
+  flex:1;display:flex;flex-direction:column;gap:10px;padding:16px;
+  background:var(--surface-card);overflow:hidden;
+}
+.pcv-json-hint { font-size:12px;color:var(--text-dim) }
+.pcv-json-textarea {
+  flex:1;font-family:var(--font-mono);font-size:12px;line-height:1.5;resize:none;
+  background:var(--surface-subtle,var(--surface-input));border:1px solid var(--surface-outline);
+  border-radius:6px;color:var(--text);padding:10px 12px;outline:none;min-height:200px;
+}
+.pcv-json-textarea:focus { border-color:var(--accent) }
+.pcv-json-footer { display:flex;align-items:center;gap:10px }
+.pcv-json-err { font-size:12px;color:var(--error) }
+
+/* ── Empty state ───────────────────────────────────────────────────── */
+.pcv-empty-state {
+  position: absolute;inset:0;pointer-events:none;
+  display: flex;align-items:center;justify-content:center;z-index:1;
+}
+.pcv-empty-text {
+  text-align:center;color:var(--text-dim);font-size:14px;line-height:1.7;
+  background:var(--surface-card);border:1px solid var(--surface-outline);
+  border-radius:12px;padding:28px 40px;box-shadow:var(--shadow-sm,0 2px 8px rgba(0,0,0,.06));
+  pointer-events:none;
+}
+
+/* ── Context menu ──────────────────────────────────────────────────── */
+.pcv-ctx-menu {
+  position: fixed;z-index: 9000;
+  min-width: 160px;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-outline);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: var(--shadow-md,0 4px 16px rgba(0,0,0,.12));
+}
+.pcv-ctx-menu-header { font-size:11px;font-weight:600;color:var(--text-dim);padding:6px 10px 4px;text-transform:uppercase;letter-spacing:.04em }
+.pcv-ctx-item {
+  display: block;width:100%;text-align:left;
+  padding: 7px 12px;font-size:13px;color:var(--text);
+  background:transparent;border:none;border-radius:5px;cursor:pointer;
+  transition:background .12s;
+}
+.pcv-ctx-item:hover { background:var(--surface-hover,var(--surface-subtle)) }
+.pcv-ctx-item--danger { color:var(--error) }
+.pcv-ctx-item--danger:hover { background:color-mix(in srgb,var(--error) 10%,transparent) }
