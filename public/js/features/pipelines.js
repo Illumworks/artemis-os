@@ -13,8 +13,6 @@ let _sortBy = "updated";
 let _editing = null;
 let _editJson = "";
 let _editErr = null;
-let _toast = null;
-let _toastTimer = null;
 let _showNew = false;
 
 const MOUNT = "#pipelines-page-root";
@@ -32,11 +30,27 @@ async function loadPipelines() {
   render();
 }
 
-function showToast(msg, ms = 4000) {
-  _toast = msg;
-  render();
-  if (_toastTimer) clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => { _toast = null; render(); }, ms);
+function showToast(label, title = "", { isError = false, ms = 4000 } = {}) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = `bg-toast${isError ? " toast-error" : ""}`;
+  toast.innerHTML = `
+    <span class="bg-toast-dot"></span>
+    <div class="bg-toast-body">
+      <div class="bg-toast-label"></div>
+      <div class="bg-toast-title"></div>
+    </div>
+    <button class="bg-toast-close" title="Dismiss">&times;</button>`;
+  toast.querySelector(".bg-toast-label").textContent = label;
+  toast.querySelector(".bg-toast-title").textContent = title;
+  const dismiss = () => {
+    toast.classList.add("toast-exit");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  };
+  toast.querySelector(".bg-toast-close")?.addEventListener("click", dismiss);
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentNode) dismiss(); }, ms);
 }
 
 function filtered() {
@@ -61,6 +75,20 @@ function dot(status) {
   return `<span class="pdot pdot-${escapeHtml(status)}"></span>`;
 }
 
+function toggle(p) {
+  const act = p.status === "active";
+  return `<button
+    class="pswitch"
+    role="switch"
+    aria-checked="${act ? "true" : "false"}"
+    aria-label="${act ? "Disable" : "Enable"} ${escapeHtml(p.name)}"
+    data-id="${p.id}"
+    data-action="${act ? "disable" : "enable"}">
+      <span class="pswitch-track"><span class="pswitch-thumb"></span></span>
+      <span class="pswitch-label">${act ? "Active" : "Paused"}</span>
+    </button>`;
+}
+
 function trigger(p) {
   const n = (p.nodes || []).find((x) => x.type?.startsWith("trigger_"));
   if (!n) return "Manual";
@@ -71,19 +99,17 @@ function trigger(p) {
 function card(p) {
   const nodes = (p.nodes || []).length;
   const compact = nodes <= 1;
-  const act = p.status === "active";
   const actions = `
-    <button class="pbtn pbtn-g ptoggle" data-id="${p.id}" data-action="${act ? "disable" : "enable"}">${act ? "Pause" : "Enable"}</button>
     <button class="pbtn pbtn-g pedit" data-id="${p.id}">Edit JSON</button>
     <button class="pbtn pbtn-p prun" data-id="${p.id}">Run</button>`;
   if (compact) {
     return `<div class="pcard pcard-c" data-pid="${p.id}">
       <div class="pcc">${dot(p.status)}<span class="pcn">${escapeHtml(p.name)}</span>
-      <span class="pcm">${escapeHtml(trigger(p))}</span>${runBadge(p.latestRun)}
+      ${toggle(p)}<span class="pcm">${escapeHtml(trigger(p))}</span>${runBadge(p.latestRun)}
       <div class="pca">${actions}</div></div></div>`;
   }
   return `<div class="pcard" data-pid="${p.id}">
-    <div class="pch">${dot(p.status)}<h3>${escapeHtml(p.name)}</h3>${runBadge(p.latestRun)}</div>
+    <div class="pch">${dot(p.status)}<h3>${escapeHtml(p.name)}</h3>${toggle(p)}${runBadge(p.latestRun)}</div>
     ${p.description ? `<p class="pcd">${escapeHtml(p.description.slice(0, 120))}</p>` : ""}
     <div class="pcs"><span>${nodes} nodes</span><span>${(p.edges||[]).length} edges</span><span>${escapeHtml(trigger(p))}</span></div>
     <div class="pca">${actions}</div></div>`;
@@ -120,7 +146,6 @@ export function render() {
     return f.map(card).join("");
   })();
   root.innerHTML = `<div class="ppg">
-    ${_toast ? `<div class="ptst">${escapeHtml(_toast)}</div>` : ""}
     <div class="ppgh">
       <div class="pptr"><h2>Pipelines</h2><button class="pbtn pbtn-p" id="pnbtn">+ New</button></div>
       <p class="ppdesc">Unified orchestration. Canvas in PIPE2; execution in PIPE4.</p>
@@ -146,18 +171,18 @@ function wire(root) {
   ["#pnc", "#pnc2"].forEach((id) => root.querySelector(id)?.addEventListener("click", () => { _showNew = false; render(); }));
   root.querySelector("#pns")?.addEventListener("click", async () => {
     const name = root.querySelector("#pnn")?.value?.trim();
-    if (!name) { showToast("Name required"); return; }
+    if (!name) { showToast("Create failed", "Name required", { isError: true }); return; }
     const desc = root.querySelector("#pnd")?.value?.trim() || null;
     try { await api.createPipelineApi({ name, description: desc, nodes: [], edges: [] }); _showNew = false; await loadPipelines(); }
-    catch (e) { showToast(`Create failed: ${e.message}`); }
+    catch (e) { showToast("Create failed", e.message, { isError: true }); }
   });
-  root.querySelectorAll(".ptoggle").forEach((b) => b.addEventListener("click", async (e) => {
+  root.querySelectorAll(".pswitch").forEach((b) => b.addEventListener("click", async (e) => {
     e.stopPropagation();
     try {
       if (b.dataset.action === "enable") await api.enablePipelineApi(b.dataset.id);
       else await api.disablePipelineApi(b.dataset.id);
       await loadPipelines();
-    } catch (e) { showToast(`Toggle failed: ${e.message}`); }
+    } catch (e) { showToast("Toggle failed", e.message, { isError: true }); }
   }));
   root.querySelectorAll(".pedit").forEach((b) => b.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -180,8 +205,11 @@ function wire(root) {
   });
   root.querySelectorAll(".prun").forEach((b) => b.addEventListener("click", async (e) => {
     e.stopPropagation();
-    try { await api.runPipelineApi(b.dataset.id); showToast("Run queued — execution engine arrives in PIPE4."); await loadPipelines(); }
-    catch (e) { showToast(`Run failed: ${e.message}`); }
+    try {
+      await api.runPipelineApi(b.dataset.id);
+      showToast("Run queued — execution engine arrives in PIPE4.", "Status will appear in run history.");
+      await loadPipelines();
+    } catch (e) { showToast("Run failed", e.message, { isError: true }); }
   }));
 }
 

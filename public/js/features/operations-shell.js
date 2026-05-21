@@ -509,6 +509,10 @@ function modelOptions(provider, selected) {
   ).join("");
 }
 
+function firstModelForProvider(provider) {
+  return getSourceModels(provider || "claude-code")[0]?.value || "";
+}
+
 function readStorage(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -746,6 +750,8 @@ function getAgentMetricRow(agent) {
 function buildAgentProfile(agent) {
   // Merge enriched real data when available for this agent.
   const enriched = _enrichedAgent?.id === agent?.id ? _enrichedAgent : null;
+  const draft = agentDraft?.id === agent?.id ? agentDraft : null;
+  const config = draft || enriched || agent;
   const profile = lookupAgentProfile(agent);
   const metricRow = getAgentMetricRow(agent);
   const fallback = AGENT_FALLBACK_METRICS[normalizeAgentId(agent)] || {};
@@ -768,13 +774,13 @@ function buildAgentProfile(agent) {
   return {
     ...agent,
     // Policy fields from real agent config (enriched or raw agent record).
-    provider: (enriched ?? agent).provider || "",
-    model: (enriched ?? agent).model || "",
-    fallbackProvider: (enriched ?? agent).fallbackProvider || null,
-    fallbackModel: (enriched ?? agent).fallbackModel || null,
-    memoryPolicy: (enriched ?? agent).memoryPolicy || null,
-    permissionMode: (enriched ?? agent).permissionMode || null,
-    outputContract: (enriched ?? agent).outputContract || null,
+    provider: config.provider || "",
+    model: config.model || "",
+    fallbackProvider: config.fallbackProvider || null,
+    fallbackModel: config.fallbackModel || null,
+    memoryPolicy: config.memoryPolicy || null,
+    permissionMode: config.permissionMode || null,
+    outputContract: config.outputContract || null,
     instructionFileExists: enriched?.instructionFileExists ?? false,
     supportingFileCount: enriched?.supportingFileCount ?? 0,
     persona,
@@ -1154,6 +1160,15 @@ function updateAgentDraftField(field, value) {
   if (field === "title" || field === "description" || field === "goal" || field === "icon" ||
       field === "provider" || field === "model" || field === "fallbackProvider" || field === "fallbackModel") {
     agentDraft[field] = value;
+    if (field === "provider") {
+      const models = getSourceModels(value || "claude-code").map((model) => model.value);
+      if (!models.includes(agentDraft.model)) agentDraft.model = firstModelForProvider(value);
+    }
+    if (field === "fallbackProvider") {
+      const models = getSourceModels(value || "claude-code").map((model) => model.value);
+      if (!value) agentDraft.fallbackModel = "";
+      else if (!models.includes(agentDraft.fallbackModel)) agentDraft.fallbackModel = firstModelForProvider(value);
+    }
   } else if (field === "maxTurns") {
     agentDraft.constraints.maxTurns = Number(value || 0);
   } else if (field === "timeoutMs") {

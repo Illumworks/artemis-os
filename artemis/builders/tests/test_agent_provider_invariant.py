@@ -48,3 +48,33 @@ async def test_patch_legacy_null_fallback_requires_population(
     resp = await client.patch("/api/agents/legacy-null", json={"name": "Touched"})
     assert resp.status_code == 422
     assert "fallback_provider" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_patch_legacy_null_fallback_can_populate_provider_policy(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    async with db_session.begin():
+        await repo.create_agent(
+            db_session,
+            agent_id="legacy-provider-patch",
+            name="Legacy Provider Patch",
+            goal="Validate provider persistence",
+            provider="claude-code",
+            model="sonnet",
+        )
+    resp = await client.patch(
+        "/api/agents/legacy-provider-patch",
+        json={
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "fallbackProvider": "claude-code",
+            "fallbackModel": "sonnet",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "codex"
+    assert data["model"] == "gpt-5.4"
+    assert data["fallbackProvider"] == "claude-code"
+    assert data["fallbackModel"] == "sonnet"
