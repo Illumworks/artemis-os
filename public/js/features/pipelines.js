@@ -1,0 +1,193 @@
+/**
+ * Pipelines page — PIPE1
+ * List + JSON editor. Visual canvas in PIPE2; execution in PIPE4.
+ */
+import { escapeHtml } from "../core/utils.js";
+import * as api from "../core/api.js";
+
+let _pipelines = [];
+let _loaded = false;
+let _error = null;
+let _search = "";
+let _sortBy = "updated";
+let _editing = null;
+let _editJson = "";
+let _editErr = null;
+let _toast = null;
+let _toastTimer = null;
+let _showNew = false;
+
+const MOUNT = "#pipelines-page-root";
+const getRoot = () => document.querySelector(MOUNT);
+
+async function loadPipelines() {
+  _error = null;
+  try {
+    _pipelines = await api.listPipelinesApi();
+    _loaded = true;
+  } catch (e) {
+    _error = e.message || String(e);
+    _loaded = true;
+  }
+  render();
+}
+
+function showToast(msg, ms = 4000) {
+  _toast = msg;
+  render();
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { _toast = null; render(); }, ms);
+}
+
+function filtered() {
+  let list = _pipelines.slice();
+  if (_search) {
+    const q = _search.toLowerCase();
+    list = list.filter((p) => p.name.toLowerCase().includes(q));
+  }
+  return _sortBy === "name"
+    ? list.sort((a, b) => a.name.localeCompare(b.name))
+    : list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+}
+
+function runBadge(run) {
+  if (!run) return '<span class="pb pb-none">No runs</span>';
+  const mod = { queued: "queued", running: "running", awaiting_approval: "waiting",
+    succeeded: "success", failed: "failed", cancelled: "cancelled" }[run.status] || "unknown";
+  return `<span class="pb pb-${mod}">${escapeHtml(run.status)}</span>`;
+}
+
+function dot(status) {
+  return `<span class="pdot pdot-${escapeHtml(status)}"></span>`;
+}
+
+function trigger(p) {
+  const n = (p.nodes || []).find((x) => x.type?.startsWith("trigger_"));
+  if (!n) return "Manual";
+  return { trigger_scheduled: n.config?.cron || "Scheduled",
+    trigger_webhook: "Webhook", trigger_event: "Event" }[n.type] || "Manual";
+}
+
+function card(p) {
+  const nodes = (p.nodes || []).length;
+  const compact = nodes <= 1;
+  const act = p.status === "active";
+  const actions = `
+    <button class="pbtn pbtn-g ptoggle" data-id="${p.id}" data-action="${act ? "disable" : "enable"}">${act ? "Pause" : "Enable"}</button>
+    <button class="pbtn pbtn-g pedit" data-id="${p.id}">Edit JSON</button>
+    <button class="pbtn pbtn-p prun" data-id="${p.id}">Run</button>`;
+  if (compact) {
+    return `<div class="pcard pcard-c" data-pid="${p.id}">
+      <div class="pcc">${dot(p.status)}<span class="pcn">${escapeHtml(p.name)}</span>
+      <span class="pcm">${escapeHtml(trigger(p))}</span>${runBadge(p.latestRun)}
+      <div class="pca">${actions}</div></div></div>`;
+  }
+  return `<div class="pcard" data-pid="${p.id}">
+    <div class="pch">${dot(p.status)}<h3>${escapeHtml(p.name)}</h3>${runBadge(p.latestRun)}</div>
+    ${p.description ? `<p class="pcd">${escapeHtml(p.description.slice(0, 120))}</p>` : ""}
+    <div class="pcs"><span>${nodes} nodes</span><span>${(p.edges||[]).length} edges</span><span>${escapeHtml(trigger(p))}</span></div>
+    <div class="pca">${actions}</div></div>`;
+}
+
+function editPanel() {
+  if (!_editing) return "";
+  return `<div class="pedit-panel">
+    <div class="peph"><h3>Edit: ${escapeHtml(_editing.name)}</h3><button class="pbtn pbtn-g" id="pec">Close</button></div>
+    <p class="pehint">PIPE1 JSON editor — visual canvas in PIPE2.</p>
+    ${_editErr ? `<div class="peerr">${escapeHtml(_editErr)}</div>` : ""}
+    <textarea class="petxt" id="petxt" rows="18" spellcheck="false">${escapeHtml(_editJson)}</textarea>
+    <div class="pef"><button class="pbtn pbtn-p" id="pes">Save</button><button class="pbtn pbtn-g" id="pec2">Cancel</button></div>
+  </div>`;
+}
+
+function newForm() {
+  return `<div class="pedit-panel">
+    <div class="peph"><h3>New Pipeline</h3><button class="pbtn pbtn-g" id="pnc">Close</button></div>
+    <label class="plbl">Name</label><input class="pinp" id="pnn" type="text" placeholder="My pipeline" />
+    <label class="plbl">Description</label><input class="pinp" id="pnd" type="text" placeholder="Optional" />
+    <div class="pef"><button class="pbtn pbtn-p" id="pns">Create</button><button class="pbtn pbtn-g" id="pnc2">Cancel</button></div>
+  </div>`;
+}
+
+export function render() {
+  const root = getRoot();
+  if (!root) return;
+  if (!_loaded) { root.innerHTML = `<div class="ppg"><div class="pload">Loading pipelines…</div></div>`; return; }
+  const list = (() => {
+    if (_error) return `<div class="pempty"><strong>Load failed</strong><span>${escapeHtml(_error)}</span></div>`;
+    const f = filtered();
+    if (!f.length) return `<div class="pempty"><strong>No pipelines yet.</strong><span>Create one or seed via <code>scripts/seed_marketing_pipeline.py</code>.</span></div>`;
+    return f.map(card).join("");
+  })();
+  root.innerHTML = `<div class="ppg">
+    ${_toast ? `<div class="ptst">${escapeHtml(_toast)}</div>` : ""}
+    <div class="ppgh">
+      <div class="pptr"><h2>Pipelines</h2><button class="pbtn pbtn-p" id="pnbtn">+ New</button></div>
+      <p class="ppdesc">Unified orchestration. Canvas in PIPE2; execution in PIPE4.</p>
+      <div class="ptb">
+        <input class="psrch" id="psrch" type="search" placeholder="Search…" value="${escapeHtml(_search)}" />
+        <div class="psrt">
+          <button class="psb ${_sortBy === "updated" ? "psb-a" : ""}" data-sort="updated">Recent</button>
+          <button class="psb ${_sortBy === "name" ? "psb-a" : ""}" data-sort="name">Name</button>
+        </div>
+      </div>
+    </div>
+    <div class="plist">${list}</div>
+    ${_showNew ? newForm() : ""}
+    ${editPanel()}
+  </div>`;
+  wire(root);
+}
+
+function wire(root) {
+  root.querySelector("#psrch")?.addEventListener("input", (e) => { _search = e.target.value; render(); });
+  root.querySelectorAll(".psb").forEach((b) => b.addEventListener("click", () => { _sortBy = b.dataset.sort; render(); }));
+  root.querySelector("#pnbtn")?.addEventListener("click", () => { _showNew = true; render(); });
+  ["#pnc", "#pnc2"].forEach((id) => root.querySelector(id)?.addEventListener("click", () => { _showNew = false; render(); }));
+  root.querySelector("#pns")?.addEventListener("click", async () => {
+    const name = root.querySelector("#pnn")?.value?.trim();
+    if (!name) { showToast("Name required"); return; }
+    const desc = root.querySelector("#pnd")?.value?.trim() || null;
+    try { await api.createPipelineApi({ name, description: desc, nodes: [], edges: [] }); _showNew = false; await loadPipelines(); }
+    catch (e) { showToast(`Create failed: ${e.message}`); }
+  });
+  root.querySelectorAll(".ptoggle").forEach((b) => b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      if (b.dataset.action === "enable") await api.enablePipelineApi(b.dataset.id);
+      else await api.disablePipelineApi(b.dataset.id);
+      await loadPipelines();
+    } catch (e) { showToast(`Toggle failed: ${e.message}`); }
+  }));
+  root.querySelectorAll(".pedit").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const p = _pipelines.find((x) => x.id === b.dataset.id);
+    if (!p) return;
+    _editing = p;
+    _editJson = JSON.stringify({ nodes: p.nodes, edges: p.edges, triggerConfig: p.triggerConfig }, null, 2);
+    _editErr = null;
+    render();
+  }));
+  ["#pec", "#pec2"].forEach((id) => root.querySelector(id)?.addEventListener("click", () => { _editing = null; render(); }));
+  root.querySelector("#petxt")?.addEventListener("input", (e) => { _editJson = e.target.value; });
+  root.querySelector("#pes")?.addEventListener("click", async () => {
+    let parsed;
+    try { parsed = JSON.parse(_editJson); } catch (e) { _editErr = `JSON error: ${e.message}`; render(); return; }
+    try {
+      await api.updatePipelineApi(_editing.id, { nodes: parsed.nodes ?? [], edges: parsed.edges ?? [], triggerConfig: parsed.triggerConfig ?? null });
+      _editing = null; await loadPipelines();
+    } catch (e) { _editErr = `Save failed: ${e.message}`; render(); }
+  });
+  root.querySelectorAll(".prun").forEach((b) => b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try { await api.runPipelineApi(b.dataset.id); showToast("Run queued — execution engine arrives in PIPE4."); await loadPipelines(); }
+    catch (e) { showToast(`Run failed: ${e.message}`); }
+  }));
+}
+
+export function initPipelinesPage() {
+  _loaded = false; _error = null; _search = ""; _sortBy = "updated";
+  _editing = null; _showNew = false;
+  render();
+  loadPipelines();
+}

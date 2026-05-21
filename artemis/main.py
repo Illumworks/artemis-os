@@ -43,6 +43,7 @@ from artemis.marketing.scout_scheduler import start_scout_scheduler, stop_scout_
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
+from artemis.pipelines.routes import router as pipelines_router
 from artemis.routes import calendar as calendar_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
@@ -226,6 +227,9 @@ app.include_router(daily_brief_routes.router)
 
 # OP1 — Automations registry
 app.include_router(automations_router)
+
+# PIPE1 — Pipelines data model + CRUD
+app.include_router(pipelines_router)
 
 # J3c stubs — Jira overview, sessions, notifications, stats
 app.include_router(jira_routes.router)
