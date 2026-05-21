@@ -48,6 +48,7 @@ class AgentCreate(_Base):
     memory_policy: MemoryPolicy = Field(default="session_scoped", alias="memoryPolicy")
     permission_mode: PermissionMode = Field(default="ask", alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PersonaData(_Base):
@@ -78,6 +79,7 @@ class AgentRead(_Base):
     memory_policy: str = Field(default="session_scoped", alias="memoryPolicy")
     permission_mode: str = Field(default="ask", alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_")
     # O2/O3 — persona/soul
     persona: dict[str, Any] | None = None
     created_at: datetime = Field(alias="createdAt")
@@ -99,6 +101,7 @@ class AgentUpdate(_Base):
     memory_policy: MemoryPolicy | None = Field(default=None, alias="memoryPolicy")
     permission_mode: PermissionMode | None = Field(default=None, alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    metadata: dict[str, Any] | None = None
     # O2/O3 — persona/soul
     persona: dict[str, Any] | None = None
 

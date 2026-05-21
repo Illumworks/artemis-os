@@ -16,9 +16,11 @@ import {
 import { initPipelinesPage } from "./pipelines.js";
 import { PROVIDER_LABELS, PROVIDER_PICKERS, getSourceModels } from "../ui/model-selector.js";
 import {
+  createCustomAgentTreeView,
   createAgentTreeView,
   getAgentHealth,
   getAgentTrigger,
+  normalizeDisplayFolder,
 } from "../components/agent-tree.js";
 
 const SHELL_CONTENT_SELECTOR = "#app-shell-content";
@@ -33,6 +35,8 @@ const OPS_SKILL_SEARCH_KEY = "artemis-ops-skill-search";
 const OPS_AUTOMATION_SELECTION_KEY = "artemis-ops-selected-automation";
 const OPS_AGENT_DRAFT_KEY = "artemis-ops-agent-draft";
 const OPS_AGENT_TREE_COLLAPSED_KEY = "artemis.agents.tree.collapsed";
+const OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY = "artemis.agents.custom-tree.collapsed";
+const OPS_AGENT_VIEW_MODE_KEY = "artemis.agents.view-mode";
 const OPS_WORKFLOW_DRAFT_KEY = "artemis-ops-workflow-draft";
 const OPS_CAMPAIGN_NOTE_KEY = "artemis-ops-campaign-notes";
 const WRITING_STUDIO_HANDOFF_KEY = "artemis-writing-studio-handoff";
@@ -467,6 +471,8 @@ let agentTreeSearch = "";
 let agentTreeSort = "name";
 let agentTreeFilters = { statuses: [], triggers: [] };
 let agentTreeCollapsed = readStorage(OPS_AGENT_TREE_COLLAPSED_KEY, {});
+let agentCustomTreeCollapsed = readStorage(OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY, {});
+let agentViewMode = readStorage(OPS_AGENT_VIEW_MODE_KEY, "slug") === "custom" ? "custom" : "slug";
 let workflowDraft = null;
 // Latest run data for the selected workflow, loaded on selection + refreshed on Run now.
 let _latestWorkflowRun = null;
@@ -981,7 +987,26 @@ function decorateAgentForTree(agent) {
 
 function isTreeCollapsed(kind, id) {
   if (agentTreeSearch.trim()) return false;
-  return Boolean(agentTreeCollapsed[`${kind}:${id}`]);
+  const store = agentViewMode === "custom" ? agentCustomTreeCollapsed : agentTreeCollapsed;
+  return Boolean(store[`${kind}:${id}`]);
+}
+
+function getAgentFolders(agents = getAgents()) {
+  return [...new Set(agents.map((agent) => normalizeDisplayFolder(agent.metadata?.display_folder)).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function renderAgentViewToggle() {
+  return `
+    <div class="ops-agent-view-toggle" aria-label="Agent tree view">
+      <span>View:</span>
+      ${["slug", "custom"].map((mode) => `
+        <button type="button" class="${agentViewMode === mode ? "active" : ""}" data-ops-action="set-agent-view-mode" data-view-mode="${mode}">
+          ${mode === "slug" ? "Slug" : "Custom"}
+        </button>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderAgentTreeControls() {
@@ -1000,6 +1025,7 @@ function renderAgentTreeControls() {
         <option value="last_run"${agentTreeSort === "last_run" ? " selected" : ""}>By last run</option>
         <option value="health"${agentTreeSort === "health" ? " selected" : ""}>By run health</option>
       </select>
+      ${renderAgentViewToggle()}
       <div class="ops-agent-tree-filters" aria-label="Filter agents">
         ${chips.map(([group, value, label]) => {
           const active = group === "status"
@@ -1012,13 +1038,13 @@ function renderAgentTreeControls() {
   `;
 }
 
-function renderAgentTreeRow(agent, selectedAgent) {
+function renderAgentTreeRow(agent, selectedAgent, { custom = false } = {}) {
   const active = agent.id === selectedAgent?.id;
   const health = getAgentHealth(agent);
   const trigger = getAgentTrigger(agent);
   const initial = (agent.displayName || "A").charAt(0).toUpperCase();
   return `
-    <button type="button" class="ops-agent-tree-row${active ? " active" : ""}" data-ops-action="select-agent" data-agent-id="${escapeAttr(agent.id)}">
+    <button type="button" class="ops-agent-tree-row${active ? " active" : ""}" data-ops-action="select-agent" data-agent-id="${escapeAttr(agent.id)}"${custom ? ' draggable="true" data-drag-kind="agent"' : ""}>
       <span class="ops-agent-tree-avatar">
         ${agent.avatarUrl ? `<img src="${escapeAttr(agent.avatarUrl)}" alt="${escapeAttr(agent.displayName)} avatar">` : escapeHtml(initial)}
       </span>
@@ -1030,11 +1056,50 @@ function renderAgentTreeRow(agent, selectedAgent) {
         <span class="ops-agent-tree-model">${escapeHtml(agent.modelLabel || "default")}</span>
         <span class="ops-agent-tree-run"><i class="ops-agent-dot ops-agent-dot-${escapeAttr(health)}"></i>${escapeHtml(agent.lastRun || "never")} &middot; ${escapeHtml(trigger)}</span>
       </span>
+      ${!custom ? `<span class="ops-agent-folder-action" data-ops-action="add-agent-to-folder" data-agent-id="${escapeAttr(agent.id)}" title="Add to folder">+</span>` : ""}
     </button>
   `;
 }
 
+function renderCustomAgentNodes(nodes, selectedAgent) {
+  return nodes.map((node) => {
+    const collapsed = isTreeCollapsed("folder", node.id);
+    return `
+      <section class="ops-agent-tree-subdomain">
+        <button type="button" class="ops-agent-tree-folder ops-agent-tree-folder-subdomain ops-agent-custom-folder"
+          draggable="${node.id === "Unsorted" ? "false" : "true"}"
+          data-ops-action="toggle-agent-tree"
+          data-tree-kind="folder"
+          data-tree-id="${escapeAttr(node.id)}"
+          data-folder-path="${escapeAttr(node.id === "Unsorted" ? "" : node.id)}"
+          aria-expanded="${collapsed ? "false" : "true"}">
+          <span>${collapsed ? ">" : "v"} ${escapeHtml(node.label)}</span>
+          <span>${node.agents.length}/${node.total}</span>
+        </button>
+        <div class="ops-agent-tree-rows${collapsed ? " hidden" : ""}">
+          ${node.agents.length ? node.agents.map((item) => renderAgentTreeRow(item, selectedAgent, { custom: true })).join("") : ""}
+          ${node.children.length ? renderCustomAgentNodes(node.children, selectedAgent) : ""}
+          ${!node.agents.length && !node.children.length ? `<div class="ops-agent-tree-empty">No agents matching filter.</div>` : ""}
+        </div>
+      </section>
+    `;
+  }).join("");
+}
+
 function renderAgentTree(agents, selectedAgent) {
+  if (agentViewMode === "custom") {
+    const view = createCustomAgentTreeView(agents, {
+      query: agentTreeSearch.trim(),
+      sort: agentTreeSort,
+      filters: agentTreeFilters,
+    });
+    return `
+      ${renderAgentTreeControls()}
+      <div class="ops-agent-tree ops-agent-tree-custom" data-localstorage-key="${escapeAttr(OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY)}">
+        ${renderCustomAgentNodes(view, selectedAgent)}
+      </div>
+    `;
+  }
   const view = createAgentTreeView(agents, {
     query: agentTreeSearch.trim(),
     sort: agentTreeSort,
@@ -1075,6 +1140,95 @@ function renderAgentTree(agents, selectedAgent) {
       }).join("")}
     </div>
   `;
+}
+
+async function patchAgentDisplayFolder(agentId, folderPath) {
+  const agent = getAgents().find((item) => item.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+  const nextFolder = normalizeDisplayFolder(folderPath);
+  const metadata = { ...(agent.metadata || {}) };
+  if (nextFolder) metadata.display_folder = nextFolder;
+  else delete metadata.display_folder;
+  await api.updateAgent(agentId, { metadata });
+}
+
+async function moveAgentToFolder(agentId, folderPath, { flipView = true } = {}) {
+  await patchAgentDisplayFolder(agentId, folderPath);
+  if (flipView) {
+    agentViewMode = "custom";
+    writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+  }
+  await refreshAgentsFromApi();
+  renderOperationsView("agents");
+}
+
+async function moveFolderToFolder(sourcePath, targetPath) {
+  const source = normalizeDisplayFolder(sourcePath);
+  const target = normalizeDisplayFolder(targetPath);
+  if (!source || source === target || target.startsWith(`${source}/`)) return;
+  const moved = getAgents().filter((agent) => {
+    const folder = normalizeDisplayFolder(agent.metadata?.display_folder);
+    return folder === source || folder.startsWith(`${source}/`);
+  });
+  await Promise.all(moved.map((agent) => {
+    const folder = normalizeDisplayFolder(agent.metadata?.display_folder);
+    const suffix = folder === source ? "" : folder.slice(source.length + 1);
+    return patchAgentDisplayFolder(agent.id, [target, source.split("/").at(-1), suffix].filter(Boolean).join("/"));
+  }));
+  agentViewMode = "custom";
+  writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+  await refreshAgentsFromApi();
+  renderOperationsView("agents");
+}
+
+function promptFolderForAgent(agentId) {
+  const folders = getAgentFolders();
+  const choice = window.prompt?.(`Folder for ${agentId}\nExisting: ${folders.join(", ") || "none"}\nType a folder name, or leave blank for Unsorted.`);
+  if (choice == null) return;
+  void moveAgentToFolder(agentId, choice).catch((err) => showOpsImportToast(err.message || "Move failed", true));
+}
+
+function showFolderContextMenu(folderPath) {
+  const folder = normalizeDisplayFolder(folderPath);
+  if (!folder) return;
+  const action = window.prompt?.(`Folder: ${folder}\nType: create, rename, or delete`);
+  if (!action) return;
+  const normalized = action.trim().toLowerCase();
+  if (normalized === "create") {
+    const name = window.prompt?.("Subfolder name");
+    const agentId = name ? window.prompt?.(`Agent id to move into ${folder}/${name}`) : "";
+    if (agentId) void moveAgentToFolder(agentId, `${folder}/${name}`).catch((err) => showOpsImportToast(err.message || "Move failed", true));
+    return;
+  }
+  if (normalized === "rename") {
+    const next = normalizeDisplayFolder(window.prompt?.("Rename folder to", folder));
+    if (!next) return;
+    const agents = getAgents().filter((agent) => {
+      const current = normalizeDisplayFolder(agent.metadata?.display_folder);
+      return current === folder || current.startsWith(`${folder}/`);
+    });
+    void Promise.all(agents.map((agent) => {
+      const current = normalizeDisplayFolder(agent.metadata?.display_folder);
+      const suffix = current === folder ? "" : current.slice(folder.length + 1);
+      return patchAgentDisplayFolder(agent.id, [next, suffix].filter(Boolean).join("/"));
+    })).then(async () => {
+      await refreshAgentsFromApi();
+      renderOperationsView("agents");
+    }).catch((err) => showOpsImportToast(err.message || "Rename failed", true));
+    return;
+  }
+  if (normalized === "delete") {
+    const agents = getAgents().filter((agent) => {
+      const current = normalizeDisplayFolder(agent.metadata?.display_folder);
+      return current === folder || current.startsWith(`${folder}/`);
+    });
+    void Promise.all(agents.map((agent) => patchAgentDisplayFolder(agent.id, "")))
+      .then(async () => {
+        await refreshAgentsFromApi();
+        renderOperationsView("agents");
+      })
+      .catch((err) => showOpsImportToast(err.message || "Delete failed", true));
+  }
 }
 
 function ensureWorkflowSelection(workflows) {
@@ -3254,18 +3408,56 @@ async function handleSkillFileDrop(file) {
   }
 }
 
+function handleOperationsDragstart(event) {
+  const row = event.target.closest("[data-drag-kind='agent']");
+  if (row && agentViewMode === "custom") {
+    event.dataTransfer?.setData("application/x-artemis-agent", row.dataset.agentId || "");
+    return;
+  }
+  const folder = event.target.closest(".ops-agent-custom-folder[data-folder-path]");
+  if (folder && agentViewMode === "custom") {
+    event.dataTransfer?.setData("application/x-artemis-folder", folder.dataset.folderPath || "");
+  }
+}
+
+function handleOperationsContextMenu(event) {
+  const folder = event.target.closest(".ops-agent-custom-folder[data-folder-path]");
+  if (!folder || agentViewMode !== "custom") return;
+  event.preventDefault();
+  showFolderContextMenu(folder.dataset.folderPath || "");
+}
+
 function handleOperationsDragover(event) {
+  const agentFolder = event.target.closest(".ops-agent-custom-folder");
+  if (agentFolder && agentViewMode === "custom") {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    agentFolder.classList.add("ops-agent-folder-drop");
+    return;
+  }
   if (!getShellContent()?.querySelector(".ops-skills-grid")) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
   getShellContent()?.querySelector(".ops-list-panel")?.classList.add("ops-drop-active");
 }
 
-function handleOperationsDragleave() {
+function handleOperationsDragleave(event) {
+  event.target.closest(".ops-agent-custom-folder")?.classList.remove("ops-agent-folder-drop");
   getShellContent()?.querySelector(".ops-list-panel")?.classList.remove("ops-drop-active");
 }
 
 function handleOperationsDrop(event) {
+  const folder = event.target.closest(".ops-agent-custom-folder");
+  if (folder && agentViewMode === "custom") {
+    event.preventDefault();
+    folder.classList.remove("ops-agent-folder-drop");
+    const target = folder.dataset.folderPath || "";
+    const agentId = event.dataTransfer?.getData("application/x-artemis-agent") || "";
+    const sourceFolder = event.dataTransfer?.getData("application/x-artemis-folder") || "";
+    if (agentId) void moveAgentToFolder(agentId, target).catch((err) => showOpsImportToast(err.message || "Move failed", true));
+    else if (sourceFolder) void moveFolderToFolder(sourceFolder, target).catch((err) => showOpsImportToast(err.message || "Move failed", true));
+    return;
+  }
   if (!getShellContent()?.querySelector(".ops-skills-grid")) return;
   event.preventDefault();
   getShellContent()?.querySelector(".ops-list-panel")?.classList.remove("ops-drop-active");
@@ -3483,11 +3675,30 @@ function handleOperationsClick(event) {
     loadEnrichedAgent(selectedAgentId).then(() => renderOperationsView("agents")).catch(() => {});
     return;
   }
+  if (action === "set-agent-view-mode") {
+    agentViewMode = button.dataset.viewMode === "custom" ? "custom" : "slug";
+    writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+    renderOperationsView("agents");
+    return;
+  }
+  if (action === "add-agent-to-folder") {
+    event.preventDefault();
+    event.stopPropagation();
+    promptFolderForAgent(button.dataset.agentId || "");
+    return;
+  }
   if (action === "toggle-agent-tree") {
     const key = `${button.dataset.treeKind}:${button.dataset.treeId}`;
-    agentTreeCollapsed = { ...agentTreeCollapsed, [key]: !agentTreeCollapsed[key] };
-    if (!agentTreeCollapsed[key]) delete agentTreeCollapsed[key];
-    writeStorage(OPS_AGENT_TREE_COLLAPSED_KEY, agentTreeCollapsed);
+    const current = agentViewMode === "custom" ? agentCustomTreeCollapsed : agentTreeCollapsed;
+    const next = { ...current, [key]: !current[key] };
+    if (!next[key]) delete next[key];
+    if (agentViewMode === "custom") {
+      agentCustomTreeCollapsed = next;
+      writeStorage(OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY, agentCustomTreeCollapsed);
+    } else {
+      agentTreeCollapsed = next;
+      writeStorage(OPS_AGENT_TREE_COLLAPSED_KEY, agentTreeCollapsed);
+    }
     renderOperationsView("agents");
     return;
   }
@@ -4105,6 +4316,8 @@ shellContent?.addEventListener("click", handleOperationsClick);
 shellContent?.addEventListener("input", handleOperationsInput);
 shellContent?.addEventListener("change", handleOperationsChange);
 shellContent?.addEventListener("keydown", handleOperationsKeydown);
+shellContent?.addEventListener("dragstart", handleOperationsDragstart);
+shellContent?.addEventListener("contextmenu", handleOperationsContextMenu);
 shellContent?.addEventListener("dragover", handleOperationsDragover);
 shellContent?.addEventListener("dragleave", handleOperationsDragleave);
 shellContent?.addEventListener("drop", handleOperationsDrop);

@@ -187,6 +187,7 @@ async def create_agent(
         memory_policy=body.memory_policy,
         permission_mode=body.permission_mode,
         output_contract=body.output_contract,
+        metadata=body.metadata,
     )
     await session.commit()
     return AgentRead.model_validate(agent).model_dump(by_alias=True)

@@ -67,6 +67,9 @@ class Agent(Base):
     )
     permission_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="ask")
     output_contract: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    metadata_: Mapped[Any] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default="'{}'::jsonb"
+    )
     # O2/O3 — persona/soul: name, purpose, voice_notes, ghostwrite, profile_image_path
     persona: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

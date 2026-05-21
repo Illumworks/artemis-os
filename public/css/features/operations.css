@@ -1494,7 +1494,7 @@ button.ops-run-row {
 
 .ops-agent-tree-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   margin-bottom: 10px;
 }
@@ -1515,6 +1515,36 @@ button.ops-run-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.ops-agent-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 3px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.ops-agent-view-toggle button {
+  min-height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 8px;
+}
+
+.ops-agent-view-toggle button.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-panel));
+  color: var(--accent);
 }
 
 .ops-agent-filter-chip {
@@ -1577,6 +1607,15 @@ button.ops-run-row {
   font-size: 12px;
 }
 
+.ops-agent-custom-folder {
+  border-radius: 6px;
+}
+
+.ops-agent-folder-drop {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 .ops-agent-tree-folder span:last-child {
   color: var(--text-muted);
   font-family: var(--font-mono);
@@ -1594,7 +1633,7 @@ button.ops-run-row {
   position: relative;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 9px;
   min-height: 50px;
@@ -1606,6 +1645,10 @@ button.ops-run-row {
   cursor: pointer;
   padding: 6px 9px;
   text-align: left;
+}
+
+.ops-agent-tree-row[draggable="true"] {
+  cursor: grab;
 }
 
 .ops-agent-tree-row:hover {
@@ -1680,6 +1723,27 @@ button.ops-run-row {
 
 .ops-agent-tree-side {
   align-items: flex-end;
+}
+
+.ops-agent-folder-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.ops-agent-tree-row:hover .ops-agent-folder-action,
+.ops-agent-folder-action:focus {
+  opacity: 1;
+}
+
+.ops-agent-folder-action:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .ops-agent-dot {

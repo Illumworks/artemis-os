@@ -12,14 +12,16 @@ def run_tree_script(source: str) -> dict:
     script = f"""
       import {{
         buildAgentTree,
+        createCustomAgentTreeView,
         createAgentTreeView,
         getVisibleAgents,
+        normalizeDisplayFolder,
         summarizeAgentTree,
       }} from {json.dumps(TREE_MODULE.as_uri())};
       const agents = [
-        {{ id: "marketing.scout.starbridge_researcher", title: "Starbridge Researcher", description: "Tracks Starbridge signals", lastRunAt: "2026-05-20T12:00:00Z", health: "Healthy", schedule: "Daily" }},
-        {{ id: "marketing.scout.board_minutes", title: "Board Minutes", description: "Board docs", lastRunAt: "2026-05-19T12:00:00Z", health: "Needs attention", schedule: "Weekly" }},
-        {{ id: "marketing.qualifier.signal_scorer", title: "Signal Qualifier", description: "Scores demand signals", lastRunAt: "2026-05-18T12:00:00Z", health: "Healthy", schedule: "Manual" }},
+        {{ id: "marketing.scout.starbridge_researcher", title: "Starbridge Researcher", description: "Tracks Starbridge signals", metadata: {{ display_folder: "Favorites" }}, lastRunAt: "2026-05-20T12:00:00Z", health: "Healthy", schedule: "Daily" }},
+        {{ id: "marketing.scout.board_minutes", title: "Board Minutes", description: "Board docs", metadata: {{ display_folder: "Marketing/Priority" }}, lastRunAt: "2026-05-19T12:00:00Z", health: "Needs attention", schedule: "Weekly" }},
+        {{ id: "marketing.qualifier.signal_scorer", title: "Signal Qualifier", description: "Scores demand signals", metadata: {{ display_folder: "Marketing/Priority" }}, lastRunAt: "2026-05-18T12:00:00Z", health: "Healthy", schedule: "Manual" }},
         {{ id: "operations.jira.ticket_triage", title: "Ticket Triage", description: "Jira queue", lastRunAt: null, health: "Never", schedule: "Manual" }},
         {{ id: "personal.note_summarizer", title: "Note Summarizer", description: "Meeting notes", lastRunAt: "2026-05-17T12:00:00Z", health: "Healthy", schedule: "Manual" }},
         {{ id: "smoke-test", title: "Smoke Test", description: "Legacy agent", lastRunAt: null, health: "Never", schedule: "Manual" }},
@@ -100,5 +102,35 @@ def test_operations_shell_persists_collapse_namespace_and_compact_rows() -> None
     shell = OPS_SHELL.read_text()
     css = OPS_CSS.read_text()
     assert 'OPS_AGENT_TREE_COLLAPSED_KEY = "artemis.agents.tree.collapsed"' in shell
+    assert 'OPS_AGENT_VIEW_MODE_KEY = "artemis.agents.view-mode"' in shell
+    assert 'data-ops-action="set-agent-view-mode"' in shell
+    assert 'data-ops-action="add-agent-to-folder"' in shell
     assert 'data-ops-action="select-agent"' in shell
     assert "min-height: 50px;" in css
+
+
+def test_custom_tree_groups_display_folders_and_unsorted_first() -> None:
+    data = run_tree_script(
+        """
+        const view = createCustomAgentTreeView(agents);
+        console.log(JSON.stringify({
+          roots: view.map((node) => node.id),
+          unsorted: view[0].agents.map((agent) => agent.id).sort(),
+          marketingTotal: view.find((node) => node.id === "Marketing").total,
+          priorityAgents: view.find((node) => node.id === "Marketing").children[0].agents.map((agent) => agent.id).sort(),
+          normalized: normalizeDisplayFolder(" / Team / Priority / "),
+        }));
+        """
+    )
+    assert data["roots"] == ["Unsorted", "Favorites", "Marketing"]
+    assert data["unsorted"] == [
+        "operations.jira.ticket_triage",
+        "personal.note_summarizer",
+        "smoke-test",
+    ]
+    assert data["marketingTotal"] == 2
+    assert data["priorityAgents"] == [
+        "marketing.qualifier.signal_scorer",
+        "marketing.scout.board_minutes",
+    ]
+    assert data["normalized"] == "Team/Priority"

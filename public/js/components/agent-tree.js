@@ -47,6 +47,32 @@ export function buildAgentTree(agents = []) {
   return tree;
 }
 
+export function getAgentDisplayFolder(agent) {
+  const value = agent?.metadata?.display_folder;
+  return typeof value === "string" ? value.trim().replace(/^\/+|\/+$/g, "") : "";
+}
+
+export function normalizeDisplayFolder(value) {
+  return String(value || "").split("/").map((part) => part.trim()).filter(Boolean).join("/");
+}
+
+function ensureCustomNode(nodes, path) {
+  const parts = path ? path.split("/") : ["Unsorted"];
+  let current = nodes;
+  let node = null;
+  let prefix = "";
+  for (const part of parts) {
+    prefix = prefix ? `${prefix}/${part}` : part;
+    node = current.find((item) => item.id === prefix);
+    if (!node) {
+      node = { id: prefix, label: part, total: 0, agents: [], children: [] };
+      current.push(node);
+    }
+    current = node.children;
+  }
+  return node;
+}
+
 function matchesSearch(agent, query) {
   if (!query) return true;
   const haystack = [
@@ -108,6 +134,26 @@ export function createAgentTreeView(agents = [], options = {}) {
       }),
     };
   });
+}
+
+export function createCustomAgentTreeView(agents = [], options = {}) {
+  const roots = [];
+  for (const agent of agents) {
+    const folder = getAgentDisplayFolder(agent) || "Unsorted";
+    const node = ensureCustomNode(roots, folder);
+    node.agents.push(agent);
+    for (const path of folder.split("/").map((_, index, parts) => parts.slice(0, index + 1).join("/"))) {
+      ensureCustomNode(roots, path).total += 1;
+    }
+  }
+  const sortNodes = (nodes) => nodes
+    .sort((a, b) => (a.id === "Unsorted" ? -1 : b.id === "Unsorted" ? 1 : a.label.localeCompare(b.label)))
+    .map((node) => ({
+      ...node,
+      agents: getVisibleAgents(node.agents, options),
+      children: sortNodes(node.children),
+    }));
+  return sortNodes(roots);
 }
 
 export function summarizeAgentTree(agents = [], options = {}) {

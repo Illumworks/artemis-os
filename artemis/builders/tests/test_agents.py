@@ -63,6 +63,23 @@ async def test_update_agent(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_agent_metadata_does_not_change_agent_id(db_session: AsyncSession) -> None:
+    async with db_session.begin():
+        await repo.create_agent(
+            db_session,
+            agent_id="folder-agent",
+            name="Folder Agent",
+            metadata={"display_folder": "Old"},
+        )
+    async with db_session.begin():
+        updated = await repo.update_agent(
+            db_session, "folder-agent", metadata={"display_folder": "Top Picks"}
+        )
+    assert updated.agent_id == "folder-agent"
+    assert updated.metadata_ == {"display_folder": "Top Picks"}
+
+
+@pytest.mark.asyncio
 async def test_delete_agent(db_session: AsyncSession) -> None:
     async with db_session.begin():
         await repo.create_agent(db_session, agent_id="del-agent", name="Delete Me")
@@ -145,6 +162,20 @@ async def test_patch_agent_http(client: AsyncClient) -> None:
     resp = await client.patch("/api/agents/patch-me", json={"name": "New"})
     assert resp.status_code == 200
     assert resp.json()["name"] == "New"
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_metadata_http_keeps_agent_id(client: AsyncClient) -> None:
+    await client.post(
+        "/api/agents/", json={"agentId": "folder-http", "name": "Folder", **PROVIDER_FIELDS}
+    )
+    resp = await client.patch(
+        "/api/agents/folder-http", json={"metadata": {"display_folder": "Favorites"}}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["agentId"] == "folder-http"
+    assert data["metadata"] == {"display_folder": "Favorites"}
 
 
 @pytest.mark.asyncio

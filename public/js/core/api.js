@@ -1284,6 +1284,7 @@ export async function updateAgent(id, agent) {
   if (agent.fallbackProvider != null) payload.fallbackProvider = agent.fallbackProvider;
   if (agent.fallbackModel != null) payload.fallbackModel = agent.fallbackModel;
   if (agent.constraints?.maxTurns != null) payload.max_iterations = agent.constraints.maxTurns;
+  if (agent.metadata != null) payload.metadata = agent.metadata;
   const res = await fetch(`/api/agents/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

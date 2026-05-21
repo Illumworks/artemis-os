@@ -35,6 +35,8 @@ from artemis.builders.models import (
 
 
 async def create_agent(session: AsyncSession, **kwargs: Any) -> Agent:
+    if "metadata" in kwargs:
+        kwargs["metadata_"] = kwargs.pop("metadata")
     agent = Agent(**kwargs)
     session.add(agent)
     await session.flush()
@@ -65,6 +67,8 @@ async def list_agents(
 
 async def update_agent(session: AsyncSession, agent_id: str, **kwargs: Any) -> Agent:
     agent = await get_agent(session, agent_id)
+    if "metadata" in kwargs:
+        kwargs["metadata_"] = kwargs.pop("metadata")
     for key, val in kwargs.items():
         if val is not None or key in ("description", "goal", "system_prompt"):
             setattr(agent, key, val)
