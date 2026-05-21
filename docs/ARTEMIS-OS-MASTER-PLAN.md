@@ -201,6 +201,31 @@ M5 ships the 9 agent definitions (system prompts + tool lists + persona) as DB f
 
 **Why:** Definitions are demoable + Builder-editable without execution. Execution adds complexity better isolated. Jon's 2026-05-20 call.
 
+### D6 — Pipeline is the unified orchestration primitive
+
+Workflows, Chains, DAGs, and Automations all reduce to directed graphs of operations with optional triggers. We ship a single `Pipeline` concept that subsumes all four. Existing primitives either get auto-migrated to Pipeline rows (PIPE6) or sunset entirely.
+
+**Node types in scope:** Agent invocation, Skill call, Trigger (manual / scheduled / webhook / event), Human Gate (approval pause), Conditional branch, Sub-pipeline call.
+
+**UX requirements (non-negotiable):**
+- Pipelines surface MUST show both simple automations (e.g., "email agent checking inbox every hour" = one-node pipeline with trigger) AND complex multi-node pipelines (marketing pipeline) as first-class citizens in the same list view.
+- Every pipeline must be enable/disable-able from the list view without entering the editor.
+- Every pipeline must be editable from the list view (click → opens visual canvas).
+- Visual canvas style: n8n's mental model with Artemis design language (spacious, fluid, purposeful — not n8n's utilitarian density).
+
+**Agent invariant (locked alongside D6):**
+- Every Agent MUST have `preferred_provider` AND `fallback_provider` selectable from the provider registry. DB fields already exist via O1; UI must surface them as required fields in Builder + Agent Card.
+
+**Why:** Four separate orchestration primitives means four CRUD-form surfaces, four executors, four mental models — the same anti-pattern D1 (Builder-first) corrected for object creation. Pipeline unifies them. The marketing pipeline becomes the canonical first instance, validating the architecture with a real use case before legacy primitives are migrated.
+
+### D6.1 — Pipelines belong to Operations, not domain tabs
+
+Pipelines are infrastructure primitives, not domain content. They live under Operations → Pipelines alongside Agents, Skills, Memory. Domain pages (Marketing, future Sales, future Support) deep-link INTO Operations → Pipelines; they never own their own pipeline tabs.
+
+A "View Marketing Pipeline" tile on the Marketing Dashboard click-throughs to the pipeline definition in Operations. The pipeline lives in one place; its activity status surfaces in many places.
+
+**Why:** Mixing primitives into domain tabs would be the same conceptual error as putting Agents under Marketing. The orchestration tier and the domain tier stay cleanly separated.
+
 ---
 
 ## Open architectural decisions (need Jon's input)
