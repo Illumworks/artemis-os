@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
 from artemis.builders.models import Agent
+from artemis.connectors.resolver import ConnectorNotConfigured, get_credentials_for_tool
 from artemis.marketing.models import ScoutRun, SignalQueue, TerritoryConfig
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.marketing.scout_sources import SCOUT_SOURCE_ADAPTERS
@@ -29,6 +30,27 @@ from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 logger = logging.getLogger(__name__)
 DEFAULT_CADENCE_SECONDS = 14400
 DEFAULT_COST_CAP_USD = 1.00
+
+
+async def get_source_credentials(
+    session: AsyncSession,
+    agent_db_id: int,
+    tool_namespace: str,
+) -> dict[str, str] | None:
+    """Return connector credentials for a source adapter, or None if not linked.
+
+    Source adapters should call this instead of reading env vars directly so
+    credentials can be managed via the Connectors UI.
+    """
+    try:
+        return await get_credentials_for_tool(session, agent_db_id, tool_namespace)
+    except ConnectorNotConfigured:
+        logger.debug(
+            "No connector linked for agent %s / namespace %s — falling back to env",
+            agent_db_id,
+            tool_namespace,
+        )
+        return None
 
 
 class ScoutMode(enum.StrEnum):

@@ -25,6 +25,8 @@ from artemis.automations.scheduler import (
 )
 from artemis.builder.routes import agents_subresource_router as builder_agents_router
 from artemis.builder.routes import router as builder_router
+from artemis.connectors.routes import agents_router as connectors_agents_router
+from artemis.connectors.routes import router as connectors_router
 from artemis.integrations.token_refresh.scheduler import (
     start_token_refresh_scheduler,
     stop_token_refresh_scheduler,
@@ -227,6 +229,10 @@ app.include_router(daily_brief_routes.router)
 
 # OP1 — Automations registry
 app.include_router(automations_router)
+
+# Connectors — per-source credential management
+app.include_router(connectors_router)
+app.include_router(connectors_agents_router)
 
 # PIPE1 — Pipelines data model + CRUD
 app.include_router(pipelines_router)

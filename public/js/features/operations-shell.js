@@ -2075,6 +2075,20 @@ function renderAgentDetail(agent) {
         </div>
       </section>
 
+      <section class="ops-mini-card" id="agent-connectors-section" data-agent-id="${escapeAttr(String(agent.dbId || ''))}">
+        <div class="ops-mini-card-label">Linked connectors</div>
+        <div class="ops-connectors-list" id="agent-connectors-list">
+          <div class="ops-loading-inline">Loading connectors…</div>
+        </div>
+        <div class="ops-attach-connector-row" style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <select data-ops-field="attach-connector-select" class="ops-attach-connector-select">
+            <option value="">— link a connector —</option>
+          </select>
+          <input type="text" data-ops-field="attach-connector-namespace" placeholder="tool namespace (e.g. starbridge)" style="flex:1;min-width:120px">
+          <button type="button" class="ops-secondary-btn" data-ops-action="attach-connector">Link</button>
+        </div>
+      </section>
+
       <section class="ops-mini-card">
         <div class="ops-mini-card-label">Memory policy <span class="ops-badge-coming">stored — scope filtering coming</span></div>
         <label class="ops-field">
@@ -2228,6 +2242,92 @@ function renderOperatingBlueprint(agent) {
       </details>
     </section>
   `;
+}
+
+// ── Agent Connectors UI ───────────────────────────────────────────────────────
+
+async function loadAgentConnectors(agentDbId) {
+  const section = document.getElementById('agent-connectors-section');
+  if (!section || !agentDbId) return;
+  const list = section.querySelector('#agent-connectors-list');
+  if (!list) return;
+
+  // Populate the connector select
+  const selectEl = section.querySelector('[data-ops-field="attach-connector-select"]');
+  try {
+    const res = await fetch('/api/connectors?status=active');
+    if (res.ok) {
+      const connectors = await res.json();
+      if (selectEl) {
+        selectEl.innerHTML = '<option value="">— link a connector —</option>' +
+          connectors.map((c) => `<option value="${c.id}" data-kind="${c.kind}">[${c.kind}] ${c.name}</option>`).join('');
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // Load linked connectors
+  try {
+    const res = await fetch(`/api/agents/${agentDbId}/connectors`);
+    if (!res.ok) { list.innerHTML = '<div class="ops-muted-copy">Could not load linked connectors.</div>'; return; }
+    const links = await res.json();
+    if (!links.length) {
+      list.innerHTML = '<div class="ops-muted-copy">No connectors linked. Link a connector below to give this agent runtime credentials.</div>';
+      return;
+    }
+    list.innerHTML = links.map((link) => `
+      <div class="ops-connector-link-row">
+        <span class="ops-pill ops-pill-accent">${link.tool_namespace}</span>
+        <span class="ops-muted-copy" style="flex:1">${link.connector_id.slice(0, 8)}…</span>
+        <button type="button" class="ops-pill-detach" data-ops-action="detach-connector"
+          data-connector-id="${link.connector_id}" data-agent-id="${agentDbId}" title="Unlink connector">×</button>
+      </div>
+    `).join('');
+  } catch {
+    list.innerHTML = '<div class="ops-muted-copy">Could not load linked connectors.</div>';
+  }
+}
+
+async function handleAttachConnector(section) {
+  const agentDbId = section.dataset.agentId;
+  if (!agentDbId) return;
+  const selectEl = section.querySelector('[data-ops-field="attach-connector-select"]');
+  const nsInput = section.querySelector('[data-ops-field="attach-connector-namespace"]');
+  const connectorId = selectEl?.value;
+  const toolNamespace = nsInput?.value?.trim();
+  if (!connectorId || !toolNamespace) {
+    showToast('Missing field', 'Select a connector and enter a tool namespace.', { isError: true });
+    return;
+  }
+  try {
+    const res = await fetch(`/api/agents/${agentDbId}/connectors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connector_id: connectorId, tool_namespace: toolNamespace }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Link failed', err.error || res.statusText, { isError: true });
+      return;
+    }
+    if (nsInput) nsInput.value = '';
+    await loadAgentConnectors(agentDbId);
+    showToast('Linked', `Connector linked as "${toolNamespace}".`);
+  } catch (e) {
+    showToast('Link failed', String(e), { isError: true });
+  }
+}
+
+async function handleDetachConnector(btn) {
+  const connectorId = btn.dataset.connectorId;
+  const agentDbId = btn.dataset.agentId;
+  if (!connectorId || !agentDbId) return;
+  try {
+    await fetch(`/api/agents/${agentDbId}/connectors/${connectorId}`, { method: 'DELETE' });
+    await loadAgentConnectors(agentDbId);
+    showToast('Unlinked', 'Connector unlinked from agent.');
+  } catch (e) {
+    showToast('Unlink failed', String(e), { isError: true });
+  }
 }
 
 function formatFileSize(bytes) {
@@ -3299,6 +3399,11 @@ export function renderOperationsView(view = getState("view")) {
   if (normalizeAppView(view) === "pipelines") {
     initPipelinesPage();
   }
+  // Load agent connectors asynchronously after the agent detail DOM is ready.
+  const connSection = document.getElementById("agent-connectors-section");
+  if (connSection && connSection.dataset.agentId) {
+    void loadAgentConnectors(connSection.dataset.agentId);
+  }
   return markup;
 }
 
@@ -4011,6 +4116,15 @@ function handleOperationsClick(event) {
         showOpsImportToast(err.message || "Detach failed", true);
       }
     })();
+    return;
+  }
+  if (action === "attach-connector") {
+    const section = document.getElementById("agent-connectors-section");
+    if (section) void handleAttachConnector(section);
+    return;
+  }
+  if (action === "detach-connector") {
+    void handleDetachConnector(button);
     return;
   }
   if (action === "reset-agent") {
