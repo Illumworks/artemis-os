@@ -246,8 +246,11 @@ async def test_signals_missedmentions_excludes_resolved(
     assert body["missedMentions"] == 2
 
 
-async def test_triage_permalink_format(db_session: AsyncSession) -> None:
+async def test_triage_permalink_format(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Permalink uses workspace-direct archives/<channel>/p<ts_nodot> format."""
+    monkeypatch.setenv("SLACK_WORKSPACE_SUBDOMAIN", "amiralearning")
     from artemis.integrations.slack.triage import _make_permalink
 
     link = _make_permalink("C123ABC", "1716000000.123456")
