@@ -19,6 +19,12 @@ DOWNSTREAM = (
     ("marketing.content.writing_studio_adapter", "content_writing_studio_adapter", 1100),
 )
 AGENT_IDS = tuple([f"marketing.scout.{slug}" for slug in SCOUT_SLUGS] + [d[0] for d in DOWNSTREAM])
+DELIVERABLES = (
+    ("deliverable_email", "Email Draft", "email", 420),
+    ("deliverable_social", "Social Draft", "social", 640),
+    ("deliverable_long_form", "Long-Form Draft", "long_form", 860),
+    ("deliverable_landing_page", "Landing-Page Draft", "landing_page", 1080),
+)
 
 
 def _label(slug: str) -> str:
@@ -33,6 +39,21 @@ def _agent_node(agent_id: str, node_id: str, x: int, y: int) -> dict[str, Any]:
         "label": _label(label_slug),
         "config": {"agent_id": agent_id, "mode": "scheduled"},
         "position": {"x": float(x), "y": float(y)},
+    }
+
+
+def _deliverable_node(node_id: str, label: str, deliverable_type: str, x: int) -> dict[str, Any]:
+    return {
+        "id": node_id,
+        "type": "agent_invocation",
+        "label": label,
+        "config": {
+            "agent_id": "marketing.content.writing_studio_adapter",
+            "mode": "scheduled",
+            "deliverable_type": deliverable_type,
+            "cost_cap_usd": 1.0,
+        },
+        "position": {"x": float(x), "y": 1260.0},
     }
 
 
@@ -51,6 +72,10 @@ def build_marketing_pipeline() -> dict[str, Any]:
         for i, slug in enumerate(SCOUT_SLUGS)
     ]
     nodes += [_agent_node(agent_id, node_id, 800, y) for agent_id, node_id, y in DOWNSTREAM[:2]]
+    nodes[-2]["label"] = "Cross-Reference (Phase 1→2→3)"
+    nodes[-2]["config"]["description"] = (
+        "Hard filters → Score against all rulesets → Route to top campaign type(s)"
+    )
     nodes.append(
         {
             "id": "gate_1_signals_inbox",
@@ -65,12 +90,33 @@ def build_marketing_pipeline() -> dict[str, Any]:
         }
     )
     nodes += [_agent_node(agent_id, node_id, 800, y) for agent_id, node_id, y in DOWNSTREAM[2:]]
+    nodes += [
+        _deliverable_node(node_id, label, deliverable_type, x)
+        for node_id, label, deliverable_type, x in DELIVERABLES
+    ]
+    nodes.append(
+        {
+            "id": "gate_2_approval_drawer",
+            "type": "human_gate",
+            "label": "Gate 2 Approval Drawer",
+            "config": {
+                "approval_kind": "content_draft",
+                "approvers": ["josh@amiralearning.com", "angela@amiralearning.com"],
+                "timeout_hours": 72,
+                "on_timeout": "escalate",
+                "escalation_to": ["jon@amiralearning.com"],
+            },
+            "position": {"x": 800.0, "y": 1440.0},
+        }
+    )
 
     scouts = [f"scout_{slug}" for slug in SCOUT_SLUGS]
     linear = "qualifier_cross_reference qualifier_brief_composer gate_1_signals_inbox content_brief_assembler content_asset_selector content_writing_studio_adapter".split()  # noqa: SIM905
     pairs = [("trigger_scheduled", scout) for scout in scouts]
     pairs += [(scout, "qualifier_cross_reference") for scout in scouts]
     pairs += list(zip(linear, linear[1:], strict=False))
+    pairs += [("content_writing_studio_adapter", node_id) for node_id, *_ in DELIVERABLES]
+    pairs += [(node_id, "gate_2_approval_drawer") for node_id, *_ in DELIVERABLES]
     edges = [
         {
             "id": f"edge_{source}_to_{target}",
