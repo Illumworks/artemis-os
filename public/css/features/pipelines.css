@@ -629,3 +629,69 @@ details[open] .ncf-summary::before { content: "▼ " }
   border-radius: 6px;color: var(--text);padding: 7px 9px;resize: vertical;outline: none;
 }
 .ncf-jsonlogic-raw:focus { border-color: var(--accent) }
+
+/* ── PIPE3 cron-picker-presets: mode selector + day-of-week ───────────────── */
+.ncf-cron-mode-bar {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ncf-cron-mode-btn {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 11px;
+  font-weight: 500;
+  border: none;
+  border-right: 1px solid var(--surface-outline);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  line-height: 1.5;
+}
+.ncf-cron-mode-btn:last-child { border-right: none }
+.ncf-cron-mode-btn--active {
+  background: color-mix(in srgb,var(--accent) 14%,transparent);
+  color: var(--accent);
+}
+.ncf-cron-mode-btn:hover:not(.ncf-cron-mode-btn--active) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.ncf-cron-every-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ncf-cron-dow-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ncf-cron-dow-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--surface-outline);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background .1s, color .1s, border-color .1s;
+  user-select: none;
+}
+.ncf-cron-dow-item input[type="checkbox"] { display: none }
+.ncf-cron-dow-item--on {
+  background: color-mix(in srgb,var(--accent) 14%,transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb,var(--accent) 40%,transparent);
+}
+.ncf-cron-dow-item:hover:not(.ncf-cron-dow-item--on) {
+  background: var(--surface-hover);
+  color: var(--text);
+}

@@ -1,9 +1,18 @@
 /**
- * trigger-scheduled-form.js — PIPE3
- * Typed config form for trigger_scheduled nodes.
- * Fields: cron expression + human preview, timezone, optional active dates,
- *         read-only next-run preview.
+ * trigger-scheduled-form.js — PIPE3 + cron-picker-presets
+ *
+ * Replaces the raw cron input with a 5-mode preset picker:
+ *   Mode 1 "every_n"  — Every N minutes / hours / days
+ *   Mode 2 "daily"    — Every day at HH:MM
+ *   Mode 3 "weekly"   — Specific days-of-week at HH:MM
+ *   Mode 4 "monthly"  — Day-of-month at HH:MM
+ *   Mode 5 "custom"   — Raw cron (power-user / fallback)
+ *
+ * Cron string remains the canonical persisted format.
+ * Parse-and-match on load opens the form in the correct mode.
  */
+
+import { compileCron, parseCron, describeCron, isValidCron } from "../cron-utils.js";
 
 const TIMEZONES = [
   "UTC",
@@ -18,47 +27,23 @@ const TIMEZONES = [
   "Australia/Sydney",
 ];
 
-// ── Cron parser — common pattern recognition ──────────────────────────────────
+const MODES = [
+  { id: "every_n", label: "Every N" },
+  { id: "daily",   label: "Daily" },
+  { id: "weekly",  label: "Weekly" },
+  { id: "monthly", label: "Monthly" },
+  { id: "custom",  label: "Custom" },
+];
 
-function describeCron(expr) {
-  if (!expr || typeof expr !== "string") return "";
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return "";
-  const [min, hr, dom, mon, dow] = parts;
-
-  if (expr === "* * * * *")        return "Every minute";
-  if (expr === "0 * * * *")        return "Every hour";
-  if (expr === "0 0 * * *")        return "Every day at midnight";
-  if (min === "0" && hr === "*" && dom === "*" && mon === "*" && dow === "*")
-    return "Every hour at :00";
-  if (min.match(/^\d+$/) && hr === "*")
-    return `Every hour at :${min.padStart(2, "0")}`;
-  if (min.match(/^\d+$/) && hr.match(/^\d+$/) && dom === "*" && mon === "*" && dow === "*")
-    return `Daily at ${hr.padStart(2, "0")}:${min.padStart(2, "0")}`;
-  if (hr.startsWith("*/")) {
-    const n = parseInt(hr.slice(2), 10);
-    if (!isNaN(n)) return `Every ${n} hour${n !== 1 ? "s" : ""}`;
-  }
-  if (min.startsWith("*/")) {
-    const n = parseInt(min.slice(2), 10);
-    if (!isNaN(n)) return `Every ${n} minute${n !== 1 ? "s" : ""}`;
-  }
-  if (dow !== "*" && dom === "*") {
-    const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-    const d = parseInt(dow, 10);
-    const dayName = isNaN(d) ? dow : (days[d] ?? dow);
-    if (min.match(/^\d+$/) && hr.match(/^\d+$/))
-      return `Weekly on ${dayName} at ${hr.padStart(2, "0")}:${min.padStart(2, "0")}`;
-  }
-  return ""; // unrecognised — show nothing extra
-}
-
-function isValidCron(expr) {
-  if (!expr) return false;
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  return parts.every((p) => /^[\d*\/,\-]+$/.test(p));
-}
+const DOW_LABELS = [
+  { d: 0, abbr: "Sun" },
+  { d: 1, abbr: "Mon" },
+  { d: 2, abbr: "Tue" },
+  { d: 3, abbr: "Wed" },
+  { d: 4, abbr: "Thu" },
+  { d: 5, abbr: "Fri" },
+  { d: 6, abbr: "Sat" },
+];
 
 function fieldMatches(field, value, min, max) {
   if (field === "*") return true;
@@ -138,22 +123,42 @@ function computeNextRun(expr, timezone) {
 
 export function renderTriggerScheduledForm(config, container) {
   const cfg = config ?? {};
-  const cron = cfg.cron ?? "0 */4 * * *";
+  const savedCron = cfg.cron ?? "0 */4 * * *";
   const tz = cfg.timezone ?? "UTC";
   const startDate = cfg.start_date ?? "";
   const endDate = cfg.end_date ?? "";
   const showDates = !!(startDate || endDate);
 
+  // Parse saved cron → determine opening mode + fields
+  const parsed = parseCron(savedCron) ?? { mode: "custom", fields: { cron: savedCron } };
+  let currentMode = parsed.mode;
+  let currentFields = parsed.fields;
+
+  // ── Initial render ────────────────────────────────────────────────────────
+
   container.innerHTML = `
     <div class="ncf ncf-sched">
+
+      <!-- Mode selector -->
       <div class="ncf-field">
-        <label class="ncf-label ncf-required">Schedule (cron)</label>
-        <input class="ncf-input ncf-cron" type="text" value="${_esc(cron)}"
-          placeholder="0 */4 * * *" spellcheck="false">
-        <div class="ncf-cron-preview ncf-hint"></div>
-        <div class="ncf-next-run-preview ncf-hint"></div>
+        <label class="ncf-label ncf-required">Schedule</label>
+        <div class="ncf-cron-mode-bar" role="group" aria-label="Schedule mode">
+          ${MODES.map((m) => `
+            <button type="button"
+              class="ncf-cron-mode-btn${m.id === currentMode ? " ncf-cron-mode-btn--active" : ""}"
+              data-mode="${m.id}">${m.label}</button>
+          `).join("")}
+        </div>
       </div>
 
+      <!-- Per-mode inputs (replaced on mode switch) -->
+      <div class="ncf-cron-inputs"></div>
+
+      <!-- Human-readable preview -->
+      <div class="ncf-cron-preview ncf-hint"></div>
+      <div class="ncf-next-run-preview ncf-hint"></div>
+
+      <!-- Timezone -->
       <div class="ncf-field">
         <label class="ncf-label">Timezone</label>
         <select class="ncf-select ncf-tz">
@@ -161,6 +166,7 @@ export function renderTriggerScheduledForm(config, container) {
         </select>
       </div>
 
+      <!-- Active date range -->
       <details class="ncf-details" ${showDates ? "open" : ""}>
         <summary class="ncf-summary">Active date range (optional)</summary>
         <div class="ncf-details-body">
@@ -176,36 +182,212 @@ export function renderTriggerScheduledForm(config, container) {
           </div>
         </div>
       </details>
+
     </div>
   `;
 
-  const cronEl = container.querySelector(".ncf-cron");
+  const inputsEl  = container.querySelector(".ncf-cron-inputs");
   const tzEl = container.querySelector(".ncf-tz");
   const previewEl = container.querySelector(".ncf-cron-preview");
   const nextRunEl = container.querySelector(".ncf-next-run-preview");
 
-  function _updatePreview() {
-    const val = cronEl.value.trim();
-    const desc = describeCron(val);
-    const valid = isValidCron(val);
-    if (!valid && val) {
+  // ── Per-mode renderers ────────────────────────────────────────────────────
+
+  function _renderEveryN(fields) {
+    const n    = fields.n ?? 4;
+    const unit = fields.unit ?? "hours";
+    inputsEl.innerHTML = `
+      <div class="ncf-field">
+        <label class="ncf-label">Repeat every</label>
+        <div class="ncf-cron-every-row">
+          <input class="ncf-input ncf-cron-n" type="number" min="1" max="59"
+            value="${_esc(n)}" style="width:80px">
+          <select class="ncf-select ncf-cron-unit" style="flex:1">
+            <option value="minutes"${unit === "minutes" ? " selected" : ""}>minutes</option>
+            <option value="hours"${unit === "hours" ? " selected" : ""}>hours</option>
+            <option value="days"${unit === "days" ? " selected" : ""}>days</option>
+          </select>
+        </div>
+        <div class="ncf-hint">Min 1, max 59 min / 23 hr / 31 days</div>
+      </div>
+    `;
+    inputsEl.querySelector(".ncf-cron-n").addEventListener("input", _sync);
+    inputsEl.querySelector(".ncf-cron-unit").addEventListener("change", _sync);
+  }
+
+  function _renderDaily(fields) {
+    const { hour = 9, minute = 0 } = fields;
+    inputsEl.innerHTML = `
+      <div class="ncf-field">
+        <label class="ncf-label">Time of day</label>
+        <input class="ncf-input ncf-cron-time" type="time"
+          value="${_timePad(hour, minute)}">
+      </div>
+    `;
+    inputsEl.querySelector(".ncf-cron-time").addEventListener("change", _sync);
+  }
+
+  function _renderWeekly(fields) {
+    const { hour = 9, minute = 0, days = [1, 2, 3, 4, 5] } = fields;
+    const daySet = new Set(days);
+    inputsEl.innerHTML = `
+      <div class="ncf-field">
+        <label class="ncf-label">Days of week</label>
+        <div class="ncf-cron-dow-row">
+          ${DOW_LABELS.map(({ d, abbr }) => `
+            <label class="ncf-cron-dow-item${daySet.has(d) ? " ncf-cron-dow-item--on" : ""}">
+              <input type="checkbox" class="ncf-cron-dow-cb" value="${d}"
+                ${daySet.has(d) ? "checked" : ""}>${abbr}
+            </label>
+          `).join("")}
+        </div>
+      </div>
+      <div class="ncf-field">
+        <label class="ncf-label">Time of day</label>
+        <input class="ncf-input ncf-cron-time" type="time"
+          value="${_timePad(hour, minute)}">
+      </div>
+    `;
+    inputsEl.querySelectorAll(".ncf-cron-dow-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        e.target.closest(".ncf-cron-dow-item").classList.toggle(
+          "ncf-cron-dow-item--on", e.target.checked
+        );
+        _sync();
+      });
+    });
+    inputsEl.querySelector(".ncf-cron-time").addEventListener("change", _sync);
+  }
+
+  function _renderMonthly(fields) {
+    const { dom = 1, hour = 9, minute = 0 } = fields;
+    inputsEl.innerHTML = `
+      <div class="ncf-field">
+        <label class="ncf-label">Day of month</label>
+        <input class="ncf-input ncf-cron-dom" type="number" min="1" max="31"
+          value="${_esc(dom)}" style="width:80px">
+        <div class="ncf-hint">Days 29-31 may not occur in all months.</div>
+      </div>
+      <div class="ncf-field">
+        <label class="ncf-label">Time of day</label>
+        <input class="ncf-input ncf-cron-time" type="time"
+          value="${_timePad(hour, minute)}">
+      </div>
+    `;
+    inputsEl.querySelector(".ncf-cron-dom").addEventListener("input", _sync);
+    inputsEl.querySelector(".ncf-cron-time").addEventListener("change", _sync);
+  }
+
+  function _renderCustom(fields) {
+    const raw = fields.cron ?? savedCron;
+    inputsEl.innerHTML = `
+      <div class="ncf-field">
+        <label class="ncf-label ncf-required">Cron expression</label>
+        <input class="ncf-input ncf-cron" type="text" value="${_esc(raw)}"
+          placeholder="0 */4 * * *" spellcheck="false">
+        <div class="ncf-hint">5 fields: minute hour day-of-month month day-of-week</div>
+      </div>
+    `;
+    inputsEl.querySelector(".ncf-cron").addEventListener("input", _sync);
+  }
+
+  // ── Mode switch ───────────────────────────────────────────────────────────
+
+  function _renderMode(mode, fields) {
+    currentMode = mode;
+    currentFields = fields ?? {};
+    switch (mode) {
+      case "every_n":  _renderEveryN(currentFields);  break;
+      case "daily":    _renderDaily(currentFields);    break;
+      case "weekly":   _renderWeekly(currentFields);   break;
+      case "monthly":  _renderMonthly(currentFields);  break;
+      case "custom":   _renderCustom(currentFields);   break;
+    }
+    // Update active button
+    container.querySelectorAll(".ncf-cron-mode-btn").forEach((btn) => {
+      btn.classList.toggle("ncf-cron-mode-btn--active", btn.dataset.mode === mode);
+    });
+    _sync();
+  }
+
+  // ── Read current inputs → fields object ──────────────────────────────────
+
+  function _readFields() {
+    switch (currentMode) {
+      case "every_n": {
+        const n    = parseInt(inputsEl.querySelector(".ncf-cron-n")?.value ?? "1", 10);
+        const unit = inputsEl.querySelector(".ncf-cron-unit")?.value ?? "hours";
+        return { n, unit };
+      }
+      case "daily": {
+        const [hour, minute] = _parseTime(inputsEl.querySelector(".ncf-cron-time")?.value);
+        return { hour, minute };
+      }
+      case "weekly": {
+        const [hour, minute] = _parseTime(inputsEl.querySelector(".ncf-cron-time")?.value);
+        const days = [...inputsEl.querySelectorAll(".ncf-cron-dow-cb:checked")]
+          .map((el) => parseInt(el.value, 10));
+        return { hour, minute, days };
+      }
+      case "monthly": {
+        const dom = parseInt(inputsEl.querySelector(".ncf-cron-dom")?.value ?? "1", 10);
+        const [hour, minute] = _parseTime(inputsEl.querySelector(".ncf-cron-time")?.value);
+        return { dom, hour, minute };
+      }
+      case "custom": {
+        const cron = inputsEl.querySelector(".ncf-cron")?.value?.trim() ?? "";
+        return { cron };
+      }
+    }
+    return {};
+  }
+
+  // ── Sync: update preview ──────────────────────────────────────────────────
+
+  function _sync() {
+    currentFields = _readFields();
+    const cron = compileCron(currentMode, currentFields);
+    const desc = describeCron(cron);
+    const valid = isValidCron(cron);
+
+    if (currentMode === "custom" && !valid && currentFields.cron) {
       previewEl.textContent = "Invalid cron expression";
       previewEl.classList.add("ncf-hint--err");
     } else {
-      previewEl.textContent = desc || (val ? "Custom schedule" : "");
+      previewEl.textContent = desc || (valid ? "Custom schedule" : "");
       previewEl.classList.remove("ncf-hint--err");
     }
     nextRunEl.textContent = val ? computeNextRun(val, tzEl.value) : "";
   }
 
-  cronEl.addEventListener("input", _updatePreview);
-  tzEl.addEventListener("change", _updatePreview);
-  _updatePreview();
+  // ── Wire up mode buttons ──────────────────────────────────────────────────
+
+  container.querySelectorAll(".ncf-cron-mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const newMode = btn.dataset.mode;
+      if (newMode === currentMode) return;
+      // When switching to custom, seed with current compiled cron
+      if (newMode === "custom") {
+        const cron = compileCron(currentMode, _readFields());
+        _renderMode("custom", { cron });
+      } else {
+        _renderMode(newMode, {});
+      }
+    });
+  });
+
+  // ── Initial mode render ───────────────────────────────────────────────────
+
+  _renderMode(currentMode, currentFields);
+
+  // ── Public API ────────────────────────────────────────────────────────────
 
   return {
     getValues() {
+      const fields = _readFields();
+      const cron = compileCron(currentMode, fields);
       const out = {
-        cron: container.querySelector(".ncf-cron")?.value?.trim() ?? cron,
+        cron,
         timezone: container.querySelector(".ncf-tz")?.value ?? "UTC",
       };
       const s = container.querySelector(".ncf-start-date")?.value;
@@ -214,13 +396,29 @@ export function renderTriggerScheduledForm(config, container) {
       if (e) out.end_date = e;
       return out;
     },
+
     validate() {
-      const val = container.querySelector(".ncf-cron")?.value?.trim() ?? "";
-      if (!val) return "Schedule (cron) is required.";
-      if (!isValidCron(val)) return "Invalid cron expression (5 space-separated fields).";
+      const fields = _readFields();
+      const cron = compileCron(currentMode, fields);
+      if (!cron) return "Schedule is required.";
+      if (!isValidCron(cron)) return "Invalid cron expression (5 space-separated fields).";
+      if (currentMode === "weekly" && !(fields.days?.length))
+        return "Select at least one day of the week.";
       return null;
     },
   };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function _timePad(hour, minute) {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function _parseTime(val) {
+  if (!val) return [9, 0];
+  const [h, m] = val.split(":").map(Number);
+  return [isNaN(h) ? 9 : h, isNaN(m) ? 0 : m];
 }
 
 function _esc(str) {
