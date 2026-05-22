@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.pipelines.models import Pipeline, PipelineRun
@@ -131,6 +131,14 @@ async def archive_pipeline(session: AsyncSession, pipeline_id: str) -> Pipeline:
     await session.flush()
     await session.refresh(p)
     return p
+
+
+async def permanently_delete_pipeline(session: AsyncSession, pipeline_id: str) -> None:
+    p = await get_pipeline(session, pipeline_id)
+    if p.status != "archived":
+        raise RuntimeError("Pipeline must be archived before permanent deletion")
+    await session.execute(delete(Pipeline).where(Pipeline.id == pipeline_id))
+    await session.flush()
 
 
 async def get_pipeline_with_latest_run(

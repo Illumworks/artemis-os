@@ -7,13 +7,13 @@
 .ptb { display:flex;align-items:center;gap:12px;flex-wrap:wrap }
 .psrch { flex:1;min-width:180px;max-width:320px;padding:7px 12px;background:var(--surface-card);border:1px solid var(--surface-outline);border-radius:6px;color:var(--text);font-size:13px;outline:none }
 .psrch:focus { border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent) }
-.psrt { display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim) }
+.psrt,.pfilter { display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim) }
 .psb { padding:5px 10px;border-radius:5px;border:1px solid var(--surface-outline);background:transparent;color:var(--text-dim);font-size:12px;cursor:pointer;transition:background .15s,color .15s }
 .psb:hover { background:var(--surface-hover);color:var(--text) }
 .psb-a { background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent) }
 .plist { display:flex;flex-direction:column;gap:10px }
 /* Cards */
-.pcard { background:var(--surface-card);border:1px solid var(--surface-outline);border-radius:10px;padding:14px 18px;transition:border-color .15s,box-shadow .15s }
+.pcard { position:relative;background:var(--surface-card);border:1px solid var(--surface-outline);border-radius:10px;padding:14px 18px;transition:border-color .15s,box-shadow .15s }
 .pcard:hover { border-color:color-mix(in srgb,var(--accent) 30%,var(--surface-outline));box-shadow:var(--surface-shadow-soft) }
 .pcard-c .pcc { display:flex;align-items:center;gap:12px;flex-wrap:wrap }
 .pcn { font-weight:600;font-size:14px;color:var(--text);flex:1;min-width:100px }
@@ -24,6 +24,14 @@
 .pcs { display:flex;gap:14px;font-size:12px;color:var(--text-dim);margin-bottom:12px }
 .pca { display:flex;gap:8px;margin-left:auto }
 .pcard-c .pca { margin-left:auto }
+.parchived-label { font-size:12px;color:var(--text-dim);white-space:nowrap }
+.pmenu { position:relative;display:inline-flex;align-items:center }
+.pkebab { width:28px;height:28px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text-dim);font-size:18px;line-height:1;cursor:pointer }
+.pkebab:hover { background:var(--surface-hover);color:var(--text);border-color:var(--surface-outline) }
+.pmenu-list { position:absolute;right:0;top:32px;z-index:30;min-width:170px;padding:5px;background:var(--surface-card);border:1px solid var(--surface-outline);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.22) }
+.pmenu-item { display:block;width:100%;padding:7px 9px;border:0;border-radius:5px;background:transparent;color:var(--text);font-size:13px;text-align:left;cursor:pointer }
+.pmenu-item:hover { background:var(--surface-hover) }
+.pmenu-danger { color:var(--error) }
 /* Enable switch */
 .pswitch { display:inline-flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--text-dim);font-size:12px;font-weight:500;cursor:pointer;padding:2px 0;white-space:nowrap }
 .pswitch-track { position:relative;width:34px;height:18px;border-radius:999px;background:var(--surface-subtle);border:1px solid var(--surface-outline);transition:background .15s,border-color .15s;flex-shrink:0 }
@@ -53,6 +61,7 @@
 .pbtn-p:hover { background:color-mix(in srgb,var(--accent) 80%,#000) }
 .pbtn-g { background:transparent;color:var(--text-dim);border:1px solid var(--surface-outline) }
 .pbtn-g:hover { background:var(--surface-hover);color:var(--text) }
+.pbtn:disabled { opacity:.45;cursor:not-allowed }
 /* Empty / loading */
 .pempty { display:flex;flex-direction:column;align-items:center;gap:8px;padding:48px 24px;text-align:center;color:var(--text-dim) }
 .pempty strong { font-size:15px;color:var(--text) }
@@ -69,6 +78,11 @@
 .plbl { font-size:12px;font-weight:500;color:var(--text-dim) }
 .pinp { padding:7px 12px;background:var(--surface-input,var(--surface-subtle));border:1px solid var(--surface-outline);border-radius:6px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box }
 .pinp:focus { outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent) }
+.pmodal-backdrop { position:fixed;inset:0;z-index:450;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.34) }
+.pmodal { width:min(420px,100%);display:flex;flex-direction:column;gap:12px;background:var(--surface-card);border:1px solid var(--surface-outline);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.38);padding:20px }
+.pmodal h3 { margin:0;font-size:16px;font-weight:650;color:var(--text) }
+.pmodal p { margin:0;color:var(--text-dim);font-size:13px;line-height:1.45 }
+.pconfirm-name { font-family:var(--font-mono);font-size:12px;color:var(--text-dim);background:var(--surface-subtle);border-radius:6px;padding:7px 9px;word-break:break-word }
 /* Danger button variant */
 .pbtn-danger { background:transparent;color:var(--error);border:1px solid color-mix(in srgb,var(--error) 35%,transparent) }
 .pbtn-danger:hover { background:color-mix(in srgb,var(--error) 10%,transparent) }

@@ -2037,6 +2037,14 @@ export async function deletePipelineApi(id) {
   if (!res.ok) throw new Error("deletePipelineApi failed");
 }
 
+export async function permanentDeletePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/permanent`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "permanentDeletePipelineApi failed");
+  }
+}
+
 export async function enablePipelineApi(id) {
   const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/enable`, { method: "POST" });
   if (!res.ok) throw new Error("enablePipelineApi failed");

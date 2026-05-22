@@ -7,6 +7,7 @@ Endpoints:
   GET    /api/pipelines/{id}    — detail with latest run
   PATCH  /api/pipelines/{id}    — update (full nodes/edges replace)
   DELETE /api/pipelines/{id}    — soft delete (status → archived)
+  DELETE /api/pipelines/{id}/permanent — hard delete archived pipeline
   POST   /api/pipelines/{id}/enable  — flip status to active
   POST   /api/pipelines/{id}/disable — flip status to paused
   POST   /api/pipelines/{id}/run     — manual trigger (records intent only — PIPE4 executes)
@@ -25,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
 from artemis.marketing.routes._auth import require_token
-from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.routes._errors import bad_request, conflict, not_found
 from artemis.pipelines import repository as repo
 from artemis.pipelines.schemas import (
     PipelineCreate,
@@ -162,6 +163,21 @@ async def delete_pipeline(
     """Soft delete: set status=archived. Row never removed from DB."""
     try:
         await repo.archive_pipeline(session, pipeline_id)
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_not_found")  # noqa: B904
+    await session.commit()
+
+
+@router.delete("/api/pipelines/{pipeline_id}/permanent", status_code=204)
+async def permanently_delete_pipeline(
+    pipeline_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> None:
+    """Hard delete an already archived pipeline and its run history."""
+    try:
+        await repo.permanently_delete_pipeline(session, pipeline_id)
+    except RuntimeError as exc:
+        raise conflict(str(exc), "pipeline_must_be_archived")  # noqa: B904
     except ValueError as exc:
         raise not_found(str(exc), "pipeline_not_found")  # noqa: B904
     await session.commit()

@@ -15,17 +15,31 @@ let _editing = null;
 let _editJson = "";
 let _editErr = null;
 let _showNew = false;
+let _archivedFilter = "default";
+let _openMenuId = null;
+let _confirm = null;
 
 // PIPE2: active canvas instance
 let _canvas = null;
 
 const MOUNT = "#pipelines-page-root";
+const ARCHIVED_FILTER_KEY = "artemis.pipelines.archived-filter";
 const getRoot = () => document.querySelector(MOUNT);
 
 async function loadPipelines() {
   _error = null;
   try {
-    _pipelines = await api.listPipelinesApi();
+    if (_archivedFilter === "include") {
+      const [visible, archived] = await Promise.all([
+        api.listPipelinesApi(),
+        api.listPipelinesApi({ status: "archived" }),
+      ]);
+      _pipelines = [...visible, ...archived];
+    } else {
+      _pipelines = await api.listPipelinesApi(
+        _archivedFilter === "only" ? { status: "archived" } : {}
+      );
+    }
     _loaded = true;
   } catch (e) {
     _error = e.message || String(e);
@@ -80,6 +94,9 @@ function dot(status) {
 }
 
 function toggle(p) {
+  if (p.status === "archived") {
+    return `<span class="parchived-label">Archived</span>`;
+  }
   const act = p.status === "active";
   return `<button
     class="pswitch"
@@ -107,14 +124,23 @@ function card(p) {
     <button class="pbtn pbtn-p popen-canvas" data-id="${p.id}">Open Canvas</button>
     <button class="pbtn pbtn-g pedit" data-id="${p.id}">Edit JSON</button>
     <button class="pbtn pbtn-g prun" data-id="${p.id}">Run</button>`;
+  const menu = `<div class="pmenu">
+    <button class="pkebab" aria-label="Pipeline actions for ${escapeHtml(p.name)}" data-id="${p.id}">⋯</button>
+    ${_openMenuId === p.id ? `<div class="pmenu-list">
+      ${p.status === "archived" ? `
+        <button class="pmenu-item prestore" data-menu-action="restore" data-id="${p.id}">Restore</button>
+        <button class="pmenu-item pmenu-danger ppermadelete" data-menu-action="permanent" data-id="${p.id}">Permanently delete</button>`
+      : `<button class="pmenu-item parchive" data-menu-action="archive" data-id="${p.id}">Archive</button>`}
+    </div>` : ""}
+  </div>`;
   if (compact) {
     return `<div class="pcard pcard-c" data-pid="${p.id}">
-      <div class="pcc">${dot(p.status)}<span class="pcn">${escapeHtml(p.name)}</span>
+      <div class="pcc">${dot(p.status)}<span class="pcn">${escapeHtml(p.name)}</span>${menu}
       ${toggle(p)}<span class="pcm">${escapeHtml(trigger(p))}</span>${runBadge(p.latestRun)}
       <div class="pca">${actions}</div></div></div>`;
   }
   return `<div class="pcard" data-pid="${p.id}">
-    <div class="pch">${dot(p.status)}<h3>${escapeHtml(p.name)}</h3>${toggle(p)}${runBadge(p.latestRun)}</div>
+    <div class="pch">${dot(p.status)}<h3>${escapeHtml(p.name)}</h3>${menu}${toggle(p)}${runBadge(p.latestRun)}</div>
     ${p.description ? `<p class="pcd">${escapeHtml(p.description.slice(0, 120))}</p>` : ""}
     <div class="pcs"><span>${nodes} nodes</span><span>${(p.edges||[]).length} edges</span><span>${escapeHtml(trigger(p))}</span></div>
     <div class="pca">${actions}</div></div>`;
@@ -140,6 +166,55 @@ function newForm() {
   </div>`;
 }
 
+function confirmDialog() {
+  if (!_confirm) return "";
+  const okDisabled = _confirm.type === "permanent" && _confirm.typed !== _confirm.pipeline.name;
+  return `<div class="pmodal-backdrop" role="presentation">
+    <div class="pmodal" role="dialog" aria-modal="true" aria-labelledby="pmodal-title">
+      <h3 id="pmodal-title">${escapeHtml(_confirm.title)}</h3>
+      <p>${escapeHtml(_confirm.message)}</p>
+      ${_confirm.type === "permanent" ? `
+        <label class="plbl" for="pconfirm-name">Type pipeline name to confirm</label>
+        <input class="pinp" id="pconfirm-name" type="text" value="${escapeHtml(_confirm.typed || "")}" autocomplete="off" />
+        <div class="pconfirm-name">${escapeHtml(_confirm.pipeline.name)}</div>` : ""}
+      <div class="pef">
+        <button class="pbtn pbtn-g" id="pmodal-cancel">Cancel</button>
+        <button class="pbtn ${_confirm.type === "permanent" ? "pbtn-danger" : "pbtn-p"}" id="pmodal-confirm" ${okDisabled ? "disabled" : ""}>${escapeHtml(_confirm.confirmLabel)}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function handlePipelineMenuAction(action, id) {
+  const pipeline = _pipelines.find((x) => x.id === id);
+  if (!pipeline) return;
+  if (action === "restore") {
+    try {
+      await api.updatePipelineApi(pipeline.id, { status: "active" });
+      showToast("Pipeline restored");
+      _openMenuId = null;
+      await loadPipelines();
+    } catch (e) { showToast("Restore failed", e.message, { isError: true }); }
+    return;
+  }
+  _confirm = action === "archive" ? {
+    type: "archive",
+    pipeline,
+    title: `Archive ${pipeline.name}?`,
+    message: "Pipelines in archive are paused and hidden from default list but can be restored.",
+    confirmLabel: "Archive",
+  } : {
+    type: "permanent",
+    pipeline,
+    typed: "",
+    title: `Permanently delete ${pipeline.name}?`,
+    message: "This cannot be undone. All run history will be lost.",
+    confirmLabel: "Permanently delete",
+  };
+  _openMenuId = null;
+  render();
+}
+
 export function render() {
   const root = getRoot();
   if (!root) return;
@@ -160,18 +235,30 @@ export function render() {
           <button class="psb ${_sortBy === "updated" ? "psb-a" : ""}" data-sort="updated">Recent</button>
           <button class="psb ${_sortBy === "name" ? "psb-a" : ""}" data-sort="name">Name</button>
         </div>
+        <div class="pfilter" aria-label="Archived filter">
+          <button class="psb ${_archivedFilter === "default" ? "psb-a" : ""}" data-archive-filter="default">Default</button>
+          <button class="psb ${_archivedFilter === "include" ? "psb-a" : ""}" data-archive-filter="include">Include archived</button>
+          <button class="psb ${_archivedFilter === "only" ? "psb-a" : ""}" data-archive-filter="only">Only archived</button>
+        </div>
       </div>
     </div>
     <div class="plist">${list}</div>
     ${_showNew ? newForm() : ""}
     ${editPanel()}
+    ${confirmDialog()}
   </div>`;
   wire(root);
 }
 
 function wire(root) {
   root.querySelector("#psrch")?.addEventListener("input", (e) => { _search = e.target.value; render(); });
-  root.querySelectorAll(".psb").forEach((b) => b.addEventListener("click", () => { _sortBy = b.dataset.sort; render(); }));
+  root.querySelectorAll("[data-sort]").forEach((b) => b.addEventListener("click", () => { _sortBy = b.dataset.sort; render(); }));
+  root.querySelectorAll("[data-archive-filter]").forEach((b) => b.addEventListener("click", async () => {
+    _archivedFilter = b.dataset.archiveFilter;
+    localStorage.setItem(ARCHIVED_FILTER_KEY, _archivedFilter);
+    _openMenuId = null;
+    await loadPipelines();
+  }));
   root.querySelector("#pnbtn")?.addEventListener("click", () => { _showNew = true; render(); });
   ["#pnc", "#pnc2"].forEach((id) => root.querySelector(id)?.addEventListener("click", () => { _showNew = false; render(); }));
   root.querySelector("#pns")?.addEventListener("click", async () => {
@@ -189,6 +276,25 @@ function wire(root) {
       await loadPipelines();
     } catch (e) { showToast("Toggle failed", e.message, { isError: true }); }
   }));
+  root.querySelectorAll(".pkebab").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    _openMenuId = _openMenuId === b.dataset.id ? null : b.dataset.id;
+    render();
+  }));
+  if (!root.dataset.pipelineMenuWired) {
+    root.dataset.pipelineMenuWired = "true";
+    const handleMenuAction = async (e) => {
+      const target = e.target instanceof Element ? e.target : e.target?.parentElement;
+      const b = target?.closest("[data-menu-action]");
+      if (!b) return;
+      if (e.type === "click" && e.detail !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      await handlePipelineMenuAction(b.dataset.menuAction, b.dataset.id);
+    };
+    root.addEventListener("pointerdown", handleMenuAction);
+    root.addEventListener("click", handleMenuAction);
+  }
   root.querySelectorAll(".pedit").forEach((b) => b.addEventListener("click", (e) => {
     e.stopPropagation();
     const p = _pipelines.find((x) => x.id === b.dataset.id);
@@ -221,6 +327,26 @@ function wire(root) {
     const p = _pipelines.find((x) => x.id === b.dataset.id);
     if (p) openCanvas(p);
   }));
+  root.querySelector("#pmodal-cancel")?.addEventListener("click", () => { _confirm = null; render(); });
+  root.querySelector("#pconfirm-name")?.addEventListener("input", (e) => {
+    if (_confirm) _confirm.typed = e.target.value;
+    const confirm = root.querySelector("#pmodal-confirm");
+    if (confirm && _confirm) confirm.disabled = _confirm.typed !== _confirm.pipeline.name;
+  });
+  root.querySelector("#pmodal-confirm")?.addEventListener("click", async () => {
+    if (!_confirm) return;
+    try {
+      if (_confirm.type === "archive") {
+        await api.deletePipelineApi(_confirm.pipeline.id);
+        showToast("Pipeline archived");
+      } else {
+        await api.permanentDeletePipelineApi(_confirm.pipeline.id);
+        showToast("Pipeline deleted permanently");
+      }
+      _confirm = null;
+      await loadPipelines();
+    } catch (e) { showToast("Pipeline action failed", e.message, { isError: true }); }
+  });
 }
 
 // ── PIPE2: Canvas view ─────────────────────────────────────────────────────
@@ -266,7 +392,9 @@ function closeCanvas() {
 
 export function initPipelinesPage() {
   _loaded = false; _error = null; _search = ""; _sortBy = "updated";
-  _editing = null; _showNew = false;
+  _editing = null; _showNew = false; _openMenuId = null; _confirm = null;
+  _archivedFilter = localStorage.getItem(ARCHIVED_FILTER_KEY) || "default";
+  if (!["default", "include", "only"].includes(_archivedFilter)) _archivedFilter = "default";
   closeCanvas();
   render();
   loadPipelines();
