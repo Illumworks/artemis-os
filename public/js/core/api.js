@@ -1090,6 +1090,7 @@ function _normaliseAgent(a) {
     // Python: agentId / name → Node: id / title
     id: a.agentId ?? a.id,
     title: a.name ?? a.title ?? a.agentId ?? "",
+    reasonCodesEmitted: a.reasonCodesEmitted ?? a.reason_codes_emitted ?? [],
   };
 }
 
@@ -1258,6 +1259,7 @@ export async function createAgent(agent) {
     fallbackProvider: agent.fallbackProvider || agent.provider || "anthropic",
     fallbackModel: agent.fallbackModel || agent.model || "claude-sonnet-4-5",
     max_iterations: agent.constraints?.maxTurns ?? agent.maxIterations ?? 50,
+    reasonCodesEmitted: agent.reasonCodesEmitted || [],
   };
   const res = await fetch("/api/agents", {
     method: "POST",
@@ -1285,6 +1287,7 @@ export async function updateAgent(id, agent) {
   if (agent.fallbackModel != null) payload.fallbackModel = agent.fallbackModel;
   if (agent.constraints?.maxTurns != null) payload.max_iterations = agent.constraints.maxTurns;
   if (agent.metadata != null) payload.metadata = agent.metadata;
+  if (agent.reasonCodesEmitted != null) payload.reasonCodesEmitted = agent.reasonCodesEmitted;
   const res = await fetch(`/api/agents/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -2016,6 +2019,25 @@ export async function createPipelineApi(data) {
 export async function getPipelineApi(id) {
   const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error("getPipelineApi failed");
+  return res.json();
+}
+
+export async function exportPipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/export`);
+  if (!res.ok) throw new Error("exportPipelineApi failed");
+  return res.json();
+}
+
+export async function importPipelineApi(bundle) {
+  const res = await fetch("/api/pipelines/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bundle),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || body.detail?.[0]?.msg || "importPipelineApi failed");
+  }
   return res.json();
 }
 

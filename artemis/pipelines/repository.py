@@ -16,7 +16,20 @@ from typing import Any
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.builders.models import Agent
+from artemis.integrations.models import Integration
 from artemis.pipelines.models import Pipeline, PipelineRun
+from artemis.pipelines.schemas import ConnectorRequirement, PipelineExportBundle
+
+_SENSITIVE_KEYS = ("api_key", "secret", "token", "password", "credential")
+_CONNECTOR_FIELDS = {
+    "starbridge": ["api_key", "api_url"],
+    "slack": ["bot_token"],
+    "gcal": ["client_id", "client_secret", "refresh_token"],
+    "gmail": ["client_id", "client_secret", "refresh_token"],
+    "jira": ["base_url", "email", "api_token"],
+    "granola": ["api_key"],
+}
 
 # ── Pipeline CRUD ─────────────────────────────────────────────────────────────
 
@@ -139,6 +152,171 @@ async def permanently_delete_pipeline(session: AsyncSession, pipeline_id: str) -
         raise RuntimeError("Pipeline must be archived before permanent deletion")
     await session.execute(delete(Pipeline).where(Pipeline.id == pipeline_id))
     await session.flush()
+
+
+def _scrub_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: _scrub_sensitive(v)
+            for k, v in value.items()
+            if not any(part in str(k).lower() for part in _SENSITIVE_KEYS)
+        }
+    if isinstance(value, list):
+        return [_scrub_sensitive(v) for v in value]
+    return value
+
+
+def _collect_agent_ids(value: Any) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in {"agent_id", "agentId"} and isinstance(nested, str):
+                found.add(nested)
+            else:
+                found.update(_collect_agent_ids(nested))
+    elif isinstance(value, list):
+        for item in value:
+            found.update(_collect_agent_ids(item))
+    return found
+
+
+def _collect_connector_kinds(value: Any) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in {
+                "connector_kind",
+                "connectorKind",
+                "integration_provider",
+            } and isinstance(nested, str):
+                found.add(nested)
+            found.update(_collect_connector_kinds(nested))
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and "." in item:
+                found.add(item.split(".", 1)[0])
+            else:
+                found.update(_collect_connector_kinds(item))
+    return found
+
+
+async def build_export_bundle(
+    session: AsyncSession,
+    pipeline_id: str,
+    *,
+    exported_from: str | None = None,
+) -> PipelineExportBundle:
+    p = await get_pipeline(session, pipeline_id)
+    pipeline = {
+        "name": p.name,
+        "description": p.description,
+        "nodes": _scrub_sensitive(p.nodes or []),
+        "edges": _scrub_sensitive(p.edges or []),
+        "trigger_config": _scrub_sensitive(p.trigger_config),
+        "status": p.status,
+        "metadata": _scrub_sensitive(p.metadata_ or {}),
+    }
+
+    agent_ids = _collect_agent_ids(p.nodes or [])
+    agents: list[dict[str, Any]] = []
+    if agent_ids:
+        result = await session.execute(
+            select(Agent).where(Agent.agent_id.in_(agent_ids)).order_by(Agent.agent_id)
+        )
+        for a in result.scalars().all():
+            agents.append(
+                {
+                    "agent_id": a.agent_id,
+                    "name": a.name,
+                    "description": a.description,
+                    "goal": a.goal,
+                    "system_prompt": a.system_prompt,
+                    "tools": _scrub_sensitive(a.tools or []),
+                    "persona": _scrub_sensitive(a.persona),
+                    "model": a.model,
+                    "provider": a.provider,
+                    "fallback_provider": a.fallback_provider,
+                    "fallback_model": a.fallback_model,
+                    "memory_policy": a.memory_policy,
+                    "permission_mode": a.permission_mode,
+                    "output_contract": _scrub_sensitive(a.output_contract),
+                    "metadata": _scrub_sensitive(a.metadata_ or {}),
+                }
+            )
+
+    connector_kinds = _collect_connector_kinds(p.nodes or [])
+    connector_kinds.update(_collect_connector_kinds([a["tools"] for a in agents]))
+    connectors = [
+        ConnectorRequirement(
+            kind=kind,
+            label=f"Required for tools or nodes that call {kind}.*",
+            fields_needed=_CONNECTOR_FIELDS.get(kind, []),
+        )
+        for kind in sorted(connector_kinds)
+    ]
+
+    return PipelineExportBundle(
+        format_version="1",
+        exported_at=datetime.now(UTC),
+        exported_from=exported_from,
+        pipeline=pipeline,
+        agents_required=agents,
+        connectors_required=connectors,
+    )
+
+
+async def import_bundle(
+    session: AsyncSession,
+    bundle: PipelineExportBundle,
+) -> dict[str, Any]:
+    agents_created: list[str] = []
+    agents_skipped: list[str] = []
+    for agent in bundle.agents_required:
+        existing = await session.execute(
+            select(Agent.agent_id).where(Agent.agent_id == agent.agent_id).limit(1)
+        )
+        if existing.scalar_one_or_none():
+            agents_skipped.append(agent.agent_id)
+            continue
+        values = agent.model_dump()
+        values["metadata_"] = values.pop("metadata", {})
+        session.add(Agent(**values))
+        agents_created.append(agent.agent_id)
+
+    warnings: list[str] = []
+    for req in bundle.connectors_required:
+        active = await session.execute(
+            select(Integration.id)
+            .where(Integration.provider == req.kind, Integration.status == "active")
+            .limit(1)
+        )
+        if active.scalar_one_or_none() is None:
+            warnings.append(f"No {req.kind} connector configured; create one before running")
+
+    source = bundle.pipeline
+    metadata = dict(source.get("metadata") or {})
+    if warnings:
+        metadata["import_warnings"] = warnings
+    requested_status = (
+        source.get("status") if source.get("status") in {"active", "paused"} else "active"
+    )
+    pipeline = await create_pipeline(
+        session,
+        name=source["name"],
+        description=source.get("description"),
+        nodes=source.get("nodes") or [],
+        edges=source.get("edges") or [],
+        trigger_config=source.get("trigger_config"),
+        status="paused" if warnings else requested_status,
+        metadata_=metadata,
+    )
+    await session.flush()
+    return {
+        "pipeline_id": pipeline.id,
+        "agents_created": agents_created,
+        "agents_skipped": agents_skipped,
+        "import_warnings": warnings,
+    }
 
 
 async def get_pipeline_with_latest_run(

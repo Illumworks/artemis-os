@@ -16,7 +16,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+import artemis.builders.models  # noqa: F401 — register models on Base.metadata
 import artemis.db
+import artemis.integrations.models  # noqa: F401 — register models on Base.metadata
 import artemis.pipelines.models  # noqa: F401 — register models on Base.metadata
 from artemis.db import attach_pgvector_codec
 
@@ -38,7 +40,10 @@ artemis.db.SessionLocal = __import__(
     class_=AsyncSession,
 )
 
-_TRUNCATE_SQL = text("TRUNCATE pipeline_runs, pipelines RESTART IDENTITY CASCADE")
+_TRUNCATE_SQL = text(
+    "TRUNCATE pipeline_runs, pipelines, agent_runs, agent_skills, agents, integrations "
+    "RESTART IDENTITY CASCADE"
+)
 
 
 @pytest.fixture

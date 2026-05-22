@@ -19,6 +19,7 @@ let _archivedFilter = "default";
 let _openMenuId = null;
 let _confirm = null;
 let _outsideMenuCloseWired = false;
+let _importInput = null;
 
 // PIPE2: active canvas instance
 let _canvas = null;
@@ -118,6 +119,47 @@ function trigger(p) {
     trigger_webhook: "Webhook", trigger_event: "Event" }[n.type] || "Manual";
 }
 
+function exportFileName(name) {
+  const slug = (name || "pipeline").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "pipeline";
+  return `${slug}-${new Date().toISOString().slice(0, 10)}.json`;
+}
+
+async function exportPipeline(pipeline) {
+  try {
+    const bundle = await api.exportPipelineApi(pipeline.id);
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportFileName(pipeline.name);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast("Pipeline JSON exported", a.download);
+  } catch (e) { showToast("Export failed", e.message, { isError: true }); }
+}
+
+async function importPipelineFile(file) {
+  try {
+    const bundle = JSON.parse(await file.text());
+    if (!bundle || bundle.format_version !== "1" || !bundle.pipeline) {
+      throw new Error("Selected file is not a v1 Artemis pipeline export");
+    }
+    const result = await api.importPipelineApi(bundle);
+    const created = result.agents_created?.length || 0;
+    const warnings = result.import_warnings || [];
+    showToast(
+      "Pipeline JSON imported",
+      `${created} new agents${warnings.length ? `; ${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : ""}`,
+      { isError: false, ms: 6500 }
+    );
+    await loadPipelines();
+    const imported = _pipelines.find((p) => p.id === result.pipeline_id) || await api.getPipelineApi(result.pipeline_id);
+    if (imported) openCanvas(imported);
+  } catch (e) { showToast("Import failed", e.message, { isError: true, ms: 6500 }); }
+}
+
 function card(p) {
   const nodes = (p.nodes || []).length;
   const compact = nodes <= 1;
@@ -128,6 +170,7 @@ function card(p) {
   const menu = `<div class="pmenu">
     <button class="pkebab" aria-label="Pipeline actions for ${escapeHtml(p.name)}" data-id="${p.id}">⋯</button>
     ${_openMenuId === p.id ? `<div class="pmenu-list">
+      <button class="pmenu-item pexport" data-menu-action="export" data-id="${p.id}">Export JSON</button>
       ${p.status === "archived" ? `
         <button class="pmenu-item prestore" data-menu-action="restore" data-id="${p.id}">Restore</button>
         <button class="pmenu-item pmenu-danger ppermadelete" data-menu-action="permanent" data-id="${p.id}">Permanently delete</button>`
@@ -228,7 +271,7 @@ export function render() {
   })();
   root.innerHTML = `<div class="ppg">
     <div class="ppgh">
-      <div class="pptr"><h2>Pipelines</h2><button class="pbtn pbtn-p" id="pnbtn">+ New</button></div>
+      <div class="pptr"><h2>Pipelines</h2><div class="pptr-actions"><button class="pbtn pbtn-g" id="pimport">Import JSON</button><button class="pbtn pbtn-p" id="pnbtn">+ New</button></div></div>
       <p class="ppdesc">Unified orchestration. Canvas in PIPE2; execution in PIPE4.</p>
       <div class="ptb">
         <input class="psrch" id="psrch" type="search" placeholder="Search…" value="${escapeHtml(_search)}" />
@@ -261,6 +304,19 @@ function wire(root) {
     await loadPipelines();
   }));
   root.querySelector("#pnbtn")?.addEventListener("click", () => { _showNew = true; render(); });
+  root.querySelector("#pimport")?.addEventListener("click", () => {
+    if (!_importInput) {
+      _importInput = document.createElement("input");
+      _importInput.type = "file";
+      _importInput.accept = "application/json,.json";
+      _importInput.addEventListener("change", async () => {
+        const file = _importInput?.files?.[0];
+        if (file) await importPipelineFile(file);
+        if (_importInput) _importInput.value = "";
+      });
+    }
+    _importInput.click();
+  });
   ["#pnc", "#pnc2"].forEach((id) => root.querySelector(id)?.addEventListener("click", () => { _showNew = false; render(); }));
   root.querySelector("#pns")?.addEventListener("click", async () => {
     const name = root.querySelector("#pnn")?.value?.trim();
@@ -301,6 +357,12 @@ function wire(root) {
       if (e.type === "click" && e.detail !== 0) return;
       e.preventDefault();
       e.stopPropagation();
+      if (b.dataset.menuAction === "export") {
+        const p = _pipelines.find((x) => x.id === b.dataset.id);
+        _openMenuId = null; render();
+        if (p) await exportPipeline(p);
+        return;
+      }
       await handlePipelineMenuAction(b.dataset.menuAction, b.dataset.id);
     };
     root.addEventListener("pointerdown", handleMenuAction);

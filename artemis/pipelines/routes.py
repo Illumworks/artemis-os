@@ -4,6 +4,8 @@ Endpoints:
   GET    /api/pipelines         — list (latest_run embedded, single LATERAL query)
   GET    /api/pipelines/        — no-slash compat alias
   POST   /api/pipelines/        — create
+  GET    /api/pipelines/{id}/export — portable JSON bundle
+  POST   /api/pipelines/import  — import portable JSON bundle
   GET    /api/pipelines/{id}    — detail with latest run
   PATCH  /api/pipelines/{id}    — update (full nodes/edges replace)
   DELETE /api/pipelines/{id}    — soft delete (status → archived)
@@ -21,15 +23,18 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
 from artemis.marketing.routes._auth import require_token
-from artemis.marketing.routes._errors import bad_request, conflict, not_found
+from artemis.marketing.routes._errors import bad_request, conflict, not_found, validation_failed
 from artemis.pipelines import repository as repo
 from artemis.pipelines.schemas import (
     PipelineCreate,
+    PipelineExportBundle,
+    PipelineImportResult,
     PipelineRunRequest,
     PipelineUpdate,
     pipeline_run_to_schema,
@@ -105,6 +110,47 @@ async def create_pipeline(
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
+
+
+@router.get("/api/pipelines/{pipeline_id}/export")
+async def export_pipeline(
+    pipeline_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return a portable, credential-free pipeline JSON bundle."""
+    try:
+        bundle = await repo.build_export_bundle(
+            session,
+            pipeline_id,
+            exported_from=str(request.base_url).rstrip("/"),
+        )
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_not_found")  # noqa: B904
+    return bundle.model_dump(mode="json")
+
+
+@router.post("/api/pipelines/import", status_code=201)
+async def import_pipeline(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Import a portable pipeline bundle, creating missing agents without overwriting."""
+    if body.get("format_version") != "1":
+        raise validation_failed(
+            {"format_version": "Format upgrade required: only format_version '1' is supported"}
+        )
+    try:
+        bundle = PipelineExportBundle.model_validate(body)
+        result = await repo.import_bundle(session, bundle)
+    except ValidationError as exc:
+        raise validation_failed({"bundle": str(exc)}) from exc
+    except KeyError as exc:
+        raise bad_request(f"Missing pipeline field: {exc}", "invalid_pipeline_import")  # noqa: B904
+    except ValueError as exc:
+        raise bad_request(str(exc), "invalid_pipeline_import")  # noqa: B904
+    await session.commit()
+    return PipelineImportResult(**result).model_dump()
 
 
 @router.get("/api/pipelines/{pipeline_id}")

@@ -3,6 +3,7 @@
 .ppgh { display:flex;flex-direction:column;gap:10px }
 .pptr { display:flex;align-items:center;justify-content:space-between;gap:16px }
 .pptr h2 { margin:0;font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--text) }
+.pptr-actions { display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end }
 .ppdesc { color:var(--text-dim);font-size:13px;margin:0 }
 .ptb { display:flex;align-items:center;gap:12px;flex-wrap:wrap }
 .psrch { flex:1;min-width:180px;max-width:320px;padding:7px 12px;background:var(--surface-card);border:1px solid var(--surface-outline);border-radius:6px;color:var(--text);font-size:13px;outline:none }

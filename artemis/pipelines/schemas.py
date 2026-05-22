@@ -147,6 +147,52 @@ class PipelineRunRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class AgentExport(BaseModel):
+    agent_id: str
+    name: str
+    description: str | None = None
+    goal: str | None = None
+    system_prompt: str | None = None
+    tools: list[Any] = Field(default_factory=list)
+    persona: dict[str, Any] | None = None
+    model: str
+    provider: str
+    fallback_provider: str | None = None
+    fallback_model: str | None = None
+    memory_policy: str = "session_scoped"
+    permission_mode: str = "ask"
+    output_contract: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConnectorRequirement(BaseModel):
+    kind: str
+    label: str
+    fields_needed: list[str] = Field(default_factory=list)
+
+
+class PipelineExportBundle(BaseModel):
+    format_version: str
+    exported_at: datetime
+    exported_from: str | None = None
+    pipeline: dict[str, Any]
+    agents_required: list[AgentExport] = Field(default_factory=list)
+    connectors_required: list[ConnectorRequirement] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_format(self) -> PipelineExportBundle:
+        if self.format_version != "1":
+            raise ValueError("Format upgrade required: only format_version '1' is supported")
+        return self
+
+
+class PipelineImportResult(BaseModel):
+    pipeline_id: str
+    agents_created: list[str] = Field(default_factory=list)
+    agents_skipped: list[str] = Field(default_factory=list)
+    import_warnings: list[str] = Field(default_factory=list)
+
+
 # ── Helper: build schema objects from ORM rows ────────────────────────────────
 
 
