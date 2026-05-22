@@ -357,7 +357,7 @@ export function renderTriggerScheduledForm(config, container) {
       previewEl.textContent = desc || (valid ? "Custom schedule" : "");
       previewEl.classList.remove("ncf-hint--err");
     }
-    nextRunEl.textContent = val ? computeNextRun(val, tzEl.value) : "";
+    nextRunEl.textContent = cron ? computeNextRun(cron, tzEl.value) : "";
   }
 
   // ── Wire up mode buttons ──────────────────────────────────────────────────
@@ -375,6 +375,8 @@ export function renderTriggerScheduledForm(config, container) {
       }
     });
   });
+
+  tzEl.addEventListener("change", _sync);
 
   // ── Initial mode render ───────────────────────────────────────────────────
 
