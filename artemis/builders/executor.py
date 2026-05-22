@@ -145,11 +145,27 @@ async def run_agent(
         The AgentRun row after completion (status='completed') or failure
         (status='failed').
     """
-    # Resolve adapter first — imported name shadows the parameter below
-    adapter = model_adapter if model_adapter is not None else AnthropicAdapter()
-
-    # Load agent definition
+    # Load agent definition first — its provider field drives adapter resolution
     agent = await get_agent(session, agent_id)
+
+    # Resolve adapter: explicit override > provider cascade from agent row >
+    # legacy AnthropicAdapter() as last resort.
+    if model_adapter is not None:
+        adapter = model_adapter
+    else:
+        from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+
+        agent_provider = getattr(agent, "provider", None)
+        agent_fallback = getattr(agent, "fallback_provider", None)
+        try:
+            adapter = resolve_adapter(agent_provider, agent_fallback)
+        except NoProviderAvailableError:
+            logger.warning(
+                "No provider in cascade resolved for agent %r; "
+                "falling back to AnthropicAdapter (will error if API key absent)",
+                agent_id,
+            )
+            adapter = AnthropicAdapter()
 
     # Build system prompt
     system_parts: list[str] = []

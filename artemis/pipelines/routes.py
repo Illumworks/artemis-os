@@ -53,25 +53,18 @@ from artemis.pipelines.schemas import (
     pipeline_to_schema,
 )
 
-_PROVIDER_CASCADE = ("claude-code", "codex", "lm-studio", "anthropic")
-
 
 def _resolve_adapter() -> Any:
     """Walk provider cascade; raises HTTP 503 if nothing available."""
-    from artemis.providers import get_adapter
-    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+    from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
 
-    for candidate in _PROVIDER_CASCADE:
-        try:
-            return get_adapter(candidate)
-        except (MissingApiKeyError, UnknownProviderError):
-            continue
-        except Exception:
-            continue
-    raise bad_request(
-        "No LLM provider is available. Add an API key in Integrations.",
-        "no_provider",
-    )
+    try:
+        return resolve_adapter()
+    except NoProviderAvailableError as exc:
+        raise bad_request(
+            "No LLM provider is available. Add an API key in Integrations.",
+            "no_provider",
+        ) from exc
 
 
 router = APIRouter(

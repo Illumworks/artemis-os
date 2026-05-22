@@ -63,7 +63,7 @@ async def test_agent_run_endpoint_happy_path(seeded_client: AsyncClient) -> None
     """POST /api/agents/{id}/run returns a completed AgentRun JSON."""
     adapter = _fake_adapter("agent says hello")
 
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await seeded_client.post(
             "/api/agents/route-agent-1/run",
             json={"userMessage": "Do something"},
@@ -81,7 +81,7 @@ async def test_agent_run_endpoint_with_shared_context(seeded_client: AsyncClient
     """POST /run with sharedContext passes it through to the executor."""
     adapter = _fake_adapter("used context")
 
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await seeded_client.post(
             "/api/agents/route-agent-2/run",
             json={"sharedContext": {"key": "value"}},
@@ -197,7 +197,7 @@ async def test_chain_run_endpoint_happy_path(client: AsyncClient, db_session: As
         )
 
     adapter = _fake_adapter("chain step done")
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await client.post(
             "/api/agent-chains/route-chain-1/run",
             json={"initialMessage": "start chain"},
@@ -242,7 +242,7 @@ async def test_dag_run_endpoint_happy_path(client: AsyncClient, db_session: Asyn
         )
 
     adapter = _fake_adapter("dag node done")
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await client.post(
             "/api/agent-dags/route-dag-1/run",
             json={"initialInputs": {"N1": "my input"}},

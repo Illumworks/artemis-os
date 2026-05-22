@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column
 
 from artemis.db import Base
@@ -98,8 +99,15 @@ class PipelineRun(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     trigger: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
     triggered_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ``MutableDict.as_mutable`` is load-bearing: PipelineExecutor mutates
+    # ``run.node_states`` in place between each node transition, then calls
+    # ``session.flush()``. Without this wrapper, SQLAlchemy snapshots the dict
+    # reference on first assignment and treats subsequent in-place writes
+    # (``node_states[node_id] = ...``) as no-op flushes, so only the very first
+    # node's ``running`` state ever reaches the DB. Removing this regresses the
+    # "trigger stuck running" bug — see codex/provider-cascade-wire-up.
     node_states: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+        MutableDict.as_mutable(JSONB), nullable=False, server_default=text("'{}'::jsonb")
     )
     cost_usd: Mapped[float] = mapped_column(nullable=False, server_default=text("0.0"))
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

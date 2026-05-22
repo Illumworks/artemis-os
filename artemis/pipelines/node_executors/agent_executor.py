@@ -120,12 +120,31 @@ async def execute_agent_node(
     if reason_codes:
         shared_context["reason_codes_emitted"] = ", ".join(reason_codes)
 
+    # Resolve the model adapter via the provider cascade unless the caller
+    # supplied one (e.g., FakeAdapter in tests).
+    resolved_adapter = model_adapter
+    if resolved_adapter is None:
+        from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+
+        try:
+            resolved_adapter = resolve_adapter(
+                getattr(agent, "provider", None),
+                getattr(agent, "fallback_provider", None),
+            )
+        except NoProviderAvailableError as exc:
+            return {
+                "status": "failed",
+                "error": f"No LLM provider available for agent '{agent_id}': {exc}",
+                "output_summary": "",
+                "cost_usd": 0.0,
+            }
+
     # Run the agent
     agent_run = await run_agent(
         session=session,
         agent_id=agent_id,
         shared_context=shared_context,
-        model_adapter=model_adapter,
+        model_adapter=resolved_adapter,
     )
 
     # Compute cost
