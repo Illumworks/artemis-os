@@ -15,6 +15,7 @@ import { describeCron } from "./cron-utils.js";
 import { buildNodeCard, updateNodeCardPosition, setNodeCardSelected } from "./pipeline-node-card.js";
 import { PipelinePalette } from "./pipeline-palette.js";
 import { PipelineConfigDrawer } from "./pipeline-config-drawer.js";
+import { PipelineAIPanel } from "./pipeline-ai-panel.js";
 
 // ── Canvas store ──────────────────────────────────────────────────────────────
 
@@ -191,6 +192,9 @@ export class PipelineCanvas {
     this._edgeIndex = new Map(); // nodeId → Set<edgeId>
     this._rafPending = false;    // requestAnimationFrame gate
     this._dragPendingNode = null; // buffered drag state for RAF
+
+    // AI Assistant panel
+    this._aiPanel = null;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -199,6 +203,7 @@ export class PipelineCanvas {
     this._buildShell();
     this._mountPalette();
     this._mountDrawer();
+    this._mountAIPanel();
     this._renderAll();
     this._wireToolbar();
     this._wireCanvasEvents();
@@ -210,6 +215,7 @@ export class PipelineCanvas {
     document.removeEventListener("mouseup",   this._onMouseUp);
     document.removeEventListener("keydown",   this._onKeyDown);
     document.removeEventListener("keyup",     this._onKeyUp);
+    this._aiPanel?.destroy();
     if (this.el) this.el.remove();
   }
 
@@ -235,6 +241,7 @@ export class PipelineCanvas {
           <span class="pcv-zoom-label">100%</span>
           <button class="pbtn pbtn-g pcv-btn-zoom-in" title="Zoom in">+</button>
           <button class="pbtn pbtn-g pcv-btn-json" title="Toggle JSON editor">View JSON</button>
+          <button class="pbtn pbtn-g pcv-btn-ai" title="Toggle AI Assistant panel">✦ AI</button>
         </div>
       </div>
 
@@ -334,6 +341,45 @@ export class PipelineCanvas {
       },
     });
     this._drawer.mount(wrap);
+  }
+
+  // ── AI Panel ──────────────────────────────────────────────────────────────
+
+  _mountAIPanel() {
+    const wrap = document.createElement("div");
+    wrap.className = "pcv-ai-panel-wrap";
+    const workspace = this.el.querySelector(".pcv-workspace");
+    workspace.appendChild(wrap);
+
+    this._aiPanel = new PipelineAIPanel({
+      pipelineId: this._state.id,
+      getCanvasState: () => this.getState(),
+      onProposalAccept: (proposal, updatedNodes, updatedEdges) => {
+        // Apply the accepted proposal to canvas state + mark dirty
+        this._state.undoStack.push({
+          nodes: this._state.nodes.map((n) => ({ ...n, position: { ...n.position } })),
+          edges: this._state.edges.map((e) => ({ ...e })),
+        });
+        if (this._state.undoStack.length > 50) this._state.undoStack.shift();
+        this._state.redoStack = [];
+        this._state.nodes = updatedNodes;
+        this._state.edges = updatedEdges;
+        this._markDirty();
+        this._renderAll();
+      },
+      onToggle: (isOpen) => {
+        const btn = this.el?.querySelector(".pcv-btn-ai");
+        if (btn) {
+          btn.classList.toggle("pcv-btn-ai--active", isOpen);
+        }
+        // Reflow canvas wrap when panel opens/closes
+        const canvasWrap = this.el?.querySelector(".pcv-canvas-wrap");
+        if (canvasWrap) {
+          canvasWrap.style.marginRight = isOpen ? "340px" : "";
+        }
+      },
+    });
+    this._aiPanel.mount(wrap);
   }
 
   // ── Full render ───────────────────────────────────────────────────────────
@@ -527,6 +573,7 @@ export class PipelineCanvas {
     tb.querySelector(".pcv-btn-fit")?.addEventListener("click", () => this._fitToView());
     tb.querySelector(".pcv-btn-layout")?.addEventListener("click", () => this._autoLayout());
     tb.querySelector(".pcv-btn-json")?.addEventListener("click", () => this._toggleJson());
+    tb.querySelector(".pcv-btn-ai")?.addEventListener("click", () => this._aiPanel?.toggle());
   }
 
   // ── Canvas events ─────────────────────────────────────────────────────────

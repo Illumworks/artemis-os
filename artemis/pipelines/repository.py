@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builders.models import Agent
 from artemis.integrations.models import Integration
-from artemis.pipelines.models import Pipeline, PipelineRun
+from artemis.pipelines.models import Pipeline, PipelineAIConversation, PipelineRun
 from artemis.pipelines.schemas import ConnectorRequirement, PipelineExportBundle
 
 _SENSITIVE_KEYS = ("api_key", "secret", "token", "password", "credential")
@@ -400,6 +400,58 @@ async def list_pipeline_runs(
         q = q.where(PipelineRun.created_at < text(f"'{cursor}'::timestamptz"))
     result = await session.execute(q)
     return list(result.scalars().all())
+
+
+# ── Pipeline AI Conversations ─────────────────────────────────────────────────
+
+
+async def get_or_create_ai_conversation(
+    session: AsyncSession, pipeline_id: str
+) -> PipelineAIConversation:
+    """Return the AI conversation row for a pipeline, creating it if absent."""
+    result = await session.execute(
+        select(PipelineAIConversation)
+        .where(PipelineAIConversation.pipeline_id == pipeline_id)
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = PipelineAIConversation(pipeline_id=pipeline_id, conversation=[])
+        session.add(row)
+        await session.flush()
+        await session.refresh(row)
+    return row
+
+
+async def append_ai_message(
+    session: AsyncSession,
+    pipeline_id: str,
+    role: str,
+    content: str,
+) -> PipelineAIConversation:
+    """Append a message to the pipeline's AI conversation history."""
+    from datetime import UTC, datetime
+
+    row = await get_or_create_ai_conversation(session, pipeline_id)
+    conversation: list[dict[str, Any]] = list(row.conversation or [])
+    conversation.append({"role": role, "content": content})
+    row.conversation = conversation
+    row.updated_at = datetime.now(UTC)
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
+async def clear_ai_conversation(session: AsyncSession, pipeline_id: str) -> PipelineAIConversation:
+    """Clear the conversation history for a pipeline (e.g. on user request)."""
+    from datetime import UTC, datetime
+
+    row = await get_or_create_ai_conversation(session, pipeline_id)
+    row.conversation = []
+    row.updated_at = datetime.now(UTC)
+    await session.flush()
+    await session.refresh(row)
+    return row
 
 
 async def update_pipeline_run(session: AsyncSession, run_id: str, **kwargs: Any) -> PipelineRun:

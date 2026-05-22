@@ -1,4 +1,4 @@
-"""Pipeline routes (PIPE1) — /api/pipelines*.
+"""Pipeline routes (PIPE1 + AI Assistant panel) — /api/pipelines*.
 
 Endpoints:
   GET    /api/pipelines         — list (latest_run embedded, single LATERAL query)
@@ -15,16 +15,24 @@ Endpoints:
   POST   /api/pipelines/{id}/run     — manual trigger (records intent only — PIPE4 executes)
   GET    /api/pipelines/{id}/runs    — cursor-paginated run history
   POST   /api/pipeline-runs/{run_id}/cancel — mark cancelled
+
+  AI Assistant panel (canvas inline AI):
+  POST   /api/pipelines/{id}/assistant/turn  — SSE stream; structured proposals
+  GET    /api/pipelines/{id}/assistant/conversation — conversation history
+  DELETE /api/pipelines/{id}/assistant/conversation — clear history
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import ValidationError
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
@@ -40,6 +48,27 @@ from artemis.pipelines.schemas import (
     pipeline_run_to_schema,
     pipeline_to_schema,
 )
+
+_PROVIDER_CASCADE = ("claude-code", "codex", "lm-studio", "anthropic")
+
+
+def _resolve_adapter() -> Any:
+    """Walk provider cascade; raises HTTP 503 if nothing available."""
+    from artemis.providers import get_adapter
+    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+
+    for candidate in _PROVIDER_CASCADE:
+        try:
+            return get_adapter(candidate)
+        except (MissingApiKeyError, UnknownProviderError):
+            continue
+        except Exception:
+            continue
+    raise bad_request(
+        "No LLM provider is available. Add an API key in Integrations.",
+        "no_provider",
+    )
+
 
 router = APIRouter(
     tags=["pipelines"],
@@ -342,3 +371,177 @@ async def cancel_run(
     )
     await session.commit()
     return _run_to_dict(run)
+
+
+# ── AI Assistant panel ────────────────────────────────────────────────────────
+
+
+class AssistantTurnRequest(BaseModel):
+    """Body for POST /api/pipelines/{id}/assistant/turn."""
+
+    message: str
+    is_first_turn: bool = False
+
+
+@router.post("/api/pipelines/{pipeline_id}/assistant/turn")
+async def assistant_turn(
+    pipeline_id: str,
+    body: AssistantTurnRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> StreamingResponse:
+    """SSE stream for one Pipeline AI Assistant turn.
+
+    Stream events (same shape as O1 Builder SSE):
+      turn_start, self_improvement*, assistant_token*, proposal_parsed*,
+      heartbeat, turn_complete | error
+
+    Reuses the O1 provider cascade + SSE heartbeat pattern from
+    artemis/builder/routes.py::send_message_stream.
+    """
+    from artemis.pipelines.assistant.turn_handler import (
+        AssistantPanelEvent,
+        handle_assistant_turn_stream,
+    )
+
+    # Verify pipeline exists
+    try:
+        pipeline = await repo.get_pipeline(session, pipeline_id)
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_not_found")  # noqa: B904
+
+    # Load conversation history
+    conv_row = await repo.get_or_create_ai_conversation(session, pipeline_id)
+    conversation = list(conv_row.conversation or [])
+
+    # Load recent runs for self-improvement context
+    recent_runs_objs = await repo.list_pipeline_runs(session, pipeline_id, limit=5)
+    recent_runs = [
+        {
+            "id": r.id,
+            "status": r.status,
+            "error_message": r.error_message,
+            "node_states": r.node_states,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in recent_runs_objs
+    ]
+
+    pipeline_data = {
+        "id": pipeline.id,
+        "name": pipeline.name,
+        "nodes": pipeline.nodes or [],
+        "edges": pipeline.edges or [],
+    }
+
+    adapter = _resolve_adapter()
+
+    user_text = body.message
+    is_first_turn = body.is_first_turn
+
+    async def _event_stream() -> AsyncIterator[str]:
+        q: asyncio.Queue[AssistantPanelEvent | None] = asyncio.Queue()
+        assistant_text_parts: list[str] = []
+
+        async def _drain() -> None:
+            try:
+                async for ev in handle_assistant_turn_stream(
+                    pipeline_id=pipeline_id,
+                    user_text=user_text,
+                    pipeline_data=pipeline_data,
+                    conversation=conversation,
+                    recent_runs=recent_runs,
+                    adapter=adapter,
+                    is_first_turn=is_first_turn,
+                ):
+                    if ev.type == "assistant_token":
+                        assistant_text_parts.append(ev.payload.get("delta", ""))
+                    await q.put(ev)
+            finally:
+                await q.put(None)
+
+        task = asyncio.ensure_future(_drain())
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=15)
+                except TimeoutError:
+                    import datetime as _dt
+
+                    yield AssistantPanelEvent(
+                        type="heartbeat",
+                        payload={"ts": _dt.datetime.now(_dt.UTC).isoformat()},
+                    ).to_sse()
+                    continue
+                if ev is None:
+                    break
+                yield ev.to_sse()
+                if ev.type == "turn_complete":
+                    # Persist conversation — open a fresh session context
+                    try:
+                        full_text = "".join(assistant_text_parts)
+                        from artemis.db import SessionLocal
+
+                        async with SessionLocal() as persist_session:
+                            await repo.append_ai_message(
+                                persist_session, pipeline_id, "user", user_text
+                            )
+                            await repo.append_ai_message(
+                                persist_session, pipeline_id, "assistant", full_text
+                            )
+                            await persist_session.commit()
+                    except Exception:
+                        logger.exception(
+                            "Failed to persist AI conversation for pipeline %s", pipeline_id
+                        )
+                    break
+                if ev.type == "error":
+                    break
+        except asyncio.CancelledError:
+            logger.info(
+                "pipeline assistant SSE cancelled for pipeline %s (client disconnect)",
+                pipeline_id,
+            )
+            task.cancel()
+        finally:
+            if not task.done():
+                task.cancel()
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
+@router.get("/api/pipelines/{pipeline_id}/assistant/conversation")
+async def get_ai_conversation(
+    pipeline_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return the current AI conversation history for a pipeline."""
+    try:
+        await repo.get_pipeline(session, pipeline_id)
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_not_found")  # noqa: B904
+    conv_row = await repo.get_or_create_ai_conversation(session, pipeline_id)
+    await session.commit()
+    return {"pipeline_id": pipeline_id, "conversation": conv_row.conversation or []}
+
+
+@router.delete("/api/pipelines/{pipeline_id}/assistant/conversation", status_code=204)
+async def clear_ai_conversation(
+    pipeline_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> None:
+    """Clear the AI conversation history for a pipeline."""
+    try:
+        await repo.get_pipeline(session, pipeline_id)
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_not_found")  # noqa: B904
+    await repo.clear_ai_conversation(session, pipeline_id)
+    await session.commit()

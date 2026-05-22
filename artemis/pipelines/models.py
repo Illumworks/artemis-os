@@ -1,8 +1,9 @@
-"""SQLAlchemy 2.x async ORM models for the Pipelines domain (PIPE1).
+"""SQLAlchemy 2.x async ORM models for the Pipelines domain (PIPE1 + AI Assistant).
 
 Tables:
-  pipelines      — unified orchestration primitive (nodes + edges JSONB)
-  pipeline_runs  — per-execution run records
+  pipelines                  — unified orchestration primitive (nodes + edges JSONB)
+  pipeline_runs              — per-execution run records
+  pipeline_ai_conversations  — conversation history per pipeline for AI Assistant
 """
 
 from __future__ import annotations
@@ -42,6 +43,30 @@ class Pipeline(Base):
     metadata_: Mapped[Any | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PipelineAIConversation(Base):
+    """Per-pipeline conversation history for the AI Assistant panel.
+
+    One row per pipeline_id. Conversation is a JSONB array of
+    {role: "user"|"assistant", content: str} dicts — same shape as the
+    Builder session conversation column.
+    """
+
+    __tablename__ = "pipeline_ai_conversations"
+
+    pipeline_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("pipelines.id", name="fk_pipeline_ai_conv_pipeline", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    conversation: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
