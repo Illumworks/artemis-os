@@ -505,6 +505,8 @@ let _agentInstructionContent = null;
 let _agentInstructionLoading = false;
 let _agentSupportingFiles = [];
 let _reasonCodeOptions = [];
+let _reasonCodesLoaded = false;
+let _reasonCodesLoading = false;
 let campaignDecisionNotes = readStorage(OPS_CAMPAIGN_NOTE_KEY, {});
 
 // Legacy in-memory skill promotion/dismissal state removed — now API-driven
@@ -543,9 +545,35 @@ function renderReasonCodeOptions(selectedCodes = []) {
   const selected = new Set((selectedCodes || []).map(String));
   return _reasonCodeOptions.map((rc) => {
     const code = rc.code || rc;
-    const label = rc.domain ? `${code} · ${rc.domain}` : code;
-    return `<option value="${escapeAttr(code)}"${selected.has(code) ? " selected" : ""}>${escapeHtml(label)}</option>`;
+    const label = rc.description || code;
+    const domain = rc.domain || "CODE";
+    return `
+      <label class="ops-reason-code-option">
+        <input
+          type="checkbox"
+          value="${escapeAttr(code)}"
+          data-ops-field="reasonCodesEmitted"
+          ${selected.has(code) ? "checked" : ""}
+        >
+        <span class="ops-reason-code-copy">
+          <strong>${escapeHtml(code)}</strong>
+          <small>${escapeHtml(domain)} · ${escapeHtml(label)}</small>
+        </span>
+      </label>
+    `;
   }).join("");
+}
+
+async function refreshReasonCodesFromApi() {
+  if (_reasonCodesLoading) return;
+  _reasonCodesLoading = true;
+  try {
+    const reasonCodes = await api.listReasonCodesApi();
+    _reasonCodeOptions = Array.isArray(reasonCodes) ? reasonCodes : [];
+    _reasonCodesLoaded = true;
+  } finally {
+    _reasonCodesLoading = false;
+  }
 }
 
 function readStorage(key, fallback) {
@@ -1833,6 +1861,9 @@ function renderAgentsPage() {
   if (!_skillsLoaded) {
     refreshSkillsFromApi().then(() => renderOperationsView("agents")).catch(() => {});
   }
+  if (!_reasonCodesLoaded && !_reasonCodesLoading) {
+    refreshReasonCodesFromApi().then(() => renderOperationsView("agents")).catch(() => {});
+  }
 
   const selectedAgent = ensureAgentSelection(agents);
   // If the enriched data isn't loaded yet for this agent, kick off the fetch and re-render when ready.
@@ -2012,12 +2043,12 @@ function renderAgentDetail(agent) {
 
       <section class="ops-mini-card">
         <div class="ops-mini-card-label">Reason codes emitted <span class="ops-badge-success">runtime-active</span></div>
-        <label class="ops-field">
+        <div class="ops-field">
           <span>Allowed codes</span>
-          <select multiple class="ops-reason-code-select" data-ops-field="reasonCodesEmitted">
-            ${renderReasonCodeOptions(agent.reasonCodesEmitted || [])}
-          </select>
-        </label>
+          <div class="ops-reason-code-multiselect" data-ops-reason-code-multiselect>
+            ${renderReasonCodeOptions(agent.reasonCodesEmitted || []) || '<p class="ops-muted-copy">No active reason codes found.</p>'}
+          </div>
+        </div>
         <p class="ops-muted-copy">When empty, runtime allows any active registry code.</p>
       </section>
 
@@ -3419,14 +3450,13 @@ async function refreshCampaignOpsFromApi() {
 }
 
 async function refreshAgentsFromApi() {
-  const [agents, chains, dags, metrics, reasonCodes] = await Promise.all([
+  const [agents, chains, dags, metrics] = await Promise.all([
     api.fetchAgents(),
     api.fetchChains(),
     api.fetchDags(),
     api.fetchAgentMetrics().catch(() => null),
-    api.listReasonCodesApi().catch(() => []),
   ]);
-  _reasonCodeOptions = Array.isArray(reasonCodes) ? reasonCodes : [];
+  await refreshReasonCodesFromApi().catch(() => {});
   setState("agents", agents);
   setState("agentChains", chains);
   setState("agentDags", dags);
@@ -3577,9 +3607,12 @@ async function savePersonaDraft() {
   }
 }
 
-async function saveAgentReasonCodes(selectEl) {
+async function saveAgentReasonCodes(fieldEl) {
   if (!selectedAgentId) return;
-  const reasonCodesEmitted = Array.from(selectEl.selectedOptions).map((option) => option.value);
+  const container = fieldEl.closest("[data-ops-reason-code-multiselect]");
+  if (!container) return;
+  const reasonCodesEmitted = Array.from(container.querySelectorAll("input[type='checkbox']:checked"))
+    .map((option) => option.value);
   if (agentDraft?.id === selectedAgentId) agentDraft.reasonCodesEmitted = reasonCodesEmitted;
   try {
     await api.updateAgent(selectedAgentId, { reasonCodesEmitted });
