@@ -95,7 +95,7 @@ function _compressDays(days) {
  * parseCron(expr) → { mode, fields } | null
  *
  * Priority order:
- *   1. every_n  — */N * * * *  or  0 */N * * *  or  0 0 */N * *
+ *   1. every_n  — *\/N * * * *  or  0 *\/N * * *  or  0 0 *\/N * *
  *   2. daily    — <m> <h> * * *
  *   3. weekly   — <m> <h> * * <dow>
  *   4. monthly  — <m> <h> <dom> * *
@@ -165,7 +165,7 @@ export function parseCron(expr) {
   return { mode: "custom", fields: { cron: expr.trim() } };
 }
 
-/** True if the string is a plain non-negative integer (no */,-, etc.) */
+/** True if the string is a plain non-negative integer (no *, /, ,, -, etc.) */
 function _isInt(s) {
   return /^\d+$/.test(s);
 }
