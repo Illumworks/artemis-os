@@ -138,6 +138,7 @@ export function renderTriggerScheduledForm(config, container) {
 
   container.innerHTML = `
     <div class="ncf ncf-sched">
+      <div class="ncf-cron-title"></div>
 
       <!-- Mode selector -->
       <div class="ncf-field">
@@ -188,6 +189,7 @@ export function renderTriggerScheduledForm(config, container) {
 
   const inputsEl  = container.querySelector(".ncf-cron-inputs");
   const tzEl = container.querySelector(".ncf-tz");
+  const titleEl = container.querySelector(".ncf-cron-title");
   const previewEl = container.querySelector(".ncf-cron-preview");
   const nextRunEl = container.querySelector(".ncf-next-run-preview");
 
@@ -351,9 +353,11 @@ export function renderTriggerScheduledForm(config, container) {
     const valid = isValidCron(cron);
 
     if (currentMode === "custom" && !valid && currentFields.cron) {
+      titleEl.textContent = "Custom schedule";
       previewEl.textContent = "Invalid cron expression";
       previewEl.classList.add("ncf-hint--err");
     } else {
+      titleEl.textContent = desc || (valid ? "Custom schedule" : "Schedule");
       previewEl.textContent = desc || (valid ? "Custom schedule" : "");
       previewEl.classList.remove("ncf-hint--err");
     }

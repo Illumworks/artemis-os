@@ -29,6 +29,7 @@ export function renderHumanGateForm(config, container) {
   const cfg = config ?? {};
   const approvalKind = cfg.approval_kind ?? "manual";
   const approvers = Array.isArray(cfg.approvers) ? cfg.approvers : [];
+  const escalationTo = Array.isArray(cfg.escalation_to) ? cfg.escalation_to : [];
   const timeoutHours = cfg.timeout_hours ?? 72;
   const onTimeout = cfg.on_timeout ?? "escalate";
 
@@ -82,6 +83,19 @@ export function renderHumanGateForm(config, container) {
           </div>
         </div>
       </div>
+
+      <div class="ncf-field ncf-escalation-field" ${onTimeout === "escalate" ? "" : "hidden"}>
+        <label class="ncf-label">Escalate to</label>
+        <div class="ncf-multiselect" data-ncf="escalation_to">
+          <div class="ncf-tags"></div>
+          <div class="ncf-ms-input-row">
+            <input class="ncf-ms-search" type="text" placeholder="Add escalation approver email…"
+              autocomplete="off" autocapitalize="none">
+            <div class="ncf-ms-results" hidden></div>
+          </div>
+        </div>
+        <div class="ncf-hint">Required when timeout escalates. Press Enter or pick from list to add.</div>
+      </div>
     </div>
   `;
 
@@ -97,13 +111,54 @@ export function renderHumanGateForm(config, container) {
     }
   });
 
+  const onTimeoutEl = container.querySelector(".ncf-on-timeout");
+  const escalationField = container.querySelector(".ncf-escalation-field");
+  onTimeoutEl.addEventListener("change", () => {
+    escalationField.hidden = onTimeoutEl.value !== "escalate";
+  });
+
   // Wire multi-select approvers
-  const msWrap = container.querySelector(".ncf-multiselect");
+  const msWrap = container.querySelector('[data-ncf="approvers"]');
+  const escalationWrap = container.querySelector('[data-ncf="escalation_to"]');
+
+  const approverPicker = _wireEmailPicker(msWrap, approvers);
+  const escalationPicker = _wireEmailPicker(escalationWrap, escalationTo);
+
+  return {
+    getValues() {
+      let kind = container.querySelector(".ncf-approval-kind")?.value ?? "manual";
+      if (kind === "__custom__") {
+        kind = container.querySelector(".ncf-approval-kind-custom")?.value?.trim() || "manual";
+      }
+      const timeout = parseInt(container.querySelector(".ncf-timeout")?.value ?? "72", 10);
+      return {
+        approval_kind: kind,
+        approvers: approverPicker.values(),
+        timeout_hours: isNaN(timeout) ? 72 : timeout,
+        on_timeout: onTimeoutEl?.value ?? "escalate",
+        escalation_to: escalationPicker.values(),
+      };
+    },
+    validate() {
+      const kind = container.querySelector(".ncf-approval-kind")?.value;
+      if (kind === "__custom__") {
+        const custom = container.querySelector(".ncf-approval-kind-custom")?.value?.trim();
+        if (!custom) return "Custom approval kind cannot be empty.";
+      }
+      if (onTimeoutEl?.value === "escalate" && !escalationPicker.values().length) {
+        return "Specify at least one escalation approver.";
+      }
+      return null;
+    },
+  };
+}
+
+function _wireEmailPicker(msWrap, initial) {
   const tagsEl = msWrap.querySelector(".ncf-tags");
   const searchEl = msWrap.querySelector(".ncf-ms-search");
   const resultsEl = msWrap.querySelector(".ncf-ms-results");
 
-  let _selected = [...approvers];
+  let _selected = [...initial];
 
   function _renderTags() {
     tagsEl.innerHTML = _selected
@@ -129,7 +184,7 @@ export function renderHumanGateForm(config, container) {
         <span class="ncf-picker-sub">${_esc(p.email)}</span>
       </button>`
     );
-    if (q && !DEFAULT_APPROVERS.some((p) => p.email === q) && !_selected.includes(q)) {
+    if (q && isValidEmail(q) && !DEFAULT_APPROVERS.some((p) => p.email === q) && !_selected.includes(q)) {
       items.unshift(
         `<button type="button" class="ncf-picker-item ncf-picker-item--free" data-email="${_esc(q)}">Add "${_esc(q)}"</button>`
       );
@@ -140,7 +195,7 @@ export function renderHumanGateForm(config, container) {
 
   function _addApprover(email) {
     email = email.trim();
-    if (email && !_selected.includes(email)) {
+    if (isValidEmail(email) && !_selected.includes(email)) {
       _selected.push(email);
       _renderTags();
     }
@@ -177,28 +232,12 @@ export function renderHumanGateForm(config, container) {
   });
 
   return {
-    getValues() {
-      let kind = container.querySelector(".ncf-approval-kind")?.value ?? "manual";
-      if (kind === "__custom__") {
-        kind = container.querySelector(".ncf-approval-kind-custom")?.value?.trim() || "manual";
-      }
-      const timeout = parseInt(container.querySelector(".ncf-timeout")?.value ?? "72", 10);
-      return {
-        approval_kind: kind,
-        approvers: [..._selected],
-        timeout_hours: isNaN(timeout) ? 72 : timeout,
-        on_timeout: container.querySelector(".ncf-on-timeout")?.value ?? "escalate",
-      };
-    },
-    validate() {
-      const kind = container.querySelector(".ncf-approval-kind")?.value;
-      if (kind === "__custom__") {
-        const custom = container.querySelector(".ncf-approval-kind-custom")?.value?.trim();
-        if (!custom) return "Custom approval kind cannot be empty.";
-      }
-      return null;
-    },
+    values() { return [..._selected]; },
   };
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email ?? "").trim());
 }
 
 function _esc(str) {

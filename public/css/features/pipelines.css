@@ -631,6 +631,12 @@ details[open] .ncf-summary::before { content: "▼ " }
 .ncf-jsonlogic-raw:focus { border-color: var(--accent) }
 
 /* ── PIPE3 cron-picker-presets: mode selector + day-of-week ───────────────── */
+.ncf-cron-title {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.25;
+}
 .ncf-cron-mode-bar {
   display: flex;
   gap: 0;

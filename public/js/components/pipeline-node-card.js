@@ -4,6 +4,8 @@
  * Light DOM only; no Shadow DOM.
  */
 
+import { describeCron } from "./cron-utils.js";
+
 const NODE_TYPE_META = {
   trigger_manual:    { icon: "▶", label: "Manual Trigger",    border: "accent" },
   trigger_scheduled: { icon: "⏱", label: "Scheduled Trigger", border: "accent" },
@@ -30,7 +32,7 @@ function configSummary(node) {
     }
   }
   if (node.type === "trigger_scheduled") {
-    return cfg.cron ? `cron: ${cfg.cron}` : "Scheduled";
+    return cfg.cron ? describeCron(cfg.cron) || `cron: ${cfg.cron}` : "Scheduled";
   }
   if (node.type === "trigger_webhook") return "Webhook";
   if (node.type === "trigger_event") return cfg.event_type || "Event";

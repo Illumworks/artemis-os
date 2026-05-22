@@ -18,6 +18,7 @@ let _showNew = false;
 let _archivedFilter = "default";
 let _openMenuId = null;
 let _confirm = null;
+let _outsideMenuCloseWired = false;
 
 // PIPE2: active canvas instance
 let _canvas = null;
@@ -188,11 +189,12 @@ function confirmDialog() {
 async function handlePipelineMenuAction(action, id) {
   const pipeline = _pipelines.find((x) => x.id === id);
   if (!pipeline) return;
+  _openMenuId = null;
   if (action === "restore") {
+    render();
     try {
       await api.updatePipelineApi(pipeline.id, { status: "active" });
       showToast("Pipeline restored");
-      _openMenuId = null;
       await loadPipelines();
     } catch (e) { showToast("Restore failed", e.message, { isError: true }); }
     return;
@@ -211,7 +213,6 @@ async function handlePipelineMenuAction(action, id) {
     message: "This cannot be undone. All run history will be lost.",
     confirmLabel: "Permanently delete",
   };
-  _openMenuId = null;
   render();
 }
 
@@ -281,6 +282,16 @@ function wire(root) {
     _openMenuId = _openMenuId === b.dataset.id ? null : b.dataset.id;
     render();
   }));
+  if (!_outsideMenuCloseWired) {
+    _outsideMenuCloseWired = true;
+    document.addEventListener("click", (e) => {
+      if (!_openMenuId) return;
+      const target = e.target instanceof Element ? e.target : e.target?.parentElement;
+      if (target?.closest(".pmenu")) return;
+      _openMenuId = null;
+      render();
+    });
+  }
   if (!root.dataset.pipelineMenuWired) {
     root.dataset.pipelineMenuWired = "true";
     const handleMenuAction = async (e) => {
