@@ -99,28 +99,16 @@ async def list_pipelines(
 
     result = await session.execute(q)
     pairs: list[tuple[Pipeline, PipelineRun | None]] = []
+    run_col_names = [c.name for c in run_alias.c]
     for row in result.all():
         p_obj: Pipeline = row[0]
-        # Lateral columns in order: id, pipeline_id, status, trigger,
-        # triggered_by, node_states, started_at, completed_at,
-        # error_message, metadata, created_at
-        run_row_id = row[1]
-        if run_row_id is None:
+        if row[1] is None:
             pairs.append((p_obj, None))
         else:
-            run_obj = PipelineRun(
-                id=row[1],
-                pipeline_id=row[2],
-                status=row[3],
-                trigger=row[4],
-                triggered_by=row[5],
-                node_states=row[6],
-                started_at=row[7],
-                completed_at=row[8],
-                error_message=row[9],
-                metadata_=row[10],
-                created_at=row[11],
-            )
+            run_data = dict(zip(run_col_names, row[1:], strict=False))
+            if "metadata" in run_data:
+                run_data["metadata_"] = run_data.pop("metadata")
+            run_obj = PipelineRun(**run_data)
             pairs.append((p_obj, run_obj))
     return pairs
 
@@ -342,22 +330,13 @@ async def get_pipeline_with_latest_run(
     if row is None:
         raise ValueError(f"Pipeline '{pipeline_id}' not found")
     p_obj: Pipeline = row[0]
-    run_row_id = row[1]
-    if run_row_id is None:
+    if row[1] is None:
         return (p_obj, None)
-    run_obj = PipelineRun(
-        id=row[1],
-        pipeline_id=row[2],
-        status=row[3],
-        trigger=row[4],
-        triggered_by=row[5],
-        node_states=row[6],
-        started_at=row[7],
-        completed_at=row[8],
-        error_message=row[9],
-        metadata_=row[10],
-        created_at=row[11],
-    )
+    run_col_names = [c.name for c in run_alias.c]
+    run_data = dict(zip(run_col_names, row[1:], strict=False))
+    if "metadata" in run_data:
+        run_data["metadata_"] = run_data.pop("metadata")
+    run_obj = PipelineRun(**run_data)
     return (p_obj, run_obj)
 
 
