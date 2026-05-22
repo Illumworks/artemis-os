@@ -4,6 +4,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "→ JS syntax check (node --check)"
+while IFS= read -r jsfile; do
+  node --check "$jsfile"
+done < <(find public/js -type f -name "*.js")
+
 echo "→ ruff check"
 uv run ruff check artemis tests
 
