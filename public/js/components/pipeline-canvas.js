@@ -11,6 +11,7 @@
  */
 
 import * as api from "../core/api.js";
+import { describeCron } from "./cron-utils.js";
 import { buildNodeCard, updateNodeCardPosition, setNodeCardSelected } from "./pipeline-node-card.js";
 import { PipelinePalette } from "./pipeline-palette.js";
 import { PipelineConfigDrawer } from "./pipeline-config-drawer.js";
@@ -314,10 +315,14 @@ export class PipelineCanvas {
         pushUndo(this._state);
         const idx = this._state.nodes.findIndex((n) => n.id === nodeId);
         if (idx >= 0) {
-          this._state.nodes[idx] = { ...this._state.nodes[idx], ...updates };
+          const nextNode = { ...this._state.nodes[idx], ...updates };
+          if (nextNode.type === "trigger_scheduled" && nextNode.config?.cron) {
+            nextNode.label = describeCron(nextNode.config.cron) || nextNode.label;
+          }
+          this._state.nodes[idx] = nextNode;
           this._markDirty();
-          this._renderNodes();
-          this._renderEdges();
+          this._redrawNode(nodeId);
+          this._updateConnectedEdges(nodeId);
         }
       },
       onDelete: (nodeId) => {
@@ -368,6 +373,25 @@ export class PipelineCanvas {
       }
     }
 
+    this._renderEmptyState();
+  }
+
+  _redrawNode(nodeId) {
+    const node = this._state.nodes.find((n) => n.id === nodeId);
+    const existing = this._nodeEls.get(nodeId);
+    if (!node || !existing) {
+      this._renderNodes();
+      return;
+    }
+
+    const card = buildNodeCard(node, {
+      selected: this._state.selectedNodeId === node.id,
+      hasError: existing.classList.contains("pcv-node--error"),
+    });
+    existing.replaceWith(card);
+    this._nodeEls.set(nodeId, card);
+    this._wireNodeCard(card, nodeId);
+    this._drawer.syncNode(node);
     this._renderEmptyState();
   }
 

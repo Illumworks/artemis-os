@@ -34,6 +34,7 @@ const MODES = [
   { id: "monthly", label: "Monthly" },
   { id: "custom",  label: "Custom" },
 ];
+const MODE_IDS = new Set(MODES.map((m) => m.id));
 
 const DOW_LABELS = [
   { d: 0, abbr: "Sun" },
@@ -131,8 +132,9 @@ export function renderTriggerScheduledForm(config, container) {
 
   // Parse saved cron → determine opening mode + fields
   const parsed = parseCron(savedCron) ?? { mode: "custom", fields: { cron: savedCron } };
-  let currentMode = parsed.mode;
-  let currentFields = parsed.fields;
+  const preferredMode = MODE_IDS.has(cfg.preferred_mode) ? cfg.preferred_mode : null;
+  let currentMode = preferredMode || parsed.mode;
+  let currentFields = _fieldsForMode(currentMode, parsed, savedCron);
 
   // ── Initial render ────────────────────────────────────────────────────────
 
@@ -395,6 +397,7 @@ export function renderTriggerScheduledForm(config, container) {
       const out = {
         cron,
         timezone: container.querySelector(".ncf-tz")?.value ?? "UTC",
+        preferred_mode: currentMode,
       };
       const s = container.querySelector(".ncf-start-date")?.value;
       const e = container.querySelector(".ncf-end-date")?.value;
@@ -425,6 +428,12 @@ function _parseTime(val) {
   if (!val) return [9, 0];
   const [h, m] = val.split(":").map(Number);
   return [isNaN(h) ? 9 : h, isNaN(m) ? 0 : m];
+}
+
+function _fieldsForMode(mode, parsed, savedCron) {
+  if (mode === "custom") return { cron: savedCron };
+  if (parsed?.mode === mode) return parsed.fields;
+  return {};
 }
 
 function _esc(str) {

@@ -64,12 +64,23 @@ def test_weekly_range_round_trips_to_weekly_mode():
     assert payload["recompiled"] == "0 9 * * 1-5"
 
 
-def test_no_cron_mode_persistence_overrides_saved_cron():
+def test_cron_preferred_mode_persists_explicit_custom_choice():
     src = SCHED_FORM.read_text()
 
     assert "parseCron(savedCron)" in src
+    assert "preferred_mode" in src
+    assert "_fieldsForMode" in src
     assert "localStorage" not in src
     assert "sessionStorage" not in src
+
+
+def test_scheduled_node_save_derives_label_and_redraws_card():
+    src = (COMP / "pipeline-canvas.js").read_text()
+
+    assert 'import { describeCron } from "./cron-utils.js"' in src
+    assert 'nextNode.type === "trigger_scheduled"' in src
+    assert "nextNode.label = describeCron(nextNode.config.cron)" in src
+    assert "this._redrawNode(nodeId)" in src
 
 
 def test_human_gate_freetext_and_escalation_to_are_wired():
