@@ -79,7 +79,7 @@ class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued', 'running', 'awaiting_approval', 'succeeded', 'failed', 'cancelled')",
+            "status IN ('queued', 'running', 'awaiting_approval', 'succeeded', 'failed', 'cancelled', 'partial_complete')",
             name="ck_pipeline_runs_status",
         ),
         CheckConstraint(
@@ -101,6 +101,7 @@ class PipelineRun(Base):
     node_states: Mapped[Any] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    cost_usd: Mapped[float] = mapped_column(nullable=False, server_default=text("0.0"))
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

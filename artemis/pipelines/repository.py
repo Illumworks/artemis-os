@@ -455,10 +455,16 @@ async def clear_ai_conversation(session: AsyncSession, pipeline_id: str) -> Pipe
 
 
 async def update_pipeline_run(session: AsyncSession, run_id: str, **kwargs: Any) -> PipelineRun:
+    from sqlalchemy.orm.attributes import flag_modified
+
     run = await get_pipeline_run(session, run_id)
     for key, val in kwargs.items():
         col = "metadata_" if key == "metadata" else key
         setattr(run, col, val)
+        # SQLAlchemy won't track in-place mutations on plain JSONB dicts;
+        # flag_modified forces the column to be included in the next flush.
+        if col in ("node_states", "metadata_"):
+            flag_modified(run, col)
     await session.flush()
     await session.refresh(run)
     return run

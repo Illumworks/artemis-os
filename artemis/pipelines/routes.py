@@ -1,4 +1,4 @@
-"""Pipeline routes (PIPE1 + AI Assistant panel) — /api/pipelines*.
+"""Pipeline routes (PIPE1 + PIPE4 + AI Assistant panel) — /api/pipelines*.
 
 Endpoints:
   GET    /api/pipelines         — list (latest_run embedded, single LATERAL query)
@@ -12,9 +12,13 @@ Endpoints:
   DELETE /api/pipelines/{id}/permanent — hard delete archived pipeline
   POST   /api/pipelines/{id}/enable  — flip status to active
   POST   /api/pipelines/{id}/disable — flip status to paused
-  POST   /api/pipelines/{id}/run     — manual trigger (records intent only — PIPE4 executes)
+  POST   /api/pipelines/{id}/run     — manual trigger (PIPE4 executes immediately)
   GET    /api/pipelines/{id}/runs    — cursor-paginated run history
-  POST   /api/pipeline-runs/{run_id}/cancel — mark cancelled
+  POST   /api/pipeline-runs/{run_id}/cancel  — mark cancelled
+  POST   /api/pipeline-runs/{run_id}/resume  — resume after approval (PIPE4)
+
+  Slack approval callback (PIPE4):
+  POST   /api/slack/pipeline-approval-callback — Slack interactive component webhook
 
   AI Assistant panel (canvas inline AI):
   POST   /api/pipelines/{id}/assistant/turn  — SSE stream; structured proposals
@@ -300,8 +304,9 @@ async def run_pipeline(
 ) -> dict[str, Any]:
     """Manually trigger a pipeline run.
 
-    Records a pipeline_runs row with status=queued. Does NOT execute anything —
-    the execution engine wires up in PIPE4.
+    Creates a pipeline_runs row and immediately dispatches the PIPE4 executor
+    via an asyncio background task. The response returns the run row in
+    'running' status; the caller can poll GET /runs for progress.
     """
     body = body or PipelineRunRequest()
     try:
@@ -321,6 +326,11 @@ async def run_pipeline(
         metadata_=body.metadata,
     )
     await session.commit()
+    run_id = run.id
+
+    # Dispatch execution in background so the HTTP response returns immediately
+    asyncio.create_task(_execute_pipeline_run(run_id))
+
     return _run_to_dict(run)
 
 
@@ -371,6 +381,211 @@ async def cancel_run(
     )
     await session.commit()
     return _run_to_dict(run)
+
+
+# ── PIPE4: Execute pipeline run (background task) ─────────────────────────────
+
+
+async def _execute_pipeline_run(run_id: str) -> None:
+    """Background task: run the pipeline executor in its own DB session."""
+    from artemis.db import SessionLocal
+    from artemis.pipelines.executor import PipelineExecutor
+
+    async with SessionLocal() as session:
+        try:
+            executor = PipelineExecutor(run_id)
+            await executor.run(session)
+            await session.commit()
+        except Exception:
+            logger.exception("Pipeline run %s failed with unhandled exception", run_id)
+            try:
+                from datetime import UTC, datetime
+
+                run = await repo.get_pipeline_run(session, run_id)
+                run.status = "failed"
+                run.error_message = "Unhandled executor exception; see server logs"
+                run.completed_at = datetime.now(UTC)
+                await session.commit()
+            except Exception:
+                logger.exception("Could not mark pipeline run %s as failed", run_id)
+
+
+# ── PIPE4: Resume ─────────────────────────────────────────────────────────────
+
+
+class ResumeRunRequest(BaseModel):
+    """Body for POST /api/pipeline-runs/{run_id}/resume."""
+
+    node_id: str
+    decision: str  # "approved" | "rejected"
+    actor: str  # email of the human who decided
+
+
+@router.post("/api/pipeline-runs/{run_id}/resume", status_code=200)
+async def resume_run(
+    run_id: str,
+    body: ResumeRunRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Resume a pipeline run after an approval gate is resolved.
+
+    1. Validates run is awaiting_approval and node_id matches a suspended gate.
+    2. Updates node_states[node_id] with decision, actor, decided_at.
+    3. Cancels the scheduled timeout job for this gate.
+    4. Re-dispatches the executor in background to continue from next node.
+    """
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    try:
+        run = await repo.get_pipeline_run(session, run_id)
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_run_not_found")  # noqa: B904
+
+    if run.status not in ("awaiting_approval", "running"):
+        raise bad_request(
+            f"Run '{run_id}' is not awaiting approval (status={run.status})",
+            "pipeline_run_not_awaiting_approval",
+        )
+
+    if body.decision not in ("approved", "rejected"):
+        raise bad_request(
+            f"decision must be 'approved' or 'rejected', got {body.decision!r}",
+            "invalid_decision",
+        )
+
+    node_states: dict[str, Any] = dict(run.node_states or {})
+    gate_state = node_states.get(body.node_id)
+    if not gate_state or not isinstance(gate_state, dict):
+        raise bad_request(
+            f"node_id '{body.node_id}' not found in node_states for run '{run_id}'",
+            "gate_node_not_found",
+        )
+
+    if gate_state.get("status") not in ("suspended", "running"):
+        raise bad_request(
+            f"Gate '{body.node_id}' is not suspended (status={gate_state.get('status')})",
+            "gate_not_suspended",
+        )
+
+    # Update gate state with human decision
+    gate_state["decision"] = body.decision
+    gate_state["decided_at"] = datetime.now(UTC).isoformat()
+    gate_state["decided_by"] = body.actor
+    node_states[body.node_id] = gate_state
+    run.node_states = node_states
+    run.status = "running"
+    await session.commit()
+
+    # Cancel the scheduled timeout job
+    try:
+        import contextlib
+
+        from artemis.pipelines.scheduler import get_pipeline_scheduler
+
+        scheduler = get_pipeline_scheduler()
+        if scheduler.running:
+            job_id = f"gate_timeout_{run_id}_{body.node_id}"
+            with contextlib.suppress(Exception):
+                scheduler.remove_job(job_id)
+    except Exception:
+        logger.warning("Could not cancel timeout job for run %s gate %s", run_id, body.node_id)
+
+    # Re-dispatch executor in background
+    asyncio.create_task(_execute_pipeline_run(run_id))
+
+    run = await repo.get_pipeline_run(session, run_id)
+    return _run_to_dict(run)
+
+
+# ── PIPE4: Slack approval callback ────────────────────────────────────────────
+
+_slack_callback_router = APIRouter(tags=["pipelines"])
+
+
+@_slack_callback_router.post("/api/slack/pipeline-approval-callback", status_code=200)
+async def slack_pipeline_approval_callback(
+    request: Request,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Handle Slack interactive component callback for pipeline gate approvals.
+
+    Slack sends a URL-encoded 'payload' field containing JSON with action info.
+    Button value format: '{run_id}:{node_id}:{decision}'
+
+    This endpoint is unauthenticated (Slack doesn't send our auth token);
+    validate via the action_id prefix to ensure it's a pipeline approval action.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    form = await request.form()
+    payload_raw = form.get("payload", "")
+    if not payload_raw:
+        return {"ok": True, "message": "No payload"}
+
+    try:
+        payload = json.loads(str(payload_raw))
+    except Exception:
+        logger.warning("Invalid Slack callback payload (not JSON)")
+        return {"ok": True}
+
+    actions = payload.get("actions", [])
+    if not actions:
+        return {"ok": True}
+
+    action = actions[0]
+    action_id: str = action.get("action_id", "")
+    if not action_id.startswith("pipeline_approval"):
+        return {"ok": True}
+
+    if action_id == "pipeline_approval_view":
+        return {"ok": True}
+
+    value: str = action.get("value", "")
+    parts = value.split(":", 2)
+    if len(parts) != 3:
+        logger.warning("Invalid pipeline approval button value: %r", value)
+        return {"ok": True}
+
+    run_id, node_id, decision = parts
+    actor_email = ""
+    try:
+        user_obj = payload.get("user", {})
+        actor_email = str(user_obj.get("name") or user_obj.get("id") or "slack_user")
+    except Exception:
+        actor_email = "slack_user"
+
+    if decision not in ("approved", "rejected"):
+        return {"ok": True}
+
+    try:
+        run = await repo.get_pipeline_run(session, run_id)
+    except ValueError:
+        return {"ok": True}
+
+    if run.status not in ("awaiting_approval", "running"):
+        return {"ok": True}
+
+    node_states: dict[str, Any] = dict(run.node_states or {})
+    gate_state = node_states.get(node_id, {})
+    if not isinstance(gate_state, dict) or gate_state.get("status") not in ("suspended", "running"):
+        return {"ok": True}
+
+    gate_state["decision"] = decision
+    gate_state["decided_at"] = datetime.now(UTC).isoformat()
+    gate_state["decided_by"] = actor_email
+    node_states[node_id] = gate_state
+    run.node_states = node_states
+    run.status = "running"
+    await session.commit()
+
+    asyncio.create_task(_execute_pipeline_run(run_id))
+
+    return {"ok": True}
+
+
+# Register the Slack callback router (no auth requirement)
+router.include_router(_slack_callback_router)
 
 
 # ── AI Assistant panel ────────────────────────────────────────────────────────

@@ -46,6 +46,10 @@ from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
 from artemis.pipelines.routes import router as pipelines_router
+from artemis.pipelines.scheduler import (
+    start_pipeline_scheduler,
+    stop_pipeline_scheduler,
+)
 from artemis.routes import calendar as calendar_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
@@ -88,6 +92,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_automation_scheduler()
     # Start the scout execution scheduler (M5b).
     start_scout_scheduler()
+    # Start the pipeline execution scheduler (PIPE4).
+    start_pipeline_scheduler()
     try:
         yield
     finally:
@@ -99,6 +105,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_token_refresh_scheduler()
         stop_automation_scheduler()
         stop_scout_scheduler()
+        stop_pipeline_scheduler()
 
 
 app = FastAPI(
