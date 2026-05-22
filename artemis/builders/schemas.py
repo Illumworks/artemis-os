@@ -48,6 +48,7 @@ class AgentCreate(_Base):
     memory_policy: MemoryPolicy = Field(default="session_scoped", alias="memoryPolicy")
     permission_mode: PermissionMode = Field(default="ask", alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    reason_codes_emitted: list[str] = Field(default_factory=list, alias="reasonCodesEmitted")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -79,9 +80,17 @@ class AgentRead(_Base):
     memory_policy: str = Field(default="session_scoped", alias="memoryPolicy")
     permission_mode: str = Field(default="ask", alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    reason_codes_emitted: list[str] = Field(default_factory=list, alias="reasonCodesEmitted")
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_")
     # O2/O3 — persona/soul
     persona: dict[str, Any] | None = None
+    cadence_seconds: int | None = Field(default=None, alias="cadenceSeconds")
+    lifecycle_status: str | None = Field(default=None, alias="lifecycleStatus")
+    urgency_tiers: dict[str, Any] | None = Field(default=None, alias="urgencyTiers")
+    failure_modes: list[dict[str, Any]] | None = Field(default=None, alias="failureModes")
+    db_tables_touched: list[str] | None = Field(default=None, alias="dbTablesTouched")
+    implementation_notes: str | None = Field(default=None, alias="implementationNotes")
+    inputs_required: list[dict[str, Any]] | None = Field(default=None, alias="inputsRequired")
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
 
@@ -101,6 +110,7 @@ class AgentUpdate(_Base):
     memory_policy: MemoryPolicy | None = Field(default=None, alias="memoryPolicy")
     permission_mode: PermissionMode | None = Field(default=None, alias="permissionMode")
     output_contract: dict[str, Any] | None = Field(default=None, alias="outputContract")
+    reason_codes_emitted: list[str] | None = Field(default=None, alias="reasonCodesEmitted")
     metadata: dict[str, Any] | None = None
     # O2/O3 — persona/soul
     persona: dict[str, Any] | None = None

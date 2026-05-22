@@ -187,6 +187,7 @@ async def create_agent(
         memory_policy=body.memory_policy,
         permission_mode=body.permission_mode,
         output_contract=body.output_contract,
+        reason_codes_emitted=body.reason_codes_emitted,
         metadata=body.metadata,
     )
     await session.commit()

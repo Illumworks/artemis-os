@@ -11,7 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.builders.models  # noqa: F401
-from artemis.marketing.scout_runner import ScoutMode, run_scout
+from artemis.marketing.scout_runner import ScoutMode, reason_code_system_suffix, run_scout
 from artemis.marketing.scout_sources.base import RawItem, ScoutSourceAdapter
 from artemis.marketing.seeds.marketing_agents import seed_marketing_agents
 
@@ -91,6 +91,28 @@ async def test_three_valid_items(db_session: AsyncSession) -> None:
         .all()
     )
     assert len(rows) == 3
+
+
+async def test_reason_code_system_injection(db_session: AsyncSession) -> None:
+    await _seed(db_session)
+    complete = _llm(_VALID_PAYLOAD)
+    with patch(
+        "artemis.marketing.scout_runner.get_adapter",
+        return_value=MagicMock(complete=complete),
+    ):
+        await run_scout(
+            db_session,
+            _SCOUT,
+            ScoutMode.manual,
+            adapter_override=_Mock([RawItem(content="c", source_url="https://ex.com/x")]),
+        )
+    request = complete.call_args.args[0]
+    assert "You may emit ONLY these reason codes: [POLICY_LIT_MANDATE" in request.system
+    assert "Any other code will be rejected by intake validation." in request.system
+
+
+def test_reason_code_system_injection_empty_degrades() -> None:
+    assert reason_code_system_suffix([]) == "Any registered reason code is valid."
 
 
 async def test_invalid_llm_output(db_session: AsyncSession) -> None:

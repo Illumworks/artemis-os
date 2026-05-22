@@ -58,7 +58,7 @@ def _deliverable_node(node_id: str, label: str, deliverable_type: str, x: int) -
 
 
 def build_marketing_pipeline() -> dict[str, Any]:
-    nodes = [
+    nodes: list[dict[str, Any]] = [
         {
             "id": "trigger_scheduled",
             "type": "trigger_scheduled",

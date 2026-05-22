@@ -34,8 +34,21 @@ UPDATE_OWNER = text(
     "UPDATE agents SET owner_user_id = 42 WHERE agent_id = 'marketing.content.asset_selector'"
 )
 SELECT_CONTRACTS = text(
-    "SELECT persona, tools, owner_user_id FROM agents "
+    "SELECT persona, tools, owner_user_id, reason_codes_emitted FROM agents "
     "WHERE agent_id = 'marketing.content.asset_selector'"
+)
+SELECT_STARBRIDGE_CODES = text(
+    "SELECT reason_codes_emitted FROM agents "
+    "WHERE agent_id = 'marketing.scout.starbridge_researcher'"
+)
+SELECT_BLUEPRINT = text(
+    "SELECT cadence_seconds, lifecycle_status, urgency_tiers, failure_modes, "
+    "db_tables_touched, implementation_notes, inputs_required "
+    "FROM agents WHERE agent_id = :agent_id"
+)
+UPDATE_BLUEPRINT = text(
+    "UPDATE agents SET cadence_seconds = 123, lifecycle_status = 'operator_edit' "
+    "WHERE agent_id = 'marketing.scout.starbridge_researcher'"
 )
 
 
@@ -95,3 +108,103 @@ async def test_persona_owner_and_tools_contracts(db_session: AsyncSession) -> No
     assert row["persona"]["purpose"] and row["persona"]["ghostwrite"] is False
     assert row["owner_user_id"] == 42
     assert isinstance(row["tools"], list) and all(isinstance(tool, str) for tool in row["tools"])
+
+
+async def test_scout_reason_codes_emitted_seeded_and_override_preserved(
+    db_session: AsyncSession,
+) -> None:
+    await _reset(db_session)
+    await seed_marketing_agents(db_session)
+    codes = (await db_session.execute(SELECT_STARBRIDGE_CODES)).scalar_one()
+    assert codes == [
+        "POLICY_LIT_MANDATE",
+        "FUNDING_LITERACY_GRANT",
+        "FUNDING_DEADLINE_NEAR",
+        "VENDOR_APPROVED_LIST",
+        "PROCUREMENT_LITERACY_RFP",
+    ]
+    await db_session.execute(
+        text(
+            "UPDATE agents SET reason_codes_emitted = '[\"CUSTOM_CODE\"]'::jsonb "
+            "WHERE agent_id = 'marketing.scout.starbridge_researcher'"
+        )
+    )
+    await db_session.commit()
+    await seed_marketing_agents(db_session)
+    assert (await db_session.execute(SELECT_STARBRIDGE_CODES)).scalar_one() == ["CUSTOM_CODE"]
+
+
+async def test_seed_extracts_operating_blueprint_fields(db_session: AsyncSession) -> None:
+    await _reset(db_session)
+    await seed_marketing_agents(db_session)
+
+    scout = (
+        (
+            await db_session.execute(
+                SELECT_BLUEPRINT, {"agent_id": "marketing.scout.starbridge_researcher"}
+            )
+        )
+        .mappings()
+        .one()
+    )
+    assert scout["cadence_seconds"] == 14400
+    assert scout["lifecycle_status"] == "bench_test"
+    assert scout["urgency_tiers"]["hot"].startswith("RFP deadline")
+    assert scout["failure_modes"][0]["name"] == "Result doesn't map to known district"
+    assert "signal_queue" in scout["db_tables_touched"]
+    assert "STARBRIDGE_API_KEY" in {item["key"] for item in scout["inputs_required"]}
+    assert "Credit usage logging" in scout["implementation_notes"]
+
+    qualifier = (
+        (
+            await db_session.execute(
+                SELECT_BLUEPRINT, {"agent_id": "marketing.qualifier.cross_reference"}
+            )
+        )
+        .mappings()
+        .one()
+    )
+    assert qualifier["cadence_seconds"] == 300
+    assert qualifier["urgency_tiers"] is None
+
+    content = (
+        (
+            await db_session.execute(
+                SELECT_BLUEPRINT, {"agent_id": "marketing.content.brief_assembler"}
+            )
+        )
+        .mappings()
+        .one()
+    )
+    assert content["cadence_seconds"] is None
+    assert "campaign_workspaces" in content["db_tables_touched"]
+
+
+async def test_reseed_preserves_existing_blueprint_when_markdown_is_silent(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    await _reset(db_session)
+    docs_root = tmp_path / "agents"
+    shutil.copytree(DEFAULT_DOCS_ROOT, docs_root)
+    await seed_marketing_agents(db_session, docs_root=docs_root)
+    await db_session.execute(UPDATE_BLUEPRINT)
+    await db_session.commit()
+
+    path = docs_root / "scout/1.1-starbridge-researcher.md"
+    body = path.read_text(encoding="utf-8")
+    body = body.replace("**Status:** **Bench-test for 6–12 months.**", "**No status:**")
+    body = body.replace("## Cadence", "## Cadence removed")
+    path.write_text(body, encoding="utf-8")
+
+    await seed_marketing_agents(db_session, docs_root=docs_root)
+    row = (
+        (
+            await db_session.execute(
+                SELECT_BLUEPRINT, {"agent_id": "marketing.scout.starbridge_researcher"}
+            )
+        )
+        .mappings()
+        .one()
+    )
+    assert row["cadence_seconds"] == 123
+    assert row["lifecycle_status"] == "operator_edit"

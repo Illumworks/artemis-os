@@ -52,6 +52,16 @@ class ScoutRunResult:
     ended_at: datetime | None = None
 
 
+def reason_code_system_suffix(reason_codes: Any) -> str:
+    codes = [str(code).strip() for code in (reason_codes or []) if str(code).strip()]
+    if codes:
+        return (
+            f"You may emit ONLY these reason codes: [{', '.join(codes)}].\n"
+            "Any other code will be rejected by intake validation."
+        )
+    return "Any registered reason code is valid."
+
+
 async def run_scout(
     session: AsyncSession,
     agent_id: str,
@@ -142,7 +152,14 @@ async def run_scout(
                     messages=[
                         Message(role="user", content=[TextBlock(text="\n".join(prompt_parts))])
                     ],
-                    system=agent.system_prompt or "",
+                    system="\n\n".join(
+                        part
+                        for part in [
+                            agent.system_prompt or "",
+                            reason_code_system_suffix(agent.reason_codes_emitted),
+                        ]
+                        if part
+                    ),
                     model=agent.model,
                     max_tokens=1024,
                 )

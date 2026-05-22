@@ -99,6 +99,93 @@ def _strip_code_fence(value: str) -> str:
     return match.group("body").strip() if match else value.strip()
 
 
+def _bullets(section: str) -> list[str]:
+    return [
+        match.group(1).strip()
+        for match in re.finditer(
+            r"^\s*-\s+(.+?)(?=\n\s*-\s+|\Z)", section, re.MULTILINE | re.DOTALL
+        )
+    ]
+
+
+def _cadence_seconds(section: str) -> int | None:
+    text = " ".join(section.split()).lower()
+    match = re.search(r"\bevery\s+(\d+)\s*(h|hr|hour|hours|m|min|minute|minutes)\b", text)
+    if match:
+        value = int(match.group(1))
+        return value * 3600 if match.group(2).startswith("h") else value * 60
+    if re.search(r"\bdaily\b|\bevery day\b", text):
+        return 86400
+    return None
+
+
+def _status(markdown: str) -> str | None:
+    match = re.search(r"^\*\*Status:\*\*\s*(.+)$", markdown, re.MULTILINE)
+    if not match:
+        return None
+    text = re.sub(r"[*`]", "", match.group(1)).strip().lower()
+    if "bench-test" in text or "bench test" in text:
+        return "bench_test"
+    if "deprecated" in text:
+        return "deprecated"
+    if "active" in text:
+        return "active"
+    return re.sub(r"[^a-z0-9]+", "_", text.split(".")[0]).strip("_") or None
+
+
+def _urgency_tiers(section: str) -> dict[str, str] | None:
+    tiers: dict[str, str] = {}
+    for bullet in _bullets(section):
+        match = re.match(r"\*\*(?P<tier>[^*]+)\*\*\s*[—:-]\s*(?P<body>.+)", bullet, re.DOTALL)
+        if match:
+            tiers[match.group("tier").strip().lower()] = " ".join(match.group("body").split())
+    return tiers or None
+
+
+def _failure_modes(section: str) -> list[dict[str, str]] | None:
+    modes: list[dict[str, str]] = []
+    for bullet in _bullets(section):
+        clean = " ".join(bullet.split())
+        match = re.match(r"\*\*(?P<name>[^*]+)\*\*\s*(?:[—:-]|→)\s*(?P<body>.+)", clean)
+        if not match:
+            match = re.match(r"(?P<name>.+?)\s*(?:[—:-]|→)\s*(?P<body>.+)", clean)
+        if match:
+            modes.append(
+                {
+                    "name": re.sub(r"`", "", match.group("name")).strip(),
+                    "description": match.group("body").strip(),
+                }
+            )
+        elif clean:
+            modes.append({"name": clean, "description": ""})
+    return modes or None
+
+
+def _db_tables(section: str) -> list[str] | None:
+    tables: list[str] = []
+    for bullet in _bullets(section):
+        for part in re.split(r",|\band\b", bullet):
+            table = re.sub(r"[`*()]", "", part).strip()
+            table = table.split()[0] if table else ""
+            if table and table not in tables:
+                tables.append(table)
+    return tables or None
+
+
+def _inputs(section: str) -> list[dict[str, str]] | None:
+    inputs: list[dict[str, str]] = []
+    for bullet in _bullets(section):
+        clean = " ".join(bullet.split())
+        key_match = re.search(r"`([A-Z][A-Z0-9_]+)`", clean)
+        name_match = re.match(r"\*\*(?P<name>[^*]+)\*\*", clean)
+        key = (
+            key_match.group(1) if key_match else (name_match.group("name") if name_match else clean)
+        )
+        desc = re.sub(r"^\*\*[^*]+\*\*\s*[—:-]?\s*", "", clean).strip()
+        inputs.append({"kind": "env" if key_match else "resource", "key": key, "description": desc})
+    return inputs or None
+
+
 def _tools(section: str) -> list[str]:
     found: list[str] = []
     for raw_line in _strip_code_fence(section).splitlines():
@@ -108,6 +195,15 @@ def _tools(section: str) -> list[str]:
         for candidate in candidates:
             if candidate not in found and candidate != "response.status_code":
                 found.append(candidate)
+    return found
+
+
+def _reason_codes_emitted(section: str) -> list[str]:
+    found: list[str] = []
+    for raw_line in section.splitlines():
+        match = re.match(r"^\|\s*`?([A-Z][A-Z0-9_]+)`?\s*\|", raw_line.strip())
+        if match and match.group(1) != "Code" and match.group(1) not in found:
+            found.append(match.group(1))
     return found
 
 
@@ -130,6 +226,9 @@ def _row(spec: MarketingAgentSpec, docs_root: Path) -> dict[str, Any]:
         "goal": _goal(purpose),
         "system_prompt": _strip_code_fence(_extract_section(markdown, "Prompt scaffolding")),
         "tools": _tools(_extract_section(markdown, "Tools required")),
+        "reason_codes_emitted": _reason_codes_emitted(
+            _extract_section(markdown, "Reason codes emitted")
+        ),
         "model": model,
         "provider": "claude-code",
         "fallback_provider": "anthropic",
@@ -148,6 +247,14 @@ def _row(spec: MarketingAgentSpec, docs_root: Path) -> dict[str, Any]:
             "version": 1,
             "trajectory_summary": {"enabled": True},
         },
+        "cadence_seconds": _cadence_seconds(_extract_section(markdown, "Cadence")),
+        "lifecycle_status": _status(markdown),
+        "urgency_tiers": _urgency_tiers(_extract_section(markdown, "Urgency tiers")),
+        "failure_modes": _failure_modes(_extract_section(markdown, "Failure modes")),
+        "db_tables_touched": _db_tables(_extract_section(markdown, "DB tables touched")),
+        "implementation_notes": _extract_section(markdown, "Implementation notes for Codex")
+        or None,
+        "inputs_required": _inputs(_extract_section(markdown, "Inputs")),
     }
 
 
@@ -166,6 +273,19 @@ async def seed_marketing_agents(
             "tools": dumps(row["tools"]),
             "persona": dumps(row["persona"]),
             "output_contract": dumps(row["output_contract"]),
+            "reason_codes_emitted": dumps(row["reason_codes_emitted"]),
+            "urgency_tiers": dumps(row["urgency_tiers"])
+            if row["urgency_tiers"] is not None
+            else None,
+            "failure_modes": dumps(row["failure_modes"])
+            if row["failure_modes"] is not None
+            else None,
+            "db_tables_touched": (
+                dumps(row["db_tables_touched"]) if row["db_tables_touched"] is not None else None
+            ),
+            "inputs_required": dumps(row["inputs_required"])
+            if row["inputs_required"] is not None
+            else None,
         }
         cursor: CursorResult[tuple[()]] = await session.execute(  # type: ignore[assignment]
             text(
@@ -173,13 +293,18 @@ async def seed_marketing_agents(
                 INSERT INTO agents (
                     agent_id, name, description, goal, system_prompt, tools, model, provider,
                     fallback_provider, fallback_model, memory_policy, permission_mode,
-                    persona, output_contract, updated_at
+                    persona, output_contract, reason_codes_emitted, cadence_seconds,
+                    lifecycle_status, urgency_tiers, failure_modes, db_tables_touched,
+                    implementation_notes, inputs_required, updated_at
                 )
                 VALUES (
                     :agent_id, :name, :description, :goal, :system_prompt, CAST(:tools AS jsonb),
                     :model, :provider, :fallback_provider, :fallback_model, :memory_policy,
                     :permission_mode, CAST(:persona AS jsonb), CAST(:output_contract AS jsonb),
-                    now()
+                    CAST(:reason_codes_emitted AS jsonb), :cadence_seconds, :lifecycle_status,
+                    CAST(:urgency_tiers AS jsonb), CAST(:failure_modes AS jsonb),
+                    CAST(:db_tables_touched AS jsonb), :implementation_notes,
+                    CAST(:inputs_required AS jsonb), now()
                 )
                 ON CONFLICT (agent_id) DO UPDATE SET
                     name = EXCLUDED.name, description = EXCLUDED.description,
@@ -188,7 +313,20 @@ async def seed_marketing_agents(
                     provider = EXCLUDED.provider, fallback_provider = EXCLUDED.fallback_provider,
                     fallback_model = EXCLUDED.fallback_model, memory_policy = EXCLUDED.memory_policy,
                     permission_mode = EXCLUDED.permission_mode, persona = EXCLUDED.persona,
-                    output_contract = EXCLUDED.output_contract, updated_at = now()
+                    output_contract = EXCLUDED.output_contract,
+                    reason_codes_emitted = CASE
+                        WHEN agents.reason_codes_emitted = '[]'::jsonb
+                        THEN EXCLUDED.reason_codes_emitted
+                        ELSE agents.reason_codes_emitted
+                    END,
+                    cadence_seconds = COALESCE(EXCLUDED.cadence_seconds, agents.cadence_seconds),
+                    lifecycle_status = COALESCE(EXCLUDED.lifecycle_status, agents.lifecycle_status),
+                    urgency_tiers = COALESCE(EXCLUDED.urgency_tiers, agents.urgency_tiers),
+                    failure_modes = COALESCE(EXCLUDED.failure_modes, agents.failure_modes),
+                    db_tables_touched = COALESCE(EXCLUDED.db_tables_touched, agents.db_tables_touched),
+                    implementation_notes = COALESCE(EXCLUDED.implementation_notes, agents.implementation_notes),
+                    inputs_required = COALESCE(EXCLUDED.inputs_required, agents.inputs_required),
+                    updated_at = now()
                 RETURNING (xmax = 0) AS inserted
                 """
             ),

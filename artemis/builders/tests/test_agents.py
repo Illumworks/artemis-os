@@ -179,6 +179,22 @@ async def test_patch_agent_metadata_http_keeps_agent_id(client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
+async def test_patch_agent_reason_codes_emitted_http(client: AsyncClient) -> None:
+    await client.post(
+        "/api/agents/", json={"agentId": "emit-http", "name": "Emit", **PROVIDER_FIELDS}
+    )
+    resp = await client.patch(
+        "/api/agents/emit-http",
+        json={"reasonCodesEmitted": ["POLICY_LIT_MANDATE", "VENDOR_APPROVED_LIST"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reasonCodesEmitted"] == [
+        "POLICY_LIT_MANDATE",
+        "VENDOR_APPROVED_LIST",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_patch_agent_not_found_http(client: AsyncClient) -> None:
     resp = await client.patch("/api/agents/no-such", json={"name": "x"})
     assert resp.status_code == 404

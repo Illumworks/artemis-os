@@ -504,6 +504,7 @@ let _enrichedAgentLoadedForId = null;   // tracks which agent ID we last attempt
 let _agentInstructionContent = null;
 let _agentInstructionLoading = false;
 let _agentSupportingFiles = [];
+let _reasonCodeOptions = [];
 let campaignDecisionNotes = readStorage(OPS_CAMPAIGN_NOTE_KEY, {});
 
 // Legacy in-memory skill promotion/dismissal state removed — now API-driven
@@ -536,6 +537,15 @@ function modelOptions(provider, selected) {
 
 function firstModelForProvider(provider) {
   return getSourceModels(provider || "claude-code")[0]?.value || "";
+}
+
+function renderReasonCodeOptions(selectedCodes = []) {
+  const selected = new Set((selectedCodes || []).map(String));
+  return _reasonCodeOptions.map((rc) => {
+    const code = rc.code || rc;
+    const label = rc.domain ? `${code} · ${rc.domain}` : code;
+    return `<option value="${escapeAttr(code)}"${selected.has(code) ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
 }
 
 function readStorage(key, fallback) {
@@ -759,6 +769,19 @@ function formatDuration(ms) {
   return `${hours}h`;
 }
 
+function formatCadenceSeconds(seconds) {
+  const value = Number(seconds || 0);
+  if (!value) return "Not specified";
+  if (value % 86400 === 0) return `Every ${value / 86400} day${value === 86400 ? "" : "s"}`;
+  if (value % 3600 === 0) return `Every ${value / 3600} hour${value === 3600 ? "" : "s"}`;
+  if (value % 60 === 0) return `Every ${value / 60} minute${value === 60 ? "" : "s"}`;
+  return `Every ${value} seconds`;
+}
+
+function formatLifecycleStatus(status) {
+  return status ? String(status).replace(/_/g, "-") : "Not specified";
+}
+
 function formatPercent(value) {
   if (value == null || Number.isNaN(Number(value))) return "—";
   return `${Math.round(Number(value))}%`;
@@ -774,7 +797,7 @@ function getAgentMetricRow(agent) {
 
 function buildAgentProfile(agent) {
   // Merge enriched real data when available for this agent.
-  const enriched = _enrichedAgent?.id === agent?.id ? _enrichedAgent : null;
+  const enriched = (_enrichedAgent?.agentId || _enrichedAgent?.id) === agent?.id ? _enrichedAgent : null;
   const draft = agentDraft?.id === agent?.id ? agentDraft : null;
   const config = draft || enriched || agent;
   const profile = lookupAgentProfile(agent);
@@ -806,6 +829,14 @@ function buildAgentProfile(agent) {
     memoryPolicy: config.memoryPolicy || null,
     permissionMode: config.permissionMode || null,
     outputContract: config.outputContract || null,
+    reasonCodesEmitted: config.reasonCodesEmitted || [],
+    cadenceSeconds: config.cadenceSeconds ?? null,
+    lifecycleStatus: config.lifecycleStatus ?? null,
+    urgencyTiers: config.urgencyTiers ?? null,
+    failureModes: Array.isArray(config.failureModes) ? config.failureModes : null,
+    dbTablesTouched: Array.isArray(config.dbTablesTouched) ? config.dbTablesTouched : null,
+    implementationNotes: config.implementationNotes || null,
+    inputsRequired: Array.isArray(config.inputsRequired) ? config.inputsRequired : null,
     instructionFileExists: enriched?.instructionFileExists ?? false,
     supportingFileCount: enriched?.supportingFileCount ?? 0,
     persona,
@@ -1366,7 +1397,7 @@ function ensureAutomationSelection(automations) {
 function getAgentDraft(agent) {
   if (agentDraft && agentDraft.id === agent?.id) return agentDraft;
   // Prefer enriched data when available for the same agent.
-  const enriched = _enrichedAgent?.id === agent?.id ? _enrichedAgent : agent;
+  const enriched = (_enrichedAgent?.agentId || _enrichedAgent?.id) === agent?.id ? _enrichedAgent : agent;
   agentDraft = {
     id: enriched?.id || "",
     title: enriched?.title || "",
@@ -1384,6 +1415,7 @@ function getAgentDraft(agent) {
     memoryPolicy: enriched?.memoryPolicy ? { ...enriched.memoryPolicy } : { scope: "project" },
     permissionMode: enriched?.permissionMode || "bypass",
     outputContract: enriched?.outputContract ? { ...enriched.outputContract } : { type: "run_summary" },
+    reasonCodesEmitted: enriched?.reasonCodesEmitted || [],
   };
   writeStorage(OPS_AGENT_DRAFT_KEY, agentDraft);
   return agentDraft;
@@ -1906,6 +1938,8 @@ function renderAgentDetail(agent) {
         <p>${escapeHtml(agent.persona?.purpose || agent.description || "No description yet.")}</p>
       </section>
 
+      ${renderOperatingBlueprint(agent)}
+
       <section class="ops-mini-card">
         <div class="ops-mini-card-label">Recent runs</div>
         <div class="ops-run-list">
@@ -1974,6 +2008,17 @@ function renderAgentDetail(agent) {
           <textarea rows="6" data-ops-field="agent-instruction" placeholder="Write detailed agent instructions here. When saved, this file becomes the runtime instruction source instead of Goal.">${escapeHtml(_agentInstructionContent || "")}</textarea>
         </label>
         <button type="button" class="ops-secondary-btn" style="margin-top:6px" data-ops-action="generate-instruction-from-goal">Generate from Goal</button>
+      </section>
+
+      <section class="ops-mini-card">
+        <div class="ops-mini-card-label">Reason codes emitted <span class="ops-badge-success">runtime-active</span></div>
+        <label class="ops-field">
+          <span>Allowed codes</span>
+          <select multiple class="ops-reason-code-select" data-ops-field="reasonCodesEmitted">
+            ${renderReasonCodeOptions(agent.reasonCodesEmitted || [])}
+          </select>
+        </label>
+        <p class="ops-muted-copy">When empty, runtime allows any active registry code.</p>
       </section>
 
       <section class="ops-mini-card">
@@ -2123,6 +2168,65 @@ function renderAgentDetail(agent) {
         ${selectedAgentId ? renderOpsSecondaryButton("Delete", "delete-agent") : ""}
       </div>
     </div>
+  `;
+}
+
+function renderOperatingBlueprint(agent) {
+  const inputs = agent.inputsRequired || [];
+  const tiers = agent.urgencyTiers || {};
+  const failures = agent.failureModes || [];
+  const tables = agent.dbTablesTouched || [];
+  return `
+    <section class="ops-mini-card ops-blueprint-card">
+      <details open>
+        <summary class="ops-blueprint-summary">
+          <span>Operating Blueprint</span>
+          <span class="ops-pill">${escapeHtml(formatLifecycleStatus(agent.lifecycleStatus))}</span>
+        </summary>
+        <div class="ops-blueprint-grid">
+          <div class="ops-blueprint-kv">
+            <span>Cadence</span>
+            <strong>${escapeHtml(formatCadenceSeconds(agent.cadenceSeconds))}</strong>
+          </div>
+          <div class="ops-blueprint-kv">
+            <span>Lifecycle</span>
+            <strong>${escapeHtml(formatLifecycleStatus(agent.lifecycleStatus))}</strong>
+          </div>
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Inputs required</div>
+          ${inputs.length ? `<div class="ops-blueprint-list">${inputs.map((input) => `
+            <div class="ops-blueprint-row">
+              <code>${escapeHtml(input.key || "Input")}</code>
+              <span>${escapeHtml(input.description || input.kind || "No description")}</span>
+            </div>
+          `).join("")}</div>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Urgency tiers</div>
+          ${Object.keys(tiers).length ? `<div class="ops-blueprint-list">${Object.entries(tiers).map(([tier, detail]) => `
+            <div class="ops-blueprint-row">
+              <code>${escapeHtml(tier)}</code>
+              <span>${escapeHtml(String(detail))}</span>
+            </div>
+          `).join("")}</div>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Failure modes</div>
+          ${failures.length ? `<ul class="ops-blueprint-bullets">${failures.map((mode) => `
+            <li><strong>${escapeHtml(mode.name || "Failure")}</strong>${mode.description ? ` — ${escapeHtml(mode.description)}` : ""}</li>
+          `).join("")}</ul>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">DB tables touched</div>
+          ${tables.length ? `<div class="ops-chip-row ops-blueprint-chips">${tables.map((table) => `<span class="ops-agent-meta-chip">${escapeHtml(table)}</span>`).join("")}</div>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Implementation notes</div>
+          ${agent.implementationNotes ? `<pre class="ops-blueprint-notes">${escapeHtml(agent.implementationNotes)}</pre>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+      </details>
+    </section>
   `;
 }
 
@@ -3210,12 +3314,14 @@ async function refreshCampaignOpsFromApi() {
 }
 
 async function refreshAgentsFromApi() {
-  const [agents, chains, dags, metrics] = await Promise.all([
+  const [agents, chains, dags, metrics, reasonCodes] = await Promise.all([
     api.fetchAgents(),
     api.fetchChains(),
     api.fetchDags(),
     api.fetchAgentMetrics().catch(() => null),
+    api.listReasonCodesApi().catch(() => []),
   ]);
+  _reasonCodeOptions = Array.isArray(reasonCodes) ? reasonCodes : [];
   setState("agents", agents);
   setState("agentChains", chains);
   setState("agentDags", dags);
@@ -3305,6 +3411,7 @@ async function saveAgentDraft() {
     memoryPolicy: agentDraft.memoryPolicy || null,
     permissionMode: agentDraft.permissionMode || null,
     outputContract: agentDraft.outputContract || null,
+    reasonCodesEmitted: agentDraft.reasonCodesEmitted || [],
   };
   if (!payload.title || !payload.goal) {
     window.alert?.("Title and goal are required.");
@@ -3360,6 +3467,22 @@ async function savePersonaDraft() {
     renderOperationsView("agents");
     const agent = getAgents().find((item) => item.id === selectedAgentId);
     showToast("Saved", `${agent?.title || selectedAgentId} updated.`);
+  } catch (err) {
+    showToast("Save failed", err?.message || String(err), { isError: true });
+  }
+}
+
+async function saveAgentReasonCodes(selectEl) {
+  if (!selectedAgentId) return;
+  const reasonCodesEmitted = Array.from(selectEl.selectedOptions).map((option) => option.value);
+  if (agentDraft?.id === selectedAgentId) agentDraft.reasonCodesEmitted = reasonCodesEmitted;
+  try {
+    await api.updateAgent(selectedAgentId, { reasonCodesEmitted });
+    _enrichedAgent = null;
+    await refreshAgentsFromApi();
+    await loadEnrichedAgent(selectedAgentId);
+    renderOperationsView("agents");
+    showToast("Saved", "Reason-code emit list updated.");
   } catch (err) {
     showToast("Save failed", err?.message || String(err), { isError: true });
   }
@@ -4346,6 +4469,10 @@ function handleOperationsChange(event) {
   if (["provider", "model", "fallbackProvider", "fallbackModel", "memoryScope", "permissionMode", "outputType"].includes(opsField)) {
     updateAgentDraftField(opsField, field.value);
     if (opsField === "provider" || opsField === "fallbackProvider") renderOperationsView("agents");
+    return;
+  }
+  if (opsField === "reasonCodesEmitted") {
+    void saveAgentReasonCodes(field);
     return;
   }
   // Workflow step selects and checkboxes: type/destination changes need a re-render.

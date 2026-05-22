@@ -56,6 +56,18 @@ def test_tree_groups_agent_id_slugs_and_legacy_agents() -> None:
     assert data["legacy"] == ["smoke-test"]
 
 
+def test_agent_card_renders_operating_blueprint() -> None:
+    js = OPS_SHELL.read_text()
+    css = OPS_CSS.read_text()
+    assert "function renderOperatingBlueprint" in js
+    assert "Operating Blueprint" in js
+    assert "inputsRequired" in js
+    assert "urgencyTiers" in js
+    assert "failureModes" in js
+    assert "Not specified" in js
+    assert ".ops-blueprint-card" in css
+
+
 def test_search_matches_name_description_and_agent_id_only() -> None:
     data = run_tree_script(
         """

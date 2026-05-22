@@ -67,11 +67,21 @@ class Agent(Base):
     )
     permission_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="ask")
     output_contract: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    reason_codes_emitted: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, server_default="'[]'::jsonb"
+    )
     metadata_: Mapped[Any] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="'{}'::jsonb"
     )
     # O2/O3 — persona/soul: name, purpose, voice_notes, ghostwrite, profile_image_path
     persona: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    cadence_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lifecycle_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    urgency_tiers: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    failure_modes: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    db_tables_touched: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    implementation_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    inputs_required: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
