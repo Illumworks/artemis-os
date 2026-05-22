@@ -268,8 +268,8 @@ def test_trigger_scheduled_live_preview_and_next_run():
     src = (NCF / "trigger-scheduled-form.js").read_text()
     assert "ncf-next-run-preview" in src
     assert "computeNextRun" in src
-    assert 'cronEl.addEventListener("input", _updatePreview)' in src
-    assert 'tzEl.addEventListener("change", _updatePreview)' in src
+    assert 'addEventListener("input", _sync)' in src
+    assert 'tzEl.addEventListener("change", _sync)' in src
 
 
 def test_human_gate_has_three_named_approvers():
