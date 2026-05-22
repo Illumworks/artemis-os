@@ -1,6 +1,63 @@
 // Centralized reactive state store
+import { DEFAULT_APP_VIEW, normalizeAppView } from "./navigation.js";
+
+const HISTORY_COMPANION_KEYS = ["builderAgentId", "builderEditAgentId", "sessionId"];
+
+function hasBrowserHistory() {
+  return typeof window !== "undefined" && typeof window.history?.pushState === "function";
+}
+
+function parseHashView() {
+  if (typeof window === "undefined") return null;
+  const hash = window.location?.hash || "";
+  if (!hash.startsWith("#/")) return null;
+  try {
+    return normalizeAppView(decodeURIComponent(hash.slice(2)));
+  } catch {
+    return DEFAULT_APP_VIEW;
+  }
+}
+
+function buildHistoryState(view) {
+  const data = { view: normalizeAppView(view) };
+  for (const key of HISTORY_COMPANION_KEYS) {
+    if (state[key] !== undefined && state[key] !== null && state[key] !== "") {
+      data[key] = state[key];
+    }
+  }
+  return data;
+}
+
+function viewHash(view) {
+  return "#/" + encodeURIComponent(normalizeAppView(view));
+}
+
+function pushViewHistory(view) {
+  if (!hasBrowserHistory()) return;
+  const nextState = buildHistoryState(view);
+  const nextHash = viewHash(nextState.view);
+  if (window.location.hash === nextHash && window.history.state?.view === nextState.view) return;
+  window.history.pushState(nextState, "", nextHash);
+}
+
+function replaceInitialHistoryState() {
+  if (!hasBrowserHistory()) return;
+  window.history.replaceState(buildHistoryState(state.view), "", window.location.href);
+}
+
+function restoreHistoryState(event) {
+  const historyState = event.state || {};
+  const nextView = historyState.view || parseHashView() || DEFAULT_APP_VIEW;
+  for (const key of HISTORY_COMPANION_KEYS) {
+    if (historyState[key] !== undefined) {
+      setState(key, historyState[key], { fromHistory: true });
+    }
+  }
+  setState("view", nextView, { fromHistory: true });
+}
+
 const state = {
-  view: "command-center",
+  view: parseHashView() || "command-center",
   ws: null,
   sessionId: null,
   parallelMode: false,
@@ -25,9 +82,12 @@ export function getState(key) {
   return state[key];
 }
 
-export function setState(key, val) {
+export function setState(key, val, options = {}) {
   state[key] = val;
   emit(key, val);
+  if (key === "view" && !options.fromHistory) {
+    pushViewHistory(val);
+  }
 }
 
 /** Subscribe to state changes for a key. Returns an unsubscribe function. */
@@ -47,4 +107,9 @@ export function off(key, fn) {
 
 function emit(key, val) {
   (listeners[key] || []).forEach((fn) => fn(val));
+}
+
+if (hasBrowserHistory()) {
+  replaceInitialHistoryState();
+  window.addEventListener("popstate", restoreHistoryState);
 }
