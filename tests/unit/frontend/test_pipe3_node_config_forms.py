@@ -214,6 +214,25 @@ def test_agent_invocation_validates_required_agent():
     assert "Agent is required" in src
 
 
+def test_agent_invocation_agent_filter_coerces_ids_to_string():
+    src = (NCF / "agent-invocation-form.js").read_text()
+    assert "_safeStr(a.agent_id ?? a.id).toLowerCase()" in src
+    assert 'String(v ?? "")' in src
+
+
+def test_agent_invocation_model_override_is_provider_filtered_select():
+    src = (NCF / "agent-invocation-form.js").read_text()
+    assert "getSourceModels(provider)" in src
+    assert 'ncf-model-override"></select>' in src
+    assert "ncf-provider-override" in src
+
+
+def test_agent_invocation_cost_cap_tooltip_copy():
+    src = (NCF / "agent-invocation-form.js").read_text()
+    assert "Stops execution when total LLM cost" in src
+    assert "partial_complete" in src
+
+
 def test_trigger_scheduled_validates_required_cron():
     src = (NCF / "trigger-scheduled-form.js").read_text()
     assert "cron" in src.lower()
@@ -243,6 +262,30 @@ def test_trigger_scheduled_has_cron_describe():
 def test_trigger_scheduled_has_cron_validation():
     src = (NCF / "trigger-scheduled-form.js").read_text()
     assert "isValidCron" in src
+
+
+def test_trigger_scheduled_live_preview_and_next_run():
+    src = (NCF / "trigger-scheduled-form.js").read_text()
+    assert "ncf-next-run-preview" in src
+    assert "computeNextRun" in src
+    assert 'cronEl.addEventListener("input", _updatePreview)' in src
+    assert 'tzEl.addEventListener("change", _updatePreview)' in src
+
+
+def test_human_gate_has_three_named_approvers():
+    src = (NCF / "human-gate-form.js").read_text()
+    for email in ["josh@amiralearning.com", "angela@amiralearning.com", "jon@amiralearning.com"]:
+        assert email in src
+    for name in ["Josh", "Angela", "Jon"]:
+        assert name in src
+
+
+def test_human_gate_on_timeout_inline_help():
+    src = (NCF / "human-gate-form.js").read_text()
+    assert "ncf-timeout-help" in src
+    assert "ping a secondary approver" in src
+    assert "automatically approve" in src
+    assert "automatically reject" in src
 
 
 # ── CSS: PIPE3 selectors present ─────────────────────────────────────────────

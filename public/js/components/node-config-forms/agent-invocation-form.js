@@ -4,8 +4,13 @@
  * Fields: agent picker, mode, cost_cap_usd, optional provider/model override.
  */
 
+import { PROVIDER_LABELS, PROVIDER_PICKERS, getSourceModels } from "../../ui/model-selector.js";
+
 const MODES = ["scheduled", "manual", "backfill"];
-const PROVIDERS = ["anthropic", "openai", "gemini"];
+const PROVIDERS = Object.keys(PROVIDER_PICKERS).filter((p) => p !== "hermes");
+const PROVIDER_ALIASES = { anthropic: "claude-code", openai: "codex" };
+const COST_CAP_HELP =
+  "Stops execution when total LLM cost for this run exceeds this cap. Applies to all provider modes (API, CLI, local). Run is marked partial_complete and the cap-hit reason is logged.";
 
 // ── Searchable agent picker ──────────────────────────────────────────────────
 
@@ -37,7 +42,7 @@ export function renderAgentInvocationForm(config, container) {
   const agentId = cfg.agent_id ?? "";
   const mode = cfg.mode ?? "scheduled";
   const costCap = cfg.cost_cap_usd != null ? cfg.cost_cap_usd : 1.0;
-  const providerOverride = cfg.provider_override ?? "";
+  const providerOverride = PROVIDER_ALIASES[cfg.provider_override] ?? cfg.provider_override ?? "";
   const modelOverride = cfg.model_override ?? "";
   const showOverride = !!(providerOverride || modelOverride);
 
@@ -62,7 +67,10 @@ export function renderAgentInvocationForm(config, container) {
       </div>
 
       <div class="ncf-field">
-        <label class="ncf-label">Cost cap (USD)</label>
+        <label class="ncf-label ncf-label-with-help">
+          <span>Cost cap (USD)</span>
+          <span class="ncf-help" tabindex="0" aria-label="${_esc(COST_CAP_HELP)}" data-tooltip="${_esc(COST_CAP_HELP)}">?</span>
+        </label>
         <input class="ncf-input ncf-cost-cap" type="number" min="0" step="0.01"
           value="${_escVal(costCap)}" placeholder="1.00">
         <div class="ncf-hint">Optional — leave blank for no cap.</div>
@@ -75,13 +83,12 @@ export function renderAgentInvocationForm(config, container) {
             <label class="ncf-label">Provider</label>
             <select class="ncf-select ncf-provider-override">
               <option value="">— use agent default —</option>
-              ${PROVIDERS.map((p) => `<option value="${p}"${p === providerOverride ? " selected" : ""}>${p}</option>`).join("")}
+              ${PROVIDERS.map((p) => `<option value="${p}"${p === providerOverride ? " selected" : ""}>${_esc(PROVIDER_LABELS[p] || p)}</option>`).join("")}
             </select>
           </div>
           <div class="ncf-field">
             <label class="ncf-label">Model override</label>
-            <input class="ncf-input ncf-model-override" type="text"
-              value="${_esc(modelOverride)}" placeholder="e.g. claude-sonnet-4-6">
+            <select class="ncf-select ncf-model-override"></select>
           </div>
         </div>
       </details>
@@ -93,6 +100,8 @@ export function renderAgentInvocationForm(config, container) {
   const searchEl = pickerWrap.querySelector(".ncf-search");
   const resultsEl = pickerWrap.querySelector(".ncf-picker-results");
   const hiddenEl = pickerWrap.querySelector(".ncf-agent-id");
+  const providerEl = container.querySelector(".ncf-provider-override");
+  const modelEl = container.querySelector(".ncf-model-override");
 
   let _allAgents = [];
   _fetchAgents().then((agents) => {
@@ -104,11 +113,12 @@ export function renderAgentInvocationForm(config, container) {
   });
 
   function _renderResults(q) {
+    const needle = _safeStr(q).toLowerCase();
     const matches = q
       ? _allAgents.filter(
           (a) =>
-            (a.name ?? "").toLowerCase().includes(q.toLowerCase()) ||
-            (a.agent_id ?? a.id ?? "").toLowerCase().includes(q.toLowerCase())
+            _safeStr(a.name).toLowerCase().includes(needle) ||
+            _safeStr(a.agent_id ?? a.id).toLowerCase().includes(needle)
         )
       : _allAgents;
     if (!matches.length) {
@@ -126,6 +136,25 @@ export function renderAgentInvocationForm(config, container) {
         )
         .join("");
     }
+  }
+
+  function _renderModelOptions() {
+    if (!modelEl) return;
+    const provider = providerEl?.value ?? "";
+    if (!provider) {
+      modelEl.innerHTML = `<option value="">— use agent default —</option>`;
+      modelEl.disabled = true;
+      return;
+    }
+    const models = getSourceModels(provider) || [];
+    const selected = models.some((m) => m.value === modelOverride) ? modelOverride : "";
+    modelEl.disabled = false;
+    modelEl.innerHTML = [
+      `<option value="">— use provider default —</option>`,
+      ...models
+        .filter((m) => m.value)
+        .map((m) => `<option value="${_esc(m.value)}"${m.value === selected ? " selected" : ""}>${_esc(m.label || m.value)}</option>`),
+    ].join("");
   }
 
   searchEl.addEventListener("focus", () => {
@@ -148,6 +177,12 @@ export function renderAgentInvocationForm(config, container) {
     searchEl.value = item.dataset.name || item.dataset.id;
     resultsEl.hidden = true;
   });
+
+  providerEl?.addEventListener("change", () => {
+    if (modelEl) modelEl.dataset.previous = modelEl.value;
+    _renderModelOptions();
+  });
+  _renderModelOptions();
 
   // Return value extractor
   return {
@@ -173,6 +208,9 @@ export function renderAgentInvocationForm(config, container) {
   };
 }
 
+function _safeStr(v) {
+  return typeof v === "string" ? v : String(v ?? "");
+}
 function _esc(str) {
   const d = document.createElement("div");
   d.textContent = String(str ?? "");

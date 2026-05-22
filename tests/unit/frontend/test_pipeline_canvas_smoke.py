@@ -251,6 +251,17 @@ def test_canvas_has_fit_to_view():
     assert "_fitToView" in src or "fitToView" in src
 
 
+def test_canvas_palette_drop_accepts_canvas_wrap_and_custom_mime():
+    src = (JS_COMP / "pipeline-canvas.js").read_text()
+    palette = (JS_COMP / "pipeline-palette.js").read_text()
+    assert "application/x-artemis-pipeline-node" in palette
+    assert 'data-palette-item="${_escAttr(data)}"' in palette
+    assert 'this.el.querySelector(".pcv-canvas-wrap")' in src
+    assert 'canvasWrap?.addEventListener("dragover", onPaletteDragOver)' in src
+    assert 'canvasWrap?.addEventListener("drop", onPaletteDrop)' in src
+    assert 'e.dataTransfer.getData("application/x-artemis-pipeline-node")' in src
+
+
 def test_canvas_has_json_toggle():
     src = (JS_COMP / "pipeline-canvas.js").read_text()
     assert "_toggleJson" in src or "toggleJson" in src

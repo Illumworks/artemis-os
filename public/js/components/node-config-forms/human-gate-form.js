@@ -12,15 +12,15 @@ const APPROVAL_KINDS = [
 ];
 
 const ON_TIMEOUT_OPTIONS = [
-  { value: "escalate",     label: "Escalate" },
-  { value: "auto_approve", label: "Auto-approve" },
-  { value: "auto_reject",  label: "Auto-reject" },
+  { value: "escalate",     label: "Escalate",     help: "If approver doesn't respond within timeout, ping a secondary approver." },
+  { value: "auto_approve", label: "Auto-approve", help: "If timeout passes without response, automatically approve." },
+  { value: "auto_reject",  label: "Auto-reject",  help: "If timeout passes without response, automatically reject." },
 ];
 
 const DEFAULT_APPROVERS = [
-  "josh@amiralearning.com",
-  "angela@amiralearning.com",
-  "jon@amiralearning.com",
+  { email: "josh@amiralearning.com", name: "Josh" },
+  { email: "angela@amiralearning.com", name: "Angela" },
+  { email: "jon@amiralearning.com", name: "Jon" },
 ];
 
 // ── Render ───────────────────────────────────────────────────────────────────
@@ -77,6 +77,9 @@ export function renderHumanGateForm(config, container) {
               (o) => `<option value="${o.value}"${o.value === onTimeout ? " selected" : ""}>${o.label}</option>`
             ).join("")}
           </select>
+          <div class="ncf-timeout-help">
+            ${ON_TIMEOUT_OPTIONS.map((o) => `<div><strong>${o.value}</strong>: ${_esc(o.help)}</div>`).join("")}
+          </div>
         </div>
       </div>
     </div>
@@ -112,17 +115,21 @@ export function renderHumanGateForm(config, container) {
   }
 
   function _renderSuggestions(q) {
+    const needle = q.toLowerCase();
     const avail = DEFAULT_APPROVERS.filter(
-      (e) => !_selected.includes(e) && e.toLowerCase().includes(q.toLowerCase())
+      (p) => !_selected.includes(p.email) && `${p.name} ${p.email}`.toLowerCase().includes(needle)
     );
     if (!avail.length && !q) {
       resultsEl.hidden = true;
       return;
     }
     const items = avail.map(
-      (e) => `<button type="button" class="ncf-picker-item" data-email="${_esc(e)}">${_esc(e)}</button>`
+      (p) => `<button type="button" class="ncf-picker-item" data-email="${_esc(p.email)}">
+        <span class="ncf-picker-name">${_esc(p.name)}</span>
+        <span class="ncf-picker-sub">${_esc(p.email)}</span>
+      </button>`
     );
-    if (q && !DEFAULT_APPROVERS.includes(q) && !_selected.includes(q)) {
+    if (q && !DEFAULT_APPROVERS.some((p) => p.email === q) && !_selected.includes(q)) {
       items.unshift(
         `<button type="button" class="ncf-picker-item ncf-picker-item--free" data-email="${_esc(q)}">Add "${_esc(q)}"</button>`
       );

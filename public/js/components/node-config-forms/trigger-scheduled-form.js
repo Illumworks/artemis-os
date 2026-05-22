@@ -60,6 +60,80 @@ function isValidCron(expr) {
   return parts.every((p) => /^[\d*\/,\-]+$/.test(p));
 }
 
+function fieldMatches(field, value, min, max) {
+  if (field === "*") return true;
+  return field.split(",").some((part) => {
+    if (part.startsWith("*/")) {
+      const step = parseInt(part.slice(2), 10);
+      return !isNaN(step) && step > 0 && (value - min) % step === 0;
+    }
+    if (part.includes("-")) {
+      const [start, end] = part.split("-").map((x) => parseInt(x, 10));
+      return !isNaN(start) && !isNaN(end) && value >= start && value <= end;
+    }
+    const exact = parseInt(part, 10);
+    if (max === 7 && exact === 7 && value === 0) return true;
+    return !isNaN(exact) && exact >= min && exact <= max && value === exact;
+  });
+}
+
+function zonedParts(date, timezone) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone || "UTC",
+    minute: "2-digit",
+    hour: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
+  return {
+    minute: Number(parts.minute),
+    hour: Number(parts.hour),
+    day: Number(parts.day),
+    month: Number(parts.month),
+  };
+}
+
+function zonedDayOfWeek(date, timezone) {
+  const label = date.toLocaleString("en-US", { timeZone: timezone || "UTC", weekday: "short" });
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(label);
+}
+
+function computeNextRun(expr, timezone) {
+  if (!isValidCron(expr)) return "Next run: see scheduler";
+  const [min, hr, dom, mon, dow] = expr.trim().split(/\s+/);
+  const start = new Date();
+  start.setSeconds(0, 0);
+  start.setMinutes(start.getMinutes() + 1);
+
+  for (let i = 0; i < 60 * 24 * 8; i += 1) {
+    const candidate = new Date(start.getTime() + i * 60_000);
+    const parts = zonedParts(candidate, timezone);
+    parts.dow = zonedDayOfWeek(candidate, timezone);
+    if (
+      fieldMatches(min, parts.minute, 0, 59) &&
+      fieldMatches(hr, parts.hour, 0, 23) &&
+      fieldMatches(dom, parts.day, 1, 31) &&
+      fieldMatches(mon, parts.month, 1, 12) &&
+      fieldMatches(dow, parts.dow, 0, 7)
+    ) {
+      const stamp = candidate.toLocaleString("en-US", {
+        timeZone: timezone || "UTC",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: "short",
+      });
+      return `Next run: ${stamp}`;
+    }
+  }
+  return "Next run: see scheduler";
+}
+
 // ── Render ───────────────────────────────────────────────────────────────────
 
 export function renderTriggerScheduledForm(config, container) {
@@ -77,6 +151,7 @@ export function renderTriggerScheduledForm(config, container) {
         <input class="ncf-input ncf-cron" type="text" value="${_esc(cron)}"
           placeholder="0 */4 * * *" spellcheck="false">
         <div class="ncf-cron-preview ncf-hint"></div>
+        <div class="ncf-next-run-preview ncf-hint"></div>
       </div>
 
       <div class="ncf-field">
@@ -105,7 +180,9 @@ export function renderTriggerScheduledForm(config, container) {
   `;
 
   const cronEl = container.querySelector(".ncf-cron");
+  const tzEl = container.querySelector(".ncf-tz");
   const previewEl = container.querySelector(".ncf-cron-preview");
+  const nextRunEl = container.querySelector(".ncf-next-run-preview");
 
   function _updatePreview() {
     const val = cronEl.value.trim();
@@ -118,9 +195,11 @@ export function renderTriggerScheduledForm(config, container) {
       previewEl.textContent = desc || (val ? "Custom schedule" : "");
       previewEl.classList.remove("ncf-hint--err");
     }
+    nextRunEl.textContent = val ? computeNextRun(val, tzEl.value) : "";
   }
 
   cronEl.addEventListener("input", _updatePreview);
+  tzEl.addEventListener("change", _updatePreview);
   _updatePreview();
 
   return {

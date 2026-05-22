@@ -509,6 +509,17 @@ export class PipelineCanvas {
 
   _wireCanvasEvents() {
     const canvas = this.el.querySelector(".pcv-canvas");
+    const canvasWrap = this.el.querySelector(".pcv-canvas-wrap");
+
+    const onPaletteDragOver = (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const onPaletteDrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._handlePaletteDrop(e);
+    };
 
     // Click on canvas background → deselect
     canvas.addEventListener("click", (e) => {
@@ -527,14 +538,10 @@ export class PipelineCanvas {
     });
 
     // Drag-drop from palette
-    canvas.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-    });
-    canvas.addEventListener("drop", (e) => {
-      e.preventDefault();
-      this._handlePaletteDrop(e);
-    });
+    canvas.addEventListener("dragover", onPaletteDragOver);
+    canvas.addEventListener("drop", onPaletteDrop);
+    canvasWrap?.addEventListener("dragover", onPaletteDragOver);
+    canvasWrap?.addEventListener("drop", onPaletteDrop);
 
     // Edge delete button (delegated)
     this.el.querySelector(".pcv-edges-svg")?.addEventListener("click", (e) => {
@@ -878,7 +885,9 @@ export class PipelineCanvas {
   _handlePaletteDrop(e) {
     let data;
     try {
-      const raw = e.dataTransfer.getData("text/plain");
+      const raw =
+        e.dataTransfer.getData("application/x-artemis-pipeline-node") ||
+        e.dataTransfer.getData("text/plain");
       data = JSON.parse(raw);
     } catch {
       data = this._paletteDragData;
