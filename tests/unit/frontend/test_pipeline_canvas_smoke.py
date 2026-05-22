@@ -157,7 +157,7 @@ def test_marketing_pipeline_has_16_nodes():
     data = _load_marketing_pipeline_data()
     if data is None:
         pytest.skip("Marketing pipeline seed not loadable (DB not available)")
-    assert len(data["nodes"]) == 16, f"Expected 16 nodes, got {len(data['nodes'])}"
+    assert len(data["nodes"]) == 21, f"Expected 21 nodes, got {len(data['nodes'])}"
 
 
 def test_marketing_pipeline_edges_reference_valid_nodes():
@@ -195,7 +195,7 @@ def test_marketing_pipeline_edge_count_in_range():
     if data is None:
         pytest.skip("Marketing pipeline seed not loadable")
     edge_count = len(data["edges"])
-    assert 20 <= edge_count <= 28, f"Expected 20–28 edges, got {edge_count}"
+    assert 28 <= edge_count <= 36, f"Expected 28–36 edges, got {edge_count}"
 
 
 # ── JS canvas logic smoke (via node meta, extracted) ─────────────────────────
