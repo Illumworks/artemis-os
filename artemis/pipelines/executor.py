@@ -23,7 +23,7 @@ Architecture:
 node_states shape per node:
   {
     "status":         "pending"|"running"|"succeeded"|"failed"|"suspended"|
-                      "partial_complete"|"waiting_for_upstream",
+                      "partial_complete"|"waiting_for_upstream"|"skipped",
     "started_at":     "2026-05-22T...",
     "ended_at":       "2026-05-22T..." | null,
     "output_summary": "...",
@@ -41,13 +41,14 @@ from collections import defaultdict, deque
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.pipelines import repository as repo
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL_STATUSES = frozenset(["succeeded", "failed", "partial_complete"])
+_TERMINAL_STATUSES = frozenset(["succeeded", "failed", "partial_complete", "skipped"])
 _TRIGGER_TYPES = frozenset(
     ["trigger_scheduled", "trigger_manual", "trigger_webhook", "trigger_event"]
 )
@@ -250,6 +251,36 @@ class PipelineExecutor:
             )
             run.node_states = node_states
             await session.flush()
+
+            if node_id == "qualifier_brief_composer":
+                qualified_count = await _qualified_signal_count_for_run(session, run)
+                if qualified_count == 0:
+                    ended_at = datetime.now(UTC).isoformat()
+                    node_states[node_id] = _make_node_state(
+                        status="succeeded",
+                        started_at=started_at,
+                        ended_at=ended_at,
+                        output_summary="No signals qualified this run",
+                    )
+                    for downstream_id in _descendants_of(node_id, edges):
+                        if downstream_id in node_states:
+                            continue
+                        node_states[downstream_id] = _make_node_state(
+                            status="skipped",
+                            ended_at=ended_at,
+                            output_summary="Skipped: upstream produced no signals",
+                            reason="upstream produced no signals",
+                        )
+                    metadata = dict(run.metadata_ or {})
+                    metadata["summary"] = "No signals this run; downstream skipped"
+                    metadata["completion_reason"] = "no_signals"
+                    run.status = "succeeded"
+                    run.completed_at = datetime.now(UTC)
+                    run.error_message = None
+                    run.metadata_ = metadata
+                    run.node_states = node_states
+                    await session.flush()
+                    return
 
             try:
                 result = await self._dispatch_node(
@@ -489,3 +520,34 @@ def _ancestors_of(node_id: str, edges: list[dict[str, Any]]) -> set[str]:
                 visited.add(parent)
                 queue.append(parent)
     return visited
+
+
+def _descendants_of(node_id: str, edges: list[dict[str, Any]]) -> set[str]:
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        adjacency[edge.get("source_node_id", "")].append(edge.get("target_node_id", ""))
+
+    visited: set[str] = set()
+    queue: deque[str] = deque([node_id])
+    while queue:
+        cur = queue.popleft()
+        for child in adjacency.get(cur, []):
+            if child not in visited:
+                visited.add(child)
+                queue.append(child)
+    return visited
+
+
+async def _qualified_signal_count_for_run(session: AsyncSession, run: Any) -> int:
+    result = await session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM signal_queue
+            WHERE signal_status = 'qualified'
+              AND created_at >= :run_created_at
+            """
+        ),
+        {"run_created_at": run.created_at},
+    )
+    return int(result.scalar_one() or 0)

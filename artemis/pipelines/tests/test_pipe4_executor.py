@@ -282,6 +282,64 @@ async def test_three_node_pipeline_succeeds(db_session: AsyncSession) -> None:
         assert ns["agent1"]["status"] == "succeeded"
 
 
+async def test_brief_composer_empty_signals_skips_downstream(
+    db_session: AsyncSession,
+) -> None:
+    """0 qualified signals halts at brief composer without creating an approval."""
+    await _reset(db_session)
+
+    nodes = [
+        _node("trigger", "trigger_manual"),
+        _node(
+            "qualifier_brief_composer",
+            "agent_invocation",
+            {"agent_id": "marketing.qualifier.brief_composer"},
+        ),
+        _node(
+            "gate_1_signals_inbox",
+            "human_gate",
+            {
+                "approval_kind": "signal_brief",
+                "approvers": ["test@example.com"],
+                "timeout_hours": 72,
+            },
+        ),
+        _node("content_brief_assembler", "agent_invocation", {"agent_id": "content.agent"}),
+    ]
+    edges = [
+        _edge("trigger", "qualifier_brief_composer"),
+        _edge("qualifier_brief_composer", "gate_1_signals_inbox"),
+        _edge("gate_1_signals_inbox", "content_brief_assembler"),
+    ]
+
+    async with db_session.begin():
+        pipeline = await repo.create_pipeline(db_session, **_make_pipeline(nodes, edges))
+        run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+
+    with patch(
+        "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
+        new=AsyncMock(side_effect=AssertionError("brief composer should not dispatch")),
+    ):
+        async with db_session.begin():
+            executor = PipelineExecutor(run.id)
+            await executor.run(db_session)
+
+    async with db_session.begin():
+        refreshed = await repo.get_pipeline_run(db_session, run.id)
+        approval_count = (
+            await db_session.execute(text("SELECT COUNT(*) FROM approvals"))
+        ).scalar_one()
+        ns = refreshed.node_states
+
+    assert refreshed.status == "succeeded"
+    assert refreshed.metadata_["summary"] == "No signals this run; downstream skipped"
+    assert ns["qualifier_brief_composer"]["status"] == "succeeded"
+    assert ns["qualifier_brief_composer"]["output_summary"] == "No signals qualified this run"
+    assert ns["gate_1_signals_inbox"]["status"] == "skipped"
+    assert ns["content_brief_assembler"]["status"] == "skipped"
+    assert approval_count == 0
+
+
 # ── 5. Integration: conditional branch ───────────────────────────────────────
 
 
@@ -795,6 +853,13 @@ async def test_marketing_pipeline_traverses_21_nodes(db_session: AsyncSession) -
             status="queued",
             trigger="manual",
             triggered_by="test",
+        )
+        await db_session.execute(
+            text(
+                "INSERT INTO signal_queue (headline, summary, campaign_family, "
+                "signal_status, discovered_by) VALUES "
+                "('Qualified marketing signal', '', 'marketing', 'qualified', 'test')"
+            )
         )
 
     run_id = run.id
