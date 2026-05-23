@@ -1779,8 +1779,77 @@ function _parseApprovalPayload(a) {
   try { return JSON.parse(a.payload); } catch { return {}; }
 }
 
+// Internal: renders a PIPE4 approval card with pipeline/node/signal context.
+function _renderPipe4ApprovalCard(a) {
+  const p4 = a.pipe4Context || {};
+  const ctx = p4.context || {};
+  const requestedAt = a.createdAt
+    ? new Date(a.createdAt).toLocaleString()
+    : '—';
+  const pipelineLabel = [p4.pipeline_name, p4.node_label].filter(Boolean).join(' — ') || 'Pipeline gate';
+  const runHref = p4.pipeline_run_id
+    ? `#pipelines/runs/${esc(p4.pipeline_run_id)}`
+    : null;
+
+  // Signals section
+  let signalSection = '';
+  if (ctx.signal_count > 0) {
+    const districts = (ctx.districts || []).map(esc).join(', ') || '—';
+    const codes = (ctx.reason_codes || []).map(esc).join(', ') || '—';
+    signalSection = `
+      <div class="mkt-pipe4-signals">
+        <span class="mkt-pipe4-label">Signals</span>
+        <span class="mkt-pipe4-value">${ctx.signal_count} qualified</span>
+        <span class="mkt-pipe4-sep">·</span>
+        <span class="mkt-pipe4-label">Districts</span>
+        <span class="mkt-pipe4-value">${districts}</span>
+        <span class="mkt-pipe4-sep">·</span>
+        <span class="mkt-pipe4-label">Codes</span>
+        <span class="mkt-pipe4-value">${codes}</span>
+      </div>`;
+  } else {
+    signalSection = `<div class="mkt-pipe4-empty">No signals qualified this run</div>`;
+  }
+
+  const evidenceSection = ctx.evidence_quote
+    ? `<blockquote class="mkt-pipe4-evidence">${esc(ctx.evidence_quote)}</blockquote>`
+    : '';
+  const briefSection = ctx.brief_preview
+    ? `<div class="mkt-pipe4-brief"><span class="mkt-pipe4-label">Brief</span> ${esc(ctx.brief_preview)}</div>`
+    : '';
+
+  return `
+    <article class="mkt-approval-card mkt-pipe4-card" data-unified-approval-id="${esc(String(a.id))}">
+      <div class="mkt-approval-head">
+        <div class="mkt-approval-title-row">
+          <span class="mkt-badge mkt-badge-pipe4">Pipeline gate</span>
+          <span class="mkt-approval-campaign">${esc(pipelineLabel)}</span>
+        </div>
+        <span class="mkt-pill mkt-pill-pending">Pending</span>
+      </div>
+      ${signalSection}
+      ${evidenceSection}
+      ${briefSection}
+      <div class="mkt-approval-meta">
+        <span>Requested: ${esc(requestedAt)}</span>
+        ${p4.node_id ? `<span>Node: ${esc(p4.node_id)}</span>` : ''}
+      </div>
+      <div class="mkt-signal-actions">
+        <button class="mkt-btn-primary" type="button" data-approve-id="${esc(String(a.id))}">Approve</button>
+        <button class="mkt-btn-ghost" type="button" data-reject-id="${esc(String(a.id))}">Reject</button>
+        ${runHref ? `<a class="mkt-btn-link" href="${runHref}">View pipeline run →</a>` : ''}
+      </div>
+    </article>
+  `;
+}
+
 // Internal: renders a single card for a real unified approval (workflow_gate, pre_run, writing_gate_2, etc.)
 function _renderUnifiedApprovalCard(a) {
+  // PIPE4 gate: has pipe4Context.pipeline_run_id
+  if (a.pipe4Context && a.pipe4Context.pipeline_run_id) {
+    return _renderPipe4ApprovalCard(a);
+  }
+
   const requestedAt = a.created_at
     ? new Date(a.created_at * 1000).toLocaleString()
     : '—';

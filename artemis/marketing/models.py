@@ -412,6 +412,9 @@ class Approval(Base):
     decided_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     decision_payload: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    # PIPE4 gate rendering context — populated by human_gate_executor at gate-fire time.
+    # NULL for non-PIPE4 approvals; UI detects absence and falls back to existing path.
+    pipe4_context: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )

@@ -160,6 +160,8 @@ def _serialize(a: Approval) -> dict[str, Any]:
         "decidedBy": a.decided_by,
         "decidedAt": a.decided_at.isoformat() if a.decided_at else None,
         "decisionPayload": a.decision_payload,
+        # PIPE4 gate rendering context (null for non-PIPE4 approvals)
+        "pipe4Context": a.pipe4_context,
         # Fields the Python schema doesn't have (Node compat — return null)
         "targetType": None,
         "approvalKind": None,

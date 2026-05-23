@@ -186,6 +186,69 @@ async def _get_slack_token(session: AsyncSession) -> str | None:
         return None
 
 
+def _build_pipe4_context(
+    approval_kind: str,
+    node_states: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the PIPE4 rendering context dict from upstream node_states.
+
+    Pure function — no I/O. Returns a context dict suitable for:
+      approval.pipe4_context["context"]
+
+    Signal data is extracted from node_states entries that contain
+    ``qualified_signals`` (list of signal dicts). Brief/draft previews are
+    extracted from ``brief_data`` / ``brief`` / ``draft_data`` / ``draft``
+    keys. Falls back to ``output_summary`` from qualifier nodes when no
+    structured signal data is present.
+    """
+    ctx: dict[str, Any] = {
+        "approval_kind": approval_kind,
+        "signal_count": 0,
+        "reason_codes": [],
+        "districts": [],
+        "evidence_quote": None,
+        "brief_preview": None,
+        "draft_summary": None,
+    }
+    for state_val in node_states.values():
+        if not isinstance(state_val, dict):
+            continue
+        qualified = state_val.get("qualified_signals")
+        if isinstance(qualified, list) and qualified:
+            ctx["signal_count"] = len(qualified)
+            codes: set[str] = set()
+            districts: set[str] = set()
+            for sig in qualified:
+                if isinstance(sig, dict):
+                    for rc in sig.get("reason_codes", []):
+                        if isinstance(rc, dict):
+                            codes.add(str(rc.get("code", "")))
+                        else:
+                            codes.add(str(rc))
+                    geo = sig.get("geography") or {}
+                    d = geo.get("district") if isinstance(geo, dict) else None
+                    if d:
+                        districts.add(str(d))
+                    if not ctx["evidence_quote"]:
+                        src = sig.get("source") or {}
+                        snippet = src.get("verbatim_snippet") if isinstance(src, dict) else None
+                        if snippet:
+                            ctx["evidence_quote"] = str(snippet)[:400]
+            ctx["reason_codes"] = sorted(codes)
+            ctx["districts"] = sorted(districts)
+        brief = state_val.get("brief_data") or state_val.get("brief")
+        if isinstance(brief, dict) and brief.get("preview") and not ctx["brief_preview"]:
+            ctx["brief_preview"] = str(brief["preview"])[:400]
+        draft = state_val.get("draft_data") or state_val.get("draft")
+        if isinstance(draft, dict) and draft.get("summary") and not ctx["draft_summary"]:
+            ctx["draft_summary"] = str(draft["summary"])[:400]
+        if not ctx["evidence_quote"] and "qualifier" in str(state_val):
+            summary = state_val.get("output_summary", "")
+            if summary:
+                ctx["evidence_quote"] = str(summary)[:300]
+    return ctx
+
+
 def _check_fan_in(
     node: dict[str, Any],
     node_states: dict[str, Any],
@@ -287,6 +350,9 @@ async def execute_human_gate_node(
         )
     ).scalar_one_or_none()
 
+    # Build PIPE4 rendering context from node_states outputs
+    pipe4_ctx = _build_pipe4_context(kind, node_states)
+
     if existing_approval is None:
         approval = Approval(
             kind=kind,
@@ -300,6 +366,13 @@ async def execute_human_gate_node(
                 "timeout_at": timeout_at.isoformat(),
                 "escalation": escalation,
             },
+            pipe4_context={
+                "pipeline_run_id": run_id,
+                "pipeline_name": pipeline_name,
+                "node_id": node_id,
+                "node_label": node_label,
+                "context": pipe4_ctx,
+            },
         )
         session.add(approval)
         await session.flush()
@@ -307,17 +380,8 @@ async def execute_human_gate_node(
     else:
         approval_id = existing_approval.id
 
-    # Build context for DM from node_states outputs
-    dm_context: dict[str, Any] = {
-        "approval_kind": kind,
-    }
-    # Try to extract signal evidence from qualifier outputs
-    for state_key, state_val in node_states.items():
-        if isinstance(state_val, dict) and "qualifier" in state_key:
-            summary = state_val.get("output_summary", "")
-            if summary:
-                dm_context["evidence"] = summary[:300]
-                break
+    # Reuse the pipe4_ctx as dm_context for Slack DMs
+    dm_context: dict[str, Any] = pipe4_ctx
 
     # Send Slack DMs
     slack_token = await _get_slack_token(session)
