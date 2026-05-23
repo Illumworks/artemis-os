@@ -88,7 +88,16 @@ function runBadge(run) {
   if (!run) return '<span class="pb pb-none">No runs</span>';
   const mod = { queued: "queued", running: "running", awaiting_approval: "waiting",
     succeeded: "success", failed: "failed", cancelled: "cancelled" }[run.status] || "unknown";
-  return `<span class="pb pb-${mod}">${escapeHtml(run.status)}</span>`;
+  const badge = `<span class="pb pb-${mod}">${escapeHtml(run.status)}</span>`;
+  // Mini-progress for active runs
+  const ns = run.nodeStates || run.node_states || {};
+  const entries = Object.values(ns);
+  const isActive = ["running", "queued", "awaiting_approval"].includes(run.status);
+  if (isActive && entries.length > 0) {
+    const done = entries.filter((n) => n && ["succeeded","failed","partial_complete"].includes(n.status)).length;
+    return `${badge} <span class="pb-mini-progress">⚡ ${done}/${entries.length}</span>`;
+  }
+  return badge;
 }
 
 function dot(status) {
@@ -390,8 +399,9 @@ function wire(root) {
   root.querySelectorAll(".prun").forEach((b) => b.addEventListener("click", async (e) => {
     e.stopPropagation();
     try {
-      const run = await api.runPipelineApi(b.dataset.id);
-      const shortRunId = String(run?.id || "").slice(0, 8) || "new";
+      const result = await api.runPipelineApi(b.dataset.id);
+      const runId = result?.id || result?.run_id;
+      const shortRunId = runId ? String(runId).slice(0, 8) : "new";
       showToast(`Run queued (#${shortRunId}). View in run history.`);
       await loadPipelines();
     } catch (e) { showToast("Run failed", e.message, { isError: true }); }
@@ -427,7 +437,20 @@ function wire(root) {
 
 let _canvasOverlay = null;
 
-function openCanvas(pipeline) {
+// PIPE5: Listen for run-history replay requests
+window.addEventListener("artemis:open-pipeline-canvas", async (e) => {
+  const { pipelineId, replayRun } = e.detail || {};
+  if (!pipelineId) return;
+  let pipeline = _pipelines.find((p) => p.id === pipelineId);
+  if (!pipeline) {
+    try { pipeline = await api.getPipelineApi(pipelineId); } catch { return; }
+  }
+  if (pipeline) {
+    openCanvas(pipeline, { replayRun: replayRun || null });
+  }
+});
+
+function openCanvas(pipeline, { replayRun = null } = {}) {
   // Tear down any existing canvas
   closeCanvas();
 
@@ -452,6 +475,7 @@ function openCanvas(pipeline) {
   _canvas = new PipelineCanvas({
     container: body,
     pipeline,
+    replayRun,
     onSaved: () => loadPipelines(),
   });
   _canvas.mount();

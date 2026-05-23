@@ -2108,6 +2108,19 @@ export async function cancelPipelineRunApi(runId) {
   return res.json();
 }
 
+export async function listAllPipelineRunsApi({ status, limit = 50, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set("status", status);
+  if (cursor) params.set("cursor", String(cursor));
+  const res = await fetch(`/api/pipeline-runs?${params}`);
+  if (!res.ok) throw new Error("listAllPipelineRunsApi failed");
+  return res.json();
+}
+
+export async function retryPipelineRunApi(pipelineId) {
+  return runPipelineApi(pipelineId, {});
+}
+
 // ── Approvals ─────────────────────────────────────────────────────────────────
 
 export async function listApprovalsApi({ status, targetType, limit = 50 } = {}) {

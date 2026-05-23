@@ -878,3 +878,154 @@ details[open] .ncf-summary::before { content: "▼ " }
 }
 .pai-input:focus { border-color: var(--accent);box-shadow: 0 0 0 2px color-mix(in srgb,var(--accent) 16%,transparent) }
 .pai-send { align-self: flex-end;padding: 6px 12px;font-size: 12px }
+
+/* ── PIPE5: Node run-state visualizations ──────────────────────────────────── */
+
+/* Pending: default — no extra styles needed */
+.pcv-node--pending { border-color: var(--surface-outline) }
+
+/* Running: pulse animation + accent border */
+.pcv-node--running {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb,var(--accent) 20%,transparent);
+  animation: pcv-node-pulse 1.5s ease-in-out infinite;
+}
+@keyframes pcv-node-pulse {
+  0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb,var(--accent) 20%,transparent) }
+  50%      { box-shadow: 0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent) }
+}
+
+/* Suspended: dimmed, warning border, no pulse */
+.pcv-node--suspended {
+  border-color: var(--warning);
+  opacity: .75;
+}
+
+/* Succeeded: green border + brief glow on first application */
+.pcv-node--succeeded {
+  border-color: var(--color-success);
+  animation: pcv-node-succeed-glow .6s ease-out forwards;
+}
+@keyframes pcv-node-succeed-glow {
+  0%   { box-shadow: 0 0 0 6px color-mix(in srgb,var(--color-success) 30%,transparent) }
+  100% { box-shadow: 0 0 0 2px color-mix(in srgb,var(--color-success) 10%,transparent) }
+}
+
+/* Failed: red border */
+.pcv-node--failed {
+  border-color: var(--error);
+  box-shadow: 0 0 0 2px color-mix(in srgb,var(--error) 15%,transparent);
+}
+
+/* Partial complete: amber border */
+.pcv-node--partial_complete {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb,var(--warning) 15%,transparent);
+}
+
+/* State badges on node cards (shown via ::after) */
+.pcv-node--running    .pcv-node-type::after { content: " · Running";              color: var(--accent) }
+.pcv-node--suspended  .pcv-node-type::after { content: " · \23F8 Awaiting approval"; color: var(--warning) }
+.pcv-node--succeeded  .pcv-node-type::after { content: " · \2713 Succeeded";       color: var(--color-success) }
+.pcv-node--failed     .pcv-node-type::after { content: " · \2717 Failed";           color: var(--error) }
+.pcv-node--partial_complete .pcv-node-type::after { content: " · Stopped";          color: var(--warning) }
+
+/* ── PIPE5: Run controls overlay (bottom-right floating panel) ─────────────── */
+
+.pcv-run-overlay {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 40;
+  width: 260px;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-outline);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: opacity .2s, transform .2s;
+}
+.pcv-run-overlay--hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+}
+.pcv-ro-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--surface-outline);
+  background: var(--surface-subtle);
+}
+.pcv-ro-title { font-size: 11px;font-weight: 600;text-transform: uppercase;letter-spacing: .04em;color: var(--text-dim) }
+.pcv-ro-dismiss {
+  background: transparent;border: none;cursor: pointer;
+  color: var(--text-dim);font-size: 14px;padding: 0 4px;border-radius: 3px;
+  transition: color .12s;
+}
+.pcv-ro-dismiss:hover { color: var(--text) }
+.pcv-ro-body { padding: 10px 12px;display: flex;flex-direction: column;gap: 6px }
+.pcv-ro-row { display: flex;align-items: center;gap: 8px }
+.pcv-ro-run-id {
+  font-family: var(--font-mono);font-size: 11px;color: var(--accent);
+  background: transparent;border: none;cursor: pointer;padding: 0;
+  transition: opacity .12s;
+}
+.pcv-ro-run-id:hover { opacity: .7 }
+.pcv-ro-status {
+  font-size: 11px;font-weight: 500;padding: 1px 7px;border-radius: 999px;
+}
+/* Reuse the .pb-* palette from PIPE1 — status classes mirror the badge classes */
+.pcv-ro-status--queued            { background: color-mix(in srgb,var(--accent) 14%,transparent);color: var(--accent) }
+.pcv-ro-status--running           { background: color-mix(in srgb,var(--accent) 14%,transparent);color: var(--accent) }
+.pcv-ro-status--awaiting-approval { background: color-mix(in srgb,var(--warning) 14%,transparent);color: var(--warning) }
+.pcv-ro-status--succeeded         { background: color-mix(in srgb,var(--color-success) 14%,transparent);color: var(--color-success) }
+.pcv-ro-status--failed            { background: color-mix(in srgb,var(--error) 14%,transparent);color: var(--error) }
+.pcv-ro-status--cancelled         { background: var(--surface-subtle);color: var(--text-dim) }
+.pcv-ro-status--partial-complete  { background: color-mix(in srgb,var(--warning) 14%,transparent);color: var(--warning) }
+.pcv-ro-progress { font-size: 12px;color: var(--text-dim) }
+.pcv-ro-elapsed  { font-size: 11px;color: var(--text-dim) }
+.pcv-ro-actions  { display: flex;flex-direction: column;gap: 5px;margin-top: 2px }
+.pcv-ro-history-link,.pcv-ro-approve {
+  font-size: 12px;color: var(--accent);text-decoration: none;
+}
+.pcv-ro-history-link:hover,.pcv-ro-approve:hover { text-decoration: underline }
+.pcv-ro-cancel { align-self: flex-start;font-size: 12px }
+
+/* ── PIPE5: Run history table ──────────────────────────────────────────────── */
+
+.prh-table-wrap { overflow-x: auto }
+.prh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.prh-th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border-bottom: 1px solid var(--surface-outline);
+  white-space: nowrap;
+}
+.prh-td { padding: 10px 12px;border-bottom: 1px solid var(--surface-outline);vertical-align: middle }
+.prh-row { transition: background .12s;cursor: pointer }
+.prh-row:hover { background: var(--surface-hover,var(--surface-subtle)) }
+.prh-name { font-weight: 500;color: var(--text) }
+.prh-actions { display: flex;gap: 6px;align-items: center }
+.prh-empty { padding: 32px;text-align: center;color: var(--text-dim) }
+.prh-filter-label { font-size: 11px;color: var(--text-dim);margin-right: 2px }
+
+/* Mini-progress badge on pipeline list cards */
+.pb-mini-progress {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+  margin-left: 4px;
+}

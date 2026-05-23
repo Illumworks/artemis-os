@@ -16,6 +16,7 @@ import { buildNodeCard, updateNodeCardPosition, setNodeCardSelected } from "./pi
 import { PipelinePalette } from "./pipeline-palette.js";
 import { PipelineConfigDrawer } from "./pipeline-config-drawer.js";
 import { PipelineAIPanel } from "./pipeline-ai-panel.js";
+import { PipelineRunOverlay } from "./pipeline-run-overlay.js";
 
 // ── Canvas store ──────────────────────────────────────────────────────────────
 
@@ -166,9 +167,10 @@ function autoLayout(nodes, edges) {
 // ── Main PipelineCanvas class ─────────────────────────────────────────────────
 
 export class PipelineCanvas {
-  constructor({ container, pipeline, onSaved }) {
+  constructor({ container, pipeline, onSaved, replayRun = null }) {
     this._container = container;
     this._onSaved = onSaved;
+    this._replayRun = replayRun;
     this._state = createStore(pipeline);
     this._nodeEls = new Map(); // nodeId → DOM element
     this._draggingNodeId = null;
@@ -195,6 +197,15 @@ export class PipelineCanvas {
 
     // AI Assistant panel
     this._aiPanel = null;
+
+    // PIPE5: Run live-view
+    this._runOverlay = null;
+    this._pollTimer = null;
+    this._pollLastStateHash = null;
+    this._pollStaleCount = 0;
+    this._pollActive = false;
+    /** @type {string | null} */
+    this._activeRunId = null;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -204,18 +215,28 @@ export class PipelineCanvas {
     this._mountPalette();
     this._mountDrawer();
     this._mountAIPanel();
+    this._mountRunOverlay();
     this._renderAll();
     this._wireToolbar();
     this._wireCanvasEvents();
     this._wireKeyboard();
+    // Replay mode: apply fixed node_states from a past run, no polling
+    if (this._replayRun) {
+      this._applyRunState(this._replayRun);
+    } else {
+      // Start polling if there's already an active run on this pipeline
+      this._maybeStartPolling();
+    }
   }
 
   destroy() {
+    this._stopPolling();
     document.removeEventListener("mousemove", this._onMouseMove);
     document.removeEventListener("mouseup",   this._onMouseUp);
     document.removeEventListener("keydown",   this._onKeyDown);
     document.removeEventListener("keyup",     this._onKeyUp);
     this._aiPanel?.destroy();
+    this._runOverlay?.destroy();
     if (this.el) this.el.remove();
   }
 
@@ -380,6 +401,142 @@ export class PipelineCanvas {
       },
     });
     this._aiPanel.mount(wrap);
+  }
+
+  // ── Run Overlay ───────────────────────────────────────────────────────────
+
+  _mountRunOverlay() {
+    this._runOverlay = new PipelineRunOverlay({
+      pipelineId: this._state.id,
+      onCancel: async (runId) => {
+        try {
+          await api.cancelPipelineRunApi(runId);
+          this._stopPolling();
+          this._applyNodeStates({});
+          this._runOverlay?.hide();
+        } catch (err) {
+          this._showToast(`Cancel failed: ${err.message}`, true);
+        }
+      },
+    });
+    this._runOverlay.mount(this.el);
+  }
+
+  // ── Poll loop — run live-view ─────────────────────────────────────────────
+
+  /** Check if the pipeline already has an active run (at mount time). */
+  async _maybeStartPolling() {
+    if (!this._state.id) return;
+    try {
+      const runs = await api.listPipelineRunsApi(this._state.id, { limit: 5 });
+      const active = (runs || []).find((r) =>
+        ["running", "queued", "awaiting_approval"].includes(r.status || r.Status)
+      );
+      if (active) {
+        this._activeRunId = active.id;
+        this._applyRunState(active);
+        this._startPolling();
+      }
+    } catch {
+      // Non-fatal — polling is best-effort
+    }
+  }
+
+  _startPolling() {
+    if (this._pollActive) return;
+    this._pollActive = true;
+    this._pollStaleCount = 0;
+    this._schedulePoll();
+  }
+
+  _stopPolling() {
+    this._pollActive = false;
+    if (this._pollTimer !== null) {
+      clearTimeout(this._pollTimer);
+      this._pollTimer = null;
+    }
+  }
+
+  _schedulePoll() {
+    if (!this._pollActive) return;
+    this._pollTimer = setTimeout(() => this._doPoll(), 1500);
+  }
+
+  async _doPoll() {
+    if (!this._pollActive || !this._activeRunId) {
+      this._stopPolling();
+      return;
+    }
+    try {
+      const runs = await api.listPipelineRunsApi(this._state.id, { limit: 5 });
+      const run = (runs || []).find((r) => r.id === this._activeRunId);
+      if (!run) { this._stopPolling(); return; }
+
+      this._applyRunState(run);
+
+      const terminal = ["succeeded", "failed", "cancelled", "partial_complete"];
+      if (terminal.includes(run.status)) {
+        this._pollActive = false;
+        return;
+      }
+
+      // Stale check: 5 min (200 × 1.5s) with no state changes → auto-pause
+      const hash = JSON.stringify(run.nodeStates || run.node_states || {});
+      if (hash === this._pollLastStateHash) {
+        this._pollStaleCount++;
+        if (this._pollStaleCount >= 200) {
+          this._stopPolling();
+          return;
+        }
+      } else {
+        this._pollStaleCount = 0;
+        this._pollLastStateHash = hash;
+      }
+    } catch {
+      // Network error — keep trying
+    }
+    this._schedulePoll();
+  }
+
+  /** Apply node_states from a pipeline_run object to the canvas DOM. */
+  _applyRunState(run) {
+    const nodeStates = run.nodeStates || run.node_states || {};
+    this._applyNodeStates(nodeStates);
+    this._runOverlay?.update(run);
+  }
+
+  /**
+   * Apply node_states dict to canvas node elements via CSS classes.
+   * @param {Object} nodeStates  — { [nodeId]: { status, error_message, ... } }
+   */
+  _applyNodeStates(nodeStates) {
+    const STATE_CLASSES = [
+      "pcv-node--pending",
+      "pcv-node--running",
+      "pcv-node--suspended",
+      "pcv-node--succeeded",
+      "pcv-node--failed",
+      "pcv-node--partial_complete",
+    ];
+    for (const [nodeId, el] of this._nodeEls) {
+      STATE_CLASSES.forEach((cls) => el.classList.remove(cls));
+      const ns = nodeStates[nodeId];
+      const status = (ns && typeof ns === "object") ? (ns.status || "pending") : "pending";
+      el.classList.add(`pcv-node--${status}`);
+      // Error detail: store on data attr for click-to-expand
+      if (status === "failed" && ns && ns.error_message) {
+        el.dataset.errorMsg = ns.error_message;
+      } else {
+        delete el.dataset.errorMsg;
+      }
+    }
+  }
+
+  /** Resume polling when user interacts (after auto-pause). */
+  resumePolling() {
+    if (this._activeRunId && !this._pollActive) {
+      this._startPolling();
+    }
   }
 
   // ── Full render ───────────────────────────────────────────────────────────
@@ -1165,9 +1322,18 @@ export class PipelineCanvas {
 
   async _run() {
     try {
-      const run = await api.runPipelineApi(this._state.id);
-      const shortRunId = String(run?.id || "").slice(0, 8) || "new";
+      const result = await api.runPipelineApi(this._state.id);
+      const runId = result?.id || result?.run_id;
+      const shortRunId = runId ? String(runId).slice(0, 8) : "new";
       this._showToast(`Run #${shortRunId} started. Watch progress on canvas.`);
+      if (runId) {
+        this._activeRunId = runId;
+        this._pollLastStateHash = null;
+        this._pollStaleCount = 0;
+        this._stopPolling();
+        this._startPolling();
+        this._runOverlay?.show(runId);
+      }
     } catch (err) {
       this._showToast(`Run failed: ${err.message}`, true);
     }

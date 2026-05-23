@@ -331,6 +331,18 @@ async def run_pipeline(
 # ── Run history ───────────────────────────────────────────────────────────────
 
 
+@router.get("/api/pipeline-runs")
+async def list_all_runs(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[dict[str, Any]]:
+    """Return recent pipeline runs across all pipelines (for run history page)."""
+    runs = await repo.list_all_pipeline_runs(session, status=status, limit=limit, cursor=cursor)
+    return [_run_to_dict(r) for r in runs]
+
+
 @router.get("/api/pipelines/{pipeline_id}/runs")
 async def list_runs(
     pipeline_id: str,

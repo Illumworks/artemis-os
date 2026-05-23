@@ -381,6 +381,23 @@ async def list_pipeline_runs(
     return list(result.scalars().all())
 
 
+async def list_all_pipeline_runs(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> list[PipelineRun]:
+    """Return recent pipeline runs across all pipelines (for run history page)."""
+    q = select(PipelineRun).order_by(PipelineRun.created_at.desc()).limit(limit)
+    if status:
+        q = q.where(PipelineRun.status == status)
+    if cursor:
+        q = q.where(PipelineRun.created_at < text(f"'{cursor}'::timestamptz"))
+    result = await session.execute(q)
+    return list(result.scalars().all())
+
+
 # ── Pipeline AI Conversations ─────────────────────────────────────────────────
 
 
