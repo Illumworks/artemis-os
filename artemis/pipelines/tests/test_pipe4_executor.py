@@ -17,6 +17,7 @@ Tests:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -134,6 +135,71 @@ async def test_trigger_manual_mode() -> None:
     result = await execute_trigger_node(node=node, node_states={}, run_id="run-1", mode="manual")
     assert result["status"] == "succeeded"
     assert "manual" in result["output_summary"]
+
+
+async def test_background_executor_crash_marks_queued_run_failed(
+    db_session: AsyncSession,
+) -> None:
+    await _reset(db_session)
+    nodes = [_node("trigger", "trigger_manual")]
+    edges: list[dict[str, Any]] = []
+
+    async with db_session.begin():
+        pipeline = await repo.create_pipeline(db_session, **_make_pipeline(nodes, edges))
+        run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+
+    from artemis.pipelines.routes import _execute_pipeline_run
+
+    with (
+        patch(
+            "artemis.pipelines.executor.PipelineExecutor.run",
+            new=AsyncMock(side_effect=RuntimeError("synthetic executor crash")),
+        ),
+        pytest.raises(RuntimeError, match="synthetic executor crash"),
+    ):
+        await _execute_pipeline_run(run.id)
+
+    import artemis.db as _db
+
+    async with _db.SessionLocal() as fresh_session:
+        final = await repo.get_pipeline_run(fresh_session, run.id)
+    assert final.status == "failed"
+    assert final.completed_at is not None
+    assert final.error_message == "Executor crashed before start: synthetic executor crash"
+
+
+async def test_sweep_orphaned_queued_runs_marks_old_rows_failed(
+    db_session: AsyncSession,
+) -> None:
+    await _reset(db_session)
+    nodes = [_node("trigger", "trigger_manual")]
+    edges: list[dict[str, Any]] = []
+
+    async with db_session.begin():
+        pipeline = await repo.create_pipeline(db_session, **_make_pipeline(nodes, edges))
+        old_run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+        fresh_run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+        await db_session.execute(
+            text("UPDATE pipeline_runs SET created_at = :created_at WHERE id = :run_id"),
+            {
+                "created_at": datetime.now(UTC) - timedelta(minutes=6),
+                "run_id": old_run.id,
+            },
+        )
+
+    from artemis.pipelines.scheduler import sweep_orphaned_queued_runs
+
+    swept = await sweep_orphaned_queued_runs(threshold_minutes=5)
+
+    import artemis.db as _db
+
+    async with _db.SessionLocal() as fresh_session:
+        old_final = await repo.get_pipeline_run(fresh_session, old_run.id)
+        fresh_final = await repo.get_pipeline_run(fresh_session, fresh_run.id)
+    assert swept == 1
+    assert old_final.status == "failed"
+    assert old_final.error_message == "Orphaned queued run (executor never started)"
+    assert fresh_final.status == "queued"
 
 
 # ── 2. Unit: conditional node ─────────────────────────────────────────────────

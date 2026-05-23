@@ -21,6 +21,7 @@ from typing import Any
 from artemis.agent.client import ModelAdapter
 from artemis.providers import get_adapter
 from artemis.providers.errors import (
+    ClaudeCodeTimeoutError,
     MissingApiKeyError,
     MissingCliBinaryError,
     UnknownProviderError,
@@ -35,6 +36,7 @@ DEFAULT_CASCADE: tuple[str, ...] = ("claude-code", "codex", "lm-studio", "anthro
 # Errors that mean "this provider can't be constructed in this env" — safe to
 # fall through. Anything else (e.g., a programming error) propagates.
 _FALLTHROUGH_ERRORS: tuple[type[Exception], ...] = (
+    ClaudeCodeTimeoutError,
     MissingApiKeyError,
     MissingCliBinaryError,
     UnknownProviderError,

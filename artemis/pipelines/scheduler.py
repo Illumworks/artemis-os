@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
 from apscheduler.triggers.cron import CronTrigger  # type: ignore[import-untyped]
@@ -63,6 +64,8 @@ def start_pipeline_scheduler() -> None:
                 count += 1
 
         logger.info("Pipeline scheduler started; registered %d cron jobs", count)
+
+        await sweep_orphaned_queued_runs()
 
         # Crash recovery: resume any runs that were interrupted mid-flight
         await _recover_interrupted_runs()
@@ -215,6 +218,32 @@ async def _fire_scheduled_pipeline(pipeline_id: str) -> None:
         except Exception:
             logger.exception("Scheduled pipeline run failed: pipeline=%s", pipeline_id)
             await session.rollback()
+
+
+async def sweep_orphaned_queued_runs(threshold_minutes: int = 5) -> int:
+    """Fail queued runs old enough that their executor almost certainly never started."""
+    from sqlalchemy import update
+
+    from artemis.pipelines.models import PipelineRun
+
+    cutoff = datetime.now(UTC) - timedelta(minutes=threshold_minutes)
+    async with _db.SessionLocal() as session:
+        result = await session.execute(
+            update(PipelineRun)
+            .where(PipelineRun.status == "queued")
+            .where(PipelineRun.created_at < cutoff)
+            .values(
+                status="failed",
+                error_message="Orphaned queued run (executor never started)",
+                completed_at=datetime.now(UTC),
+            )
+            .returning(PipelineRun.id)
+        )
+        await session.commit()
+        swept = len(result.scalars().all())
+        if swept:
+            logger.warning("Swept %d orphaned queued pipeline run(s)", swept)
+        return swept
 
 
 async def _recover_interrupted_runs() -> None:

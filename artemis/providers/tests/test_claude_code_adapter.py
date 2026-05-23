@@ -12,8 +12,16 @@ import pytest
 
 from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
-from artemis.providers.claude_code.adapter import ClaudeCodeAdapter, _flatten_to_prompt
-from artemis.providers.errors import MissingCliBinaryError, ProviderAPIError
+from artemis.providers.claude_code.adapter import (
+    _TIMEOUT_SECONDS,
+    ClaudeCodeAdapter,
+    _flatten_to_prompt,
+)
+from artemis.providers.errors import (
+    ClaudeCodeTimeoutError,
+    MissingCliBinaryError,
+    ProviderAPIError,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -128,11 +136,12 @@ async def test_complete_raises_on_timeout(tmp_path: Path) -> None:
 
     with (
         patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)),
-        patch("asyncio.wait_for", side_effect=asyncio.TimeoutError),
-        pytest.raises(ProviderAPIError) as exc_info,
+        pytest.raises(ClaudeCodeTimeoutError) as exc_info,
     ):
         await adapter.complete(_simple_request())
     assert exc_info.value.status_code == 408
+    assert _TIMEOUT_SECONDS == 300.0
+    assert "timed out after 300s" in exc_info.value.body
 
 
 async def test_complete_raises_on_non_json_output(tmp_path: Path) -> None:

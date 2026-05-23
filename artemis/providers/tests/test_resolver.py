@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from artemis.providers.errors import (
+    ClaudeCodeTimeoutError,
     MissingApiKeyError,
     MissingCliBinaryError,
     UnknownProviderError,
@@ -61,6 +62,21 @@ def test_resolve_falls_back_to_declared_fallback() -> None:
         side_effect=_make_builders(
             {
                 "claude-code": MissingCliBinaryError("claude-code", "claude"),
+                "anthropic": sentinel,
+            }
+        ),
+    ):
+        result = resolve_adapter("claude-code", "anthropic")
+    assert result is sentinel  # type: ignore[comparison-overlap]
+
+
+def test_resolve_treats_claude_code_timeout_as_recoverable() -> None:
+    sentinel = _Sentinel("anthropic")
+    with patch(
+        "artemis.providers.resolver.get_adapter",
+        side_effect=_make_builders(
+            {
+                "claude-code": ClaudeCodeTimeoutError(408, "timed out"),
                 "anthropic": sentinel,
             }
         ),

@@ -1165,8 +1165,9 @@ export class PipelineCanvas {
 
   async _run() {
     try {
-      await api.runPipelineApi(this._state.id);
-      this._showToast("Run queued — execution wired in PIPE4.");
+      const run = await api.runPipelineApi(this._state.id);
+      const shortRunId = String(run?.id || "").slice(0, 8) || "new";
+      this._showToast(`Run #${shortRunId} started. Watch progress on canvas.`);
     } catch (err) {
       this._showToast(`Run failed: ${err.message}`, true);
     }

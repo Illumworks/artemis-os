@@ -27,9 +27,9 @@ import os
 from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.agent.types import Message, TextBlock, Usage
 from artemis.providers._bin_path import find_cli_binary
-from artemis.providers.errors import MissingCliBinaryError, ProviderAPIError
+from artemis.providers.errors import ClaudeCodeTimeoutError, MissingCliBinaryError, ProviderAPIError
 
-_TIMEOUT_SECONDS = 120.0
+_TIMEOUT_SECONDS = 300.0
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
@@ -73,7 +73,10 @@ class ClaudeCodeAdapter:
         except TimeoutError:
             proc.kill()
             await proc.wait()
-            raise ProviderAPIError(408, "claude CLI timed out after 120 s") from None
+            raise ClaudeCodeTimeoutError(
+                408,
+                f"Claude CLI timed out after {int(_TIMEOUT_SECONDS)}s; trying provider cascade",
+            ) from None
 
         if proc.returncode != 0:
             raise ProviderAPIError(

@@ -390,8 +390,9 @@ function wire(root) {
   root.querySelectorAll(".prun").forEach((b) => b.addEventListener("click", async (e) => {
     e.stopPropagation();
     try {
-      await api.runPipelineApi(b.dataset.id);
-      showToast("Run queued — execution engine arrives in PIPE4.", "Status will appear in run history.");
+      const run = await api.runPipelineApi(b.dataset.id);
+      const shortRunId = String(run?.id || "").slice(0, 8) || "new";
+      showToast(`Run queued (#${shortRunId}). View in run history.`);
       await loadPipelines();
     } catch (e) { showToast("Run failed", e.message, { isError: true }); }
   }));

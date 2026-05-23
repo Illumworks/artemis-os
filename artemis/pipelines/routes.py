@@ -37,6 +37,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
@@ -383,24 +384,28 @@ async def _execute_pipeline_run(run_id: str) -> None:
     """Background task: run the pipeline executor in its own DB session."""
     from artemis.db import SessionLocal
     from artemis.pipelines.executor import PipelineExecutor
+    from artemis.pipelines.models import PipelineRun
 
     async with SessionLocal() as session:
         try:
             executor = PipelineExecutor(run_id)
             await executor.run(session)
             await session.commit()
-        except Exception:
-            logger.exception("Pipeline run %s failed with unhandled exception", run_id)
-            try:
-                from datetime import UTC, datetime
-
-                run = await repo.get_pipeline_run(session, run_id)
-                run.status = "failed"
-                run.error_message = "Unhandled executor exception; see server logs"
-                run.completed_at = datetime.now(UTC)
-                await session.commit()
-            except Exception:
-                logger.exception("Could not mark pipeline run %s as failed", run_id)
+        except Exception as exc:
+            logger.exception("Pipeline run %s failed before executor startup", run_id)
+            await session.rollback()
+            await session.execute(
+                update(PipelineRun)
+                .where(PipelineRun.id == run_id)
+                .where(PipelineRun.status == "queued")
+                .values(
+                    status="failed",
+                    error_message=f"Executor crashed before start: {exc}",
+                    completed_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+            raise
 
 
 # ── PIPE4: Resume ─────────────────────────────────────────────────────────────
