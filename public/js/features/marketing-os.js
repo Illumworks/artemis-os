@@ -20,6 +20,7 @@ import {
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
   qualifySignalApi,
   listScoutRunsApi, listScoutPackagesApi,
+  listPipelinesApi,
 } from '../core/api.js';
 import {
   filterSignals,
@@ -36,6 +37,7 @@ const MKT_CAMPAIGN_KEY = 'artemis-mkt-selected-campaign';
 const MKT_WORKSPACE_TAB_KEY = 'artemis-mkt-workspace-tab';
 const MKT_SIGNAL_TREE_STATE = {
   signals: [],
+  pipelineRuns: [],
   mode: 'state',
   sort: 'newest',
   query: '',
@@ -1658,6 +1660,8 @@ function _signalCardHtml(signal) {
 
 export function renderMarketingSignals(signals = [], isDemo = false) {
   if (!isDemo) {
+    const completedRuns = MKT_SIGNAL_TREE_STATE.pipelineRuns
+      .filter((run) => ['succeeded', 'skipped', 'partial_complete'].includes(run.status));
     return renderSignalInboxTree(signals, {
       mode: MKT_SIGNAL_TREE_STATE.mode,
       sort: MKT_SIGNAL_TREE_STATE.sort,
@@ -1665,6 +1669,9 @@ export function renderMarketingSignals(signals = [], isDemo = false) {
       filters: MKT_SIGNAL_TREE_STATE.filters,
       selectedId: MKT_SIGNAL_TREE_STATE.selectedId,
       collapsed: readCollapsedSignalGroups(),
+      emptyMessage: completedRuns.length
+        ? `Last ${Math.min(3, completedRuns.length)} pipeline runs produced 0 signals. Configure scout connectors to start ingesting data.`
+        : null,
     });
   }
   const items = signals.map((s) => _signalCardHtml(s)).join('');
@@ -1931,8 +1938,12 @@ export async function loadMarketingSignals(container) {
   _wireSignalActions(container);
   MKT_SIGNAL_TREE_STATE.mode = readSignalGroupMode();
   try {
-    const result = await listSignalQueueApi({ limit: 200 });
+    const [result, pipelines] = await Promise.all([
+      listSignalQueueApi({ limit: 200 }),
+      listPipelinesApi({ limit: 12 }).catch(() => []),
+    ]);
     const realSignals = result.signals || [];
+    MKT_SIGNAL_TREE_STATE.pipelineRuns = _latestPipelineRuns(pipelines);
     MKT_SIGNAL_TREE_STATE.signals = realSignals;
     MKT_SIGNAL_TREE_STATE.selectedId = realSignals[0]?.id || null;
     container.innerHTML = renderMarketingSignals(realSignals, false);
@@ -1946,7 +1957,11 @@ function _renderSignalTreeState(container) {
 }
 
 async function _refreshSignalTree(container) {
-  const result = await listSignalQueueApi({ limit: 200 });
+  const [result, pipelines] = await Promise.all([
+    listSignalQueueApi({ limit: 200 }),
+    listPipelinesApi({ limit: 12 }).catch(() => []),
+  ]);
+  MKT_SIGNAL_TREE_STATE.pipelineRuns = _latestPipelineRuns(pipelines);
   MKT_SIGNAL_TREE_STATE.signals = result.signals || [];
   const visible = filterSignals(MKT_SIGNAL_TREE_STATE.signals.map(normalizeSignal), {
     query: MKT_SIGNAL_TREE_STATE.query,
@@ -1956,6 +1971,17 @@ async function _refreshSignalTree(container) {
     MKT_SIGNAL_TREE_STATE.selectedId = visible[0]?.id || MKT_SIGNAL_TREE_STATE.signals[0]?.id || null;
   }
   _renderSignalTreeState(container);
+}
+
+function _latestPipelineRuns(pipelines = []) {
+  return (pipelines || [])
+    .map((pipeline) => pipeline.latestRun ? {
+      ...pipeline.latestRun,
+      pipelineName: pipeline.name,
+      pipelineId: pipeline.id,
+    } : null)
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function _toggleSignalFilter(category, value) {

@@ -243,6 +243,7 @@ async def create_run(
                 source_type=payload.get("sourceType") or payload.get("source_type", "manual"),
                 source_url=payload.get("sourceUrl") or payload.get("source_url"),
                 source_id=payload.get("sourceId") or payload.get("source_id"),
+                pipeline_run_id=payload.get("pipelineRunId") or payload.get("pipeline_run_id"),
                 summary=payload.get("summary", ""),
                 urgency_tier=payload.get("urgencyTier") or payload.get("urgency_tier", "standard"),
                 discovered_by=scout_type,

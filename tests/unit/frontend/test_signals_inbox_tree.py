@@ -41,6 +41,14 @@ def run_tree_script(source: str) -> dict:
           state: "FL",
           districtId: "Pinellas County",
           reasonCodes: [{{ code: "POLICY_LIT_MANDATE", confidence: 0.91 }}],
+          pipelineRun: {{
+            id: "run_1234567890abcdef",
+            pipelineId: "marketing-pipeline",
+            pipelineName: "Marketing Pipeline",
+            status: "awaiting_approval",
+            startedAt: "2026-05-21T11:00:00Z",
+          }},
+          approval: {{ id: 9, href: "#approvals/9" }},
           createdAt: "2026-05-21T12:00:00Z",
           qualificationJson: {{ scores: [{{ campaignFamily: "state_screener", passedHardFilters: true }}] }},
         }},
@@ -100,6 +108,10 @@ def test_each_grouping_mode_builds_expected_tree() -> None:
     }
     assert data["geography"][0]["childCount"] == 1
     assert [g["key"] for g in data["urgency"]] == ["hot", "standard", "enrichment"]
+    assert [g["key"] for g in data["pipeline"]] == [
+        "Marketing Pipeline · run_1234",
+        "No pipeline run",
+    ]
     assert data["flat"][0]["count"] == 3
 
 
@@ -135,14 +147,28 @@ def test_detail_panel_and_empty_state_render() -> None:
         """
         const detail = mod.renderSignalDetailPanel(signals[0]);
         const empty = mod.renderSignalInboxTree([], { mode: "state" });
+        const emptyRuns = mod.renderSignalInboxTree([], {
+          mode: "state",
+          emptyMessage: "Last 3 pipeline runs produced 0 signals. Configure scout connectors to start ingesting data.",
+        });
         console.log(JSON.stringify({
           hasAudit: detail.includes("Qualifier Audit"),
           hasReason: detail.includes("POLICY_LIT_MANDATE 91%"),
-          hasPipelineLink: empty.includes("Open Marketing Pipeline"),
+          hasRunBadge: detail.includes("Marketing Pipeline") && detail.includes("View pipeline run"),
+          hasApproval: detail.includes("Awaiting Gate 1"),
+          hasPipelineCta: empty.includes("Trigger marketing pipeline manually"),
+          hasConnectorCta: emptyRuns.includes("Configure scout connectors"),
         }));
         """
     )
-    assert data == {"hasAudit": True, "hasReason": True, "hasPipelineLink": True}
+    assert data == {
+        "hasAudit": True,
+        "hasReason": True,
+        "hasRunBadge": True,
+        "hasApproval": True,
+        "hasPipelineCta": True,
+        "hasConnectorCta": True,
+    }
 
 
 def test_local_storage_keys_and_static_wiring() -> None:

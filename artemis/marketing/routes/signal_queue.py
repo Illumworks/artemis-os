@@ -22,7 +22,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import Ruleset, SignalQueue, SignalReasonCode, TerritoryConfig
+from artemis.marketing.models import (
+    Approval,
+    Ruleset,
+    SignalQueue,
+    SignalReasonCode,
+    TerritoryConfig,
+)
 from artemis.marketing.qualifier import (
     RulesetInput,
     SignalInput,
@@ -43,6 +49,7 @@ from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.marketing.state_machine import SignalState, transition
+from artemis.pipelines.models import Pipeline, PipelineRun
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +175,7 @@ async def intake(
         campaign_family=normalized.campaign_family,
         source_type=normalized.source_type,
         source_url=normalized.source_url,
+        pipeline_run_id=body.get("pipelineRunId") or body.get("pipeline_run_id"),
         summary=normalized.why_flagged or "",
         urgency_tier=normalized.urgency_tier,
         discovered_by=normalized.discovered_by,
@@ -222,8 +230,9 @@ async def list_queue(
         limit=limit,
         cursor=cursor,
     )
+    contexts = await _load_signal_contexts(session, signals)
     return {
-        "signals": [_serialize_signal(s) for s in signals],
+        "signals": [_serialize_signal(s, contexts.get(s.id)) for s in signals],
         "total": len(signals),
     }
 
@@ -241,7 +250,8 @@ async def get_signal_route(
         signal = await get_signal(session, signal_id)
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
-    return _serialize_signal(signal)
+    contexts = await _load_signal_contexts(session, [signal])
+    return _serialize_signal(signal, contexts.get(signal.id))
 
 
 # ── Qualify (C3 real implementation) ─────────────────────────────────────────
@@ -507,12 +517,58 @@ async def _run_and_store_qualification(
     return qual_dict
 
 
-def _serialize_signal(signal: SignalQueue) -> dict[str, Any]:
+async def _load_signal_contexts(
+    session: AsyncSession,
+    signals: list[SignalQueue],
+) -> dict[int, dict[str, Any]]:
+    contexts: dict[int, dict[str, Any]] = {s.id: {} for s in signals}
+    run_ids = [s.pipeline_run_id for s in signals if s.pipeline_run_id]
+    if run_ids:
+        rows = await session.execute(
+            select(PipelineRun, Pipeline)
+            .join(Pipeline, Pipeline.id == PipelineRun.pipeline_id)
+            .where(PipelineRun.id.in_(run_ids))
+        )
+        runs = {run.id: (run, pipe) for run, pipe in rows.all()}
+        for signal in signals:
+            if signal.pipeline_run_id in runs:
+                run, pipe = runs[signal.pipeline_run_id]
+                contexts[signal.id]["pipelineRun"] = {
+                    "id": run.id,
+                    "pipelineId": run.pipeline_id,
+                    "pipelineName": pipe.name,
+                    "status": run.status,
+                    "startedAt": run.started_at.isoformat() if run.started_at else None,
+                    "createdAt": run.created_at.isoformat(),
+                }
+
+    pending = await session.execute(select(Approval).where(Approval.status == "pending"))
+    wanted = {str(s.id): s.id for s in signals}
+    for approval in pending.scalars().all():
+        payload = approval.decision_payload or {}
+        metadata = payload.get("metadata") or payload.get("context") or payload
+        signal_ids = metadata.get("signal_ids") or metadata.get("signalIds") or []
+        for raw_id in signal_ids if isinstance(signal_ids, list) else []:
+            signal_id = wanted.get(str(raw_id))
+            if signal_id and "approval" not in contexts[signal_id]:
+                contexts[signal_id]["approval"] = {
+                    "id": approval.id,
+                    "label": "Awaiting Gate 1",
+                    "href": f"#approvals/{approval.id}",
+                }
+    return contexts
+
+
+def _serialize_signal(signal: SignalQueue, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    context = context or {}
     return {
         "id": signal.id,
         "sourceType": signal.source_type,
         "sourceUrl": signal.source_url,
         "sourceId": signal.source_id,
+        "pipelineRunId": signal.pipeline_run_id,
+        "pipelineRun": context.get("pipelineRun"),
+        "approval": context.get("approval"),
         "headline": signal.headline,
         "summary": signal.summary,
         "campaignFamily": signal.campaign_family,

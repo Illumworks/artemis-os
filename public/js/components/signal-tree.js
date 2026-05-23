@@ -3,7 +3,7 @@ import { escapeHtml } from "../core/utils.js";
 export const SIGNAL_GROUP_KEY = "artemis.signals.group-by";
 export const SIGNAL_COLLAPSED_KEY = "artemis.signals.tree.collapsed";
 
-export const SIGNAL_GROUPS = ["state", "reason", "geography", "urgency", "flat"];
+export const SIGNAL_GROUPS = ["state", "reason", "geography", "urgency", "pipeline", "flat"];
 export const SIGNAL_STATUSES = [
   "pending_qualification",
   "qualified",
@@ -97,6 +97,19 @@ function normalizeUrgency(value) {
   return SIGNAL_URGENCIES.includes(value) ? value : "standard";
 }
 
+function normalizePipelineRun(signal) {
+  const run = signal.pipelineRun || signal.pipeline_run || null;
+  const id = signal.pipelineRunId || signal.pipeline_run_id || run?.id || null;
+  if (!id) return null;
+  return {
+    id,
+    pipelineId: run?.pipelineId || run?.pipeline_id || signal.pipelineId || null,
+    pipelineName: run?.pipelineName || run?.pipeline_name || signal.pipelineName || "Marketing Pipeline",
+    status: run?.status || "running",
+    startedAt: run?.startedAt || run?.started_at || run?.createdAt || run?.created_at || null,
+  };
+}
+
 export function normalizeSignal(signal = {}) {
   const reasonCodes = Array.isArray(signal.reasonCodes) ? signal.reasonCodes : [];
   const codeLabels = reasonCodes.map(reasonCodeLabel).filter(Boolean);
@@ -104,6 +117,7 @@ export function normalizeSignal(signal = {}) {
   const district = signal.district || signal.districtName || signal.districtId || provenance.district || "";
   const stateCode = (signal.stateCode || signal.state || provenance.state || "").toString().toUpperCase();
   const discoveredAt = signal.discoveredAt || signal.createdAt || signal.updatedAt || null;
+  const pipelineRun = normalizePipelineRun(signal);
   return {
     ...signal,
     id: signal.id,
@@ -123,6 +137,8 @@ export function normalizeSignal(signal = {}) {
     discoveredAt,
     qualificationJson: signal.qualificationJson || null,
     briefId: signal.briefId || signal.campaignBriefId || null,
+    pipelineRun,
+    approval: signal.approval || signal.gateApproval || null,
   };
 }
 
@@ -135,6 +151,8 @@ export function makeSignalSearchText(signal) {
     signal.stateCode,
     signal.sourceType,
     signal.signalStatus,
+    signal.pipelineRun?.pipelineName,
+    signal.pipelineRun?.id,
     ...signal.reasonCodeLabels,
   ].filter(Boolean).join(" ").toLowerCase();
 }
@@ -169,6 +187,7 @@ function groupLabel(mode, key) {
   if (mode === "reason") return key || "Uncoded";
   if (mode === "geography") return key || "Unknown state";
   if (mode === "urgency") return key[0]?.toUpperCase() + key.slice(1);
+  if (mode === "pipeline") return key;
   return "Signals";
 }
 
@@ -195,6 +214,11 @@ export function buildSignalTree(signals, mode = "state", sort = "newest") {
       for (const code of codes) add(map, code, signal);
     }
     if (mode === "geography") add(map, signal.stateCode || "Unknown", signal);
+    if (mode === "pipeline") {
+      const run = signal.pipelineRun;
+      const key = run ? `${run.pipelineName} · ${String(run.id).slice(0, 8)}` : "No pipeline run";
+      add(map, key, signal);
+    }
   }
   let groups = [...map.entries()].map(([key, rows]) => ({
     key,
@@ -258,6 +282,9 @@ function signalTitle(signal) {
 function rowHtml(signal, selectedId) {
   const selected = String(signal.id) === String(selectedId);
   const initial = (signal.district || signal.headline || "?").trim()[0]?.toUpperCase() || "?";
+  const pipelineBadge = signal.pipelineRun
+    ? `<span class="mkt-signal-row-pipeline">${esc(signal.pipelineRun.pipelineName)} · ${esc(String(signal.pipelineRun.id).slice(0, 8))}</span>`
+    : "";
   return `
     <button class="mkt-signal-row${selected ? " is-selected" : ""}" type="button"
             data-signal-row="${esc(signal.id)}" aria-pressed="${selected ? "true" : "false"}">
@@ -266,6 +293,7 @@ function rowHtml(signal, selectedId) {
       <span class="mkt-signal-row-main">
         <span class="mkt-signal-row-title">${esc(signalTitle(signal))}</span>
         <span class="mkt-signal-row-sub">${esc(signal.headline)}</span>
+        ${pipelineBadge}
       </span>
       <span class="mkt-signal-row-side">
         <span class="mkt-signal-row-urgency mkt-signal-row-urgency--${esc(signal.urgencyTier)}">${esc(signal.urgencyTier)}</span>
@@ -333,6 +361,8 @@ export function renderSignalDetailPanel(signal) {
   if (!signal) {
     return `<aside class="mkt-signal-detail-panel"><p class="mkt-signal-detail-muted">Select a signal to inspect source evidence and qualifier audit.</p></aside>`;
   }
+  const run = signal.pipelineRun;
+  const approval = signal.approval;
   return `
     <aside class="mkt-signal-detail-panel" data-signal-id="${esc(signal.id)}">
       <div class="mkt-signal-detail-head">
@@ -345,6 +375,15 @@ export function renderSignalDetailPanel(signal) {
         <span>${esc(signal.urgencyTier)}</span>
         ${signal.stateCode ? `<span>${esc(signal.stateCode)}</span>` : ""}
       </div>
+      ${run ? `<section class="mkt-signal-pipeline">
+        <h5>Pipeline Run</h5>
+        <div class="mkt-signal-pipeline-card">
+          <span>${esc(run.pipelineName)} · ${esc(String(run.id).slice(0, 8))}</span>
+          <span>${esc(run.status.replace(/_/g, " "))}${run.startedAt ? ` · ${esc(timeAgo(run.startedAt))}` : ""}</span>
+          <a href="#pipelines/${esc(run.pipelineId || "")}/runs/${esc(run.id)}">View pipeline run →</a>
+        </div>
+      </section>` : ""}
+      ${approval ? `<a class="mkt-signal-approval-badge" href="${esc(approval.href || "#approvals")}">Awaiting Gate 1</a>` : ""}
       <section>
         <h5>Source</h5>
         <p class="mkt-signal-detail-snippet">${esc(signal.summary || "No source snippet captured.")}</p>
@@ -426,7 +465,7 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
       </div>
       <div class="mkt-signals-group-toggle" aria-label="Group signals">
         <span>Group by:</span>
-        ${SIGNAL_GROUPS.map((g) => `<button type="button" class="${mode === g ? "is-active" : ""}" data-signal-group="${g}">${esc(g === "reason" ? "Reason Code" : g[0].toUpperCase() + g.slice(1))}</button>`).join("")}
+        ${SIGNAL_GROUPS.map((g) => `<button type="button" class="${mode === g ? "is-active" : ""}" data-signal-group="${g}">${esc(g === "reason" ? "Reason Code" : g === "pipeline" ? "Pipeline Run" : g[0].toUpperCase() + g.slice(1))}</button>`).join("")}
       </div>
       <div class="mkt-signals-filters">${filtersHtml}</div>
       <div class="mkt-signals-add-row">
@@ -444,8 +483,9 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
       </div>
       ${emptyPage ? `
         <div class="mkt-signals-empty mkt-signals-empty--page">
-          <p>No signals yet. Scouts run on the marketing pipeline's schedule.</p>
-          <a href="#" data-nav="operations-pipelines">Open Marketing Pipeline</a>
+          <p>${esc(options.emptyMessage || "No signals yet. Scouts run on the marketing pipeline's schedule.")}</p>
+          <a href="#" data-nav="pipelines">Trigger marketing pipeline manually →</a>
+          <a href="#integrations" data-nav="integrations">Configure scout connectors →</a>
         </div>` : `
         <div class="mkt-signals-layout">
           <div class="mkt-signal-tree" data-signal-tree>${treeEmpty ? '<p class="mkt-signals-empty">No signals matching filter.</p>' : groupsHtml}</div>

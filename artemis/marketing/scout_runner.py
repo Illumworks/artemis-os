@@ -209,6 +209,7 @@ async def run_scout(
             SignalQueue(
                 source_type=normalized.source_type,
                 source_url=normalized.source_url,
+                pipeline_run_id=payload.get("pipelineRunId") or payload.get("pipeline_run_id"),
                 headline=normalized.headline,
                 summary=normalized.verbatim_snippet or normalized.headline,
                 campaign_family=normalized.campaign_family,

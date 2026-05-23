@@ -42,6 +42,7 @@ class SignalCreate(_Base):
     source_type: str = Field(default="manual", alias="sourceType")
     source_url: str | None = Field(default=None, alias="sourceUrl")
     source_id: str | None = Field(default=None, alias="sourceId")
+    pipeline_run_id: str | None = Field(default=None, alias="pipelineRunId")
     summary: str = ""
     urgency_tier: str = Field(default="standard", alias="urgencyTier")
     discovered_by: str = Field(default="manual", alias="discoveredBy")
@@ -59,6 +60,9 @@ class SignalRead(_Base):
     source_type: str = Field(alias="sourceType")
     source_url: str | None = Field(default=None, alias="sourceUrl")
     source_id: str | None = Field(default=None, alias="sourceId")
+    pipeline_run_id: str | None = Field(default=None, alias="pipelineRunId")
+    pipeline_run: dict[str, Any] | None = Field(default=None, alias="pipelineRun")
+    approval: dict[str, Any] | None = None
     headline: str
     summary: str
     campaign_family: str = Field(alias="campaignFamily")

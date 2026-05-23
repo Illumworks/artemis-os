@@ -75,12 +75,18 @@ class SignalQueue(Base):
         Index("idx_signal_queue_status_tier", "signal_status", "urgency_tier"),
         Index("idx_signal_queue_family_status", "campaign_family", "signal_status"),
         Index("idx_signal_queue_district", "district_id"),
+        Index("idx_signal_queue_pipeline_run", "pipeline_run_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pipeline_run_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("pipeline_runs.id", name="fk_signal_queue_pipeline_run", ondelete="SET NULL"),
+        nullable=True,
+    )
     headline: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     campaign_family: Mapped[str] = mapped_column(Text, nullable=False)

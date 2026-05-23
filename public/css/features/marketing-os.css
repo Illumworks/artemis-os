@@ -1261,6 +1261,16 @@
   color: var(--text-secondary);
 }
 
+.mkt-signal-row-pipeline {
+  width: fit-content; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-radius: 5px; padding: 2px 6px;
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent, #6366f1) 9%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, var(--accent, #6366f1) 18%, transparent);
+}
+
 .mkt-signal-row-side {
   display: flex;
   flex-direction: column;
@@ -1379,6 +1389,29 @@
   border: 1px solid color-mix(in srgb, var(--surface-outline) 65%, transparent);
 }
 
+.mkt-signal-pipeline-card {
+  display: flex; flex-direction: column; gap: 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-card) 64%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 65%, transparent);
+  padding: 8px; font-size: 12px;
+}
+
+.mkt-signal-pipeline-card span:first-child { font-family: var(--font-mono); color: var(--text); }
+
+.mkt-signal-pipeline-card span,
+.mkt-signal-pipeline-card a {
+  color: var(--text-secondary); text-decoration: none;
+}
+
+.mkt-signal-approval-badge {
+  width: fit-content; border-radius: 999px; padding: 4px 8px;
+  background: color-mix(in srgb, var(--amber) 14%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, transparent);
+  color: var(--text);
+  font-size: 12px; text-decoration: none;
+}
+
 .mkt-signal-audit {
   display: flex;
   flex-direction: column;
@@ -1408,6 +1441,8 @@
 }
 
 .mkt-signals-empty--page a {
+  display: inline-flex;
+  margin-right: 12px;
   color: var(--accent, #6366f1);
   text-decoration: none;
 }
