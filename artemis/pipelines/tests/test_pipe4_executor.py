@@ -398,6 +398,7 @@ async def test_brief_composer_empty_signals_skips_downstream(
         ns = refreshed.node_states
 
     assert refreshed.status == "succeeded"
+    assert refreshed.metadata_ is not None
     assert refreshed.metadata_["summary"] == "No signals this run; downstream skipped"
     assert ns["qualifier_brief_composer"]["status"] == "succeeded"
     assert ns["qualifier_brief_composer"]["output_summary"] == "No signals qualified this run"

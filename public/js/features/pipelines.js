@@ -402,7 +402,7 @@ function wire(root) {
       const result = await api.runPipelineApi(b.dataset.id);
       const runId = result?.id || result?.run_id;
       const shortRunId = runId ? String(runId).slice(0, 8) : "new";
-      showToast(`Run queued (#${shortRunId}). View in run history.`);
+      showToast(`Run queued (#${shortRunId}). Watch progress on canvas.`, "Status will appear in run history.");
       await loadPipelines();
     } catch (e) { showToast("Run failed", e.message, { isError: true }); }
   }));
