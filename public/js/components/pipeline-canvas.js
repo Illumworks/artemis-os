@@ -18,6 +18,21 @@ import { PipelineConfigDrawer } from "./pipeline-config-drawer.js";
 import { PipelineAIPanel } from "./pipeline-ai-panel.js";
 import { PipelineRunOverlay } from "./pipeline-run-overlay.js";
 
+const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "awaiting_approval"]);
+const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "partial_complete", "skipped"]);
+const ACTIVE_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function _runTimestamp(run) {
+  return run?.createdAt || run?.created_at || run?.startedAt || run?.started_at || null;
+}
+
+function _isRecentActiveRun(run) {
+  if (!run || !ACTIVE_RUN_STATUSES.has(run.status || run.Status)) return false;
+  const ts = _runTimestamp(run);
+  if (!ts) return false;
+  return Date.now() - new Date(ts).getTime() < ACTIVE_RUN_MAX_AGE_MS;
+}
+
 // ── Canvas store ──────────────────────────────────────────────────────────────
 
 function createStore(pipeline) {
@@ -428,10 +443,8 @@ export class PipelineCanvas {
   async _maybeStartPolling() {
     if (!this._state.id) return;
     try {
-      const runs = await api.listPipelineRunsApi(this._state.id, { limit: 5 });
-      const active = (runs || []).find((r) =>
-        ["running", "queued", "awaiting_approval"].includes(r.status || r.Status)
-      );
+      const runs = await api.listPipelineRunsApi(this._state.id, { limit: 20, sort: "created_at_desc" });
+      const active = (runs || []).find((r) => _isRecentActiveRun(r));
       if (active) {
         this._activeRunId = active.id;
         this._applyRunState(active);
@@ -468,14 +481,13 @@ export class PipelineCanvas {
       return;
     }
     try {
-      const runs = await api.listPipelineRunsApi(this._state.id, { limit: 5 });
+      const runs = await api.listPipelineRunsApi(this._state.id, { limit: 20, sort: "created_at_desc" });
       const run = (runs || []).find((r) => r.id === this._activeRunId);
       if (!run) { this._stopPolling(); return; }
 
       this._applyRunState(run);
 
-      const terminal = ["succeeded", "failed", "cancelled", "partial_complete"];
-      if (terminal.includes(run.status)) {
+      if (TERMINAL_RUN_STATUSES.has(run.status)) {
         this._pollActive = false;
         return;
       }

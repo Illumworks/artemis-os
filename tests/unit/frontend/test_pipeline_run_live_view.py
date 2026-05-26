@@ -123,6 +123,27 @@ def test_run_overlay_conditional_logic():
     assert "awaiting_approval" in src
     assert "TERMINAL" in src or "terminal" in src.lower()
     assert "hide()" in src or "this.hide" in src
+    assert "cancelBtn.disabled = isTerminal" in src
+    assert "#/pipeline-run-history" in src
+    assert 'setState("view", "pipeline-run-history")' in src
+
+
+def test_live_run_polling_filters_recent_active_runs():
+    src = (JS_COMP / "pipeline-canvas.js").read_text()
+    assert "ACTIVE_RUN_MAX_AGE_MS" in src
+    assert "_isRecentActiveRun" in src
+    assert 'sort: "created_at_desc"' in src
+    assert '"skipped"' in src
+
+
+def test_pipeline_run_history_is_real_shell_view():
+    nav = (JS_CORE / "navigation.js").read_text()
+    ops = (JS_FEAT / "operations-shell.js").read_text()
+    home = (JS_FEAT / "home.js").read_text()
+    assert "PIPELINE_RUN_HISTORY_VIEW" in nav
+    assert "operations/pipeline-run-history" in nav
+    assert "initPipelineRunHistoryPage" in ops
+    assert "loadPipelineRunHistoryShell" in home
 
 
 # ── Run history page ──────────────────────────────────────────────────────────

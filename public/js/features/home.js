@@ -23,6 +23,7 @@ import {
   MARKETING_APPROVALS_VIEW,
   MARKETING_RULESETS_VIEW,
   MARKETING_SCOUT_RUNS_VIEW,
+  PIPELINE_RUN_HISTORY_VIEW,
   isShellView,
   normalizeAppView,
 } from '../core/navigation.js';
@@ -75,7 +76,7 @@ import {
 } from './meetings.js';
 import { loadAgents } from './agents.js';
 import { loadWorkflows } from './workflows.js';
-import { renderOperationsView, loadSkillsShell, loadAutomationsShell, loadCampaignOpsShell } from './operations-shell.js';
+import { renderOperationsView, loadSkillsShell, loadAutomationsShell, loadCampaignOpsShell, loadPipelineRunHistoryShell } from './operations-shell.js';
 import {
   loadMarketingDashboard,
   loadMarketingCampaigns,
@@ -147,7 +148,7 @@ const WIDE_PAGE_VIEWS = new Set([
   DEFAULT_APP_VIEW, CALENDAR_VIEW, MEETINGS_VIEW, JIRA_VIEW, OKR_VIEW, WRITING_STUDIO_VIEW,
   OPERATIONS_VIEW, MEMORY_VIEW,
   MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SCOUT_RUNS_VIEW,
-  'agents', 'skills', 'workflows', 'automations',
+  'agents', 'skills', 'workflows', 'automations', PIPELINE_RUN_HISTORY_VIEW,
 ]);
 function isWidePageView(view) {
   return WIDE_PAGE_VIEWS.has(view);
@@ -200,6 +201,8 @@ onState('view', (view) => {
       loadSkillsShell();
     } else if (normalizedView === 'automations') {
       loadAutomationsShell();
+    } else if (normalizedView === PIPELINE_RUN_HISTORY_VIEW) {
+      loadPipelineRunHistoryShell();
     } else if (normalizedView === MARKETING_DASHBOARD_VIEW) {
       loadMarketingDashboard(appShellContent);
     } else if (normalizedView === MARKETING_CAMPAIGNS_VIEW) {
@@ -498,7 +501,7 @@ function renderShell(view) {
     appShellContent.innerHTML = renderWritingStudioLoading();
     return;
   }
-  if (view === OPERATIONS_VIEW || view === 'agents' || view === 'skills' || view === 'workflows' || view === 'automations') {
+  if (view === OPERATIONS_VIEW || view === 'agents' || view === 'skills' || view === 'workflows' || view === 'automations' || view === PIPELINE_RUN_HISTORY_VIEW) {
     renderOperationsView(view);
     return;
   }

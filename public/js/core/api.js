@@ -2092,9 +2092,10 @@ export async function runPipelineApi(id, opts = {}) {
   return res.json();
 }
 
-export async function listPipelineRunsApi(id, { limit = 20, cursor } = {}) {
+export async function listPipelineRunsApi(id, { limit = 20, cursor, sort } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", String(cursor));
+  if (sort) params.set("sort", String(sort));
   const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/runs?${params}`);
   if (!res.ok) throw new Error("listPipelineRunsApi failed");
   return res.json();

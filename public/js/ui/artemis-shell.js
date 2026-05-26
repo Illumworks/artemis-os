@@ -42,6 +42,7 @@ const RAIL_NAV_VIEW_MAP = {
   'writing-studio': WRITING_STUDIO_VIEW,
   automations: 'automations',
   pipelines: 'pipelines',
+  'pipeline-run-history': 'pipelines',
   skills: 'skills',
   agents: 'agents',
   workflows: 'workflows',

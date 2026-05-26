@@ -7,6 +7,7 @@ export const MEETINGS_VIEW = "meetings";
 export const JIRA_VIEW = "jira";
 export const OKR_VIEW = "okr";
 export const OPERATIONS_VIEW = "operations";
+export const PIPELINE_RUN_HISTORY_VIEW = "pipeline-run-history";
 export const MEMORY_VIEW = "memory";
 export const DEV_PROJECTS_VIEW = "dev-projects";
 export const WRITING_STUDIO_VIEW = "writing-studio";
@@ -119,6 +120,15 @@ export const SECONDARY_NAV_DESTINATIONS = [
     description: "Unified orchestration primitives — nodes, edges, and trigger config. Visual canvas in PIPE2.",
     section: "Operations",
     view: "pipelines",
+    focus: "pipelines",
+  },
+  {
+    id: PIPELINE_RUN_HISTORY_VIEW,
+    label: "Run History",
+    shortLabel: "Runs",
+    description: "Pipeline execution history, replay links, and terminal run actions.",
+    section: "Operations",
+    view: PIPELINE_RUN_HISTORY_VIEW,
     focus: "pipelines",
   },
   {
@@ -242,6 +252,7 @@ export function normalizeAppView(view) {
   if (view === "jira" || view === "jira-board") return JIRA_VIEW;
   if (view === "okr" || view === "okr-studio") return OKR_VIEW;
   if (view === "operations") return OPERATIONS_VIEW;
+  if (view === "pipeline-run-history" || view === "operations/pipeline-run-history") return PIPELINE_RUN_HISTORY_VIEW;
   if (view === "memory") return MEMORY_VIEW;
   if (view === "writing-studio") return WRITING_STUDIO_VIEW;
   if (view === "marketing-os") return MARKETING_OS_VIEW;
@@ -281,6 +292,7 @@ export function isShellView(view) {
     || normalizedView === "skills"
     || normalizedView === "automations"
     || normalizedView === "pipelines"
+    || normalizedView === PIPELINE_RUN_HISTORY_VIEW
     || normalizedView === MARKETING_OS_VIEW
     || normalizedView === MARKETING_DASHBOARD_VIEW
     || normalizedView === MARKETING_CAMPAIGNS_VIEW

@@ -4,11 +4,14 @@
  * Props: pipelineId {string}, onCancel {(runId) => void}
  */
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "partial_complete"]);
+import { setState } from "../core/store.js";
+
+const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "partial_complete", "skipped"]);
 
 const STATUS_LABEL = {
   queued: "Queued", running: "Running", awaiting_approval: "Awaiting approval",
   succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", partial_complete: "Stopped: cost cap",
+  skipped: "Skipped",
 };
 
 function _elapsed(startedAt) {
@@ -51,7 +54,7 @@ export class PipelineRunOverlay {
         <div class="pcv-ro-progress"></div>
         <div class="pcv-ro-elapsed"></div>
         <div class="pcv-ro-actions">
-          <a class="pcv-ro-history-link" href="#operations/pipeline-run-history">View in run history →</a>
+          <a class="pcv-ro-history-link" href="#/pipeline-run-history">View in run history →</a>
           <a class="pcv-ro-approve" href="#operations/approvals" style="display:none">Approve at Gate →</a>
           <button class="pcv-ro-cancel pcv-ro-btn pbtn pbtn-g">Cancel run</button>
         </div>
@@ -104,15 +107,19 @@ export class PipelineRunOverlay {
       this._elapsedTimer = setInterval(() => this._tickElapsed(), 1000);
     }
 
+    const isTerminal = TERMINAL_STATUSES.has(status);
     const cancelBtn = this.el.querySelector(".pcv-ro-cancel");
-    if (cancelBtn) cancelBtn.style.display = TERMINAL_STATUSES.has(status) ? "none" : "";
+    if (cancelBtn) {
+      cancelBtn.disabled = isTerminal;
+      cancelBtn.textContent = isTerminal ? "Run completed" : "Cancel run";
+      cancelBtn.title = isTerminal ? `Run already ${STATUS_LABEL[status] || status}` : "Cancel run";
+    }
 
     const approveEl = this.el.querySelector(".pcv-ro-approve");
     if (approveEl) approveEl.style.display = status === "awaiting_approval" ? "" : "none";
 
-    if (TERMINAL_STATUSES.has(status)) {
+    if (isTerminal) {
       if (this._elapsedTimer) { clearInterval(this._elapsedTimer); this._elapsedTimer = null; }
-      setTimeout(() => this.hide(), 4000);
     }
   }
 
@@ -124,6 +131,10 @@ export class PipelineRunOverlay {
   _wireEvents() {
     if (!this.el) return;
     this.el.querySelector(".pcv-ro-dismiss")?.addEventListener("click", () => this.hide());
+    this.el.querySelector(".pcv-ro-history-link")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      setState("view", "pipeline-run-history");
+    });
     this.el.querySelector(".pcv-ro-run-id")?.addEventListener("click", () => {
       if (this._currentRunId) navigator.clipboard?.writeText(this._currentRunId).catch(() => {});
     });

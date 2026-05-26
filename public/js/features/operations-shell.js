@@ -3,6 +3,7 @@ import { escapeHtml, slugify } from "../core/utils.js";
 import {
   MEMORY_VIEW,
   OPERATIONS_VIEW,
+  PIPELINE_RUN_HISTORY_VIEW,
   WRITING_STUDIO_VIEW,
   normalizeAppView,
 } from "../core/navigation.js";
@@ -14,6 +15,7 @@ import {
   initBuilderSurface,
 } from "./agent-builder.js";
 import { initPipelinesPage } from "./pipelines.js";
+import { initPipelineRunHistoryPage } from "./pipeline-run-history.js";
 import { PROVIDER_LABELS, PROVIDER_PICKERS, getSourceModels } from "../ui/model-selector.js";
 import {
   createCustomAgentTreeView,
@@ -598,7 +600,8 @@ function isOperationsSurfaceView(view) {
     || normalized === "skills"
     || normalized === "workflows"
     || normalized === "automations"
-    || normalized === "pipelines";
+    || normalized === "pipelines"
+    || normalized === PIPELINE_RUN_HISTORY_VIEW;
 }
 
 function scheduleRender() {
@@ -3392,6 +3395,10 @@ function renderPipelinesPage() {
   return `<div id="pipelines-page-root"></div>`;
 }
 
+function renderPipelineRunHistoryPage() {
+  return `<div id="pipeline-run-history-root"></div>`;
+}
+
 function buildOperationsMarkup(view) {
   const normalized = normalizeAppView(view);
   switch (normalized) {
@@ -3409,6 +3416,8 @@ function buildOperationsMarkup(view) {
       return renderAutomationsPage();
     case "pipelines":
       return renderPipelinesPage();
+    case PIPELINE_RUN_HISTORY_VIEW:
+      return renderPipelineRunHistoryPage();
     default:
       return "";
   }
@@ -3429,6 +3438,8 @@ export function renderOperationsView(view = getState("view")) {
   // For the Pipelines sub-view, delegate to the pipelines module after DOM is set.
   if (normalizeAppView(view) === "pipelines") {
     initPipelinesPage();
+  } else if (normalizeAppView(view) === PIPELINE_RUN_HISTORY_VIEW) {
+    initPipelineRunHistoryPage();
   }
   // Load agent connectors asynchronously after the agent detail DOM is ready.
   const connSection = document.getElementById("agent-connectors-section");
@@ -4710,6 +4721,10 @@ export async function loadAutomationsShell() {
 
 export function loadPipelinesShell() {
   renderOperationsView("pipelines");
+}
+
+export function loadPipelineRunHistoryShell() {
+  renderOperationsView(PIPELINE_RUN_HISTORY_VIEW);
 }
 
 export async function loadCampaignOpsShell() {
