@@ -30,25 +30,25 @@ These are the codes scouts assign in their signal output. The Qualifier uses the
 
 Naming convention follows what's already in the Figma: SCREAMING\_SNAKE\_CASE, prefixed by domain (POLICY\_, FUNDING\_, VENDOR\_, DISTRICT\_, PROCUREMENT\_, TX\_, LEADER\_).
 
-| Code | Plain-English trigger | What the scout looks for | Default urgency |
-| :---- | :---- | :---- | :---- |
-| POLICY\_LIT\_MANDATE | New state law passes requiring screening or literacy intervention | Bills with screening/intervention/dyslexia/structured-literacy keywords reaching INTRODUCED, PASSED\_CHAMBER, or ENACTED in a priority state | hot at PASSED\_CHAMBER or ENACTED; standard at INTRODUCED |
-| POLICY\_EDTECH\_TIME\_LIMIT | Legislation reducing time on ed tech, or public dissatisfaction with screen-time on ed tech | Bills, news, or board commentary citing screen-time caps or ed-tech-time reduction; Amira positioned as low-time / high-impact | standard; hot if bill is statewide and includes K–3 |
-| FUNDING\_LITERACY\_GRANT | State publishes a literacy grant or funding announcement for high-impact tutoring | Grants.gov, Federal Register, or state DoE press releases announcing literacy / tutoring / HIT funding | hot if deadline ≤ 30 days; standard if 30–90; enrichment otherwise |
-| FUNDING\_DEADLINE\_NEAR | State notification or selection deadline within 90 days | Any active funding signal where days\_until ≤ 90 | hot ≤ 30 days, standard 30–90 |
-| FUNDING\_HB2\_ELIA | District publicly discusses HB 2 Early Literacy Intervention Allotment ($250/student, K–3) spend | TX board minutes / budget docs referencing HB 2, ELIA, or Early Literacy Intervention Allotment | enrichment (context only — not a discrete event) |
-| VENDOR\_APPROVED\_LIST | State adds Amira to an approved-vendor list | State DoE procurement / approved-vendor list pages mentioning Amira (or category Amira qualifies for) | hot |
-| VENDOR\_DISSATISFACTION | Public dissatisfaction with iReady, Lexia, UCSF Multitudes, or Amplify | News, board minutes, or LinkedIn posts naming the competitor with negative valence (efficacy, cost, fit, renewal) | standard; hot if board votes non-renewal or RFP follows |
-| DISTRICT\_STRATEGIC\_LITERACY | District strategic plan names literacy as a top priority | Strategic plan PDFs, board adoption of plan with literacy as named pillar | standard |
-| DISTRICT\_PROFICIENCY\_GAP | District publicly cites a literacy achievement gap or proficiency drop | Board minutes, press releases, or local news citing reading-proficiency decline, NAEP drop, or named gap | standard; hot if paired with vendor dissatisfaction or RFP |
-| DISTRICT\_DLL\_EXPANSION | District announces bilingual or dual-language program expansion | Board votes, press releases, or strategic plan items naming DLL / dual-language / bilingual program expansion | standard |
-| DISTRICT\_MTSS\_STRAIN | District announces MTSS or intervention staffing challenges | Board minutes or news citing intervention staffing shortages, MTSS gaps, Tier 2/3 capacity issues | standard |
-| PROCUREMENT\_ELA\_ADOPTION | New core ELA adoption cycle opening | Adoption committee formation, public comment windows, ELA materials review on board agenda | standard; hot when RFP posts |
-| PROCUREMENT\_LITERACY\_RFP | Active literacy/assessment/curriculum RFP | RFPs/RFIs on statewide portals or district sites; literacy / reading / assessment / tutoring scope | hot if days\_to\_close ≤ 14; standard 15–45; reject \> 45 unless strategic |
-| TX\_HB1416\_WAIVER | District pursues or is awarded an HB 1416 tutoring waiver | TEA waiver filings, board discussion of HB 1416 waiver, district press; Amira is TEA-approved for HB 1416 | hot |
-| TX\_HB3\_DYSLEXIA\_COMPLIANCE | District flags HB 3 dyslexia reporting compliance challenges | Board minutes / TEA correspondence citing HB 3 dyslexia reporting friction; Amira is TEA-approved | hot |
-| LEADER\_TRANSITION\_FORMAL | New superintendent, CAO, or curriculum director formally hired | Two-source confirmed formal hire — board vote OR district press release | hot for 90 days post-hire |
-| LEADER\_TRANSITION\_INTERIM | Interim supe / CAO / curriculum lead named | Single-source interim announcement | standard |
+| Code | Plain-English trigger | What the scout looks for | Default urgency | Primary scouts |
+| :---- | :---- | :---- | :---- | :---- |
+| POLICY\_LIT\_MANDATE | New state law passes requiring screening or literacy intervention | Bills with screening/intervention/dyslexia/structured-literacy keywords reaching INTRODUCED, PASSED\_CHAMBER, or ENACTED in a priority state | hot at PASSED\_CHAMBER or ENACTED; standard at INTRODUCED | legislative,starbridge_researcher,state_doe |
+| POLICY\_EDTECH\_TIME\_LIMIT | Legislation reducing time on ed tech, or public dissatisfaction with screen-time on ed tech | Bills, news, or board commentary citing screen-time caps or ed-tech-time reduction; Amira positioned as low-time / high-impact | standard; hot if bill is statewide and includes K–3 | legislative,regional_news,board_minutes |
+| FUNDING\_LITERACY\_GRANT | State publishes a literacy grant or funding announcement for high-impact tutoring | Grants.gov, Federal Register, or state DoE press releases announcing literacy / tutoring / HIT funding | hot if deadline ≤ 30 days; standard if 30–90; enrichment otherwise | federal_funding,starbridge_researcher,state_doe |
+| FUNDING\_DEADLINE\_NEAR | State notification or selection deadline within 90 days | Any active funding signal where days\_until ≤ 90 | hot ≤ 30 days, standard 30–90 | federal_funding,starbridge_researcher |
+| FUNDING\_HB2\_ELIA | District publicly discusses HB 2 Early Literacy Intervention Allotment ($250/student, K–3) spend | TX board minutes / budget docs referencing HB 2, ELIA, or Early Literacy Intervention Allotment | enrichment (context only — not a discrete event) | board_minutes,legislative,starbridge_researcher |
+| VENDOR\_APPROVED\_LIST | State adds Amira to an approved-vendor list | State DoE procurement / approved-vendor list pages mentioning Amira (or category Amira qualifies for) | hot | state_doe,procurement |
+| VENDOR\_DISSATISFACTION | Public dissatisfaction with iReady, Lexia, UCSF Multitudes, or Amplify | News, board minutes, or LinkedIn posts naming the competitor with negative valence (efficacy, cost, fit, renewal) | standard; hot if board votes non-renewal or RFP follows | regional_news,board_minutes,linkedin_observer |
+| DISTRICT\_STRATEGIC\_LITERACY | District strategic plan names literacy as a top priority | Strategic plan PDFs, board adoption of plan with literacy as named pillar | standard | board_minutes,regional_news |
+| DISTRICT\_PROFICIENCY\_GAP | District publicly cites a literacy achievement gap or proficiency drop | Board minutes, press releases, or local news citing reading-proficiency decline, NAEP drop, or named gap | standard; hot if paired with vendor dissatisfaction or RFP | board_minutes,regional_news |
+| DISTRICT\_DLL\_EXPANSION | District announces bilingual or dual-language program expansion | Board votes, press releases, or strategic plan items naming DLL / dual-language / bilingual program expansion | standard | board_minutes,regional_news |
+| DISTRICT\_MTSS\_STRAIN | District announces MTSS or intervention staffing challenges | Board minutes or news citing intervention staffing shortages, MTSS gaps, Tier 2/3 capacity issues | standard | board_minutes,regional_news |
+| PROCUREMENT\_ELA\_ADOPTION | New core ELA adoption cycle opening | Adoption committee formation, public comment windows, ELA materials review on board agenda | standard; hot when RFP posts | board_minutes,procurement |
+| PROCUREMENT\_LITERACY\_RFP | Active literacy/assessment/curriculum RFP | RFPs/RFIs on statewide portals or district sites; literacy / reading / assessment / tutoring scope | hot if days\_to\_close ≤ 14; standard 15–45; reject \> 45 unless strategic | procurement,state_doe,starbridge_researcher |
+| TX\_HB1416\_WAIVER | District pursues or is awarded an HB 1416 tutoring waiver | TEA waiver filings, board discussion of HB 1416 waiver, district press; Amira is TEA-approved for HB 1416 | hot | board_minutes,state_doe,regional_news |
+| TX\_HB3\_DYSLEXIA\_COMPLIANCE | District flags HB 3 dyslexia reporting compliance challenges | Board minutes / TEA correspondence citing HB 3 dyslexia reporting friction; Amira is TEA-approved | hot | board_minutes,state_doe |
+| LEADER\_TRANSITION\_FORMAL | New superintendent, CAO, or curriculum director formally hired | Two-source confirmed formal hire — board vote OR district press release | hot for 90 days post-hire | leadership_transition,regional_news,board_minutes |
+| LEADER\_TRANSITION\_INTERIM | Interim supe / CAO / curriculum lead named | Single-source interim announcement | standard | leadership_transition,regional_news,linkedin_observer |
 
 **Note on urgency:** default tiers above are starting points. The Qualifier should override based on the signal's own deadline field (per the schema in the Figma — urgency.tier is computed from urgency.days\_until). Where I've written "hot" without a deadline, it means: emit hot regardless of timing, because the event itself is the buying window.
 
@@ -125,4 +125,3 @@ Direct answers to your question "what are the nuances between this state, that s
 * Dissatisfaction language is rarely direct. Look for: "reviewing our options," "considering alternatives," "renewal under review," board efficacy reviews of named products, public RFP releases naming an incumbent.
 
 * Screen-time dissatisfaction is becoming its own thread. Amira's positioning here is strong (low time, high impact) — POLICY\_EDTECH\_TIME\_LIMIT should fire on legislation OR public sentiment, not just bills.
-
