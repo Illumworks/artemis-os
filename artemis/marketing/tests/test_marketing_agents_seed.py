@@ -13,6 +13,11 @@ import artemis.builders.models  # noqa: F401
 from artemis.marketing.seeds.marketing_agents import (
     DEFAULT_DOCS_ROOT,
     MARKETING_AGENT_SPECS,
+    MarketingAgentSpec,
+    _extract_section,
+    _failure_modes,
+    _row,
+    _urgency_tiers_v2,
     seed_marketing_agents,
 )
 
@@ -64,6 +69,79 @@ async def test_populates_canonical_16_and_is_idempotent(db_session: AsyncSession
     rows = (await db_session.execute(SELECT_IDS)).scalars().all()
     assert (first["inserted"], second["inserted"], second["updated"], len(rows)) == (16, 0, 16, 16)
     assert set(rows) == EXPECTED
+
+
+async def test_urgency_tiers_v2_accepts_bold_form() -> None:
+    section = "- **hot** — RFPs and board votes\n- **standard** — speculation"
+    assert _urgency_tiers_v2(section) == {
+        "hot": "RFPs and board votes",
+        "standard": "speculation",
+    }
+
+
+async def test_urgency_tiers_v2_accepts_reserve_for_form() -> None:
+    section = _extract_section(
+        (DEFAULT_DOCS_ROOT / "scout/1.2-regional-news-scout.md").read_text(encoding="utf-8"),
+        "Urgency tiers",
+    )
+    tiers = _urgency_tiers_v2(section)
+    assert tiers is not None
+    assert tiers["standard"] == "speculation"
+    assert tiers["hot"] == (
+        "Formal RFPs; Board votes (passed); Official transitions (announced); "
+        "Gubernatorial directives"
+    )
+
+
+async def test_urgency_tiers_v2_empty_returns_none() -> None:
+    assert _urgency_tiers_v2("") is None
+
+
+async def test_failure_modes_parses_regional_news_plain_bullets() -> None:
+    section = _extract_section(
+        (DEFAULT_DOCS_ROOT / "scout/1.2-regional-news-scout.md").read_text(encoding="utf-8"),
+        "Failure modes",
+    )
+    modes = _failure_modes(section)
+    assert modes is not None and len(modes) >= 4
+    assert all(mode["name"] and "description" in mode for mode in modes)
+
+
+async def test_row_extracts_implementation_notes_without_codex_suffix(tmp_path: Path) -> None:
+    docs_root = tmp_path / "agents"
+    (docs_root / "scout").mkdir(parents=True)
+    (docs_root / "scout/test.md").write_text(
+        "\n".join(
+            [
+                "# Agent 1.1 — Test Scout",
+                "",
+                "## Purpose",
+                "Test purpose.",
+                "",
+                "## Prompt scaffolding",
+                "Prompt.",
+                "",
+                "## Tools required",
+                "- tool.call",
+                "",
+                "## Implementation notes",
+                "Plain implementation notes.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    row = _row(
+        MarketingAgentSpec(
+            "marketing.scout.starbridge_researcher",
+            "scout/test.md",
+            "haiku",
+            "persistent",
+            "auto",
+            "signal",
+        ),
+        docs_root,
+    )
+    assert row["implementation_notes"] == "Plain implementation notes."
 
 
 async def test_markdown_edit_then_reseed_updates_description(

@@ -133,13 +133,41 @@ def _status(markdown: str) -> str | None:
     return re.sub(r"[^a-z0-9]+", "_", text.split(".")[0]).strip("_") or None
 
 
-def _urgency_tiers(section: str) -> dict[str, str] | None:
+def _urgency_tiers_v2(section: str) -> dict[str, str] | None:
+    """Permissive parser for bold bullets, plain bullets, and reserve-for prose."""
     tiers: dict[str, str] = {}
+    if not section.strip():
+        return None
+
     for bullet in _bullets(section):
-        match = re.match(r"\*\*(?P<tier>[^*]+)\*\*\s*[—:-]\s*(?P<body>.+)", bullet, re.DOTALL)
+        clean = " ".join(bullet.split())
+        match = re.match(r"\*\*(?P<tier>[^*]+)\*\*\s*[—:-]\s*(?P<body>.+)", clean)
+        if not match:
+            match = re.match(
+                r"(?P<tier>[A-Za-z][A-Za-z0-9_ /()-]{0,60}?)\s*(?:[—:]|\s+-\s+)\s*(?P<body>.+)",
+                clean,
+            )
         if match:
             tiers[match.group("tier").strip().lower()] = " ".join(match.group("body").split())
+
+    lead_in = re.split(r"^\s*-\s+", section, maxsplit=1, flags=re.MULTILINE)[0]
+    reserve = re.search(r"\bReserve\s+(?P<tier>[a-z][a-z0-9_-]*)\s+for:\s*$", lead_in, re.I)
+    if reserve:
+        tier = reserve.group("tier").strip().lower()
+        tiers[tier] = "; ".join(" ".join(bullet.split()) for bullet in _bullets(section))
+
+    for inline in re.finditer(
+        r"\b(?P<body>[A-Za-z][A-Za-z0-9_ /()-]{1,80}?)\s*=\s*"
+        r"(?P<tier>hot|standard|enrichment|low|medium|high|critical)\b",
+        lead_in,
+        re.I,
+    ):
+        tiers[inline.group("tier").strip().lower()] = inline.group("body").strip().lower()
     return tiers or None
+
+
+def _urgency_tiers(section: str) -> dict[str, str] | None:
+    return _urgency_tiers_v2(section)
 
 
 def _failure_modes(section: str) -> list[dict[str, str]] | None:
@@ -249,10 +277,11 @@ def _row(spec: MarketingAgentSpec, docs_root: Path) -> dict[str, Any]:
         },
         "cadence_seconds": _cadence_seconds(_extract_section(markdown, "Cadence")),
         "lifecycle_status": _status(markdown),
-        "urgency_tiers": _urgency_tiers(_extract_section(markdown, "Urgency tiers")),
+        "urgency_tiers": _urgency_tiers_v2(_extract_section(markdown, "Urgency tiers")),
         "failure_modes": _failure_modes(_extract_section(markdown, "Failure modes")),
         "db_tables_touched": _db_tables(_extract_section(markdown, "DB tables touched")),
         "implementation_notes": _extract_section(markdown, "Implementation notes for Codex")
+        or _extract_section(markdown, "Implementation notes")
         or None,
         "inputs_required": _inputs(_extract_section(markdown, "Inputs")),
     }
