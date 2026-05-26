@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+from functools import lru_cache
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +30,7 @@ from artemis.builders.repository import (
     set_agent_context,
     set_agent_run_completed,
 )
+from artemis.marketing.josh_spec import JoshSpec, parse_spec, reason_codes_for_scout
 from artemis.ws.events import (
     agent_completed_event,
     agent_failed_event,
@@ -39,6 +42,102 @@ from artemis.ws.events import (
 from artemis.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _cached_josh_spec() -> JoshSpec:
+    return parse_spec()
+
+
+def _build_system_prompt(
+    agent: Any,
+    shared_context: dict[str, Any] | None,
+) -> str | None:
+    """Compose the rich system prompt from agent row + Josh's spec.
+
+    Returns None only if every section would be empty (legacy compatibility for
+    agents with no system_prompt + no goal + no persona).
+    """
+    parts: list[str] = []
+
+    # Base system prompt
+    if agent.system_prompt:
+        parts.append(agent.system_prompt)
+
+    # Persona sections (populated by F3; gracefully absent pre-F3)
+    persona = agent.persona or {}
+    if isinstance(persona, dict):
+        voice_notes = persona.get("voice_notes") or ""
+        purpose = persona.get("purpose") or ""
+        if voice_notes:
+            parts.append(f"## Voice\n{voice_notes}")
+        if purpose:
+            parts.append(f"## Purpose\n{purpose}")
+
+    # Goal
+    if agent.goal:
+        parts.append(f"## Goal\n{agent.goal}")
+
+    # Scout-only: Josh-spec reason codes + state nuances
+    agent_id: str = agent.agent_id or ""
+    if agent_id.startswith("marketing.scout."):
+        scout_slug = agent_id.rsplit(".", 1)[-1]
+        spec = _cached_josh_spec()
+        scout_codes = reason_codes_for_scout(spec, scout_slug)
+        if scout_codes:
+            lines = [
+                "## Reason codes you may emit\n\n"
+                "You may emit ONLY these reason codes. Any other code will be rejected.\n"
+            ]
+            for rc in scout_codes:
+                lines.append(
+                    f"- **{rc.code}** ({rc.default_urgency}) — {rc.description}\n"
+                    f"  Scout's job: {rc.what_scout_looks_for}"
+                )
+            parts.append("\n".join(lines))
+
+        if spec.state_nuances:
+            nuance_lines = ["## State nuances to watch"]
+            for sn in spec.state_nuances:
+                nuance_lines.append(f"\n### {sn.state}\n{sn.text}")
+            parts.append("\n".join(nuance_lines))
+
+    # Urgency tiers (populated by F3; gracefully absent pre-F3)
+    urgency_tiers = agent.urgency_tiers
+    if urgency_tiers and isinstance(urgency_tiers, dict):
+        tier_lines = ["## Urgency discipline"]
+        for tier, desc in urgency_tiers.items():
+            tier_lines.append(f"- **{tier}**: {desc}")
+        parts.append("\n".join(tier_lines))
+
+    # Failure modes (populated by F3; gracefully absent pre-F3)
+    failure_modes = agent.failure_modes
+    if failure_modes and isinstance(failure_modes, list):
+        fm_lines = ["## Failure modes to avoid"]
+        for fm in failure_modes:
+            name = fm.get("name", "")
+            desc = fm.get("description", "")
+            fm_lines.append(f"- **{name}** — {desc}")
+        parts.append("\n".join(fm_lines))
+
+    # Implementation notes (populated by F3; gracefully absent pre-F3)
+    if agent.implementation_notes:
+        parts.append(f"## Implementation notes\n{agent.implementation_notes}")
+
+    # Inputs required (populated by F3; gracefully absent pre-F3)
+    inputs_required = agent.inputs_required
+    if inputs_required and isinstance(inputs_required, list):
+        inp_lines = ["## Inputs available"]
+        for inp in inputs_required:
+            inp_lines.append(f"- {inp}")
+        parts.append("\n".join(inp_lines))
+
+    # Shared context from upstream pipeline nodes
+    if shared_context:
+        ctx_lines = "\n".join(f"{k}: {v}" for k, v in shared_context.items())
+        parts.append(f"## Context\n{ctx_lines}")
+
+    return "\n\n".join(parts) if parts else None
 
 
 def _build_agent_hooks(run_id: str) -> HookRegistry:
@@ -167,16 +266,8 @@ async def run_agent(
             )
             adapter = AnthropicAdapter()
 
-    # Build system prompt
-    system_parts: list[str] = []
-    if agent.system_prompt:
-        system_parts.append(agent.system_prompt)
-    if agent.goal:
-        system_parts.append(f"## Goal\n{agent.goal}")
-    if shared_context:
-        ctx_lines = "\n".join(f"{k}: {v}" for k, v in shared_context.items())
-        system_parts.append(f"## Context\n{ctx_lines}")
-    system_prompt = "\n\n".join(system_parts) if system_parts else None
+    # Build system prompt (rich injection: persona, Josh-spec reason codes, state nuances, etc.)
+    system_prompt = _build_system_prompt(agent, shared_context)
 
     # Tool resolution — V1 stub
     tools_list = agent.tools if isinstance(agent.tools, list) else []
