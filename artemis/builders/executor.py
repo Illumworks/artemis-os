@@ -5,10 +5,6 @@ Public function: run_agent()
 This module is the "execution" half of the Builders domain. It loads an Agent
 row, creates an AgentRun record, drives run_turn, writes results to
 agent_context, and returns the updated AgentRun.
-
-Tool resolution is deliberately stubbed for V1: if agent.tools is non-empty a
-warning is logged and the run proceeds with tools=None. Full tool resolution is
-a later slice.
 """
 
 from __future__ import annotations
@@ -20,9 +16,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import artemis.tools  # noqa: F401 — registers tool factories at import time
 from artemis.agent import AnthropicAdapter, run_turn
 from artemis.agent.client import ModelAdapter
 from artemis.agent.hooks import HookRegistry
+from artemis.agent.tools import ToolRegistry
 from artemis.builders.models import AgentRun
 from artemis.builders.repository import (
     create_agent_run,
@@ -31,6 +29,8 @@ from artemis.builders.repository import (
     set_agent_run_completed,
 )
 from artemis.marketing.josh_spec import JoshSpec, parse_spec, reason_codes_for_scout
+from artemis.tools.context import ToolContext
+from artemis.tools.registry import get_factory, known_tool_names
 from artemis.ws.events import (
     agent_completed_event,
     agent_failed_event,
@@ -269,16 +269,6 @@ async def run_agent(
     # Build system prompt (rich injection: persona, Josh-spec reason codes, state nuances, etc.)
     system_prompt = _build_system_prompt(agent, shared_context)
 
-    # Tool resolution — V1 stub
-    tools_list = agent.tools if isinstance(agent.tools, list) else []
-    if tools_list:
-        logger.warning(
-            "Agent '%s' has tools %r but tool resolution is not yet implemented. "
-            "Running with no tools.",
-            agent_id,
-            tools_list,
-        )
-
     # Choose the user message: explicit > agent.goal > generic
     effective_message: str = user_message or agent.goal or "Please proceed."
 
@@ -294,6 +284,35 @@ async def run_agent(
         owner_user_id=owner_user_id,
     )
     await session.flush()
+
+    # Build per-call tool registry from agent.tools (list of name strings).
+    # Unknown tool names are dropped with a single WARNING; they do not crash the run.
+    tool_context = ToolContext(
+        session=session,
+        agent_id=agent_id,
+        agent_db_id=agent.id,
+        agent_run_id=run_id,
+        pipeline_run_id=str(shared_context["pipeline_run_id"])
+        if shared_context and "pipeline_run_id" in shared_context
+        else None,
+    )
+    tool_registry = ToolRegistry()
+    unknown_tools: list[str] = []
+    for raw_name in agent.tools or []:
+        name = raw_name if isinstance(raw_name, str) else raw_name.get("name", "")
+        factory = get_factory(name)
+        if factory is None:
+            unknown_tools.append(name)
+            continue
+        tool_def, impl = factory(tool_context)
+        tool_registry.register(tool_def, impl)
+    if unknown_tools:
+        logger.warning(
+            "Agent %r declares unknown tools (dropped): %s. Known: %s",
+            agent_id,
+            unknown_tools,
+            known_tool_names(),
+        )
 
     # Broadcast run started
     await ws_manager.broadcast(
@@ -311,7 +330,7 @@ async def run_agent(
             system=system_prompt,
             model=agent.model,
             max_iterations=agent.max_iterations,
-            tools=None,
+            tools=tool_registry if len(tool_registry) > 0 else None,
             hooks=hooks,
         )
 
