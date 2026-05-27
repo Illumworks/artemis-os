@@ -125,7 +125,19 @@ The work in this session (Phase 1+2 blueprint/runtime/tool-execution rebuild) is
 - **PROVIDER FORK (blocks Phase BH loop-close).** The 5th hollowness layer: the `claude-code` provider adapter (`artemis/providers/claude_code/adapter.py`) cannot do tool-use — it flattens everything to a `claude --print` text prompt and ignores `request.tools`. Verified: the adapter has zero tool handling; the cascade (`resolve_adapter`) tries `provider` first and only falls through on auth/availability errors, so claude-code (always available) is never bypassed; both ANTHROPIC_API_KEY and OPENAI_API_KEY in `.env` are empty (len 0). Marketing agents are seeded `provider=claude-code`. Net: scouts now actively TRY to use tools (F6 worked) but report "I don't have access to the tools this task requires" because the provider can't emit tool calls. This conflicts with the committed invariant "Provider cascade is CLI-first; agents default to claude-code (no API key)" — that invariant predates tool execution.
   - **Option A (pragmatic unblock):** Jon adds a real ANTHROPIC_API_KEY to `.env` + switch marketing agents to `provider=anthropic` (seed change + re-seed). Loop closes immediately, no code. Costs API $ (~$0.11–0.50/run, trivial at demo scale). Abandons "free CLI" for marketing agents.
   - **Option B (architecturally aligned, bigger):** teach the claude-code adapter tool-use — expose artemis tools as an MCP server claude-code connects to (claude-code CLI supports MCP natively), or use the claude-code SDK tool mechanism. Keeps the free model. Real provider engineering, ~1-2 weeks.
-  - **Lead recommendation: A now, B banked.** Free-via-subscription matters at scale; for a 9-scout demo on 4h cadence, API cost is negligible. Bank B as a provider-engineering stream to return to the free model later. Requires: Jon provides the key (secret); then switch marketing agent provider + re-seed (small Worker task).
+  - **RESOLVED 2026-05-27: Jon has NO anthropic key and won't add API cost (the whole point is relying on the paid CLI subscription). Option A is OFF. Must do Option B. Requirement: keep a path to add an API key LATER.**
+
+### Provider tool-use — research findings (claude-code-guide agent, 2026-05-27)
+
+The authoritative answer on doing custom tool-use via the Claude Code subscription (no API key):
+
+1. `claude --print` headless CAN do tool use, but ONLY claude-code's BUILT-IN tools (Read/Write/Edit/Bash/Grep/WebSearch/WebFetch). No custom-tool registration in headless `-p`.
+2. **`claude -p --mcp-config <json>` is the ONLY subscription-compatible path to custom tools.** Claude connects to an MCP server and calls its tools autonomously during the headless run (it runs its own agent loop). This works with subscription auth.
+3. The **Claude Agent SDK (Python)** supports custom in-process tools BUT requires `ANTHROPIC_API_KEY` — it does NOT authenticate via the CLI subscription. So it's the "add key later" path, not the subscription path.
+4. MCP per-run context (DB session, agent_id, run_id, permission allowlist): MCP server is a separate process. Options: env/args at launch, shared DB, or HTTP callback into the app.
+
+**Implication / locked direction:** The subscription path = an MCP server that re-exposes the artemis tool registry (P2/P3), launched per-run by the claude-code adapter via `--mcp-config`, with run context passed at launch. claude-code runs its own tool loop (artemis's `run_turn` is bypassed for claude-code-provider agents). The "add API key later" path is ALREADY built: the AnthropicAdapter forwards tools through artemis's `run_turn` loop correctly — it just needs a key. Both coexist via the provider cascade. This is the F4-equivalent design for the subscription era; needs its own design doc + brief. Real scope (~1-2 weeks). This is now the critical path to close Phase BH — the loop cannot close without it given the no-API-key constraint.
+
   - Note: terminal-Lead left a plain uvicorn running on :8000 (merged code) from its smoke. May conflict with Lead's preview server.
 
 ## Resolved this turn
