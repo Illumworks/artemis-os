@@ -324,15 +324,48 @@ async def run_agent(
     hooks = _build_agent_hooks(run_id)
 
     try:
-        result = await run_turn(
-            adapter=adapter,
-            messages=[_user_msg(effective_message)],
-            system=system_prompt,
-            model=agent.model,
-            max_iterations=agent.max_iterations,
-            tools=tool_registry if len(tool_registry) > 0 else None,
-            hooks=hooks,
-        )
+        if _is_claude_code_tool_run(adapter, tool_registry):
+            # claude-code IS the agent runtime for tool-using scouts: it spawns
+            # the per-run Artemis MCP server and runs its own fetch→call-tool loop
+            # on the user's subscription, returning a single final result. Signals
+            # are written directly to the DB by that MCP-server process, so no
+            # further artemis turns run here. (Anthropic/run_turn path unchanged.)
+            from typing import cast
+
+            from artemis.agent.client import CompletionRequest
+            from artemis.agent.types import RunResult, StopReason
+            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+            cc_adapter = cast(ClaudeCodeAdapter, adapter)
+            completion = await cc_adapter.run_with_tools(
+                CompletionRequest(
+                    messages=[_user_msg(effective_message)],
+                    system=system_prompt,
+                    model=agent.model,
+                ),
+                agent_id=agent_id,
+                run_id=run_id,
+                pipeline_run_id=tool_context.pipeline_run_id,
+                agent_tools=[t.name for t in tool_registry.specs()],
+            )
+            # Normalise the single CompletionResponse into the RunResult shape the
+            # downstream text/usage/finalize code expects (one assistant message).
+            result = RunResult(
+                messages=[_user_msg(effective_message), completion.message],
+                stop_reason=cast(StopReason, completion.stop_reason),
+                usage=completion.usage,
+                iterations=1,
+            )
+        else:
+            result = await run_turn(
+                adapter=adapter,
+                messages=[_user_msg(effective_message)],
+                system=system_prompt,
+                model=agent.model,
+                max_iterations=agent.max_iterations,
+                tools=tool_registry if len(tool_registry) > 0 else None,
+                hooks=hooks,
+            )
 
         # Extract final assistant text
         final_text = _extract_text(result)
@@ -373,6 +406,23 @@ async def run_agent(
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _is_claude_code_tool_run(adapter: ModelAdapter, tool_registry: ToolRegistry) -> bool:
+    """True when claude-code should run its OWN tool loop instead of run_turn.
+
+    Detection is ``isinstance(adapter, ClaudeCodeAdapter)``: ``resolve_adapter``
+    returns a *bare* adapter instance (not a cascade wrapper — the cascade in
+    ``artemis/providers/resolver.py`` returns the first constructible adapter
+    directly), and the ``model_adapter`` override path passes an instance too. A
+    duck-typed ``provider`` string check would miss the override and the resolver
+    both return concrete instances, so isinstance is the precise test. Only fires
+    when the agent actually has tools — a no-tool claude-code run stays on the
+    text/``run_turn`` path.
+    """
+    from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+    return isinstance(adapter, ClaudeCodeAdapter) and len(tool_registry) > 0
 
 
 def _user_msg(text: str):  # type: ignore[no-untyped-def]
