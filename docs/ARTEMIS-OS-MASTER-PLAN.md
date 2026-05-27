@@ -1,7 +1,7 @@
 # Artemis OS — Master Plan
 
 **Living doc. Updated whenever a strategic decision lands.**
-**Last revised:** 2026-05-20 (Jon + Lead — platform-framing clarification + Marketing seed reframe)
+**Last revised:** 2026-05-26 (Lead — corrective insertion: blueprint/runtime/tool-execution hollowness discovery + rebuild plan)
 
 ---
 
@@ -109,6 +109,31 @@ J10-J11 closed the major transport blockers. Recent landings:
 - OP1 Automations registry port from Node (next Operations gap)
 - OP-cleanup stale test fixes (Slack permalink + migration test path)
 - start-app.sh hardcoded path fix
+
+### Phase BH — Blueprint Hollowness rebuild (corrective insertion, 2026-05-26)
+
+**Trigger:** Lead session 2026-05-26 audit discovered three layers of hollowness underneath the "substrate complete" framing the prior session reached.
+
+**The discovery:** Pipeline executor walks 22 nodes per run and completes successfully, but scouts emit zero signals because (1) the seed loader populated only ~30% of blueprint fields in agent rows, (2) `run_agent()` injected only ~30% of what IS loaded into the LLM system message, (3) tool execution was stubbed — `agent.tools` was decorative; the loop ran with `tools=None`. Plus Josh's spec was duplicated across four places with no single source of truth.
+
+Full audit: `docs/blueprint-audit-2026-05-26.md`. Coordination: `docs/STREAMS-2026-05-26.md`. Lead continuity: `docs/LEAD-SESSION-LOG.md` (read FIRST on any new Lead session).
+
+**Phase 1 (DONE 2026-05-26):**
+- **F1** (`4c8fdd4`) — Josh-spec parser; `decisions/campaign-signal-spec-v1.md` is now the single source (duplicate deleted, "Primary scouts" column added, reason-codes seed reads the parser).
+- **F2** (`7ad56b0`) — `run_agent()` runtime injection: persona voice, urgency tiers, failure modes, Josh-spec reason-code allowlist, state nuances, implementation notes all flow into the LLM system prompt.
+- **F3** (`40cdf0b`) — seed parser regex repairs (urgency/failure/notes now populate).
+
+**Phase 2 (in flight 2026-05-26):**
+- **P1** (`e9356db`) — scout blueprints rebuilt as voice/focus docs (stale reason-code tables removed).
+- **P4** (`6769fe5`) — qualifier + content blueprints filled (3 empty system prompts written, tools declared).
+- **P2** (`40fa7b9`) — tool bridge: `agent.tools` → `(Tool, ToolImpl)` factories + `signal_queue.write` reference tool + e2e proof (scout LLM → real signal_queue row). Uses the existing `artemis/agent/loop.py` tool-use machinery.
+- **P3** (queued, fires after P2) — remaining tool implementations.
+
+**Architectural commitments:** Josh's spec is the single source of truth (runtime-read, not re-encoded). Blueprints are voice/focus docs; operational data is injected at runtime. Tool execution is in-process for v1 (MCP-graduation path preserved). AI-maintenance is the maintenance pattern.
+
+**Cost cap (v1):** `ARTEMIS_SCOUT_COST_CAP_USD` env-configurable, default $50 (effectively unlimited at haiku rates); observability log per run; cost-dashboard UI queued as stream `C-cost-dashboard`.
+
+**Position in priority order:** Phase BH lands before PIPE6. PIPE6 (Workflows + Automations sunset + auto-migrate to Pipelines) remains the next-next item per the D6 lock.
 
 ### Marketing seed (Artemis seed data) — planned, not started
 
