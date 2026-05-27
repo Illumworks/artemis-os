@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.builders.models  # noqa: F401
+from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
 from artemis.marketing.seeds.marketing_agents import (
     DEFAULT_DOCS_ROOT,
     MARKETING_AGENT_SPECS,
@@ -188,19 +189,16 @@ async def test_persona_owner_and_tools_contracts(db_session: AsyncSession) -> No
     assert isinstance(row["tools"], list) and all(isinstance(tool, str) for tool in row["tools"])
 
 
-async def test_scout_reason_codes_emitted_seeded_and_override_preserved(
+async def test_scout_reason_codes_emitted_sourced_from_josh_spec(
     db_session: AsyncSession,
 ) -> None:
     await _reset(db_session)
     await seed_marketing_agents(db_session)
-    codes = (await db_session.execute(SELECT_STARBRIDGE_CODES)).scalar_one()
-    assert codes == [
-        "POLICY_LIT_MANDATE",
-        "FUNDING_LITERACY_GRANT",
-        "FUNDING_DEADLINE_NEAR",
-        "VENDOR_APPROVED_LIST",
-        "PROCUREMENT_LITERACY_RFP",
+    expected_codes = [
+        rc.code for rc in reason_codes_for_scout(parse_spec(), "starbridge_researcher")
     ]
+    codes = (await db_session.execute(SELECT_STARBRIDGE_CODES)).scalar_one()
+    assert codes == expected_codes
     await db_session.execute(
         text(
             "UPDATE agents SET reason_codes_emitted = '[\"CUSTOM_CODE\"]'::jsonb "
@@ -209,7 +207,7 @@ async def test_scout_reason_codes_emitted_seeded_and_override_preserved(
     )
     await db_session.commit()
     await seed_marketing_agents(db_session)
-    assert (await db_session.execute(SELECT_STARBRIDGE_CODES)).scalar_one() == ["CUSTOM_CODE"]
+    assert (await db_session.execute(SELECT_STARBRIDGE_CODES)).scalar_one() == expected_codes
 
 
 async def test_seed_extracts_operating_blueprint_fields(db_session: AsyncSession) -> None:

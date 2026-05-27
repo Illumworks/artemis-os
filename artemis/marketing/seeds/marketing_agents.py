@@ -15,8 +15,11 @@ from typing import Any, NamedTuple
 from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
+
 DEFAULT_DOCS_ROOT = Path(__file__).resolve().parents[3] / "docs/marketing-ops-v1/agents"
 MODEL_IDS = {"haiku": "claude-haiku-4-5", "sonnet": "claude-sonnet-4-6"}
+_JOSH_SPEC = parse_spec()
 
 
 class MarketingAgentSpec(NamedTuple):
@@ -226,15 +229,6 @@ def _tools(section: str) -> list[str]:
     return found
 
 
-def _reason_codes_emitted(section: str) -> list[str]:
-    found: list[str] = []
-    for raw_line in section.splitlines():
-        match = re.match(r"^\|\s*`?([A-Z][A-Z0-9_]+)`?\s*\|", raw_line.strip())
-        if match and match.group(1) != "Code" and match.group(1) not in found:
-            found.append(match.group(1))
-    return found
-
-
 def _goal(purpose: str) -> str:
     collapsed = " ".join(purpose.split())
     match = re.match(r"(.+?[.!?])(?:\s|$)", collapsed)
@@ -247,6 +241,10 @@ def _row(spec: MarketingAgentSpec, docs_root: Path) -> dict[str, Any]:
     purpose = _extract_section(markdown, "Purpose")
     persona_purpose, voice_notes = PERSONAS[spec.agent_id]
     model = MODEL_IDS[spec.model_tier]
+    reason_codes = []
+    if spec.agent_id.startswith("marketing.scout."):
+        slug = spec.agent_id.rsplit(".", 1)[-1]
+        reason_codes = [rc.code for rc in reason_codes_for_scout(_JOSH_SPEC, slug)]
     return {
         "agent_id": spec.agent_id,
         "name": name,
@@ -254,9 +252,7 @@ def _row(spec: MarketingAgentSpec, docs_root: Path) -> dict[str, Any]:
         "goal": _goal(purpose),
         "system_prompt": _strip_code_fence(_extract_section(markdown, "Prompt scaffolding")),
         "tools": _tools(_extract_section(markdown, "Tools required")),
-        "reason_codes_emitted": _reason_codes_emitted(
-            _extract_section(markdown, "Reason codes emitted")
-        ),
+        "reason_codes_emitted": reason_codes,
         "model": model,
         "provider": "claude-code",
         "fallback_provider": "anthropic",
@@ -343,11 +339,7 @@ async def seed_marketing_agents(
                     fallback_model = EXCLUDED.fallback_model, memory_policy = EXCLUDED.memory_policy,
                     permission_mode = EXCLUDED.permission_mode, persona = EXCLUDED.persona,
                     output_contract = EXCLUDED.output_contract,
-                    reason_codes_emitted = CASE
-                        WHEN agents.reason_codes_emitted = '[]'::jsonb
-                        THEN EXCLUDED.reason_codes_emitted
-                        ELSE agents.reason_codes_emitted
-                    END,
+                    reason_codes_emitted = EXCLUDED.reason_codes_emitted,
                     cadence_seconds = COALESCE(EXCLUDED.cadence_seconds, agents.cadence_seconds),
                     lifecycle_status = COALESCE(EXCLUDED.lifecycle_status, agents.lifecycle_status),
                     urgency_tiers = COALESCE(EXCLUDED.urgency_tiers, agents.urgency_tiers),
