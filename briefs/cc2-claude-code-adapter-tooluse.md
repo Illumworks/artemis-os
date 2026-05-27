@@ -32,15 +32,20 @@ In `artemis/providers/claude_code/adapter.py`, add a tool-capable execution path
 
 New method (or extended path), conceptually `run_with_tools(request, *, agent_id, run_id, pipeline_run_id, agent_tools: list[str]) -> CompletionResponse`:
 1. Generate a per-run MCP config JSON (temp file) describing one stdio server named `artemis`: command `python` (use the same interpreter, `sys.executable`), args `["-m", "artemis.tools.mcp_server", "--agent-id", agent_id, "--run-id", run_id, ...]`. Match the MCP config schema claude-code expects (`mcpServers` map — verify the exact shape claude-code's `--mcp-config` wants).
-2. Build the launch command:
+2. Build the launch command. **CORRECTED FLAGS — verified against the installed claude CLI 2026-05-27 (terminal-Lead):**
    ```
    claude -p --output-format json --model <model>
      --mcp-config <generated.json>
-     --allowedTools mcp__artemis__<t1> mcp__artemis__<t2> ...   (one per agent tool)
-     --disallowedTools <claude-code built-ins: Bash, Read, Write, Edit, etc.>
-     --max-turns <N>     (sane cap, e.g. 15 — sign-off Q3)
+     --strict-mcp-config          # load ONLY our artemis server, ignore the user's other MCP configs (hardens scoping)
+     --allowed-tools mcp__artemis__<t1> mcp__artemis__<t2> ...   (one per agent tool; canonical flag is hyphenated)
+     --disallowed-tools Bash Read Write Edit Glob Grep WebSearch WebFetch   (disable claude-code built-ins)
+     --permission-mode <mode>     # see step 2a
    ```
-   (Verify the exact flag names/format against the installed claude CLI — `--allowedTools`/`--disallowedTools`/`--max-turns` spellings. Adapt to reality; report what the CLI actually accepts.)
+   - `--allowed-tools` / `--disallowed-tools` are the canonical hyphenated spellings (camelCase aliases also accepted — use hyphenated).
+   - `--strict-mcp-config` is REQUIRED — it guarantees claude-code loads only our artemis MCP server and ignores any user-level MCP config, so the per-agent tool scoping can't be widened by external config.
+   - **`--max-turns` does NOT exist in the installed CLI. Do not use it.** Do NOT use `--max-budget-usd` either (its "API calls" semantics are unclear on subscription auth). **The runaway guard is the existing 300s wall-clock subprocess timeout already in the adapter** (sign-off Q3 revised — see design doc). Keep that timeout; consider making it configurable via an env var (e.g. `ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS`, default 300). On subscription there is no per-token $ cost, so wall-clock is the correct bound.
+
+2a. **`--permission-mode`:** in headless `-p`, claude-code may otherwise prompt for tool permission. We need MCP tools to run autonomously without prompts. The `--allowed-tools` list pre-approves exactly our MCP tools; verify whether default headless behavior already runs them without prompting, or whether a specific `--permission-mode` value is needed for non-interactive auto-approval of the allowed tools. **Check `claude --help` for the permission-mode values and pick the one that runs allowed tools autonomously in headless mode. Report what you chose and why.** Do NOT use a blanket "skip all permissions" mode if a scoped one works — the allow-list is the security boundary.
 3. Pipe the composed prompt (the F2 rich system prompt + F6 imperative task, already in `request.system` + `request.messages`) via stdin, same as today's `_flatten_to_prompt`.
 4. Run the subprocess (reuse the timeout pattern). On success, parse the JSON result → final text + usage. Return a `CompletionResponse` with `stop_reason="end_turn"` (claude-code already ran its full loop; there are no further turns for artemis to orchestrate).
 5. Clean up the temp MCP config file.
@@ -84,8 +89,8 @@ Mock the subprocess (don't launch real claude in unit tests). The REAL launch is
 ## Acceptance criteria (demonstrate each)
 
 1. `ARTEMIS_TEST_DB_URL=... uv run pytest artemis/providers/tests/test_claude_code_tooluse.py artemis/builders/tests/test_run_agent_routing.py -v` — all pass. **Paste.**
-2. Generated MCP config + launch command for regional_news. **Paste them** (Lead verifies allowedTools = regional_news's tools, built-ins disallowed, max-turns set).
-3. The actual claude CLI flag names verified against the installed binary (`claude --help` excerpt for mcp-config/allowedTools/max-turns). **Paste the relevant lines.**
+2. Generated MCP config + launch command for regional_news. **Paste them** (Lead verifies `--allowed-tools` = regional_news's MCP tool names, built-ins in `--disallowed-tools`, `--strict-mcp-config` present, a permission-mode chosen, and the wall-clock timeout retained as the runaway guard — NO max-turns).
+3. The actual claude CLI flags verified against the installed binary (`claude --help` excerpt for `--mcp-config`, `--allowed-tools`, `--disallowed-tools`, `--strict-mcp-config`, `--permission-mode`). **Paste the relevant lines + which permission-mode you chose for autonomous headless MCP tool calls and why.**
 4. `./scripts/check.sh` passes modulo known-exempt j5b. **Paste summary.**
 5. `git diff --stat` + `git log --oneline -1` on `worker/cc2-adapter-tooluse`. **Paste.**
 
