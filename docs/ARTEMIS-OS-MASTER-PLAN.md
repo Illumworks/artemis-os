@@ -133,7 +133,19 @@ Full audit: `docs/blueprint-audit-2026-05-26.md`. Coordination: `docs/STREAMS-20
 
 **Cost cap (v1):** `ARTEMIS_SCOUT_COST_CAP_USD` env-configurable, default $50 (effectively unlimited at haiku rates); observability log per run; cost-dashboard UI queued as stream `C-cost-dashboard`.
 
-**Position in priority order:** Phase BH lands before PIPE6. PIPE6 (Workflows + Automations sunset + auto-migrate to Pipelines) remains the next-next item per the D6 lock.
+**Position in priority order:** Phase BH lands first. Then **Signal Playbook** (see D7 below), then **PIPE6** (Workflows + Automations sunset + auto-migrate to Pipelines, per the D6 lock).
+
+### D7 — Signal Playbook: the Marketing UI over Josh's spec (locked 2026-05-26)
+
+A Marketing-section UI for Josh / Anne Marie to view + edit the criteria that fire campaigns (reason codes first; territory/rules/nuances later), without a deploy.
+
+- **Name:** "Signal Playbook." **Placement:** under Marketing (domain content, not an orchestration primitive — contrast D6.1).
+- **Source-of-truth architecture: Option B** — the `signal_reason_codes` DB table (already exists from M1) becomes canonical; `josh_spec.parse_spec(file)` is demoted to an import path; runtime reads a cached table projection; `decisions/campaign-signal-spec-v1.md` becomes a one-way generated export (preserved for git/human reading, never read at runtime).
+- **Editing UX:** structured per-field forms (validated dropdowns / chip-selects / textareas), never a raw editable text list. Soft-retire only (lossless invariant). Chosen specifically to eliminate fragility — no markdown syntax in the edit path.
+- **Why Option B over A/C:** A (UI writes markdown) reintroduces the fragility Jon wants gone; C (bidirectional sync) is a divergence bug factory; B matches build-philosophy #5 (operator-mutable config → table) and consolidates onto the table that already exists.
+- **Streams:** SP1 (backend canonical-source shift + CRUD API + markdown export) → SP2 (the Marketing UI). After Phase BH, before PIPE6.
+
+Full design: `docs/signal-playbook-design.md`.
 
 ### Marketing seed (Artemis seed data) — planned, not started
 
