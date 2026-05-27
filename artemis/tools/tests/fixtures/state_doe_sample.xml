@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Florida DOE News</title>
+    <link>https://www.fldoe.org</link>
+    <description>Florida Department of Education News</description>
+    <item>
+      <title>FLDOE Announces Science of Reading Professional Development Initiative</title>
+      <link>https://www.fldoe.org/news/2026/reading-pd.html</link>
+      <pubDate>Fri, 23 May 2026 12:00:00 GMT</pubDate>
+      <description>The Florida DOE will provide statewide training in structured literacy methods.</description>
+    </item>
+    <item>
+      <title>Florida School Grades Released for 2025-2026</title>
+      <link>https://www.fldoe.org/news/2026/school-grades.html</link>
+      <pubDate>Thu, 22 May 2026 09:00:00 GMT</pubDate>
+      <description>Annual school accountability grades show improvement in reading proficiency.</description>
+    </item>
+  </channel>
+</rss>
