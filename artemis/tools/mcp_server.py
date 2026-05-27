@@ -39,6 +39,13 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Register every ORM model whose table is an FK target of a tool write, so
+# SQLAlchemy's mapper is fully configured in this standalone process. Without
+# this, signal_queue.write fails at flush — SignalQueue.pipeline_run_id FKs
+# pipeline_runs, whose Table is otherwise never imported into Base.metadata
+# here. The main app imports all models at startup; this entrypoint must too.
+import artemis.marketing.models  # noqa: F401
+import artemis.pipelines.models  # noqa: F401
 import artemis.tools  # noqa: F401 — import side-effect registers all tool factories
 from artemis.agent.types import Tool, ToolImpl
 from artemis.builders import repository as repo
