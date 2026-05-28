@@ -203,6 +203,16 @@ async def _fire_scheduled_pipeline(pipeline_id: str) -> None:
             if pipeline.status != "active":
                 return
 
+            existing = await repo.acquire_run_lock(session, pipeline_id)
+            if existing is not None:
+                logger.warning(
+                    "Scheduler skipping pipeline %s — in-flight run %s (status=%s) is still active",
+                    pipeline_id,
+                    existing.id,
+                    existing.status,
+                )
+                return
+
             run = await repo.create_pipeline_run(
                 session,
                 pipeline_id=pipeline_id,
