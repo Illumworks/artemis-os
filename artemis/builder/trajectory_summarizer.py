@@ -9,17 +9,58 @@ The summarizer calls the LLM with the run's final messages to extract:
   - what_was_missing: tools/context/capabilities that were absent
 
 Design:
-  summarize_async(run_id)  — fire-and-forget entry point (wraps summarize in a task)
-  summarize(run_id, ...)   — the actual implementation; testable synchronously
+  summarize_async(snapshot)  — fire-and-forget entry point (wraps summarize in a task)
+  summarize(snapshot, ...)   — the actual implementation; testable synchronously
+
+CC13: The summarizer no longer queries the DB for the AgentRun row.  The caller
+builds an AgentRunSnapshot from the in-scope run object (before commit) and passes
+it directly.  This eliminates the transaction-visibility race where the async task's
+new session opened after the flush (but before the commit) could not see the row.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AgentRunSnapshot:
+    """Immutable snapshot of the fields needed by the trajectory summarizer.
+
+    Constructed by the caller (executor) from the in-scope AgentRun object
+    immediately after flush, then passed to summarize_async(). This avoids
+    a DB re-query in a separate session that cannot see the unflushed row.
+
+    Attributes
+    ----------
+    run_id:
+        The UUID string (AgentRun.run_id). Used in log messages and as the
+        human-readable identifier in the prompt.
+    run_pk:
+        The integer primary key (AgentRun.id). Used as the FK when inserting
+        the agent_run_trajectory_summaries row.
+    agent_id:
+        The agent identifier string, or None for anonymous runs.
+    status:
+        Terminal status of the run ("completed", "failed", etc.).
+    user_message:
+        The original user message that triggered the run, or None.
+    error:
+        Error string if the run failed, or None.
+    """
+
+    run_id: str
+    run_pk: int
+    agent_id: str | None
+    status: str
+    user_message: str | None
+    error: str | None
+
 
 # ── Background-task retention (CC7 pattern) ───────────────────────────────────
 # A bare asyncio.create_task() return value is weakly referenced by the event
@@ -51,38 +92,41 @@ Run data:
 """
 
 
-async def summarize_async(run_id: int) -> None:
-    """Fire-and-forget: schedule summarize(run_id) as a background task.
+async def summarize_async(snapshot: AgentRunSnapshot) -> None:
+    """Fire-and-forget: schedule summarize(snapshot) as a background task.
 
     Called at the end of agent_run completion. Does not block the caller.
+    The snapshot carries all data the summarizer needs — no DB lookup occurs.
     """
-    task = asyncio.create_task(_safe_summarize(run_id), name=f"trajectory_summarize_{run_id}")
+    task = asyncio.create_task(
+        _safe_summarize(snapshot), name=f"trajectory_summarize_{snapshot.run_id}"
+    )
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)
 
 
-async def _safe_summarize(run_id: int) -> None:
+async def _safe_summarize(snapshot: AgentRunSnapshot) -> None:
     """Wrapper that catches all exceptions so a summarizer failure never crashes the caller."""
     try:
-        await summarize(run_id)
+        await summarize(snapshot)
     except Exception:
-        logger.exception("trajectory_summarizer: run_id=%s failed (non-fatal)", run_id)
+        logger.exception("trajectory_summarizer: unhandled exception during summarize")
 
 
 async def summarize(
-    run_id: int,
+    snapshot: AgentRunSnapshot,
     *,
     adapter: Any | None = None,
     db_session: Any | None = None,
 ) -> None:
-    """Generate and persist a trajectory summary for the given run.
+    """Generate and persist a trajectory summary from the provided snapshot.
 
     Parameters
     ----------
-    run_id:
-        The agent_runs.id PK.
+    snapshot:
+        Pre-built AgentRunSnapshot with all fields needed. No DB lookup is performed.
     adapter:
-        Optional ModelAdapter override (for tests). Defaults to the Anthropic adapter.
+        Optional ModelAdapter override (for tests). Defaults to provider cascade.
     db_session:
         Optional AsyncSession override (for tests). If None, opens one from SessionLocal.
     """
@@ -92,7 +136,6 @@ async def summarize(
     from artemis.agent.client import AnthropicAdapter
     from artemis.agent.loop import run_turn, user_message
     from artemis.builder.repository import create_trajectory_summary, get_trajectory_summary
-    from artemis.builders.models import AgentRun
 
     # Resolve adapter via provider cascade (claude-code → codex → lm-studio → anthropic)
     if adapter is None:
@@ -111,27 +154,19 @@ async def summarize(
             adapter = AnthropicAdapter()
 
     async def _do_summarize(session: Any) -> None:
-        from sqlalchemy import select as sa_select
-
         # Check idempotency: don't re-summarize.
-        existing = await get_trajectory_summary(session, run_id)
+        existing = await get_trajectory_summary(session, snapshot.run_pk)
         if existing is not None:
-            logger.debug("trajectory_summarizer: run_id=%s already summarized", run_id)
+            logger.debug("trajectory_summarizer: run_id=%s already summarized", snapshot.run_id)
             return
 
-        # Load the run record.
-        result = await session.execute(sa_select(AgentRun).where(AgentRun.id == run_id).limit(1))
-        run = result.scalar_one_or_none()
-        if run is None:
-            logger.warning("trajectory_summarizer: run_id=%s not found", run_id)
-            return
-
+        # Build prompt directly from snapshot — no DB lookup needed.
         run_data: dict[str, Any] = {
-            "run_id": str(run.run_id),
-            "agent_id": run.agent_id,
-            "status": run.status,
-            "user_message": run.user_message,
-            "error": run.error,
+            "run_id": snapshot.run_id,
+            "agent_id": snapshot.agent_id,
+            "status": snapshot.status,
+            "user_message": snapshot.user_message,
+            "error": snapshot.error,
             "stop_reason": None,  # not on model yet; placeholder
         }
 
@@ -147,7 +182,9 @@ async def summarize(
                 cache_tools=False,
             )
         except Exception:
-            logger.exception("trajectory_summarizer: LLM call failed for run_id=%s", run_id)
+            logger.exception(
+                "trajectory_summarizer: LLM call failed for run_id=%s", snapshot.run_id
+            )
             return
 
         # Extract the assistant's text.
@@ -172,20 +209,22 @@ async def summarize(
             parsed = json.loads(clean)
         except (json.JSONDecodeError, ValueError):
             logger.warning(
-                "trajectory_summarizer: could not parse JSON for run_id=%s: %r", run_id, text[:200]
+                "trajectory_summarizer: could not parse JSON for run_id=%s: %r",
+                snapshot.run_id,
+                text[:200],
             )
-            # Store partial — at least record the raw text in what_worked.
+            # Store partial — all-null fields preserve the row for audit.
             parsed = {"what_worked": None, "what_stalled": None, "what_was_missing": None}
 
         await create_trajectory_summary(
             session,
-            run_id=run_id,
+            run_id=snapshot.run_pk,
             what_worked=parsed.get("what_worked") or None,
             what_stalled=parsed.get("what_stalled") or None,
             what_was_missing=parsed.get("what_was_missing") or None,
         )
         await session.commit()
-        logger.info("trajectory_summarizer: run_id=%s summarized", run_id)
+        logger.info("trajectory_summarizer: run_id=%s summarized", snapshot.run_id)
 
     if db_session is not None:
         await _do_summarize(db_session)
