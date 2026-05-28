@@ -101,9 +101,17 @@ async def test_summarize_sync_writes_non_null_fields(db_session: AsyncSession) -
     summary_adapter = FakeAdapter([ScriptedReply(text=summary_json)])
 
     # 3. Call summarize() synchronously, injecting both adapter and session.
-    from artemis.builder.trajectory_summarizer import summarize
+    from artemis.builder.trajectory_summarizer import AgentRunSnapshot, summarize
 
-    await summarize(run.id, adapter=summary_adapter, db_session=db_session)
+    snapshot = AgentRunSnapshot(
+        run_id=run.run_id,
+        run_pk=run.id,
+        agent_id=run.agent_id,
+        status=run.status,
+        user_message=run.user_message,
+        error=run.error,
+    )
+    await summarize(snapshot, adapter=summary_adapter, db_session=db_session)
     await db_session.commit()
 
     # 4. Verify the row was written with non-null fields.

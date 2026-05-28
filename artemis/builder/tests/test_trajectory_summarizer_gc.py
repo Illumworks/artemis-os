@@ -117,7 +117,17 @@ async def test_summarize_async_applies_cc7_pattern(db_session: AsyncSession) -> 
     run = await _commit_agent_run(db_session, agent_id="gc-pattern-test")
     size_before = len(ts._BACKGROUND_TASKS)
 
-    await ts.summarize_async(run.id)
+    from artemis.builder.trajectory_summarizer import AgentRunSnapshot
+
+    snapshot = AgentRunSnapshot(
+        run_id=run.run_id,
+        run_pk=run.id,
+        agent_id=run.agent_id,
+        status=run.status,
+        user_message=run.user_message,
+        error=run.error,
+    )
+    await ts.summarize_async(snapshot)
     size_after_schedule = len(ts._BACKGROUND_TASKS)
 
     # Cancel immediately — task hasn't started yet (we haven't yielded).

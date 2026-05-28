@@ -396,9 +396,21 @@ async def run_agent(
     await session.flush()
 
     # Fire-and-forget trajectory summary — does not block or affect run status.
-    from artemis.builder.trajectory_summarizer import summarize_async
+    # CC13: pass a snapshot built from the in-scope run object (already flushed
+    # into this session) rather than just run.id.  The background task's new
+    # session cannot see the unflushed row, so we pass the data directly and
+    # eliminate the DB lookup entirely.
+    from artemis.builder.trajectory_summarizer import AgentRunSnapshot, summarize_async
 
-    await summarize_async(run.id)
+    snapshot = AgentRunSnapshot(
+        run_id=run.run_id,
+        run_pk=run.id,
+        agent_id=run.agent_id,
+        status=run.status,
+        user_message=run.user_message,
+        error=run.error,
+    )
+    await summarize_async(snapshot)
 
     return run
 
