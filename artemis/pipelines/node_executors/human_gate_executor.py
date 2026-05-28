@@ -186,7 +186,162 @@ async def _get_slack_token(session: AsyncSession) -> str | None:
         return None
 
 
-def _build_pipe4_context(
+# Gate kinds whose approval card renders qualified signals. For these, in the
+# MCP era the agents' real effects live in signal_queue (committed via tool calls),
+# not in node_states — so the card context must be READ FROM THE DB.
+_SIGNAL_GATE_KINDS = frozenset({"signal_brief"})
+
+_PREVIEW_MAX = 400
+
+
+async def _build_pipe4_context(
+    approval_kind: str,
+    node_states: dict[str, Any],
+    *,
+    session: AsyncSession | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the PIPE4 rendering context dict for an approval card.
+
+    Returns a context dict suitable for ``approval.pipe4_context["context"]``.
+
+    For signal-family gates (``approval_kind`` in :data:`_SIGNAL_GATE_KINDS`)
+    with a ``session`` and ``run_id`` supplied, the context is read from
+    ``signal_queue`` — the qualified signals committed by the scout/qualifier
+    agents via MCP tool calls for this run. This is the source of truth in the
+    MCP era; agents only return ``output_summary`` text into ``node_states``.
+
+    For content/draft gates, or when no session/run_id is available, this falls
+    back to the original ``node_states``-based extraction (preserved verbatim),
+    which still serves content_draft gates and existing tests.
+    """
+    if session is not None and run_id is not None and approval_kind in _SIGNAL_GATE_KINDS:
+        return await _build_signal_gate_context_from_db(approval_kind, session, run_id)
+    return _build_pipe4_context_from_node_states(approval_kind, node_states)
+
+
+async def _build_signal_gate_context_from_db(
+    approval_kind: str,
+    session: AsyncSession,
+    run_id: str,
+) -> dict[str, Any]:
+    """Build a signal-gate card context from committed signal_queue rows.
+
+    Reads ``signal_queue`` rows for this run whose ``signal_status`` is
+    ``'qualified'`` and aggregates the five UI-contract fields (signal_count,
+    reason_codes, districts, evidence_quote, brief_preview) from them. A run
+    with zero qualified signals yields the clean empty context (no error).
+    """
+    from sqlalchemy import select
+
+    from artemis.marketing.models import SignalQueue
+
+    ctx: dict[str, Any] = {
+        "approval_kind": approval_kind,
+        "signal_count": 0,
+        "reason_codes": [],
+        "districts": [],
+        "evidence_quote": None,
+        "brief_preview": None,
+        "draft_summary": None,
+    }
+
+    rows = (
+        (
+            await session.execute(
+                select(SignalQueue)
+                .where(
+                    SignalQueue.pipeline_run_id == run_id,
+                    SignalQueue.signal_status == "qualified",
+                )
+                .order_by(SignalQueue.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    if not rows:
+        return ctx
+
+    ctx["signal_count"] = len(rows)
+    codes: set[str] = set()
+    districts: set[str] = set()
+    for row in rows:
+        raw_codes = row.reason_codes if isinstance(row.reason_codes, list) else []
+        for rc in raw_codes:
+            code = rc.get("code", "") if isinstance(rc, dict) else str(rc)
+            if code:
+                codes.add(str(code))
+        geo = row.district_id or row.state
+        if geo:
+            districts.add(str(geo))
+        if not ctx["evidence_quote"]:
+            quote = _brief_field(row.qualification_json, "evidence_quote")
+            if quote:
+                ctx["evidence_quote"] = str(quote)[:_PREVIEW_MAX]
+
+    ctx["reason_codes"] = sorted(codes)
+    ctx["districts"] = sorted(districts)
+
+    # Brief preview: prefer the top signal's brief preview, then its body.
+    top = rows[0].qualification_json
+    preview = _brief_field(top, "preview") or _brief_field(top, "body")
+    if not preview:
+        for row in rows[1:]:
+            preview = _brief_field(row.qualification_json, "preview") or _brief_field(
+                row.qualification_json, "body"
+            )
+            if preview:
+                break
+    if preview:
+        ctx["brief_preview"] = str(preview)[:_PREVIEW_MAX]
+
+    return ctx
+
+
+def _brief_field(qualification_json: Any, field: str) -> Any:
+    """Safely read ``qualification_json['brief'][field]`` (None if absent)."""
+    if not isinstance(qualification_json, dict):
+        return None
+    brief = qualification_json.get("brief")
+    if not isinstance(brief, dict):
+        return None
+    return brief.get(field)
+
+
+async def rebuild_gate_context(session: AsyncSession, approval_id: int) -> dict[str, Any]:
+    """Idempotently rebuild a pending gate's pipe4 context from the DB.
+
+    Loads the ``Approval`` row, reads its ``pipeline_run_id`` from
+    ``pipe4_context``, re-runs the DB-reading signal-gate logic, writes the
+    rebuilt context back into ``approval.pipe4_context["context"]``, commits,
+    and returns the new context. Used to backfill approvals created before the
+    gate card read from the DB.
+    """
+    from artemis.marketing.models import Approval
+
+    approval = await session.get(Approval, approval_id)
+    if approval is None:
+        raise ValueError(f"no approval with id={approval_id}")
+
+    p4 = dict(approval.pipe4_context) if isinstance(approval.pipe4_context, dict) else {}
+    run_id = p4.get("pipeline_run_id")
+    if not run_id:
+        raise ValueError(f"approval {approval_id} has no pipeline_run_id in pipe4_context")
+
+    new_ctx = await _build_signal_gate_context_from_db(approval.kind, session, str(run_id))
+
+    # Reassign the dict so SQLAlchemy flags the JSONB column dirty (in-place
+    # mutation of a nested dict is not detected by the default JSONB type).
+    p4["context"] = new_ctx
+    approval.pipe4_context = p4
+
+    await session.commit()
+    return new_ctx
+
+
+def _build_pipe4_context_from_node_states(
     approval_kind: str,
     node_states: dict[str, Any],
 ) -> dict[str, Any]:
@@ -200,6 +355,9 @@ def _build_pipe4_context(
     extracted from ``brief_data`` / ``brief`` / ``draft_data`` / ``draft``
     keys. Falls back to ``output_summary`` from qualifier nodes when no
     structured signal data is present.
+
+    This is the legacy path, retained for content/draft gates and any caller
+    that has no DB session.
     """
     ctx: dict[str, Any] = {
         "approval_kind": approval_kind,
@@ -350,8 +508,11 @@ async def execute_human_gate_node(
         )
     ).scalar_one_or_none()
 
-    # Build PIPE4 rendering context from node_states outputs
-    pipe4_ctx = _build_pipe4_context(kind, node_states)
+    # Build PIPE4 rendering context. For signal-family gates this READS FROM THE
+    # DB (signal_queue), since the scout/qualifier agents commit their real
+    # effects there via MCP tool calls and only return summary text into
+    # node_states. Content/draft gates fall back to the node_states path.
+    pipe4_ctx = await _build_pipe4_context(kind, node_states, session=session, run_id=run_id)
 
     if existing_approval is None:
         approval = Approval(

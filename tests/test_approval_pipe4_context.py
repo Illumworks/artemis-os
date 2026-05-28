@@ -9,6 +9,11 @@ Tests:
 6. Approvals route _serialize returns pipe4Context=None for non-PIPE4 approvals
 
 All tests are pure unit tests — no database required.
+
+Note (CC5): ``_build_pipe4_context`` is now async (it reads signal_queue from
+the DB for signal-family gates when a session+run_id are supplied). These tests
+exercise the legacy node_states fallback path (no session passed), so they call
+it without DB access — just awaited.
 """
 
 from __future__ import annotations
@@ -16,6 +21,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +45,8 @@ def _make_approval_mock(**kwargs: Any) -> MagicMock:
 # ── 1. _build_pipe4_context: populates signal fields ─────────────────────────
 
 
-def test_build_pipe4_context_with_signals() -> None:
+@pytest.mark.asyncio
+async def test_build_pipe4_context_with_signals() -> None:
     """Qualified signals populate signal_count, reason_codes, districts, evidence."""
     from artemis.pipelines.node_executors.human_gate_executor import _build_pipe4_context
 
@@ -60,7 +68,7 @@ def test_build_pipe4_context_with_signals() -> None:
         }
     }
 
-    ctx = _build_pipe4_context("signal_brief", node_states)
+    ctx = await _build_pipe4_context("signal_brief", node_states)
 
     assert ctx["signal_count"] == 2
     assert "HIGH_ENGAGEMENT" in ctx["reason_codes"]
@@ -75,7 +83,8 @@ def test_build_pipe4_context_with_signals() -> None:
 # ── 2. _build_pipe4_context: empty context when no signals ────────────────────
 
 
-def test_build_pipe4_context_empty_when_no_signals() -> None:
+@pytest.mark.asyncio
+async def test_build_pipe4_context_empty_when_no_signals() -> None:
     """No qualified_signals in node_states → zero counts, all fields None."""
     from artemis.pipelines.node_executors.human_gate_executor import _build_pipe4_context
 
@@ -83,7 +92,7 @@ def test_build_pipe4_context_empty_when_no_signals() -> None:
         "some-other-node": {"status": "succeeded", "output_summary": "done"},
     }
 
-    ctx = _build_pipe4_context("signal_brief", node_states)
+    ctx = await _build_pipe4_context("signal_brief", node_states)
 
     assert ctx["signal_count"] == 0
     assert ctx["reason_codes"] == []
@@ -96,7 +105,8 @@ def test_build_pipe4_context_empty_when_no_signals() -> None:
 # ── 3. _build_pipe4_context: extracts brief_preview ──────────────────────────
 
 
-def test_build_pipe4_context_extracts_brief_preview() -> None:
+@pytest.mark.asyncio
+async def test_build_pipe4_context_extracts_brief_preview() -> None:
     """brief_data.preview in node_state is captured as brief_preview."""
     from artemis.pipelines.node_executors.human_gate_executor import _build_pipe4_context
 
@@ -107,7 +117,7 @@ def test_build_pipe4_context_extracts_brief_preview() -> None:
         },
     }
 
-    ctx = _build_pipe4_context("signal_brief", node_states)
+    ctx = await _build_pipe4_context("signal_brief", node_states)
 
     assert ctx["brief_preview"] == "This is the brief preview text."
 
@@ -115,7 +125,8 @@ def test_build_pipe4_context_extracts_brief_preview() -> None:
 # ── 4. _build_pipe4_context: extracts draft_summary ──────────────────────────
 
 
-def test_build_pipe4_context_extracts_draft_summary() -> None:
+@pytest.mark.asyncio
+async def test_build_pipe4_context_extracts_draft_summary() -> None:
     """draft_data.summary in node_state is captured as draft_summary."""
     from artemis.pipelines.node_executors.human_gate_executor import _build_pipe4_context
 
@@ -126,7 +137,7 @@ def test_build_pipe4_context_extracts_draft_summary() -> None:
         },
     }
 
-    ctx = _build_pipe4_context("content_draft", node_states)
+    ctx = await _build_pipe4_context("content_draft", node_states)
 
     assert ctx["draft_summary"] == "Draft summary here."
 
