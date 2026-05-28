@@ -39,11 +39,11 @@ from artemis.providers._bin_path import find_cli_binary
 from artemis.providers.errors import ClaudeCodeTimeoutError, MissingCliBinaryError, ProviderAPIError
 from artemis.tools.mcp_server import mcp_tool_name
 
-_DEFAULT_TIMEOUT_SECONDS = 300.0
-#: Wall-clock subprocess timeout for the text path. The tool path reads the
-#: env-configurable :func:`_timeout_seconds` so long-running agent loops get a
-#: tunable bound (``--max-turns`` does NOT exist on the claude CLI; on a
-#: subscription there is no per-token cost, so wall-clock is the correct guard).
+_DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS", "900"))
+#: Wall-clock subprocess timeout. Both the text path and the tool path call
+#: :func:`_timeout_seconds` so ``ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS`` tunes
+#: both without a code change. Default 900s (3× the observed 300s hit point on
+#: the qualifier; scouts finish in 30-60s so they are unaffected).
 _TIMEOUT_SECONDS = _DEFAULT_TIMEOUT_SECONDS
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 
@@ -72,16 +72,17 @@ _PERMISSION_MODE = "default"
 def _timeout_seconds() -> float:
     """Read the wall-clock subprocess timeout (env-configurable).
 
-    ``ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS`` overrides the 300s default. An
-    unparseable value falls back to the default rather than crashing the run.
+    Reads ``os.environ`` on every call so ``monkeypatch.setenv`` in tests
+    takes effect without reloading the module. ``ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS``
+    overrides the 900s default. An unparseable value falls back silently.
     """
     raw = os.environ.get("ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS")
     if not raw:
-        return _DEFAULT_TIMEOUT_SECONDS
+        return 900.0
     try:
         return float(raw)
     except ValueError:
-        return _DEFAULT_TIMEOUT_SECONDS
+        return 900.0
 
 
 class ClaudeCodeAdapter:
@@ -110,6 +111,7 @@ class ClaudeCodeAdapter:
             model,
         ]
 
+        timeout = _timeout_seconds()
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -119,14 +121,14 @@ class ClaudeCodeAdapter:
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input=prompt.encode()),
-                timeout=_TIMEOUT_SECONDS,
+                timeout=timeout,
             )
         except TimeoutError:
             proc.kill()
             await proc.wait()
             raise ClaudeCodeTimeoutError(
                 408,
-                f"Claude CLI timed out after {int(_TIMEOUT_SECONDS)}s; trying provider cascade",
+                f"Claude CLI timed out after {int(timeout)}s; trying provider cascade",
             ) from None
 
         if proc.returncode != 0:
