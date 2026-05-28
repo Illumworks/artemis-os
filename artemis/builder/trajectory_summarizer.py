@@ -40,11 +40,11 @@ Extract exactly three one-sentence observations. Be specific — name the tool, 
 the error message, or the missing capability. If a field genuinely does not apply, write null.
 
 Respond with valid JSON only, no prose:
-{
+{{
   "what_worked": "<one sentence or null>",
   "what_stalled": "<one sentence or null>",
   "what_was_missing": "<one sentence or null>"
-}
+}}
 
 Run data:
 {run_data}
