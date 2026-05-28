@@ -340,6 +340,29 @@ async def get_pipeline_with_latest_run(
     return (p_obj, run_obj)
 
 
+# ── Run-lock ─────────────────────────────────────────────────────────────────
+
+_IN_FLIGHT_STATUSES = ("queued", "running", "awaiting_approval")
+
+
+async def acquire_run_lock(session: AsyncSession, pipeline_id: str) -> PipelineRun | None:
+    """Return the existing in-flight run for *pipeline_id*, or None if the lock is free.
+
+    "In-flight" means status IN ('queued', 'running', 'awaiting_approval').
+    If not None, the caller must reject (409 for HTTP) or skip (log+return for scheduler).
+    If None, it is safe to create a new run within the same transaction.
+
+    Single-process DB guard only; a distributed lock can be layered on later.
+    """
+    result = await session.execute(
+        select(PipelineRun)
+        .where(PipelineRun.pipeline_id == pipeline_id)
+        .where(PipelineRun.status.in_(_IN_FLIGHT_STATUSES))
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 # ── Pipeline runs ─────────────────────────────────────────────────────────────
 
 

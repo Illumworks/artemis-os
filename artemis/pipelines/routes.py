@@ -34,7 +34,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import update
@@ -324,6 +324,21 @@ async def run_pipeline(
 
     if p.status == "archived":
         raise bad_request("Cannot run an archived pipeline", "pipeline_archived")
+
+    existing = await repo.acquire_run_lock(session, pipeline_id)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "pipeline_run_in_flight",
+                "in_flight_run_id": existing.id,
+                "message": (
+                    f"Pipeline already has an in-flight run (id={existing.id}, "
+                    f"status={existing.status}). "
+                    "Cancel or wait for it to complete before starting a new run."
+                ),
+            },
+        )
 
     run = await repo.create_pipeline_run(
         session,
