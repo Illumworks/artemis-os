@@ -395,11 +395,24 @@ async def run_agent(
 
     await session.flush()
 
+    # CC14: commit the agent_run row NOW so it is globally visible before
+    # summarize_async fires.  The pipeline executor uses one long transaction
+    # across all nodes (flush-per-node, single commit at end in routes.py).
+    # The summarizer opens its OWN session — it cannot see rows that are only
+    # flushed but not committed in the caller's session, causing FK violations.
+    # Committing here is safe: run_agent is called with the caller's session
+    # but the caller (execute_agent_node / PipelineExecutor) only reads
+    # in-memory fields from the returned AgentRun object after this point,
+    # never relying on these rows being part of the outer transaction.
+    await session.commit()
+
     # Fire-and-forget trajectory summary — does not block or affect run status.
     # CC13: pass a snapshot built from the in-scope run object (already flushed
     # into this session) rather than just run.id.  The background task's new
     # session cannot see the unflushed row, so we pass the data directly and
     # eliminate the DB lookup entirely.
+    # CC14: the commit above ensures the FK target (agent_runs.id) is visible
+    # to the summarizer's separate session before it attempts the INSERT.
     from artemis.builder.trajectory_summarizer import AgentRunSnapshot, summarize_async
 
     snapshot = AgentRunSnapshot(

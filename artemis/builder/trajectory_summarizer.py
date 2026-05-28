@@ -216,15 +216,24 @@ async def summarize(
             # Store partial — all-null fields preserve the row for audit.
             parsed = {"what_worked": None, "what_stalled": None, "what_was_missing": None}
 
+        what_worked = parsed.get("what_worked") or None
+        what_stalled = parsed.get("what_stalled") or None
+        what_was_missing = parsed.get("what_was_missing") or None
         await create_trajectory_summary(
             session,
             run_id=snapshot.run_pk,
-            what_worked=parsed.get("what_worked") or None,
-            what_stalled=parsed.get("what_stalled") or None,
-            what_was_missing=parsed.get("what_was_missing") or None,
+            what_worked=what_worked,
+            what_stalled=what_stalled,
+            what_was_missing=what_was_missing,
         )
         await session.commit()
-        logger.info("trajectory_summarizer: run_id=%s summarized", snapshot.run_id)
+        logger.info(
+            "trajectory_summarizer: run_pk=%s summarized (worked=%s..., stalled=%s..., missing=%s...)",
+            snapshot.run_pk,
+            (what_worked or "")[:60],
+            (what_stalled or "")[:60],
+            (what_was_missing or "")[:60],
+        )
 
     if db_session is not None:
         await _do_summarize(db_session)
