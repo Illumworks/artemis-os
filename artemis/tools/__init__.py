@@ -7,9 +7,9 @@ import artemis.tools.board_minutes  # noqa: F401 — registers board_minutes.fet
 import artemis.tools.campaign_brief  # noqa: F401 — registers campaign_brief.write
 import artemis.tools.contact_db  # noqa: F401 — registers contact_db_stub.has_contact (stub)
 import artemis.tools.districts  # noqa: F401 — registers districts.get (stub)
-import artemis.tools.federal_register  # noqa: F401 — registers federal_register.search (stub)
-import artemis.tools.grants_gov  # noqa: F401 — registers grants_gov.search (stub)
-import artemis.tools.legiscan  # noqa: F401 — registers legiscan.* (stubs)
+import artemis.tools.federal_register  # noqa: F401 — registers federal_register.search
+import artemis.tools.grants_gov  # noqa: F401 — registers grants_gov.search
+import artemis.tools.legiscan  # noqa: F401 — registers legiscan.* (real, stub-until-key)
 import artemis.tools.linkedin  # noqa: F401 — registers linkedin_scraper.* (stubs)
 import artemis.tools.memory_layer  # noqa: F401 — registers memory_layer.* (stubs)
 import artemis.tools.news  # noqa: F401 — registers news_api.search

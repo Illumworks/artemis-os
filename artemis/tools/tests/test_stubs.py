@@ -62,15 +62,15 @@ async def test_unresolved_signals_stub() -> None:
 
 
 @pytest.mark.asyncio
-async def test_api_key_stubs() -> None:
+async def test_api_key_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     """All API-key-required stubs return STUB string."""
+    # legiscan is real-but-stub-until-key; ensure no key so it returns the stub.
+    monkeypatch.delenv("LEGISCAN_API_KEY", raising=False)
     stubs = [
         _legiscan_search(_ctx()),
         _legiscan_bill(_ctx()),
         _sb_search(_ctx()),
         _sb_doc(_ctx()),
-        _grants_factory(_ctx()),
-        _fed_factory(_ctx()),
         _proc_factory(_ctx()),
         _li_fetch(_ctx()),
         _li_delta(_ctx()),
@@ -78,6 +78,15 @@ async def test_api_key_stubs() -> None:
     for _, impl in stubs:
         result = await impl({})
         assert "STUB" in result, f"Expected STUB in: {result}"
+
+
+@pytest.mark.asyncio
+async def test_real_free_tools_graceful_empty() -> None:
+    """grants_gov + federal_register are now real, no key — empty args → []."""
+    _, grants = _grants_factory(_ctx())
+    assert json.loads(await grants({})) == []
+    _, fed = _fed_factory(_ctx())
+    assert json.loads(await fed({})) == []
 
 
 @pytest.mark.asyncio
