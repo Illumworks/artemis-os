@@ -11,6 +11,8 @@ import json
 import logging
 from typing import Any
 
+from sqlalchemy import select, text
+
 from artemis.agent.types import Tool, ToolImpl
 from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
 from artemis.marketing.models import SignalQueue
@@ -106,6 +108,36 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             normalized = normalize_intake_payload(intake_payload, scout_type=slug)
         except ValueError as exc:
             return f"VALIDATION_ERROR: {exc}"
+
+        # ── Source-URL dedup (fallback for null-district / federal signals) ──────
+        # If source_url is set, check for a recent non-archived row with the same URL.
+        # District-based dedup in the qualifier suppress-stale rule handles non-null
+        # districts; this catches the federal_funding case where district_id is null.
+        if normalized.source_url:
+            _dedup_statuses_excluded = ("archived", "rejected_hard_filter")
+            existing_stmt = (
+                select(SignalQueue.id)
+                .where(SignalQueue.source_url == normalized.source_url)
+                .where(SignalQueue.signal_status.notin_(_dedup_statuses_excluded))
+                .where(SignalQueue.created_at >= text("now() - interval '30 days'"))
+                .limit(1)
+            )
+            existing_result = await ctx.session.execute(existing_stmt)
+            existing_id = existing_result.scalar_one_or_none()
+            if existing_id is not None:
+                logger.info(
+                    "signal_queue.write: deduped agent=%s source_url=%s existing_id=%s",
+                    ctx.agent_id,
+                    normalized.source_url,
+                    existing_id,
+                )
+                return json.dumps(
+                    {
+                        "signal_id": existing_id,
+                        "status": "deduplicated",
+                        "duplicate_of": existing_id,
+                    }
+                )
 
         row = SignalQueue(
             source_type=normalized.source_type,
