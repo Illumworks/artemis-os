@@ -265,8 +265,8 @@ async def test_timeout_seconds_env_override(monkeypatch: pytest.MonkeyPatch) -> 
     from artemis.providers.claude_code.adapter import _timeout_seconds
 
     monkeypatch.delenv("ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS", raising=False)
-    assert _timeout_seconds() == 300.0
+    assert _timeout_seconds() == 900.0
     monkeypatch.setenv("ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS", "42")
     assert _timeout_seconds() == 42.0
     monkeypatch.setenv("ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS", "not-a-number")
-    assert _timeout_seconds() == 300.0
+    assert _timeout_seconds() == 900.0

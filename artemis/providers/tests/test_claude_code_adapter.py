@@ -13,9 +13,9 @@ import pytest
 from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
 from artemis.providers.claude_code.adapter import (
-    _TIMEOUT_SECONDS,
     ClaudeCodeAdapter,
     _flatten_to_prompt,
+    _timeout_seconds,
 )
 from artemis.providers.errors import (
     ClaudeCodeTimeoutError,
@@ -140,8 +140,8 @@ async def test_complete_raises_on_timeout(tmp_path: Path) -> None:
     ):
         await adapter.complete(_simple_request())
     assert exc_info.value.status_code == 408
-    assert _TIMEOUT_SECONDS == 300.0
-    assert "timed out after 300s" in exc_info.value.body
+    assert _timeout_seconds() == 900.0
+    assert "timed out after 900s" in exc_info.value.body
 
 
 async def test_complete_raises_on_non_json_output(tmp_path: Path) -> None:
