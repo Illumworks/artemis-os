@@ -21,6 +21,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ── Background-task retention (CC7 pattern) ───────────────────────────────────
+# A bare asyncio.create_task() return value is weakly referenced by the event
+# loop — the GC can collect it before it runs.  Holding a strong reference in
+# this module-level set prevents GC; the done-callback discards the reference
+# once the task finishes so the set does not grow without bound.
+
+_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+
 # ── Prompt ────────────────────────────────────────────────────────────────────
 
 _TRAJECTORY_PROMPT = """\
@@ -48,7 +56,9 @@ async def summarize_async(run_id: int) -> None:
 
     Called at the end of agent_run completion. Does not block the caller.
     """
-    asyncio.create_task(_safe_summarize(run_id), name=f"trajectory_summarize_{run_id}")
+    task = asyncio.create_task(_safe_summarize(run_id), name=f"trajectory_summarize_{run_id}")
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
 
 
 async def _safe_summarize(run_id: int) -> None:
