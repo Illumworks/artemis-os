@@ -75,6 +75,20 @@ router = APIRouter(
 
 logger = logging.getLogger(__name__)
 
+# ── Dispatch registry ─────────────────────────────────────────────────────────
+# asyncio holds only a WEAK reference to fire-and-forget tasks, so an
+# unreferenced task can be garbage-collected before it finishes. This set
+# keeps a STRONG reference for the lifetime of each execution; the
+# done-callback removes the entry so the set doesn't leak.
+_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _dispatch_execution(run_id: str) -> None:
+    """Create a background executor task and retain it until it completes."""
+    task: asyncio.Task[None] = asyncio.create_task(_execute_pipeline_run(run_id))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -323,7 +337,7 @@ async def run_pipeline(
     run_id = run.id
 
     # Dispatch execution in background so the HTTP response returns immediately
-    asyncio.create_task(_execute_pipeline_run(run_id))
+    _dispatch_execution(run_id)
 
     return _run_to_dict(run)
 
@@ -501,7 +515,7 @@ async def resume_run(
         logger.warning("Could not cancel timeout job for run %s gate %s", run_id, body.node_id)
 
     # Re-dispatch executor in background
-    asyncio.create_task(_execute_pipeline_run(run_id))
+    _dispatch_execution(run_id)
 
     run = await repo.get_pipeline_run(session, run_id)
     return _run_to_dict(run)
@@ -589,7 +603,7 @@ async def slack_pipeline_approval_callback(
     run.status = "running"
     await session.commit()
 
-    asyncio.create_task(_execute_pipeline_run(run_id))
+    _dispatch_execution(run_id)
 
     return {"ok": True}
 

@@ -221,7 +221,22 @@ async def _fire_scheduled_pipeline(pipeline_id: str) -> None:
 
 
 async def sweep_orphaned_queued_runs(threshold_minutes: int = 5) -> int:
-    """Fail queued runs old enough that their executor almost certainly never started."""
+    """Fail queued runs old enough that their executor almost certainly never started.
+
+    TODO (CC7 Part B): Before failing, attempt a single re-dispatch for runs that have
+    been queued for 1+ minutes but have empty node_states and have not been re-dispatched
+    before (check metadata_['redispatch_count']). Only mark failed if redispatch_count >= 1
+    or the run exceeds the full threshold_minutes. Guard strictly on status == 'queued'
+    AND empty/absent node_states to avoid double-execution.
+
+    Deferred from CC7 because:
+    1. Converting the bulk UPDATE to a per-row loop would exceed the ~60 LOC cap for Part B.
+    2. On server restart, _recover_interrupted_runs() already picks up queued+running runs
+       immediately, so the sweep's main job is cleanup, not recovery; the GC footgun
+       (Part A) was the actual failure mode.
+    3. A race exists between _recover_interrupted_runs (startup) and this sweep: both could
+       attempt to dispatch the same queued run if the sweeper fires before recovery finishes.
+    """
     from sqlalchemy import update
 
     from artemis.pipelines.models import PipelineRun
