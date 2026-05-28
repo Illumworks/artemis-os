@@ -123,11 +123,22 @@ Full audit: `docs/blueprint-audit-2026-05-26.md`. Coordination: `docs/STREAMS-20
 - **F2** (`7ad56b0`) — `run_agent()` runtime injection: persona voice, urgency tiers, failure modes, Josh-spec reason-code allowlist, state nuances, implementation notes all flow into the LLM system prompt.
 - **F3** (`40cdf0b`) — seed parser regex repairs (urgency/failure/notes now populate).
 
-**Phase 2 (in flight 2026-05-26):**
+**Phase 2 (DONE 2026-05-26):**
 - **P1** (`e9356db`) — scout blueprints rebuilt as voice/focus docs (stale reason-code tables removed).
 - **P4** (`6769fe5`) — qualifier + content blueprints filled (3 empty system prompts written, tools declared).
-- **P2** (`40fa7b9`) — tool bridge: `agent.tools` → `(Tool, ToolImpl)` factories + `signal_queue.write` reference tool + e2e proof (scout LLM → real signal_queue row). Uses the existing `artemis/agent/loop.py` tool-use machinery.
-- **P3** (queued, fires after P2) — remaining tool implementations.
+- **P2** (`40fa7b9`) — tool bridge: `agent.tools` → `(Tool, ToolImpl)` factories + `signal_queue.write` reference tool + e2e proof.
+- **P3** (`653d96c`) — tool catalog (24 tools, scout fetch + emit).
+- **F5** (`9c885e9`) — reason codes derived from Josh's spec (single-source).
+
+**Phase BH-2 — subscription tool execution (DONE 2026-05-27):** The closing smoke revealed the claude-code provider can't do tool-use; subscription-only constraint (no API key) forced an MCP path. Design: `docs/claude-code-mcp-tool-execution.md`.
+- **CC1** (`22cca3c`) — artemis MCP server (re-exposes the tool registry, per-agent scoped, stdio).
+- **CC2** (`cd87142`) — claude-code adapter rework: tool-using agents run `claude -p --mcp-config --strict-mcp-config --allowed-tools mcp__artemis__*`; claude-code runs its own loop; run_turn bypassed for that path. (The add-API-key-later path — anthropic + run_turn — coexists, untouched.)
+- **CC4** (`6cf7ae8`) — qualifier/content tools (signal_queue.get/update_status via M3 transition, signal_briefs.write, ruleset_storage.*).
+- **CC5** (`a6524c3`) — Gate-card reads qualified signals + briefs from the DB (MCP-era principle: agent effects live in the DB, not node_states).
+
+**✅ PHASE BH CLOSED 2026-05-27.** Full chain works end-to-end on the subscription, zero API cost — scout → live news → signal → qualifier (Josh's §4 rules) → brief → Gate 1 with real, approvable content. Visually verified. The previous session's "we're basically done" became actually-done by running every layer instead of assuming.
+
+**Next:** Signal Playbook (SP1→SP2, D7), then PIPE6.
 
 **Architectural commitments:** Josh's spec is the single source of truth (runtime-read, not re-encoded). Blueprints are voice/focus docs; operational data is injected at runtime. Tool execution is in-process for v1 (MCP-graduation path preserved). AI-maintenance is the maintenance pattern.
 
