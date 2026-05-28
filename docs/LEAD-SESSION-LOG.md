@@ -39,7 +39,7 @@ The marketing pipeline runs end-to-end on the Claude Code subscription, zero API
 
 **The six hollowness layers, all caught only by running it, each smaller than the last:** (1) data loading, (2) runtime injection, (3) tool execution, (4) invocation task, (5) provider tool-use (the deep one — subscription MCP path), (6) qualifier tools + gate-card DB read. Never once accepted "it looks done."
 
-**Next:** Signal Playbook (SP1→SP2, D7) → PIPE6. Banked cleanups: stale pre-CC5 thin approval cards (backfill/archive), ~8 locked worker worktrees (CC2/CC4/P1-P4), cost-dashboard reads claude total_cost_usd not token sums, per-node editable pipeline instructions, scout_runner legacy-path deprecation.
+**Next:** Signal Playbook (SP1→SP2, D7) → PIPE6. Banked cleanups: stale pre-CC5 thin approval cards, ~8 locked worker worktrees, cost-dashboard reads claude total_cost_usd not token sums, per-node editable pipeline instructions, scout_runner legacy-path deprecation. **NEW BANKED 2026-05-28:** the Agent Builder is functionally domain-agnostic (verified by reading `agent_builder.py` — zero marketing refs; works on generic agents/builder_sessions/definition_proposals tables; skill-suggestion mechanism is generic), BUT `artemis/builder/routes.py` imports `_auth`/`_errors` from `artemis/marketing/routes/` (those files are GENERIC shared helpers per their own docstrings, just misplaced). Move them to `artemis/routes/_shared/` + update importers so the platform-not-marketing-only architecture is visible in the code structure — trivial cleanup, worth doing before non-marketing domains build.
 
 ### Robustness + API-key findings (2026-05-27, Jon asked "is it solid + are agents missing keys")
 
