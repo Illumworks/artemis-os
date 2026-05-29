@@ -156,6 +156,16 @@ async def _execute_tool(
     entry = tools.get(use.name)
     assert entry is not None  # name-in-registry check above
 
+    # H1: validate input against the tool's JSONSchema before execution.
+    # Returns a self-teaching error string on failure, None on success.
+    validation_error = tools.validate_input(use.name, use.input)
+    if validation_error is not None:
+        return ToolResultBlock(
+            tool_use_id=use.id,
+            content=validation_error,
+            is_error=True,
+        )
+
     payload = {"name": use.name, "input": use.input, "tool_use_id": use.id}
     if hooks:
         await hooks.fire("before_tool", payload)

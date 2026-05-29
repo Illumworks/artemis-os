@@ -39,6 +39,30 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from artemis.db import Base
 
+# ---------------------------------------------------------------------------
+# Canonical signal lifecycle states (H1 — source of truth for tool schemas)
+#
+# These are the valid values for signal_queue.signal_status. The authoritative
+# enum definition lives in artemis/marketing/state_machine.py (SignalState).
+# This tuple is the documentation anchor; do NOT add states here without
+# adding them to SignalState first.
+#
+# NOTE: held_pending_corroboration and suppressed_deprioritized have been
+# observed in production rows (see hallucination-audit-2026-05-29.md) but are
+# NOT valid enum members — H2 resolves the drift. Do NOT accept them in
+# tool schemas until H2 completes.
+# ---------------------------------------------------------------------------
+CANONICAL_SIGNAL_STATES: tuple[str, ...] = (
+    "pending_qualification",  # initial state written by scouts
+    "qualified",  # passed qualification; promoted to campaign workspace
+    "rejected_hard_filter",  # terminal — definitively not relevant
+    "suppressed_stale",  # terminal — stale / superseded signal
+    "approved",  # Gate-1 human approved (written to signal_status pending m3b cleanup)
+    "rejected_at_gate_1",  # Gate-1 human rejected
+    "snoozed",  # snooze-and-revisit
+    "archived",  # terminal — manually archived
+)
+
 
 class SignalReasonCode(Base):
     """Registry of canonical signal reason codes (Josh spec v1).

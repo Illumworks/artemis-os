@@ -72,7 +72,27 @@ If you can't answer yes with evidence from an actual run, it's not solid yet —
 
 ---
 
-## Part 4 — How the Builder uses this
+## Part 4 — Tools fail loud and recoverable
+
+Every tool in Artemis OS is a teaching surface as well as an execution surface. When a tool's input is rejected, the error message **must enumerate the valid alternatives** — not return an opaque code. This is the H1 contract, enforced at the registry layer (every agent inherits it automatically).
+
+### What this means for tool authors
+
+- **Declare enum/type/required/constraints rigorously in input_schema.** If a parameter has a fixed set of valid values, declare `"enum": [...]`. If it has a minimum or maximum, declare `"minimum"` or `"maximum"`. The registry uses these to produce self-teaching errors. A schema that omits constraints can't teach; it can only reject opaquely.
+
+- **Validation errors enumerate valid alternatives.** When an LLM passes an invalid value, the ToolResultBlock it receives names the field, the rejected value, and the valid set. For example: `Invalid value for parameter 'newStatus': 'pending_human_review'. Valid values are: pending_qualification, qualified, suppressed_stale, ...`
+
+- **Single-retry-to-correct is the expected recovery pattern.** The LLM sees the error, corrects the value on its next turn, and retries. No human intervention. No DB pollution. The bug class is single-turn-recoverable by design — but only if the schema is rigorously declared.
+
+- **Self-teaching messages stay under 300 chars.** Long enumerations are truncated to the first 10 values + "...and N more (see tool schema)". Agents can always inspect the full tool schema if they need the complete list.
+
+### The ordering guarantee
+
+Input schema validation runs BEFORE the tool implementation is called. A schema rejection never reaches the DB. Validation errors do NOT count as tool execution failures; they are recoverable feedback, not fatal errors.
+
+---
+
+## Part 5 — How the Builder uses this
 
 The AI Pipeline Builder should treat Part 2 as design constraints it enforces when composing a pipeline: every agent node gets an imperative task (P1), only existing+scoped tools (P4), a tool-capable provider for tool-users (P5), downstream nodes wired to read DB effects (P3), and explicit empty/dedup handling (P7). The Builder should also run/validate against Part 3's checklist before presenting a pipeline as ready — surfacing "I verified a real run produced N signals" rather than "I wired the nodes."
 
