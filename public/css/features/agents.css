@@ -1,3 +1,156 @@
+/* ── Proposals Inbox panel (J6a) ─────────────────────── */
+
+.inbox-panel {
+  background: var(--surface, #282c34);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: var(--radius, 6px);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.inbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
+}
+
+.inbox-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim, #6b7280);
+}
+
+.inbox-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--color-accent-cyan, #56b6c2);
+  color: #1a1d23;
+  border-radius: 10px;
+  padding: 1px 7px;
+  line-height: 18px;
+}
+
+.inbox-empty {
+  padding: 14px;
+  font-size: 12px;
+  color: var(--text-dim, #6b7280);
+}
+
+.inbox-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim, #6b7280);
+  padding: 8px 14px 4px;
+}
+
+.inbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border, rgba(255,255,255,.05));
+  flex-wrap: wrap;
+}
+
+.inbox-row:first-of-type {
+  border-top: none;
+}
+
+.inbox-agent-name {
+  font-size: 13px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.inbox-pill-proposals {
+  background: rgba(86, 182, 194, 0.15);
+  color: var(--color-accent-cyan, #56b6c2);
+}
+
+.inbox-pill-summaries {
+  background: rgba(198, 120, 221, 0.12);
+  color: #c678dd;
+}
+
+.inbox-actions {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.inbox-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: var(--radius, 6px);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  background: transparent;
+  color: var(--text, #abb2bf);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s;
+}
+
+.inbox-btn:hover {
+  background: rgba(86, 182, 194, 0.1);
+  color: var(--color-accent-cyan, #56b6c2);
+  border-color: var(--color-accent-cyan, #56b6c2);
+}
+
+.inbox-btn-approve {
+  color: #98c379;
+  border-color: rgba(152, 195, 121, 0.3);
+}
+
+.inbox-btn-approve:hover {
+  background: rgba(152, 195, 121, 0.12);
+  color: #98c379;
+  border-color: #98c379;
+}
+
+.inbox-btn-reject {
+  color: var(--error, #e06c75);
+  border-color: rgba(224, 108, 117, 0.3);
+}
+
+.inbox-btn-reject:hover {
+  background: rgba(224, 108, 117, 0.1);
+  color: var(--error, #e06c75);
+  border-color: var(--error, #e06c75);
+}
+
+/* Badge on the overview page Agents card */
+.inbox-overview-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--color-accent-cyan, #56b6c2);
+  color: #1a1d23;
+  border-radius: 10px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 18px;
+}
+
 /* ── Agents ───────────────────────────────────────────── */
 
 /* Agent card in panel */

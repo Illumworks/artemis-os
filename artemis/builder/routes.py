@@ -442,6 +442,173 @@ async def reject_proposal_route(
 # ── Builder context (agents subresource) ─────────────────────────────────────
 
 
+@router.get("/inbox")
+async def get_builder_inbox(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Proposals Inbox — cross-agent discovery surface (J6a).
+
+    Returns three lists:
+      agents_with_pending_proposals — agents that have >= 1 pending proposal,
+        with proposal_ids so the caller can inline-approve/reject the first one.
+      agents_with_new_summaries — agents with trajectory summaries newer than
+        last_reviewed_at (or last_reviewed_at IS NULL).  Agents already in the
+        proposals list are excluded to avoid double-listing.
+      skills_with_pending_proposals — skills with >= 1 pending proposal.
+    """
+    from sqlalchemy import text as sa_text
+
+    # ── agents with pending proposals ─────────────────────────────────────────
+    proposals_q = sa_text(
+        """
+        SELECT
+            a.agent_id,
+            a.name,
+            COUNT(dp.id)               AS pending_count,
+            MAX(dp.created_at)         AS last_proposal_at,
+            MAX(ats.generated_at)      AS last_summary_at,
+            a.last_reviewed_at,
+            ARRAY_AGG(dp.id ORDER BY dp.created_at ASC) AS proposal_ids
+        FROM agents a
+        JOIN definition_proposals dp
+            ON dp.target_id = CAST(a.id AS integer)
+           AND dp.kind = 'agent'
+           AND dp.status = 'pending'
+        LEFT JOIN agent_runs ar ON ar.agent_id = a.agent_id
+        LEFT JOIN agent_run_trajectory_summaries ats ON ats.run_id = ar.id
+        GROUP BY a.agent_id, a.name, a.last_reviewed_at
+        ORDER BY last_proposal_at DESC
+        """
+    )
+    proposals_result = await session.execute(proposals_q)
+    proposals_rows = proposals_result.fetchall()
+
+    agents_with_pending_proposals = [
+        {
+            "agent_id": row.agent_id,
+            "name": row.name,
+            "kind": "agent",
+            "pending_count": row.pending_count,
+            "last_proposal_at": row.last_proposal_at.isoformat() if row.last_proposal_at else None,
+            "last_summary_at": row.last_summary_at.isoformat() if row.last_summary_at else None,
+            "last_reviewed_at": row.last_reviewed_at.isoformat() if row.last_reviewed_at else None,
+            "proposal_ids": list(row.proposal_ids) if row.proposal_ids else [],
+        }
+        for row in proposals_rows
+    ]
+
+    # Set of agent_ids already captured above — exclude from summaries list.
+    proposal_agent_ids = {r["agent_id"] for r in agents_with_pending_proposals}
+
+    # ── agents with new summaries (no pending proposals) ─────────────────────
+    summaries_q = sa_text(
+        """
+        SELECT
+            a.agent_id,
+            a.name,
+            COUNT(ats.run_id)          AS new_summary_count,
+            MAX(ats.generated_at)      AS last_summary_at,
+            a.last_reviewed_at
+        FROM agents a
+        JOIN agent_runs ar ON ar.agent_id = a.agent_id
+        JOIN agent_run_trajectory_summaries ats ON ats.run_id = ar.id
+        WHERE (
+            a.last_reviewed_at IS NULL
+            OR ats.generated_at > a.last_reviewed_at
+        )
+        GROUP BY a.agent_id, a.name, a.last_reviewed_at
+        ORDER BY last_summary_at DESC
+        """
+    )
+    summaries_result = await session.execute(summaries_q)
+    summaries_rows = summaries_result.fetchall()
+
+    agents_with_new_summaries = [
+        {
+            "agent_id": row.agent_id,
+            "name": row.name,
+            "new_summary_count": row.new_summary_count,
+            "last_summary_at": row.last_summary_at.isoformat() if row.last_summary_at else None,
+            "last_reviewed_at": row.last_reviewed_at.isoformat() if row.last_reviewed_at else None,
+        }
+        for row in summaries_rows
+        if row.agent_id not in proposal_agent_ids
+    ]
+
+    # ── skills with pending proposals ─────────────────────────────────────────
+    skills_q = sa_text(
+        """
+        SELECT
+            s.slug                     AS skill_id,
+            s.name,
+            COUNT(dp.id)               AS pending_count,
+            MAX(dp.created_at)         AS last_proposal_at,
+            ARRAY_AGG(dp.id ORDER BY dp.created_at ASC) AS proposal_ids
+        FROM skills s
+        JOIN definition_proposals dp
+            ON dp.target_id = CAST(s.id AS integer)
+           AND dp.kind = 'skill'
+           AND dp.status = 'pending'
+        GROUP BY s.slug, s.name
+        ORDER BY last_proposal_at DESC
+        """
+    )
+    skills_result = await session.execute(skills_q)
+    skills_rows = skills_result.fetchall()
+
+    skills_with_pending_proposals = [
+        {
+            "skill_id": row.skill_id,
+            "name": row.name,
+            "pending_count": row.pending_count,
+            "last_proposal_at": row.last_proposal_at.isoformat() if row.last_proposal_at else None,
+            "proposal_ids": list(row.proposal_ids) if row.proposal_ids else [],
+        }
+        for row in skills_rows
+    ]
+
+    return {
+        "agents_with_pending_proposals": agents_with_pending_proposals,
+        "agents_with_new_summaries": agents_with_new_summaries,
+        "skills_with_pending_proposals": skills_with_pending_proposals,
+    }
+
+
+@agents_subresource_router.post("/{agent_id}/mark-reviewed")
+async def mark_agent_reviewed(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Mark an agent as reviewed — stamps last_reviewed_at = now().
+
+    Called by the Proposals Inbox when an operator clicks "Review with Builder"
+    so the agent drops out of the new-summaries list after the next reload.
+    """
+    from sqlalchemy import func as sa_func
+    from sqlalchemy import select as sa_select
+    from sqlalchemy import update as sa_update
+
+    from artemis.builders.models import Agent
+
+    # Confirm agent exists.
+    result = await session.execute(sa_select(Agent).where(Agent.agent_id == agent_id).limit(1))
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        raise not_found(f"Agent '{agent_id}' not found", "agent_not_found")
+
+    now = await session.scalar(sa_select(sa_func.now()))
+    await session.execute(
+        sa_update(Agent).where(Agent.agent_id == agent_id).values(last_reviewed_at=now)
+    )
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "agent_id": agent_id,
+        "last_reviewed_at": now.isoformat() if now else None,
+    }
+
+
 @agents_subresource_router.get("/{agent_id}/builder-context")
 async def get_agent_builder_context(
     agent_id: str,

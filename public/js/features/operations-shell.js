@@ -1726,7 +1726,7 @@ function renderOverviewPage() {
         <div class="ops-launch-head">
           <div>
             <div class="ops-launch-eyebrow">Agents</div>
-            <h3>Who does work</h3>
+            <h3>Who does work<span id="ops-inbox-badge-placeholder"></span></h3>
           </div>
           <span class="ops-pill">${escapeHtml(`${agentStats.activeAgents} rostered`)}</span>
         </div>
@@ -4697,6 +4697,52 @@ onState("view", (view) => {
 document.addEventListener("builder:rerender", () => {
   if (normalizeAppView(getState("view")) === "agents/builder") {
     renderOperationsView("agents/builder");
+  }
+});
+
+// ── Proposals Inbox badge (J6a) ───────────────────────────────────────────────
+// Fetch the inbox count and inject a badge into the operations overview page's
+// Agents card.  Cache 30 s; clear on builder session close / proposal action.
+
+let _opsInboxCache = null;
+let _opsInboxCacheTs = 0;
+const _OPS_INBOX_TTL_MS = 30_000;
+
+async function _refreshOpsInboxBadge() {
+  const placeholder = document.getElementById("ops-inbox-badge-placeholder");
+  if (!placeholder) return;
+
+  const now = Date.now();
+  if (!_opsInboxCache || now - _opsInboxCacheTs >= _OPS_INBOX_TTL_MS) {
+    try {
+      _opsInboxCache = await api.builderFetchInbox();
+      _opsInboxCacheTs = now;
+    } catch {
+      return; // don't show a broken badge
+    }
+  }
+
+  const total =
+    (_opsInboxCache.agents_with_pending_proposals?.length ?? 0) +
+    (_opsInboxCache.agents_with_new_summaries?.length ?? 0);
+
+  if (total > 0) {
+    placeholder.innerHTML = `<span class="inbox-overview-badge">${total}</span>`;
+  } else {
+    placeholder.innerHTML = "";
+  }
+}
+
+// Invalidate ops inbox cache on proposal approval/rejection so the badge updates.
+document.addEventListener("builder:proposal-actioned", () => {
+  _opsInboxCache = null;
+});
+
+// After each operations overview render, inject the inbox badge asynchronously.
+onState("view", (view) => {
+  if (normalizeAppView(view) === OPERATIONS_VIEW) {
+    // Give the DOM a tick to settle after scheduleRender, then inject the badge.
+    queueMicrotask(() => _refreshOpsInboxBadge().catch(() => {}));
   }
 });
 
