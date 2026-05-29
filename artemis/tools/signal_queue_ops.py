@@ -128,9 +128,22 @@ _UPDATE_STATUS_DEF = Tool(
             },
             "newStatus": {
                 "type": "string",
+                # H1: enum declared so validation errors enumerate valid alternatives.
+                # Canonical source of truth: SignalState in artemis/marketing/state_machine.py.
+                "enum": [
+                    "pending_qualification",
+                    "qualified",
+                    "rejected_hard_filter",
+                    "suppressed_stale",
+                    "approved",
+                    "rejected_at_gate_1",
+                    "snoozed",
+                    "archived",
+                ],
                 "description": (
-                    "Target signal status. Legal from pending_qualification: "
-                    "qualified, rejected_hard_filter, suppressed_stale."
+                    "Target signal status. Legal transitions from pending_qualification: "
+                    "qualified, rejected_hard_filter, suppressed_stale. "
+                    "From qualified: approved, rejected_at_gate_1, snoozed, archived."
                 ),
             },
             "reason": {
