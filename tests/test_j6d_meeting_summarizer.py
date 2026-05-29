@@ -514,7 +514,9 @@ def test_build_system_prompt_with_recent_meeting_context() -> None:
 
     assert "Q2 Planning" in prompt
     assert "Defined OKRs" in prompt
-    assert "## Recent meetings" in prompt
+    # H4: header reframed to mark summaries as LLM inferences with provenance.
+    assert "Recent meeting summaries" in prompt
+    assert "treat as inferences" in prompt
 
 
 def test_build_system_prompt_without_recent_meeting_context() -> None:
@@ -528,7 +530,7 @@ def test_build_system_prompt_without_recent_meeting_context() -> None:
         recent_meeting_context=None,
     )
 
-    assert "## Recent meetings" not in prompt
+    assert "Recent meeting summaries" not in prompt
 
 
 @pytest.mark.asyncio
@@ -964,7 +966,10 @@ async def test_llm_summarize_happy_path() -> None:
     llm_json = json.dumps(
         {
             "bullets": ["Discussed roadmap", "Agreed on timeline", "Next steps defined"],
-            "action_items": [{"text": "Ship J6d", "owner": "Jon", "due": "Friday"}],
+            # H4: "due" must be ISO 8601 or one of the allowed loose tokens —
+            # "Friday" was previously accepted by the bare json.loads path but
+            # now rejected by the Pydantic shape contract.
+            "action_items": [{"text": "Ship J6d", "owner": "Jon", "due": "this week"}],
         }
     )
     good_response = CompletionResponse(
