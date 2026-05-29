@@ -1,8 +1,21 @@
-# Builder Responsiveness — Design + Plan
+# Responsiveness — Design + Plan (provider-adapter-wide, not just Builder)
 
 **Status:** Design captured. Build phased after CC18 + Proposals Inbox + SP1 land. Not blocking anything; preserves the architectural intent for whenever responsiveness becomes the bottleneck.
 
-**Goal (in Jon's words):** the Builder should feel as snappy as Claude Code or terminal-Lead — sub-second responsiveness for chat turns, visible progress for longer thinking, never opaque "Thinking..." waits over a minute.
+**Goal (in Jon's words, clarified 2026-05-29):** ANY claude-code-driven surface in Artemis — **Floating Artemis (the personal assistant)**, Agent Builder, Pipeline AI Panel, Skills builder, and similar — should feel as snappy as Claude Code or terminal-Lead. Sub-second responsiveness for chat turns, visible progress for longer thinking, never opaque "Thinking..." waits over a minute. The fix lives at the provider-adapter layer, not per-surface.
+
+## Scope — every surface that goes through `artemis/providers/claude_code/adapter.py`
+
+| Surface | User-facing? | Path | Priority |
+|---|---|---|---|
+| **Floating Artemis** chat | YES (Jon's primary assistant) | `floating_artemis/chat.py` → `run_turn` → adapter | **HIGHEST** — most-used surface |
+| **Agent Builder** chat | YES (operator) | `builders/executor.py` → `run_agent` → adapter | HIGH |
+| **Pipeline AI Panel** (canvas) | YES (operator) | Routes through same adapter | HIGH |
+| Pipeline node agents (scout / qualifier / content) | Background | `pipelines/node_executors/agent_executor.py` → `run_agent` → adapter | LOWER — affects cycle time but not user-watching |
+| Dev Projects loop runner | Less user-facing | `dev_projects/loop_runner.py` → adapter | Banked |
+| Legacy `scout_runner` (marketing) | Banked for deprecation | n/a | n/a |
+
+**Single fix, wide leverage.** This is the architectural reason to do Phase 2 (Option C) properly when the time comes — every chat-style surface in the platform gets the speedup, not just the Builder.
 
 ---
 
@@ -91,19 +104,36 @@ That's why we feel sub-second-snappy on most turns and the Builder doesn't. **It
 
 ## Why this isn't blocking anything now
 
-The producer side of the self-improvement loop (CC10-CC17) is structurally complete. CC18 wires `target_id` so the Builder reads the right summaries. Proposals Inbox (queued next) makes them discoverable. **All of that works regardless of Builder speed.** Operators can already approve / reject; the loop fires; agents improve.
+The producer side of the self-improvement loop (CC10-CC17) is structurally complete. CC18 wires `target_id` so the Builder reads the right summaries. Proposals Inbox (queued next) makes them discoverable. **All of that works regardless of speed.** Operators can already approve / reject; the loop fires; agents improve.
 
-Builder responsiveness becomes the bottleneck *after* the loop is being actively used — when "I have to wait 90 seconds for the Builder to read 11 summaries and propose" is the friction. Until then, correctness > responsiveness.
+Responsiveness becomes the bottleneck *after* surfaces are being actively used:
+- Floating Artemis: when Jon is asking it frequent questions in the personal workflow and waiting >30s per response becomes a daily friction.
+- Agent Builder: when operators are reviewing 5+ agents per session and the wait compounds.
+- Pipeline AI Panel: when iterating on a pipeline design conversationally.
 
-When responsiveness IS the bottleneck, Phase 1 (B + A) is the cheap-and-big-win move. Phase 2 (C) is reserved for if/when daily-use volume justifies the engineering investment.
+When responsiveness IS the bottleneck, Phase 1 (B + A) is the cheap-and-big-win move applied at the adapter level — every consumer surface benefits in one shot. Phase 2 (C) is reserved for if/when the persistent-session architecture is needed to match Claude Code's interactive feel.
+
+## Trigger criteria (when to fire each phase)
+
+**Fire Phase 1 (B + A) when ANY of:**
+- Floating Artemis daily-use volume makes the wait noticeable to Jon.
+- Operator feedback from Builder use cites speed as a friction point.
+- Pipeline AI Panel adoption picks up.
+- Any surface is opaque "Thinking..." over 10s for what should feel like a quick exchange.
+
+**Fire Phase 2 (C) when ANY of:**
+- Phase 1 shipped and the *perceived* speed is still slower than Claude Code despite streaming progress.
+- Average session crosses 5+ turns and cumulative wait time becomes a productivity drag.
+- Floating Artemis use shifts toward "primary assistant" frequency.
 
 ---
 
 ## What this doc preserves
 
+- **The scope:** ANY claude-code-driven surface in the platform (Floating Artemis, Agent Builder, Pipeline AI Panel, pipeline agents). Provider-adapter layer = single point of leverage.
 - **The architectural insight:** subscription-only doesn't preclude snappiness. The current slowness is an adapter design choice, fixable.
 - **The three options + their costs:** so when this stream fires, no re-discovery time.
 - **The decision criteria:** so we know when to move from Phase 1 to Phase 2 rather than guessing.
-- **The reference point:** "feels like Claude Code" is the goal, not "feels OK." Set the bar at the experience Jon already knows is possible.
+- **The reference point:** "feels like Claude Code" is the goal, not "feels OK." Set the bar at the experience Jon already knows is possible — including matching the snappiness of this very Lead session he's having with terminal-Lead and me.
 
-When the stream fires, it starts with the Phase 1 brief (CC[N] — bundled B + A). This doc is the spec.
+When the stream fires, it starts with the Phase 1 brief (CC[N] — bundled B + A at the adapter layer). Every surface in the scope table inherits the speedup. This doc is the spec.
