@@ -1,4 +1,4 @@
-"""Test fixtures for artemis/builder tests (O1 trajectory summarizer).
+"""Test fixtures for artemis/builder tests (O1 trajectory summarizer + J6a inbox).
 
 Requires a running Postgres at ARTEMIS_TEST_DB_URL (or ARTEMIS_DB_URL with
 "artemis_test" in the URL), already migrated via `alembic upgrade head`.
@@ -12,12 +12,15 @@ import os
 from collections.abc import AsyncIterator
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 import artemis.builder.repository  # noqa: F401 — ensure O1 models are registered
 import artemis.builders.models  # noqa: F401 — registers all builder models on Base.metadata
 import artemis.db
+import artemis.marketing.models  # noqa: F401 — needed for FK resolution in test runs
+import artemis.tools.models  # noqa: F401 — registers tool_invocations on Base.metadata
 from artemis.db import attach_pgvector_codec
 
 # Hard guard against live-DB destruction.
@@ -42,6 +45,7 @@ artemis.db.SessionLocal = __import__(
 # Child tables first (FK constraints).
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "tool_invocations, "
     "agent_context, "
     "agent_run_trajectory_summaries, "
     "definition_proposals, "
@@ -70,3 +74,13 @@ async def db_session() -> AsyncIterator[AsyncSession]:
             yield session
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[AsyncClient]:
+    """HTTP client bound to the FastAPI app via ASGI transport."""
+    from artemis.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac

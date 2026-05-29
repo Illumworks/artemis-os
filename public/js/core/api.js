@@ -2573,3 +2573,22 @@ export async function builderRejectProposal(proposalId) {
   if (!res.ok) throw new Error(body.error || "builderRejectProposal failed");
   return body;
 }
+
+// ── Proposals Inbox (J6a) ─────────────────────────────────────────────────────
+
+export async function builderFetchInbox() {
+  const res = await fetch("/api/builder/inbox");
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderFetchInbox failed");
+  return body;
+}
+
+export async function builderMarkAgentReviewed(agentId) {
+  const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/mark-reviewed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderMarkAgentReviewed failed");
+  return body;
+}

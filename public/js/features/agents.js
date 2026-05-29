@@ -253,19 +253,200 @@ function renderRecentRunsSection() {
   $.agentPanel.appendChild(runsWrap);
 }
 
+// ══════════════════════════════════════════════════════════
+// Proposals Inbox Panel (J6a)
+// ══════════════════════════════════════════════════════════
+
+/** 30-second cache so repeated sidebar opens don't hammer the endpoint. */
+let _inboxCache = null;
+let _inboxCacheTs = 0;
+const _INBOX_TTL_MS = 30_000;
+
+export function invalidateInboxCache() {
+  _inboxCache = null;
+  _inboxCacheTs = 0;
+}
+
+async function fetchInboxCached() {
+  const now = Date.now();
+  if (_inboxCache && now - _inboxCacheTs < _INBOX_TTL_MS) return _inboxCache;
+  try {
+    _inboxCache = await api.builderFetchInbox();
+    _inboxCacheTs = now;
+  } catch (err) {
+    console.warn("Inbox fetch failed:", err);
+    _inboxCache = { agents_with_pending_proposals: [], agents_with_new_summaries: [], skills_with_pending_proposals: [] };
+    _inboxCacheTs = now;
+  }
+  return _inboxCache;
+}
+
+/** Navigate to Builder for a specific agent via the CC18 pattern. */
+function _openBuilderForAgent(agentId) {
+  // Resolve the agentDbId from state (same logic as operations-shell CC18).
+  const agents = getState("agents") || [];
+  const match = agents.find(a => a.id === agentId);
+  const agentDbId = match?.dbId ?? null;
+
+  // Close the sidebar panel first.
+  $.agentSidebar?.classList.add("hidden");
+  $.agentBtn?.classList.remove("active");
+
+  // CC18 pattern: set builderEditAgent* state so initBuilderSurface()
+  // creates a target-scoped session when the builder view opens.
+  setState("builderEditAgentId", agentId);
+  if (agentDbId) setState("builderEditAgentDbId", agentDbId);
+
+  // Navigate to the builder view — operations-shell's onState("view") listener
+  // handles init and re-render automatically.
+  setState("view", "agents/builder");
+}
+
+async function renderInboxPanel() {
+  if (!$.agentPanel) return;
+
+  const inbox = await fetchInboxCached();
+  const proposals = inbox.agents_with_pending_proposals || [];
+  const summaries = inbox.agents_with_new_summaries || [];
+  const totalCount = proposals.length + summaries.length;
+
+  const panel = document.createElement("div");
+  panel.className = "inbox-panel";
+
+  // ── Header ──────────────────────────────────────────
+  const header = document.createElement("div");
+  header.className = "inbox-header";
+  header.innerHTML = `
+    <span class="inbox-title">Agent Review Inbox</span>
+    ${totalCount > 0 ? `<span class="inbox-badge">${totalCount}</span>` : ""}
+  `;
+  panel.appendChild(header);
+
+  if (totalCount === 0) {
+    const empty = document.createElement("div");
+    empty.className = "inbox-empty";
+    empty.textContent = "No pending proposals or new summaries.";
+    panel.appendChild(empty);
+    $.agentPanel.insertBefore(panel, $.agentPanel.firstChild);
+    return;
+  }
+
+  // ── Section 1: Pending Proposals ────────────────────
+  if (proposals.length > 0) {
+    const label = document.createElement("div");
+    label.className = "inbox-section-label";
+    label.textContent = "Pending Proposals";
+    panel.appendChild(label);
+
+    for (const item of proposals) {
+      const row = document.createElement("div");
+      row.className = "inbox-row";
+
+      const firstProposalId = item.proposal_ids?.[0] ?? null;
+
+      row.innerHTML = `
+        <span class="inbox-agent-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+        <span class="inbox-pill inbox-pill-proposals">${item.pending_count} proposal${item.pending_count !== 1 ? "s" : ""}</span>
+        <div class="inbox-actions">
+          ${firstProposalId ? `
+            <button class="inbox-btn inbox-btn-approve" data-proposal-id="${firstProposalId}" data-action="inbox-approve" title="Approve first pending proposal">Approve</button>
+            <button class="inbox-btn inbox-btn-reject" data-proposal-id="${firstProposalId}" data-action="inbox-reject" title="Reject first pending proposal">Reject</button>
+          ` : ""}
+          <button class="inbox-btn" data-action="inbox-review-builder" data-agent-id="${escapeHtml(item.agent_id)}">Review</button>
+        </div>
+      `;
+      panel.appendChild(row);
+    }
+  }
+
+  // ── Section 2: New Summaries ─────────────────────────
+  if (summaries.length > 0) {
+    const label = document.createElement("div");
+    label.className = "inbox-section-label";
+    label.textContent = "New Summaries";
+    panel.appendChild(label);
+
+    for (const item of summaries) {
+      const row = document.createElement("div");
+      row.className = "inbox-row";
+      row.innerHTML = `
+        <span class="inbox-agent-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+        <span class="inbox-pill inbox-pill-summaries">${item.new_summary_count} new</span>
+        <div class="inbox-actions">
+          <button class="inbox-btn" data-action="inbox-review-builder" data-agent-id="${escapeHtml(item.agent_id)}">Review</button>
+        </div>
+      `;
+      panel.appendChild(row);
+    }
+  }
+
+  // ── Event delegation on the panel ───────────────────
+  panel.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+
+    if (action === "inbox-approve") {
+      const proposalId = Number(btn.dataset.proposalId);
+      btn.disabled = true;
+      btn.textContent = "…";
+      try {
+        await api.builderApproveProposal(proposalId);
+        invalidateInboxCache();
+        await renderInboxPanel();
+      } catch (err) {
+        console.error("Approve failed:", err);
+        btn.disabled = false;
+        btn.textContent = "Approve";
+      }
+    } else if (action === "inbox-reject") {
+      const proposalId = Number(btn.dataset.proposalId);
+      btn.disabled = true;
+      btn.textContent = "…";
+      try {
+        await api.builderRejectProposal(proposalId);
+        invalidateInboxCache();
+        await renderInboxPanel();
+      } catch (err) {
+        console.error("Reject failed:", err);
+        btn.disabled = false;
+        btn.textContent = "Reject";
+      }
+    } else if (action === "inbox-review-builder") {
+      const agentId = btn.dataset.agentId;
+      // Mark reviewed then open builder.
+      api.builderMarkAgentReviewed(agentId).catch(() => {});
+      invalidateInboxCache();
+      _openBuilderForAgent(agentId);
+    }
+  });
+
+  // Insert at top of sidebar panel, replacing any existing inbox panel.
+  const existing = $.agentPanel.querySelector(".inbox-panel");
+  if (existing) {
+    $.agentPanel.replaceChild(panel, existing);
+  } else {
+    $.agentPanel.insertBefore(panel, $.agentPanel.firstChild);
+  }
+}
+
 function renderAgentPanel() {
   const agents = getState("agents");
   const chains = getState("agentChains") || [];
   if (!$.agentPanel) return;
   $.agentPanel.innerHTML = "";
 
+  // ── Compact preview banner ──
   const previewBanner = document.createElement("div");
   previewBanner.className = "toolbox-preview-banner";
   previewBanner.innerHTML = `
-    <div class="toolbox-preview-title">Advanced builder surfaces</div>
-    <div class="toolbox-preview-body">Agents, chains, DAGs, and workflows are available as dedicated launcher surfaces while the real build/orchestration/maintenance system continues to mature.</div>
+    <div class="toolbox-preview-title">Builder surfaces</div>
+    <div class="toolbox-preview-body">Agents, chains, and DAGs.</div>
   `;
   $.agentPanel.appendChild(previewBanner);
+
+  // Render Inbox panel (async — fires and fills in when data arrives)
+  renderInboxPanel().catch((err) => console.warn("renderInboxPanel failed:", err));
 
   // ── Orchestrate card ──
   const orchCard = document.createElement("div");
