@@ -203,6 +203,12 @@ async def read_recent_runs(
                 "what_worked": traj.what_worked,
                 "what_stalled": traj.what_stalled,
                 "what_was_missing": traj.what_was_missing,
+                "provenance": {
+                    "source": "llm_trajectory_summarizer",
+                    "confidence": "medium",
+                    "generated_at": traj.generated_at.isoformat() if traj.generated_at else None,
+                    "model": "claude-sonnet-4-6",
+                },
             }
         output.append(entry)
 
