@@ -31,6 +31,7 @@ tool's raw JSON-schema ``inputSchema`` dict verbatim from the artemis
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 
@@ -51,6 +52,7 @@ from artemis.agent.types import Tool, ToolImpl
 from artemis.builders import repository as repo
 from artemis.db import SessionLocal
 from artemis.tools.context import ToolContext
+from artemis.tools.models import ToolInvocation
 from artemis.tools.registry import get_factory, known_tool_names
 
 logger = logging.getLogger(__name__)
@@ -84,6 +86,54 @@ def artemis_tool_name(mcp_name: str) -> str:
     """
     forward = {mcp_tool_name(n): n for n in known_tool_names()}
     return forward[mcp_name]
+
+
+# ── Tool-invocation logging (CC17) ────────────────────────────────────────────
+
+#: Result prefixes that indicate a logical failure (not a hard exception).
+_FAILURE_PREFIXES = (
+    "VALIDATION_ERROR",
+    "PERMISSION_DENIED",
+    "STUB:",
+    "TOOL_ERROR:",
+    "UNKNOWN_TOOL:",
+)
+
+
+def _summarize_args(args: dict[str, object], max_len: int = 500) -> str:
+    """Return a ≤max_len string representation of call arguments."""
+    try:
+        raw = json.dumps(args, default=str)
+    except Exception:
+        raw = repr(args)
+    return raw[:max_len] if len(raw) > max_len else raw
+
+
+async def _log_invocation(
+    session: AsyncSession,
+    agent_run_id: str,
+    pipeline_run_id: str | None,
+    tool_name: str,
+    args_summary: str | None,
+    result_preview: str | None,
+    success: bool,
+) -> None:
+    """Insert one ToolInvocation row and commit it independently.
+
+    Each invocation is its own committed fact — the MCP server's session
+    commits once per tool call so provenance is durable even if the agent
+    run subsequently fails.
+    """
+    row = ToolInvocation(
+        agent_run_id=agent_run_id,
+        pipeline_run_id=pipeline_run_id,
+        tool_name=tool_name,
+        args_summary=args_summary,
+        result_preview=result_preview,
+        success=success,
+    )
+    session.add(row)
+    await session.commit()
 
 
 # ── Core, testable tool-set construction ───────────────────────────────────────
@@ -132,13 +182,24 @@ async def build_tool_set(
     return tool_set
 
 
-def _build_server(session: AsyncSession, tool_set: dict[str, tuple[Tool, ToolImpl]]) -> Server:
+def _build_server(
+    session: AsyncSession,
+    tool_set: dict[str, tuple[Tool, ToolImpl]],
+    run_id: str,
+    pipeline_run_id: str | None = None,
+) -> Server:
     """Wire a low-level MCP ``Server`` over a pre-built tool set.
 
     The ``list_tools`` handler advertises each tool with its verbatim
     ``input_schema``. The ``call_tool`` handler dispatches to the artemis
     ``ToolImpl``, commits on success, rolls back on exception, and always
     returns text content (never crashes the session).
+
+    CC17: every tool invocation is logged to ``tool_invocations`` via
+    ``_log_invocation`` — one committed row per call, regardless of outcome.
+    The artemis-style tool name (e.g. ``signal_queue.write``) is resolved
+    from the MCP name via ``artemis_tool_name``; unknown names fall back to
+    the MCP name so logs are never silently lost.
     """
     server: Server = Server(SERVER_NAME)
 
@@ -155,17 +216,48 @@ def _build_server(session: AsyncSession, tool_set: dict[str, tuple[Tool, ToolImp
 
     @server.call_tool()  # type: ignore[untyped-decorator]
     async def _call_tool(name: str, arguments: dict[str, object]) -> list[mcp_types.TextContent]:
+        # Resolve artemis-style name for logging (signal_queue.write, not signal_queue_write).
+        try:
+            a_name = artemis_tool_name(name)
+        except KeyError:
+            a_name = name  # unknown MCP name — log as-is
+
+        args_summary = _summarize_args(dict(arguments))
+
         entry = tool_set.get(name)
         if entry is None:
-            return [mcp_types.TextContent(type="text", text=f"UNKNOWN_TOOL: {name}")]
+            result_text = f"UNKNOWN_TOOL: {name}"
+            await _log_invocation(
+                session, run_id, pipeline_run_id, a_name, args_summary, result_text[:500], False
+            )
+            return [mcp_types.TextContent(type="text", text=result_text)]
+
         _tool_def, impl = entry
         try:
             result = await impl(dict(arguments))
         except Exception as exc:  # never crash the session mid-run
             await session.rollback()
             logger.exception("tool %r raised; rolled back", name)
+            error_preview = f"EXCEPTION: {exc!s}"[:500]
+            await _log_invocation(
+                session, run_id, pipeline_run_id, a_name, args_summary, error_preview, False
+            )
             return [mcp_types.TextContent(type="text", text=f"TOOL_ERROR: {exc}")]
+
+        # Determine success: False for known failure-prefix results.
+        success = not any(result.startswith(p) for p in _FAILURE_PREFIXES)
+        result_preview = result[:500] if isinstance(result, str) else None
+
+        # Log before the per-write commit so the log row is always committed
+        # even if session.commit() below is a no-op (read-only tool).
+        await _log_invocation(
+            session, run_id, pipeline_run_id, a_name, args_summary, result_preview, success
+        )
+
         # Per-write commit: a successful read / no-write commits a no-op.
+        # Note: _log_invocation already committed the session; this second
+        # commit is a no-op for tools that did no additional writes, and a
+        # flush for tools that wrote signal_queue rows etc. in the same call.
         await session.commit()
         return [mcp_types.TextContent(type="text", text=result)]
 
@@ -202,7 +294,7 @@ async def _serve(agent_id: str, run_id: str, pipeline_run_id: str | None) -> int
             run_id,
             sorted(tool_set),
         )
-        server = _build_server(session, tool_set)
+        server = _build_server(session, tool_set, run_id, pipeline_run_id)
         async with stdio_server() as (read_stream, write_stream):
             await server.run(
                 read_stream,

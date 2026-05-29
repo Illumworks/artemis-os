@@ -12,6 +12,10 @@ import artemis.tools.grants_gov  # noqa: F401 — registers grants_gov.search
 import artemis.tools.legiscan  # noqa: F401 — registers legiscan.* (real, stub-until-key)
 import artemis.tools.linkedin  # noqa: F401 — registers linkedin_scraper.* (stubs)
 import artemis.tools.memory_layer  # noqa: F401 — registers memory_layer.* (stubs)
+
+# CC17 — register ToolInvocation ORM on Base.metadata so the table is included in
+# Alembic autogenerate and available to any process that imports artemis.tools.
+import artemis.tools.models  # noqa: F401 — registers tool_invocations on Base.metadata
 import artemis.tools.news  # noqa: F401 — registers news_api.search
 import artemis.tools.pdf_extractor  # noqa: F401 — registers pdf_extractor.extract
 import artemis.tools.procurement  # noqa: F401 — registers procurement_portal.fetch (stub)

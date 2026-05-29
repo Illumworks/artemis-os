@@ -421,10 +421,14 @@ async def run_agent(
     #   The signals_emitted query is safe post-commit (CC14 ensures agent_run is
     #   committed; signal_queue rows written during the run are also committed
     #   because run_agent's session.commit() flushes the full transaction).
+    # CC17: query tool_invocations for the real MCP-path tool calls first;
+    #   fall back to message-walking if empty (preserves CC16 for anthropic
+    #   in-process path which never writes to tool_invocations).
     from sqlalchemy import func, select
 
     from artemis.builder.trajectory_summarizer import summarize_async
     from artemis.marketing.models import SignalQueue
+    from artemis.tools.models import ToolInvocation
 
     # Count signals written by this run (provenance->>'agent_run_id' == run_id).
     # Uses JSONB text-extraction operator (->>'agent_run_id') via SQLAlchemy's
@@ -437,7 +441,15 @@ async def run_agent(
     )
     signals_emitted: int = sig_result.scalar_one() or 0
 
-    snapshot = _build_snapshot(run, result, signals_emitted)
+    # CC17: fetch MCP-path tool invocations committed by mcp_server subprocess.
+    inv_result = await session.execute(
+        select(ToolInvocation)
+        .where(ToolInvocation.agent_run_id == run.run_id)
+        .order_by(ToolInvocation.invoked_at)
+    )
+    mcp_invocations: list[Any] = list(inv_result.scalars().all())
+
+    snapshot = _build_snapshot(run, result, signals_emitted, mcp_invocations)
     await summarize_async(snapshot)
 
     return run
@@ -452,14 +464,21 @@ def _build_snapshot(
     run: Any,
     result: Any,
     signals_emitted: int,
+    mcp_invocations: list[Any] | None = None,  # ToolInvocation rows from CC17 table
 ) -> Any:  # returns AgentRunSnapshot; typed as Any to avoid cross-module import at module level
     """Build an enriched AgentRunSnapshot from the completed run + RunResult.
 
-    Extracts structured tool-call summaries by pairing each ToolUseBlock with
-    its ToolResultBlock by tool_use_id, plus final_text and duration_ms.
+    CC17: extraction strategy — query tool_invocations first (MCP path); fall
+    back to message-walking if empty (anthropic in-process path, CC16).
 
-    This helper is a pure function of its arguments (modulo truncation) and
-    is designed to be testable in isolation without a DB session.
+    The two paths are mutually exclusive in practice:
+    - claude-code runs write to tool_invocations via mcp_server; result.messages
+      contains only the final assistant text (tool blocks happen inside the
+      subprocess).
+    - anthropic/run_turn runs never write to tool_invocations; result.messages
+      contains full ToolUseBlock / ToolResultBlock pairs.
+
+    Keeping both paths means neither provider regresses.
 
     Parameters
     ----------
@@ -473,6 +492,11 @@ def _build_snapshot(
     signals_emitted:
         Pre-counted number of signal_queue rows attributed to this run.
         Caller is responsible for querying this AFTER commit (CC14 safe).
+    mcp_invocations:
+        List of ToolInvocation ORM rows for this run_id (CC17).  When
+        non-empty, these are used as the authoritative tool_calls source and
+        message-walking is skipped.  When empty or None, falls back to
+        message-walking for the anthropic in-process path.
 
     Returns
     -------
@@ -484,35 +508,47 @@ def _build_snapshot(
 
     messages = result.messages if result is not None else []
 
-    # --- Extract tool calls by pairing ToolUseBlock ↔ ToolResultBlock --------
-    # Build a map from tool_use_id → ToolResultBlock first, then walk in order.
-    result_map: dict[str, ToolResultBlock] = {}
-    for msg in messages:
-        if msg.role == "user":
-            for block in msg.content:
-                if isinstance(block, ToolResultBlock):
-                    result_map[block.tool_use_id] = block
-
     tool_calls_list: list[_ToolCallSummary] = []
-    for msg in messages:
-        if msg.role == "assistant":
-            for block in msg.content:
-                if isinstance(block, ToolUseBlock):
-                    result_block = result_map.get(block.id)
-                    if result_block is not None:
-                        success = not result_block.is_error
-                        preview = (result_block.content or "")[:100]
-                    else:
-                        # Tool call with no result (end_turn before tool result)
-                        success = True
-                        preview = ""
-                    tool_calls_list.append(
-                        _ToolCallSummary(
-                            name=block.name,
-                            success=success,
-                            result_preview=preview,
+
+    if mcp_invocations:
+        # CC17: MCP path — use ground-truth invocation log.
+        for inv in mcp_invocations:
+            tool_calls_list.append(
+                _ToolCallSummary(
+                    name=inv.tool_name,
+                    success=inv.success,
+                    result_preview=inv.result_preview or "",
+                )
+            )
+    else:
+        # CC16 fallback: anthropic in-process path — walk result.messages.
+        # Build a map from tool_use_id → ToolResultBlock first, then walk in order.
+        result_map: dict[str, ToolResultBlock] = {}
+        for msg in messages:
+            if msg.role == "user":
+                for block in msg.content:
+                    if isinstance(block, ToolResultBlock):
+                        result_map[block.tool_use_id] = block
+
+        for msg in messages:
+            if msg.role == "assistant":
+                for block in msg.content:
+                    if isinstance(block, ToolUseBlock):
+                        result_block = result_map.get(block.id)
+                        if result_block is not None:
+                            success = not result_block.is_error
+                            preview = (result_block.content or "")[:100]
+                        else:
+                            # Tool call with no result (end_turn before tool result)
+                            success = True
+                            preview = ""
+                        tool_calls_list.append(
+                            _ToolCallSummary(
+                                name=block.name,
+                                success=success,
+                                result_preview=preview,
+                            )
                         )
-                    )
 
     # --- Extract final assistant text (last assistant message, ~500 chars) ---
     final_text: str | None = None
