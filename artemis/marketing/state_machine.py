@@ -23,12 +23,23 @@ from typing import Any
 
 
 class SignalState(enum.StrEnum):
-    """signal_queue.signal_status lifecycle."""
+    """signal_queue.signal_status lifecycle.
+
+    Canonical source of truth (H2 alignment). Every value written to
+    signal_queue.signal_status must be a member here.
+
+    suppressed_deprioritized — emitted by qualifier_rule_layer suppress rules
+        (e.g. suppress_tx_biliteracy_v1). It is a legitimate terminal state,
+        not a legacy alias. Added here because live code already writes it but
+        the enum was missing the member (CC20 drift report).
+        Live DB scan 2026-05-29: 0 rows (no data migration needed).
+    """
 
     pending_qualification = "pending_qualification"
     qualified = "qualified"
     rejected_hard_filter = "rejected_hard_filter"  # terminal
     suppressed_stale = "suppressed_stale"  # terminal
+    suppressed_deprioritized = "suppressed_deprioritized"  # terminal — H2 drift fix
 
     # These four members reflect Gate 1 outcomes currently written to
     # signal_status. Long-term these belong on signal_briefs.status, not
@@ -88,6 +99,7 @@ SIGNAL_TRANSITIONS: dict[SignalState, set[SignalState]] = {
         SignalState.qualified,
         SignalState.rejected_hard_filter,
         SignalState.suppressed_stale,
+        SignalState.suppressed_deprioritized,
     },
     SignalState.qualified: {
         SignalState.APPROVED,
@@ -98,6 +110,7 @@ SIGNAL_TRANSITIONS: dict[SignalState, set[SignalState]] = {
     SignalState.SNOOZED: {SignalState.qualified},
     SignalState.rejected_hard_filter: set(),
     SignalState.suppressed_stale: set(),
+    SignalState.suppressed_deprioritized: set(),  # terminal — H2 drift fix
     SignalState.APPROVED: set(),
     SignalState.REJECTED_AT_GATE_1: set(),
     SignalState.ARCHIVED: set(),
