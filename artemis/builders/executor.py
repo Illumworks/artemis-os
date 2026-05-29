@@ -323,6 +323,10 @@ async def run_agent(
     # Build hook registry that streams events to WS subscribers
     hooks = _build_agent_hooks(run_id)
 
+    # Initialize result to None so it is always defined post-try/except
+    # (the except branch does not produce a RunResult).
+    result: Any = None
+
     try:
         if _is_claude_code_tool_run(adapter, tool_registry):
             # claude-code IS the agent runtime for tool-using scouts: it spawns
@@ -413,16 +417,27 @@ async def run_agent(
     # eliminate the DB lookup entirely.
     # CC14: the commit above ensures the FK target (agent_runs.id) is visible
     # to the summarizer's separate session before it attempts the INSERT.
-    from artemis.builder.trajectory_summarizer import AgentRunSnapshot, summarize_async
+    # CC16: enrich snapshot with tool calls, signal count, final text, duration.
+    #   The signals_emitted query is safe post-commit (CC14 ensures agent_run is
+    #   committed; signal_queue rows written during the run are also committed
+    #   because run_agent's session.commit() flushes the full transaction).
+    from sqlalchemy import func, select
 
-    snapshot = AgentRunSnapshot(
-        run_id=run.run_id,
-        run_pk=run.id,
-        agent_id=run.agent_id,
-        status=run.status,
-        user_message=run.user_message,
-        error=run.error,
+    from artemis.builder.trajectory_summarizer import summarize_async
+    from artemis.marketing.models import SignalQueue
+
+    # Count signals written by this run (provenance->>'agent_run_id' == run_id).
+    # Uses JSONB text-extraction operator (->>'agent_run_id') via SQLAlchemy's
+    # [] subscript + .as_string(). Safe post-commit because run_agent's
+    # session.commit() above flushed both agent_runs and signal_queue rows.
+    sig_result = await session.execute(
+        select(func.count())
+        .select_from(SignalQueue)
+        .where(SignalQueue.provenance["agent_run_id"].as_string() == run.run_id)
     )
+    signals_emitted: int = sig_result.scalar_one() or 0
+
+    snapshot = _build_snapshot(run, result, signals_emitted)
     await summarize_async(snapshot)
 
     return run
@@ -431,6 +446,104 @@ async def run_agent(
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _build_snapshot(
+    run: Any,
+    result: Any,
+    signals_emitted: int,
+) -> Any:  # returns AgentRunSnapshot; typed as Any to avoid cross-module import at module level
+    """Build an enriched AgentRunSnapshot from the completed run + RunResult.
+
+    Extracts structured tool-call summaries by pairing each ToolUseBlock with
+    its ToolResultBlock by tool_use_id, plus final_text and duration_ms.
+
+    This helper is a pure function of its arguments (modulo truncation) and
+    is designed to be testable in isolation without a DB session.
+
+    Parameters
+    ----------
+    run:
+        The AgentRun ORM object after set_agent_run_completed. Provides
+        run_id, id, agent_id, status, user_message, error, started_at,
+        completed_at.
+    result:
+        The RunResult from run_turn / ClaudeCodeAdapter. Provides messages
+        with ToolUseBlock / ToolResultBlock / TextBlock content.
+    signals_emitted:
+        Pre-counted number of signal_queue rows attributed to this run.
+        Caller is responsible for querying this AFTER commit (CC14 safe).
+
+    Returns
+    -------
+    AgentRunSnapshot
+        Frozen snapshot ready to pass to summarize_async().
+    """
+    from artemis.agent.types import TextBlock, ToolResultBlock, ToolUseBlock
+    from artemis.builder.trajectory_summarizer import AgentRunSnapshot, _ToolCallSummary
+
+    messages = result.messages if result is not None else []
+
+    # --- Extract tool calls by pairing ToolUseBlock ↔ ToolResultBlock --------
+    # Build a map from tool_use_id → ToolResultBlock first, then walk in order.
+    result_map: dict[str, ToolResultBlock] = {}
+    for msg in messages:
+        if msg.role == "user":
+            for block in msg.content:
+                if isinstance(block, ToolResultBlock):
+                    result_map[block.tool_use_id] = block
+
+    tool_calls_list: list[_ToolCallSummary] = []
+    for msg in messages:
+        if msg.role == "assistant":
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock):
+                    result_block = result_map.get(block.id)
+                    if result_block is not None:
+                        success = not result_block.is_error
+                        preview = (result_block.content or "")[:100]
+                    else:
+                        # Tool call with no result (end_turn before tool result)
+                        success = True
+                        preview = ""
+                    tool_calls_list.append(
+                        _ToolCallSummary(
+                            name=block.name,
+                            success=success,
+                            result_preview=preview,
+                        )
+                    )
+
+    # --- Extract final assistant text (last assistant message, ~500 chars) ---
+    final_text: str | None = None
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
+            if texts:
+                raw = " ".join(texts)
+                final_text = raw[:500] if len(raw) > 500 else raw
+            break
+
+    # --- Compute duration_ms --------------------------------------------------
+    duration_ms: int | None = None
+    started_at = getattr(run, "started_at", None)
+    completed_at = getattr(run, "completed_at", None)
+    if started_at is not None and completed_at is not None:
+        delta = completed_at - started_at
+        duration_ms = int(delta.total_seconds() * 1000)
+
+    return AgentRunSnapshot(
+        run_id=run.run_id,
+        run_pk=run.id,
+        agent_id=run.agent_id,
+        status=run.status,
+        user_message=run.user_message,
+        error=run.error,
+        tool_calls=tuple(tool_calls_list),
+        signals_emitted=signals_emitted,
+        final_text=final_text,
+        duration_ms=duration_ms,
+    )
 
 
 def _is_claude_code_tool_run(adapter: ModelAdapter, tool_registry: ToolRegistry) -> bool:

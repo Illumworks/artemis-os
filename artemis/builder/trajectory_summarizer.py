@@ -16,6 +16,10 @@ CC13: The summarizer no longer queries the DB for the AgentRun row.  The caller
 builds an AgentRunSnapshot from the in-scope run object (before commit) and passes
 it directly.  This eliminates the transaction-visibility race where the async task's
 new session opened after the flush (but before the commit) could not see the row.
+
+CC16: AgentRunSnapshot now carries structured tool-call extracts, signal emission
+counts, the agent's final text, and wall-clock duration — so the LLM has real
+data to reason over instead of meta-complaining about missing transcripts.
 """
 
 from __future__ import annotations
@@ -26,6 +30,25 @@ from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ToolCallSummary:
+    """Structured summary of a single tool call, extracted from a ToolUseBlock pair.
+
+    Attributes
+    ----------
+    name:
+        Tool name (e.g. "signal_queue.write", "news_api.search").
+    success:
+        False when the ToolResultBlock carried is_error=True.
+    result_preview:
+        First ~100 chars of the result content (or error string).
+    """
+
+    name: str
+    success: bool
+    result_preview: str  # ~100 chars, no raw transcript
 
 
 @dataclass(frozen=True)
@@ -52,6 +75,17 @@ class AgentRunSnapshot:
         The original user message that triggered the run, or None.
     error:
         Error string if the run failed, or None.
+    tool_calls:
+        Ordered sequence of tool calls the agent made, with success/failure
+        and a short result preview. Empty tuple for no-tool runs.
+    signals_emitted:
+        Count of signal_queue rows written by this run
+        (provenance->>'agent_run_id' == run_id). Set by executor post-commit.
+    final_text:
+        Last assistant text message, truncated to ~500 chars.
+    duration_ms:
+        Wall-clock duration in milliseconds (completed_at - started_at).
+        None if timestamps unavailable.
     """
 
     run_id: str
@@ -60,6 +94,11 @@ class AgentRunSnapshot:
     status: str
     user_message: str | None
     error: str | None
+    # CC16 enrichment fields
+    tool_calls: tuple[_ToolCallSummary, ...] = ()
+    signals_emitted: int = 0
+    final_text: str | None = None
+    duration_ms: int | None = None
 
 
 # ── Background-task retention (CC7 pattern) ───────────────────────────────────
@@ -75,10 +114,24 @@ _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 _TRAJECTORY_PROMPT = """\
 You are analyzing an agent run to extract a short trajectory summary for self-improvement.
 
-The run record and final conversation messages are provided below.
+The run record is provided below. It includes:
+- Basic run metadata (status, user_message, error)
+- tool_calls: the ordered sequence of tools the agent called, each with success/failure
+  and a result preview (~100 chars)
+- signals_emitted: how many signal_queue rows this run wrote
+- final_text: the agent's last assistant message (~500 chars)
+- duration_ms: wall-clock time for the run
 
 Extract exactly three one-sentence observations. Be specific — name the tool, the step,
-the error message, or the missing capability. If a field genuinely does not apply, write null.
+the error message, the signal count, or the missing capability.
+
+Look at the tool_calls sequence: which tools did the agent call, did they succeed, did
+the agent never call expected tools (e.g. did a scout never call signal_queue.write)?
+Look at signals_emitted: did the agent produce work product (signals_emitted > 0)?
+Look at final_text: did the agent state confusion, ask for clarification, or describe
+what it did?
+
+If a field genuinely does not apply, write null.
 
 Respond with valid JSON only, no prose:
 {{
@@ -168,6 +221,18 @@ async def summarize(
             "user_message": snapshot.user_message,
             "error": snapshot.error,
             "stop_reason": None,  # not on model yet; placeholder
+            # CC16: structured enrichment fields
+            "tool_calls": [
+                {
+                    "name": tc.name,
+                    "success": tc.success,
+                    "result_preview": tc.result_preview,
+                }
+                for tc in snapshot.tool_calls
+            ],
+            "signals_emitted": snapshot.signals_emitted,
+            "final_text": snapshot.final_text,
+            "duration_ms": snapshot.duration_ms,
         }
 
         prompt = _TRAJECTORY_PROMPT.format(run_data=json.dumps(run_data, indent=2))
