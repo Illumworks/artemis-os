@@ -23,6 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 import artemis.builder.repository  # noqa: F401 — ensure O1 models are registered
 import artemis.builders.models  # noqa: F401 — registers all builder models on Base.metadata
 import artemis.db
+import artemis.marketing.models  # noqa: F401 — SignalQueue is queried by run_agent (CC16)
+import artemis.tools.models  # noqa: F401 — registers tool_invocations on Base.metadata
 from artemis.db import attach_pgvector_codec
 
 # Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
@@ -50,6 +52,7 @@ artemis.db.SessionLocal = __import__(
 # are included so builder tests start with a clean state too.
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "tool_invocations, "
     "agent_context, "
     "agent_run_trajectory_summaries, "
     "definition_proposals, "

@@ -17,6 +17,7 @@ import artemis.builders.models  # noqa: F401
 import artemis.db
 import artemis.marketing.models  # noqa: F401
 import artemis.pipelines.models  # noqa: F401  — pipeline_runs is FK dep of signal_queue
+import artemis.tools.models  # noqa: F401  — registers tool_invocations on Base.metadata
 from artemis.db import attach_pgvector_codec
 
 _db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
@@ -32,6 +33,7 @@ artemis.db.SessionLocal = __import__(
 
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "tool_invocations, "
     "campaign_state_transitions, approvals, campaign_deliverables, content_asset_links, "
     "content_assets, campaign_briefs, campaign_candidates, scout_runs, "
     "qualifier_rule_applications, skipped_signals, signal_queue, rulesets, "
