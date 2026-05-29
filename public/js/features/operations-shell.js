@@ -1890,7 +1890,7 @@ function renderAgentsPage() {
       "Who does work",
       "A roster for scanning, plus a dedicated main-canvas profile for policy, memory, skills, and runtime health.",
       agentChips,
-      [renderOpsButton("Build with Agent-Builder", "open-shell-view", { "shell-view": "agents/builder" }), renderOpsSecondaryButton("New agent", "new-agent"), ...(selectedAgent ? [renderOpsSecondaryButton("Edit with Builder", "edit-agent-with-builder", { "agent-id": selectedAgent.id })] : []), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
+      [renderOpsButton("Build with Agent-Builder", "open-shell-view", { "shell-view": "agents/builder" }), renderOpsSecondaryButton("New agent", "new-agent"), ...(selectedAgent ? [renderOpsSecondaryButton("Edit with Builder", "edit-agent-with-builder", { "agent-id": selectedAgent.id, "agent-db-id": selectedAgent.dbId ?? (_enrichedAgent?.id ?? "") })] : []), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
     )}
     <section class="ops-grid ops-agents-grid">
       <article class="ops-panel ops-list-panel">
@@ -4112,11 +4112,16 @@ function handleOperationsClick(event) {
   }
   if (action === "edit-agent-with-builder") {
     const agentId = button.dataset.agentId || selectedAgentId;
+    // CC18: builder_sessions.target_id is the Agent INT PK, not the slug.
+    // We pass it through state so initBuilderSurface() can create a new
+    // target-scoped session that triggers read_recent_runs() automatically.
+    const rawDbId = button.dataset.agentDbId || "";
+    const agentDbId = rawDbId && !Number.isNaN(Number(rawDbId)) ? Number(rawDbId) : null;
     if (agentId) {
-      // Store the target agent ID so the Builder can seed from it
       writeStorage(OPS_AGENT_SELECTION_KEY, agentId);
       setState("builderEditAgentId", agentId);
     }
+    if (agentDbId) setState("builderEditAgentDbId", agentDbId);
     setState("view", "agents/builder");
     renderOperationsView("agents/builder");
     return;
@@ -4679,7 +4684,10 @@ onState("workflowsError", scheduleRender);
 // Init Agent-Builder surface when the view switches to "agents/builder"
 let _builderInitialized = false;
 onState("view", (view) => {
-  if (normalizeAppView(view) === "agents/builder" && !_builderInitialized) {
+  if (normalizeAppView(view) !== "agents/builder") return;
+  // CC18: when navigating with a pending "Edit with Builder" target, always
+  // re-init so initBuilderSurface() can spawn a new target-scoped session.
+  if (!_builderInitialized || getState("builderEditAgentDbId")) {
     _builderInitialized = true;
     void initBuilderSurface().then(() => renderOperationsView("agents/builder")).catch(() => {});
   }

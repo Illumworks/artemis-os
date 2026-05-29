@@ -11,6 +11,7 @@
 
 import { escapeHtml } from "../core/utils.js";
 import * as api from "../core/api.js";
+import { getState, setState } from "../core/store.js";
 
 // ── Persistence keys (mirror dev_projects.js STORAGE pattern) ─────────────────
 
@@ -33,8 +34,13 @@ async function fetchSessions() {
   _sessions = (data.sessions || []).filter((s) => s.status !== "abandoned");
 }
 
-async function createSession() {
-  const data = await api.builderCreateSession({ builder_kind: "agent" });
+async function createSession({ target_id } = {}) {
+  // CC18: pass target_id when entering from an agent profile so the Builder
+  // LLM runs read_recent_runs() against that agent's history. Omit it for the
+  // generic "New session" flow so users can still build a fresh agent.
+  const payload = { builder_kind: "agent" };
+  if (target_id != null) payload.target_id = target_id;
+  const data = await api.builderCreateSession(payload);
   _sessions = [data, ..._sessions];
   return data;
 }
@@ -75,6 +81,15 @@ async function fetchPendingProposals(sessionId) {
 }
 
 // ── Render helpers ─────────────────────────────────────────────────────────────
+
+function _lookupAgentLabel(dbId) {
+  // CC18: builder_sessions.target_id is the agent int PK; resolve back to the
+  // slug/name for display. The normalised agents in state carry both `dbId`
+  // (int PK) and `id` (slug, after _normaliseAgent).
+  const agents = Array.isArray(getState("agents")) ? getState("agents") : [];
+  const hit = agents.find((a) => a.dbId === dbId);
+  return hit ? (hit.title || hit.id || String(dbId)) : `agent #${dbId}`;
+}
 
 function renderSessionStatus(status) {
   const labels = { active: "Active", committed: "Committed", abandoned: "Abandoned" };
@@ -274,6 +289,7 @@ export function renderAgentBuilderPage() {
         <div class="builder-chat-header">
           <div class="builder-chat-title">
             ${session ? `Session #${session.id}` : "Agent-Builder"}
+            ${session?.target_id ? `<span class="builder-chat-subtitle">Reviewing: ${escapeHtml(_lookupAgentLabel(session.target_id))}</span>` : ""}
           </div>
           ${session && session.status === "active" ? `
             <button type="button" class="builder-abandon-btn ops-button ops-button-danger-ghost"
@@ -612,6 +628,19 @@ export async function initBuilderSurface() {
     // Always re-fetch from backend — never trust a stale localStorage cache (Bug 2).
     // fetchSessions() already filters abandoned sessions.
     await fetchSessions();
+
+    // CC18: if the user clicked "Edit with Builder" from an agent profile,
+    // operations-shell sets builderEditAgentDbId in state. Spawn a fresh
+    // target-scoped session so the Builder LLM reads recent runs first.
+    const pendingTargetId = getState("builderEditAgentDbId");
+    if (pendingTargetId) {
+      setState("builderEditAgentDbId", null);
+      const sess = await createSession({ target_id: pendingTargetId });
+      _selectedSessionId = sess.id;
+      _currentSession = await loadSession(sess.id);
+      try { localStorage.setItem(BUILDER_SELECTED_SESSION_KEY, String(sess.id)); } catch {}
+      return;
+    }
 
     // Restore the previously-selected session if it still exists and is active.
     // Falls back to the most-recent active session so first-time users still

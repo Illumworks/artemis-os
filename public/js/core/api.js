@@ -1085,10 +1085,15 @@ function _slugify(name = "") {
 
 /** Map a Python AgentRead → Node agent shape */
 function _normaliseAgent(a) {
+  // Preserve the Postgres int PK as `dbId` — needed by callers that have to
+  // address the agent by its row id (e.g. builder_sessions.target_id is INT).
+  // The slug overrides `id` for legacy Node-shape compatibility.
+  const dbId = typeof a.id === "number" ? a.id : (a.dbId ?? null);
   return {
     ...a,
     // Python: agentId / name → Node: id / title
     id: a.agentId ?? a.id,
+    dbId,
     title: a.name ?? a.title ?? a.agentId ?? "",
     reasonCodesEmitted: a.reasonCodesEmitted ?? a.reason_codes_emitted ?? [],
   };
