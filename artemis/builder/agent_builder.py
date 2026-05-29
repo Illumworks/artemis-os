@@ -434,6 +434,12 @@ async def handle_turn_stream(
             )
 
     tools = build_tool_registry(db_session=db_session, builder_session_id=builder_session_id)
+    # NOTE (CC19): build_tool_registry / tools.specs() are still used for
+    # non-claude-code adapters (anthropic, gemini, openai, openrouter) that
+    # handle tool_use turns in-process. For ClaudeCodeAdapter, tool specs are
+    # passed through to _complete_with_tools but the in-process tool impls
+    # (build_tool_registry implementations) are dead code on that path — the
+    # tools execute inside the claude-code subprocess via the MCP server.
     tool_specs = tools.specs()
     messages.append(make_user_message(user_text))
 
@@ -451,6 +457,13 @@ async def handle_turn_stream(
     assistant_text = ""
     stop_reason = "end_turn"
 
+    # CC19: detect ClaudeCodeAdapter so we can set the contextvar and
+    # short-circuit the 5-iteration tool_use loop (claude-code's internal
+    # agent loop runs all tool-use iterations inside the subprocess).
+    from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+    _is_claude_code_with_tools = isinstance(adapter, ClaudeCodeAdapter) and bool(tool_specs)
+
     try:
         for _iteration in range(5):
             request = CompletionRequest(
@@ -461,7 +474,20 @@ async def handle_turn_stream(
                 cache_system=True,
                 cache_tools=True,
             )
-            response = await adapter.complete(request)
+
+            # CC19: set builder_session_id contextvar before calling adapter.complete()
+            # so ClaudeCodeAdapter._complete_with_tools can pass it to the MCP server.
+            if _is_claude_code_with_tools:
+                from artemis.builder.context import builder_session_id_var
+
+                _token = builder_session_id_var.set(builder_session_id)
+                try:
+                    response = await adapter.complete(request)
+                finally:
+                    builder_session_id_var.reset(_token)
+            else:
+                response = await adapter.complete(request)
+
             conversation.append(response.message)
 
             # Emit assistant text tokens (chunk-granularity since AnthropicAdapter
@@ -470,6 +496,14 @@ async def handle_turn_stream(
                 if isinstance(block, TextBlock) and block.text:
                     assistant_text += block.text
                     yield BuilderEvent(type="assistant_token", payload={"delta": block.text})
+
+            # CC19 short-circuit: ClaudeCodeAdapter's internal agent loop already
+            # completed all tool-use iterations inside the subprocess. The returned
+            # response is always end_turn (never tool_use). Break after one
+            # iteration to avoid unnecessary retries.
+            if _is_claude_code_with_tools:
+                stop_reason = response.stop_reason or "end_turn"
+                break
 
             if response.stop_reason != "tool_use":
                 stop_reason = response.stop_reason or "end_turn"

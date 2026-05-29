@@ -3,6 +3,30 @@
 Design language: fluidity, simplicity, purposefulness, naturalness, spacious, open.
 Applied here as: ``get_adapter()`` is the single entry point; callers pass a
 string and keyword args, the registry does the rest.
+
+Tool-execution capability matrix (CC19)
+----------------------------------------
++-------------+------------------------------------+
+| Provider    | Tool support in .complete()        |
++-------------+------------------------------------+
+| anthropic   | Native tool_use loop               |
+| gemini      | Function-calling translated        |
+| openai      | tool_calls ↔ tool_use translation  |
+| openrouter  | Same as openai                     |
+| claude-code | Via MCP path ONLY                  |
+|             | (.complete() with tools → MCP      |
+|             | server; or .run_with_tools())       |
+| codex       | Text-only — tools silently ignored |
+|             | (emits logger.warning)             |
+| lm-studio   | Text-only fallback — tool support  |
+|             | model-dependent, not reliable      |
+|             | (emits logger.warning)             |
++-------------+------------------------------------+
+
+When routing surfaces that require tool execution (Builder, Floating Artemis,
+Pipeline AI Panel), prefer anthropic/gemini/openai/openrouter for in-process
+tool_use, or claude-code for subscription-based MCP execution.  Do NOT route
+tool-using surfaces to codex or lm-studio without explicit warning suppression.
 """
 
 from __future__ import annotations
