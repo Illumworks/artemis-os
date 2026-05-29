@@ -88,6 +88,11 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
+    # J6a — Proposals Inbox: records when an operator last reviewed this agent's
+    # pending proposals / trajectory summaries.  NULL = never reviewed.
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
 
 class AgentSkill(Base):
