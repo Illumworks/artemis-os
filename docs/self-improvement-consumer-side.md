@@ -41,9 +41,22 @@ Citations live in `definition_proposals.citations` (JSONB) — the run IDs the p
 
 `definition_proposals` is at **0 rows** for the lifetime of the app — the producer side (trajectory summaries) has been broken for the same lifetime. The UI is dormant *because there's nothing to show*. Once **CC14 + CC15** land, summaries flow → Builder reads them → proposals start landing → the UI surface lights up for the first time.
 
-## Gaps worth banking
+## Gaps — empirically confirmed 2026-05-28 (not theoretical)
 
-1. **No global "Proposals Inbox" across agents.** Today you only see proposals when you open a specific agent's Builder. If the Builder has proposed updates across 5 agents while you weren't looking, you need to open all 5 to find them. Skills has a cross-view; Agents doesn't. **Highest-priority gap** — without it, proposals pile up unnoticed.
+After CC10-CC17 closed the producer side (summaries diagnostic and truthful), Lead opened the Builder UI to verify the consumer side. **The discovery flow doesn't exist:**
+
+1. Click an agent in the roster (e.g. `marketing.scout.regional_news`) → agent profile loads. **Trajectory summaries are NOT shown on the profile.**
+2. Click "Edit with Builder" → opens the GENERIC Builder session list. **Sessions are NOT auto-linked to the selected agent.** Existing sessions are user-initiated creation conversations (*"build me a small agent that summarizes my emails"*).
+3. Click "New" → blank session, prompt says *"Describe the agent you want to build"*. **Creation-first UX, not edit-first.** No agent picker. No list of agents-with-recent-summaries.
+4. To actually trigger a review, the user has to *type* something like *"Review marketing.scout.regional_news and propose improvements based on its recent runs."* The Builder LLM then calls `read_recent_runs()` and `propose()` — the mechanism works, but the user has to KNOW to do this.
+
+**Net effect:** even after CC10-CC17 made summaries diagnostic + truthful, the loop doesn't fire end-to-end because **no one knows to ask the Builder about the agents that have new summaries.** `definition_proposals = 0` historically wasn't only the producer-side bug; it's ALSO the consumer-side discovery gap.
+
+### Highest-priority gap — the Proposals Inbox (task #32, now empirically required before SP1)
+
+A cross-agent "Agents with summaries to review" surface, with proposal counts and a one-click "Review with Builder" that opens a session **pre-scoped to that agent** (Builder reads `read_recent_runs` automatically as the prompt instructs).
+
+Without this: summaries pile up in the DB unread.
 
 2. **No diff/preview of what changes.** The proposal card shows the proposed JSONB but not a side-by-side diff vs the current definition. Review is harder than it should be. Polish.
 
