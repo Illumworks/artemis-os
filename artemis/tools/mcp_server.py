@@ -1,4 +1,4 @@
-"""Artemis Tools MCP Server (stream CC1, extended CC19).
+"""Artemis Tools MCP Server (stream CC1, extended CC19, CC20).
 
 Subscription-compatible tool-execution path for the ``claude-code`` provider.
 ``claude -p --mcp-config`` spawns this module as a stdio subprocess; it exposes
@@ -15,9 +15,11 @@ CC19 adds a second mode — Builder-scoped tool execution:
     python -m artemis.tools.mcp_server \\
         --builder-session-id <id>
 
-In this mode the server exposes five Builder-scoped tools:
+In this mode the server exposes eight Builder-scoped tools (five from CC19 +
+three grounding tools from CC20):
   builder_read_existing, builder_read_capabilities, builder_read_recent_runs,
-  builder_propose, builder_test_run.
+  builder_propose, builder_test_run,
+  builder_read_tool_signatures, builder_read_db_schema, builder_read_skill_catalog.
 
 The ``builder_session_id`` scope is established via a contextvar
 (``artemis.builder.context.builder_session_id_var``) BEFORE the subprocess is
@@ -286,13 +288,17 @@ def _build_server(
 #: builder_propose — same protection as the in-process _propose closure.
 _builder_seen_run_ids: dict[int, set[int]] = {}
 
-#: MCP tool names for the Builder scope (cc19).
+#: MCP tool names for the Builder scope (cc19 + cc20).
 BUILDER_MCP_TOOL_NAMES: tuple[str, ...] = (
     "builder_read_existing",
     "builder_read_capabilities",
     "builder_read_recent_runs",
     "builder_propose",
     "builder_test_run",
+    # CC20 grounding tools.
+    "builder_read_tool_signatures",
+    "builder_read_db_schema",
+    "builder_read_skill_catalog",
 )
 
 _BUILDER_TOOL_SCHEMAS: list[mcp_types.Tool] = [
@@ -403,6 +409,62 @@ _BUILDER_TOOL_SCHEMAS: list[mcp_types.Tool] = [
                 },
             },
             "required": ["definition", "prompt"],
+        },
+    ),
+    # ── CC20 grounding tools ────────────────────────────────────────────────
+    mcp_types.Tool(
+        name="builder_read_tool_signatures",
+        description=(
+            "Return the actual parameter schemas + valid enum values for all tools "
+            "an agent has access to. Grounds the Builder against real allowed_status_values "
+            "so it never enumerates hallucinated status names. "
+            "MUST be called after read_recent_runs() and BEFORE propose()."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The agent_id string (dotted slug) of the agent to inspect.",
+                },
+            },
+            "required": ["agent_id"],
+        },
+    ),
+    mcp_types.Tool(
+        name="builder_read_db_schema",
+        description=(
+            "Return the actual DB schema (columns, CHECK constraints, FK relationships, "
+            "unique constraints) for the requested tables. "
+            "Use before proposing changes that reference DB column names or status values."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "table_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Table names to inspect (e.g. ['signal_queue', 'definition_proposals']).",
+                },
+            },
+            "required": ["table_names"],
+        },
+    ),
+    mcp_types.Tool(
+        name="builder_read_skill_catalog",
+        description=(
+            "List ALL registered tools across the platform plus all skills table rows. "
+            "Use before co-proposing a skill to confirm the name is not already taken."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "description": "Optional filter: 'tool' or 'skill' (default: both).",
+                },
+            },
+            "required": [],
         },
     ),
 ]
@@ -570,6 +632,90 @@ async def _dispatch_builder_tool(
             allow_writes=False,
         )
         return _json.dumps(result, indent=2)
+
+    # ── CC20 grounding tools ────────────────────────────────────────────────────
+
+    if name == "builder_read_tool_signatures":
+        from artemis.builder.grounding import extract_allowed_status_values
+        from artemis.builders import repository as _builders_repo
+
+        agent_id_arg = str(_args.get("agent_id", ""))
+        if not agent_id_arg:
+            return _json.dumps({"error": "agent_id is required"})
+
+        try:
+            agent = await _builders_repo.get_agent(session, agent_id_arg)
+        except ValueError:
+            return _json.dumps({"error": f"Agent not found: {agent_id_arg!r}"})
+
+        from artemis.tools.registry import get_factory
+
+        declared = agent.tools or []
+
+        # Collect allowed status values once (shared across all tools for this agent).
+        allowed_statuses = await extract_allowed_status_values(session)
+
+        tool_entries: list[dict[str, _Any]] = []
+        for entry in declared:
+            t_name = entry if isinstance(entry, str) else str(entry.get("name", ""))
+            tool_entry: dict[str, _Any] = {"name": t_name}
+
+            factory = get_factory(t_name)
+            if factory is not None:
+                try:
+                    from unittest.mock import MagicMock
+
+                    stub = MagicMock()
+                    stub.session = None
+                    stub.agent_id = "__grounding_stub__"
+                    stub.agent_db_id = 0
+                    stub.agent_run_id = "__grounding_stub__"
+                    stub.pipeline_run_id = None
+                    tool_def, _impl = factory(stub)
+                    tool_entry["description"] = tool_def.description
+                    tool_entry["input_schema"] = tool_def.input_schema
+                except Exception:
+                    pass
+
+            # Attach allowed status values for any status-related tool.
+            if "status" in t_name.lower() or "queue" in t_name.lower():
+                tool_entry["allowed_status_values"] = allowed_statuses
+
+            tool_entries.append(tool_entry)
+
+        return _json.dumps(
+            {"agent_id": agent_id_arg, "tools": tool_entries},
+            indent=2,
+        )
+
+    if name == "builder_read_db_schema":
+        from artemis.builder.grounding import extract_db_constraints
+
+        raw = _args.get("table_names", [])
+        if not isinstance(raw, list):
+            return _json.dumps({"error": "table_names must be an array of strings"})
+        table_names = [str(t) for t in raw]
+        if not table_names:
+            return _json.dumps({"error": "table_names must be a non-empty array"})
+
+        schema_result = await extract_db_constraints(session, table_names)
+        return _json.dumps(schema_result, indent=2)
+
+    if name == "builder_read_skill_catalog":
+        from artemis.builder.grounding import extract_tool_registry
+
+        kind_filter = str(_args.get("kind", "")) if _args.get("kind") else None
+
+        catalog = await extract_tool_registry(session)
+
+        if kind_filter == "tool":
+            return _json.dumps(
+                {"registered_tools": catalog["registered_tools"], "skills": []}, indent=2
+            )
+        if kind_filter == "skill":
+            return _json.dumps({"registered_tools": [], "skills": catalog["skills"]}, indent=2)
+
+        return _json.dumps(catalog, indent=2)
 
     return _json.dumps({"error": f"Unknown builder tool: {name}"})
 

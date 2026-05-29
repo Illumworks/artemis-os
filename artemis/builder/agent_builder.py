@@ -85,6 +85,17 @@ When a user describes a problem or task they want automated:
 If the user is opening an existing agent (edit session):
 - Start by calling read_recent_runs() to load trajectory summaries.
 - Lead with: "I've reviewed your last N runs. Here's what I noticed: [patterns]."
+- After read_recent_runs(), BEFORE calling propose():
+  - Call read_tool_signatures(agent_id) to load the actual parameter schemas +
+    allowed enum values for every tool the agent uses.
+  - For any tool that writes to a DB table referenced by your proposed system prompt,
+    call read_db_schema with that table name.
+  - For any skill you intend to co-propose, call read_skill_catalog to confirm the
+    name isn't already taken.
+- NEVER enumerate enum values, status names, or parameter constraints from inference.
+  ALWAYS read them via the grounding tools first.
+- If a grounding tool returns data that contradicts your proposed change, revise
+  BEFORE calling propose().
 - Then propose definition changes, citing specific run IDs.
 
 ## Tool use rules
@@ -216,6 +227,61 @@ AGENT_BUILDER_TOOL_SPECS: list[dict[str, Any]] = [
             "required": ["definition", "prompt"],
         },
     },
+    # ── CC20 grounding tools ──────────────────────────────────────────────────
+    {
+        "name": "read_tool_signatures",
+        "description": (
+            "Return the actual parameter schemas + valid enum values for all tools "
+            "an agent has access to. MUST be called after read_recent_runs() and "
+            "BEFORE propose() when editing an existing agent."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The agent_id string (dotted slug) of the agent to inspect.",
+                },
+            },
+            "required": ["agent_id"],
+        },
+    },
+    {
+        "name": "read_db_schema",
+        "description": (
+            "Return the actual DB schema (columns, CHECK constraints, FK relationships) "
+            "for the requested tables. Use before proposing changes that reference DB "
+            "column names or status values."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "table_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Table names to inspect.",
+                },
+            },
+            "required": ["table_names"],
+        },
+    },
+    {
+        "name": "read_skill_catalog",
+        "description": (
+            "List ALL registered tools across the platform plus all skills table rows. "
+            "Use before co-proposing a skill to confirm the name is not already taken."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "description": "Optional filter: 'tool' or 'skill' (default: both).",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -325,12 +391,94 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
         )
         return json.dumps(result, indent=2)
 
+    # ── CC20 grounding tools (in-process path for non-ClaudeCode adapters) ────
+
+    async def _read_tool_signatures(inp: dict[str, Any]) -> str:
+        import json
+
+        from artemis.builder.grounding import extract_allowed_status_values
+        from artemis.builders import repository as _br
+
+        agent_id_arg = str(inp.get("agent_id", ""))
+        if not agent_id_arg:
+            return json.dumps({"error": "agent_id is required"})
+
+        try:
+            agent_row = await _br.get_agent(db_session, agent_id_arg)
+        except ValueError:
+            return json.dumps({"error": f"Agent not found: {agent_id_arg!r}"})
+
+        from artemis.tools.registry import get_factory
+
+        allowed_statuses = await extract_allowed_status_values(db_session)
+        declared = agent_row.tools or []
+        tool_entries: list[dict[str, Any]] = []
+        for t_entry in declared:
+            t_name = t_entry if isinstance(t_entry, str) else str(t_entry.get("name", ""))
+            te: dict[str, Any] = {"name": t_name}
+            factory = get_factory(t_name)
+            if factory is not None:
+                try:
+                    from unittest.mock import MagicMock
+
+                    stub = MagicMock()
+                    stub.session = None
+                    stub.agent_id = "__grounding_stub__"
+                    stub.agent_db_id = 0
+                    stub.agent_run_id = "__grounding_stub__"
+                    stub.pipeline_run_id = None
+                    td, _ = factory(stub)
+                    te["description"] = td.description
+                    te["input_schema"] = td.input_schema
+                except Exception:
+                    pass
+            if "status" in t_name.lower() or "queue" in t_name.lower():
+                te["allowed_status_values"] = allowed_statuses
+            tool_entries.append(te)
+
+        return json.dumps({"agent_id": agent_id_arg, "tools": tool_entries}, indent=2)
+
+    async def _read_db_schema(inp: dict[str, Any]) -> str:
+        import json
+
+        from artemis.builder.grounding import extract_db_constraints
+
+        raw = inp.get("table_names", [])
+        if not isinstance(raw, list):
+            return json.dumps({"error": "table_names must be an array of strings"})
+        table_names = [str(t) for t in raw]
+        if not table_names:
+            return json.dumps({"error": "table_names must be a non-empty array"})
+
+        result = await extract_db_constraints(db_session, table_names)
+        return json.dumps(result, indent=2)
+
+    async def _read_skill_catalog(inp: dict[str, Any]) -> str:
+        import json
+
+        from artemis.builder.grounding import extract_tool_registry
+
+        kind_filter = str(inp.get("kind", "")) if inp.get("kind") else None
+        catalog = await extract_tool_registry(db_session)
+
+        if kind_filter == "tool":
+            return json.dumps(
+                {"registered_tools": catalog["registered_tools"], "skills": []}, indent=2
+            )
+        if kind_filter == "skill":
+            return json.dumps({"registered_tools": [], "skills": catalog["skills"]}, indent=2)
+        return json.dumps(catalog, indent=2)
+
     impl_map = {
         "read_existing": _read_existing,
         "read_capabilities": _read_capabilities,
         "read_recent_runs": _read_recent_runs,
         "propose": _propose,
         "test_run": _test_run,
+        # CC20 grounding.
+        "read_tool_signatures": _read_tool_signatures,
+        "read_db_schema": _read_db_schema,
+        "read_skill_catalog": _read_skill_catalog,
     }
     for spec_dict in AGENT_BUILDER_TOOL_SPECS:
         tool = Tool(
