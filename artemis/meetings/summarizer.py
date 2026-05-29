@@ -19,6 +19,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from artemis.integrations.gcal.client import GCalClient
 from artemis.integrations.gcal.types import Event
 from artemis.integrations.granola.client import GranolaClient, Meeting
 from artemis.meetings.models import MeetingMatchLog, MeetingSummary
+from artemis.meetings.summary_schemas import MeetingSummary as MeetingSummarySchema
 from artemis.memory.raw_inputs import insert_raw_input
 
 logger = logging.getLogger(__name__)
@@ -270,11 +272,19 @@ Produce a JSON object with exactly these keys:
 Respond with ONLY the JSON object. No markdown fences, no preamble."""
 
 
+_MAX_VALIDATION_RETRIES = 1
+
+
 async def _llm_summarize(
     title: str,
     transcript_data: dict[str, Any],
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Call the LLM via resolve_adapter() and return (bullets_text, action_items).
+    """Call the LLM and return (bullets_text, action_items) bounded by Pydantic.
+
+    H4: Output is validated against `MeetingSummarySchema`. On validation
+    failure, retries once with the error appended to the next prompt. After
+    the retry, returns an empty summary rather than letting hallucinated
+    content propagate into Floating Artemis's system prompt.
 
     Returns placeholder values if the LLM call fails so the scheduler doesn't
     crash — a failed summary is still logged.
@@ -294,11 +304,6 @@ async def _llm_summarize(
         # Fall back to full JSON if no obvious transcript key.
         transcript_text = json.dumps(transcript_data, indent=2)[:8000]
 
-    prompt = _SUMMARY_PROMPT.format(
-        title=title,
-        transcript=transcript_text[:6000],
-    )
-
     # Resolve best available provider (same chain as floating_artemis).
     adapter = None
     for candidate in ("claude-code", "codex", "lm-studio", "anthropic"):
@@ -313,25 +318,42 @@ async def _llm_summarize(
     if adapter is None:
         adapter = AnthropicAdapter()
 
-    try:
-        request = CompletionRequest(
-            messages=[Message(role="user", content=[TextBlock(text=prompt)])],
-            max_tokens=1024,
-        )
-        response = await adapter.complete(request)
-        raw_text = ""
-        for block in response.message.content:
-            if isinstance(block, TextBlock):
-                raw_text += block.text
-
-        parsed = json.loads(raw_text.strip())
-        bullets_list: list[str] = parsed.get("bullets", [])
-        action_items: list[dict[str, Any]] = parsed.get("action_items", [])
-        bullets_text = "\n".join(f"- {b}" for b in bullets_list)
-        return bullets_text, action_items
-    except Exception:
-        logger.warning("LLM summarization failed for meeting %r", title, exc_info=True)
-        return "- Summary unavailable (LLM call failed)", []
+    last_error: str | None = None
+    for attempt in range(_MAX_VALIDATION_RETRIES + 1):
+        prompt = _SUMMARY_PROMPT.format(title=title, transcript=transcript_text[:6000])
+        if last_error is not None:
+            prompt += (
+                f"\n\nYour previous response failed Pydantic validation: {last_error}\n"
+                "Re-emit the JSON with corrected shape. Do not add commentary."
+            )
+        try:
+            request = CompletionRequest(
+                messages=[Message(role="user", content=[TextBlock(text=prompt)])],
+                max_tokens=1024,
+            )
+            response = await adapter.complete(request)
+            raw_text = "".join(
+                block.text for block in response.message.content if isinstance(block, TextBlock)
+            )
+            summary = MeetingSummarySchema.model_validate_json(raw_text.strip())
+            bullets_text = "\n".join(f"- {b}" for b in summary.bullets)
+            action_items = [item.model_dump() for item in summary.action_items]
+            return bullets_text, action_items
+        except ValidationError as exc:
+            last_error = str(exc)
+            logger.warning(
+                "Meeting summarizer validation failed (attempt %d) for %r: %s",
+                attempt + 1,
+                title,
+                exc,
+            )
+            if attempt >= _MAX_VALIDATION_RETRIES:
+                # Persistent shape failure → empty placeholder (no hallucinated commitments).
+                return "- Summary unavailable (validation failed)", []
+        except Exception:
+            logger.warning("LLM summarization failed for meeting %r", title, exc_info=True)
+            return "- Summary unavailable (LLM call failed)", []
+    return "- Summary unavailable (validation failed)", []
 
 
 # ── Main scheduler tick ───────────────────────────────────────────────────────
