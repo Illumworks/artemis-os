@@ -85,7 +85,9 @@ Alembic migration. NULL default = "never reviewed."
 
 ### Part B — Frontend: Inbox panel on the Agents page
 
-In `public/js/features/agents.js`, add a new section at the top of the Agents page (above the roster). The panel:
+**Visual design note from Jon (2026-05-29):** the existing Agents-page hero (the *"Who Does Work / A roster for scanning..."* block + 4 buttons + 4 stat cards above the roster) is *too big and not functional*. The Inbox should land at the top and ideally make the page feel **more functional, less hero-heavy**. You have permission to **shrink or restructure the existing hero** (e.g., compress stats into a single denser bar; move "Build with Agent-Builder" / "Edit with Builder" buttons into a tighter action row; remove redundant descriptive text) to make the Inbox the primary above-the-fold surface without the page feeling visually bloated. Use your aesthetic judgment within the existing design system; Lead will verify the result in-browser post-merge. **Goal: when an operator lands on Agents, the first thing they see is what needs attention (Inbox), not a marketing-style hero.**
+
+In `public/js/features/agents.js`, add a new section at the top of the Agents page (above the roster, ideally taking the visual real estate the oversized hero currently uses). The panel:
 
 - **Header:** "Inbox — Agent Reviews Pending" with a count badge.
 - **Section 1: Pending Proposals** — list rows for `agents_with_pending_proposals`:
@@ -171,6 +173,7 @@ Idempotent. No backfill needed (NULL = never reviewed).
 - Inline Approve/Reject use the EXISTING `/api/builder/proposals/{id}/approve|reject` routes — don't duplicate.
 - "Review with Builder" MUST set `target_id` on session creation (CC18's pattern). If CC18 hasn't merged yet, this brief independently passes `target_id` per the existing API contract (which already supports it).
 - Don't unify the Skills "proposed" pill rendering into the Inbox in this brief — leave the Skills page as-is; the Inbox shows skill proposals as a separate section.
+- **Aesthetics:** shrink/restructure the existing oversized hero so the Inbox is the primary above-the-fold surface. Use existing design tokens / CSS variables / components. Don't introduce new visual languages. Lead does the eyes-on-glass post-merge.
 - Local-only git. Worker commits on `worker/proposals-inbox`; terminal-Lead merges after Lead approves.
 
 ---
