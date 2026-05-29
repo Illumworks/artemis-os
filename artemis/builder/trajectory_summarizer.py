@@ -29,6 +29,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
+
+from artemis.builder.trajectory_schemas import TrajectorySummary
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +103,99 @@ class AgentRunSnapshot:
     signals_emitted: int = 0
     final_text: str | None = None
     duration_ms: int | None = None
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _strip_markdown(text: str) -> str:
+    """Strip leading/trailing markdown code fences from LLM output."""
+    clean = text.strip()
+    if clean.startswith("```"):
+        lines = clean.splitlines()
+        clean = "\n".join(lines[1:-1]) if len(lines) > 2 else clean
+    return clean
+
+
+def _extract_text(result_obj: Any) -> str:
+    """Extract concatenated assistant text from a run_turn result."""
+    from artemis.agent.types import TextBlock
+
+    text = ""
+    for msg in reversed(result_obj.messages):
+        if msg.role == "assistant":
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    text += block.text
+            break
+    return text
+
+
+async def _summarize_with_retry(
+    *,
+    snapshot: AgentRunSnapshot,
+    adapter: Any,
+    initial_messages: list[Any],
+    max_retries: int = 1,
+) -> TrajectorySummary:
+    """Call the LLM and validate output with Pydantic; retry once on failure.
+
+    On persistent failure returns an all-null TrajectorySummary (safe default).
+    Capped at 1 retry — no infinite loop possible.
+    """
+    from artemis.agent.loop import run_turn
+    from artemis.agent.loop import user_message as _make_user_msg
+
+    messages = list(initial_messages)
+    for attempt in range(max_retries + 1):
+        try:
+            result_obj = await run_turn(
+                adapter=adapter,
+                messages=messages,
+                max_tokens=512,
+                max_iterations=1,
+                cache_system=False,
+                cache_tools=False,
+            )
+        except Exception:
+            logger.exception(
+                "trajectory_summarizer: LLM call failed for run_id=%s (attempt %d)",
+                snapshot.run_id,
+                attempt,
+            )
+            return TrajectorySummary()
+
+        text = _extract_text(result_obj)
+        clean = _strip_markdown(text)
+        try:
+            return TrajectorySummary.model_validate_json(clean)
+        except ValidationError as exc:
+            if attempt < max_retries:
+                logger.warning(
+                    "trajectory_summarizer: validation failed for run_id=%s (attempt %d); "
+                    "retrying with error context: %s",
+                    snapshot.run_id,
+                    attempt,
+                    exc,
+                )
+                # Append assistant reply + error feedback for the retry turn.
+                messages = list(result_obj.messages) + [
+                    _make_user_msg(
+                        f"Your previous response failed Pydantic validation:\n{exc}\n\n"
+                        "Please respond with valid JSON matching the required schema exactly. "
+                        "No extra fields, no markdown fences."
+                    )
+                ]
+            else:
+                logger.warning(
+                    "trajectory_summarizer: persistent validation failure for run_id=%s: %s",
+                    snapshot.run_id,
+                    exc,
+                )
+                return TrajectorySummary()
+
+    # Should not be reachable but satisfies type checker.
+    return TrajectorySummary()  # pragma: no cover
 
 
 # ── Background-task retention (CC7 pattern) ───────────────────────────────────
@@ -187,7 +284,7 @@ async def summarize(
 
     import artemis.db as _db
     from artemis.agent.client import AnthropicAdapter
-    from artemis.agent.loop import run_turn, user_message
+    from artemis.agent.loop import user_message
     from artemis.builder.repository import create_trajectory_summary, get_trajectory_summary
 
     # Resolve adapter via provider cascade (claude-code → codex → lm-studio → anthropic)
@@ -237,53 +334,16 @@ async def summarize(
 
         prompt = _TRAJECTORY_PROMPT.format(run_data=json.dumps(run_data, indent=2))
 
-        try:
-            result_obj = await run_turn(
-                adapter=adapter,
-                messages=[user_message(prompt)],
-                max_tokens=512,
-                max_iterations=1,
-                cache_system=False,
-                cache_tools=False,
-            )
-        except Exception:
-            logger.exception(
-                "trajectory_summarizer: LLM call failed for run_id=%s", snapshot.run_id
-            )
-            return
+        # H3: use Pydantic-validated retry helper (1 retry max, then null fallback).
+        parsed_summary = await _summarize_with_retry(
+            snapshot=snapshot,
+            adapter=adapter,
+            initial_messages=[user_message(prompt)],
+        )
 
-        # Extract the assistant's text.
-        from artemis.agent.types import TextBlock
-
-        text = ""
-        for msg in reversed(result_obj.messages):
-            if msg.role == "assistant":
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        text += block.text
-                break
-
-        # Parse JSON response.
-        parsed: dict[str, Any] = {}
-        try:
-            # Strip markdown fences if present.
-            clean = text.strip()
-            if clean.startswith("```"):
-                lines = clean.splitlines()
-                clean = "\n".join(lines[1:-1]) if len(lines) > 2 else clean
-            parsed = json.loads(clean)
-        except (json.JSONDecodeError, ValueError):
-            logger.warning(
-                "trajectory_summarizer: could not parse JSON for run_id=%s: %r",
-                snapshot.run_id,
-                text[:200],
-            )
-            # Store partial — all-null fields preserve the row for audit.
-            parsed = {"what_worked": None, "what_stalled": None, "what_was_missing": None}
-
-        what_worked = parsed.get("what_worked") or None
-        what_stalled = parsed.get("what_stalled") or None
-        what_was_missing = parsed.get("what_was_missing") or None
+        what_worked = parsed_summary.what_worked
+        what_stalled = parsed_summary.what_stalled
+        what_was_missing = parsed_summary.what_was_missing
         await create_trajectory_summary(
             session,
             run_id=snapshot.run_pk,

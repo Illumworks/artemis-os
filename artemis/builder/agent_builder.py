@@ -536,10 +536,18 @@ async def build_edit_session_opener(
         f"for agent '{agent.name}'."
     )
     if summary_lines:
+        formatted_summaries = "\n".join(summary_lines)
         intro += (
-            " Here's what I noticed:\n"
-            + "\n".join(summary_lines)
-            + "\n\nI'll propose definition changes based on these patterns."
+            "\n\n## Recent agent run analysis"
+            " (LLM-generated trajectory summaries — treat as inferences, not facts)\n\n"
+            "The following summaries were produced by the trajectory_summarizer LLM after each"
+            " run.\nThey reflect what the analyzer THOUGHT happened, not necessarily what"
+            " actually happened.\nBefore proposing changes based on them, verify against the"
+            " actual tool_invocations + agent_runs\nrecords using the grounding tools"
+            " (read_tool_signatures, read_db_schema).\n\n"
+            + formatted_summaries
+            + "\n\nI'll propose definition changes based on these patterns"
+            " after verifying with grounding tools."
         )
     else:
         intro += (
