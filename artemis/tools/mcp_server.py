@@ -1,4 +1,4 @@
-"""Artemis Tools MCP Server (stream CC1).
+"""Artemis Tools MCP Server (stream CC1, extended CC19).
 
 Subscription-compatible tool-execution path for the ``claude-code`` provider.
 ``claude -p --mcp-config`` spawns this module as a stdio subprocess; it exposes
@@ -9,6 +9,21 @@ Invocation (the INTERFACE CONTRACT — CC2 depends on this; do not drift):
 
     python -m artemis.tools.mcp_server \\
         --agent-id <dotted_id> --run-id <uuid> [--pipeline-run-id <id>]
+
+CC19 adds a second mode — Builder-scoped tool execution:
+
+    python -m artemis.tools.mcp_server \\
+        --builder-session-id <id>
+
+In this mode the server exposes five Builder-scoped tools:
+  builder_read_existing, builder_read_capabilities, builder_read_recent_runs,
+  builder_propose, builder_test_run.
+
+The ``builder_session_id`` scope is established via a contextvar
+(``artemis.builder.context.builder_session_id_var``) BEFORE the subprocess is
+launched; the MCP server reads it at tool-call time.  The agent-run tools
+(``--agent-id``) and builder tools (``--builder-session-id``) are mutually
+exclusive; pass exactly one scope.
 
 - Transport: stdio.
 - MCP server name: ``artemis``.
@@ -264,14 +279,317 @@ def _build_server(
     return server
 
 
+# ── Builder-scoped MCP tools (CC19) ───────────────────────────────────────────
+
+#: Per-session set of run PKs returned by builder_read_recent_runs.
+#: Keyed by builder_session_id (int). Used to validate citations in
+#: builder_propose — same protection as the in-process _propose closure.
+_builder_seen_run_ids: dict[int, set[int]] = {}
+
+#: MCP tool names for the Builder scope (cc19).
+BUILDER_MCP_TOOL_NAMES: tuple[str, ...] = (
+    "builder_read_existing",
+    "builder_read_capabilities",
+    "builder_read_recent_runs",
+    "builder_propose",
+    "builder_test_run",
+)
+
+_BUILDER_TOOL_SCHEMAS: list[mcp_types.Tool] = [
+    mcp_types.Tool(
+        name="builder_read_existing",
+        description="List existing definitions of a given kind (agent/skill/workflow).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["agent", "skill", "workflow"],
+                    "description": "The kind of definition to list.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of results (default 50).",
+                    "default": 50,
+                },
+            },
+            "required": ["kind"],
+        },
+    ),
+    mcp_types.Tool(
+        name="builder_read_capabilities",
+        description="Return available providers, models, and integrations.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    ),
+    mcp_types.Tool(
+        name="builder_read_recent_runs",
+        description=(
+            "Return the most recent agent runs + trajectory summaries. "
+            "Use in edit sessions to surface self-improvement context."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The agent_id string of the agent to look up.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max runs to return (default 10).",
+                    "default": 10,
+                },
+            },
+            "required": ["agent_id"],
+        },
+    ),
+    mcp_types.Tool(
+        name="builder_propose",
+        description=(
+            "Stage a draft definition as a DefinitionProposal awaiting user approval. "
+            "Use for both agent definitions and co-proposed skills."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["agent", "skill", "workflow", "automation"],
+                    "description": "Kind of definition being proposed.",
+                },
+                "definition": {
+                    "type": "object",
+                    "description": "The draft definition object.",
+                },
+                "target_id": {
+                    "type": "integer",
+                    "description": "Non-null when revising an existing definition.",
+                },
+                "citations": {
+                    "type": "object",
+                    "description": (
+                        "Self-improvement citations. Shape: "
+                        "{run_ids: [int, ...], observations: [...], summary: str}. "
+                        "run_ids MUST be IDs returned by builder_read_recent_runs "
+                        "in this session — never fabricate or guess IDs."
+                    ),
+                },
+            },
+            "required": ["kind", "definition"],
+        },
+    ),
+    mcp_types.Tool(
+        name="builder_test_run",
+        description=(
+            "Fire a sandboxed trial run of the current draft definition against a test prompt. "
+            "Read-only tools only. Returns output + tools_skipped list. "
+            "Note: when claude-code is the active adapter, this uses a fallback provider "
+            "(anthropic, openai, etc.) for sandbox execution."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "definition": {
+                    "type": "object",
+                    "description": "The draft agent definition to test.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The test prompt to run against the draft.",
+                },
+            },
+            "required": ["definition", "prompt"],
+        },
+    ),
+]
+
+
+def _build_builder_server(session: AsyncSession, builder_session_id: int) -> Server:
+    """Wire a low-level MCP Server with the five Builder-scoped tools (CC19).
+
+    Tool calls are dispatched to the builder engine primitives, scoped to the
+    given builder_session_id.  Citations validation uses a per-session
+    _seen_run_ids set so builder_propose cannot fabricate run IDs.
+
+    test_run recursion concern: when claude-code is the active adapter (i.e.,
+    this server IS the MCP subprocess launched by ClaudeCodeAdapter), we walk
+    the provider cascade EXCLUDING claude-code for sandbox execution.  If no
+    other provider is available, we return an explicit error rather than
+    recursing into another claude-code subprocess.
+    """
+    # Per-session seen-run-ids tracking (mutable, captured by closure).
+    if builder_session_id not in _builder_seen_run_ids:
+        _builder_seen_run_ids[builder_session_id] = set()
+    seen_run_ids = _builder_seen_run_ids[builder_session_id]
+
+    server: Server = Server(SERVER_NAME)
+
+    @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
+    async def _list_tools() -> list[mcp_types.Tool]:
+        return list(_BUILDER_TOOL_SCHEMAS)
+
+    @server.call_tool()  # type: ignore[untyped-decorator]
+    async def _call_tool(name: str, arguments: dict[str, object]) -> list[mcp_types.TextContent]:
+        args = dict(arguments)
+        try:
+            result = await _dispatch_builder_tool(
+                name=name,
+                args=args,
+                session=session,
+                builder_session_id=builder_session_id,
+                seen_run_ids=seen_run_ids,
+            )
+        except Exception as exc:
+            await session.rollback()
+            logger.exception("builder tool %r raised; rolled back", name)
+            return [mcp_types.TextContent(type="text", text=f"TOOL_ERROR: {exc}")]
+
+        await session.commit()
+        return [mcp_types.TextContent(type="text", text=result)]
+
+    return server
+
+
+async def _dispatch_builder_tool(
+    *,
+    name: str,
+    args: dict[str, object],
+    session: AsyncSession,
+    builder_session_id: int,
+    seen_run_ids: set[int],
+) -> str:
+    """Dispatch a builder MCP tool call to the appropriate engine primitive."""
+    import json as _json
+    from typing import Any as _Any
+
+    from artemis.builder import engine as builder_engine
+
+    # Narrow argument dict to Any for convenience — the MCP protocol delivers
+    # JSON-decoded values so these casts are safe at runtime.
+    _args: dict[str, _Any] = args
+
+    if name == "builder_read_existing":
+        results = await builder_engine.read_existing(
+            str(_args.get("kind", "agent")),
+            db_session=session,
+            limit=int(_args.get("limit", 50)),
+        )
+        return _json.dumps(results, indent=2)
+
+    if name == "builder_read_capabilities":
+        result = await builder_engine.read_capabilities(db_session=session)
+        return _json.dumps(result, indent=2)
+
+    if name == "builder_read_recent_runs":
+        runs = await builder_engine.read_recent_runs(
+            str(_args.get("agent_id", "")),
+            db_session=session,
+            limit=int(_args.get("limit", 10)),
+        )
+        # Record returned PKs for citation validation.
+        for entry in runs:
+            if "id" in entry:
+                seen_run_ids.add(int(entry["id"]))
+        return _json.dumps(runs, indent=2)
+
+    if name == "builder_propose":
+        citations = _args.get("citations")
+        if citations and isinstance(citations, dict):
+            cited_ids = [int(r) for r in citations.get("run_ids", [])]
+            bad_ids = [rid for rid in cited_ids if rid not in seen_run_ids]
+            if bad_ids:
+                return _json.dumps(
+                    {
+                        "error": (
+                            "run_ids validation failed: the following IDs were not returned by "
+                            f"builder_read_recent_runs in this session and cannot be cited: "
+                            f"{bad_ids}. Only reference run IDs from the set "
+                            "builder_read_recent_runs returned."
+                        )
+                    }
+                )
+
+        definition = _args.get("definition", {})
+        if not isinstance(definition, dict):
+            definition = {}
+        target_id_raw = _args.get("target_id")
+        target_id = int(target_id_raw) if target_id_raw is not None else None
+
+        proposal_id = await builder_engine.propose(
+            str(_args.get("kind", "agent")),
+            definition,
+            db_session=session,
+            builder_session_id=builder_session_id,
+            target_id=target_id,
+            proposed_by="builder",
+            citations=citations if isinstance(citations, dict) else None,
+        )
+        # Commit is handled by the outer _call_tool wrapper.
+        return _json.dumps({"proposal_id": proposal_id, "status": "pending"})
+
+    if name == "builder_test_run":
+        # Recursion concern: this MCP server is itself running as a subprocess
+        # launched by ClaudeCodeAdapter._complete_with_tools().  We must NOT
+        # use claude-code again for sandbox execution — that would recurse.
+        # Walk the provider cascade EXCLUDING claude-code.
+        from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+        from artemis.providers.registry import get_adapter
+
+        sandbox_adapter = None
+        for candidate in ("anthropic", "openai", "openrouter", "gemini", "lm-studio", "codex"):
+            try:
+                sandbox_adapter = get_adapter(candidate)
+                break
+            except (MissingApiKeyError, UnknownProviderError):
+                continue
+            except Exception:
+                continue
+
+        if sandbox_adapter is None:
+            return _json.dumps(
+                {
+                    "error": (
+                        "test_run requires a tool-capable provider other than claude-code; "
+                        "configure ANTHROPIC_API_KEY or another tool-capable provider "
+                        "for sandbox execution."
+                    )
+                }
+            )
+
+        definition = _args.get("definition", {})
+        if not isinstance(definition, dict):
+            definition = {}
+        result = await builder_engine.sandbox_run(
+            definition,
+            str(_args.get("prompt", "")),
+            adapter=sandbox_adapter,
+            allow_writes=False,
+        )
+        return _json.dumps(result, indent=2)
+
+    return _json.dumps({"error": f"Unknown builder tool: {name}"})
+
+
 # ── stdio entrypoint ────────────────────────────────────────────────────────────
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m artemis.tools.mcp_server")
-    parser.add_argument("--agent-id", required=True, help="Dotted agent id to bind to.")
-    parser.add_argument("--run-id", required=True, help="Agent run UUID (for provenance).")
+    # Agent-run scope (CC1/CC2) — mutually exclusive with builder scope.
+    parser.add_argument("--agent-id", default=None, help="Dotted agent id to bind to.")
+    parser.add_argument("--run-id", default=None, help="Agent run UUID (for provenance).")
     parser.add_argument("--pipeline-run-id", default=None, help="Optional pipeline run id.")
+    # Builder scope (CC19) — mutually exclusive with agent-run scope.
+    parser.add_argument(
+        "--builder-session-id",
+        default=None,
+        type=int,
+        help="Builder session id (CC19 Builder MCP tools).",
+    )
     return parser.parse_args(argv)
 
 
@@ -304,10 +622,45 @@ async def _serve(agent_id: str, run_id: str, pipeline_run_id: str | None) -> int
     return 0
 
 
+async def _serve_builder(builder_session_id: int) -> int:
+    """Open a session and serve Builder-scoped MCP tools over stdio (CC19).
+
+    Returns a process exit code (0 on clean shutdown).
+    """
+    async with SessionLocal() as session:
+        logger.info(
+            "artemis MCP server (builder) bound to builder_session_id=%s tools=%s",
+            builder_session_id,
+            BUILDER_MCP_TOOL_NAMES,
+        )
+        server = _build_builder_server(session, builder_session_id)
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     args = _parse_args(argv)
     import anyio
+
+    # CC19: builder scope takes priority when --builder-session-id is given.
+    if args.builder_session_id is not None:
+        return anyio.run(_serve_builder, args.builder_session_id)
+
+    # Agent-run scope (CC1/CC2): both --agent-id and --run-id are required.
+    if not args.agent_id or not args.run_id:
+        print(
+            "FATAL: must pass either --builder-session-id (CC19) "
+            "or both --agent-id and --run-id (CC1/CC2)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
 
     return anyio.run(
         _serve,

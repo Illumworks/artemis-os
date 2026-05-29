@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 
 from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.agent.types import Message, TextBlock, Usage
 from artemis.providers._bin_path import find_cli_binary
 from artemis.providers.errors import MissingCliBinaryError, ProviderAPIError
+
+logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 120.0
 _VALID_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
@@ -52,7 +55,20 @@ class CodexAdapter:
         self._default_speed_tier = default_speed_tier
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
-        """Run a single completion via the codex CLI."""
+        """Run a single completion via the codex CLI.
+
+        Note: CodexAdapter is text-only and does not support tool execution.
+        Tools passed in ``request.tools`` will be silently ignored.
+        Route tool-using surfaces to a tool-capable provider (anthropic, claude-code,
+        gemini, openai, or openrouter).
+        """
+        if request.tools:
+            logger.warning(
+                "%s adapter received request.tools but does not support tool execution. "
+                "Tools will be ignored. Consider routing tool-using surfaces to a "
+                "tool-capable provider.",
+                type(self).__name__,
+            )
         model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
 
