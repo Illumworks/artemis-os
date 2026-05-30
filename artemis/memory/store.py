@@ -95,6 +95,32 @@ async def _embed_and_store(
 # ── Public write API ─────────────────────────────────────────────────────────
 
 
+async def get_or_create_scope(
+    session: AsyncSession,
+    scope_kind: str,
+    scope_id: str,
+) -> MemoryScope:
+    """Idempotent fetch-or-create for a memory scope.
+
+    Returns the existing row if (scope_kind, scope_id) already exists,
+    otherwise inserts it and returns the new row. Safe for concurrent callers
+    via the ON CONFLICT DO NOTHING + re-fetch pattern.
+    """
+    stmt = (
+        pg_insert(MemoryScope)
+        .values(scope_kind=scope_kind, scope_id=scope_id)
+        .on_conflict_do_nothing(index_elements=["scope_kind", "scope_id"])
+    )
+    await session.execute(stmt)
+    result = await session.execute(
+        select(MemoryScope).where(
+            MemoryScope.scope_kind == scope_kind,
+            MemoryScope.scope_id == scope_id,
+        )
+    )
+    return result.scalar_one()
+
+
 async def upsert_embedding(
     session: AsyncSession,
     target_table: Literal["drawer", "observation"],

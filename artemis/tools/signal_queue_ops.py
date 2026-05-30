@@ -25,10 +25,14 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from artemis.agent.types import Tool, ToolImpl
 from artemis.marketing.models import SignalQueue
 from artemis.marketing.state_machine import IllegalTransition, transition
+from artemis.memory.models import MemoryEvidence
+from artemis.memory.schemas import Scope, Source
+from artemis.memory.store import get_or_create_scope, write_drawer, write_observation
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import register_tool
 
@@ -190,12 +194,107 @@ def _update_status_factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             signal_id,
             new_status,
         )
+
+        # M5: fire memory write only on qualified transition (Part D).
+        if new_status == "qualified":
+            try:
+                await _write_signal_memory(ctx.session, entity)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "M5 memory write failed for signal_id=%s: %s",
+                    signal_id,
+                    exc,
+                    exc_info=True,
+                )
+
         return json.dumps({"signal_id": signal_id, "signal_status": entity.signal_status})
 
     return (_UPDATE_STATUS_DEF, _impl)
 
 
 register_tool("signal_queue.update_status", _update_status_factory)
+
+
+# ── M5: memory write on qualified transition ──────────────────────────────────
+
+_MARKETING_SCOPE = Scope(scope_kind="workspace", scope_id="marketing")
+
+
+async def _write_signal_memory(session: Any, signal: SignalQueue) -> None:
+    """Write drawer + observation + evidence links when a signal is qualified.
+
+    Called only on pending_qualification → qualified. Failure is non-fatal:
+    the caller (update_status) catches all exceptions and logs a warning.
+    This function never commits — the MCP server owns the commit boundary.
+    """
+    signal_id: int = signal.id
+
+    # Ensure marketing scope exists.
+    await get_or_create_scope(session, "workspace", "marketing")
+
+    # Part A-1: Drawer (verbatim evidence)
+    reason_codes = signal.reason_codes or []
+    drawer_content = json.dumps(
+        {
+            "id": signal_id,
+            "headline": signal.headline,
+            "source_url": signal.source_url,
+            "source_type": signal.source_type,
+            "reason_codes": reason_codes,
+            "district_id": signal.district_id,
+            "pipeline_run_id": signal.pipeline_run_id,
+            "campaign_family": signal.campaign_family,
+            "urgency_tier": signal.urgency_tier,
+            "summary": signal.summary,
+            "state": signal.state,
+            "qualification_json": signal.qualification_json,
+        },
+        sort_keys=True,
+    )
+    drawer = await write_drawer(
+        session,
+        _MARKETING_SCOPE,
+        drawer_content,
+        Source(source_kind="signal_queue", source_id=str(signal_id)),
+    )
+
+    # Part A-2: Observation (curated summary)
+    if isinstance(reason_codes, list):
+        codes_csv = ", ".join(
+            str(r.get("code", r) if isinstance(r, dict) else r) for r in reason_codes
+        )
+    else:
+        codes_csv = str(reason_codes)
+    district = signal.district_id or "unknown"
+    pipeline_run = signal.pipeline_run_id or "unknown"
+    obs_content = (
+        f"Qualified signal {signal_id}: {signal.headline}. "
+        f"Source: {signal.source_type}. "
+        f"Reason codes: {codes_csv}. "
+        f"District: {district}. "
+        f"Pipeline run: {pipeline_run}."
+    )
+    obs = await write_observation(
+        session,
+        _MARKETING_SCOPE,
+        obs_content,
+        category="signal_qualification",
+        source_quality=0.7,
+    )
+
+    # Part A-3: Evidence links (observation → drawer + observation → signal_queue row)
+    for src_kind, src_id in (("drawer", drawer.id), ("signal_queue", signal_id)):
+        stmt = (
+            pg_insert(MemoryEvidence)
+            .values(
+                observation_id=obs.id,
+                source_kind=src_kind,
+                source_id=src_id,
+                weight=1.0,
+            )
+            .on_conflict_do_nothing(constraint="uq_evidence_obs_source")
+        )
+        await session.execute(stmt)
 
 
 # ── signal_queue.find_by_district_and_code ──────────────────────────────────────
