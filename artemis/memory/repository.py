@@ -274,19 +274,26 @@ async def get_observation_detail(
         if ev.source_quote:
             item["source_preview"] = ev.source_quote[:_PREVIEW_LEN]
         elif ev.source_kind == "drawer":
-            dr_result = await session.execute(
-                select(MemoryDrawer).where(MemoryDrawer.id == ev.source_id)
-            )
-            dr = dr_result.scalar_one_or_none()
-            if dr is not None:
-                item["source_preview"] = dr.content[:_PREVIEW_LEN]
+            # CC28: ev.source_id is TEXT; numeric IDs need int() for BigInt PK lookup
+            try:
+                dr_result = await session.execute(
+                    select(MemoryDrawer).where(MemoryDrawer.id == int(ev.source_id))
+                )
+                dr = dr_result.scalar_one_or_none()
+                if dr is not None:
+                    item["source_preview"] = dr.content[:_PREVIEW_LEN]
+            except (ValueError, TypeError):
+                pass  # non-numeric source_id; no preview available
         elif ev.source_kind == "observation":
-            src_obs_result = await session.execute(
-                select(MemoryObservation).where(MemoryObservation.id == ev.source_id)
-            )
-            src_obs = src_obs_result.scalar_one_or_none()
-            if src_obs is not None:
-                item["source_preview"] = src_obs.content[:_PREVIEW_LEN]
+            try:
+                src_obs_result = await session.execute(
+                    select(MemoryObservation).where(MemoryObservation.id == int(ev.source_id))
+                )
+                src_obs = src_obs_result.scalar_one_or_none()
+                if src_obs is not None:
+                    item["source_preview"] = src_obs.content[:_PREVIEW_LEN]
+            except (ValueError, TypeError):
+                pass  # non-numeric source_id; no preview available
         evidence.append(item)
 
     # The stored memory_observations.evidence_count column is only bumped by

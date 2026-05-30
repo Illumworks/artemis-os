@@ -420,7 +420,7 @@ async def link_evidence(
     session: AsyncSession,
     observation_id: int,
     source_kind: EvidenceSourceKind,
-    source_id: int,
+    source_id: str,
     source_quote: str | None = None,
     weight: float = 1.0,
 ) -> Evidence:
@@ -434,6 +434,9 @@ async def link_evidence(
     agent_run, signal_queue, definition_proposal, pipeline_run, skill,
     floating_artemis_messages, meeting). Existing callers pass matching
     string literals; mypy will flag drift on any new kind.
+
+    source_id is now TEXT (CC28). Pass string representations of numeric IDs
+    (e.g. str(signal_id)) or raw non-numeric identifiers (skill slugs, UUIDs).
     """
     stmt = (
         pg_insert(MemoryEvidence)

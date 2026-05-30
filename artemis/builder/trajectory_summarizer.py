@@ -271,7 +271,7 @@ async def _write_trajectory_observation(
                 mem_session,
                 observation_id=obs.id,
                 source_kind="agent_run",
-                source_id=run_pk,
+                source_id=str(run_pk),  # CC28: link_evidence now takes str
                 weight=1.0,
             )
             await mem_session.commit()

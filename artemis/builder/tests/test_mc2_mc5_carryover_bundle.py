@@ -123,7 +123,7 @@ async def test_mc2_gate1_approval_multi_scope_join_table(db_session: AsyncSessio
     ev_rows = (await db_session.execute(select(MemoryEvidence))).scalars().all()
     assert len(ev_rows) == 1
     assert ev_rows[0].source_kind == "signal_queue"
-    assert ev_rows[0].source_id == 42
+    assert ev_rows[0].source_id == "42"  # CC28: source_id is now TEXT
 
 
 @pytest.mark.asyncio
@@ -232,13 +232,11 @@ async def test_mc3_skill_promotion_multi_scope_join_table(db_session: AsyncSessi
     assert ("skill", "brief-composer", True) in scope_pairs
     assert ("workspace", "platform", False) in scope_pairs
 
-    from artemis.builder.memory_carryover import _source_id_to_int
-
     ev_rows = (await db_session.execute(select(MemoryEvidence))).scalars().all()
     assert len(ev_rows) == 1
     assert ev_rows[0].source_kind == "skill"
-    # source_id is hashed (slug → stable int) since MemoryEvidence.source_id is BigInteger
-    assert ev_rows[0].source_id == _source_id_to_int("brief-composer")
+    # CC28: source_id is now TEXT — raw slug, not SHA-256 hash
+    assert ev_rows[0].source_id == "brief-composer"
 
 
 @pytest.mark.asyncio
@@ -315,23 +313,23 @@ async def test_mc4_pipeline_gate_multi_scope_join_table(db_session: AsyncSession
     assert len(obs_list) == 1, f"Expected 1 observation, got {len(obs_list)}"
 
     obs = obs_list[0]
-    assert obs.scope_kind == "workspace"
-    assert obs.scope_id == "pipeline-pipeline-marketing-v1"
+    # CC27: MC4 now writes to pipeline:<id> scope (was workspace:pipeline-<id>)
+    assert obs.scope_kind == "pipeline"
+    assert obs.scope_id == "pipeline-marketing-v1"
     assert obs.category == "pipeline_gate_decision"
     assert obs.wing == "durable"
     assert obs.confidence_origin == "mc_pipeline_gate"
 
-    # 2 scope-join rows: primary (workspace:pipeline-...) + secondary (workspace:platform)
+    # 2 scope-join rows: primary (pipeline:<id>) + secondary (workspace:platform)
     assert len(scope_rows) == 2, f"Expected 2 scope-join rows, got {len(scope_rows)}"
     primary_rows = [r for r in scope_rows if r.is_primary]
     assert len(primary_rows) == 1
 
-    from artemis.builder.memory_carryover import _source_id_to_int
-
     ev_rows = (await db_session.execute(select(MemoryEvidence))).scalars().all()
     assert len(ev_rows) == 1
     assert ev_rows[0].source_kind == "pipeline_run"
-    assert ev_rows[0].source_id == _source_id_to_int("run-abc-123")
+    # CC28: source_id is now TEXT — raw string, not hash
+    assert ev_rows[0].source_id == "run-abc-123"
 
 
 @pytest.mark.asyncio
@@ -429,9 +427,9 @@ async def test_mc5_fa_approval_three_scope_join_rows(db_session: AsyncSession) -
     source_kinds = {e.source_kind for e in ev_rows}
     assert "signal_queue" in source_kinds, f"Missing signal_queue, got {source_kinds}"
     assert "floating_artemis_messages" in source_kinds, f"Missing fa_messages, got {source_kinds}"
-    # signal_queue source_id is the integer signal_id
+    # CC28: source_id is now TEXT; signal_queue source_id is str(signal_id)
     sq_ev = next(e for e in ev_rows if e.source_kind == "signal_queue")
-    assert sq_ev.source_id == 77
+    assert sq_ev.source_id == "77"
 
 
 @pytest.mark.asyncio

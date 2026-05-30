@@ -360,4 +360,4 @@ async def test_provenance_evidence_chain_drawer_and_signal_queue(
 
     # Signal queue link points to the right signal
     sq_link = next(e for e in evidence_rows if e.source_kind == "signal_queue")
-    assert sq_link.source_id == signal_id
+    assert sq_link.source_id == str(signal_id)  # CC28: source_id is now TEXT

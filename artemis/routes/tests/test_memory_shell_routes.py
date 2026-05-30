@@ -242,18 +242,19 @@ async def test_observation_detail_evidence_chain(
     )
 
     # Link both drawers as evidence using a fresh session
+    # CC28: link_evidence source_id is now str
     async with AsyncSession(_test_engine, expire_on_commit=False) as sess, sess.begin():
         await link_evidence(
             sess,
             observation_id=obs_id,
             source_kind="drawer",
-            source_id=dr1_id,
+            source_id=str(dr1_id),
         )
         await link_evidence(
             sess,
             observation_id=obs_id,
             source_kind="drawer",
-            source_id=dr2_id,
+            source_id=str(dr2_id),
         )
 
     resp = await client.get(f"/api/memory/observations/{obs_id}")
@@ -266,9 +267,10 @@ async def test_observation_detail_evidence_chain(
 
     assert "evidence" in data
     assert len(data["evidence"]) == 2
+    # CC28: source_id is now TEXT in the API response
     ev_source_ids = {ev["source_id"] for ev in data["evidence"]}
-    assert dr1_id in ev_source_ids
-    assert dr2_id in ev_source_ids
+    assert str(dr1_id) in ev_source_ids
+    assert str(dr2_id) in ev_source_ids
 
     # CC24: evidence_count on the observation payload must match the actual
     # length of the evidence array, not the stale server-default (1).
@@ -342,11 +344,12 @@ async def test_stats_totals(
     obs_id = await _make_observation("stats obs", scope_kind="agent", scope_id="stats.agent")
     # Link 1 evidence row using a fresh session
     async with AsyncSession(_test_engine, expire_on_commit=False) as sess, sess.begin():
+        # CC28: link_evidence source_id is now str
         await link_evidence(
             sess,
             observation_id=obs_id,
             source_kind="drawer",
-            source_id=dr_id,
+            source_id=str(dr_id),
         )
 
     resp = await client.get("/api/memory/stats")

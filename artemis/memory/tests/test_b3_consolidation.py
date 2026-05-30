@@ -343,9 +343,10 @@ async def test_apply_consolidation_links_evidence(db_session: AsyncSession) -> N
         )
 
     evidence = await list_evidence_for_observation(db_session, created[0].id)
+    # CC28: source_id is now TEXT; compare as strings
     src_ids = {ev.source_id for ev in evidence}
-    assert obs1.id in src_ids
-    assert obs2.id in src_ids
+    assert str(obs1.id) in src_ids
+    assert str(obs2.id) in src_ids
 
 
 async def test_apply_consolidation_is_lossless(db_session: AsyncSession) -> None:
@@ -403,7 +404,7 @@ async def test_apply_consolidation_forwards_drawer_evidence(db_session: AsyncSes
     from artemis.memory.store import link_evidence, list_evidence_for_observation
 
     async with db_session.begin():
-        await link_evidence(db_session, obs1.id, "drawer", drawer.id, weight=1.0)
+        await link_evidence(db_session, obs1.id, "drawer", str(drawer.id), weight=1.0)  # CC28: str
 
     proposal = ConsolidationProposal(
         category="discovery",
@@ -418,7 +419,7 @@ async def test_apply_consolidation_forwards_drawer_evidence(db_session: AsyncSes
     evidence = await list_evidence_for_observation(db_session, created[0].id)
     drawer_ev = [e for e in evidence if e.source_kind == "drawer"]
     assert len(drawer_ev) == 1
-    assert drawer_ev[0].source_id == drawer.id
+    assert drawer_ev[0].source_id == str(drawer.id)  # CC28: source_id is TEXT
     assert drawer_ev[0].weight == pytest.approx(0.9, abs=0.001)
 
 
