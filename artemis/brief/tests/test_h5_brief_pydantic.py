@@ -228,3 +228,50 @@ async def test_persistent_failure_produces_empty_brief(
         for rec in caplog.records
         if rec.levelno >= logging.WARNING
     ), f"Expected warning log, got: {[r.message for r in caplog.records]}"
+
+
+# ── Test 8: _build_prompt instructs LLM with the DailyBrief schema ────────────
+
+
+def test_build_prompt_references_dailybrief_schema() -> None:
+    """The LLM prompt must reference every DailyBrief field name + enum value,
+    and must not reference the legacy Node-shape fields (headline / continuity
+    / defer / slackUrgency / calendarNote / rank / ticket / why)."""
+    from artemis.brief.prompt import _build_prompt
+
+    prompt = _build_prompt("today is test day")
+
+    for field in (
+        '"highlights"',
+        '"priorities"',
+        '"next_actions"',
+        '"okr_status"',
+        '"risks"',
+        '"summary"',
+        '"confidence"',
+        '"title"',
+        '"detail"',
+        '"source"',
+        '"item"',
+        '"rationale"',
+        '"urgency"',
+        '"action"',
+        '"owner"',
+        '"due"',
+    ):
+        assert field in prompt, f"DailyBrief field {field} missing from prompt"
+
+    for legacy in (
+        '"headline"',
+        '"continuity"',
+        '"defer"',
+        '"slackUrgency"',
+        '"calendarNote"',
+        '"rank"',
+        '"ticket"',
+        '"why"',
+    ):
+        assert legacy not in prompt, f"Legacy Node-shape field {legacy} still in prompt"
+
+    for enum_value in ('"high"', '"medium"', '"low"'):
+        assert enum_value in prompt, f"Enum value {enum_value} missing from prompt"
