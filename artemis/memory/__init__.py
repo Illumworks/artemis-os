@@ -20,6 +20,7 @@ from artemis.memory.schemas import (
 from artemis.memory.store import (
     get_drawer,
     get_observation,
+    get_or_create_scope,
     link_evidence,
     list_evidence_for_observation,
     supersede_observation,
@@ -39,6 +40,7 @@ __all__ = [
     # store
     "get_drawer",
     "get_observation",
+    "get_or_create_scope",
     "link_evidence",
     "list_evidence_for_observation",
     "supersede_observation",

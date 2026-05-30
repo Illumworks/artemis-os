@@ -198,6 +198,99 @@ async def _summarize_with_retry(
     return TrajectorySummary()  # pragma: no cover
 
 
+# ── M1: Memory observation write ─────────────────────────────────────────────
+
+
+def _build_observation_content(
+    run_id: str,
+    generated_at_iso: str,
+    what_worked: str | None,
+    what_stalled: str | None,
+    what_was_missing: str | None,
+) -> str:
+    """Compose a single-paragraph observation from the trajectory fields.
+
+    Clauses for null/empty fields are omitted cleanly.
+    """
+    parts = [f"Run {run_id} ({generated_at_iso})."]
+    if what_worked:
+        parts.append(f"What worked: {what_worked}.")
+    if what_stalled:
+        parts.append(f"What stalled: {what_stalled}.")
+    if what_was_missing:
+        parts.append(f"What was missing: {what_was_missing}.")
+    return " ".join(parts)
+
+
+async def _write_trajectory_observation(
+    *,
+    run_id: str,
+    run_pk: int,
+    agent_id: str,
+    what_worked: str | None,
+    what_stalled: str | None,
+    what_was_missing: str | None,
+) -> None:
+    """Write a memory observation from a trajectory summary, then link evidence.
+
+    Opens a FRESH session from artemis.db.SessionLocal so the memory write is
+    fully isolated from the trajectory session. This prevents deadlocks caused
+    by session.begin_nested() (SAVEPOINT for embeddings) interacting with the
+    outer trajectory session's transaction.
+
+    Failure isolation: any exception is caught, logged as WARNING, and swallowed.
+    The trajectory summary row (already committed) is the durable source-of-truth;
+    the observation is an additive layer.
+    """
+    from datetime import UTC, datetime
+
+    import artemis.db as _db
+    from artemis.memory.schemas import Scope, SourceQualityHint
+    from artemis.memory.store import get_or_create_scope, link_evidence, write_observation
+
+    try:
+        generated_at_iso = datetime.now(UTC).isoformat(timespec="seconds")
+        content = _build_observation_content(
+            run_id=run_id,
+            generated_at_iso=generated_at_iso,
+            what_worked=what_worked,
+            what_stalled=what_stalled,
+            what_was_missing=what_was_missing,
+        )
+        async with _db.SessionLocal() as mem_session:
+            await get_or_create_scope(mem_session, scope_kind="agent", scope_id=agent_id)
+            scope = Scope(scope_kind="agent", scope_id=agent_id)
+            obs = await write_observation(
+                mem_session,
+                scope=scope,
+                content=content,
+                category="trajectory",
+                source_quality=SourceQualityHint.agent,
+            )
+            await link_evidence(
+                mem_session,
+                observation_id=obs.id,
+                source_kind="agent_run",
+                source_id=run_pk,
+                weight=1.0,
+            )
+            await mem_session.commit()
+        logger.info(
+            "M1: observation id=%s written for agent_id=%s run_pk=%s",
+            obs.id,
+            agent_id,
+            run_pk,
+        )
+    except Exception as exc:
+        logger.warning(
+            "M1 memory observation write failed for run_id=%s agent_id=%s: %s",
+            run_id,
+            agent_id,
+            exc,
+            exc_info=True,
+        )
+
+
 # ── Background-task retention (CC7 pattern) ───────────────────────────────────
 # A bare asyncio.create_task() return value is weakly referenced by the event
 # loop — the GC can collect it before it runs.  Holding a strong reference in
@@ -359,6 +452,18 @@ async def summarize(
             (what_stalled or "")[:60],
             (what_was_missing or "")[:60],
         )
+
+        # M1 — write a memory observation from the trajectory summary.
+        # Failure here MUST NOT break the trajectory write above.
+        if snapshot.agent_id is not None:
+            await _write_trajectory_observation(
+                run_id=snapshot.run_id,
+                run_pk=snapshot.run_pk,
+                agent_id=snapshot.agent_id,
+                what_worked=what_worked,
+                what_stalled=what_stalled,
+                what_was_missing=what_was_missing,
+            )
 
     if db_session is not None:
         await _do_summarize(db_session)
