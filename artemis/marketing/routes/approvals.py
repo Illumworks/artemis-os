@@ -124,6 +124,28 @@ async def decide(
     if decision == "approved" and approval.kind == "automation_run":
         asyncio.create_task(_resume_automation_run(approval.subject_id))
 
+    # MC2: memory carryover for signal-brief gate approvals via generic route.
+    # signal_queue.py already fires carryover for /{signal_id}/approve; this
+    # covers the same Gate-1 surface when reached via the generic approvals API.
+    _mc2_signal_kinds = frozenset({"signal_brief", "signal_gate1", "gate1"})
+    if approval.kind in _mc2_signal_kinds:
+        from artemis.builder.memory_carryover import write_signal_gate1_approval_observation
+
+        # subject_id may be int or str depending on context
+        try:
+            signal_id_for_mc2 = int(approval.subject_id.split(":")[0])
+        except Exception:
+            signal_id_for_mc2 = None
+        if signal_id_for_mc2 is not None:
+            asyncio.create_task(
+                write_signal_gate1_approval_observation(
+                    signal_id=signal_id_for_mc2,
+                    new_status=decision,
+                    decided_by=decided_by,
+                    decision_payload=decision_payload,
+                )
+            )
+
     return _serialize(updated)
 
 
