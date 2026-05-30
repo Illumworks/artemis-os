@@ -401,19 +401,82 @@ async def approve_proposal(
 ) -> dict[str, Any]:
     """Commit the proposal to the real definition tables."""
     from artemis.builder.engine import commit
+    from artemis.builder.memory_carryover import write_proposal_approval_observation
     from artemis.builder.repository import get_definition_proposal
 
     try:
-        await get_definition_proposal(session, proposal_id)
+        proposal = await get_definition_proposal(session, proposal_id)
     except ValueError:
         raise not_found(f"Proposal {proposal_id} not found", "proposal_not_found")  # noqa: B904
+
+    # Capture proposal fields before commit (session still valid pre-commit)
+    _kind = proposal.kind
+    _target_id = proposal.target_id
+    _proposed_definition = dict(proposal.proposed_definition or {})
+    _proposed_by = proposal.proposed_by
+    _citations = dict(proposal.citations) if proposal.citations else None
+    _builder_session_id = proposal.builder_session_id
 
     try:
         result = await commit(proposal_id, db_session=session)
     except ValueError as exc:
         raise bad_request(str(exc), "proposal_cannot_commit")  # noqa: B904
 
+    # already_approved is idempotent — no memory write needed for a no-op
+    if result.get("status") == "already_approved":
+        await session.commit()
+        return result
+
     await session.commit()
+
+    # Resolve target slug (agent_id string or skill slug) for the memory scope id.
+    # For agent: look up agent_id string from agents.id; for skill: look up slug.
+    target_slug: str = (
+        _proposed_definition.get("agent_id") or _proposed_definition.get("slug") or ""
+    )
+    if _kind == "agent" and _target_id is not None:
+        try:
+            from sqlalchemy import select as _sa_select
+
+            from artemis.builders.models import Agent as _Agent
+
+            _r = await session.execute(
+                _sa_select(_Agent.agent_id).where(_Agent.id == _target_id).limit(1)
+            )
+            _slug = _r.scalar_one_or_none()
+            if _slug:
+                target_slug = _slug
+        except Exception:
+            pass
+    elif _kind == "skill" and _target_id is not None:
+        try:
+            from sqlalchemy import select as _sa_select
+
+            from artemis.builders.models import Skill as _Skill
+
+            _r = await session.execute(
+                _sa_select(_Skill.slug).where(_Skill.id == _target_id).limit(1)
+            )
+            _slug = _r.scalar_one_or_none()
+            if _slug:
+                target_slug = _slug
+        except Exception:
+            pass
+    # Fallback: use slug from commit result
+    if not target_slug:
+        target_slug = result.get("agent_id") or result.get("slug") or str(_target_id or proposal_id)
+
+    await write_proposal_approval_observation(
+        proposal_id=proposal_id,
+        kind=_kind,
+        target_id=_target_id,
+        target_slug=target_slug,
+        proposed_definition=_proposed_definition,
+        proposed_by=_proposed_by,
+        citations=_citations,
+        builder_session_id=_builder_session_id,
+    )
+
     return result
 
 
