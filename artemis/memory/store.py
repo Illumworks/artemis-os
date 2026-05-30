@@ -33,6 +33,7 @@ from artemis.memory.models import (
     MemoryEmbedding,
     MemoryEvidence,
     MemoryObservation,
+    MemoryObservationScope,
     MemoryScope,
 )
 from artemis.memory.schemas import Drawer, Evidence, Observation, Scope, Source
@@ -196,6 +197,9 @@ async def write_observation(
     raw_source_kind: str = "agent_observation",
     raw_source_id: str | None = None,
     raw_actor: str | None = None,
+    additional_scopes: list[Scope] | None = None,
+    wing: Literal["working", "durable"] = "durable",
+    confidence_origin: str | None = None,
 ) -> Observation:
     """Write an observation, deduplicating by content hash within the scope.
 
@@ -208,10 +212,30 @@ async def write_observation(
     invariant. Callers that omit it still work (backward compat) but their
     observations have no verbatim source record.
 
+    MW1 additions:
+    - additional_scopes: extra scopes written to memory_observation_scopes with
+      is_primary=FALSE. The primary scope goes to both the legacy columns and
+      the join table with is_primary=TRUE.
+    - wing: 'durable' (default) or 'working'. Stored on the observation row.
+    - confidence_origin: free-text source label for auditability.
+
+    Raises ValueError if additional_scopes contains the primary scope (which
+    would violate the is_primary invariant).
+
     Embeds content in the same transaction (best-effort; failure is logged and
     the row is queued for backfill — it never blocks the write).
     """
     from artemis.memory.raw_inputs import insert_raw_input
+
+    # Validate: no duplicate of primary scope in additional_scopes
+    if additional_scopes:
+        primary_key = (scope.scope_kind, scope.scope_id)
+        for extra in additional_scopes:
+            if (extra.scope_kind, extra.scope_id) == primary_key:
+                raise ValueError(
+                    f"additional_scopes must not contain the primary scope "
+                    f"({scope.scope_kind}:{scope.scope_id})"
+                )
 
     raw_input_id: int | None = None
     if raw_payload is not None:
@@ -241,6 +265,8 @@ async def write_observation(
             valid_until=valid_until,
             owner_user_id=owner_user_id,
             raw_input_id=raw_input_id,
+            wing=wing,
+            confidence_origin=confidence_origin,
         )
         .on_conflict_do_nothing(constraint="uq_obs_scope_hash")
     )
@@ -255,7 +281,103 @@ async def write_observation(
     row = result.scalar_one()
     obs = Observation.model_validate(row)
     await _embed_and_store(session, "observation", obs.id, content, embedding_provider)
+
+    # MW1: write primary scope to join table
+    await add_observation_scope(
+        session,
+        observation_id=obs.id,
+        scope_kind=scope.scope_kind,
+        scope_id=scope.scope_id,
+        weight=1.0,
+        is_primary=True,
+    )
+
+    # MW1: write secondary scopes to join table
+    if additional_scopes:
+        for extra_scope in additional_scopes:
+            await _ensure_scope(session, extra_scope)
+            await add_observation_scope(
+                session,
+                observation_id=obs.id,
+                scope_kind=extra_scope.scope_kind,
+                scope_id=extra_scope.scope_id,
+                weight=1.0,
+                is_primary=False,
+            )
+
     return obs
+
+
+async def add_observation_scope(
+    session: AsyncSession,
+    observation_id: int,
+    scope_kind: str,
+    scope_id: str,
+    weight: float = 1.0,
+    is_primary: bool = False,
+) -> None:
+    """Add a scope entry to the join table for an observation.
+
+    Idempotent: INSERT … ON CONFLICT DO NOTHING. If the (observation_id,
+    scope_kind, scope_id) row already exists it is left unchanged.
+    """
+    stmt = (
+        pg_insert(MemoryObservationScope)
+        .values(
+            observation_id=observation_id,
+            scope_kind=scope_kind,
+            scope_id=scope_id,
+            weight=weight,
+            is_primary=is_primary,
+        )
+        .on_conflict_do_nothing()
+    )
+    await session.execute(stmt)
+
+
+async def list_scopes_for_observation(
+    session: AsyncSession,
+    observation_id: int,
+) -> list[tuple[str, str, float, bool]]:
+    """Return all scopes for an observation as (scope_kind, scope_id, weight, is_primary)."""
+    result = await session.execute(
+        select(
+            MemoryObservationScope.scope_kind,
+            MemoryObservationScope.scope_id,
+            MemoryObservationScope.weight,
+            MemoryObservationScope.is_primary,
+        ).where(MemoryObservationScope.observation_id == observation_id)
+    )
+    return [(row[0], row[1], row[2], row[3]) for row in result.all()]
+
+
+async def list_observations_for_scope(
+    session: AsyncSession,
+    scope_kind: str,
+    scope_id: str,
+    *,
+    is_primary: bool | None = None,
+) -> list[MemoryObservation]:
+    """Return observations belonging to a scope via the join table.
+
+    is_primary filter is optional: None returns all (primary + secondary),
+    True returns only primary-scope observations, False only secondary.
+    """
+    stmt = (
+        select(MemoryObservation)
+        .join(
+            MemoryObservationScope,
+            MemoryObservationScope.observation_id == MemoryObservation.id,
+        )
+        .where(
+            MemoryObservationScope.scope_kind == scope_kind,
+            MemoryObservationScope.scope_id == scope_id,
+        )
+    )
+    if is_primary is not None:
+        stmt = stmt.where(MemoryObservationScope.is_primary == is_primary)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def get_or_create_scope(
