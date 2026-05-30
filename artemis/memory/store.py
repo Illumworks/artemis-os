@@ -258,10 +258,39 @@ async def write_observation(
     return obs
 
 
+async def get_or_create_scope(
+    session: AsyncSession,
+    scope_kind: str,
+    scope_id: str,
+) -> MemoryScope:
+    """Fetch or create a memory_scopes row for (scope_kind, scope_id).
+
+    Idempotent: concurrent callers both executing the upsert are safe because
+    the underlying INSERT … ON CONFLICT DO NOTHING ignores duplicates. The
+    SELECT after the upsert always returns the canonical row.
+
+    M1 uses this to ensure the `agent` scope row exists for each unique
+    agent_id before writing an observation.
+    """
+    stmt = (
+        pg_insert(MemoryScope)
+        .values(scope_kind=scope_kind, scope_id=scope_id)
+        .on_conflict_do_nothing(index_elements=["scope_kind", "scope_id"])
+    )
+    await session.execute(stmt)
+    result = await session.execute(
+        select(MemoryScope).where(
+            MemoryScope.scope_kind == scope_kind,
+            MemoryScope.scope_id == scope_id,
+        )
+    )
+    return result.scalar_one()
+
+
 async def link_evidence(
     session: AsyncSession,
     observation_id: int,
-    source_kind: Literal["drawer", "observation"],
+    source_kind: str,
     source_id: int,
     source_quote: str | None = None,
     weight: float = 1.0,
