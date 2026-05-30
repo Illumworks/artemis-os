@@ -70,6 +70,19 @@ class DefinitionProposalRead(BaseModel):
     citations: dict[str, Any] | None = None
     status: str
     created_at: datetime
+    # CC22 — captured when an operator rejects a proposal.
+    rejection_reason: str | None = None
+    rejected_at: datetime | None = None
+
+
+class ProposalRejectRequest(BaseModel):
+    """Optional body for POST /api/builder/proposals/{id}/reject (CC22).
+
+    All fields optional; an empty/missing body still rejects cleanly so
+    one-click reject from the Inbox UI keeps working.
+    """
+
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 # ── Trajectory summaries ──────────────────────────────────────────────────────

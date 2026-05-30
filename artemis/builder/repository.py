@@ -171,11 +171,24 @@ async def approve_proposal(session: AsyncSession, proposal_id: int) -> Definitio
     return row
 
 
-async def reject_proposal(session: AsyncSession, proposal_id: int) -> DefinitionProposal:
+async def reject_proposal(
+    session: AsyncSession,
+    proposal_id: int,
+    *,
+    rejection_reason: str | None = None,
+) -> DefinitionProposal:
+    """Flip a pending proposal to ``rejected``.
+
+    CC22: optional ``rejection_reason`` is captured alongside ``rejected_at``
+    (always set on flip).  Backward-compat: callers that don't pass a reason
+    still reject the proposal cleanly; rejection_reason just stays NULL.
+    """
     row = await get_definition_proposal(session, proposal_id)
     if row.status != "pending":
         raise ValueError(f"Proposal {proposal_id} is not pending (status={row.status!r})")
     row.status = "rejected"
+    row.rejection_reason = rejection_reason
+    row.rejected_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(row)
     return row

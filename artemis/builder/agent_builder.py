@@ -579,13 +579,58 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
         # M2 memory retrieval.
         "search_memory": _search_memory,
     }
+
+    # CC21: wrap each in-process Builder tool impl so every call logs a
+    # tool_invocations row scoped to builder_session_id.  The MCP-path
+    # equivalent is in tools/mcp_server.py::_build_builder_server.
+    from artemis.tools.mcp_server import _log_invocation, _summarize_args
+
+    _failure_prefixes = (
+        "VALIDATION_ERROR",
+        "PERMISSION_DENIED",
+        "STUB:",
+        "TOOL_ERROR:",
+        "UNKNOWN_TOOL:",
+    )
+
+    from artemis.agent.types import ToolImpl
+
+    def _logged(tool_name: str, impl: ToolImpl) -> ToolImpl:
+        async def _wrapped(inp: dict[str, Any]) -> str:
+            args_summary = _summarize_args(inp)
+            try:
+                result: str = await impl(inp)
+            except Exception as exc:
+                await _log_invocation(
+                    db_session,
+                    builder_session_id=builder_session_id,
+                    tool_name=tool_name,
+                    args_summary=args_summary,
+                    result_preview=f"EXCEPTION: {exc!s}"[:500],
+                    success=False,
+                )
+                raise
+            success = not any(result.startswith(p) for p in _failure_prefixes)
+            result_preview = result[:500] if isinstance(result, str) else None
+            await _log_invocation(
+                db_session,
+                builder_session_id=builder_session_id,
+                tool_name=tool_name,
+                args_summary=args_summary,
+                result_preview=result_preview,
+                success=success,
+            )
+            return result
+
+        return _wrapped
+
     for spec_dict in AGENT_BUILDER_TOOL_SPECS:
         tool = Tool(
             name=spec_dict["name"],
             description=spec_dict["description"],
             input_schema=spec_dict["input_schema"],
         )
-        registry.register(tool, impl_map[spec_dict["name"]])
+        registry.register(tool, _logged(spec_dict["name"], impl_map[spec_dict["name"]]))
 
     return registry
 

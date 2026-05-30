@@ -401,10 +401,20 @@ async function renderInboxPanel() {
       }
     } else if (action === "inbox-reject") {
       const proposalId = Number(btn.dataset.proposalId);
+      // CC22: prompt for an optional reason.  Cancel = abort entirely (no
+      // accidental reject).  OK with empty text = reject without reason
+      // (one-click flow: just press Enter).  OK with text = reject with reason.
+      const reason = window.prompt(
+        "Optional: why are you rejecting this? (Helps the Builder learn.)\n" +
+        "Leave blank and press Enter to reject without a reason.\n" +
+        "Press Cancel to abort.",
+        ""
+      );
+      if (reason === null) return; // user cancelled
       btn.disabled = true;
       btn.textContent = "…";
       try {
-        await api.builderRejectProposal(proposalId);
+        await api.builderRejectProposal(proposalId, reason || null);
         invalidateInboxCache();
         await renderInboxPanel();
       } catch (err) {

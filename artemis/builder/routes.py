@@ -37,6 +37,7 @@ from artemis.builder.schemas import (
     BuilderSessionCreate,
     BuilderSessionRead,
     DefinitionProposalRead,
+    ProposalRejectRequest,
     TrajectorySummaryRead,
 )
 from artemis.db import get_session
@@ -483,9 +484,15 @@ async def approve_proposal(
 @router.post("/proposals/{proposal_id}/reject")
 async def reject_proposal_route(
     proposal_id: int,
+    body: ProposalRejectRequest | None = None,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Decline a proposal."""
+    """Decline a proposal.
+
+    CC22: optional ``{"reason": "..."}`` body captures the WHY for operator
+    feedback loops.  Empty/missing body still rejects cleanly (backward-compat
+    with the original one-click Inbox reject path).
+    """
     from artemis.builder.repository import get_definition_proposal, reject_proposal
 
     try:
@@ -493,8 +500,10 @@ async def reject_proposal_route(
     except ValueError:
         raise not_found(f"Proposal {proposal_id} not found", "proposal_not_found")  # noqa: B904
 
+    reason = body.reason if body is not None else None
+
     try:
-        row = await reject_proposal(session, proposal_id)
+        row = await reject_proposal(session, proposal_id, rejection_reason=reason)
     except ValueError as exc:
         raise bad_request(str(exc), "proposal_cannot_reject")  # noqa: B904
 
