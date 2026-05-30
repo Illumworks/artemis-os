@@ -15,11 +15,12 @@ CC19 adds a second mode — Builder-scoped tool execution:
     python -m artemis.tools.mcp_server \\
         --builder-session-id <id>
 
-In this mode the server exposes eight Builder-scoped tools (five from CC19 +
-three grounding tools from CC20):
+In this mode the server exposes nine Builder-scoped tools (five from CC19 +
+three grounding tools from CC20 + one memory tool from M2):
   builder_read_existing, builder_read_capabilities, builder_read_recent_runs,
   builder_propose, builder_test_run,
-  builder_read_tool_signatures, builder_read_db_schema, builder_read_skill_catalog.
+  builder_read_tool_signatures, builder_read_db_schema, builder_read_skill_catalog,
+  builder_search_memory.
 
 The ``builder_session_id`` scope is established via a contextvar
 (``artemis.builder.context.builder_session_id_var``) BEFORE the subprocess is
@@ -288,7 +289,7 @@ def _build_server(
 #: builder_propose — same protection as the in-process _propose closure.
 _builder_seen_run_ids: dict[int, set[int]] = {}
 
-#: MCP tool names for the Builder scope (cc19 + cc20).
+#: MCP tool names for the Builder scope (cc19 + cc20 + m2).
 BUILDER_MCP_TOOL_NAMES: tuple[str, ...] = (
     "builder_read_existing",
     "builder_read_capabilities",
@@ -299,6 +300,8 @@ BUILDER_MCP_TOOL_NAMES: tuple[str, ...] = (
     "builder_read_tool_signatures",
     "builder_read_db_schema",
     "builder_read_skill_catalog",
+    # M2 memory tool.
+    "builder_search_memory",
 )
 
 _BUILDER_TOOL_SCHEMAS: list[mcp_types.Tool] = [
@@ -465,6 +468,36 @@ _BUILDER_TOOL_SCHEMAS: list[mcp_types.Tool] = [
                 },
             },
             "required": [],
+        },
+    ),
+    # ── M2 memory tool ──────────────────────────────────────────────────────────
+    mcp_types.Tool(
+        name="builder_search_memory",
+        description=(
+            "Retrieve curated memory observations for an agent across its full run history. "
+            "Returns observations ranked by recency, relevance, and evidence chain quality. "
+            "MUST be called after read_recent_runs() and BEFORE propose() in edit sessions. "
+            "Observations are more authoritative than trajectory summaries — they have "
+            "evidence chains and are deduplicated across all runs."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The agent_id string (dotted slug) to search memory for.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional natural-language query to focus retrieval.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max observations to return (default 10, max 50).",
+                    "default": 10,
+                },
+            },
+            "required": ["agent_id"],
         },
     ),
 ]
@@ -717,7 +750,85 @@ async def _dispatch_builder_tool(
 
         return _json.dumps(catalog, indent=2)
 
+    # ── M2 memory retrieval tool ────────────────────────────────────────────────
+
+    if name == "builder_search_memory":
+        return await _dispatch_builder_search_memory(_args, session)
+
     return _json.dumps({"error": f"Unknown builder tool: {name}"})
+
+
+async def _dispatch_builder_search_memory(
+    args: dict[str, object],
+    session: AsyncSession,
+) -> str:
+    """Retrieve curated memory observations for an agent (M2).
+
+    Resolves scope agent:<agent_id>, calls search_observations, and returns
+    each observation with its top-3 evidence links.  Empty scope returns [].
+    Read-only — uses the passed-in session, no new session opened.
+    """
+    import json as _json
+    from typing import Any as _Any
+
+    from sqlalchemy import select as _sa_select
+
+    from artemis.memory.models import MemoryScope
+    from artemis.memory.retrieval import search_observations
+    from artemis.memory.schemas import Scope
+    from artemis.memory.store import list_evidence_for_observation
+
+    agent_id_arg = str(args.get("agent_id", "")).strip()
+    if not agent_id_arg:
+        return _json.dumps({"error": "agent_id is required"})
+
+    query_arg = str(args.get("query", "")).strip()
+    limit_arg = min(int(args.get("limit", 10)), 50)  # type: ignore[call-overload]
+
+    # Check whether the scope exists; if not, return [] (not error).
+    scope_check = await session.execute(
+        _sa_select(MemoryScope).where(
+            MemoryScope.scope_kind == "agent",
+            MemoryScope.scope_id == agent_id_arg,
+        )
+    )
+    if scope_check.scalar_one_or_none() is None:
+        return _json.dumps([])
+
+    scope = Scope(scope_kind="agent", scope_id=agent_id_arg)
+    # search_observations requires a non-empty query string for FTS/semantic;
+    # fall back to a broad recency-only search when no query is provided.
+    effective_query = query_arg or agent_id_arg
+    observations = await search_observations(
+        session=session,
+        scope_set=[scope],
+        query=effective_query,
+        limit=limit_arg,
+    )
+
+    results: list[dict[str, _Any]] = []
+    for obs in observations:
+        evidence_links = await list_evidence_for_observation(session, obs.id)
+        evidence_summary = [
+            {
+                "source_kind": ev.source_kind,
+                "source_id": ev.source_id,
+                "preview": ev.source_quote or "",
+            }
+            for ev in evidence_links[:3]
+        ]
+        results.append(
+            {
+                "id": obs.id,
+                "content": obs.content,
+                "created_at": obs.created_at.isoformat(),
+                "confidence": obs.confidence,
+                "superseded_by": obs.superseded_by,
+                "evidence_summary": evidence_summary,
+            }
+        )
+
+    return _json.dumps(results, indent=2)
 
 
 # ── stdio entrypoint ────────────────────────────────────────────────────────────

@@ -92,6 +92,11 @@ If the user is opening an existing agent (edit session):
     call read_db_schema with that table name.
   - For any skill you intend to co-propose, call read_skill_catalog to confirm the
     name isn't already taken.
+  - **Call search_memory(agent_id) to retrieve curated observations across the
+    agent's full history (M2). Recent runs show only the latest N; search_memory
+    surfaces durable patterns from all runs. Treat memory observations as more
+    authoritative than trajectory summaries — they have evidence chains and may
+    supersede stale patterns.**
 - NEVER enumerate enum values, status names, or parameter constraints from inference.
   ALWAYS read them via the grounding tools first.
 - If a grounding tool returns data that contradicts your proposed change, revise
@@ -282,6 +287,36 @@ AGENT_BUILDER_TOOL_SPECS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    # ── M2 memory retrieval tool ────────────────────────────────────────────────
+    {
+        "name": "search_memory",
+        "description": (
+            "Retrieve curated memory observations for an agent across its full run history. "
+            "Returns observations ranked by recency, relevance, and evidence chain quality. "
+            "MUST be called after read_recent_runs() and BEFORE propose() in edit sessions. "
+            "Observations are more authoritative than trajectory summaries — they have "
+            "evidence chains and are deduplicated across all runs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The agent_id string (dotted slug) to search memory for.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional natural-language query to focus retrieval.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max observations to return (default 10, max 50).",
+                    "default": 10,
+                },
+            },
+            "required": ["agent_id"],
+        },
+    },
 ]
 
 
@@ -469,6 +504,68 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
             return json.dumps({"registered_tools": [], "skills": catalog["skills"]}, indent=2)
         return json.dumps(catalog, indent=2)
 
+    async def _search_memory(inp: dict[str, Any]) -> str:
+        """M2: retrieve curated memory observations for an agent (in-process path)."""
+        import json
+
+        from sqlalchemy import select as _sa_select
+
+        from artemis.memory.models import MemoryScope
+        from artemis.memory.retrieval import search_observations
+        from artemis.memory.schemas import Scope
+        from artemis.memory.store import list_evidence_for_observation
+
+        agent_id_arg = str(inp.get("agent_id", "")).strip()
+        if not agent_id_arg:
+            return json.dumps({"error": "agent_id is required"})
+
+        query_arg = str(inp.get("query", "")).strip()
+        limit_raw = inp.get("limit", 10)
+        limit_arg = min(int(limit_raw) if limit_raw is not None else 10, 50)
+
+        # Check whether the scope exists; if not, return [] (not error).
+        scope_check = await db_session.execute(
+            _sa_select(MemoryScope).where(
+                MemoryScope.scope_kind == "agent",
+                MemoryScope.scope_id == agent_id_arg,
+            )
+        )
+        if scope_check.scalar_one_or_none() is None:
+            return json.dumps([])
+
+        scope = Scope(scope_kind="agent", scope_id=agent_id_arg)
+        effective_query = query_arg or agent_id_arg
+        observations = await search_observations(
+            session=db_session,
+            scope_set=[scope],
+            query=effective_query,
+            limit=limit_arg,
+        )
+
+        results: list[dict[str, Any]] = []
+        for obs in observations:
+            evidence_links = await list_evidence_for_observation(db_session, obs.id)
+            evidence_summary = [
+                {
+                    "source_kind": ev.source_kind,
+                    "source_id": ev.source_id,
+                    "preview": ev.source_quote or "",
+                }
+                for ev in evidence_links[:3]
+            ]
+            results.append(
+                {
+                    "id": obs.id,
+                    "content": obs.content,
+                    "created_at": obs.created_at.isoformat(),
+                    "confidence": obs.confidence,
+                    "superseded_by": obs.superseded_by,
+                    "evidence_summary": evidence_summary,
+                }
+            )
+
+        return json.dumps(results, indent=2)
+
     impl_map = {
         "read_existing": _read_existing,
         "read_capabilities": _read_capabilities,
@@ -479,6 +576,8 @@ def build_tool_registry(*, db_session: Any, builder_session_id: int) -> ToolRegi
         "read_tool_signatures": _read_tool_signatures,
         "read_db_schema": _read_db_schema,
         "read_skill_catalog": _read_skill_catalog,
+        # M2 memory retrieval.
+        "search_memory": _search_memory,
     }
     for spec_dict in AGENT_BUILDER_TOOL_SPECS:
         tool = Tool(
@@ -501,11 +600,16 @@ async def build_edit_session_opener(
     Loads builder-context (recent runs + trajectory summaries) and returns a
     plain-English summary the builder prepends to its first-turn system context.
     Returns None if the agent has no runs yet.
+
+    M2: after the H3 trajectory-summary block, injects a "Prior observations"
+    section sourced from search_observations (memory keystone).
     """
     from sqlalchemy import select as sa_select
 
     from artemis.builder import engine
     from artemis.builders.models import Agent
+    from artemis.memory.retrieval import search_observations
+    from artemis.memory.schemas import Scope
 
     result = await db_session.execute(sa_select(Agent).where(Agent.id == target_id).limit(1))
     agent = result.scalar_one_or_none()
@@ -553,6 +657,28 @@ async def build_edit_session_opener(
         intro += (
             " No trajectory summaries are available yet — I'll need a few runs to spot patterns."
         )
+
+    # M2: inject memory observations after the H3 trajectory-summary block.
+    try:
+        memory_observations = await search_observations(
+            session=db_session,
+            scope_set=[Scope(scope_kind="agent", scope_id=agent.agent_id)],
+            query=agent.agent_id,
+            limit=10,
+        )
+        if memory_observations:
+            memory_block = (
+                "\n\n## Prior observations (memory keystone — curated across all runs)\n\n"
+                "These observations are written-once, evidence-linked summaries. They reflect "
+                "patterns the platform considers significant across this agent's full history "
+                "— not just the last 10 runs.\n\n"
+            )
+            for obs in memory_observations:
+                memory_block += f"- (obs #{obs.id}, {obs.created_at.isoformat()}): {obs.content}\n"
+            intro += memory_block
+    except Exception:
+        logger.debug("M2 memory injection failed for agent %r", agent.agent_id, exc_info=True)
+
     return intro
 
 
