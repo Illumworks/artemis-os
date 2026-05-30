@@ -289,8 +289,15 @@ async def get_observation_detail(
                 item["source_preview"] = src_obs.content[:_PREVIEW_LEN]
         evidence.append(item)
 
+    # The stored memory_observations.evidence_count column is only bumped by
+    # the consolidator's corroboration path; raw link_evidence calls leave it
+    # at the server default (1). Recompute from the actual evidence rows here
+    # so the detail endpoint never reports fewer links than it actually shows.
+    obs_payload = Observation.model_validate(obs).model_dump(mode="json")
+    obs_payload["evidence_count"] = len(evidence_rows)
+
     return {
-        "observation": Observation.model_validate(obs).model_dump(mode="json"),
+        "observation": obs_payload,
         "evidence": evidence,
     }
 
