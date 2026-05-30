@@ -16,10 +16,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builders.models import (
+    Agent,
     AgentRun,
     AgentRunTrajectorySummary,
     BuilderSession,
     DefinitionProposal,
+    Skill,
 )
 
 # ── BuilderSession ─────────────────────────────────────────────────────────────
@@ -171,6 +173,26 @@ async def approve_proposal(session: AsyncSession, proposal_id: int) -> Definitio
     return row
 
 
+async def _resolve_target_slug(session: AsyncSession, row: DefinitionProposal) -> str | None:
+    """Look up the agent_id or skill slug for a proposal's target.
+
+    Returns None when kind is unknown, target_id is NULL, or the target row is
+    missing.  Used by CC29 to pick the primary scope for the rejection memory
+    write (kind=agent → agent:<agent_id>, kind=skill → skill:<slug>).
+    """
+    if row.target_id is None:
+        return None
+    if row.kind == "agent":
+        result = await session.execute(
+            select(Agent.agent_id).where(Agent.id == row.target_id).limit(1)
+        )
+        return result.scalar_one_or_none()
+    if row.kind == "skill":
+        result = await session.execute(select(Skill.slug).where(Skill.id == row.target_id).limit(1))
+        return result.scalar_one_or_none()
+    return None
+
+
 async def reject_proposal(
     session: AsyncSession,
     proposal_id: int,
@@ -182,6 +204,13 @@ async def reject_proposal(
     CC22: optional ``rejection_reason`` is captured alongside ``rejected_at``
     (always set on flip).  Backward-compat: callers that don't pass a reason
     still reject the proposal cleanly; rejection_reason just stays NULL.
+
+    CC29: After the flip + flush, also writes a memory carryover observation
+    via ``write_proposal_rejection_observation``.  The memory write is
+    failure-isolated — any exception is logged WARNING and swallowed inside
+    the helper, so the /reject endpoint stays durable.  Idempotency:
+    re-rejecting an already-rejected proposal raises ValueError above before
+    we reach the hook, so the observation cannot be duplicated.
     """
     row = await get_definition_proposal(session, proposal_id)
     if row.status != "pending":
@@ -191,6 +220,23 @@ async def reject_proposal(
     row.rejected_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(row)
+
+    # CC29: memory carryover (failure-isolated inside the helper).
+    from artemis.builder.memory_carryover import write_proposal_rejection_observation
+
+    target_slug = await _resolve_target_slug(session, row)
+    await write_proposal_rejection_observation(
+        proposal_id=row.id,
+        kind=row.kind,
+        target_id=row.target_id,
+        target_slug=target_slug,
+        proposed_definition=dict(row.proposed_definition or {}),
+        proposed_by=row.proposed_by,
+        citations=dict(row.citations) if row.citations else None,
+        rejection_reason=rejection_reason,
+        builder_session_id=row.builder_session_id,
+    )
+
     return row
 
 
