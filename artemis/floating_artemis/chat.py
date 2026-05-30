@@ -27,6 +27,7 @@ from artemis.floating_artemis.authority import (
     confirmation_store,
 )
 from artemis.floating_artemis.intent import IntentKind, classify_intent, handle_observability_intent
+from artemis.floating_artemis.memory import inject_memory_context, write_turn_drawer
 from artemis.floating_artemis.memory_read_cache import put as cache_put
 from artemis.floating_artemis.personality import PERSONALITY_PROFILE, select_voice_samples
 from artemis.floating_artemis.schemas import MemoryObservationDigest, MemoryReadEvent
@@ -438,13 +439,28 @@ async def handle_turn(
                 {"type": "floating_artemis.turn_complete", "session_id": session_id},
             )
             # Persist both user message and assistant response
-            await _persist_messages(
+            shortcut_user_msg_id = await _persist_messages(
                 session_id=session_id,
                 user_text=user_text,
                 assistant_text=response,
                 usage=Usage(),
                 db_session=db_session,
             )
+            # M3: write conversation drawer for intent-shortcut turns too (failure-isolated)
+            if shortcut_user_msg_id is not None and response:
+                try:
+                    await write_turn_drawer(
+                        user_msg_id=shortcut_user_msg_id,
+                        user_text=user_text,
+                        assistant_text=response,
+                    )
+                except Exception:
+                    logger.warning(
+                        "M3 turn-drawer write failed (shortcut) session_id=%s msg_id=%s",
+                        session_id,
+                        shortcut_user_msg_id,
+                        exc_info=True,
+                    )
             return TurnResult(
                 session_id=session_id,
                 response_text=response,
@@ -476,6 +492,15 @@ async def handle_turn(
 
     # ── 4. Load history ───────────────────────────────────────────────────────
     history = await _load_message_history(session_id=session_id, db_session=db_session)
+
+    # ── 4b. M4: inject memory context into system prompt ─────────────────────
+    # Augment after history load so we can use recent turns as retrieval context.
+    system_prompt = await inject_memory_context(
+        system_prompt,
+        user_text,
+        history,
+        session_id,
+    )
 
     # ── 5. Build tool registry ────────────────────────────────────────────────
     auth_registry = _build_tool_registry(available_surfaces)
@@ -611,13 +636,30 @@ async def handle_turn(
                 break
 
     # ── 9. Persist messages ────────────────────────────────────────────────────
-    await _persist_messages(
+    user_msg_id = await _persist_messages(
         session_id=session_id,
         user_text=user_text,
         assistant_text=response_text,
         usage=result.usage,
         db_session=db_session,
     )
+
+    # ── 9b. M3: auto-write conversation drawer ────────────────────────────────
+    # Failure-isolated: drawer write NEVER breaks chat.
+    if user_msg_id is not None and response_text is not None:
+        try:
+            await write_turn_drawer(
+                user_msg_id=user_msg_id,
+                user_text=user_text,
+                assistant_text=response_text,
+            )
+        except Exception:
+            logger.warning(
+                "M3 turn-drawer write failed session_id=%s msg_id=%s",
+                session_id,
+                user_msg_id,
+                exc_info=True,
+            )
 
     # ── 10. Broadcast completion ──────────────────────────────────────────────
     await _broadcast(
@@ -947,20 +989,26 @@ async def _persist_messages(
     assistant_text: str | None,
     usage: Usage,
     db_session: Any | None,
-) -> None:
-    """Persist user + assistant messages to the DB."""
+) -> int | None:
+    """Persist user + assistant messages to the DB.
+
+    Returns the user message's primary key (for M3 drawer anchoring), or None
+    when no user message was written or persistence failed.
+    """
     try:
         import artemis.db as _db
         from artemis.floating_artemis.repository import add_message, touch_session
 
-        async def _do_persist(session: Any) -> None:
+        async def _do_persist(session: Any) -> int | None:
+            user_msg_id: int | None = None
             if user_text is not None:
-                await add_message(
+                user_msg = await add_message(
                     session,
                     session_id=session_id,
                     role="user",
                     content=[{"type": "text", "text": user_text}],
                 )
+                user_msg_id = user_msg.id
             if assistant_text is not None:
                 await add_message(
                     session,
@@ -974,11 +1022,13 @@ async def _persist_messages(
                 )
             await touch_session(session, session_id)
             await session.commit()
+            return user_msg_id
 
         if db_session is not None:
-            await _do_persist(db_session)
+            return await _do_persist(db_session)
         else:
             async with _db.SessionLocal() as session:
-                await _do_persist(session)
+                return await _do_persist(session)
     except Exception:
         logger.debug("Could not persist messages for session %s", session_id, exc_info=True)
+        return None
