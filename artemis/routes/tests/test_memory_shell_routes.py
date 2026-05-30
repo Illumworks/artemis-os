@@ -270,6 +270,10 @@ async def test_observation_detail_evidence_chain(
     assert dr1_id in ev_source_ids
     assert dr2_id in ev_source_ids
 
+    # CC24: evidence_count on the observation payload must match the actual
+    # length of the evidence array, not the stale server-default (1).
+    assert data["observation"]["evidence_count"] == len(data["evidence"]) == 2
+
     # Previews come from drawer content
     for ev in data["evidence"]:
         assert ev["source_preview"] is not None

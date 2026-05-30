@@ -277,7 +277,11 @@ async def search_observations(
         _provider = provider or get_default_provider()
         try:
             query_vec = await _provider.embed(query)
-            vec_str = "[" + ",".join(f"{x:.8f}" for x in query_vec) + "]"
+            # asyncpg has the pgvector codec registered (see artemis.db) and
+            # encodes Python lists/ndarrays straight to vector binary format.
+            # Pre-serializing to a "[0.1,0.2,…]" text blob trips the codec
+            # ("could not convert string to float") and quietly drops every
+            # semantic candidate — pass the list through unchanged instead.
             scope_clause_o, _ = _scope_sql_parts(scope_set, prefix="o.")
             sem_sql = text(f"""
                 SELECT o.id,
@@ -295,7 +299,7 @@ async def search_observations(
             """)
             sem_params = {
                 **base_params,
-                "_qvec": vec_str,
+                "_qvec": query_vec,
                 "_model_version": _provider.model_version,
             }
             result = await session.execute(sem_sql, sem_params)

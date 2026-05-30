@@ -424,9 +424,10 @@ function renderM6DetailPanel() {
     return `<div class="memory-shell-detail-empty"><span>Loading…</span></div>`;
   }
   if (!m6State.detailData) {
+    const label = m6State.tab === "drawers" ? "Select a drawer" : "Select an observation";
     return `
       <div class="memory-shell-detail-empty">
-        <strong>Select an observation</strong>
+        <strong>${label}</strong>
         <span>Click any row to see the full content and evidence chain.</span>
       </div>
     `;

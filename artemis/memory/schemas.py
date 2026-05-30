@@ -8,7 +8,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 ScopeKind = Literal["project", "workspace", "brand", "agent", "skill", "global"]
-EvidenceSourceKind = Literal["drawer", "observation"]
+EvidenceSourceKind = Literal[
+    "drawer",
+    "observation",
+    "agent_run",
+    "signal_queue",
+    "definition_proposal",
+    "pipeline_run",
+    "skill",
+    "floating_artemis_messages",
+    "meeting",
+]
 EntityKind = Literal["person", "project", "brand", "campaign", "post", "channel", "other"]
 
 

@@ -36,7 +36,14 @@ from artemis.memory.models import (
     MemoryObservationScope,
     MemoryScope,
 )
-from artemis.memory.schemas import Drawer, Evidence, Observation, Scope, Source
+from artemis.memory.schemas import (
+    Drawer,
+    Evidence,
+    EvidenceSourceKind,
+    Observation,
+    Scope,
+    Source,
+)
 
 if TYPE_CHECKING:
     from artemis.memory.embeddings import EmbeddingProvider
@@ -412,7 +419,7 @@ async def get_or_create_scope(
 async def link_evidence(
     session: AsyncSession,
     observation_id: int,
-    source_kind: str,
+    source_kind: EvidenceSourceKind,
     source_id: int,
     source_quote: str | None = None,
     weight: float = 1.0,
@@ -421,6 +428,12 @@ async def link_evidence(
 
     Idempotent: if the (observation_id, source_kind, source_id) triple already
     exists, the existing evidence record is returned unchanged.
+
+    source_kind is constrained to EvidenceSourceKind — the union of every
+    upstream provenance the memory keystone recognizes (drawer, observation,
+    agent_run, signal_queue, definition_proposal, pipeline_run, skill,
+    floating_artemis_messages, meeting). Existing callers pass matching
+    string literals; mypy will flag drift on any new kind.
     """
     stmt = (
         pg_insert(MemoryEvidence)
