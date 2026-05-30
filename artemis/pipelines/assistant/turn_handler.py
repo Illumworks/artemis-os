@@ -12,6 +12,11 @@ Key differences from Agent-Builder:
     pipeline_id (see routes.py for the repo helpers).
   - Self-improvement: on first turn per panel session, we inject a summary
     of the last 5 pipeline runs into the system prompt.
+
+H5: PROPOSAL_BEGIN...PROPOSAL_END blocks are validated against PipelineProposal
+(Pydantic) before being emitted as proposal_parsed events.  Validation failure
+strips the malformed block from the response text and logs a warning — the
+user's next turn is the natural retry path (no auto-retry in interactive flow).
 """
 
 from __future__ import annotations
@@ -162,6 +167,43 @@ def _extract_proposals(text: str) -> list[dict[str, Any]]:
     return proposals
 
 
+def _extract_and_validate_proposal(
+    assistant_text: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """Extract PROPOSAL_BEGIN...PROPOSAL_END block and validate against PipelineProposal.
+
+    Returns (text_without_proposal_block, parsed_proposal_dict_or_None).
+
+    On validation failure: removes the malformed proposal block from the text
+    (so the user does not see broken UI markup) and logs a warning.  The
+    conversational text is returned unchanged.  No auto-retry — the operator's
+    next turn is the natural retry path for interactive flow.
+    """
+    import re
+
+    from pydantic import ValidationError
+
+    from artemis.pipelines.assistant.schemas import PipelineProposal
+
+    match = re.search(r"PROPOSAL_BEGIN\s*\n(.*?)\n\s*PROPOSAL_END", assistant_text, re.DOTALL)
+    if not match:
+        return assistant_text, None
+
+    raw_json = match.group(1).strip()
+    cleaned_text = re.sub(
+        r"PROPOSAL_BEGIN.*?PROPOSAL_END", "", assistant_text, flags=re.DOTALL
+    ).strip()
+
+    try:
+        proposal = PipelineProposal.model_validate_json(raw_json)
+        return cleaned_text, proposal.model_dump(mode="json")
+    except ValidationError as exc:
+        logger.warning("Pipeline AI Panel proposal validation failed: %s", exc)
+        # Fall through: return text without the malformed block so the UI
+        # shows the conversational response but no broken proposal widget.
+        return cleaned_text, None
+
+
 # ── Self-improvement scan ──────────────────────────────────────────────────────
 
 
@@ -302,10 +344,22 @@ async def handle_assistant_turn_stream(
                 assistant_text += block.text
                 yield AssistantPanelEvent(type="assistant_token", payload={"delta": block.text})
 
-        # Extract and emit proposals
-        proposals = _extract_proposals(assistant_text)
-        for prop in proposals:
-            yield AssistantPanelEvent(type="proposal_parsed", payload=prop)
+        # Extract, validate (H5), and emit proposals.
+        # _extract_and_validate_proposal handles a single PROPOSAL_BEGIN...PROPOSAL_END
+        # block per turn.  For multiple proposals, fall back to the legacy extractor
+        # so we don't silently drop valid blocks when one is malformed.
+        validated_text, validated_prop = _extract_and_validate_proposal(assistant_text)
+        if validated_prop is not None:
+            yield AssistantPanelEvent(type="proposal_parsed", payload=validated_prop)
+        elif validated_text != assistant_text:
+            # Block was present but failed validation — text was stripped, no event emitted.
+            pass
+        else:
+            # No PROPOSAL_BEGIN block found by the new validator; try the legacy path
+            # in case of alternative whitespace/formatting in the block markers.
+            proposals = _extract_proposals(assistant_text)
+            for prop in proposals:
+                yield AssistantPanelEvent(type="proposal_parsed", payload=prop)
 
     except asyncio.CancelledError:
         logger.info(

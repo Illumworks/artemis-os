@@ -3,20 +3,25 @@
 Architecture:
   gather_sources → _build_context_string → _build_prompt
     → LLM completion (resolve_adapter chain)
-      → parse JSON → save_brief_snapshot → return brief
+      → Pydantic validate (DailyBrief) → save_brief_snapshot → return brief
+
+H5: LLM output is validated against DailyBrief before persistence.
+Validation failure triggers one retry with the error injected into the prompt.
+Persistent failure falls back to empty DailyBrief() + warning log.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.brief import repository
 from artemis.brief.prompt import _build_context_string, _build_prompt
+from artemis.brief.schemas import DailyBrief
 from artemis.brief.sources import gather_sources
 
 logger = logging.getLogger(__name__)
@@ -85,8 +90,66 @@ async def _call_llm(prompt: str) -> tuple[str, str, int | None, int | None]:
     return output, model_used, tokens_in, tokens_out
 
 
+async def _generate_with_retry(
+    prompt: str,
+    *,
+    max_retries: int = 1,
+) -> tuple[DailyBrief, str, int | None, int | None]:
+    """Call LLM, validate against DailyBrief, retry once on validation failure.
+
+    Returns (validated_brief, model_used, tokens_in, tokens_out).
+    On persistent failure returns (DailyBrief(), ...) — empty default — so
+    the caller can still persist an audit row without breaking the API.
+    """
+    last_error: str | None = None
+    model_used: str = BRIEF_MODEL
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+
+    for attempt in range(max_retries + 1):
+        current_prompt = prompt
+        if last_error is not None:
+            current_prompt = (
+                prompt
+                + f"\n\n[CORRECTION NEEDED] Your previous response failed schema validation:\n"
+                f"{last_error}\n"
+                "Please return a valid JSON object matching the required schema exactly."
+            )
+
+        try:
+            output, model_used, tokens_in, tokens_out = await _call_llm(current_prompt)
+        except BriefGenerationError:
+            # LLM call itself failed — don't retry
+            logger.warning("Daily brief LLM call failed on attempt %d", attempt)
+            return DailyBrief(), model_used, tokens_in, tokens_out
+
+        # Extract JSON from output (strip markdown fences if present)
+        match = _JSON_RE.search(output)
+        if not match:
+            last_error = f"No JSON object found in response. Output: {output[:200]!r}"
+            if attempt >= max_retries:
+                logger.warning("Daily brief validation persistent failure: %s", last_error)
+                return DailyBrief(), model_used, tokens_in, tokens_out
+            continue
+
+        try:
+            brief = DailyBrief.model_validate_json(match.group(0))
+            return brief, model_used, tokens_in, tokens_out
+        except ValidationError as exc:
+            last_error = str(exc)
+            if attempt >= max_retries:
+                logger.warning("Daily brief validation persistent failure: %s", exc)
+                return DailyBrief(), model_used, tokens_in, tokens_out
+
+    # Unreachable, but satisfies type checker
+    return DailyBrief(), model_used, tokens_in, tokens_out
+
+
 async def generate_brief(session: AsyncSession) -> dict[str, Any]:
     """Generate a new brief, persist the snapshot, and return the parsed brief.
+
+    H5: LLM output is validated against DailyBrief (Pydantic).  One retry on
+    failure; persistent failure persists an empty DailyBrief + logs warning.
 
     Raises BriefGenerationError on failure.
     """
@@ -94,18 +157,9 @@ async def generate_brief(session: AsyncSession) -> dict[str, Any]:
     context_string = _build_context_string(sources)
     prompt = _build_prompt(context_string)
 
-    output, model_used, tokens_in, tokens_out = await _call_llm(prompt)
+    brief_model, model_used, tokens_in, tokens_out = await _generate_with_retry(prompt)
 
-    match = _JSON_RE.search(output)
-    if not match:
-        raise BriefGenerationError(
-            f"Brief generation returned no JSON. Raw output: {output[:200]!r}"
-        )
-
-    try:
-        brief: dict[str, Any] = json.loads(match.group(0))
-    except json.JSONDecodeError as exc:
-        raise BriefGenerationError(f"Brief JSON parse failed: {exc}") from exc
+    brief: dict[str, Any] = brief_model.model_dump(mode="json")
 
     from datetime import UTC, datetime
 

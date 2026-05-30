@@ -115,7 +115,8 @@ async def test_generate_persists_snapshot() -> None:
 
     session = _make_session()
 
-    valid_json = '{"headline": "Focus day", "priorities": [{"rank": 1, "title": "A", "why": "W", "ticket": null}, {"rank": 2, "title": "B", "why": "W2", "ticket": null}, {"rank": 3, "title": "C", "why": "W3", "ticket": null}], "continuity": null, "context": "Ctx", "defer": "D", "slackUrgency": "low", "calendarNote": null}'
+    # H5: DailyBrief shape — highlights/priorities/next_actions (not headline/rank/ticket).
+    valid_json = '{"highlights": [{"title": "Focus day", "detail": "Sprint review first", "source": "jira"}], "priorities": [{"item": "Sprint review", "rationale": "Due today", "urgency": "high"}], "next_actions": [], "okr_status": null, "risks": [], "summary": "Sprint review day.", "confidence": "high"}'
 
     snap = _fake_snapshot(id_=42)
 
@@ -147,7 +148,8 @@ async def test_generate_persists_snapshot() -> None:
         result = await generate_brief_endpoint(session=session)
 
     assert result["generated"] is True
-    assert result["brief"]["headline"] == "Focus day"
+    # H5: DailyBrief shape — highlights key, not headline.
+    assert result["brief"]["highlights"][0]["title"] == "Focus day"
     assert result["brief"]["_snapshotId"] == 42
     mock_save.assert_awaited_once()
 
@@ -159,7 +161,9 @@ async def test_generate_persists_snapshot() -> None:
 async def test_generate_handles_markdown_fenced_json() -> None:
     from artemis.brief.generator import generate_brief
 
-    fenced = '```json\n{"headline": "Fenced", "priorities": [{"rank": 1, "title": "A", "why": "W", "ticket": null}, {"rank": 2, "title": "B", "why": "W2", "ticket": null}, {"rank": 3, "title": "C", "why": "W3", "ticket": null}], "continuity": null, "context": "Ctx", "defer": "D", "slackUrgency": "low", "calendarNote": null}\n```'
+    # H5: DailyBrief-shaped JSON wrapped in markdown fences.
+    inner_json = '{"highlights": [{"title": "Fenced brief", "detail": null, "source": null}], "priorities": [], "next_actions": [], "okr_status": null, "risks": [], "summary": null, "confidence": "medium"}'
+    fenced = f"```json\n{inner_json}\n```"
 
     snap = _fake_snapshot(id_=7)
 
@@ -190,18 +194,26 @@ async def test_generate_handles_markdown_fenced_json() -> None:
     ):
         result = await generate_brief(session=_make_session())
 
-    assert result["headline"] == "Fenced"
+    # H5: DailyBrief shape — highlights key, not headline.
+    assert result["highlights"][0]["title"] == "Fenced brief"
     assert result["_snapshotId"] == 7
 
 
-# ── POST /api/daily-brief/generate — prose-only → 502 ───────────────────────
+# ── POST /api/daily-brief/generate — prose-only → empty DailyBrief (H5) ──────
 
 
 @pytest.mark.asyncio
-async def test_generate_raises_on_no_json() -> None:
-    from fastapi import HTTPException
+async def test_generate_falls_back_on_no_json() -> None:
+    """H5 failure isolation: when LLM returns no JSON, _generate_with_retry logs
+    a warning and returns an empty DailyBrief().  The endpoint persists the
+    empty brief and returns generated=True — no 502.
 
+    Pre-H5 behavior: BriefGenerationError → 502. H5 changes this to failure
+    isolation (empty brief + warning log) so the UI flow is never broken.
+    """
     from artemis.routes.daily_brief import generate_brief_endpoint
+
+    snap = _fake_snapshot(id_=99)
 
     with (
         patch(
@@ -227,12 +239,20 @@ async def test_generate_raises_on_no_json() -> None:
                 10,
             ),
         ),
-        pytest.raises(HTTPException) as exc_info,
+        patch(
+            "artemis.brief.repository.save_brief_snapshot",
+            new_callable=AsyncMock,
+            return_value=snap,
+        ),
     ):
-        await generate_brief_endpoint(session=_make_session())
+        result = await generate_brief_endpoint(session=_make_session())
 
-    assert exc_info.value.status_code == 502
-    assert exc_info.value.detail["error"] == "brief_generation_failed"
+    # H5: no 502 — failure isolation returns empty DailyBrief.
+    assert result["generated"] is True
+    brief = result["brief"]
+    assert brief["highlights"] == []
+    assert brief["priorities"] == []
+    assert brief["summary"] is None
 
 
 # ── GET /api/daily-brief/history — 10 seeded → returns 7 ────────────────────
