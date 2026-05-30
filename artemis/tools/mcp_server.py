@@ -129,8 +129,10 @@ def _summarize_args(args: dict[str, object], max_len: int = 500) -> str:
 
 async def _log_invocation(
     session: AsyncSession,
-    agent_run_id: str,
-    pipeline_run_id: str | None,
+    *,
+    agent_run_id: str | None = None,
+    builder_session_id: int | None = None,
+    pipeline_run_id: str | None = None,
     tool_name: str,
     args_summary: str | None,
     result_preview: str | None,
@@ -141,9 +143,14 @@ async def _log_invocation(
     Each invocation is its own committed fact — the MCP server's session
     commits once per tool call so provenance is durable even if the agent
     run subsequently fails.
+
+    CC21: exactly one of agent_run_id / builder_session_id must be set
+    (enforced by the ck_tool_invocations_scope CHECK constraint).  Pipeline
+    callers pass agent_run_id; Builder callers pass builder_session_id.
     """
     row = ToolInvocation(
         agent_run_id=agent_run_id,
+        builder_session_id=builder_session_id,
         pipeline_run_id=pipeline_run_id,
         tool_name=tool_name,
         args_summary=args_summary,
@@ -246,7 +253,13 @@ def _build_server(
         if entry is None:
             result_text = f"UNKNOWN_TOOL: {name}"
             await _log_invocation(
-                session, run_id, pipeline_run_id, a_name, args_summary, result_text[:500], False
+                session,
+                agent_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
+                tool_name=a_name,
+                args_summary=args_summary,
+                result_preview=result_text[:500],
+                success=False,
             )
             return [mcp_types.TextContent(type="text", text=result_text)]
 
@@ -258,7 +271,13 @@ def _build_server(
             logger.exception("tool %r raised; rolled back", name)
             error_preview = f"EXCEPTION: {exc!s}"[:500]
             await _log_invocation(
-                session, run_id, pipeline_run_id, a_name, args_summary, error_preview, False
+                session,
+                agent_run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
+                tool_name=a_name,
+                args_summary=args_summary,
+                result_preview=error_preview,
+                success=False,
             )
             return [mcp_types.TextContent(type="text", text=f"TOOL_ERROR: {exc}")]
 
@@ -269,7 +288,13 @@ def _build_server(
         # Log before the per-write commit so the log row is always committed
         # even if session.commit() below is a no-op (read-only tool).
         await _log_invocation(
-            session, run_id, pipeline_run_id, a_name, args_summary, result_preview, success
+            session,
+            agent_run_id=run_id,
+            pipeline_run_id=pipeline_run_id,
+            tool_name=a_name,
+            args_summary=args_summary,
+            result_preview=result_preview,
+            success=success,
         )
 
         # Per-write commit: a successful read / no-write commits a no-op.
@@ -530,6 +555,7 @@ def _build_builder_server(session: AsyncSession, builder_session_id: int) -> Ser
     @server.call_tool()  # type: ignore[untyped-decorator]
     async def _call_tool(name: str, arguments: dict[str, object]) -> list[mcp_types.TextContent]:
         args = dict(arguments)
+        args_summary = _summarize_args(args)
         try:
             result = await _dispatch_builder_tool(
                 name=name,
@@ -541,8 +567,29 @@ def _build_builder_server(session: AsyncSession, builder_session_id: int) -> Ser
         except Exception as exc:
             await session.rollback()
             logger.exception("builder tool %r raised; rolled back", name)
+            error_preview = f"EXCEPTION: {exc!s}"[:500]
+            await _log_invocation(
+                session,
+                builder_session_id=builder_session_id,
+                tool_name=name,
+                args_summary=args_summary,
+                result_preview=error_preview,
+                success=False,
+            )
             return [mcp_types.TextContent(type="text", text=f"TOOL_ERROR: {exc}")]
 
+        # Determine success: False for known failure-prefix results.
+        success = not any(result.startswith(p) for p in _FAILURE_PREFIXES)
+        result_preview = result[:500] if isinstance(result, str) else None
+        # CC21: log Builder tool calls with builder_session_id scope.
+        await _log_invocation(
+            session,
+            builder_session_id=builder_session_id,
+            tool_name=name,
+            args_summary=args_summary,
+            result_preview=result_preview,
+            success=success,
+        )
         await session.commit()
         return [mcp_types.TextContent(type="text", text=result)]
 

@@ -2592,11 +2592,16 @@ export async function builderApproveProposal(proposalId) {
   return body;
 }
 
-export async function builderRejectProposal(proposalId) {
-  const res = await fetch(`/api/builder/proposals/${encodeURIComponent(proposalId)}/reject`, {
+export async function builderRejectProposal(proposalId, reason = null) {
+  // CC22: optional reason body — backend accepts empty body for one-click reject.
+  const init = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-  });
+  };
+  if (reason && typeof reason === "string" && reason.trim()) {
+    init.body = JSON.stringify({ reason: reason.trim().slice(0, 2000) });
+  }
+  const res = await fetch(`/api/builder/proposals/${encodeURIComponent(proposalId)}/reject`, init);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || "builderRejectProposal failed");
   return body;

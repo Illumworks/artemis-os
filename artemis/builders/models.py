@@ -395,6 +395,11 @@ class DefinitionProposal(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
+    # CC22 — operator-provided rejection metadata.  Captured when /reject is
+    # called with a body containing reason; rejected_at is also set on flip.
+    # Existing rejected rows (pre-CC22) remain NULL for both — we don't backfill.
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class AgentRunTrajectorySummary(Base):
