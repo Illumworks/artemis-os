@@ -117,10 +117,26 @@ async def approve_skill(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
     try:
-        await repo.set_skill_status(session, slug, "approved")
+        skill = await repo.get_skill(session, slug)
     except ValueError:
         raise not_found(f"Skill '{slug}' not found", "skill_not_found")  # noqa: B904
+    await repo.set_skill_status(session, slug, "approved")
     await session.commit()
+
+    # MC3: fire-and-forget memory carryover (failure must not break approval)
+    import asyncio as _asyncio
+
+    from artemis.builder.memory_carryover import write_skill_promotion_observation
+
+    _asyncio.create_task(
+        write_skill_promotion_observation(
+            skill_slug=slug,
+            skill_name=skill.name,
+            description=skill.description,
+            promoted_by="operator",
+        )
+    )
+
     return {"ok": True}
 
 

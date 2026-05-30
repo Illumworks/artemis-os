@@ -350,6 +350,20 @@ async def approve_signal(
     await session.refresh(updated)
     await session.refresh(candidate)
 
+    # MC2: fire-and-forget memory carryover (failure must not break approval)
+    import asyncio as _asyncio
+
+    from artemis.builder.memory_carryover import write_signal_gate1_approval_observation
+
+    _asyncio.create_task(
+        write_signal_gate1_approval_observation(
+            signal_id=signal_id,
+            new_status=updated.signal_status,
+            decided_by="operator",
+            decision_payload={"headline": updated.headline},
+        )
+    )
+
     return {
         "signal": _serialize_signal(updated),
         "candidateId": candidate.id,
@@ -382,6 +396,21 @@ async def reject_signal(
     updated = await transition(session, "signal", signal_id, SignalState.REJECTED_AT_GATE_1)
     await session.commit()
     await session.refresh(updated)
+
+    # MC2: fire-and-forget memory carryover (failure must not break rejection)
+    import asyncio as _asyncio
+
+    from artemis.builder.memory_carryover import write_signal_gate1_approval_observation
+
+    _asyncio.create_task(
+        write_signal_gate1_approval_observation(
+            signal_id=signal_id,
+            new_status=updated.signal_status,
+            decided_by="operator",
+            decision_payload={"headline": updated.headline},
+        )
+    )
+
     return _serialize_signal(updated)
 
 

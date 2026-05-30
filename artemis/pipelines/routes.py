@@ -532,6 +532,22 @@ async def resume_run(
     # Re-dispatch executor in background
     _dispatch_execution(run_id)
 
+    # MC4: fire-and-forget memory carryover (failure must not break resume)
+    import asyncio as _asyncio
+
+    from artemis.builder.memory_carryover import write_pipeline_gate_decision_observation
+
+    _asyncio.create_task(
+        write_pipeline_gate_decision_observation(
+            pipeline_run_id=run_id,
+            pipeline_id=run.pipeline_id,
+            node_id=body.node_id,
+            decision=body.decision,
+            decided_by=body.actor or "operator",
+            decision_payload={"pipeline_name": run.pipeline_id},
+        )
+    )
+
     run = await repo.get_pipeline_run(session, run_id)
     return _run_to_dict(run)
 
