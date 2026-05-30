@@ -269,6 +269,104 @@ async def write_proposal_approval_observation(
         )
 
 
+# ── CC29: definition-proposal rejection ──────────────────────────────────────
+
+
+async def write_proposal_rejection_observation(
+    *,
+    proposal_id: int,
+    kind: str,
+    target_id: int | None,  # noqa: ARG001 — reserved for context
+    target_slug: str | None,
+    proposed_definition: dict[str, Any],
+    proposed_by: str,
+    citations: dict[str, Any] | None,
+    rejection_reason: str | None,
+    builder_session_id: int | None = None,  # noqa: ARG001 — reserved for context
+) -> None:
+    """CC29: Write a memory observation when a definition proposal is REJECTED.
+
+    Multi-scope: agent:<slug> or skill:<slug> (primary) + workspace:platform
+    (audit).  If kind has no resolvable target_slug, falls back to
+    workspace:platform as the only scope.
+
+    Evidence: definition_proposal source + cited agent_run sources.
+
+    Failure isolation: any exception is caught + logged WARNING. The /reject
+    endpoint response succeeds regardless.
+    """
+    import artemis.db as _db
+
+    iso_date = _compose_iso_date()
+
+    run_ids: list[str] = []
+    if citations and isinstance(citations, dict):
+        raw = citations.get("run_ids", [])
+        if isinstance(raw, list):
+            run_ids = [str(r) for r in raw if isinstance(r, (int, str))]
+
+    reason_part = (
+        f"Reason: {_smart_truncate(rejection_reason, 500)}"
+        if rejection_reason
+        else "Reason: (none captured)"
+    )
+    summary_excerpt = _extract_summary(proposed_definition)
+    runs_part = ", ".join(run_ids) if run_ids else "(none)"
+    content = (
+        f"Operator rejected definition proposal #{proposal_id} for {kind} "
+        f"{target_slug or '(unknown)'} on {iso_date}. {reason_part}. "
+        f"Citations: runs {runs_part}. Proposed by: {proposed_by}. "
+        f"Summary: {summary_excerpt}."
+    )
+
+    # Scope selection: agent/skill primary if slug present, otherwise workspace:platform only.
+    if kind == "agent" and target_slug:
+        primary_kind, primary_id = "agent", target_slug
+        additional_kinds = [_PLATFORM_SCOPE_KIND]
+        additional_ids = [_PLATFORM_SCOPE_ID]
+    elif kind == "skill" and target_slug:
+        primary_kind, primary_id = "skill", target_slug
+        additional_kinds = [_PLATFORM_SCOPE_KIND]
+        additional_ids = [_PLATFORM_SCOPE_ID]
+    else:
+        primary_kind, primary_id = _PLATFORM_SCOPE_KIND, _PLATFORM_SCOPE_ID
+        additional_kinds = []
+        additional_ids = []
+
+    try:
+        from artemis.memory.schemas import SourceQualityHint
+
+        obs_id = await _multi_scope_observation_write(
+            primary_scope_kind=primary_kind,
+            primary_scope_id=primary_id,
+            additional_scope_kinds=additional_kinds,
+            additional_scope_ids=additional_ids,
+            content=content,
+            category="definition_rejection",
+            confidence_origin="mc_definition_rejection",
+            source_quality=SourceQualityHint.operator,
+        )
+        async with _db.SessionLocal() as session:
+            await _link_evidence_raw(session, obs_id, "definition_proposal", str(proposal_id))
+            for run_id in run_ids:
+                await _link_evidence_raw(session, obs_id, "agent_run", run_id)
+            await session.commit()
+        logger.info(
+            "CC29: rejection observation written (id=%s) for proposal_id=%s kind=%s target=%s",
+            obs_id,
+            proposal_id,
+            kind,
+            target_slug,
+        )
+    except Exception as exc:
+        logger.warning(
+            "CC29 memory observation write failed for proposal_id=%s: %s",
+            proposal_id,
+            exc,
+            exc_info=True,
+        )
+
+
 # ── MC2: Signal Gate-1 approval ───────────────────────────────────────────────
 
 
