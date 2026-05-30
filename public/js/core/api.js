@@ -165,6 +165,34 @@ export async function fetchMemoryEmbeddingStatus() {
   return _readJsonOrThrow(res, "Failed to load semantic memory status");
 }
 
+// M6 — Memory shell read endpoints
+export async function fetchMemoryShellStats() {
+  const res = await fetch("/api/memory/stats");
+  return _readJsonOrThrow(res, "Failed to load memory stats");
+}
+
+export async function fetchMemoryShellScopes() {
+  const res = await fetch("/api/memory/scopes");
+  return _readJsonOrThrow(res, "Failed to load memory scopes");
+}
+
+export async function fetchMemoryShellDrawers({ scopeKind, scopeId, limit = 50, offset = 0 } = {}) {
+  const qs = _buildQueryString({ scope_kind: scopeKind, scope_id: scopeId, limit, offset });
+  const res = await fetch(`/api/memory/drawers${qs}`);
+  return _readJsonOrThrow(res, "Failed to load memory drawers");
+}
+
+export async function fetchMemoryShellObservations({ scopeKind, scopeId, limit = 50, offset = 0 } = {}) {
+  const qs = _buildQueryString({ scope_kind: scopeKind, scope_id: scopeId, limit, offset });
+  const res = await fetch(`/api/memory/observations${qs}`);
+  return _readJsonOrThrow(res, "Failed to load memory observations");
+}
+
+export async function fetchMemoryShellObservationDetail(observationId) {
+  const res = await fetch(`/api/memory/observations/${encodeURIComponent(observationId)}`);
+  return _readJsonOrThrow(res, "Failed to load observation detail");
+}
+
 export async function ensureMemoryEmbeddings() {
   const res = await fetch("/api/memory/embeddings/ensure", {
     method: "POST",

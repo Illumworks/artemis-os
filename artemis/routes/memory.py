@@ -1,22 +1,37 @@
-"""Memory M2 — HTTP routes for conflict management and observation history.
+"""Memory HTTP routes.
 
-Mounted under /api/memory. Three endpoints:
+Mounted under /api/memory.
+
+Conflict management (M2):
   GET  /api/memory/conflicts                     — list unresolved conflicts
   POST /api/memory/conflicts/{id}/resolve        — apply resolution
   GET  /api/memory/observations/{id}/history     — supersession chain
+
+Shell UI read layer (M6) — all read-only:
+  GET  /api/memory/drawers                       — paginated drawer list
+  GET  /api/memory/observations                  — paginated observation list
+  GET  /api/memory/observations/{id}             — detail + evidence chain
+  GET  /api/memory/scopes                        — distinct scopes with row counts
+  GET  /api/memory/stats                         — dashboard totals
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
+from artemis.marketing.routes._auth import require_token
 from artemis.memory.repository import (
+    get_memory_stats,
+    get_observation_detail,
     get_observation_history,
     list_conflicts_unresolved,
+    list_drawers,
+    list_observations,
+    list_scopes,
     resolve_conflict,
 )
 from artemis.memory.schemas import Conflict, ConflictResolveRequest, Observation
@@ -114,3 +129,98 @@ async def observation_history(
 async def embeddings_status() -> dict[str, object]:
     """Return embedding job queue status (stub — embedding pipeline not yet implemented)."""
     return {"queued": 0, "processing": 0, "completed_today": 0, "last_error": None}
+
+
+# ── M6 Shell read endpoints (all require token) ───────────────────────────────
+
+
+@router.get("/drawers", dependencies=[Depends(require_token)])
+async def list_drawers_endpoint(
+    scope_kind: Annotated[str | None, Query(description="Filter by scope_kind")] = None,
+    scope_id: Annotated[str | None, Query(description="Filter by scope_id")] = None,
+    limit: Annotated[int, Query(ge=1, le=200, description="Page size")] = 50,
+    offset: Annotated[int, Query(ge=0, description="Page offset")] = 0,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Paginated list of memory drawers.
+
+    Optional filters: scope_kind, scope_id.
+    Default limit 50, max 200.
+    """
+    rows, total = await list_drawers(
+        session,
+        scope_kind=scope_kind,
+        scope_id=scope_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {"drawers": rows, "total": total, "offset": offset}
+
+
+@router.get("/observations", dependencies=[Depends(require_token)])
+async def list_observations_endpoint(
+    scope_kind: Annotated[str | None, Query(description="Filter by scope_kind")] = None,
+    scope_id: Annotated[str | None, Query(description="Filter by scope_id")] = None,
+    limit: Annotated[int, Query(ge=1, le=200, description="Page size")] = 50,
+    offset: Annotated[int, Query(ge=0, description="Page offset")] = 0,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Paginated list of memory observations.
+
+    Optional filters: scope_kind, scope_id.
+    Default limit 50, max 200.
+    """
+    rows, total = await list_observations(
+        session,
+        scope_kind=scope_kind,
+        scope_id=scope_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {"observations": rows, "total": total, "offset": offset}
+
+
+@router.get("/observations/{observation_id}", dependencies=[Depends(require_token)])
+async def get_observation_detail_endpoint(
+    observation_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Observation detail with evidence chain.
+
+    Returns the full observation row and all evidence links with source previews.
+    Returns 404 if the observation is not found.
+
+    Note: this route is registered before /observations/{id}/history so the
+    path parameter does not shadow the 'history' literal — FastAPI resolves
+    exact-match path segments first.
+    """
+    detail = await get_observation_detail(session, observation_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": f"Observation {observation_id} not found", "code": "not_found"},
+        )
+    return detail
+
+
+@router.get("/scopes", dependencies=[Depends(require_token)])
+async def list_scopes_endpoint(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[dict[str, Any]]:
+    """List distinct scopes with drawer and observation counts.
+
+    Used to populate the scope-filter UI in the memory shell.
+    """
+    return await list_scopes(session)
+
+
+@router.get("/stats", dependencies=[Depends(require_token)])
+async def memory_stats_endpoint(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Overall memory counts for the dashboard header.
+
+    Returns total_drawers, total_observations, total_evidence_links,
+    scope_count, and a by_scope_kind breakdown.
+    """
+    return await get_memory_stats(session)
