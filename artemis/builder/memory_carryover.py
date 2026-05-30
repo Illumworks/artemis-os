@@ -25,8 +25,8 @@ Failure isolation:
 source_kind values used here that are NOT in EvidenceSourceKind Literal:
   definition_proposal, agent_run, signal_queue, skill,
   pipeline_run, floating_artemis_messages
-  (CC23 banked: extend Literal to include these source kinds)
   _link_evidence_raw bypasses the Literal type-check via raw pg_insert.
+  (CC23 resolved the Literal extension; these are now in EvidenceSourceKind.)
 """
 
 from __future__ import annotations
@@ -59,23 +59,12 @@ def _smart_truncate(text: str, max_chars: int = _SUMMARY_MAX_CHARS) -> str:
     return truncated + "…"
 
 
-def _source_id_to_int(source_id: str) -> int:
-    """Convert a source_id string to a stable BigInteger for MemoryEvidence.source_id.
-
-    MemoryEvidence.source_id is a BigInteger column. For numeric IDs (signal_id,
-    proposal_id, agent_run_id) we parse directly. For non-numeric IDs (skill slug,
-    pipeline_run UUID, FA session string) we use a stable hash.
-    CC23 will migrate source_id to Text; until then this bridge function is load-bearing.
-    """
-    try:
-        return int(source_id)
-    except (ValueError, TypeError):
-        # Stable positive int in BigInteger range via sha256 truncation
-        import hashlib
-
-        digest = hashlib.sha256(source_id.encode()).digest()
-        # Take first 7 bytes (56 bits) to stay safely in BigInt positive range
-        return int.from_bytes(digest[:7], "big")
+# CC28: _source_id_to_int removed — memory_evidence.source_id is now TEXT.
+# Skill slugs, pipeline_run UUIDs, FA session IDs can be stored as-is.
+# Legacy note: observations written before CC28 (obs ids 29–31, MC3/MC4/MC5 smokes)
+# have SHA-256-hashed BigInt values in source_id (now stored as numeric strings).
+# Per lossless invariant those rows are NOT modified; they're listed here for audit.
+_LEGACY_HASHED_OBSERVATION_IDS: tuple[int, ...] = (29, 30, 31)  # MC3/MC4/MC5 smokes
 
 
 async def _link_evidence_raw(
@@ -93,9 +82,8 @@ async def _link_evidence_raw(
     type-checks source_kind against the Literal).  The Literal is a read-layer
     hint, not a DB constraint.
 
-    source_id is coerced to int via _source_id_to_int: numeric strings are parsed
-    directly; non-numeric strings (UUIDs, slugs) are SHA-256 hashed to a stable
-    positive BigInteger (CC23 will migrate source_id column to Text).
+    CC28: source_id is now TEXT — numeric IDs pass as str(id), slugs/UUIDs pass
+    as-is. No SHA-256 hashing. _source_id_to_int was removed.
     """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -106,7 +94,7 @@ async def _link_evidence_raw(
         .values(
             observation_id=observation_id,
             source_kind=source_kind,
-            source_id=_source_id_to_int(source_id),
+            source_id=source_id,
             weight=1.0,
         )
         .on_conflict_do_nothing(constraint="uq_evidence_obs_source")
@@ -420,9 +408,10 @@ async def write_pipeline_gate_decision_observation(
 ) -> None:
     """MC4: Pipeline human-gate decision (approved/rejected).
 
-    Multi-scope: workspace:pipeline-<id> (primary) + workspace:platform (audit).
-    Note: ScopeKind Literal does not include 'pipeline' (CC23/mw2 will extend it).
-    Until then we use workspace scope with pipeline-prefixed scope_id.
+    Multi-scope: pipeline:<pipeline_id> (primary) + workspace:platform (audit).
+    CC27: ScopeKind Literal now includes 'pipeline'; using it directly.
+    Previously used workspace:pipeline-<id> as a workaround (pre-CC27 rows are
+    preserved verbatim per lossless invariant).
     Evidence: pipeline_run source.
     Failure is fully isolated.
     """
@@ -438,16 +427,13 @@ async def write_pipeline_gate_decision_observation(
         f"{decided_by} {decision} pipeline {pipeline_id} gate at node {node_id} on {iso_date}. "
         f"Context: {payload_summary}."
     )
-    # Use workspace scope_kind with pipeline-prefixed scope_id since 'pipeline'
-    # is not yet in ScopeKind Literal. Future: extend Literal + use pipeline:<id>.
-    primary_scope_id = f"pipeline-{pipeline_id}"
 
     try:
         from artemis.memory.schemas import SourceQualityHint
 
         obs_id = await _multi_scope_observation_write(
-            primary_scope_kind=_PLATFORM_SCOPE_KIND,
-            primary_scope_id=primary_scope_id,
+            primary_scope_kind="pipeline",  # CC27: was workspace:pipeline-<id>
+            primary_scope_id=pipeline_id,
             additional_scope_kinds=[_PLATFORM_SCOPE_KIND],
             additional_scope_ids=[_PLATFORM_SCOPE_ID],
             content=content,

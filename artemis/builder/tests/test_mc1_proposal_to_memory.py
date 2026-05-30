@@ -509,7 +509,8 @@ async def test_source_kinds_are_correct(db_session: AsyncSession) -> None:
     )
     assert len(run_links) == 1, f"Expected 1 run evidence (MW1 refactor), got {len(run_links)}"
 
+    # CC28: source_id is now TEXT; compare as strings
     for link in proposal_links:
-        assert link.source_id == proposal_id, f"Wrong proposal source_id: {link.source_id}"
+        assert link.source_id == str(proposal_id), f"Wrong proposal source_id: {link.source_id}"
     for link in run_links:
-        assert link.source_id == 7, f"Wrong run source_id: {link.source_id}"
+        assert link.source_id == "7", f"Wrong run source_id: {link.source_id}"

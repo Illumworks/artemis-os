@@ -232,7 +232,11 @@ class MemoryEvidence(Base):
         nullable=False,
     )
     source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    source_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # CC28: widened from BigInteger to Text — supports slugs, UUIDs, numeric strings.
+    # Existing rows had BigInt values; migration 0049 stringified them (e.g. 182 → "182").
+    # Rows written before CC28 with SHA-256 hashes (MC3/MC4/MC5 smokes: obs ids 29–31)
+    # retain their hash strings verbatim — lossless invariant, do not modify.
+    source_id: Mapped[str] = mapped_column(Text, nullable=False)
     source_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
     weight: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
     created_at: Mapped[datetime] = mapped_column(

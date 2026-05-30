@@ -171,11 +171,12 @@ async def test_trajectory_to_memory_integration(db_session: AsyncSession) -> Non
     assert obs_row.category == "trajectory"
 
     # (c) memory_evidence row linking observation to the agent_run
+    # CC28: source_id is now TEXT; compare as string
     ev_result = await db_session.execute(
         select(MemoryEvidence).where(
             MemoryEvidence.observation_id == obs_row.id,
             MemoryEvidence.source_kind == "agent_run",
-            MemoryEvidence.source_id == run_pk,
+            MemoryEvidence.source_id == str(run_pk),
         )
     )
     ev_row = ev_result.scalar_one_or_none()

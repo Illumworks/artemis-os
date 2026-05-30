@@ -252,11 +252,12 @@ async def test_link_evidence_drawer(db_session: AsyncSession) -> None:
     drawer = await _drawer(db_session)
     obs = await _observation(db_session)
     async with db_session.begin():
-        ev = await link_evidence(db_session, obs.id, "drawer", drawer.id, weight=0.8)
+        # CC28: link_evidence now takes source_id: str
+        ev = await link_evidence(db_session, obs.id, "drawer", str(drawer.id), weight=0.8)
     assert ev.id > 0
     assert ev.observation_id == obs.id
     assert ev.source_kind == "drawer"
-    assert ev.source_id == drawer.id
+    assert ev.source_id == str(drawer.id)  # CC28: source_id is now TEXT
     assert ev.weight == pytest.approx(0.8)
 
 
@@ -264,17 +265,19 @@ async def test_link_evidence_observation(db_session: AsyncSession) -> None:
     src_obs = await _observation(db_session, content="source obs")
     target_obs = await _observation(db_session, content="target obs")
     async with db_session.begin():
-        ev = await link_evidence(db_session, target_obs.id, "observation", src_obs.id)
+        # CC28: link_evidence now takes source_id: str
+        ev = await link_evidence(db_session, target_obs.id, "observation", str(src_obs.id))
     assert ev.source_kind == "observation"
-    assert ev.source_id == src_obs.id
+    assert ev.source_id == str(src_obs.id)  # CC28: source_id is now TEXT
 
 
 async def test_link_evidence_source_quote_stored(db_session: AsyncSession) -> None:
     drawer = await _drawer(db_session)
     obs = await _observation(db_session)
     async with db_session.begin():
+        # CC28: source_id is str
         ev = await link_evidence(
-            db_session, obs.id, "drawer", drawer.id, source_quote="exact phrase"
+            db_session, obs.id, "drawer", str(drawer.id), source_quote="exact phrase"
         )
     assert ev.source_quote == "exact phrase"
 
@@ -284,9 +287,10 @@ async def test_link_evidence_idempotent(db_session: AsyncSession) -> None:
     drawer = await _drawer(db_session)
     obs = await _observation(db_session)
     async with db_session.begin():
-        ev1 = await link_evidence(db_session, obs.id, "drawer", drawer.id)
+        # CC28: source_id is str
+        ev1 = await link_evidence(db_session, obs.id, "drawer", str(drawer.id))
     async with db_session.begin():
-        ev2 = await link_evidence(db_session, obs.id, "drawer", drawer.id)
+        ev2 = await link_evidence(db_session, obs.id, "drawer", str(drawer.id))
     assert ev1.id == ev2.id
 
 
@@ -295,8 +299,9 @@ async def test_list_evidence_for_observation(db_session: AsyncSession) -> None:
     d2 = await _drawer(db_session, content="drawer two")
     obs = await _observation(db_session)
     async with db_session.begin():
-        await link_evidence(db_session, obs.id, "drawer", d1.id, weight=0.9)
-        await link_evidence(db_session, obs.id, "drawer", d2.id, weight=0.5)
+        # CC28: source_id is str
+        await link_evidence(db_session, obs.id, "drawer", str(d1.id), weight=0.9)
+        await link_evidence(db_session, obs.id, "drawer", str(d2.id), weight=0.5)
     async with db_session.begin():
         evs = await list_evidence_for_observation(db_session, obs.id)
     assert len(evs) == 2
@@ -316,10 +321,14 @@ async def test_evidence_chain_traversal_obs_to_drawer(db_session: AsyncSession) 
     drawer = await _drawer(db_session, content="source text")
     obs = await _observation(db_session)
     async with db_session.begin():
-        await link_evidence(db_session, obs.id, "drawer", drawer.id, source_quote="source text")
+        # CC28: source_id is str
+        await link_evidence(
+            db_session, obs.id, "drawer", str(drawer.id), source_quote="source text"
+        )
         evs = await list_evidence_for_observation(db_session, obs.id)
         assert len(evs) == 1
-        fetched_drawer = await get_drawer(db_session, evs[0].source_id)
+        # CC28: source_id is now str; cast to int for BigInt PK lookup
+        fetched_drawer = await get_drawer(db_session, int(evs[0].source_id))
     assert fetched_drawer is not None
     assert fetched_drawer.content == "source text"
 

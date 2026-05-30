@@ -283,7 +283,8 @@ async def _write_signal_memory(session: Any, signal: SignalQueue) -> None:
     )
 
     # Part A-3: Evidence links (observation → drawer + observation → signal_queue row)
-    for src_kind, src_id in (("drawer", drawer.id), ("signal_queue", signal_id)):
+    # CC28: source_id is now TEXT; pass str() for numeric IDs.
+    for src_kind, src_id in (("drawer", str(drawer.id)), ("signal_queue", str(signal_id))):
         stmt = (
             pg_insert(MemoryEvidence)
             .values(

@@ -7,7 +7,20 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-ScopeKind = Literal["project", "workspace", "brand", "agent", "skill", "global"]
+ScopeKind = Literal[
+    "project",
+    "workspace",
+    "brand",
+    "agent",
+    "skill",
+    "global",
+    "pipeline",  # CC27: pipeline-run scope (MC4 workaround was workspace:pipeline-<id>)
+    "district",  # CC27: K-12 district context (Salesforce-ready)
+    "account",  # CC27: CRM account (Salesforce/ChurnZero-ready)
+    "person",  # CC27: contact/lead/employee
+    "meeting",  # CC27: granola meeting transcript scope
+    "personal",  # CC27: per-user personal scope (D10 privacy boundary)
+]
 EvidenceSourceKind = Literal[
     "drawer",
     "observation",
@@ -112,7 +125,7 @@ class Evidence(BaseModel):
     id: int
     observation_id: int
     source_kind: str
-    source_id: int
+    source_id: str  # CC28: widened from int — supports slugs, UUIDs, numeric strings
     source_quote: str | None
     weight: float
     created_at: datetime

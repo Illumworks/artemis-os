@@ -253,11 +253,12 @@ async def apply_consolidation(
 
         for src_id in proposal.evidence_from_ids:
             # Link the source observation as evidence
+            # CC28: link_evidence now takes source_id: str
             await link_evidence(
                 session,
                 observation_id=new_obs.id,
                 source_kind="observation",
-                source_id=src_id,
+                source_id=str(src_id),
                 weight=1.0,
             )
             # Supersede the source observation
