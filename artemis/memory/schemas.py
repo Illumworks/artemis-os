@@ -90,6 +90,9 @@ class Observation(BaseModel):
     confidence: float = 0.5
     supersedes: int | None = None
     evidence_count: int = 1
+    # MW1 fields
+    wing: str = "durable"
+    confidence_origin: str | None = None
 
 
 class Evidence(BaseModel):
@@ -128,6 +131,9 @@ class ScoredObservation(BaseModel):
     confidence: float = 0.5
     supersedes: int | None = None
     evidence_count: int = 1
+    # MW1 fields
+    wing: str = "durable"
+    confidence_origin: str | None = None
     # Retrieval scores
     final_score: float
     fts_rank: float

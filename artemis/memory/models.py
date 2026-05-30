@@ -1,10 +1,11 @@
 """SQLAlchemy 2.x async ORM models for the memory keystone.
 
 Core tables:
-  memory_scopes             — scope catalog (UX helper, not query-critical)
-  memory_drawers            — verbatim layer; immutable evidence floor
-  memory_observations       — curated layer; what retrieval reads at prompt time
-  memory_evidence           — many-to-many link: drawer/obs → observation
+  memory_scopes                — scope catalog (UX helper, not query-critical)
+  memory_drawers               — verbatim layer; immutable evidence floor
+  memory_observations          — curated layer; what retrieval reads at prompt time
+  memory_evidence              — many-to-many link: drawer/obs → observation
+  memory_observation_scopes    — MW1: many-to-many join: observation ↔ scope
 
 Graph layer (B4):
   memory_entities           — named entities extracted from observations
@@ -195,6 +196,10 @@ class MemoryObservation(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
+    # MW1: multi-scope metadata
+    wing: Mapped[str] = mapped_column(Text, nullable=False, server_default="durable")
+    confidence_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     evidence: Mapped[list[MemoryEvidence]] = relationship(
         "MemoryEvidence",
         back_populates="observation",
@@ -240,6 +245,44 @@ class MemoryEvidence(Base):
         "MemoryObservation",
         back_populates="evidence",
         lazy="noload",
+    )
+
+
+class MemoryObservationScope(Base):
+    """MW1: many-to-many join between memory_observations and memory_scopes.
+
+    One row per (observation_id, scope_kind, scope_id). is_primary=True marks
+    the primary scope — the one that also lives in memory_observations.scope_kind
+    / scope_id for backward-compat reads (M6 endpoints keep working via those
+    legacy columns). Secondary scopes only exist in this table.
+
+    LOSSLESS: rows are never deleted directly; CASCADE from observation delete
+    (which is itself never called) is the only removal path.
+    """
+
+    __tablename__ = "memory_observation_scopes"
+    __table_args__ = (
+        Index("idx_memory_observation_scopes_obs", "observation_id"),
+        Index("idx_memory_observation_scopes_scope", "scope_kind", "scope_id"),
+    )
+
+    observation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "memory_observations.id",
+            name="fk_obs_scopes_observation",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    scope_kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    scope_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
 
 

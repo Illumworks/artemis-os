@@ -44,6 +44,8 @@ _TRUNCATE_SQL = text(
     # Graph tables (depend on memory_entities + memory_observations)
     "memory_relation_rejections, memory_relations, "
     "memory_entity_mentions, memory_entity_aliases, memory_entities, "
+    # MW1: join table (CASCADE from memory_observations handles it, but list explicitly)
+    "memory_observation_scopes, "
     # B1/B2 tables
     "memory_embeddings, memory_evidence, memory_observations, "
     "memory_drawers, memory_scopes, "
