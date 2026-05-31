@@ -33,22 +33,6 @@ export const $ = {
   toolboxBtn: document.getElementById("toolbox-btn"),
   toolboxPanel: document.getElementById("toolbox-panel"),
 
-  // Workflows (panel kept for legacy, button merged into agent-btn)
-  workflowBtn: document.getElementById("workflow-btn"),   // removed from DOM — will be null
-  workflowPanel: document.getElementById("workflow-panel"),
-
-  // Workflow CRUD Modal
-  wfModal: document.getElementById("wf-modal"),
-  wfModalTitle: document.getElementById("wf-modal-title"),
-  wfModalClose: document.getElementById("wf-modal-close"),
-  wfModalCancel: document.getElementById("wf-modal-cancel"),
-  wfForm: document.getElementById("wf-form"),
-  wfFormTitle: document.getElementById("wf-form-title"),
-  wfFormDesc: document.getElementById("wf-form-desc"),
-  wfStepsList: document.getElementById("wf-steps-list"),
-  wfAddStepBtn: document.getElementById("wf-add-step-btn"),
-  wfFormEditId: document.getElementById("wf-form-edit-id"),
-
   // Agents
   agentBtn: document.getElementById("agent-btn"),
   agentPanel: document.getElementById("agent-panel"),

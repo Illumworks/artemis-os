@@ -676,8 +676,6 @@ function renderAgentPanel() {
   addCard.addEventListener("click", () => openAgentModal());
   $.agentPanel.appendChild(addCard);
 
-  // Render workflow cards in the sidebar
-  renderWorkflowSidebar();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1654,8 +1652,6 @@ function toggleAgentSidebar(forceOpen) {
 bindListener($.agentBtn, "click", () => {
   $.toolboxPanel.classList.add("hidden");
   $.toolboxBtn.classList.remove("active");
-  if ($.workflowPanel) $.workflowPanel.classList.add("hidden");
-  if ($.workflowBtn) $.workflowBtn.classList.remove("active");
   toggleAgentSidebar();
 });
 
