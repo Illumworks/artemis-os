@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Import all model modules so they register on Base.metadata.
 # As B1 / B2 / B3 / B4 land their models, add imports here.
+import artemis.marketing.models  # noqa: F401 — registers marketing OS models
 import artemis.memory.models  # noqa: F401 — registers memory keystone models
 from alembic import context
 from artemis.config import settings

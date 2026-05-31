@@ -16,12 +16,15 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.district_classifier import classify_tier, is_supported
 from artemis.marketing.models import (
     Approval,
     CampaignBrief,
     CampaignCandidate,
     ContentAsset,
     ContentAssetLink,
+    District,
+    DistrictTierBand,
     Ruleset,
     ScoutRun,
     SignalQueue,
@@ -359,6 +362,101 @@ async def decide_approval(
         approval.decision_payload = decision_payload
     await session.flush()
     return approval
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Districts
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def get_district(session: AsyncSession, district_id: int) -> District | None:
+    return await session.get(District, district_id)
+
+
+async def get_tier_bands(session: AsyncSession) -> list[DistrictTierBand]:
+    result = await session.execute(
+        select(DistrictTierBand).order_by(DistrictTierBand.display_order)
+    )
+    return list(result.scalars().all())
+
+
+async def upsert_district(
+    session: AsyncSession,
+    *,
+    nces_id: str | None,
+    name: str,
+    state: str | None,
+    enrollment: int | None,
+    on_skip_list: bool = False,
+    source: str,
+) -> District:
+    normalized_nces_id = nces_id.strip() if nces_id else None
+    normalized_name = name.strip()
+    normalized_state = state.strip().upper() if state else None
+    bands = await get_tier_bands(session)
+    tier = classify_tier(enrollment, bands)
+    classified_at = datetime.now(tz=UTC)
+
+    district: District | None = None
+    if normalized_nces_id is not None:
+        district = await session.scalar(
+            select(District)
+            .where(District.nces_id == normalized_nces_id)
+            .order_by(District.id.desc())
+            .limit(1)
+        )
+    if district is None:
+        stmt = select(District).where(District.name == normalized_name)
+        if normalized_state is None:
+            stmt = stmt.where(District.state.is_(None))
+        else:
+            stmt = stmt.where(District.state == normalized_state)
+        district = await session.scalar(stmt.order_by(District.id.desc()).limit(1))
+
+    if district is None:
+        district = District(
+            nces_id=normalized_nces_id,
+            name=normalized_name,
+            state=normalized_state,
+            enrollment=enrollment,
+            tier=tier,
+            supported=is_supported(tier),
+            on_skip_list=on_skip_list,
+            classification_source=source,
+            classified_at=classified_at,
+        )
+        session.add(district)
+    else:
+        district.nces_id = normalized_nces_id
+        district.name = normalized_name
+        district.state = normalized_state
+        district.enrollment = enrollment
+        district.tier = tier
+        district.supported = is_supported(tier)
+        district.on_skip_list = on_skip_list
+        district.classification_source = source
+        district.classified_at = classified_at
+
+    district.updated_at = classified_at
+    await session.flush()
+    await session.refresh(district)
+    return district
+
+
+async def recompute_all_tiers(session: AsyncSession) -> int:
+    bands = await get_tier_bands(session)
+    result = await session.execute(select(District).order_by(District.id))
+    districts = list(result.scalars().all())
+    now = datetime.now(tz=UTC)
+
+    for district in districts:
+        district.tier = classify_tier(district.enrollment, bands)
+        district.supported = is_supported(district.tier)
+        district.classified_at = now
+        district.updated_at = now
+
+    await session.flush()
+    return len(districts)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

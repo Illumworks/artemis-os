@@ -68,6 +68,8 @@ _TRUNCATE_SQL = text(
     "scout_runs, "
     "qualifier_rule_applications, "
     "skipped_signals, "
+    "districts, "
+    "district_tier_bands, "
     "signal_queue, "
     "rulesets, "
     "territory_config, "

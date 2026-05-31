@@ -10,6 +10,8 @@ Tables (all Postgres, all TIMESTAMPTZ timestamps, all JSONB blobs):
   campaign_deliverables — Writing Studio draft refs tied to a candidate
   rulesets              — versioned qualification logic per campaign family
   territory_config      — one-row-per-family hot/standard state routing config
+  districts             — first-class district entity with tier/support flags
+  district_tier_bands   — global editable district size bands
   approvals             — generic approval gate log (signals, writing gates, …)
 
 Intentional improvements over the Node SQLite schema:
@@ -27,9 +29,11 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
+    Integer,
     Text,
     UniqueConstraint,
     func,
@@ -414,6 +418,62 @@ class TerritoryConfig(Base):
     hot_states: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
     standard_states: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
     unlisted_multiplier: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.85")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DistrictTierBand(Base):
+    """Global editable enrollment bands for district tier classification."""
+
+    __tablename__ = "district_tier_bands"
+    __table_args__ = (
+        CheckConstraint("tier IN ('D1', 'D2', 'D3', 'D4')", name="ck_district_tier_bands_tier"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tier: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    min_enrollment: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_enrollment: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class District(Base):
+    """First-class district entity with lossless support and tier state."""
+
+    __tablename__ = "districts"
+    __table_args__ = (
+        CheckConstraint(
+            "tier IS NULL OR tier IN ('D1', 'D2', 'D3', 'D4')",
+            name="ck_districts_tier",
+        ),
+        CheckConstraint(
+            "classification_source IN ('nces', 'manual', 'unresolved')",
+            name="ck_districts_classification_source",
+        ),
+        Index("idx_districts_state", "state"),
+        Index("idx_districts_tier", "tier"),
+        Index("idx_districts_supported", "supported"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nces_id: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enrollment: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tier: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supported: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    on_skip_list: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    classification_source: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="unresolved"
+    )
+    classified_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
