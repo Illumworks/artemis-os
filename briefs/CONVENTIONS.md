@@ -75,6 +75,13 @@ Then each run has its own tree + HEAD, branches independently off the integratio
 
 Two-sufficiency check before any parallel fire: (1) no file overlap, AND (2) no shared working tree. Both must hold.
 
+**Env-var split for workers (lesson, 2026-05-31):** alembic's env reads `ARTEMIS_DB_URL`; pytest conftests read `ARTEMIS_TEST_DB_URL`. A worker prompt that says `ARTEMIS_TEST_DB_URL=... uv run alembic upgrade head` migrates the WRONG database (or silently no-ops against prod). Always pass BOTH in worker/dispatch prompts, split by tool:
+```
+ARTEMIS_DB_URL=postgresql+asyncpg://artemis:artemis@localhost/<db> uv run alembic upgrade head
+ARTEMIS_TEST_DB_URL=postgresql+asyncpg://artemis:artemis@localhost/<db> uv run pytest <files>
+```
+Worktrees have no `.env`, so workers fall through to defaults unless these are explicit — making the wrong-DB trap silent.
+
 ## Other conventions
 
 - Brief filenames: `<phase-letter><sub-number>-<kebab-summary>.md` (`j7-daily-brief-port.md`, `j6c-meetings-rebuild.md`).

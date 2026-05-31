@@ -120,6 +120,25 @@ Signal → district link: `signal_queue.district_id` becomes an FK-ish reference
 - **Master-plan D3 — `campaign_ruleset_versions`** (outstanding, task #76): unrelated; stays its own work.
 - **CC27 district/account/person scopes:** the future CRM-integration horizon (Salesforce → district accounts, contacts) plugs into this `districts` entity. This design is the on-ramp.
 
+## District data: source, freshness, and refresh cadence (loaded 2026-05-31)
+
+**Source:** NCES Common Core of Data (CCD), the federal authoritative census of every US public school district, pulled via the **Urban Institute Education Data Portal API** (a clean REST mirror of CCD — keeps our refresh script small + stdlib-only, no new deps). Endpoint: `educationdata.urban.org/.../ccd/directory/{year}/` (directory includes total enrollment).
+
+**Refresh script:** `scripts/refresh_nces_districts.py` → writes `artemis/marketing/data/nces_districts.csv` (columns `nces_id,name,state,enrollment`) → loaded via `artemis.marketing.nces_loader.load_districts_from_csv` (DIST1).
+
+**Currently loaded:** 2024-25 school year (Urban `year=2024`), 13,462 districts (regular local + component, `agency_type` 1,2). Tier distribution at the locked bands:
+- D1 (≥25k): 284 · D2 (10–25k): 620 · D3 (5–10k): 988 · **D4 (<5k): 11,511 (unsupported)**
+- **~86% of US districts are D4** — outside Amira's serviceable market today. Only ~1,892 districts are in supported D1–D3 tiers. This is the load-bearing reason district classification exists: most signals referencing small districts should soft-flag as unsupported.
+
+**WHEN TO UPDATE (the cadence):**
+- CCD is an **annual** collection. Urban `year` = fall of the school year (`year=2024` = 2024-25).
+- NCES releases the **preliminary directory in spring** after the school year; enrollment fills in over the following months. By late spring / early summer the prior school year is ~99% populated.
+- **Refresh once a year, late spring / early summer:** bump `--year`, re-run the script, re-load, then call `repository.recompute_all_tiers()` (or the DIST2 "recompute" button) so stored districts pick up enrollment changes + any band edits.
+- **Lossless:** the loader UPSERTS by `nces_id`; never deletes. A district that closes simply stops updating; its row persists. (Reopening to D4 is a `supported` flip, never a re-import.)
+- Optional automation: an annual scheduled reminder (not yet set — pending Jon's ok, since it's standing config).
+
+**Known loader follow-up (banked):** when `nces_id` is present, the loader must upsert STRICTLY by `nces_id` — it currently also matches on name+state, which collapses distinct districts that legitimately share a name (e.g. multiple "Buckeye Local" in OH). 2024-25 load: 13,462 CSV rows → 13,403 rows (~59 distinct districts lost, mostly small D4). Fix + reload to recover.
+
 ## Status: fully locked (2026-05-31)
 
 All decisions resolved. D-5 adopted (editable bands D1≥25k / D2 10–25k / D3 5–10k / D4 <5k). D-6 locked (dedicated name-resolution agent). Briefs cleared to draft. The NCES-lookup + pure-function-tier approach keeps the whole district-sizing path hallucination-free by construction, which is the stated bar.

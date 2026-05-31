@@ -109,8 +109,8 @@ Topic-specific, durable references. Read when you need to dig into that topic.
 | `briefs/dist1-district-entity-classifier.md` | ✅ Merged (2360245) — districts + tier bands + NCES loader, mig 0054, 7/7 tests |
 | `briefs/pipe6-followup-frontend-prune.md` | ✅ Merged (e3935a1) — pruned dead Workflows/Automations frontend, -703 LOC |
 | **Campaign-initiation stream (queued, sequential — NOTE Codex isolation rule in CONVENTIONS):** | |
-| `briefs/dist2-tier-band-editor.md` | Band editor UI + recompute (`mini`/medium) — after DIST1 ✅ |
-| `briefs/dist3-classifier-agent-signal-link.md` | Classifier agent + signal link (`gpt-5.4`/medium) — after DIST1 |
+| `briefs/dist2-tier-band-editor.md` | ✅ Merged (e7b7930) — band editor + District Sizing UI |
+| `briefs/dist3-classifier-agent-signal-link.md` | ✅ Merged (7fc46a2) — classifier agent + resolved_district_id FK, mig 0055 |
 | `briefs/dist4-qualifier-soft-flag-gate1.md` | Qualifier soft-flag + Gate 1 card (`mini`/medium) — after DIST3 |
 | `briefs/ci1-initiation-substrate.md` | Initiation columns + deliverable registry (`mini`/low) — after Stream 1 |
 | `briefs/ci2-initiation-step-pydantic.md` | Initiation step + Pydantic + brief_assembler (`gpt-5.4`/medium) — after CI1 |
