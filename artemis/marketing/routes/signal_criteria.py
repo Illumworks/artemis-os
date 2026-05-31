@@ -11,20 +11,29 @@ Endpoints:
   GET  /tier-bands            — return the 4 district tier bands ordered by display_order
   PUT  /tier-bands            — upsert all 4 bands; validates tiling (no gaps/overlaps)
   POST /tier-bands/recompute  — recompute all district tiers; returns {updated: N}
+  GET  /district-data-status  — live freshness + tier counts for the loaded NCES dataset
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import DistrictTierBand, Ruleset, SignalReasonCode, TerritoryConfig
+from artemis.marketing.models import (
+    District,
+    DistrictDataMeta,
+    DistrictTierBand,
+    Ruleset,
+    SignalReasonCode,
+    TerritoryConfig,
+)
 from artemis.marketing.repository import (
     activate_ruleset_version,
     get_territory_config,
@@ -468,6 +477,96 @@ async def patch_reason_code(
     await session.commit()
     await session.refresh(rc)
     return _serialize_reason_code(rc)
+
+
+# ── District Data Status ──────────────────────────────────────────────────────
+
+# Freshness thresholds (months): CCD is annual, so >18 months means a newer
+# school year is almost certainly already available.
+_FRESHNESS_AGING_MONTHS = 12
+_FRESHNESS_STALE_MONTHS = 18
+
+
+class DistrictDataStatusResponse(BaseModel):
+    """Response shape for GET /district-data-status."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    loaded: bool = Field(description="False when district_data_meta is empty — honest empty state.")
+    source: str | None = None
+    school_year: str | None = None
+    loaded_at: str | None = None
+    total_districts: int | None = None
+    supported_count: int | None = None
+    unsupported_count: int | None = None
+    tier_counts: dict[str, int] | None = None
+    months_since_loaded: int | None = None
+    freshness: str | None = None  # "current" | "aging" | "stale"
+
+
+def _compute_freshness(loaded_at: datetime) -> tuple[int, str]:
+    now = datetime.now(tz=UTC)
+    delta = now - loaded_at
+    months = int(delta.days / 30.44)  # approximate calendar months
+    if months < _FRESHNESS_AGING_MONTHS:
+        freshness = "current"
+    elif months < _FRESHNESS_STALE_MONTHS:
+        freshness = "aging"
+    else:
+        freshness = "stale"
+    return months, freshness
+
+
+@router.get("/district-data-status", response_model=DistrictDataStatusResponse)
+async def get_district_data_status(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> DistrictDataStatusResponse:
+    """Return live freshness state + tier counts for the loaded NCES district dataset.
+
+    Reads district_data_meta for provenance (source, school_year, loaded_at,
+    row_count) and queries districts live for tier counts so the numbers are
+    always current even if bands have been recomputed since the last load.
+
+    If district_data_meta is empty (no load has run), returns loaded=false with
+    all numeric fields null — never fabricated numbers.
+    """
+    # Fetch meta singleton (may be absent)
+    meta_result = await session.execute(
+        select(DistrictDataMeta).order_by(DistrictDataMeta.id).limit(1)
+    )
+    meta = meta_result.scalar_one_or_none()
+
+    if meta is None:
+        return DistrictDataStatusResponse(loaded=False)
+
+    # Live tier counts from districts table
+    tier_result = await session.execute(
+        select(District.tier, func.count(District.id)).group_by(District.tier)
+    )
+    tier_rows = tier_result.all()
+    tier_counts: dict[str, int] = {}
+    for tier, count in tier_rows:
+        tier_counts[tier or "unknown"] = count
+
+    total = sum(tier_counts.values())
+    # supported = D1+D2+D3; unsupported = D4 + unknown (no tier assigned)
+    supported_count = sum(v for k, v in tier_counts.items() if k in ("D1", "D2", "D3"))
+    unsupported_count = total - supported_count
+
+    months, freshness = _compute_freshness(meta.loaded_at)
+
+    return DistrictDataStatusResponse(
+        loaded=True,
+        source=meta.source,
+        school_year=meta.school_year,
+        loaded_at=meta.loaded_at.isoformat(),
+        total_districts=total,
+        supported_count=supported_count,
+        unsupported_count=unsupported_count,
+        tier_counts=tier_counts,
+        months_since_loaded=months,
+        freshness=freshness,
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

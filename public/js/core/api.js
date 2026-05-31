@@ -2247,6 +2247,15 @@ export async function recomputeTierBandsApi() {
   return res.json();
 }
 
+// ── District Data Status ───────────────────────────────────────────────────
+
+/** Fetch district data provenance + freshness from the DIST5 meta singleton. */
+export async function getDistrictDataStatusApi() {
+  const res = await fetch("/api/signal-criteria/district-data-status");
+  if (!res.ok) throw new Error("getDistrictDataStatusApi failed");
+  return res.json();
+}
+
 // ── Signal Queue ──────────────────────────────────────────────────────────
 
 export async function listSignalQueueApi(params = {}) {
