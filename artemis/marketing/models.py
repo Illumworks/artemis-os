@@ -109,6 +109,7 @@ class SignalQueue(Base):
         Index("idx_signal_queue_status_tier", "signal_status", "urgency_tier"),
         Index("idx_signal_queue_family_status", "campaign_family", "signal_status"),
         Index("idx_signal_queue_district", "district_id"),
+        Index("idx_signal_queue_resolved_district", "resolved_district_id"),
         Index("idx_signal_queue_pipeline_run", "pipeline_run_id"),
     )
 
@@ -127,6 +128,12 @@ class SignalQueue(Base):
     urgency_tier: Mapped[str] = mapped_column(Text, nullable=False, server_default="standard")
     discovered_by: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
     district_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # DIST3: additive resolved FK — district_id (text) preserved for provenance.
+    resolved_district_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("districts.id", name="fk_signal_queue_resolved_district", ondelete="SET NULL"),
+        nullable=True,
+    )
     state: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason_codes: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
     provenance: Mapped[Any | None] = mapped_column(JSONB, nullable=True)

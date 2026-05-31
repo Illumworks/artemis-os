@@ -18,6 +18,7 @@ from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
 from artemis.marketing.models import SignalQueue
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.tools.context import ToolContext
+from artemis.tools.district_resolve import resolve_district
 from artemis.tools.registry import register_tool
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,31 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
         )
         ctx.session.add(row)
         await ctx.session.flush()
+
+        # DIST3 — intake-time district resolution hook.
+        # Attempt to resolve the raw district_id text to a canonical districts FK.
+        # On confident match: set resolved_district_id. On no-match: leave NULL.
+        # The agent never fabricates a district; a data gap stays NULL.
+        if normalized.district:
+            resolve_result = await resolve_district(
+                ctx.session, normalized.district, normalized.state_code
+            )
+            if resolve_result.matched and resolve_result.district_id is not None:
+                row.resolved_district_id = resolve_result.district_id
+                await ctx.session.flush()
+                logger.info(
+                    "signal_queue.write: resolved district %r → id=%s (confidence=%.2f)",
+                    normalized.district,
+                    resolve_result.district_id,
+                    resolve_result.confidence,
+                )
+            else:
+                logger.info(
+                    "signal_queue.write: district %r unresolved (%s) — leaving NULL",
+                    normalized.district,
+                    resolve_result.message,
+                )
+
         logger.info(
             "signal_queue.write: agent=%s signal_id=%s status=pending_qualification",
             ctx.agent_id,
