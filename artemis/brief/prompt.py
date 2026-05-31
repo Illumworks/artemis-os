@@ -1,7 +1,9 @@
 """Context builder and prompt builder for daily brief.
 
-Ports _buildContextString and _buildPrompt from the Node reference verbatim
-in structure — same section headers, same truncation limits.
+`_build_context_string` mirrors the Node reference's section layout
+(same section headers, same truncation limits). `_build_prompt` emits
+the H5 `DailyBrief` schema — the previous Node-shaped prompt was
+replaced when DailyBrief became the validated output contract.
 """
 
 from __future__ import annotations
@@ -32,11 +34,11 @@ def _build_context_string(sources: dict[str, Any]) -> str:
             if priorities:
                 lines.append("Suggested priorities:")
                 for i, p in enumerate(priorities):
-                    ticket = p.get("ticket")
-                    suffix = f" ({ticket})" if ticket else ""
-                    lines.append(f"  {i + 1}. {p.get('title', '')}{suffix}")
-            if prev.get("defer"):
-                lines.append(f"Suggested to defer: {prev['defer']}")
+                    urgency = p.get("urgency")
+                    suffix = f" ({urgency})" if urgency else ""
+                    lines.append(f"  {i + 1}. {p.get('item', '')}{suffix}")
+            if prev.get("summary"):
+                lines.append(f"Summary: {prev['summary']}")
         except Exception:
             pass
 
@@ -153,24 +155,29 @@ def _build_prompt(context_string: str) -> str:
 
 {context_string}
 
-Generate a JSON object with this exact structure (no other text, valid JSON only):
+Generate a JSON object matching this exact schema (no other text, valid JSON only):
 {{
-  "headline": "One sentence capturing the most important thing about today",
-  "priorities": [
-    {{ "rank": 1, "title": "short action title", "why": "1-2 sentence reason grounded in the data above", "ticket": "JIRA-KEY or null" }},
-    {{ "rank": 2, "title": "...", "why": "...", "ticket": null }},
-    {{ "rank": 3, "title": "...", "why": "...", "ticket": null }}
+  "highlights": [
+    {{ "title": "short headline of something notable today", "detail": "1-2 sentence elaboration or null", "source": "jira|calendar|okr|slack|sessions|memory or null" }}
   ],
-  "continuity": "1-2 sentences comparing what was suggested previously vs what sessions show actually happened. null if no previous brief.",
-  "context": "1 sentence of key context Jon should hold in mind today (meetings, blockers, deadlines)",
-  "defer": "One specific thing to explicitly not worry about today",
-  "slackUrgency": "low|medium|high",
-  "calendarNote": "brief note about today's schedule or null if no meetings"
+  "priorities": [
+    {{ "item": "short action to focus on", "rationale": "1-2 sentence reason grounded in the data above or null", "urgency": "high" }},
+    {{ "item": "...", "rationale": "...", "urgency": "medium" }}
+  ],
+  "next_actions": [
+    {{ "action": "concrete next step", "owner": "person responsible or null", "due": "ISO date or loose date token or null" }}
+  ],
+  "okr_status": "1-2 sentences on OKR progress, or null if no OKR data",
+  "risks": ["short risk description", "..."],
+  "summary": "1-3 sentences capturing the day's overall shape and (if a previous brief exists) whether yesterday's plan was followed or interrupted",
+  "confidence": "high"
 }}
 
 Rules:
 - Be direct and opinionated. Say "Focus on X first" not "You might consider X"
-- Ground every priority in actual data from the context (ticket numbers, KR names, session titles)
-- If previous brief exists, acknowledge explicitly whether the plan was followed or interrupted
-- Keep "why" under 30 words each
+- Ground every priority and highlight in actual data from the context (ticket numbers, KR names, session titles, meeting names)
+- Use 2-3 priorities ordered most-urgent first. The "urgency" field accepts only "high", "medium", or "low"
+- Keep each "rationale" under 30 words
+- highlights, next_actions, and risks may be empty arrays if the context doesn't support specific entries — do not invent
+- "confidence" accepts only "high", "medium", or "low" — reflect how much the context supports concrete recommendations
 - Return ONLY the JSON object, nothing else"""
