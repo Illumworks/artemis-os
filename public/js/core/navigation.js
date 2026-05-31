@@ -17,6 +17,7 @@ export const MARKETING_CAMPAIGNS_VIEW = "marketing-campaigns";
 export const MARKETING_SIGNALS_VIEW = "marketing-signals";
 export const MARKETING_APPROVALS_VIEW = "marketing-approvals";
 export const MARKETING_RULESETS_VIEW = "marketing-rulesets";
+export const MARKETING_SIGNAL_PLAYBOOK_VIEW = "signal-playbook";
 export const MARKETING_SCOUT_RUNS_VIEW = "marketing-scout-runs";
 export const INTEGRATIONS_VIEW = "integrations";
 
@@ -190,12 +191,12 @@ export const SECONDARY_NAV_DESTINATIONS = [
     view: MARKETING_APPROVALS_VIEW,
   },
   {
-    id: MARKETING_RULESETS_VIEW,
-    label: "Scout Rulesets",
-    shortLabel: "Rulesets",
-    description: "Campaign trigger criteria, territory priorities, and reason-code registry.",
+    id: MARKETING_SIGNAL_PLAYBOOK_VIEW,
+    label: "Signal Playbook",
+    shortLabel: "Playbook",
+    description: "Editable campaign-signal criteria and reason-code registry.",
     section: "Marketing",
-    view: MARKETING_RULESETS_VIEW,
+    view: MARKETING_SIGNAL_PLAYBOOK_VIEW,
   },
   {
     id: MARKETING_SCOUT_RUNS_VIEW,
@@ -261,6 +262,7 @@ export function normalizeAppView(view) {
   if (view === "marketing-signals") return MARKETING_SIGNALS_VIEW;
   if (view === "marketing-approvals") return MARKETING_APPROVALS_VIEW;
   if (view === "marketing-rulesets") return MARKETING_RULESETS_VIEW;
+  if (view === "signal-playbook") return MARKETING_SIGNAL_PLAYBOOK_VIEW;
   if (view === "marketing-scout-runs") return MARKETING_SCOUT_RUNS_VIEW;
   if (view === "pipelines") return "pipelines";
   if (view === "dev-projects") return "chat";
@@ -298,6 +300,8 @@ export function isShellView(view) {
     || normalizedView === MARKETING_CAMPAIGNS_VIEW
     || normalizedView === MARKETING_SIGNALS_VIEW
     || normalizedView === MARKETING_APPROVALS_VIEW
+    || normalizedView === MARKETING_RULESETS_VIEW
+    || normalizedView === MARKETING_SIGNAL_PLAYBOOK_VIEW
     || normalizedView === LEGACY_DASHBOARD_VIEW
     || normalizedView === INTEGRATIONS_VIEW;
 }

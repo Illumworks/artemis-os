@@ -15,7 +15,8 @@ import {
   listContentAssetsApi, createContentAssetApi,
   listCampaignRulesetsApi, getCampaignRulesetApi,
   listRulesetVersionsApi, activateRulesetVersionApi,
-  listReasonCodesApi, getTerritoryConfigApi, upsertTerritoryStateApi,
+  listReasonCodesApi, createReasonCodeApi, patchReasonCodeApi, exportReasonCodesMarkdownApi,
+  getTerritoryConfigApi, upsertTerritoryStateApi,
   listSignalQueueApi, createSignalApi,
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
   qualifySignalApi,
@@ -44,6 +45,14 @@ const MKT_SIGNAL_TREE_STATE = {
   filters: { urgencies: [], statuses: [], reasons: [], geographies: [] },
   selectedId: null,
 };
+
+const SP_SCOUTS = [
+  "board_minutes", "federal_funding", "leadership_transition", "legislative",
+  "linkedin_observer", "procurement", "regional_news", "starbridge_researcher", "state_doe",
+];
+const SP_FAMILIES = ["obc", "state_screener", "biliteracy", "reading_growth", "OBC", "Dyslexia / structured literacy", "Biliteracy / DLL", "High-impact tutoring (HIT)", "General growth"];
+const SP_URGENCIES = ["hot", "standard", "low", "enrichment"];
+let spState = { codes: [], domain: "", scout: "", showRetired: false, editing: null };
 
 // ── Deliverables cache ─────────────────────────────────────────────────────
 // Keyed by campaignId. Populated lazily when the Assets tab opens for an API campaign.
@@ -2810,220 +2819,147 @@ function _navigateToWritingStudio(draftId) {
   setState('view', WRITING_STUDIO_VIEW);
 }
 
-// ── Scout Rulesets surface ─────────────────────────────────────────────────
+// ── Signal Playbook surface ────────────────────────────────────────────────
 
-const TIER_PILL_CLASS = {
-  hot:      'mkt-tier-hot',
-  standard: 'mkt-tier-standard',
-  low:      'mkt-tier-low',
-  excluded: 'mkt-tier-excluded',
-};
-
-function _tierPill(tier) {
-  const cls = TIER_PILL_CLASS[tier] || 'mkt-tier-standard';
-  return `<span class="mkt-territory-tier-pill ${cls}">${esc(tier)}</span>`;
-}
-
-export function renderMarketingRulesets(rulesets = [], reasonCodes = []) {
-  if (rulesets.length === 0) {
-    return `<section class="mkt-section">
-      <h2 class="mkt-section-heading">Scout Rulesets</h2>
-      <p class="mkt-section-subtext">No campaign rulesets found. Seed data may not have loaded.</p>
-    </section>`;
-  }
-
-  const rcByFamily = {};
-  for (const rc of reasonCodes) {
-    for (const f of (rc.campaignFamilies || [])) {
-      if (!rcByFamily[f]) rcByFamily[f] = [];
-      rcByFamily[f].push(rc);
-    }
-  }
-
-  const cards = rulesets.map((rs) => {
-    const active = rs.activeVersionDetails;
-    const vLabel = active ? `v${active.versionNumber}` : 'No active version';
-    const vState = active ? active.state : '—';
-    const minScore = active ? `${Math.round((active.minFitScore || 0) * 100)}%` : '—';
-    const weightedSignals = active?.weightedSignals || [];
-    const hardFilters = active?.hardFilters || [];
-
-    const signalRows = weightedSignals.map((ws) => `
-      <tr>
-        <td class="mkt-rs-signal-code">${esc(ws.reason_code || ws.ruleId || '')}</td>
-        <td>${esc(ws.description || '')}</td>
-        <td class="mkt-rs-signal-weight">${ws.weight !== undefined ? Math.round(ws.weight * 100) + '%' : '—'}</td>
-      </tr>`).join('');
-
-    const filterItems = hardFilters.map((f) =>
-      `<li>${esc(f.description || f.type || JSON.stringify(f))}</li>`
-    ).join('');
-
-    return `
-      <div class="mkt-rs-card" data-ruleset-family="${esc(rs.campaignFamily)}">
-        <div class="mkt-rs-card-header">
-          <div>
-            <span class="mkt-rs-family-name">${esc(rs.displayName)}</span>
-            <span class="mkt-rs-family-slug mkt-demo-label">${esc(rs.campaignFamily)}</span>
-          </div>
-          <div class="mkt-rs-card-meta">
-            <span class="mkt-rs-version-badge">${esc(vLabel)}</span>
-            <span class="mkt-workspace-state-pill mkt-pill-${esc(vState)}">${esc(vState)}</span>
-          </div>
-        </div>
-        ${rs.description ? `<p class="mkt-rs-description">${esc(rs.description)}</p>` : ''}
-        <div class="mkt-rs-detail-grid">
-          <div class="mkt-rs-detail-col">
-            <div class="mkt-rs-detail-heading">Weighted signals</div>
-            ${weightedSignals.length > 0 ? `
-            <table class="mkt-rs-signal-table">
-              <thead><tr><th>Reason code</th><th>Description</th><th>Weight</th></tr></thead>
-              <tbody>${signalRows}</tbody>
-            </table>` : '<p class="mkt-rs-empty">No weighted signals defined.</p>'}
-          </div>
-          <div class="mkt-rs-detail-col">
-            <div class="mkt-rs-detail-heading">Hard filters</div>
-            ${hardFilters.length > 0
-              ? `<ul class="mkt-rs-filter-list">${filterItems}</ul>`
-              : '<p class="mkt-rs-empty">No hard filters defined.</p>'}
-            <div class="mkt-rs-detail-heading" style="margin-top:10px">Min fit score</div>
-            <span class="mkt-rs-min-score">${minScore}</span>
-          </div>
-        </div>
-        <div class="mkt-rs-territory-section" data-territory-family="${esc(rs.campaignFamily)}">
-          <div class="mkt-rs-detail-heading">Territory priorities</div>
-          <div class="mkt-rs-territory-loading">Loading…</div>
-        </div>
-        <div class="mkt-rs-version-history-section">
-          <button class="mkt-btn mkt-btn-sm mkt-btn-ghost mkt-rs-history-toggle"
-                  data-family="${esc(rs.campaignFamily)}">Version history</button>
-          <div class="mkt-rs-version-history" data-family-history="${esc(rs.campaignFamily)}" style="display:none"></div>
-        </div>
-      </div>`;
-  }).join('');
-
-  const rcSection = reasonCodes.length > 0 ? `
-    <section class="mkt-section mkt-rs-reason-codes-section">
-      <h3 class="mkt-rs-section-heading">Reason Code Registry</h3>
-      <p class="mkt-section-subtext">Canonical trigger codes used by signals and rulesets.</p>
-      <table class="mkt-rs-signal-table">
-        <thead><tr><th>Code</th><th>Label</th><th>Category</th><th>Families</th></tr></thead>
-        <tbody>${reasonCodes.map((rc) => `
-          <tr class="${rc.retiredAt ? 'mkt-rs-retired' : ''}">
-            <td class="mkt-rs-signal-code">${esc(rc.code)}</td>
-            <td>${esc(rc.label)}${rc.retiredAt ? ' <em>(retired)</em>' : ''}</td>
-            <td>${esc(rc.category || '—')}</td>
-            <td>${(rc.campaignFamilies || []).map((f) => `<span class="mkt-rs-family-chip">${esc(f)}</span>`).join(' ')}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </section>` : '';
-
+export function renderMarketingRulesets(_rulesets = [], reasonCodes = []) {
+  const codes = reasonCodes.length ? reasonCodes : spState.codes;
+  const domains = [...new Set(codes.map((rc) => rc.domain).filter(Boolean))].sort();
+  const visible = codes.filter((rc) => {
+    if (!spState.showRetired && rc.isActive === false) return false;
+    if (spState.domain && rc.domain !== spState.domain) return false;
+    if (spState.scout && !(rc.primaryScouts || []).includes(spState.scout)) return false;
+    return true;
+  });
+  const grouped = visible.reduce((acc, rc) => {
+    (acc[rc.domain || "other"] ||= []).push(rc);
+    return acc;
+  }, {});
+  const groups = Object.entries(grouped).map(([domain, rows]) => `
+    <section class="mkt-sp-domain">
+      <h3 class="mkt-rs-section-heading">Domain: ${esc(domain)}</h3>
+      <div class="mkt-rs-cards">${rows.map(_renderReasonCodeCard).join("")}</div>
+    </section>`).join("");
   return `
-    <section class="mkt-section">
-      <h2 class="mkt-section-heading">Scout Rulesets</h2>
-      <p class="mkt-section-subtext">Campaign trigger criteria and territory priorities. Read-only — ruleset authoring via agent chat is coming in a later milestone.</p>
-      <div class="mkt-rs-cards">${cards}</div>
+    <section class="mkt-section mkt-sp-shell">
+      <div class="mkt-section-header">
+        <div>
+          <h2 class="mkt-section-heading">Signal Playbook</h2>
+          <p class="mkt-section-subtext">Live registry of campaign-signal criteria. Edits here are read by scouts and the qualifier on the next run.</p>
+        </div>
+        <div class="mkt-sp-actions">
+          <button class="mkt-btn-secondary" data-sp-action="export">Export as markdown</button>
+          <button class="mkt-btn-primary" data-sp-action="add">+ Add code</button>
+        </div>
+      </div>
+      <div class="mkt-sp-toolbar">
+        <label>Domain <select data-sp-filter="domain"><option value="">All</option>${domains.map((d) => `<option value="${esc(d)}"${spState.domain === d ? " selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
+        <label>Scout <select data-sp-filter="scout"><option value="">All</option>${SP_SCOUTS.map((s) => `<option value="${esc(s)}"${spState.scout === s ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
+        <label class="mkt-sp-check"><input type="checkbox" data-sp-filter="retired"${spState.showRetired ? " checked" : ""}> Show retired</label>
+      </div>
+      ${groups || '<p class="mkt-section-subtext">No reason codes match the current filters.</p>'}
     </section>
-    ${rcSection}`;
+    ${spState.editing ? _renderReasonCodeEditor(spState.editing) : ""}`;
 }
 
 export async function loadMarketingRulesets(container) {
   if (!container) return;
-  container.innerHTML = `<section class="mkt-section"><p class="mkt-section-subtext">Loading rulesets…</p></section>`;
-
-  let rulesets = [];
-  let reasonCodes = [];
+  container.innerHTML = `<section class="mkt-section"><p class="mkt-section-subtext">Loading Signal Playbook…</p></section>`;
   try {
-    [rulesets, reasonCodes] = await Promise.all([
-      listCampaignRulesetsApi().then(async (list) => {
-        // Fetch full active-version details for each family
-        return Promise.all(list.map((rs) => getCampaignRulesetApi(rs.campaignFamily)));
-      }),
-      listReasonCodesApi(),
-    ]);
+    spState.codes = await listReasonCodesApi({ includeRetired: true });
   } catch {
-    container.innerHTML = `<section class="mkt-section">
-      <h2 class="mkt-section-heading">Scout Rulesets</h2>
-      <p class="mkt-section-subtext mkt-error-text">Could not load rulesets. Is the server running?</p>
-    </section>`;
+    container.innerHTML = `<section class="mkt-section"><h2 class="mkt-section-heading">Signal Playbook</h2><p class="mkt-section-subtext mkt-error-text">Could not load reason codes.</p></section>`;
     return;
   }
+  _renderSignalPlaybook(container);
+}
 
-  container.innerHTML = renderMarketingRulesets(rulesets, reasonCodes);
+function _renderSignalPlaybook(container) {
+  container.innerHTML = renderMarketingRulesets([], spState.codes);
+  container.querySelectorAll("[data-sp-action]").forEach((btn) => btn.addEventListener("click", () => _handleSpAction(container, btn)));
+  container.querySelectorAll("[data-sp-filter]").forEach((el) => el.addEventListener("change", () => {
+    if (el.dataset.spFilter === "domain") spState.domain = el.value;
+    if (el.dataset.spFilter === "scout") spState.scout = el.value;
+    if (el.dataset.spFilter === "retired") spState.showRetired = el.checked;
+    _renderSignalPlaybook(container);
+  }));
+}
 
-  // Async-fill territory sections
-  for (const rs of rulesets) {
-    const family = rs.campaignFamily;
-    const territorySection = container.querySelector(`[data-territory-family="${family}"]`);
-    if (!territorySection) continue;
-    try {
-      const config = await getTerritoryConfigApi(family);
-      if (config.length === 0) {
-        territorySection.querySelector('.mkt-rs-territory-loading').textContent = 'No states configured.';
-        continue;
-      }
-      const tiers = ['hot', 'standard', 'low', 'excluded'];
-      const grouped = {};
-      for (const t of tiers) grouped[t] = config.filter((s) => s.priorityTier === t);
+function _renderReasonCodeCard(rc) {
+  const scouts = (rc.primaryScouts || []).map((s) => `<span class="mkt-rs-family-chip">${esc(s)}</span>`).join(" ") || "—";
+  const families = (rc.campaignFamilies || []).map((f) => `<span class="mkt-rs-family-chip">${esc(f)}</span>`).join(" ") || "—";
+  return `<article class="mkt-rs-card ${rc.isActive === false ? "mkt-rs-retired" : ""}">
+    <div class="mkt-rs-card-header"><span class="mkt-rs-family-name">${esc(rc.code)}</span><button class="mkt-btn mkt-btn-sm mkt-btn-ghost" data-sp-action="edit" data-code="${esc(rc.code)}">Edit</button></div>
+    <p class="mkt-rs-description">${esc(rc.description || "")}</p>
+    <p class="mkt-rs-empty">Scout watches: ${esc(rc.whatScoutLooksFor || "")}</p>
+    <div class="mkt-sp-card-meta"><span>Urgency: ${esc(rc.defaultUrgency || "—")}</span><span>Primary scouts: ${scouts}</span><span>Campaign families: ${families}</span></div>
+  </article>`;
+}
 
-      const html = tiers.filter((t) => grouped[t].length > 0).map((t) => `
-        <div class="mkt-rs-territory-tier-group">
-          ${_tierPill(t)}
-          ${grouped[t].map((s) => `
-            <span class="mkt-rs-state-chip" title="${esc(s.notes || '')}">
-              ${esc(s.stateCode)}
-            </span>`).join('')}
-        </div>`).join('');
-      territorySection.querySelector('.mkt-rs-territory-loading').outerHTML = `<div class="mkt-rs-territory-groups">${html}</div>`;
-    } catch {
-      territorySection.querySelector('.mkt-rs-territory-loading').textContent = 'Territory data unavailable.';
-    }
+function _renderReasonCodeEditor(rc = {}) {
+  const isNew = !rc.code;
+  const chipGroup = (name, values, selected = []) => values.map((v) => `
+    <label class="mkt-sp-chip"><input type="checkbox" name="${name}" value="${esc(v)}"${selected.includes(v) ? " checked" : ""}> ${esc(v)}</label>`).join("");
+  return `<div class="mkt-modal-backdrop"><div class="mkt-modal mkt-sp-modal">
+    <h3>${isNew ? "Add reason code" : `Edit ${esc(rc.code)}`}</h3>
+    <label>Code<input data-sp-field="code" value="${esc(rc.code || "")}" ${isNew ? "" : "readonly"}></label>
+    <label>Domain<input data-sp-field="domain" value="${esc(rc.domain || "")}" ${isNew ? "" : "readonly"}></label>
+    <label>Plain-English trigger<textarea data-sp-field="description" maxlength="2000">${esc(rc.description || "")}</textarea></label>
+    <label>What the scout looks for<textarea data-sp-field="whatScoutLooksFor" maxlength="2000">${esc(rc.whatScoutLooksFor || "")}</textarea></label>
+    <label>Default urgency<select data-sp-field="defaultUrgency">${SP_URGENCIES.map((u) => `<option value="${u}"${(rc.defaultUrgency || "standard") === u ? " selected" : ""}>${u}</option>`).join("")}</select></label>
+    <div class="mkt-sp-chipset"><strong>Primary scouts</strong>${chipGroup("primaryScouts", SP_SCOUTS, rc.primaryScouts || [])}</div>
+    <div class="mkt-sp-chipset"><strong>Campaign families</strong>${chipGroup("campaignFamilies", SP_FAMILIES, rc.campaignFamilies || [])}</div>
+    <label class="mkt-sp-check"><input type="checkbox" data-sp-field="isActive"${rc.isActive !== false ? " checked" : ""}> Active</label>
+    <div class="mkt-sp-modal-actions"><button class="mkt-btn-secondary" data-sp-action="cancel">Cancel</button><button class="mkt-btn-primary" data-sp-action="save">Save</button></div>
+  </div></div>`;
+}
+
+async function _handleSpAction(container, btn) {
+  const action = btn.dataset.spAction;
+  if (action === "add") spState.editing = { isActive: true, primaryScouts: [], campaignFamilies: [] };
+  if (action === "edit") spState.editing = spState.codes.find((rc) => rc.code === btn.dataset.code);
+  if (action === "cancel") spState.editing = null;
+  if (action === "export") return _downloadSignalPlaybookMarkdown();
+  if (action === "save") return _saveSignalPlaybookCode(container);
+  _renderSignalPlaybook(container);
+}
+
+async function _saveSignalPlaybookCode(container) {
+  const modal = container.querySelector(".mkt-sp-modal");
+  if (!modal) return;
+  const payload = {
+    code: modal.querySelector('[data-sp-field="code"]').value.trim(),
+    domain: modal.querySelector('[data-sp-field="domain"]').value.trim(),
+    description: modal.querySelector('[data-sp-field="description"]').value.trim(),
+    whatScoutLooksFor: modal.querySelector('[data-sp-field="whatScoutLooksFor"]').value.trim(),
+    defaultUrgency: modal.querySelector('[data-sp-field="defaultUrgency"]').value,
+    primaryScouts: [...modal.querySelectorAll('input[name="primaryScouts"]:checked')].map((i) => i.value),
+    campaignFamilies: [...modal.querySelectorAll('input[name="campaignFamilies"]:checked')].map((i) => i.value),
+    isActive: modal.querySelector('[data-sp-field="isActive"]').checked,
+  };
+  if (!payload.code || !/^[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(payload.code) || !payload.domain) {
+    alert("Code must be SCREAMING_SNAKE and domain is required.");
+    return;
   }
+  try {
+    const saved = spState.editing?.code
+      ? await patchReasonCodeApi(spState.editing.code, Object.fromEntries(Object.entries(payload).filter(([k]) => !["code", "domain"].includes(k))))
+      : await createReasonCodeApi(payload);
+    spState.codes = spState.codes.filter((rc) => rc.code !== saved.code).concat(saved).sort((a, b) => a.domain.localeCompare(b.domain) || a.code.localeCompare(b.code));
+    spState.editing = null;
+    _renderSignalPlaybook(container);
+  } catch (err) {
+    alert(err.message || "Could not save reason code.");
+  }
+}
 
-  // Wire version history toggles
-  container.querySelectorAll('.mkt-rs-history-toggle').forEach((btn) => {
-    const family = btn.dataset.family;
-    const historyDiv = container.querySelector(`[data-family-history="${family}"]`);
-    if (!historyDiv) return;
-    btn.addEventListener('click', async () => {
-      if (historyDiv.style.display !== 'none') {
-        historyDiv.style.display = 'none';
-        btn.textContent = 'Version history';
-        return;
-      }
-      historyDiv.style.display = 'block';
-      btn.textContent = 'Hide history';
-      if (historyDiv.dataset.loaded) return;
-      historyDiv.innerHTML = '<p class="mkt-rs-empty">Loading…</p>';
-      try {
-        const versions = await listRulesetVersionsApi(family);
-        if (versions.length === 0) {
-          historyDiv.innerHTML = '<p class="mkt-rs-empty">No versions recorded.</p>';
-          return;
-        }
-        historyDiv.innerHTML = `
-          <table class="mkt-rs-signal-table mkt-rs-history-table">
-            <thead><tr><th>Version</th><th>State</th><th>Min score</th><th>Notes</th><th>Activated</th></tr></thead>
-            <tbody>${versions.map((v) => {
-              const activatedDate = v.activatedAt
-                ? new Date(v.activatedAt * 1000).toLocaleDateString()
-                : '—';
-              return `<tr>
-                <td>v${v.versionNumber}</td>
-                <td><span class="mkt-workspace-state-pill mkt-pill-${esc(v.state)}">${esc(v.state)}</span></td>
-                <td>${Math.round((v.minFitScore || 0) * 100)}%</td>
-                <td>${esc(v.notes || '—')}</td>
-                <td>${esc(activatedDate)}</td>
-              </tr>`;
-            }).join('')}</tbody>
-          </table>`;
-        historyDiv.dataset.loaded = '1';
-      } catch {
-        historyDiv.innerHTML = '<p class="mkt-rs-empty">Could not load version history.</p>';
-      }
-    });
-  });
+async function _downloadSignalPlaybookMarkdown() {
+  const markdown = await exportReasonCodesMarkdownApi();
+  const blob = new Blob([markdown], { type: "text/markdown" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `signal-playbook-${new Date().toISOString().slice(0, 10)}.md`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // ── Scout Runs debug surface (read-only) ──────────────────────────────────

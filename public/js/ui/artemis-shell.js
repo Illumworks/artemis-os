@@ -26,6 +26,7 @@ import {
   MARKETING_CAMPAIGNS_VIEW,
   MARKETING_SIGNALS_VIEW,
   MARKETING_APPROVALS_VIEW,
+  MARKETING_SIGNAL_PLAYBOOK_VIEW,
   isShellView,
 } from '../core/navigation.js';
 import { openIntegrationsModal } from '../components/integrations-modal.js';
@@ -51,6 +52,7 @@ const RAIL_NAV_VIEW_MAP = {
   'marketing-campaigns': MARKETING_CAMPAIGNS_VIEW,
   'marketing-signals': MARKETING_SIGNALS_VIEW,
   'marketing-approvals': MARKETING_APPROVALS_VIEW,
+  'signal-playbook': MARKETING_SIGNAL_PLAYBOOK_VIEW,
 };
 
 // Focus hints for Workspace sub-sections that still share a parent view.

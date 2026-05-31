@@ -2264,10 +2264,42 @@ export async function uploadAgentAvatarApi(id, file) {
 // ── Signal Criteria / Scout Ruleset Lite ──────────────────────────────────
 
 export async function listReasonCodesApi({ includeRetired = false } = {}) {
-  const qs = includeRetired ? "?includeRetired=true" : "";
+  const qs = includeRetired ? "?include_inactive=true" : "";
   const res = await fetch(`/api/signal-criteria/reason-codes${qs}`);
   if (!res.ok) throw new Error("listReasonCodesApi failed");
   return res.json();
+}
+
+export async function createReasonCodeApi(payload = {}) {
+  const res = await fetch("/api/signal-criteria/reason-codes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail?.error || body.error || "createReasonCodeApi failed");
+  }
+  return res.json();
+}
+
+export async function patchReasonCodeApi(code, patch = {}) {
+  const res = await fetch(`/api/signal-criteria/reason-codes/${encodeURIComponent(code)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail?.error || body.error || "patchReasonCodeApi failed");
+  }
+  return res.json();
+}
+
+export async function exportReasonCodesMarkdownApi() {
+  const res = await fetch("/api/signal-criteria/reason-codes/markdown-export");
+  if (!res.ok) throw new Error("exportReasonCodesMarkdownApi failed");
+  return res.text();
 }
 
 export async function listCampaignRulesetsApi() {
