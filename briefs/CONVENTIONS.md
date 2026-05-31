@@ -46,6 +46,35 @@ J9's `git log` claimed parent `1d375b8` (skipping J6e's merge that "should" have
 
 The relative-paths convention still holds as defensive practice — Workers given absolute paths could theoretically still write to the wrong worktree, and the convention costs nothing. But the real load-bearing rule for not losing merges is the `pwd` reflex.
 
+## Model + reasoning-effort tiering (Codex / Worker dispatch)
+
+**Every brief states a recommended model + reasoning effort near the top** (a `**Recommended Codex model / effort:**` line under `Paste-into:`). The Lead picks the tier; the operator shouldn't have to guess and shouldn't burn the flagship on mechanical work.
+
+The rule: **match the tier to the reasoning the task needs, not its importance.** A fully-specified brief (exact schema, exact signatures, exact tests) is execution, not reasoning — it goes in the cheap lane. Save the flagship for work where the agent must *figure something out*.
+
+| Task shape | Codex model | Effort |
+|---|---|---|
+| Fully-specified brief (schema + pure fn + exact tests; mock removal; mechanical fix) | `gpt-5.4-mini` | low |
+| Normal feature work, some inference needed | `gpt-5.4-mini` or `gpt-5.4` | medium |
+| Ambiguous debugging, architecture, "figure out why X breaks" | `gpt-5.4` | high/xhigh |
+
+A tight brief pays off twice — once in correctness, once in token cost (the more the Lead front-loads into the brief, the smaller the model that can execute it). Set a persistent `[profiles.worker]` in `~/.codex/config.toml` (`model = "gpt-5.4-mini"`, `model_reasoning_effort = "low"`) for the mechanical lane; CLI flags override per-run. (Model names current as of 2026-05; re-verify against `codex` docs if they've moved.)
+
+## Concurrent Codex runs need separate worktrees (lesson, 2026-05-31)
+
+**Two Codex accounts pointed at the same repo is NOT isolation — it's two cooks on one cutting board.** Codex (unlike the Agent tool with `isolation: "worktree"`) operates directly in whatever working tree it's launched in, creating + checking out branches in that shared tree. Run two concurrently in the same checkout and they fight over the single working tree + HEAD.
+
+This bit us on the DIST1 ∥ pipe6 parallel fire: file-overlap analysis said "safe" (DIST1 backend, pipe6 frontend — no shared files), and that was necessary but **not sufficient**. They didn't collide on files; they collided on the tree. The pipe6 Codex branched *on top of* DIST1's commit (because DIST1's branch was checked out when pipe6 started), and the main repo ended up on the pipe6 branch while it ran — so the Lead couldn't merge DIST1 without yanking the tree out from under the live pipe6 run. (It resolved cleanly because pipe6 was still in its inventory phase and hadn't committed, but that was luck, not design.)
+
+**The rule:** for genuinely parallel Codex runs, give each its own git worktree (or clone):
+```bash
+git worktree add ../artemis-<scope> lead/<integration-branch>
+# launch the second Codex with cwd = ../artemis-<scope>
+```
+Then each run has its own tree + HEAD, branches independently off the integration branch, and the Lead merges each branch on its own. If you can't isolate, **run them sequentially** — finish + merge one before firing the next.
+
+Two-sufficiency check before any parallel fire: (1) no file overlap, AND (2) no shared working tree. Both must hold.
+
 ## Other conventions
 
 - Brief filenames: `<phase-letter><sub-number>-<kebab-summary>.md` (`j7-daily-brief-port.md`, `j6c-meetings-rebuild.md`).
