@@ -245,13 +245,16 @@ def _row(spec: MarketingAgentSpec, docs_root: Path) -> dict[str, Any]:
     if spec.agent_id.startswith("marketing.scout."):
         slug = spec.agent_id.rsplit(".", 1)[-1]
         reason_codes = [rc.code for rc in reason_codes_for_scout(_JOSH_SPEC, slug)]
+    tools = _tools(_extract_section(markdown, "Tools required"))
+    if spec.agent_id == "marketing.content.asset_selector":
+        tools = [tool for tool in tools if tool != "claude.complete"]
     return {
         "agent_id": spec.agent_id,
         "name": name,
         "description": purpose,
         "goal": _goal(purpose),
         "system_prompt": _strip_code_fence(_extract_section(markdown, "Prompt scaffolding")),
-        "tools": _tools(_extract_section(markdown, "Tools required")),
+        "tools": tools,
         "reason_codes_emitted": reason_codes,
         "model": model,
         "provider": "claude-code",

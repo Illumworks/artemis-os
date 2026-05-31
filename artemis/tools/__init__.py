@@ -6,6 +6,7 @@ from __future__ import annotations
 import artemis.tools.board_minutes  # noqa: F401 — registers board_minutes.fetch
 import artemis.tools.campaign_brief  # noqa: F401 — registers campaign_brief.write
 import artemis.tools.contact_db  # noqa: F401 — registers contact_db_stub.has_contact (stub)
+import artemis.tools.content_agent_tools  # noqa: F401 — registers CC12 content-agent tools
 import artemis.tools.districts  # noqa: F401 — registers districts.get (stub)
 import artemis.tools.federal_register  # noqa: F401 — registers federal_register.search
 import artemis.tools.grants_gov  # noqa: F401 — registers grants_gov.search
