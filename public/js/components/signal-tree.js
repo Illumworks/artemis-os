@@ -139,6 +139,8 @@ export function normalizeSignal(signal = {}) {
     briefId: signal.briefId || signal.campaignBriefId || null,
     pipelineRun,
     approval: signal.approval || signal.gateApproval || null,
+    // DIST4: district context from qualification_json.districtContext
+    districtContext: signal.districtContext || (signal.qualificationJson && signal.qualificationJson.districtContext) || null,
   };
 }
 
@@ -160,12 +162,16 @@ export function makeSignalSearchText(signal) {
 export function filterSignals(signals, options = {}) {
   const query = (options.query || "").trim().toLowerCase();
   const filters = options.filters || {};
+  // DIST4: hideUnsupported toggle — default OFF so D4 signals stay visible by default.
+  const hideUnsupported = !!options.hideUnsupported;
   return signals.filter((signal) => {
     if (query && !makeSignalSearchText(signal).includes(query)) return false;
     if (filters.urgencies?.length && !filters.urgencies.includes(signal.urgencyTier)) return false;
     if (filters.statuses?.length && !filters.statuses.includes(signal.signalStatus)) return false;
     if (filters.reasons?.length && !signal.reasonCodeLabels.some((c) => filters.reasons.includes(c))) return false;
     if (filters.geographies?.length && !filters.geographies.includes(signal.stateCode)) return false;
+    // DIST4: when toggle is on, hide signals whose districtContext.tierFlag === "unsupported_tier"
+    if (hideUnsupported && signal.districtContext?.tierFlag === "unsupported_tier") return false;
     return true;
   });
 }
@@ -357,6 +363,35 @@ function renderQualifierAudit(signal) {
   }).join("");
 }
 
+// DIST4 — render district context block for the Gate 1 detail panel.
+// Rules:
+//   - districtContext null/absent → show nothing (no district data yet).
+//   - districtContext.resolved === false → muted "District: unresolved" — never fabricate.
+//   - districtContext.resolved === true → show tier, enrollment, supported badge.
+//   - Unsupported tier (districtSupported === false) → warning badge, card stays actionable.
+function renderDistrictContextBlock(ctx) {
+  if (!ctx) return "";
+  if (!ctx.resolved) {
+    return `<section class="mkt-signal-district mkt-signal-district--unresolved">
+      <h5>District</h5>
+      <p class="mkt-signal-detail-muted">District: unresolved</p>
+    </section>`;
+  }
+  const enrollment = ctx.districtEnrollment != null
+    ? Number(ctx.districtEnrollment).toLocaleString() + " students"
+    : "enrollment unknown";
+  const tier = ctx.districtTier || "tier unknown";
+  const locationParts = [ctx.districtName, ctx.districtState].filter(Boolean);
+  const location = locationParts.join(" · ");
+  const supportedBadge = ctx.districtSupported === false
+    ? `<span class="mkt-signal-district-badge mkt-signal-district-badge--warn" title="This district tier is not currently supported — signal is still actionable">⚠ unsupported tier (filtered)</span>`
+    : `<span class="mkt-signal-district-badge mkt-signal-district-badge--ok">supported ✓</span>`;
+  return `<section class="mkt-signal-district${ctx.districtSupported === false ? " mkt-signal-district--unsupported" : ""}">
+    <h5>District</h5>
+    <p class="mkt-signal-district-line">${esc(location)} · ${esc(tier)} · ${esc(enrollment)} ${supportedBadge}</p>
+  </section>`;
+}
+
 export function renderSignalDetailPanel(signal) {
   if (!signal) {
     return `<aside class="mkt-signal-detail-panel"><p class="mkt-signal-detail-muted">Select a signal to inspect source evidence and qualifier audit.</p></aside>`;
@@ -384,6 +419,7 @@ export function renderSignalDetailPanel(signal) {
         </div>
       </section>` : ""}
       ${approval ? `<a class="mkt-signal-approval-badge" href="${esc(approval.href || "#approvals")}">Awaiting Gate 1</a>` : ""}
+      ${renderDistrictContextBlock(signal.districtContext)}
       <section>
         <h5>Source</h5>
         <p class="mkt-signal-detail-snippet">${esc(signal.summary || "No source snippet captured.")}</p>
@@ -434,9 +470,11 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
   const sort = options.sort === "urgency" ? "urgency" : "newest";
   const query = options.query || "";
   const filters = options.filters || {};
+  // DIST4: hide-unsupported toggle (default OFF — D4 still visible, per D-4 decision)
+  const hideUnsupported = !!options.hideUnsupported;
   const selectedId = options.selectedId || signals[0]?.id || null;
   const selected = signals.find((s) => String(s.id) === String(selectedId)) || signals[0] || null;
-  const filtered = sortSignals(filterSignals(signals, { query, filters }), sort);
+  const filtered = sortSignals(filterSignals(signals, { query, filters, hideUnsupported }), sort);
   const tree = buildSignalTree(filtered, mode, sort);
   const filterOptions = summarizeFilterOptions(signals);
   const collapsed = options.collapsed || readCollapsedSignalGroups();
@@ -462,6 +500,9 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
       <div class="mkt-signals-toolbar">
         <label class="mkt-signals-search"><span>Search</span><input type="search" value="${esc(query)}" placeholder="Signal, district, reason code..." data-signal-search></label>
         <label class="mkt-signals-sort"><span>Sort</span><select data-signal-sort><option value="newest"${sort === "newest" ? " selected" : ""}>Newest</option><option value="urgency"${sort === "urgency" ? " selected" : ""}>Urgency</option></select></label>
+        <label class="mkt-signals-hide-unsupported" title="Hide signals from D4 (unsupported tier) districts. Default OFF — D4 signals are visible for review per design decision D-4.">
+          <input type="checkbox" data-signal-hide-unsupported${hideUnsupported ? " checked" : ""}> Hide unsupported tiers
+        </label>
       </div>
       <div class="mkt-signals-group-toggle" aria-label="Group signals">
         <span>Group by:</span>

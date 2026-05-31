@@ -33,6 +33,7 @@ from artemis.marketing.qualifier import (
     RulesetInput,
     SignalInput,
     TerritoryEntry,
+    annotate_district_tier,
     qualify_signal,
 )
 from artemis.marketing.repository import (
@@ -40,6 +41,7 @@ from artemis.marketing.repository import (
     create_signal,
     find_signal_by_dedupe_key,
     get_active_ruleset_version,
+    get_district,
     get_signal,
     list_signals,
     save_signal_qualification,
@@ -541,6 +543,20 @@ async def _run_and_store_qualification(
     qual = qualify_signal(signal_input, ruleset_inputs, territories_by_family)
     qual_dict = qual.to_dict()
 
+    # DIST4: annotate district tier soft-flag (no migration — stored in qualification_json)
+    district = None
+    if signal.resolved_district_id is not None:
+        district = await get_district(session, signal.resolved_district_id)
+    qual_dict = annotate_district_tier(
+        qual_dict,
+        district_id=district.id if district else None,
+        district_name=district.name if district else None,
+        district_state=district.state if district else None,
+        district_tier=district.tier if district else None,
+        district_enrollment=district.enrollment if district else None,
+        district_supported=district.supported if district else None,
+    )
+
     # Store on signal
     await save_signal_qualification(session, signal.id, qual_dict)
     return qual_dict
@@ -590,6 +606,11 @@ async def _load_signal_contexts(
 
 def _serialize_signal(signal: SignalQueue, context: dict[str, Any] | None = None) -> dict[str, Any]:
     context = context or {}
+    qual = signal.qualification_json
+    # DIST4: surface districtContext from qualification_json (written by annotate_district_tier)
+    district_context: dict[str, Any] | None = None
+    if isinstance(qual, dict):
+        district_context = qual.get("districtContext")
     return {
         "id": signal.id,
         "sourceType": signal.source_type,
@@ -604,6 +625,8 @@ def _serialize_signal(signal: SignalQueue, context: dict[str, Any] | None = None
         "urgencyTier": signal.urgency_tier,
         "discoveredBy": signal.discovered_by,
         "districtId": signal.district_id,
+        "resolvedDistrictId": signal.resolved_district_id,
+        "districtContext": district_context,
         "state": signal.state,
         "reasonCodes": signal.reason_codes or [],
         "provenance": signal.provenance,

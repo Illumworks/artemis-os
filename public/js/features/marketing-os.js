@@ -37,6 +37,11 @@ import {
 // ── Storage keys ──────────────────────────────────────────────────────────
 const MKT_CAMPAIGN_KEY = 'artemis-mkt-selected-campaign';
 const MKT_WORKSPACE_TAB_KEY = 'artemis-mkt-workspace-tab';
+// DIST4: localStorage key for the hide-unsupported-tiers toggle (default OFF)
+const MKT_HIDE_UNSUPPORTED_KEY = 'artemis-mkt-hide-unsupported-tiers';
+function readHideUnsupported() { try { return localStorage.getItem(MKT_HIDE_UNSUPPORTED_KEY) === 'true'; } catch { return false; } }
+function writeHideUnsupported(v) { try { localStorage.setItem(MKT_HIDE_UNSUPPORTED_KEY, v ? 'true' : 'false'); } catch {} }
+
 const MKT_SIGNAL_TREE_STATE = {
   signals: [],
   pipelineRuns: [],
@@ -45,6 +50,7 @@ const MKT_SIGNAL_TREE_STATE = {
   query: '',
   filters: { urgencies: [], statuses: [], reasons: [], geographies: [] },
   selectedId: null,
+  hideUnsupported: readHideUnsupported(),
 };
 
 const SP_SCOUTS = [
@@ -1679,6 +1685,7 @@ export function renderMarketingSignals(signals = [], isDemo = false) {
       filters: MKT_SIGNAL_TREE_STATE.filters,
       selectedId: MKT_SIGNAL_TREE_STATE.selectedId,
       collapsed: readCollapsedSignalGroups(),
+      hideUnsupported: MKT_SIGNAL_TREE_STATE.hideUnsupported,
       emptyMessage: completedRuns.length
         ? `Last ${Math.min(3, completedRuns.length)} pipeline runs produced 0 signals. Configure scout connectors to start ingesting data.`
         : null,
@@ -2289,9 +2296,18 @@ function _wireSignalActions(container) {
   });
 
   container.addEventListener('change', (e) => {
-    if (!e.target.matches('[data-signal-sort]')) return;
-    MKT_SIGNAL_TREE_STATE.sort = e.target.value === 'urgency' ? 'urgency' : 'newest';
-    _renderSignalTreeState(container);
+    if (e.target.matches('[data-signal-sort]')) {
+      MKT_SIGNAL_TREE_STATE.sort = e.target.value === 'urgency' ? 'urgency' : 'newest';
+      _renderSignalTreeState(container);
+      return;
+    }
+    // DIST4: hide-unsupported toggle — persists in localStorage, default OFF
+    if (e.target.matches('[data-signal-hide-unsupported]')) {
+      MKT_SIGNAL_TREE_STATE.hideUnsupported = e.target.checked;
+      writeHideUnsupported(e.target.checked);
+      MKT_SIGNAL_TREE_STATE.selectedId = null;
+      _renderSignalTreeState(container);
+    }
   });
 }
 
