@@ -17,6 +17,7 @@ import {
   listRulesetVersionsApi, activateRulesetVersionApi,
   listReasonCodesApi, createReasonCodeApi, patchReasonCodeApi, exportReasonCodesMarkdownApi,
   getTerritoryConfigApi, upsertTerritoryStateApi,
+  getTierBandsApi, upsertTierBandsApi, recomputeTierBandsApi,
   listSignalQueueApi, createSignalApi,
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
   qualifySignalApi,
@@ -2819,6 +2820,106 @@ function _navigateToWritingStudio(draftId) {
   setState('view', WRITING_STUDIO_VIEW);
 }
 
+// ── District Sizing section ────────────────────────────────────────────────
+
+const dsState = {
+  bands: /** @type {Array<{tier:string,minEnrollment:number|null,maxEnrollment:number|null,displayOrder:number}>} */ ([]),
+  saving: false,
+  recomputeResult: /** @type {number|null} */ (null),
+  error: /** @type {string|null} */ (null),
+};
+
+function _renderDistrictSizing() {
+  const TIER_LABELS = { D1: "D1 — Large (≥ threshold)", D2: "D2 — Mid", D3: "D3 — Small", D4: "D4 — Micro (unsupported)" };
+  const bandRows = dsState.bands.map((b) => `
+    <tr>
+      <td class="mkt-ds-tier-label">${esc(TIER_LABELS[b.tier] || b.tier)}</td>
+      <td><input class="mkt-ds-input" type="number" min="0" data-ds-tier="${esc(b.tier)}" data-ds-field="minEnrollment" value="${b.minEnrollment ?? ""}" placeholder="null (no floor)"></td>
+      <td><input class="mkt-ds-input" type="number" min="0" data-ds-tier="${esc(b.tier)}" data-ds-field="maxEnrollment" value="${b.maxEnrollment ?? ""}" placeholder="null (no ceiling)"></td>
+    </tr>`).join("");
+  const recomputeMsg = dsState.recomputeResult !== null
+    ? `<span class="mkt-ds-feedback mkt-ds-feedback--ok">Recomputed — ${dsState.recomputeResult} district(s) updated.</span>` : "";
+  const errorMsg = dsState.error
+    ? `<span class="mkt-ds-feedback mkt-ds-feedback--err">${esc(dsState.error)}</span>` : "";
+  return `
+    <section class="mkt-section mkt-ds-shell" data-ds-section>
+      <div class="mkt-section-header">
+        <div>
+          <h2 class="mkt-section-heading">District Sizing</h2>
+          <p class="mkt-section-subtext">Global enrollment tier bands (D1–D4). Edit thresholds and save; then recompute to reclassify all districts.</p>
+        </div>
+      </div>
+      ${dsState.bands.length === 0
+        ? '<p class="mkt-section-subtext mkt-error-text">No tier bands found — run migrations to seed defaults.</p>'
+        : `<table class="mkt-ds-table">
+            <thead><tr><th>Tier</th><th>Min enrollment</th><th>Max enrollment</th></tr></thead>
+            <tbody>${bandRows}</tbody>
+          </table>
+          <div class="mkt-ds-actions">
+            <button class="mkt-btn-primary" data-ds-action="save"${dsState.saving ? " disabled" : ""}>${dsState.saving ? "Saving…" : "Save bands"}</button>
+            <button class="mkt-btn-secondary" data-ds-action="recompute">Recompute all districts</button>
+            ${recomputeMsg}${errorMsg}
+          </div>`}
+    </section>`;
+}
+
+function _attachDistrictSizingHandlers(container) {
+  const section = container.querySelector("[data-ds-section]");
+  if (!section) return;
+  section.querySelectorAll("[data-ds-action]").forEach((btn) => {
+    btn.addEventListener("click", () => _handleDsAction(container, btn.dataset.dsAction));
+  });
+}
+
+async function _handleDsAction(container, action) {
+  dsState.error = null;
+  dsState.recomputeResult = null;
+  if (action === "save") {
+    dsState.saving = true;
+    _repatchDistrictSizing(container);
+    const payload = dsState.bands.map((b) => {
+      const section = container.querySelector("[data-ds-section]");
+      const minEl = section?.querySelector(`[data-ds-tier="${b.tier}"][data-ds-field="minEnrollment"]`);
+      const maxEl = section?.querySelector(`[data-ds-tier="${b.tier}"][data-ds-field="maxEnrollment"]`);
+      return {
+        tier: b.tier,
+        minEnrollment: minEl?.value !== "" ? parseInt(minEl.value, 10) : null,
+        maxEnrollment: maxEl?.value !== "" ? parseInt(maxEl.value, 10) : null,
+        displayOrder: b.displayOrder,
+      };
+    });
+    try {
+      const result = await upsertTierBandsApi(payload);
+      dsState.bands = result.bands;
+    } catch (err) {
+      dsState.error = err.message || "Could not save tier bands.";
+    } finally {
+      dsState.saving = false;
+    }
+    _repatchDistrictSizing(container);
+  } else if (action === "recompute") {
+    try {
+      const result = await recomputeTierBandsApi();
+      dsState.recomputeResult = result.updated;
+    } catch (err) {
+      dsState.error = err.message || "Recompute failed.";
+    }
+    _repatchDistrictSizing(container);
+  }
+}
+
+function _repatchDistrictSizing(container) {
+  const section = container.querySelector("[data-ds-section]");
+  if (!section) return;
+  const replacement = document.createElement("div");
+  replacement.innerHTML = _renderDistrictSizing();
+  const newSection = replacement.querySelector("[data-ds-section]");
+  if (newSection) {
+    section.replaceWith(newSection);
+    _attachDistrictSizingHandlers(container);
+  }
+}
+
 // ── Signal Playbook surface ────────────────────────────────────────────────
 
 export function renderMarketingRulesets(_rulesets = [], reasonCodes = []) {
@@ -2865,16 +2966,28 @@ export async function loadMarketingRulesets(container) {
   if (!container) return;
   container.innerHTML = `<section class="mkt-section"><p class="mkt-section-subtext">Loading Signal Playbook…</p></section>`;
   try {
-    spState.codes = await listReasonCodesApi({ includeRetired: true });
+    const [codesResult, bandsResult] = await Promise.allSettled([
+      listReasonCodesApi({ includeRetired: true }),
+      getTierBandsApi(),
+    ]);
+    if (codesResult.status === "rejected") {
+      container.innerHTML = `<section class="mkt-section"><h2 class="mkt-section-heading">Signal Playbook</h2><p class="mkt-section-subtext mkt-error-text">Could not load reason codes.</p></section>`;
+      return;
+    }
+    spState.codes = codesResult.value;
+    dsState.bands = bandsResult.status === "fulfilled" ? (bandsResult.value.bands || []) : [];
+    dsState.recomputeResult = null;
+    dsState.error = null;
   } catch {
-    container.innerHTML = `<section class="mkt-section"><h2 class="mkt-section-heading">Signal Playbook</h2><p class="mkt-section-subtext mkt-error-text">Could not load reason codes.</p></section>`;
+    container.innerHTML = `<section class="mkt-section"><h2 class="mkt-section-heading">Signal Playbook</h2><p class="mkt-section-subtext mkt-error-text">Could not load Signal Playbook.</p></section>`;
     return;
   }
   _renderSignalPlaybook(container);
 }
 
 function _renderSignalPlaybook(container) {
-  container.innerHTML = renderMarketingRulesets([], spState.codes);
+  container.innerHTML = _renderDistrictSizing() + renderMarketingRulesets([], spState.codes);
+  _attachDistrictSizingHandlers(container);
   container.querySelectorAll("[data-sp-action]").forEach((btn) => btn.addEventListener("click", () => _handleSpAction(container, btn)));
   container.querySelectorAll("[data-sp-filter]").forEach((el) => el.addEventListener("change", () => {
     if (el.dataset.spFilter === "domain") spState.domain = el.value;
