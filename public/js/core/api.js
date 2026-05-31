@@ -2217,6 +2217,36 @@ export async function upsertTerritoryStateApi(family, _stateCode, payload = {}) 
   return res.json();
 }
 
+// ── District Tier Bands ───────────────────────────────────────────────────
+
+export async function getTierBandsApi() {
+  const res = await fetch("/api/signal-criteria/tier-bands");
+  if (!res.ok) throw new Error("getTierBandsApi failed");
+  return res.json();
+}
+
+export async function upsertTierBandsApi(bands) {
+  const res = await fetch("/api/signal-criteria/tier-bands", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bands }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "upsertTierBandsApi failed");
+  }
+  return res.json();
+}
+
+export async function recomputeTierBandsApi() {
+  const res = await fetch("/api/signal-criteria/tier-bands/recompute", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "recomputeTierBandsApi failed");
+  }
+  return res.json();
+}
+
 // ── Signal Queue ──────────────────────────────────────────────────────────
 
 export async function listSignalQueueApi(params = {}) {

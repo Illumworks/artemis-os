@@ -8,6 +8,9 @@ Endpoints:
   GET  /reason-codes          — list reason codes (active only by default)
   POST /reason-codes          — create a new reason code
   PATCH /reason-codes/{code}  — update description/urgency/is_active (code+domain immutable)
+  GET  /tier-bands            — return the 4 district tier bands ordered by display_order
+  PUT  /tier-bands            — upsert all 4 bands; validates tiling (no gaps/overlaps)
+  POST /tier-bands/recompute  — recompute all district tiers; returns {updated: N}
 """
 
 from __future__ import annotations
@@ -21,11 +24,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import Ruleset, SignalReasonCode, TerritoryConfig
+from artemis.marketing.models import DistrictTierBand, Ruleset, SignalReasonCode, TerritoryConfig
 from artemis.marketing.repository import (
     activate_ruleset_version,
     get_territory_config,
+    get_tier_bands,
     list_ruleset_versions,
+    recompute_all_tiers,
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
@@ -189,6 +194,146 @@ async def upsert_territory(
     await session.refresh(config)
     await session.commit()
     return _serialize_territory(config)
+
+
+# ── District Tier Bands ───────────────────────────────────────────────────────
+
+VALID_TIERS: tuple[str, ...] = ("D1", "D2", "D3", "D4")
+
+
+class TierBandItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    tier: str = Field(pattern=r"^D[1-4]$")
+    min_enrollment: int | None = Field(default=None, alias="minEnrollment")
+    max_enrollment: int | None = Field(default=None, alias="maxEnrollment")
+    display_order: int = Field(alias="displayOrder")
+
+
+class TierBandsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bands: list[TierBandItem] = Field(min_length=4, max_length=4)
+
+
+class TierBandsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    bands: list[dict[str, Any]]
+
+
+def _validate_tiling(bands: list[TierBandItem]) -> None:
+    """Ensure the 4 bands tile the enrollment space with no gaps or overlaps.
+
+    Tiling invariant (by display_order ascending: D1=1, D2=2, D3=3, D4=4):
+      - The highest-display-order band (D4) must have min_enrollment=None (floor).
+      - The lowest-display-order band (D1) must have max_enrollment=None (ceiling).
+      - For every consecutive pair (ordered ascending by display_order),
+        lower.max_enrollment + 1 must equal upper.min_enrollment.
+        e.g. D3.max_enrollment + 1 == D2.min_enrollment.
+    """
+    ordered = sorted(bands, key=lambda b: b.display_order)
+    # D1 (display_order=1) is the top tier — no ceiling
+    if ordered[0].max_enrollment is not None:
+        raise bad_request(
+            f"Tier {ordered[0].tier} (display_order={ordered[0].display_order}) is the highest "
+            "tier and must have maxEnrollment=null (no upper ceiling).",
+            "tier_bands_invalid_tiling",
+        )
+    # D4 (display_order=4) is the bottom tier — no floor
+    if ordered[-1].min_enrollment is not None:
+        raise bad_request(
+            f"Tier {ordered[-1].tier} (display_order={ordered[-1].display_order}) is the lowest "
+            "tier and must have minEnrollment=null (no lower floor).",
+            "tier_bands_invalid_tiling",
+        )
+    # Consecutive adjacency: for bands[i] and bands[i+1] (ascending display_order),
+    # bands[i+1].max_enrollment + 1 == bands[i].min_enrollment  (lower tier max+1 == upper tier min)
+    for i in range(len(ordered) - 1):
+        upper = ordered[i]  # e.g. D2 (display_order 2)
+        lower = ordered[i + 1]  # e.g. D3 (display_order 3)
+        if lower.max_enrollment is None:
+            raise bad_request(
+                f"Tier {lower.tier} maxEnrollment is null but it is not the bottom tier. "
+                "Only the lowest display_order tier may have maxEnrollment=null.",
+                "tier_bands_invalid_tiling",
+            )
+        if upper.min_enrollment is None:
+            raise bad_request(
+                f"Tier {upper.tier} minEnrollment is null but it is not the top tier. "
+                "Only the highest display_order tier may have minEnrollment=null.",
+                "tier_bands_invalid_tiling",
+            )
+        expected_min = lower.max_enrollment + 1
+        if upper.min_enrollment != expected_min:
+            if upper.min_enrollment > expected_min:
+                raise bad_request(
+                    f"Gap detected between {lower.tier} and {upper.tier}: "
+                    f"{lower.tier}.maxEnrollment={lower.max_enrollment} but "
+                    f"{upper.tier}.minEnrollment={upper.min_enrollment} "
+                    f"(expected {expected_min}). Enrollment values "
+                    f"{expected_min}–{upper.min_enrollment - 1} are uncovered.",
+                    "tier_bands_gap",
+                )
+            else:
+                raise bad_request(
+                    f"Overlap detected between {lower.tier} and {upper.tier}: "
+                    f"{lower.tier}.maxEnrollment={lower.max_enrollment} but "
+                    f"{upper.tier}.minEnrollment={upper.min_enrollment} "
+                    f"(expected {expected_min}). Values "
+                    f"{upper.min_enrollment}–{lower.max_enrollment} are covered by both tiers.",
+                    "tier_bands_overlap",
+                )
+
+
+@router.get("/tier-bands")
+async def list_tier_bands(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return the 4 district tier bands ordered by display_order."""
+    bands = await get_tier_bands(session)
+    return {"bands": [_serialize_tier_band(b) for b in bands]}
+
+
+@router.put("/tier-bands")
+async def upsert_tier_bands(
+    body: TierBandsUpdate,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Update all 4 tier bands. Validates tiling (no gaps/overlaps) before persisting."""
+    _validate_tiling(body.bands)
+
+    existing = {b.tier: b for b in await get_tier_bands(session)}
+    for band_in in body.bands:
+        if band_in.tier in existing:
+            row = existing[band_in.tier]
+            row.min_enrollment = band_in.min_enrollment
+            row.max_enrollment = band_in.max_enrollment
+            row.display_order = band_in.display_order
+        else:
+            session.add(
+                DistrictTierBand(
+                    tier=band_in.tier,
+                    min_enrollment=band_in.min_enrollment,
+                    max_enrollment=band_in.max_enrollment,
+                    display_order=band_in.display_order,
+                )
+            )
+
+    await session.flush()
+    await session.commit()
+    updated = await get_tier_bands(session)
+    return {"bands": [_serialize_tier_band(b) for b in updated]}
+
+
+@router.post("/tier-bands/recompute")
+async def recompute_tier_bands(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Recompute tier + supported on all districts using the current band config."""
+    updated = await recompute_all_tiers(session)
+    await session.commit()
+    return {"updated": updated}
 
 
 # ── Reason Codes ─────────────────────────────────────────────────────────────
@@ -449,4 +594,15 @@ def _serialize_territory(t: TerritoryConfig) -> dict[str, Any]:
         "unlistedMultiplier": t.unlisted_multiplier,
         "createdAt": t.created_at.isoformat(),
         "updatedAt": t.updated_at.isoformat(),
+    }
+
+
+def _serialize_tier_band(b: DistrictTierBand) -> dict[str, Any]:
+    return {
+        "id": b.id,
+        "tier": b.tier,
+        "minEnrollment": b.min_enrollment,
+        "maxEnrollment": b.max_enrollment,
+        "displayOrder": b.display_order,
+        "updatedAt": b.updated_at.isoformat(),
     }
