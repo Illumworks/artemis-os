@@ -34,7 +34,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from artemis.db import Base
@@ -78,6 +78,12 @@ class SignalReasonCode(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     what_scout_looks_for: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_urgency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    primary_scouts: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
+    campaign_families: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
