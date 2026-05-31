@@ -63,12 +63,19 @@ async def _reset(session: AsyncSession) -> None:
     await session.commit()
 
 
-async def test_populates_canonical_16_and_is_idempotent(db_session: AsyncSession) -> None:
+async def test_populates_canonical_17_and_is_idempotent(db_session: AsyncSession) -> None:
+    # DIST3: added marketing.district.classifier → 17 canonical agents (was 16).
+    _expected_count = len(MARKETING_AGENT_SPECS)
     await _reset(db_session)
     first = await seed_marketing_agents(db_session)
     second = await seed_marketing_agents(db_session)
     rows = (await db_session.execute(SELECT_IDS)).scalars().all()
-    assert (first["inserted"], second["inserted"], second["updated"], len(rows)) == (16, 0, 16, 16)
+    assert (
+        first["inserted"],
+        second["inserted"],
+        second["updated"],
+        len(rows),
+    ) == (_expected_count, 0, _expected_count, _expected_count)
     assert set(rows) == EXPECTED
 
 

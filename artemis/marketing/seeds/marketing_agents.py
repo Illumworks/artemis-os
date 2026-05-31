@@ -48,6 +48,7 @@ marketing.qualifier.brief_composer|qualifier/2.4-brief-composer-agent.md|sonnet|
 marketing.content.brief_assembler|content/5.1-campaign-brief-assembler.md|haiku|session_scoped|ask|writing_studio_draft
 marketing.content.asset_selector|content/5.2-asset-selector-agent.md|sonnet|session_scoped|ask|writing_studio_draft
 marketing.content.writing_studio_adapter|content/5.3-writing-studio-adapter.md|haiku|session_scoped|ask|writing_studio_draft
+marketing.district.classifier|district/3.1-district-classifier.md|haiku|session_scoped|auto|district_resolution
 """.strip()
 
 MARKETING_AGENT_SPECS = tuple(MarketingAgentSpec(*line.split("|")) for line in _SPECS.splitlines())
@@ -69,6 +70,7 @@ marketing.qualifier.brief_composer|I turn qualified signals into concise campaig
 marketing.content.brief_assembler|I build the immutable campaign brief that downstream content work can trust.|Orderly, validation-first, and quiet. Cares about clean transforms, frozen evidence, and failing loudly before bad input reaches drafting.
 marketing.content.asset_selector|I pick the asset bundle that makes a campaign feel coherent instead of patched together.|Editorial and evidence-led. Balances relevance, freshness, campaign fit, and specificity without overfitting to a single deliverable.
 marketing.content.writing_studio_adapter|I carry approved campaign inputs across the Writing Studio boundary reliably, one draft payload at a time.|Quiet, mechanical, reliable. Speaks only when something breaks, and when it does, it reports the exact boundary failure.
+marketing.district.classifier|I map raw district names to canonical NCES entities so qualification and approval have real district context.|Precise and hallucination-immune. Resolves names only; never guesses enrollment or tier. A NULL is always better than a fabricated match.
 """.strip()
 
 PERSONAS = {
