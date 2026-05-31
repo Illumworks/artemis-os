@@ -230,18 +230,18 @@ register_tool("signal_briefs.get_approval_history", _history_factory)
 _READ_DEF = Tool(
     name="campaign_brief.read",
     description=(
-        "Read the most recent immutable campaign brief for a candidate from "
-        "campaign_briefs. Companion to campaign_brief.write. Returns the brief row as a "
-        "JSON object, or NOT_FOUND if the candidate has no brief yet. Any marketing "
-        "agent may call this."
+        "Read an immutable campaign brief from campaign_briefs. Pass brief_id to read "
+        "a specific row, or candidateId for the latest brief for a candidate. Returns "
+        "the brief row as a JSON object, or NOT_FOUND. Any marketing agent may call this."
     ),
     input_schema={
         "type": "object",
-        "required": ["candidateId"],
         "properties": {
+            "brief_id": {"type": "integer", "description": "The campaign_briefs.id to read."},
+            "briefId": {"type": "integer", "description": "Camel-case alias for brief_id."},
             "candidateId": {
                 "type": "integer",
-                "description": "The campaign_candidates.id whose latest brief to read.",
+                "description": "Legacy: campaign_candidates.id whose latest brief to read.",
             },
         },
     },
@@ -252,18 +252,27 @@ def _read_factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
     async def _impl(arguments: dict[str, Any]) -> str:
         if not ctx.agent_id.startswith(_MARKETING_PREFIX):
             return f"PERMISSION_DENIED: agent {ctx.agent_id!r} cannot read campaign briefs"
+        brief_id = arguments.get("brief_id", arguments.get("briefId"))
         candidate_id = arguments.get("candidateId")
-        if not isinstance(candidate_id, int):
-            return "VALIDATION_ERROR: 'candidateId' is required and must be an integer"
-        stmt = (
-            select(CampaignBrief)
-            .where(CampaignBrief.candidate_id == candidate_id)
-            .order_by(CampaignBrief.generated_at.desc())
-            .limit(1)
-        )
+        if isinstance(brief_id, int):
+            stmt = select(CampaignBrief).where(CampaignBrief.id == brief_id).limit(1)
+        elif isinstance(candidate_id, int):
+            stmt = (
+                select(CampaignBrief)
+                .where(CampaignBrief.candidate_id == candidate_id)
+                .order_by(CampaignBrief.generated_at.desc())
+                .limit(1)
+            )
+        else:
+            return "VALIDATION_ERROR: 'brief_id' is required and must be an integer"
         row = (await ctx.session.execute(stmt)).scalar_one_or_none()
         if row is None:
-            return f"NOT_FOUND: no campaign brief for candidate id={candidate_id}"
+            target = (
+                f"brief id={brief_id}"
+                if isinstance(brief_id, int)
+                else f"candidate id={candidate_id}"
+            )
+            return f"NOT_FOUND: no campaign brief for {target}"
         return json.dumps(
             {
                 "id": row.id,

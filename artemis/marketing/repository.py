@@ -305,6 +305,20 @@ async def list_campaign_asset_links(
     return list(result.scalars().all())
 
 
+async def list_approved_content_assets(
+    session: AsyncSession, *, campaign_family: str | None = None, limit: int = 50
+) -> list[ContentAsset]:
+    """Return approved reusable assets, optionally filtered by metadata campaign family."""
+    bounded_limit = max(1, min(limit, 200))
+    stmt = select(ContentAsset).where(ContentAsset.status == "approved")
+    if campaign_family:
+        stmt = stmt.where(
+            ContentAsset.asset_metadata["campaign_family"].as_string() == campaign_family
+        )
+    result = await session.execute(stmt.order_by(ContentAsset.id.desc()).limit(bounded_limit))
+    return list(result.scalars().all())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Approvals
 # ─────────────────────────────────────────────────────────────────────────────
