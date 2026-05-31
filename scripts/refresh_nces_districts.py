@@ -27,6 +27,34 @@ FRESHNESS / WHEN TO UPDATE:
 USAGE:
   uv run python scripts/refresh_nces_districts.py --year 2024 \
       --out artemis/marketing/data/nces_districts.csv
+
+LOADER STEP (run after the script to stamp district_data_meta):
+  This script only writes the CSV.  After it finishes, run the loader to ingest
+  into Postgres and stamp the freshness meta:
+
+    ARTEMIS_DB_URL=postgresql+asyncpg://artemis:artemis@localhost/artemis_os \\
+      uv run python -c "
+    import asyncio, pathlib
+    from artemis.db import SessionLocal
+    from artemis.marketing.nces_loader import load_districts_from_csv
+
+    year = 2024  # match --year above
+    sy = f'{year}-{str(year+1)[2:]}'
+    async def main():
+        async with SessionLocal() as s:
+            result = await load_districts_from_csv(
+                s,
+                pathlib.Path('artemis/marketing/data/nces_districts.csv'),
+                school_year=sy,
+            )
+            await s.commit()
+            print(result)
+    asyncio.run(main())
+    "
+
+  The school_year (e.g. '2024-25') is stamped in district_data_meta so the
+  Signal Playbook freshness panel stays accurate.  Derive it from --year as
+  f'{year}-{str(year+1)[2:]}'.
 """
 from __future__ import annotations
 

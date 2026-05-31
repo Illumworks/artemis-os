@@ -567,6 +567,27 @@ class SkippedSignal(Base):
     )
 
 
+class DistrictDataMeta(Base):
+    """Singleton metadata row stamped after each NCES district bulk load.
+
+    Only one logical row exists (upserted on each load).  If the table is
+    empty the endpoint/UI show an honest "no data loaded" state.
+    """
+
+    __tablename__ = "district_data_meta"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    school_year: Mapped[str] = mapped_column(Text, nullable=False)
+    loaded_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class CampaignStateTransition(Base):
     """Append-only audit log for every campaign lifecycle state transition.
 

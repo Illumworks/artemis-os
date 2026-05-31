@@ -17,7 +17,7 @@ import {
   listRulesetVersionsApi, activateRulesetVersionApi,
   listReasonCodesApi, createReasonCodeApi, patchReasonCodeApi, exportReasonCodesMarkdownApi,
   getTerritoryConfigApi, upsertTerritoryStateApi,
-  getTierBandsApi, upsertTierBandsApi, recomputeTierBandsApi,
+  getTierBandsApi, upsertTierBandsApi, recomputeTierBandsApi, getDistrictDataStatusApi,
   listSignalQueueApi, createSignalApi,
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
   qualifySignalApi,
@@ -2836,6 +2836,127 @@ function _navigateToWritingStudio(draftId) {
   setState('view', WRITING_STUDIO_VIEW);
 }
 
+// ── District Data provenance card (DIST5) ─────────────────────────────────
+
+const ddState = {
+  status: /** @type {Object|null} */ (null),
+  loading: false,
+  error: /** @type {string|null} */ (null),
+};
+
+function _renderDistrictDataCard() {
+  if (ddState.loading) {
+    return `
+    <section class="mkt-section mkt-dd-shell" data-dd-section>
+      <div class="mkt-section-header">
+        <div>
+          <h2 class="mkt-section-heading">District Data</h2>
+          <p class="mkt-section-subtext">NCES Common Core of Data provenance and freshness.</p>
+        </div>
+      </div>
+      <p class="mkt-section-subtext">Loading…</p>
+    </section>`;
+  }
+
+  if (ddState.error) {
+    return `
+    <section class="mkt-section mkt-dd-shell" data-dd-section>
+      <div class="mkt-section-header">
+        <div>
+          <h2 class="mkt-section-heading">District Data</h2>
+          <p class="mkt-section-subtext">NCES Common Core of Data provenance and freshness.</p>
+        </div>
+      </div>
+      <p class="mkt-section-subtext mkt-error-text">${esc(ddState.error)}</p>
+    </section>`;
+  }
+
+  const s = ddState.status;
+
+  if (!s || !s.loaded) {
+    return `
+    <section class="mkt-section mkt-dd-shell" data-dd-section>
+      <div class="mkt-section-header">
+        <div>
+          <h2 class="mkt-section-heading">District Data</h2>
+          <p class="mkt-section-subtext">NCES Common Core of Data provenance and freshness.</p>
+        </div>
+      </div>
+      <p class="mkt-section-subtext mkt-error-text">No district data loaded — run <code>scripts/refresh_nces_districts.py</code> then load via the loader.</p>
+    </section>`;
+  }
+
+  // Freshness badge
+  const freshness = s.freshness || "current";
+  const months = s.months_since_loaded ?? s.monthsSinceLoaded ?? 0;
+  const freshnessClasses = { current: "mkt-dd-badge--current", aging: "mkt-dd-badge--aging", stale: "mkt-dd-badge--stale" };
+  const freshnessLabels = {
+    current: `Current · loaded ${months} mo ago`,
+    aging:   `Aging · loaded ${months} mo ago`,
+    stale:   `Stale · ${months} mo old — newer school-year data likely available. Refresh: <code>scripts/refresh_nces_districts.py</code>`,
+  };
+  const badgeClass = freshnessClasses[freshness] || freshnessClasses.current;
+  const badgeLabel = freshnessLabels[freshness] || freshnessLabels.current;
+
+  // Tier mini-breakdown
+  const tc = s.tier_counts || s.tierCounts || {};
+  const schoolYear = s.school_year || s.schoolYear || "—";
+  const total = s.total_districts ?? s.totalDistricts ?? 0;
+  const supported = s.supported_count ?? s.supportedCount ?? 0;
+  const unsupported = s.unsupported_count ?? s.unsupportedCount ?? 0;
+  const tierRows = ["D1", "D2", "D3", "D4"].map((t) => `
+    <tr>
+      <td class="mkt-ds-tier-label">${esc(t)}</td>
+      <td>${tc[t] ?? 0}</td>
+    </tr>`).join("");
+
+  return `
+    <section class="mkt-section mkt-dd-shell" data-dd-section>
+      <div class="mkt-section-header">
+        <div>
+          <h2 class="mkt-section-heading">District Data</h2>
+          <p class="mkt-section-subtext">NCES Common Core of Data (${esc(schoolYear)}) · via Urban Institute</p>
+        </div>
+      </div>
+      <p class="mkt-section-subtext">
+        ${total.toLocaleString()} districts · ${supported.toLocaleString()} supported (D1–D3) · ${unsupported.toLocaleString()} unsupported (D4)
+      </p>
+      <table class="mkt-ds-table">
+        <thead><tr><th>Tier</th><th>Count</th></tr></thead>
+        <tbody>${tierRows}</tbody>
+      </table>
+      <div class="mkt-dd-freshness">
+        <span class="mkt-dd-badge ${esc(badgeClass)}">${badgeLabel}</span>
+      </div>
+      <!-- TODO (Part E): Add a "Check for newer data" refresh button that POSTs to a
+           backend endpoint running refresh+load+recompute and returns the new status.
+           Must include: loading state, failure handling (network/API errors → show error,
+           don't corrupt existing data — loader upserts so partial failure is non-destructive),
+           and must call recompute_all_tiers after load. -->
+    </section>`;
+}
+
+async function _loadDistrictDataCard(container) {
+  ddState.loading = true;
+  ddState.error = null;
+  try {
+    ddState.status = await getDistrictDataStatusApi();
+  } catch (err) {
+    ddState.error = err.message || "Could not load district data status.";
+    ddState.status = null;
+  } finally {
+    ddState.loading = false;
+  }
+  // Re-patch just the dd section inside the container (non-destructive)
+  const section = container.querySelector("[data-dd-section]");
+  if (section) {
+    const replacement = document.createElement("div");
+    replacement.innerHTML = _renderDistrictDataCard();
+    const newSection = replacement.querySelector("[data-dd-section]");
+    if (newSection) section.replaceWith(newSection);
+  }
+}
+
 // ── District Sizing section ────────────────────────────────────────────────
 
 const dsState = {
@@ -2982,9 +3103,10 @@ export async function loadMarketingRulesets(container) {
   if (!container) return;
   container.innerHTML = `<section class="mkt-section"><p class="mkt-section-subtext">Loading Signal Playbook…</p></section>`;
   try {
-    const [codesResult, bandsResult] = await Promise.allSettled([
+    const [codesResult, bandsResult, ddResult] = await Promise.allSettled([
       listReasonCodesApi({ includeRetired: true }),
       getTierBandsApi(),
+      getDistrictDataStatusApi(),
     ]);
     if (codesResult.status === "rejected") {
       container.innerHTML = `<section class="mkt-section"><h2 class="mkt-section-heading">Signal Playbook</h2><p class="mkt-section-subtext mkt-error-text">Could not load reason codes.</p></section>`;
@@ -2994,6 +3116,10 @@ export async function loadMarketingRulesets(container) {
     dsState.bands = bandsResult.status === "fulfilled" ? (bandsResult.value.bands || []) : [];
     dsState.recomputeResult = null;
     dsState.error = null;
+    // District Data provenance state
+    ddState.status = ddResult.status === "fulfilled" ? ddResult.value : null;
+    ddState.error = ddResult.status === "rejected" ? (ddResult.reason?.message || "Could not load district data status.") : null;
+    ddState.loading = false;
   } catch {
     container.innerHTML = `<section class="mkt-section"><h2 class="mkt-section-heading">Signal Playbook</h2><p class="mkt-section-subtext mkt-error-text">Could not load Signal Playbook.</p></section>`;
     return;
@@ -3002,7 +3128,7 @@ export async function loadMarketingRulesets(container) {
 }
 
 function _renderSignalPlaybook(container) {
-  container.innerHTML = _renderDistrictSizing() + renderMarketingRulesets([], spState.codes);
+  container.innerHTML = _renderDistrictDataCard() + _renderDistrictSizing() + renderMarketingRulesets([], spState.codes);
   _attachDistrictSizingHandlers(container);
   container.querySelectorAll("[data-sp-action]").forEach((btn) => btn.addEventListener("click", () => _handleSpAction(container, btn)));
   container.querySelectorAll("[data-sp-filter]").forEach((el) => el.addEventListener("change", () => {
