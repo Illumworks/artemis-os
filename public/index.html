@@ -130,13 +130,6 @@
         </button>
         <div class="rail-section-body">
           <div class="rail-section-body-inner">
-            <div class="rail-item" data-nav="automations" role="button" tabindex="0">
-              <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-              </svg>
-              <span>Automations</span>
-              <span class="rail-item-badge">6</span>
-            </div>
             <div class="rail-item" data-nav="skills" role="button" tabindex="0">
               <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
@@ -156,13 +149,6 @@
               </svg>
               <span>Agents</span>
               <span class="rail-item-badge">9</span>
-            </div>
-            <div class="rail-item" data-nav="workflows" role="button" tabindex="0">
-              <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M6 9v3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V9"/>
-              </svg>
-              <span>Workflows</span>
-              <span class="rail-item-badge">4</span>
             </div>
             <div class="rail-item" data-nav="memory" role="button" tabindex="0">
               <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -493,7 +479,7 @@
   <aside id="agent-sidebar" class="agent-sidebar hidden" aria-hidden="true">
     <div class="agent-sidebar-header">
       <div class="agent-sidebar-title-row">
-        <span class="agent-sidebar-title">Agents &amp; Workflows</span>
+        <span class="agent-sidebar-title">Agents</span>
       </div>
       <button id="agent-sidebar-close" class="agent-sidebar-close" title="Close">&times;</button>
     </div>
@@ -544,8 +530,6 @@
       <option value="0">unlimited</option>
     </select>
     <button id="agent-btn"></button>
-    <button id="workflow-btn"></button>
-    <div id="workflow-panel"></div>
     <button id="system-prompt-badge"></button>
     <button id="system-prompt-edit-btn"></button>
     <button id="telegram-settings-btn"></button>
@@ -575,7 +559,6 @@
   <artemis-dag-editor></artemis-dag-editor>
   <artemis-chain-modal></artemis-chain-modal>
   <artemis-agent-modal></artemis-agent-modal>
-  <artemis-workflow-modal></artemis-workflow-modal>
   <artemis-prompt-modal></artemis-prompt-modal>
   <artemis-system-prompt-modal></artemis-system-prompt-modal>
   <artemis-file-picker></artemis-file-picker>

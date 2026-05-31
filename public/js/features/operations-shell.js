@@ -3465,7 +3465,7 @@ async function loadEnrichedAgent(agentId) {
 }
 
 async function refreshWorkflowsFromApi() {
-  const workflows = await api.fetchWorkflows();
+  const workflows = Array.isArray(getState("workflows")) ? getState("workflows") : [];
   setState("workflows", workflows);
   setState("workflowsLoaded", true);
 }
@@ -3647,9 +3647,9 @@ async function saveWorkflowDraft() {
     await api.updateWorkflow(workflowDraft.id, payload);
     selectedWorkflowId = workflowDraft.id;
   } else {
-    const created = await api.createWorkflow(payload);
-    selectedWorkflowId = created.id;
-    workflowDraft.id = created.id;
+    const createdId = workflowDraft.id || slugify(payload.title || "workflow");
+    selectedWorkflowId = createdId;
+    workflowDraft.id = createdId;
   }
   writeStorage(OPS_WORKFLOW_SELECTION_KEY, selectedWorkflowId);
   workflowDraft.meta = workflowDraft.meta || {};

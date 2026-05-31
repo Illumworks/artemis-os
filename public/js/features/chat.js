@@ -11,7 +11,6 @@ import { loadSessions } from './sessions.js';
 import { loadStats, loadAccountInfo } from './cost-dashboard.js';
 import { loadProjects } from './projects.js';
 import { loadPrompts } from './prompts.js';
-import { loadWorkflows } from './workflows.js';
 import { loadAgents, handleAgentMessage } from './agents.js';
 import './agent-monitor.js';
 import { connectWebSocket } from '../core/ws.js';
@@ -1351,7 +1350,6 @@ if (!isSurfaceAvailable("chat")) {
     loadStats();
     loadPrompts();
     connectWebSocket();
-    loadWorkflows();
     loadAgents();
     loadSkillCommands();
   } catch (err) {

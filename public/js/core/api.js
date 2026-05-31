@@ -1127,15 +1127,8 @@ function _normaliseAgent(a) {
   };
 }
 
-/** Map a Python WorkflowRead → Node workflow shape */
-function _normaliseWorkflow(w) {
-  return {
-    ...w,
-    // Python: workflowId / name → Node: id / title
-    id: w.workflowId ?? w.id,
-    title: w.name ?? w.title ?? w.workflowId ?? "",
-  };
-}
+// Historical note: _normaliseWorkflow was removed with the PIPE6 frontend
+// prune; workflow payloads are now dead front-end surface area.
 
 /** Map a Python AgentChainRead → Node chain shape
  *  Python stores per-step agent refs inside steps[].agentId; Node stores a
@@ -1180,94 +1173,6 @@ function _normaliseDag(d) {
     nodes,
     edges,
   };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-export async function fetchWorkflows() {
-  const res = await fetch("/api/workflows");
-  const body = await res.json();
-  // Python returns { workflows: [...] }; Node expected a flat array
-  const raw = Array.isArray(body) ? body : (body.workflows ?? []);
-  return raw.map(_normaliseWorkflow);
-}
-
-export async function createWorkflow(workflow) {
-  // Send Node shape → Python expects workflowId / name
-  const payload = {
-    workflowId: workflow.id ?? workflow.workflowId ?? _slugify(workflow.title),
-    name: workflow.title ?? workflow.name,
-    description: workflow.description || "",
-    steps: workflow.steps || [],
-  };
-  const res = await fetch("/api/workflows", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to create workflow");
-  }
-  return _normaliseWorkflow(await res.json());
-}
-
-export async function updateWorkflow(id, workflow) {
-  // Python uses PATCH; Node used PUT.  Send only the changed fields.
-  const payload = {};
-  if (workflow.title != null || workflow.name != null) payload.name = workflow.title ?? workflow.name;
-  if (workflow.description != null) payload.description = workflow.description;
-  if (workflow.steps != null) payload.steps = workflow.steps;
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to update workflow");
-  }
-  return _normaliseWorkflow(await res.json());
-}
-
-export async function deleteWorkflowApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to delete workflow");
-  }
-  // Python returns 204 No Content — no JSON body
-}
-
-export async function runWorkflowApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
-    method: "POST",
-  });
-  if (res.status === 404) {
-    // F2b execution endpoints not yet wired — graceful no-op
-    return { __notYetWired: true, message: "Run not yet wired (Phase F2b in progress)" };
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to start workflow run");
-  }
-  return res.json(); // { runId }
-}
-
-export async function listWorkflowRunsApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs`);
-  if (!res.ok) return [];
-  const body = await res.json();
-  return Array.isArray(body) ? body : (body.runs ?? []);
-}
-
-export async function getLatestWorkflowRunApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs/latest`);
-  if (res.status === 404) return null;
-  if (!res.ok) return null;
-  return res.json();
 }
 
 export async function fetchAgents() {
@@ -1959,67 +1864,6 @@ export async function fetchAgentRunById(runId) {
   const res = await fetch(`/api/agents/runs/${encodeURIComponent(runId)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error("fetchAgentRunById failed");
-  return res.json();
-}
-
-// ── Automations ───────────────────────────────────────────────────────────────
-
-export async function listAutomationsApi() {
-  const res = await fetch("/api/automations");
-  if (!res.ok) throw new Error("listAutomationsApi failed");
-  return res.json();
-}
-
-export async function createAutomationApi(data) {
-  const res = await fetch("/api/automations", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "createAutomationApi failed");
-  }
-  return res.json();
-}
-
-export async function updateAutomationApi(id, data) {
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "updateAutomationApi failed");
-  }
-  return res.json();
-}
-
-export async function deleteAutomationApi(id) {
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("deleteAutomationApi failed");
-  return res.json();
-}
-
-export async function runAutomationApi(id, opts = {}) {
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}/run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(opts),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "runAutomationApi failed");
-  }
-  return res.json();
-}
-
-export async function listAutomationRunsApi(id, { limit = 20, cursor } = {}) {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (cursor) params.set("cursor", String(cursor));
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}/runs?${params}`);
-  if (!res.ok) throw new Error("listAutomationRunsApi failed");
   return res.json();
 }
 
