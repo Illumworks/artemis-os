@@ -38,7 +38,7 @@ export const PRIMARY_NAV_DESTINATIONS = [
     id: OPERATIONS_VIEW,
     label: "Operations",
     shortLabel: "Operations",
-    description: "Agents, Skills, Workflows, Campaign Ops, and Memory.",
+    description: "Agents, Skills, Pipelines, Run History, and Memory.",
   },
   {
     id: MARKETING_OS_VIEW,
@@ -106,15 +106,6 @@ export const SECONDARY_NAV_DESTINATIONS = [
     focus: "skills",
   },
   {
-    id: "workflows",
-    label: "Workflows",
-    shortLabel: "Flows",
-    description: "Workflow builder and inspector for saved recipes.",
-    section: "Operations",
-    view: "workflows",
-    focus: "workflows",
-  },
-  {
     id: "pipelines",
     label: "Pipelines",
     shortLabel: "Pipelines",
@@ -131,15 +122,6 @@ export const SECONDARY_NAV_DESTINATIONS = [
     section: "Operations",
     view: PIPELINE_RUN_HISTORY_VIEW,
     focus: "pipelines",
-  },
-  {
-    id: "automations",
-    label: "Automations",
-    shortLabel: "Automations",
-    description: "Scheduled and triggered rules that control when workflows and agents run.",
-    section: "Operations",
-    view: "automations",
-    focus: "automations",
   },
   {
     id: "memory",
@@ -288,11 +270,9 @@ export function isShellView(view) {
     || normalizedView === OPERATIONS_VIEW
     || normalizedView === MEMORY_VIEW
     || normalizedView === WRITING_STUDIO_VIEW
-    || normalizedView === "workflows"
     || normalizedView === "agents"
     || normalizedView === "agents/builder"
     || normalizedView === "skills"
-    || normalizedView === "automations"
     || normalizedView === "pipelines"
     || normalizedView === PIPELINE_RUN_HISTORY_VIEW
     || normalizedView === MARKETING_OS_VIEW

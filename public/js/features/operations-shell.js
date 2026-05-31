@@ -598,8 +598,6 @@ function isOperationsSurfaceView(view) {
     || normalized === "agents"
     || normalized === "agents/builder"
     || normalized === "skills"
-    || normalized === "workflows"
-    || normalized === "automations"
     || normalized === "pipelines"
     || normalized === PIPELINE_RUN_HISTORY_VIEW;
 }
@@ -1699,15 +1697,11 @@ function renderOpsPill(label, tone = "") {
 
 function renderOverviewPage() {
   const agents = getAgents();
-  const workflows = getWorkflows();
   const approvedSkills = getApprovedSkills();
   const pendingSkills = getPendingSkills();
-  const automations = _automations;
   const metrics = getAgentMetrics();
   const agentStats = getAgentOverviewStats(agents, metrics);
-  const workflowStats = getWorkflowOverviewStats(workflows);
   const skillStats = getSkillOverviewStats(approvedSkills, pendingSkills);
-  const automationStats = getAutomationOverviewStats(automations);
 
   return `
     ${renderOperationsHero(
@@ -1717,8 +1711,7 @@ function renderOverviewPage() {
       [
         renderSummaryChip("Agents", `${agentStats.activeAgents} rostered`),
         renderSummaryChip("Skills", `${skillStats.approved} approved`),
-        renderSummaryChip("Workflows", `${workflowStats.total} saved`),
-        renderSummaryChip("Automations", `${automationStats.active} active`),
+        renderSummaryChip("Pipelines", "Unified orchestration"),
       ],
     )}
     <section class="ops-launch-grid">
@@ -1761,37 +1754,19 @@ function renderOverviewPage() {
       <article class="ops-launch-card">
         <div class="ops-launch-head">
           <div>
-            <div class="ops-launch-eyebrow">Workflows</div>
-            <h3>Builder + inspector</h3>
+            <div class="ops-launch-eyebrow">Pipelines</div>
+            <h3>Canvas + run history</h3>
           </div>
-          <span class="ops-pill">${escapeHtml(`${workflowStats.active} active`)}</span>
+          <span class="ops-pill">D6 unified</span>
         </div>
-        <p>The recipe is the primary object. Schedule and runtime data travel with it, not instead of it.</p>
+        <p>Visual pipeline definitions, trigger nodes, execution state, and assistant-guided edits live in one place.</p>
         <div class="ops-launch-meta">
-          <span>${escapeHtml(String(workflowStats.steps))} steps total</span>
-          <span>${escapeHtml(String(workflowStats.paused))} paused</span>
+          <span>Nodes + edges</span>
+          <span>Runs + approvals</span>
         </div>
         <div class="operations-hero-actions">
-          ${renderOpsButton("Open Workflows", "open-shell-view", { "shell-view": "workflows" })}
-          ${renderOpsSecondaryButton("Open Operations", "open-shell-view", { "shell-view": "operations" })}
-        </div>
-      </article>
-      <article class="ops-launch-card">
-        <div class="ops-launch-head">
-          <div>
-            <div class="ops-launch-eyebrow">Automations</div>
-            <h3>Runtime registry</h3>
-          </div>
-          <span class="ops-pill">${escapeHtml(`${automationStats.paused} paused`)}</span>
-        </div>
-        <p>Fast list/toggle control for active or paused runtime schedules. No second workflow builder here.</p>
-        <div class="ops-launch-meta">
-          <span>${escapeHtml(String(automationStats.triggered))} triggered</span>
-          <span>${escapeHtml(String(automationStats.active))} active</span>
-        </div>
-        <div class="operations-hero-actions">
-          ${renderOpsButton("Open Automations", "open-shell-view", { "shell-view": "automations" })}
-          ${renderOpsSecondaryButton("Open Workflows", "open-shell-view", { "shell-view": "workflows" })}
+          ${renderOpsButton("Open Pipelines", "open-shell-view", { "shell-view": "pipelines" })}
+          ${renderOpsSecondaryButton("Open Run History", "open-shell-view", { "shell-view": PIPELINE_RUN_HISTORY_VIEW })}
         </div>
       </article>
     </section>
@@ -3410,10 +3385,6 @@ function buildOperationsMarkup(view) {
       return renderAgentBuilderPage();
     case "skills":
       return renderSkillsPage();
-    case "workflows":
-      return renderWorkflowsPage();
-    case "automations":
-      return renderAutomationsPage();
     case "pipelines":
       return renderPipelinesPage();
     case PIPELINE_RUN_HISTORY_VIEW:

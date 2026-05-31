@@ -93,112 +93,20 @@ async def test_workflow_run_lifecycle(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_workflows_empty(client: AsyncClient, db_session: AsyncSession) -> None:
-    # db_session fixture truncates builders tables before this test
-    resp = await client.get("/api/workflows/")
-    assert resp.status_code == 200
-    assert resp.json()["workflows"] == []
-
-
-@pytest.mark.asyncio
-async def test_create_workflow_http(client: AsyncClient) -> None:
-    payload = {
-        "workflowId": "http-wf",
-        "name": "HTTP Workflow",
-        "steps": _STEPS,
-    }
-    resp = await client.post("/api/workflows/", json=payload)
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["workflowId"] == "http-wf"
-    assert data["steps"] == _STEPS
-
-
-@pytest.mark.asyncio
-async def test_create_workflow_empty_steps_rejected(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/api/workflows/", json={"workflowId": "empty-steps", "name": "Bad", "steps": []}
-    )
-    assert resp.status_code == 400
-    assert resp.json()["code"] == "steps_required"
-
-
-@pytest.mark.asyncio
-async def test_get_workflow_http(client: AsyncClient) -> None:
-    await client.post(
-        "/api/workflows/",
-        json={"workflowId": "get-wf", "name": "Get", "steps": _STEPS},
-    )
-    resp = await client.get("/api/workflows/get-wf")
-    assert resp.status_code == 200
-    assert resp.json()["workflowId"] == "get-wf"
-
-
-@pytest.mark.asyncio
-async def test_get_workflow_not_found_http(client: AsyncClient) -> None:
-    resp = await client.get("/api/workflows/no-such")
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "workflow_not_found"
-
-
-@pytest.mark.asyncio
-async def test_create_workflow_duplicate_http(client: AsyncClient) -> None:
-    payload = {"workflowId": "dup-wf", "name": "Dup", "steps": _STEPS}
-    await client.post("/api/workflows/", json=payload)
-    resp = await client.post("/api/workflows/", json=payload)
-    assert resp.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_patch_workflow_http(client: AsyncClient) -> None:
-    await client.post(
-        "/api/workflows/", json={"workflowId": "patch-wf", "name": "Old", "steps": _STEPS}
-    )
-    resp = await client.patch("/api/workflows/patch-wf", json={"name": "New"})
-    assert resp.status_code == 200
-    assert resp.json()["name"] == "New"
-
-
-@pytest.mark.asyncio
-async def test_delete_workflow_http(client: AsyncClient) -> None:
-    await client.post(
-        "/api/workflows/", json={"workflowId": "rm-wf", "name": "Remove", "steps": _STEPS}
-    )
-    resp = await client.delete("/api/workflows/rm-wf")
-    assert resp.status_code == 204
-    assert (await client.get("/api/workflows/rm-wf")).status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_list_workflow_runs_http(client: AsyncClient) -> None:
-    await client.post(
-        "/api/workflows/", json={"workflowId": "runs-wf", "name": "Runs", "steps": _STEPS}
-    )
-    resp = await client.get("/api/workflows/runs-wf/runs")
-    assert resp.status_code == 200
-    assert resp.json()["runs"] == []
-
-
-@pytest.mark.asyncio
-async def test_latest_workflow_run_not_found(client: AsyncClient) -> None:
-    resp = await client.get("/api/workflows/runs-wf/runs/latest")
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "no_runs"
-
-
-@pytest.mark.asyncio
-async def test_latest_workflow_run_http(client: AsyncClient, db_session: AsyncSession) -> None:
-    async with db_session.begin():
-        await repo.create_workflow(db_session, workflow_id="latest-wf", name="Latest", steps=_STEPS)
-        older = await repo.create_workflow_run(
-            db_session, run_id="older-run", workflow_id="latest-wf", status="completed"
+async def test_workflow_http_surface_deprecated(client: AsyncClient) -> None:
+    for method, path in [
+        ("get", "/api/workflows/"),
+        ("post", "/api/workflows/"),
+        ("get", "/api/workflows/get-wf"),
+        ("patch", "/api/workflows/patch-wf"),
+        ("delete", "/api/workflows/rm-wf"),
+        ("get", "/api/workflows/runs-wf/runs"),
+        ("get", "/api/workflows/runs-wf/runs/latest"),
+    ]:
+        resp = await client.request(
+            method.upper(), path, json={} if method in {"post", "patch"} else None
         )
-        latest = await repo.create_workflow_run(
-            db_session, run_id="latest-run", workflow_id="latest-wf", status="pending"
-        )
-    assert latest.id > older.id
-
-    resp = await client.get("/api/workflows/latest-wf/runs/latest")
-
-    assert resp.status_code == 200
-    assert resp.json()["runId"] == "latest-run"
+        assert resp.status_code == 410
+        body = resp.json()
+        assert body["error"] == "workflows_deprecated"
+        assert body["redirect_to"] == "/api/pipelines"
