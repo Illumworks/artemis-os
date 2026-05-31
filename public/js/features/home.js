@@ -76,8 +76,7 @@ import {
   renderMeetingsPastCanvas as _renderMeetingsPastCanvas,
 } from './meetings.js';
 import { loadAgents } from './agents.js';
-import { loadWorkflows } from './workflows.js';
-import { renderOperationsView, loadSkillsShell, loadAutomationsShell, loadCampaignOpsShell, loadPipelineRunHistoryShell } from './operations-shell.js';
+import { renderOperationsView, loadSkillsShell, loadPipelinesShell, loadPipelineRunHistoryShell } from './operations-shell.js';
 import {
   loadMarketingDashboard,
   loadMarketingCampaigns,
@@ -149,7 +148,7 @@ const WIDE_PAGE_VIEWS = new Set([
   DEFAULT_APP_VIEW, CALENDAR_VIEW, MEETINGS_VIEW, JIRA_VIEW, OKR_VIEW, WRITING_STUDIO_VIEW,
   OPERATIONS_VIEW, MEMORY_VIEW,
   MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SIGNAL_PLAYBOOK_VIEW, MARKETING_SCOUT_RUNS_VIEW,
-  'agents', 'skills', 'workflows', 'automations', PIPELINE_RUN_HISTORY_VIEW,
+  'agents', 'skills', 'pipelines', PIPELINE_RUN_HISTORY_VIEW,
 ]);
 function isWidePageView(view) {
   return WIDE_PAGE_VIEWS.has(view);
@@ -194,14 +193,12 @@ onState('view', (view) => {
       loadMemoryShell();
     } else if (normalizedView === WRITING_STUDIO_VIEW) {
       loadWritingStudio();
-    } else if (normalizedView === 'workflows') {
-      loadWorkflowsShell();
     } else if (normalizedView === 'agents') {
       loadAgentsShell();
     } else if (normalizedView === 'skills') {
       loadSkillsShell();
-    } else if (normalizedView === 'automations') {
-      loadAutomationsShell();
+    } else if (normalizedView === 'pipelines') {
+      loadPipelinesShell();
     } else if (normalizedView === PIPELINE_RUN_HISTORY_VIEW) {
       loadPipelineRunHistoryShell();
     } else if (normalizedView === MARKETING_DASHBOARD_VIEW) {
@@ -502,7 +499,7 @@ function renderShell(view) {
     appShellContent.innerHTML = renderWritingStudioLoading();
     return;
   }
-  if (view === OPERATIONS_VIEW || view === 'agents' || view === 'skills' || view === 'workflows' || view === 'automations' || view === PIPELINE_RUN_HISTORY_VIEW) {
+  if (view === OPERATIONS_VIEW || view === 'agents' || view === 'skills' || view === 'pipelines' || view === PIPELINE_RUN_HISTORY_VIEW) {
     renderOperationsView(view);
     return;
   }
@@ -1758,10 +1755,6 @@ function _collectOkrKrs(container) {
     id: Number(el.dataset.krId),
     title: el.dataset.krTitle || el.querySelector('.okr-kr-title')?.textContent?.trim() || `KR ${el.dataset.krId}`,
   })).filter((kr) => Number.isFinite(kr.id));
-}
-
-async function loadWorkflowsShell() {
-  await loadWorkflows();
 }
 
 async function loadAgentsShell() {
@@ -6044,7 +6037,7 @@ function buildModuleRail() {
     { title: 'Meetings', body: 'Prep, notes, follow-up, and decision extraction surface.', state: 'Read-only', shellView: MEETINGS_VIEW, actionLabel: 'Open Meetings' },
     { title: 'Jira Board', body: 'Operational risk, deadlines, and execution queue entry point.', state: 'Read-only', shellView: 'workspace', shellFocus: 'jira-board', actionLabel: 'Open Jira Board' },
     { title: 'OKR Studio', body: 'Goal health, evidence capture, and update-risk workspace.', state: 'Read-only', shellView: 'workspace', shellFocus: 'okr-studio', actionLabel: 'Open OKR Studio' },
-    { title: 'Campaign Ops', body: 'Marketing campaign portfolio, gates, handoffs, and reporting.', state: 'Preview', shellView: 'automations', actionLabel: 'Open Campaign Ops' },
+    { title: 'Pipelines', body: 'Unified orchestration canvas for scheduled, triggered, and multi-step work.', state: 'Live', shellView: 'pipelines', actionLabel: 'Open Pipelines' },
     { title: 'Agents', body: 'Durable worker profiles will live here once the agent surfaces fully settle.', state: 'Deferred', shellView: 'agents', actionLabel: 'Open Agents' },
   ];
 }
@@ -6057,8 +6050,8 @@ function buildOperationsRail() {
   return [
     { title: 'Agents', body: 'Open the dedicated agent roster, profile, and run-health surface.', state: 'Live', shellView: 'agents', actionLabel: 'Open Agents' },
     { title: 'Skills', body: 'Open the approved capability library and proposal review surface.', state: 'Live', shellView: 'skills', actionLabel: 'Open Skills' },
-    { title: 'Workflows', body: 'Open the workflow builder and inspector for saved recipes.', state: 'Live', shellView: 'workflows', actionLabel: 'Open Workflows' },
-    { title: 'Campaign Ops', body: 'Open the marketing campaign portfolio, human gates, rejected repository, and reporting contract.', state: 'Preview', shellView: 'automations', actionLabel: 'Open Campaign Ops' },
+    { title: 'Pipelines', body: 'Open the unified orchestration canvas for trigger nodes, sequential edges, and run state.', state: 'Live', shellView: 'pipelines', actionLabel: 'Open Pipelines' },
+    { title: 'Run History', body: 'Open pipeline execution history, replay links, and terminal run actions.', state: 'Live', shellView: PIPELINE_RUN_HISTORY_VIEW, actionLabel: 'Open Run History' },
     { title: 'Memory', body: 'Open the memory surface for scoped knowledge and cleanup.', state: 'Live', shellView: MEMORY_VIEW, actionLabel: 'Open Memory' },
   ];
 }

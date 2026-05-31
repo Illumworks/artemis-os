@@ -27,11 +27,9 @@ The left rail is collapsible and visible on every page. Items are grouped by cat
 
 | Item | What it does | Key data |
 |---|---|---|
-| **Automations** | Legacy registry of scheduled triggers. **Sunsetting in PIPE6** — automations become Pipelines with trigger nodes. | `automations`, `automation_runs` (OP1) |
 | **Skills** | User-authored capability bundles (markdown + tool list + kind). Attachable to agents. | `skills`, `agent_skills` join |
 | **Pipelines** | The unified orchestration primitive (D6). Visual canvas + AI assistant panel. Replaces Workflows/Chains/DAGs/Automations long-term. | `pipelines`, `pipeline_runs` (PIPE1+PIPE2+PIPE3+PIPE5) |
 | **Agents** | Roster of LLM agents. Tree view (Slug / Custom) + Operating Blueprint + Persona + Linked Connectors. | `agents`, `agent_runs`, `agent_skills`, `agent_connectors` |
-| **Workflows** | Legacy sequential recipes. **Sunsetting in PIPE6** — workflows become Pipelines with sequential edges. | `workflows`, `workflow_runs` |
 | **Memory** | Memory layer surface (raw_inputs, observations, conflicts). UI HTTP routes partial; full surface is queued. | `raw_inputs`, `observations`, `entities`, `memory_conflicts` (Memory-M2) |
 
 ### Marketing
@@ -127,8 +125,13 @@ Connections (account popup) ← Read from: connectors (encrypted credentials)
 - **Integrations / Connectors are NOT under Operations.** They're in the account popup → Connections.
 - **Approval Queue and Signals Inbox are different gates.** Signals Inbox = Gate 1 (signal-level approval). Approval Queue = Gate 2 (draft-level approval).
 - **The Pipeline AI Assistant is NOT the Floating Artemis.** AI Assistant is pipeline-scoped (sidebar inside canvas). Floating Artemis is workspace-scoped (persistent across pages).
-- **Pipelines REPLACE Workflows/Automations long-term.** Both still appear in left rail during transition; PIPE6 sunsets them.
+- **Pipelines replaced Workflows/Automations in PIPE6.** Legacy routes return 410 with a redirect hint to `/api/pipelines`.
 - **The "Builder" surface (Agent Builder) is for AGENTS only.** Pipelines have their own inline AI Assistant (different mental model).
+
+## Deprecated surfaces (sunset in PIPE6, 2026-05-30)
+
+- **Automations** — never had production usage. Routes return 410. Empty tables preserved per lossless invariant. Use Pipelines with trigger nodes instead.
+- **Workflows** — light usage (1 workflow + 3 runs migrated to Pipelines via migration 0053). Routes return 410. Rows preserved per lossless invariant. Use Pipelines with sequential edges instead.
 
 ---
 

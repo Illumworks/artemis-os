@@ -9,8 +9,6 @@ Tests:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,75 +120,16 @@ async def test_cancel_run(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_endpoint_approval_policy_no_dispatch(client: AsyncClient) -> None:
-    """POST /api/automations/{id}/run with approval policy returns awaiting_approval."""
-    import artemis.automations.models  # noqa: F401
-
-    # First create an automation via the API
-    create_resp = await client.post(
-        "/api/automations/",
-        json={
-            "name": "Policy Run",
-            "triggerType": "manual",
-            "targetType": "agent",
-            "targetId": "nonexistent-agent",
-            "approvalPolicy": {"required": True},
-        },
-    )
-    assert create_resp.status_code == 201, create_resp.text
-    auto_id = create_resp.json()["id"]
-
-    run_resp = await client.post(f"/api/automations/{auto_id}/run", json={})
-    assert run_resp.status_code == 202, run_resp.text
-    data = run_resp.json()
-    assert data["status"] == "awaiting_approval"
-    assert data["targetRunId"] is None
-
-
-@pytest.mark.asyncio
-async def test_resume_endpoint(client: AsyncClient) -> None:
-    """POST /api/automation-runs/{id}/resume transitions awaiting_approval → queued."""
-    create_resp = await client.post(
-        "/api/automations/",
-        json={
-            "name": "Resume Test",
-            "triggerType": "manual",
-            "targetType": "agent",
-            "targetId": "stub-agent",
-            "approvalPolicy": {"required": True},
-        },
-    )
-    auto_id = create_resp.json()["id"]
-
-    run_resp = await client.post(f"/api/automations/{auto_id}/run", json={})
-    run_id = run_resp.json()["id"]
-
-    with patch(
-        "artemis.automations.routes._dispatch_in_background",
-        new_callable=AsyncMock,
-    ):
-        resume_resp = await client.post(f"/api/automation-runs/{run_id}/resume")
-    assert resume_resp.status_code == 202, resume_resp.text
-    assert resume_resp.json()["status"] == "queued"
-
-
-@pytest.mark.asyncio
-async def test_cancel_endpoint(client: AsyncClient) -> None:
-    """POST /api/automation-runs/{id}/cancel sets status=cancelled."""
-    create_resp = await client.post(
-        "/api/automations/",
-        json={
-            "name": "Cancel Test",
-            "triggerType": "manual",
-            "targetType": "agent",
-            "targetId": "stub-agent",
-            "approvalPolicy": {"required": True},
-        },
-    )
-    auto_id = create_resp.json()["id"]
-    run_resp = await client.post(f"/api/automations/{auto_id}/run", json={})
-    run_id = run_resp.json()["id"]
-
-    cancel_resp = await client.post(f"/api/automation-runs/{run_id}/cancel")
-    assert cancel_resp.status_code == 200, cancel_resp.text
-    assert cancel_resp.json()["status"] == "cancelled"
+async def test_automation_http_surface_deprecated(client: AsyncClient) -> None:
+    """Legacy automation HTTP routes return PIPE6 410 after sunset."""
+    for method, path in [
+        ("post", "/api/automations/"),
+        ("post", "/api/automations/legacy/run"),
+        ("post", "/api/automation-runs/legacy/resume"),
+        ("post", "/api/automation-runs/legacy/cancel"),
+    ]:
+        resp = await client.request(method.upper(), path, json={})
+        assert resp.status_code == 410
+        body = resp.json()
+        assert body["error"] == "automations_deprecated"
+        assert body["redirect_to"] == "/api/pipelines"
