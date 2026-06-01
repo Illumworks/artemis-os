@@ -1,5 +1,13 @@
 # CI2 — Initiation pipeline step + Pydantic proposal + brief_assembler (Stream 2)
 
+> **⚠ UPDATED 2026-06-01.** brief_assembler reads the FULL signal cluster (all signals on the
+> candidate via `campaign_candidate_signals`), not a single signal — and is GROUNDED on the
+> predecessor campaign's brief + collateral (lineage) so it proposes "build on last time,"
+> not from scratch. It may emit **reviewable** refinement suggestions (split/merge a signal) —
+> proposals the operator sees, never silent auto-moves. The LLM never does the grouping
+> (deterministic by district+family). See design doc § "Stream 2: multi-signal grouping +
+> campaign lineage".
+
 **Paste-into:** Codex OR terminal-Lead worker.
 **Recommended Codex model / effort:** `gpt-5.4` · reasoning effort `medium`. Real wiring: a new pipeline step between Gate 1 and content, an extended agent prompt, and a Pydantic proposal schema with registry/territory validation. Some design inference about the pipeline executor + brief_assembler — use the flagship.
 **Target branch:** `worker/ci2-initiation-step`

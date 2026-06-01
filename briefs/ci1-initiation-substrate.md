@@ -1,5 +1,19 @@
 # CI1 — Campaign initiation substrate + deliverable-type registry (Stream 2)
 
+> **⚠ UPDATED 2026-06-01 — multi-signal grouping + lineage (authoritative spec in
+> `docs/campaign-initiation-and-district-design.md` § "Stream 2: multi-signal grouping +
+> campaign lineage").** CI1 substrate now ALSO includes:
+> 1. **`campaign_candidate_signals`** many-to-many join (signal↔candidate, `is_primary` flag,
+>    `attached_at`) — a campaign records ALL its constituent signals, not just one.
+> 2. **Cluster-or-create** logic: a newly-qualified signal attaches to an OPEN candidate
+>    (not initiated, not rejected) for the same `resolved_district + campaign_family` within a
+>    **90-day** window; else creates a new candidate. Runs at qualification time.
+> 3. **`campaign_candidates.predecessor_id`** lineage link (fresh candidate per campaign, but
+>    knows its predecessor for the same district+family).
+> 4. **Clustering window = editable config** (Signal Playbook, mirroring `district_tier_bands`)
+>    — NOT hardcoded.
+> Locked knobs G-1..G-4 + lineage are in the design doc. Build alongside the columns/registry below.
+
 **Paste-into:** Codex OR terminal-Lead worker.
 **Recommended Codex model / effort:** `gpt-5.4-mini` · reasoning effort `low`. Pure substrate: columns + a small registry table + seed + repository helpers + tests. No design judgment.
 **Target branch:** `worker/ci1-initiation-substrate`

@@ -1,5 +1,13 @@
 # CI3 — Campaign Initiation UI form (Stream 2)
 
+> **⚠ UPDATED 2026-06-01.** The initiation form surfaces (a) the candidate's FULL signal
+> cluster (all corroborating signals, primary flagged) with add/remove, and (b) **prior
+> campaigns** for the same district+family (lineage) with **view / clone / adapt** affordances
+> on their collateral — prior brief, Writing Studio drafts, `content_assets` — so the operator
+> starts from "what we did last time," not a blank page. Past **results/outcomes** are a
+> documented FUTURE capability (collateral reuse only in v1). See design doc § "Stream 2:
+> multi-signal grouping + campaign lineage".
+
 **Paste-into:** Codex OR terminal-Lead worker.
 **Recommended Codex model / effort:** `gpt-5.4-mini` · reasoning effort `medium`. UI form wired to existing endpoints + the CI2 proposal; mirrors existing approval/review UI patterns. Some inference about the marketing-os.js structure.
 **Target branch:** `worker/ci3-initiation-ui`
