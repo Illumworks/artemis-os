@@ -224,6 +224,7 @@ class CampaignCandidate(Base):
     deliverables: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
     objective: Mapped[str | None] = mapped_column(Text, nullable=True)
+    initiation_proposal_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     target_scope_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     deliverable_types_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     initiated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

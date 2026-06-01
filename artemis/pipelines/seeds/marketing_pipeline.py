@@ -3,9 +3,10 @@ from __future__ import annotations
 from json import dumps
 from typing import Any
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.models import DeliverableType
 from artemis.pipelines.schemas import PipelineCreate
 
 PIPELINE_ID = "marketing.main"
@@ -19,11 +20,8 @@ DOWNSTREAM = (
     ("marketing.content.writing_studio_adapter", "content_writing_studio_adapter", 1100),
 )
 AGENT_IDS = tuple([f"marketing.scout.{slug}" for slug in SCOUT_SLUGS] + [d[0] for d in DOWNSTREAM])
-DELIVERABLES = (
-    ("deliverable_email", "Email Draft", "email", 420),
-    ("deliverable_social", "Social Draft", "social", 640),
-    ("deliverable_long_form", "Long-Form Draft", "long_form", 860),
-    ("deliverable_landing_page", "Landing-Page Draft", "landing_page", 1080),
+_DEFAULT_ACTIVE_DELIVERABLES = (
+    {"slug": "outreach_email", "label": "Outreach Email", "display_order": 1},
 )
 
 
@@ -42,7 +40,7 @@ def _agent_node(agent_id: str, node_id: str, x: int, y: int) -> dict[str, Any]:
     }
 
 
-def _deliverable_node(node_id: str, label: str, deliverable_type: str, x: int) -> dict[str, Any]:
+def _deliverable_node(node_id: str, label: str, deliverable_slug: str, x: int) -> dict[str, Any]:
     return {
         "id": node_id,
         "type": "agent_invocation",
@@ -50,14 +48,33 @@ def _deliverable_node(node_id: str, label: str, deliverable_type: str, x: int) -
         "config": {
             "agent_id": "marketing.content.writing_studio_adapter",
             "mode": "scheduled",
-            "deliverable_type": deliverable_type,
+            "deliverable_type_slug": deliverable_slug,
             "cost_cap_usd": 1.0,
         },
         "position": {"x": float(x), "y": 1260.0},
     }
 
 
-def build_marketing_pipeline() -> dict[str, Any]:
+def _deliverable_definitions(
+    deliverable_types: list[dict[str, Any]] | None = None,
+) -> list[tuple[str, str, str, int]]:
+    rows = deliverable_types or list(_DEFAULT_ACTIVE_DELIVERABLES)
+    ordered = sorted(rows, key=lambda row: int(row.get("display_order", 0)))
+    return [
+        (
+            f"deliverable_{row['slug']}",
+            str(row.get("label") or row["slug"]).title(),
+            str(row["slug"]),
+            420 + (i * 220),
+        )
+        for i, row in enumerate(ordered)
+    ]
+
+
+def build_marketing_pipeline(
+    deliverable_types: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    deliverables = _deliverable_definitions(deliverable_types)
     nodes: list[dict[str, Any]] = [
         {
             "id": "trigger_scheduled",
@@ -89,10 +106,25 @@ def build_marketing_pipeline() -> dict[str, Any]:
             "position": {"x": 800.0, "y": 690.0},
         }
     )
-    nodes += [_agent_node(agent_id, node_id, 800, y) for agent_id, node_id, y in DOWNSTREAM[2:]]
+    nodes.append(_agent_node(DOWNSTREAM[2][0], DOWNSTREAM[2][1], 800, DOWNSTREAM[2][2]))
+    nodes[-1]["config"]["propose_initiation"] = True
+    nodes.append(
+        {
+            "id": "gate_campaign_initiation",
+            "type": "human_gate",
+            "label": "Campaign Initiation Confirm",
+            "config": {
+                "approval_kind": "campaign_initiation",
+                "approvers": ["josh@amiralearning.com", "angela@amiralearning.com"],
+                "timeout_hours": 72,
+            },
+            "position": {"x": 800.0, "y": 960.0},
+        }
+    )
+    nodes += [_agent_node(agent_id, node_id, 800, y) for agent_id, node_id, y in DOWNSTREAM[3:]]
     nodes += [
-        _deliverable_node(node_id, label, deliverable_type, x)
-        for node_id, label, deliverable_type, x in DELIVERABLES
+        _deliverable_node(node_id, label, deliverable_slug, x)
+        for node_id, label, deliverable_slug, x in deliverables
     ]
     nodes.append(
         {
@@ -111,12 +143,20 @@ def build_marketing_pipeline() -> dict[str, Any]:
     )
 
     scouts = [f"scout_{slug}" for slug in SCOUT_SLUGS]
-    linear = "qualifier_cross_reference qualifier_brief_composer gate_1_signals_inbox content_brief_assembler content_asset_selector content_writing_studio_adapter".split()  # noqa: SIM905
+    linear = [
+        "qualifier_cross_reference",
+        "qualifier_brief_composer",
+        "gate_1_signals_inbox",
+        "content_brief_assembler",
+        "gate_campaign_initiation",
+        "content_asset_selector",
+        "content_writing_studio_adapter",
+    ]
     pairs = [("trigger_scheduled", scout) for scout in scouts]
     pairs += [(scout, "qualifier_cross_reference") for scout in scouts]
     pairs += list(zip(linear, linear[1:], strict=False))
-    pairs += [("content_writing_studio_adapter", node_id) for node_id, *_ in DELIVERABLES]
-    pairs += [(node_id, "gate_2_approval_drawer") for node_id, *_ in DELIVERABLES]
+    pairs += [("content_writing_studio_adapter", node_id) for node_id, *_ in deliverables]
+    pairs += [(node_id, "gate_2_approval_drawer") for node_id, *_ in deliverables]
     edges = [
         {
             "id": f"edge_{source}_to_{target}",
@@ -155,7 +195,16 @@ async def seed_marketing_pipeline(session: AsyncSession) -> dict[str, Any]:
             "Run scripts/seed_marketing_agents.py; missing agent_ids: " + ", ".join(missing)
         )
 
-    row = build_marketing_pipeline()
+    deliverable_rows = await session.execute(
+        select(DeliverableType)
+        .where(DeliverableType.active.is_(True))
+        .order_by(DeliverableType.display_order, DeliverableType.id)
+    )
+    deliverable_types = [
+        {"slug": row.slug, "label": row.label, "display_order": row.display_order}
+        for row in deliverable_rows.scalars().all()
+    ]
+    row = build_marketing_pipeline(deliverable_types)
     cursor = await session.execute(
         text(
             """

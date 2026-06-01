@@ -12,7 +12,7 @@ Tests:
 9. Integration: cost cap halts executor + partial_complete status
 10. Integration: timeout auto_approve fires audit entry + continues
 11. Integration: escalation flow (timeout → escalation_to DM)
-12. Smoke: marketing pipeline end-to-end (21 nodes, mocked agents + Slack)
+12. Smoke: marketing pipeline end-to-end (CI2 graph, mocked agents + Slack)
 """
 
 from __future__ import annotations
@@ -884,8 +884,8 @@ async def test_escalation_timeout_sends_audit_and_updates_state(db_session: Asyn
 # ── 12. Smoke: marketing pipeline end-to-end ─────────────────────────────────
 
 
-async def test_marketing_pipeline_traverses_21_nodes(db_session: AsyncSession) -> None:
-    """Smoke test: 21-node marketing pipeline traverses all nodes.
+async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) -> None:
+    """Smoke test: CI2 marketing pipeline traverses the initiation gate flow.
 
     Mocks all agent invocations and Slack DMs.
     Gate 1 and Gate 2 suspend → then resume with approved decision.
@@ -898,7 +898,7 @@ async def test_marketing_pipeline_traverses_21_nodes(db_session: AsyncSession) -
 
     await _reset(db_session)
 
-    # Insert the 21 marketing agents (minimal stubs)
+    # Insert the marketing agents (minimal stubs)
     async with db_session.begin():
         await db_session.execute(
             text(
@@ -911,7 +911,7 @@ async def test_marketing_pipeline_traverses_21_nodes(db_session: AsyncSession) -
 
     # Seed marketing pipeline
     result = await seed_marketing_pipeline(db_session)
-    assert result["node_count"] == 21
+    assert result["node_count"] == 19
 
     async with db_session.begin():
         run = await repo.create_pipeline_run(
@@ -975,7 +975,7 @@ async def test_marketing_pipeline_traverses_21_nodes(db_session: AsyncSession) -
         ns["gate_1_signals_inbox"]["decided_by"] = "test@example.com"
         await repo.update_pipeline_run(db_session, run_id, node_states=ns, status="running")
 
-    # Second pass: runs from gate_1 onwards until gate_2 suspends
+    # Second pass: runs from gate_1 onwards until the initiation gate suspends
     with (
         patch(
             "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
@@ -997,17 +997,17 @@ async def test_marketing_pipeline_traverses_21_nodes(db_session: AsyncSession) -
     async with db_session.begin():
         run_obj = await repo.get_pipeline_run(db_session, run_id)
         ns = run_obj.node_states
-        assert ns.get("gate_2_approval_drawer", {}).get("status") == "suspended", (
-            f"Expected gate_2 suspended; got {ns.get('gate_2_approval_drawer')}"
+        assert ns.get("gate_campaign_initiation", {}).get("status") == "suspended", (
+            f"Expected initiation gate suspended; got {ns.get('gate_campaign_initiation')}"
         )
 
-        # Approve gate_2
-        ns["gate_2_approval_drawer"]["decision"] = "approved"
-        ns["gate_2_approval_drawer"]["decided_at"] = "2026-05-22T01:00:00+00:00"
-        ns["gate_2_approval_drawer"]["decided_by"] = "test@example.com"
+        # Approve initiation gate
+        ns["gate_campaign_initiation"]["decision"] = "approved"
+        ns["gate_campaign_initiation"]["decided_at"] = "2026-05-22T00:30:00+00:00"
+        ns["gate_campaign_initiation"]["decided_by"] = "test@example.com"
         await repo.update_pipeline_run(db_session, run_id, node_states=ns, status="running")
 
-    # Third pass: completes remaining nodes
+    # Third pass: runs until gate_2 suspends
     with (
         patch(
             "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
@@ -1027,28 +1027,51 @@ async def test_marketing_pipeline_traverses_21_nodes(db_session: AsyncSession) -
             await executor3.run(db_session)
 
     async with db_session.begin():
+        run_obj = await repo.get_pipeline_run(db_session, run_id)
+        ns = run_obj.node_states
+        assert ns.get("gate_2_approval_drawer", {}).get("status") == "suspended", (
+            f"Expected gate_2 suspended; got {ns.get('gate_2_approval_drawer')}"
+        )
+
+        ns["gate_2_approval_drawer"]["decision"] = "approved"
+        ns["gate_2_approval_drawer"]["decided_at"] = "2026-05-22T01:00:00+00:00"
+        ns["gate_2_approval_drawer"]["decided_by"] = "test@example.com"
+        await repo.update_pipeline_run(db_session, run_id, node_states=ns, status="running")
+
+    # Fourth pass: completes remaining nodes
+    with (
+        patch(
+            "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
+            new=_mock_execute_agent_node,
+        ),
+        patch(
+            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "artemis.pipelines.node_executors.human_gate_executor._schedule_timeout",
+            return_value=None,
+        ),
+    ):
+        async with db_session.begin():
+            executor4 = PipelineExecutor(run_id)
+            await executor4.run(db_session)
+
+    async with db_session.begin():
         final = await repo.get_pipeline_run(db_session, run_id)
         assert final.status == "succeeded", (
             f"Expected succeeded; got {final.status}; error={final.error_message}"
         )
         ns = final.node_states
-        # All 21 node IDs should be in node_states (trigger + 9 scouts + 5 downstream + 2 gates + 4 deliverables)
         total_nodes = len([k for k in ns if not k.startswith("_")])
-        assert total_nodes == 21, (
-            f"Expected 21 nodes in state, got {total_nodes}: {list(ns.keys())}"
+        assert total_nodes == 19, (
+            f"Expected 19 nodes in state, got {total_nodes}: {list(ns.keys())}"
         )
-
-        # Spot-check specific nodes
         assert ns["trigger_scheduled"]["status"] == "succeeded"
         assert ns["gate_1_signals_inbox"]["status"] == "succeeded"
+        assert ns["gate_campaign_initiation"]["status"] == "succeeded"
         assert ns["gate_2_approval_drawer"]["status"] == "succeeded"
-        for deliverable in (
-            "deliverable_email",
-            "deliverable_social",
-            "deliverable_long_form",
-            "deliverable_landing_page",
-        ):
-            assert ns[deliverable]["status"] == "succeeded", f"{deliverable} not succeeded"
+        assert ns["deliverable_outreach_email"]["status"] == "succeeded"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
