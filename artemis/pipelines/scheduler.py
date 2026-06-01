@@ -193,9 +193,14 @@ def _deregister_job(scheduler: AsyncIOScheduler, job_id: str) -> None:
 
 
 async def _fire_scheduled_pipeline(pipeline_id: str) -> None:
-    """APScheduler callback: create a run and dispatch executor for a scheduled trigger."""
+    """APScheduler callback: create a run and dispatch the executor subprocess.
+
+    #103: executor runs out-of-process so a crashing agent_invocation node
+    cannot take down the web app. The cron tick stays in-loop (just creates
+    the row + spawns); execution happens in ``python -m
+    artemis.pipelines.run_cli <run_id>``.
+    """
     from artemis.pipelines import repository as repo
-    from artemis.pipelines.executor import PipelineExecutor
 
     async with _db.SessionLocal() as session:
         try:
@@ -221,13 +226,18 @@ async def _fire_scheduled_pipeline(pipeline_id: str) -> None:
                 triggered_by="scheduler",
             )
             await session.commit()
-
-            executor = PipelineExecutor(run.id)
-            await executor.run(session)
-            await session.commit()
+            run_id = run.id
         except Exception:
             logger.exception("Scheduled pipeline run failed: pipeline=%s", pipeline_id)
             await session.rollback()
+            return
+
+    # Dispatch via routes._dispatch_execution so the spawn + reaper logic
+    # lives in exactly one place. The reaper retains a strong reference to
+    # the subprocess task for the lifetime of the run.
+    from artemis.pipelines.routes import _dispatch_execution
+
+    _dispatch_execution(run_id)
 
 
 async def sweep_orphaned_queued_runs(threshold_minutes: int = 5) -> int:
@@ -272,31 +282,33 @@ async def sweep_orphaned_queued_runs(threshold_minutes: int = 5) -> int:
 
 
 async def _recover_interrupted_runs() -> None:
-    """On startup, resume any pipeline runs that were in-flight when the server stopped."""
+    """On startup, resume any pipeline runs that were in-flight when the server stopped.
+
+    #103: each interrupted run is re-dispatched as a subprocess so a crashing
+    executor cannot take down the freshly started web app.
+    """
     from sqlalchemy import select
 
-    from artemis.pipelines.executor import PipelineExecutor
     from artemis.pipelines.models import PipelineRun
+    from artemis.pipelines.routes import _dispatch_execution
 
     async with _db.SessionLocal() as session:
         try:
             result = await session.execute(
-                select(PipelineRun).where(PipelineRun.status.in_(["running", "queued"]))
+                select(PipelineRun.id).where(PipelineRun.status.in_(["running", "queued"]))
             )
-            interrupted = list(result.scalars().all())
-
-            if interrupted:
-                logger.info(
-                    "Recovering %d interrupted pipeline run(s) on startup", len(interrupted)
-                )
-
-            for run in interrupted:
-                try:
-                    executor = PipelineExecutor(run.id)
-                    await executor.run(session)
-                    await session.commit()
-                except Exception:
-                    logger.exception("Failed to recover pipeline run %s", run.id)
-                    await session.rollback()
+            interrupted_ids = [row for row in result.scalars().all()]
         except Exception:
             logger.exception("Failed to load interrupted pipeline runs for recovery")
+            return
+
+    if interrupted_ids:
+        logger.info(
+            "Recovering %d interrupted pipeline run(s) on startup", len(interrupted_ids)
+        )
+
+    for run_id in interrupted_ids:
+        try:
+            _dispatch_execution(run_id)
+        except Exception:
+            logger.exception("Failed to re-dispatch pipeline run %s", run_id)

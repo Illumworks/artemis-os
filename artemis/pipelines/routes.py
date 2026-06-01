@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -76,16 +78,75 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 # ── Dispatch registry ─────────────────────────────────────────────────────────
-# asyncio holds only a WEAK reference to fire-and-forget tasks, so an
-# unreferenced task can be garbage-collected before it finishes. This set
-# keeps a STRONG reference for the lifetime of each execution; the
-# done-callback removes the entry so the set doesn't leak.
+# #103: pipeline runs execute OUT-OF-PROCESS via ``python -m
+# artemis.pipelines.run_cli <run_id>`` so a crashing agent_invocation node
+# (claude grandchild, semaphore leak, etc.) can never take down the
+# FastAPI web app — the same fix #102 applied to scheduled scouts.
+#
+# A background reaper task awaits the subprocess so zombies don't pile up
+# and the returncode is logged. asyncio holds only a WEAK reference to
+# fire-and-forget tasks, so this set keeps a STRONG reference for the
+# lifetime of each reaper; the done-callback removes the entry so the set
+# doesn't leak. Pipeline runs can run for many minutes, so there is no
+# wall-clock kill — the run owns its own lifecycle (gate timeouts already
+# handled by the scheduler).
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+
+# Repo root — passed as cwd so the subprocess inherits the same project
+# layout regardless of where uvicorn was launched from.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+async def _reap_run_subprocess(run_id: str, proc: asyncio.subprocess.Process) -> None:
+    """Await a dispatched run subprocess, log its returncode + tail."""
+    try:
+        stdout, _ = await proc.communicate()
+    except Exception:
+        logger.exception("pipeline run %s: subprocess communicate() failed", run_id)
+        return
+
+    tail = (stdout or b"").decode(errors="replace").strip().splitlines()[-1:] if stdout else []
+    last_line = tail[0] if tail else "(no output)"
+    if proc.returncode == 0:
+        logger.info(
+            "pipeline run %s: subprocess exit=0 last_line=%s", run_id, last_line
+        )
+    else:
+        logger.warning(
+            "pipeline run %s: subprocess exit=%s last_line=%s",
+            run_id,
+            proc.returncode,
+            last_line,
+        )
 
 
 def _dispatch_execution(run_id: str) -> None:
-    """Create a background executor task and retain it until it completes."""
-    task: asyncio.Task[None] = asyncio.create_task(_execute_pipeline_run(run_id))
+    """Spawn the pipeline run as an isolated subprocess and reap it in the background.
+
+    The pipeline_runs row already exists in the DB before dispatch, so the
+    subprocess only needs the run_id. All state flows through the DB.
+    """
+    # Lazy import so a missing module path during tests doesn't break import time.
+    from artemis.pipelines import run_cli
+
+    argv = [sys.executable, "-m", run_cli.MODULE_NAME, run_id]
+
+    async def _spawn_and_reap() -> None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(_REPO_ROOT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except OSError:
+            logger.exception(
+                "pipeline run %s: failed to spawn subprocess argv=%r", run_id, argv
+            )
+            return
+        await _reap_run_subprocess(run_id, proc)
+
+    task: asyncio.Task[None] = asyncio.create_task(_spawn_and_reap())
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)
 
