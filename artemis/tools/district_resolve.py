@@ -144,12 +144,30 @@ def _expand_abbreviation(normalised: str) -> str:
 
 
 def _bare(normalised: str) -> str:
-    """Strip common district suffixes to allow suffix-insensitive matching."""
+    """Strip common district suffixes + trailing district numbers for matching.
+
+    Many states number their districts (Illinois is ~94% numbered: "River Forest
+    District 90", "Chicago ... Dist 299"; Missouri "Independence 30"). Scouts emit
+    the plain name ("Independence School District") while NCES stores the numbered
+    form, so we strip a trailing district-type token + number here. Collisions
+    (two numbered districts sharing a bare name in one state) are caught safely by
+    the caller's ambiguity guard — a tie returns no-match, never a fabricated pick.
+    """
     result = normalised
+    # Strip a trailing district number, optionally preceded by a type token
+    # (district / dist / cusd / csd / sd / chsd / esd / hsd / unit / no / #).
+    result = re.sub(
+        r"\s+(?:district|dist\.?|cusd|csd|sd|chsd|esd|hsd|unit|no\.?|number|#)?\s*#?\s*\d+$",
+        "",
+        result,
+    ).strip()
     for suffix in _STRIP_SUFFIXES:
         if result.endswith(suffix):
             result = result[: -len(suffix)].strip()
             break
+    # A suffix strip can expose a now-trailing number (e.g. "... schools 30");
+    # peel one more trailing number so both forms converge.
+    result = re.sub(r"\s+#?\s*\d+$", "", result).strip()
     return result
 
 

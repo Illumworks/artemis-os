@@ -464,3 +464,42 @@ async def test_resolve_non_match_still_returns_null_after_suffix_normalization(
     assert result.matched is False
     assert result.district_id is None
     assert result.match_method == "no_match"
+
+
+def _numbered(did: int, name: str, state: str) -> District:
+    return District(
+        id=did,
+        nces_id=f"nces-{did}",
+        name=name,
+        state=state,
+        enrollment=14272,
+        tier="D2",
+        supported=True,
+        on_skip_list=False,
+        classification_source="nces",
+    )
+
+
+def test_resolve_numbered_district_name_variants() -> None:
+    """Numbered district names (MO 'Independence 30', IL '... District 90') match
+    the plain scout form. ~94% of IL districts are numbered, so this is load-bearing."""
+    indep = _numbered(9301, "INDEPENDENCE 30", "MO")
+    river_forest = _numbered(9302, "River Forest SD 90", "IL")
+
+    r1 = resolve_district_from_list("Independence School District", "MO", [indep])
+    assert r1.matched is True
+    assert r1.district_id == 9301
+
+    r2 = resolve_district_from_list("River Forest District 90", "IL", [river_forest])
+    assert r2.matched is True
+    assert r2.district_id == 9302
+
+
+def test_numbered_strip_does_not_fabricate_on_collision() -> None:
+    """Two numbered districts sharing a bare name in one state stay ambiguous —
+    a bare query must NOT fabricate a pick (the no-match guard holds)."""
+    a = _numbered(9401, "Lincoln 1", "NE")
+    b = _numbered(9402, "Lincoln 2", "NE")
+    result = resolve_district_from_list("Lincoln Public Schools", "NE", [a, b])
+    assert result.matched is False
+    assert result.district_id is None
