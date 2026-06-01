@@ -66,6 +66,7 @@ async def execute_agent_node(
     config: dict[str, Any] = node.get("config") or {}
     agent_id: str = config.get("agent_id", "")
     cost_cap: float | None = config.get("cost_cap_usd")
+    deliverable_type_slug = config.get("deliverable_type_slug")
 
     if not agent_id:
         return {
@@ -74,6 +75,35 @@ async def execute_agent_node(
             "output_summary": "",
             "cost_usd": 0.0,
         }
+
+    if config.get("propose_initiation") is True:
+        return await _execute_campaign_initiation_proposal(
+            session=session,
+            run_id=run_id,
+            agent_id=agent_id,
+            model_adapter=model_adapter,
+        )
+
+    if isinstance(deliverable_type_slug, str) and deliverable_type_slug:
+        enabled = await _deliverable_enabled_for_run(session, run_id, deliverable_type_slug)
+        if enabled is False:
+            return {
+                "status": "skipped",
+                "output_summary": (
+                    f"Skipped deliverable '{deliverable_type_slug}': not in confirmed candidate mix"
+                ),
+                "cost_usd": 0.0,
+            }
+        if enabled is None:
+            return {
+                "status": "failed",
+                "error": (
+                    "No initiated candidate found for this pipeline run; "
+                    f"cannot schedule deliverable '{deliverable_type_slug}'"
+                ),
+                "output_summary": "",
+                "cost_usd": 0.0,
+            }
 
     # Build shared context from prior node outputs
     shared_context: dict[str, Any] = {
@@ -200,3 +230,66 @@ async def execute_agent_node(
         "cost_usd": node_cost,
         "agent_run_id": run_uuid,
     }
+
+
+async def _execute_campaign_initiation_proposal(
+    *,
+    session: AsyncSession,
+    run_id: str,
+    agent_id: str,
+    model_adapter: Any | None,
+) -> dict[str, Any]:
+    from artemis.marketing.brief_assembler import propose_campaign_initiation
+    from artemis.marketing.repository import list_run_candidates
+
+    candidates = await list_run_candidates(session, run_id, initiated_only=False)
+    if len(candidates) != 1:
+        return {
+            "status": "failed",
+            "error": (
+                "campaign initiation proposal requires exactly one uninitiated candidate "
+                f"for pipeline run {run_id}; found {len(candidates)}"
+            ),
+            "output_summary": "",
+            "cost_usd": 0.0,
+        }
+
+    result = await propose_campaign_initiation(
+        session,
+        candidates[0].id,
+        model_adapter=model_adapter,
+    )
+    if result.proposal is None:
+        return {
+            "status": "failed",
+            "error": "CampaignInitiationProposal validation failed after retry",
+            "output_summary": "",
+            "cost_usd": 0.0,
+            "candidate_id": candidates[0].id,
+            "proposal_validation_failed": True,
+        }
+
+    return {
+        "status": "succeeded",
+        "output_summary": (
+            f"Proposed campaign initiation for candidate {candidates[0].id}: {result.proposal.name}"
+        ),
+        "cost_usd": 0.0,
+        "candidate_id": candidates[0].id,
+        "proposal": result.proposal.model_dump(mode="json"),
+        "retries_used": result.retries_used,
+        "agent_id": agent_id,
+    }
+
+
+async def _deliverable_enabled_for_run(
+    session: AsyncSession,
+    run_id: str,
+    deliverable_type_slug: str,
+) -> bool | None:
+    from artemis.marketing.repository import list_run_candidates
+
+    candidates = await list_run_candidates(session, run_id, initiated_only=True)
+    if not candidates:
+        return None
+    return deliverable_type_slug in (candidates[0].deliverable_types_json or [])

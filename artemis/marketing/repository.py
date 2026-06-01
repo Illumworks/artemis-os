@@ -9,6 +9,7 @@ conditions that callers should handle. Callers own the commit/rollback.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.marketing.district_classifier import classify_tier, is_supported
-from artemis.marketing.initiation_schemas import TargetScope
+from artemis.marketing.initiation_schemas import CampaignInitiationProposal, TargetScope
 from artemis.marketing.models import (
     Approval,
     CampaignBrief,
@@ -36,6 +37,16 @@ from artemis.marketing.models import (
     TerritoryConfig,
 )
 from artemis.marketing.state_machine import WorkspaceState
+
+
+@dataclass(slots=True)
+class CandidatePredecessorContext:
+    candidate_id: int
+    name: str | None
+    objective: str | None
+    latest_brief: dict[str, Any] | None
+    linked_assets: list[dict[str, Any]]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Signal Queue
@@ -356,6 +367,51 @@ async def get_candidate_signals(
     return list(result.scalars().all())
 
 
+async def get_candidate_signal_rows(session: AsyncSession, candidate_id: int) -> list[SignalQueue]:
+    await get_candidate(session, candidate_id)
+    result = await session.execute(
+        select(SignalQueue)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.signal_id == SignalQueue.id)
+        .where(CampaignCandidateSignal.candidate_id == candidate_id)
+        .order_by(
+            CampaignCandidateSignal.is_primary.desc(),
+            CampaignCandidateSignal.attached_at.asc(),
+            CampaignCandidateSignal.id.asc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_candidate_primary_signal(
+    session: AsyncSession, candidate_id: int
+) -> SignalQueue | None:
+    result = await session.execute(
+        select(SignalQueue)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.signal_id == SignalQueue.id)
+        .where(
+            CampaignCandidateSignal.candidate_id == candidate_id,
+            CampaignCandidateSignal.is_primary.is_(True),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def save_initiation_proposal(
+    session: AsyncSession,
+    candidate_id: int,
+    proposal: CampaignInitiationProposal | dict[str, Any] | None,
+) -> CampaignCandidate:
+    candidate = await get_candidate(session, candidate_id)
+    candidate.initiation_proposal_json = (
+        proposal.model_dump(mode="json")
+        if isinstance(proposal, CampaignInitiationProposal)
+        else proposal
+    )
+    await session.flush()
+    return candidate
+
+
 async def initiate_campaign(
     session: AsyncSession,
     candidate_id: int,
@@ -436,6 +492,65 @@ async def get_campaign_brief(session: AsyncSession, candidate_id: int) -> Campai
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_candidate_predecessor_context(
+    session: AsyncSession,
+    candidate_id: int,
+) -> CandidatePredecessorContext | None:
+    candidate = await get_candidate(session, candidate_id)
+    if candidate.predecessor_id is None:
+        return None
+
+    predecessor = await get_candidate(session, candidate.predecessor_id)
+    latest_brief = await get_campaign_brief(session, predecessor.id)
+    asset_rows = (
+        await session.execute(
+            select(ContentAsset, ContentAssetLink.link_role)
+            .join(ContentAssetLink, ContentAssetLink.asset_id == ContentAsset.id)
+            .where(ContentAssetLink.candidate_id == predecessor.id)
+            .order_by(ContentAsset.id.asc())
+        )
+    ).all()
+
+    return CandidatePredecessorContext(
+        candidate_id=predecessor.id,
+        name=predecessor.name,
+        objective=predecessor.objective,
+        latest_brief=latest_brief.content if latest_brief is not None else None,
+        linked_assets=[
+            {
+                "asset_id": asset.id,
+                "asset_type": asset.asset_type,
+                "summary": asset.summary,
+                "metadata": asset.asset_metadata,
+                "link_role": link_role,
+            }
+            for asset, link_role in asset_rows
+        ],
+    )
+
+
+async def list_run_candidates(
+    session: AsyncSession,
+    pipeline_run_id: str,
+    *,
+    initiated_only: bool | None = None,
+) -> list[CampaignCandidate]:
+    stmt = (
+        select(CampaignCandidate)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.candidate_id == CampaignCandidate.id)
+        .join(SignalQueue, SignalQueue.id == CampaignCandidateSignal.signal_id)
+        .where(SignalQueue.pipeline_run_id == pipeline_run_id)
+        .distinct()
+        .order_by(CampaignCandidate.id.asc())
+    )
+    if initiated_only is True:
+        stmt = stmt.where(CampaignCandidate.initiated_at.is_not(None))
+    elif initiated_only is False:
+        stmt = stmt.where(CampaignCandidate.initiated_at.is_(None))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

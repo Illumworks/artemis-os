@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 _VALID_MODES = ("all_districts", "states", "district_tier", "named_districts")
 _VALID_TIERS = ("D1", "D2", "D3", "D4")
@@ -123,3 +123,55 @@ class TargetScope(BaseModel):
         if not self.district_ids:
             raise ValueError("named_districts mode requires a non-empty district_ids list")
         return self
+
+
+class CampaignInitiationProposal(BaseModel):
+    """LLM-proposed campaign identity + scope, pending operator confirmation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    objective: str = Field(min_length=1, max_length=500)
+    recommended_deliverable_types: list[str] = Field(min_length=1)
+    target_scope: TargetScope
+    rationale: str | None = None
+
+    @field_validator("recommended_deliverable_types")
+    @classmethod
+    def _validate_recommended_deliverable_types(
+        cls,
+        value: list[str],
+        info: ValidationInfo,
+    ) -> list[str]:
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        if not normalized:
+            raise ValueError("recommended_deliverable_types must contain at least one slug")
+
+        active_slugs = sorted(
+            {
+                str(slug).strip()
+                for slug in (info.context or {}).get("active_deliverable_slugs", [])
+                if str(slug).strip()
+            }
+        )
+        if active_slugs:
+            invalid = sorted(slug for slug in normalized if slug not in active_slugs)
+            if invalid:
+                raise ValueError(
+                    "recommended_deliverable_types must be active deliverable type slugs. "
+                    f"Invalid: {', '.join(invalid)}. "
+                    f"Active: {', '.join(active_slugs)}"
+                )
+
+        return normalized
+
+    @classmethod
+    def validate_with_active_slugs(
+        cls,
+        value: Any,
+        active_deliverable_slugs: list[str],
+    ) -> CampaignInitiationProposal:
+        return cls.model_validate(
+            value,
+            context={"active_deliverable_slugs": list(active_deliverable_slugs)},
+        )

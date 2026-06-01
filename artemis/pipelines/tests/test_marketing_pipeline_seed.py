@@ -54,42 +54,32 @@ async def test_seed_loads_idempotently_and_writes_expected_graph(
     node_ids = {node["id"] for node in nodes}
     nodes_by_id = {node["id"]: node for node in nodes}
     agent_ids = [node["config"]["agent_id"] for node in nodes if node["type"] == "agent_invocation"]
-    deliverable_ids = {
-        "deliverable_email",
-        "deliverable_social",
-        "deliverable_long_form",
-        "deliverable_landing_page",
-    }
+    deliverable_ids = {"deliverable_outreach_email"}
 
     assert (first["inserted"], second["inserted"]) == (1, 0)
     assert row["created_at"] == created_at and row["owner_user_id"] is None
     assert row["name"] == "Marketing Pipeline"
     assert row["trigger_config"] == TRIGGER_CONFIG
-    assert len(nodes) == 21 and len(edges) == 31
+    assert len(nodes) == 19 and len(edges) == 26
     assert set(agent_ids) == set(AGENT_IDS)
     assert {
         "trigger_scheduled": "trigger_scheduled",
         "gate_1_signals_inbox": "human_gate",
+        "gate_campaign_initiation": "human_gate",
         "gate_2_approval_drawer": "human_gate",
     }.items() <= {node["id"]: node["type"] for node in nodes}.items()
     assert deliverable_ids <= node_ids
     assert nodes_by_id["qualifier_cross_reference"]["label"] == "Cross-Reference (Phase 1→2→3)"
-    assert {nodes_by_id[node_id]["config"]["deliverable_type"] for node_id in deliverable_ids} == {
-        "email",
-        "social",
-        "long_form",
-        "landing_page",
+    assert {
+        nodes_by_id[node_id]["config"]["deliverable_type_slug"] for node_id in deliverable_ids
+    } == {
+        "outreach_email",
     }
     assert [
         edge["target_node_id"]
         for edge in edges
         if edge["source_node_id"] == "content_writing_studio_adapter"
-    ] == [
-        "deliverable_email",
-        "deliverable_social",
-        "deliverable_long_form",
-        "deliverable_landing_page",
-    ]
+    ] == ["deliverable_outreach_email"]
     assert {
         edge["source_node_id"]
         for edge in edges

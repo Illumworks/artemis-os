@@ -6,6 +6,7 @@
 
 const APPROVAL_KINDS = [
   { value: "signal_brief",     label: "Signal Brief" },
+  { value: "campaign_initiation", label: "Campaign Initiation" },
   { value: "content_draft",    label: "Content Draft" },
   { value: "policy_decision",  label: "Policy Decision" },
   { value: "manual",           label: "Manual / General" },
