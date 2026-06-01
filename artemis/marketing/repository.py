@@ -25,6 +25,7 @@ from artemis.marketing.models import (
     CampaignBrief,
     CampaignCandidate,
     CampaignCandidateSignal,
+    CampaignDeliverable,
     ContentAsset,
     ContentAssetLink,
     DeliverableType,
@@ -46,6 +47,16 @@ class CandidatePredecessorContext:
     objective: str | None
     latest_brief: dict[str, Any] | None
     linked_assets: list[dict[str, Any]]
+
+
+@dataclass(slots=True)
+class CandidateLineageContext:
+    candidate_id: int
+    name: str | None
+    objective: str | None
+    latest_brief: dict[str, Any] | None
+    linked_assets: list[dict[str, Any]]
+    drafts: list[dict[str, Any]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -421,7 +432,7 @@ async def initiate_campaign(
     owner_user_id: int | None,
     target_scope: TargetScope | dict[str, Any],
     deliverable_type_slugs: list[str],
-    initiated_by: int,
+    initiated_by: int | None,
 ) -> CampaignCandidate:
     candidate = await get_candidate(session, candidate_id)
     if candidate.initiated_at is not None:
@@ -529,6 +540,76 @@ async def get_candidate_predecessor_context(
             for asset, link_role in asset_rows
         ],
     )
+
+
+async def get_candidate_lineage_context(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    max_depth: int = 10,
+) -> list[CandidateLineageContext]:
+    """Return the predecessor chain, nearest first, with collateral payloads."""
+    lineage: list[CandidateLineageContext] = []
+    seen: set[int] = set()
+    current = await get_candidate(session, candidate_id)
+    predecessor_id = current.predecessor_id
+
+    while predecessor_id is not None and len(lineage) < max_depth and predecessor_id not in seen:
+        seen.add(predecessor_id)
+        predecessor = await get_candidate(session, predecessor_id)
+        latest_brief = await get_campaign_brief(session, predecessor.id)
+        asset_rows = (
+            await session.execute(
+                select(ContentAsset, ContentAssetLink.link_role)
+                .join(ContentAssetLink, ContentAssetLink.asset_id == ContentAsset.id)
+                .where(ContentAssetLink.candidate_id == predecessor.id)
+                .order_by(ContentAsset.id.asc())
+            )
+        ).all()
+        draft_rows = (
+            (
+                await session.execute(
+                    select(CampaignDeliverable)
+                    .where(CampaignDeliverable.candidate_id == predecessor.id)
+                    .order_by(CampaignDeliverable.created_at.desc(), CampaignDeliverable.id.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        lineage.append(
+            CandidateLineageContext(
+                candidate_id=predecessor.id,
+                name=predecessor.name,
+                objective=predecessor.objective,
+                latest_brief=latest_brief.content if latest_brief is not None else None,
+                linked_assets=[
+                    {
+                        "asset_id": asset.id,
+                        "asset_type": asset.asset_type,
+                        "summary": asset.summary,
+                        "metadata": asset.asset_metadata,
+                        "link_role": link_role,
+                    }
+                    for asset, link_role in asset_rows
+                ],
+                drafts=[
+                    {
+                        "draft_id": draft.id,
+                        "deliverable_id": draft.deliverable_id,
+                        "campaign_id": draft.campaign_id,
+                        "status": draft.status,
+                        "metadata": draft.deliverable_metadata,
+                    }
+                    for draft in draft_rows
+                ],
+            )
+        )
+
+        predecessor_id = predecessor.predecessor_id
+
+    return lineage
 
 
 async def list_run_candidates(

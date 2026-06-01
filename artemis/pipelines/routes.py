@@ -41,6 +41,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from artemis.db import get_session
 from artemis.marketing.routes._auth import require_token
@@ -517,6 +518,61 @@ class ResumeRunRequest(BaseModel):
     actor: str  # email of the human who decided
 
 
+async def _prepare_pipeline_resume(
+    session: AsyncSession,
+    run_id: str,
+    *,
+    node_id: str,
+    decision: str,
+    actor: str,
+) -> tuple[Any, dict[str, Any]]:
+    """Validate + stage a gate resume without committing.
+
+    Shared by the PIPE4 HTTP resume route and the marketing initiation confirm
+    route so both seams honor the same gate-release contract.
+    """
+    try:
+        run = await repo.get_pipeline_run(session, run_id)
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_run_not_found") from exc
+
+    if run.status not in ("awaiting_approval", "running"):
+        raise bad_request(
+            f"Run '{run_id}' is not awaiting approval (status={run.status})",
+            "pipeline_run_not_awaiting_approval",
+        )
+
+    if decision not in ("approved", "rejected"):
+        raise bad_request(
+            f"decision must be 'approved' or 'rejected', got {decision!r}",
+            "invalid_decision",
+        )
+
+    node_states: dict[str, Any] = dict(run.node_states or {})
+    gate_state = node_states.get(node_id)
+    if not gate_state or not isinstance(gate_state, dict):
+        raise bad_request(
+            f"node_id '{node_id}' not found in node_states for run '{run_id}'",
+            "gate_node_not_found",
+        )
+
+    if gate_state.get("status") not in ("suspended", "running"):
+        raise bad_request(
+            f"Gate '{node_id}' is not suspended (status={gate_state.get('status')})",
+            "gate_not_suspended",
+        )
+
+    gate_state["decision"] = decision
+    gate_state["decided_at"] = datetime.now(UTC).isoformat()
+    gate_state["decided_by"] = actor
+    node_states[node_id] = gate_state
+    run.node_states = node_states
+    flag_modified(run, "node_states")
+    run.status = "running"
+    await session.flush()
+    return run, gate_state
+
+
 @router.post("/api/pipeline-runs/{run_id}/resume", status_code=200)
 async def resume_run(
     run_id: str,
@@ -530,46 +586,13 @@ async def resume_run(
     3. Cancels the scheduled timeout job for this gate.
     4. Re-dispatches the executor in background to continue from next node.
     """
-    from datetime import UTC, datetime  # noqa: PLC0415
-
-    try:
-        run = await repo.get_pipeline_run(session, run_id)
-    except ValueError as exc:
-        raise not_found(str(exc), "pipeline_run_not_found")  # noqa: B904
-
-    if run.status not in ("awaiting_approval", "running"):
-        raise bad_request(
-            f"Run '{run_id}' is not awaiting approval (status={run.status})",
-            "pipeline_run_not_awaiting_approval",
-        )
-
-    if body.decision not in ("approved", "rejected"):
-        raise bad_request(
-            f"decision must be 'approved' or 'rejected', got {body.decision!r}",
-            "invalid_decision",
-        )
-
-    node_states: dict[str, Any] = dict(run.node_states or {})
-    gate_state = node_states.get(body.node_id)
-    if not gate_state or not isinstance(gate_state, dict):
-        raise bad_request(
-            f"node_id '{body.node_id}' not found in node_states for run '{run_id}'",
-            "gate_node_not_found",
-        )
-
-    if gate_state.get("status") not in ("suspended", "running"):
-        raise bad_request(
-            f"Gate '{body.node_id}' is not suspended (status={gate_state.get('status')})",
-            "gate_not_suspended",
-        )
-
-    # Update gate state with human decision
-    gate_state["decision"] = body.decision
-    gate_state["decided_at"] = datetime.now(UTC).isoformat()
-    gate_state["decided_by"] = body.actor
-    node_states[body.node_id] = gate_state
-    run.node_states = node_states
-    run.status = "running"
+    run, _ = await _prepare_pipeline_resume(
+        session,
+        run_id,
+        node_id=body.node_id,
+        decision=body.decision,
+        actor=body.actor,
+    )
     await session.commit()
 
     # Cancel the scheduled timeout job
