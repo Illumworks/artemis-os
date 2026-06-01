@@ -219,6 +219,44 @@ def _build_agent_hooks(run_id: str) -> HookRegistry:
     return hooks
 
 
+def default_agent_instruction(agent_id: str, override: str | None = None) -> str:
+    """Imperative user message that makes an agent act immediately with its tools.
+
+    Autonomous (non-conversational) runs — pipeline ``agent_invocation`` nodes and
+    the scout scheduler — must pass a directive message, or a small model just
+    replies passively and calls no tools. Shared so both call sites stay in sync.
+    A caller-supplied override always wins.
+    """
+    if override:
+        return override
+    if agent_id.startswith("marketing.scout."):
+        return (
+            "Execute your scan NOW. Use your tools: call your fetch tools "
+            "(e.g. news_api.search, state_doe.fetch, board_minutes.fetch) to pull "
+            "current items from your sources, evaluate each against your allowed "
+            "reason codes, and call signal_queue.write for EACH qualifying signal "
+            "(one call per signal). Use reason_codes.get_allowlist if unsure which "
+            "codes you may emit. When done, briefly report how many signals you "
+            "emitted. If nothing qualifies this run, say so explicitly — do not ask "
+            "for clarification; you are running autonomously."
+        )
+    if agent_id.startswith("marketing.qualifier."):
+        return (
+            "Process the pending signals NOW. Use your tools to read context and "
+            "apply your qualification logic. Do not ask for clarification; act "
+            "autonomously and report your result."
+        )
+    if agent_id.startswith("marketing.content."):
+        return (
+            "Assemble your deliverable NOW from the qualified inputs in context. "
+            "Use your tools. Do not ask for clarification; act autonomously."
+        )
+    return (
+        "Execute your task now using your available tools. "
+        "Act autonomously; do not ask for clarification."
+    )
+
+
 async def run_agent(
     *,
     session: AsyncSession,

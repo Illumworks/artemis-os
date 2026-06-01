@@ -9,7 +9,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
 from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import-untyped]
 
-from artemis.marketing.scout_runner import DEFAULT_CADENCE_SECONDS, ScoutMode
+from artemis.marketing.scout_runner import DEFAULT_CADENCE_SECONDS
 from artemis.marketing.seeds.marketing_agents import MARKETING_AGENT_SPECS
 
 logger = logging.getLogger(__name__)
@@ -20,15 +20,58 @@ _SCOUT_AGENT_IDS = [
 
 
 async def _run_scout_job(agent_id: str) -> None:
-    from artemis.db import SessionLocal
-    from artemis.marketing.scout_runner import run_scout
+    # Route scheduled scout runs through the AGENTIC path (run_agent), which uses
+    # the agent's real tools (live news fetch + signal_queue.write) and resolves
+    # the claude-code subscription adapter from the agent's provider field.
+    #
+    # The legacy run_scout path fed off stub source adapters (NullAdapter -> []),
+    # so every scheduled run emitted zero signals while the scheduler logged
+    # "completed" — hollow autonomous production (#101). run_agent is the same
+    # path the marketing pipeline already uses to produce real signals.
+    from sqlalchemy import select
 
+    from artemis.builders.executor import default_agent_instruction, run_agent
+    from artemis.db import SessionLocal
+    from artemis.marketing.models import SignalQueue
+    from artemis.marketing.repository import create_scout_run, update_scout_run
+
+    slug = agent_id.split(".")[-1]
     async with SessionLocal() as session:
         try:
-            result = await run_scout(session, agent_id, ScoutMode.scheduled)
+            run = await run_agent(
+                session=session,
+                agent_id=agent_id,
+                user_message=default_agent_instruction(agent_id),
+            )
+            signal_ids = (
+                (
+                    await session.execute(
+                        select(SignalQueue.id).where(
+                            SignalQueue.provenance["agent_run_id"].astext == run.run_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # Mirror a scout_runs row so the scout-run history + freshness panels
+            # stay accurate now that production flows through run_agent/agent_runs.
+            scout_run = await create_scout_run(
+                session, run_id=f"sched_{run.run_id}", scout_type=slug, status="pending"
+            )
+            await update_scout_run(
+                session,
+                scout_run.id,
+                status="complete" if run.status == "completed" else "failed",
+                created_signal_ids=[str(sid) for sid in signal_ids],
+            )
             await session.commit()
             logger.info(
-                "scout %s: emitted=%d cost=$%.4f", agent_id, result.signals_emitted, result.cost_usd
+                "scout %s: run=%s status=%s emitted=%d",
+                agent_id,
+                run.run_id,
+                run.status,
+                len(signal_ids),
             )
         except Exception:
             await session.rollback()

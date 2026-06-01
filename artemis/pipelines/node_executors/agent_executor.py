@@ -139,37 +139,12 @@ async def execute_agent_node(
                 "cost_usd": 0.0,
             }
 
-    # Synthesize an imperative instruction so the agent acts immediately with its tools.
-    # A per-node override in config["instruction"] wins over the role-based default.
-    instruction = config.get("instruction")
-    if not instruction:
-        if agent_id.startswith("marketing.scout."):
-            instruction = (
-                "Execute your scan NOW. Use your tools: call your fetch tools "
-                "(e.g. news_api.search, state_doe.fetch, board_minutes.fetch) to pull "
-                "current items from your sources, evaluate each against your allowed "
-                "reason codes, and call signal_queue.write for EACH qualifying signal "
-                "(one call per signal). Use reason_codes.get_allowlist if unsure which "
-                "codes you may emit. When done, briefly report how many signals you "
-                "emitted. If nothing qualifies this run, say so explicitly — do not ask "
-                "for clarification; you are running autonomously."
-            )
-        elif agent_id.startswith("marketing.qualifier."):
-            instruction = (
-                "Process the pending signals NOW. Use your tools to read context and "
-                "apply your qualification logic. Do not ask for clarification; act "
-                "autonomously and report your result."
-            )
-        elif agent_id.startswith("marketing.content."):
-            instruction = (
-                "Assemble your deliverable NOW from the qualified inputs in context. "
-                "Use your tools. Do not ask for clarification; act autonomously."
-            )
-        else:
-            instruction = (
-                "Execute your task now using your available tools. "
-                "Act autonomously; do not ask for clarification."
-            )
+    # Imperative instruction that drives immediate tool use (shared with the scout
+    # scheduler so autonomous runs behave identically). A per-node override in
+    # config["instruction"] wins over the role-based default.
+    from artemis.builders.executor import default_agent_instruction
+
+    instruction = default_agent_instruction(agent_id, config.get("instruction"))
 
     # Run the agent
     agent_run = await run_agent(
