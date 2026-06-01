@@ -79,7 +79,10 @@ class ScoutEmittedSignal(BaseModel):
     source_url: str | None = None
     source_title: str | None = None
     campaign_family: str | None = None
-    urgency_tier: Literal["hot", "standard", "low"] = "standard"
+    # Canonical urgency tiers (josh_spec §2). The legacy slug "low" is mapped
+    # to "enrichment" by the model_validator below so an in-flight scout that
+    # still emits the old slug doesn't blow up Pydantic validation.
+    urgency_tier: Literal["hot", "standard", "enrichment"] = "standard"
     reason_codes: list[ReasonCode] = Field(default_factory=list)
     why_flagged: str | None = None
     evidence: str | None = None
@@ -95,6 +98,18 @@ class ScoutEmittedSignal(BaseModel):
             return values
         if "discoveredBy" not in values and "discovered_by" not in values:
             values = {**values, "discoveredBy": ""}
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_legacy_urgency_low(cls, values: Any) -> Any:
+        """Map the legacy 'low' slug to canonical 'enrichment' before Literal check."""
+        if not isinstance(values, dict):
+            return values
+        for key in ("urgencyTier", "urgency_tier"):
+            raw = values.get(key)
+            if isinstance(raw, str) and raw.strip().lower() == "low":
+                values = {**values, key: "enrichment"}
         return values
 
 

@@ -118,6 +118,45 @@ def normalize_campaign_family(value: str | None) -> str | None:
     return _CAMPAIGN_FAMILY_ALIASES.get(str(value).strip().lower())
 
 
+# ── Urgency-tier taxonomy (single source of truth) ───────────────────────────
+# Josh's spec uses three tiers — hot, standard, enrichment — for default
+# urgency and the qualifier's suppress/boost ladder (§2 table, §4.2 suppress
+# "downgrade to enrichment only"). brief_assembler already maps P2 →
+# "enrichment". The legacy `low` slug that lived in scout intake / the tool
+# schema / the Pydantic Literal was never in the spec; it normalizes to
+# `enrichment`. (Resolves the #81 hot/standard/low vs hot/standard/enrichment
+# drift the SP UI was already half-aware of.)
+CANONICAL_URGENCY_TIERS: tuple[str, ...] = (
+    "hot",
+    "standard",
+    "enrichment",
+)
+
+# Maps every known label / canonical slug / legacy alias -> canonical slug.
+# Keys are lowercased/stripped before lookup.
+_URGENCY_TIER_ALIASES: dict[str, str] = {
+    # canonical slugs (pass-through)
+    "hot": "hot",
+    "standard": "standard",
+    "enrichment": "enrichment",
+    # legacy pre-2026-05-31 slug -> canonical
+    "low": "enrichment",
+}
+
+
+def normalize_urgency_tier(value: str | None) -> str | None:
+    """Map any urgency-tier label / slug / legacy alias to its canonical slug.
+
+    Returns None if unrecognized. Case- and whitespace-insensitive. This is
+    the one place urgency-tier strings are reconciled — callers (scout intake,
+    qualifier overrides, UI) should normalize through here rather than
+    hardcode their own tier sets.
+    """
+    if not value:
+        return None
+    return _URGENCY_TIER_ALIASES.get(str(value).strip().lower())
+
+
 def reason_codes_for_scout(spec: JoshSpec, scout_slug: str) -> tuple[ReasonCodeSpec, ...]:
     """Return all reason codes whose primary_scouts contains scout_slug."""
     return tuple(row for row in spec.reason_codes if scout_slug in row.primary_scouts)

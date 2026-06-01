@@ -64,7 +64,13 @@ _DEF = Tool(
             },
             "urgencyTier": {
                 "type": "string",
-                "enum": ["hot", "standard", "low"],
+                "enum": ["hot", "standard", "enrichment"],
+                "description": (
+                    "Urgency tier — one of: hot, standard, enrichment. "
+                    "Spec §2 default urgencies and the qualifier suppress/boost "
+                    "ladder use these three. The legacy slug 'low' is also "
+                    "accepted and normalized to 'enrichment'."
+                ),
             },
             "reasonCodes": {
                 "type": "array",

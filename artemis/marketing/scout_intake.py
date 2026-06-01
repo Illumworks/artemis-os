@@ -23,7 +23,9 @@ from typing import Any
 
 from artemis.marketing.josh_spec import (
     CANONICAL_CAMPAIGN_FAMILIES,
+    CANONICAL_URGENCY_TIERS,
     normalize_campaign_family,
+    normalize_urgency_tier,
 )
 from artemis.marketing.scout_schemas import (
     ReasonCodeAllowlistError,
@@ -49,7 +51,8 @@ VALID_SOURCE_TYPES: frozenset[str] = frozenset(
 # Canonical campaign-family slugs — single source of truth lives in josh_spec.
 VALID_CAMPAIGN_FAMILIES: frozenset[str] = frozenset(CANONICAL_CAMPAIGN_FAMILIES)
 
-VALID_URGENCY_TIERS: frozenset[str] = frozenset({"hot", "standard", "low"})
+# Canonical urgency tiers — single source of truth lives in josh_spec.
+VALID_URGENCY_TIERS: frozenset[str] = frozenset(CANONICAL_URGENCY_TIERS)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Result type
@@ -194,14 +197,19 @@ def normalize_intake_payload(
         except (ValueError, TypeError):
             errors.append("sourcePublishedAt must be a valid ISO date")
 
-    # urgencyTier (optional)
+    # urgencyTier (optional) — normalize legacy/alias slugs to the canonical
+    # set (single source of truth in josh_spec) before validating. Empty/None
+    # is allowed (defaults to "standard" below).
     urgency_tier_raw = payload.get("urgencyTier")
-    if (
-        urgency_tier_raw is not None
-        and urgency_tier_raw != ""
-        and urgency_tier_raw not in VALID_URGENCY_TIERS
-    ):
-        errors.append(f"urgencyTier must be one of: {', '.join(sorted(VALID_URGENCY_TIERS))}")
+    normalized_urgency: str | None = None
+    if urgency_tier_raw is not None and urgency_tier_raw != "":
+        normalized_urgency = normalize_urgency_tier(urgency_tier_raw)
+        if normalized_urgency is None:
+            errors.append(
+                "urgencyTier must be one of: "
+                + ", ".join(CANONICAL_URGENCY_TIERS)
+                + " (legacy alias 'low' is also accepted)"
+            )
 
     # fitScore (optional)
     fit_score_raw = payload.get("fitScore")
@@ -241,7 +249,7 @@ def normalize_intake_payload(
                     entry["confidence"] = max(0.0, min(1.0, float(entry["confidence"])))
             normalized_reason_codes.append(entry)
 
-    normalized_urgency_tier = urgency_tier_raw or "standard"
+    normalized_urgency_tier = normalized_urgency or "standard"
 
     # Anti-spoof: unconditionally override discoveredBy to scout_type
     normalized_discovered_by = scout_type

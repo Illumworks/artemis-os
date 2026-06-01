@@ -60,7 +60,10 @@ const SP_SCOUTS = [
 // Canonical campaign families (single source of truth: josh_spec §3, slugified).
 // Reconciled from the prior 4-slug + 5-label mix (#79/#80).
 const SP_FAMILIES = ["obc", "dyslexia", "biliteracy", "hit", "general_growth"];
-const SP_URGENCIES = ["hot", "standard", "low", "enrichment"];
+// Canonical urgency tiers (single source of truth: josh_spec §2 default
+// urgencies + §4 suppress/boost ladder). Reconciled from the prior 3-slug
+// (hot/standard/low) + 4-item (added enrichment) mix (#81).
+const SP_URGENCIES = ["hot", "standard", "enrichment"];
 let spState = { codes: [], domain: "", scout: "", showRetired: false, editing: null };
 
 // ── Deliverables cache ─────────────────────────────────────────────────────
