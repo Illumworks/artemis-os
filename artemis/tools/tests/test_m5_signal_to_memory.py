@@ -59,7 +59,8 @@ _TRUNCATE_SQL = text(
     # Marketing + pipeline
     "tool_invocations, "
     "campaign_state_transitions, approvals, campaign_deliverables, "
-    "content_asset_links, content_assets, campaign_briefs, campaign_candidates, "
+    "content_asset_links, content_assets, campaign_briefs, campaign_candidate_signals, "
+    "campaign_candidates, "
     "scout_runs, qualifier_rule_applications, skipped_signals, signal_queue, "
     "rulesets, territory_config, signal_reason_codes, "
     "pipeline_ai_conversations, pipeline_runs, pipelines, "

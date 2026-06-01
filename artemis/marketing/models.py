@@ -159,6 +159,12 @@ class SignalQueue(Base):
         back_populates="source_signal",
         lazy="noload",
     )
+    candidate_signals: Mapped[list[CampaignCandidateSignal]] = relationship(
+        "CampaignCandidateSignal",
+        back_populates="signal",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
 
 
 class ScoutRun(Base):
@@ -196,6 +202,7 @@ class CampaignCandidate(Base):
         Index("idx_campaign_candidates_family", "campaign_family"),
         Index("idx_campaign_candidates_updated", "updated_at"),
         Index("idx_campaign_candidates_source_signal", "source_signal_id"),
+        Index("idx_campaign_candidates_predecessor", "predecessor_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -215,6 +222,19 @@ class CampaignCandidate(Base):
     ruleset_version_at_qualification: Mapped[str | None] = mapped_column(Text, nullable=True)
     metrics_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     deliverables: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    objective: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_scope_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    deliverable_types_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    initiated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    initiated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    predecessor_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "campaign_candidates.id", name="fk_campaign_candidates_predecessor", ondelete="SET NULL"
+        ),
+        nullable=True,
+    )
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
@@ -226,6 +246,23 @@ class CampaignCandidate(Base):
     source_signal: Mapped[SignalQueue | None] = relationship(
         "SignalQueue",
         back_populates="candidates",
+        lazy="noload",
+    )
+    candidate_signals: Mapped[list[CampaignCandidateSignal]] = relationship(
+        "CampaignCandidateSignal",
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
+    predecessor: Mapped[CampaignCandidate | None] = relationship(
+        "CampaignCandidate",
+        remote_side="CampaignCandidate.id",
+        back_populates="successors",
+        lazy="noload",
+    )
+    successors: Mapped[list[CampaignCandidate]] = relationship(
+        "CampaignCandidate",
+        back_populates="predecessor",
         lazy="noload",
     )
     briefs: Mapped[list[CampaignBrief]] = relationship(
@@ -244,6 +281,72 @@ class CampaignCandidate(Base):
         "CampaignDeliverable",
         back_populates="candidate",
         cascade="all, delete-orphan",
+        lazy="noload",
+    )
+
+
+class DeliverableType(Base):
+    """Registry of campaign deliverable types."""
+
+    __tablename__ = "deliverable_types"
+    __table_args__ = (Index("idx_deliverable_types_active_order", "active", "display_order"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    default_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CampaignCandidateSignal(Base):
+    """Many-to-many join: campaign_candidates ↔ signal_queue."""
+
+    __tablename__ = "campaign_candidate_signals"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_id", "signal_id", name="uq_campaign_candidate_signals_candidate_signal"
+        ),
+        Index("idx_campaign_candidate_signals_candidate", "candidate_id"),
+        Index("idx_campaign_candidate_signals_signal", "signal_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "campaign_candidates.id",
+            name="fk_campaign_candidate_signals_candidate",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    signal_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "signal_queue.id", name="fk_campaign_candidate_signals_signal", ondelete="CASCADE"
+        ),
+        nullable=False,
+    )
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    attached_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    candidate: Mapped[CampaignCandidate] = relationship(
+        "CampaignCandidate",
+        back_populates="candidate_signals",
+        lazy="noload",
+    )
+    signal: Mapped[SignalQueue] = relationship(
+        "SignalQueue",
+        back_populates="candidate_signals",
         lazy="noload",
     )
 
@@ -583,6 +686,21 @@ class DistrictDataMeta(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MarketingClusteringConfig(Base):
+    """Singleton config row for deterministic candidate clustering."""
+
+    __tablename__ = "marketing_clustering_config"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    cluster_window_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default="90")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
