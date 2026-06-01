@@ -892,6 +892,25 @@ export async function getCampaignBriefApi(candidateId) {
   return _readJsonOrThrow(res, "Failed to fetch campaign brief");
 }
 
+export async function getCampaignInitiationProposalApi(candidateId) {
+  const res = await fetch(
+    `/api/marketing/campaigns/${encodeURIComponent(candidateId)}/initiation-proposal`,
+  );
+  return _readJsonOrThrow(res, "Failed to fetch campaign initiation proposal");
+}
+
+export async function initiateCampaignApi(candidateId, payload = {}) {
+  const res = await fetch(
+    `/api/marketing/campaigns/${encodeURIComponent(candidateId)}/initiate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return _readJsonOrThrow(res, "Failed to initiate campaign");
+}
+
 export async function deleteWritingDraftApi(id) {
   const res = await fetch(`/api/writing-studio/drafts/${encodeURIComponent(id)}`, {
     method: "DELETE",

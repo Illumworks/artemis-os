@@ -8,6 +8,7 @@ import {
   listApprovalsApi, decideApprovalApi,
   fetchCampaignOpsOverview,
   decideCampaignCandidateApi, promoteCampaignCandidateApi, reopenCampaignCandidateApi,
+  getCampaignInitiationProposalApi, initiateCampaignApi,
   createCampaignWritingHandoffApi,
   listCampaignDeliverablesApi,
   assembleCampaignBriefApi, getCampaignBriefApi,
@@ -19,6 +20,7 @@ import {
   getTerritoryConfigApi, upsertTerritoryStateApi,
   getTierBandsApi, upsertTierBandsApi, recomputeTierBandsApi, getDistrictDataStatusApi,
   refreshDistrictDataApi,
+  fetchAccountInfo,
   listSignalQueueApi, createSignalApi,
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
   qualifySignalApi,
@@ -67,6 +69,14 @@ const SP_FAMILIES = ["obc", "dyslexia", "biliteracy", "hit", "general_growth"];
 const SP_URGENCIES = ["hot", "standard", "enrichment"];
 let spState = { codes: [], domain: "", scout: "", showRetired: false, editing: null };
 
+const US_STATES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+  "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+  "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+  "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+  "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+];
+
 // ── Deliverables cache ─────────────────────────────────────────────────────
 // Keyed by campaignId. Populated lazily when the Assets tab opens for an API campaign.
 const _deliverablesCache = new Map();
@@ -80,6 +90,10 @@ const _briefCache = new Map();
 // Keyed by campaignId → array of linked asset rows.
 // undefined means "not yet fetched". [] means loaded with no links.
 const _assetLinksCache = new Map();
+
+// ── Initiation proposal cache ──────────────────────────────────────────────
+// Keyed by campaignId → full initiation proposal payload.
+const _initiationProposalCache = new Map();
 
 // ── Mock data ─────────────────────────────────────────────────────────────
 // Three real campaigns seeded as the first workspace instances (MVP-1).
@@ -386,7 +400,11 @@ const APPROVALS_MOCK = [
 
 // ── Module-level campaign map ──────────────────────────────────────────────
 // Merges static CAMPAIGNS with real API candidates. Updated by async patches.
-let _campaignMap = new Map(CAMPAIGNS.map((c) => [c.id, c]));
+function _campaignMapKey(id) {
+  return String(id ?? '');
+}
+
+let _campaignMap = new Map(CAMPAIGNS.map((c) => [_campaignMapKey(c.id), c]));
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -480,7 +498,7 @@ function freshnessBadge(dateStr) {
 function _normCandidate(raw) {
   return {
     id: raw.id,
-    name: raw.name || '',
+    name: raw.name || raw.initiationProposalJson?.name || '',
     family: raw.family || '',
     status: raw.status || '',
     stage: raw.stage || '',
@@ -500,6 +518,12 @@ function _normCandidate(raw) {
     latestDraftId: raw.latestDraftId ? Number(raw.latestDraftId) : null,
     latestDraftTitle: raw.latestDraftTitle || null,
     kpis: raw.kpis || null,
+    initiationProposalJson: raw.initiationProposalJson || null,
+    targetScopeJson: raw.targetScopeJson || null,
+    deliverableTypesJson: raw.deliverableTypesJson || null,
+    initiatedAt: raw.initiatedAt || null,
+    initiatedBy: raw.initiatedBy || null,
+    predecessorId: raw.predecessorId || null,
     _fromApi: true,
   };
 }
@@ -507,7 +531,7 @@ function _normCandidate(raw) {
 // Merge real API candidate data into a static CAMPAIGNS entry (or return
 // a normalized standalone if there is no static entry).
 function _mergeWithStatic(realCandidate) {
-  const staticEntry = _campaignMap.get(realCandidate.id);
+  const staticEntry = _campaignMap.get(_campaignMapKey(realCandidate.id));
   if (staticEntry && !staticEntry._fromApi) {
     return {
       ...staticEntry,
@@ -638,10 +662,12 @@ export function renderMarketingCampaigns(campaignsOrId = null, selectedId = null
     resolvedSelectedId = campaignsOrId; // original single-arg call: renderMarketingCampaigns(selectedId)
   }
 
-  const selected = resolvedSelectedId ? campaigns.find((c) => c.id === resolvedSelectedId) : null;
+  const selected = resolvedSelectedId
+    ? campaigns.find((c) => String(c.id) === String(resolvedSelectedId))
+    : null;
 
   const listItems = campaigns.map((c) => `
-    <div class="mkt-campaign-list-item ${resolvedSelectedId === c.id ? 'active' : ''}"
+    <div class="mkt-campaign-list-item ${String(resolvedSelectedId) === String(c.id) ? 'active' : ''}"
          data-mkt-open-campaign="${esc(c.id)}" role="button" tabindex="0">
       <span class="mkt-list-item-name">${esc(c.name)}</span>
       <span class="mkt-list-item-family">${esc(c.family)}</span>
@@ -712,14 +738,17 @@ function renderCampaignWorkspace(campaign) {
 
   const actionsHtml = campaign._fromApi ? _renderWorkspaceActions(campaign) : '';
   const writingStudioHtml = campaign._fromApi ? _renderWritingStudioSection(campaign) : '';
+  const initiationActionHtml = campaign._fromApi && !campaign.initiatedAt
+    ? `<button class="mkt-btn-secondary mkt-initiation-open-btn" type="button" data-mkt-initiation-open="${esc(campaign.id)}">Review initiation proposal</button>`
+    : '';
 
   return `
     <div class="mkt-workspace" data-campaign-id="${esc(campaign.id)}">
       <div class="mkt-workspace-header">
         <div class="mkt-workspace-header-left">
           <div class="shell-eyebrow">${esc(campaign.family)}</div>
-          <h2 class="mkt-workspace-title">${esc(campaign.name)}</h2>
-          <div class="mkt-workspace-owner">${esc(campaign.owner)} · ${esc(campaign.deadline)}</div>
+          <h2 class="mkt-workspace-title">${esc(campaign.name || 'Pending initiation')}</h2>
+          <div class="mkt-workspace-owner">${esc(campaign.owner || 'Unassigned')} · ${esc(campaign.deadline || '—')}</div>
         </div>
         <div class="mkt-workspace-header-meta">
           ${priorityBadge(campaign.priority)}
@@ -731,6 +760,7 @@ function renderCampaignWorkspace(campaign) {
           </span>
         </div>
       </div>
+      ${initiationActionHtml}
       ${actionsHtml}
       ${writingStudioHtml}
       <nav class="mkt-tab-nav" aria-label="Campaign workspace tabs">
@@ -796,6 +826,214 @@ function _renderWritingStudioSection(c) {
   `;
 }
 
+function _resolveAccountUser(accountInfo) {
+  if (!accountInfo || typeof accountInfo !== 'object') return null;
+  const id = accountInfo.id ?? accountInfo.userId ?? accountInfo.accountId ?? accountInfo.ownerUserId ?? null;
+  if (id == null || id === '') return null;
+  const label =
+    accountInfo.displayName ||
+    accountInfo.name ||
+    accountInfo.fullName ||
+    accountInfo.email ||
+    String(id);
+  return { id: String(id), label };
+}
+
+function _scopeToFormModel(targetScope, defaultTargetScope) {
+  const scope = targetScope && typeof targetScope === 'object' ? targetScope : defaultTargetScope || { mode: 'all_districts' };
+  const mode = scope.mode || 'all_districts';
+  return {
+    mode,
+    states: Array.isArray(scope.states) ? scope.states.map((state) => String(state).toUpperCase()) : [],
+    tiers: Array.isArray(scope.tiers) ? scope.tiers.map((tier) => String(tier).toUpperCase()) : [],
+  };
+}
+
+function _renderTargetScopeSection(scopeModel, districtContext) {
+  const stateOptions = US_STATES.map((state) => `
+    <option value="${esc(state)}"${scopeModel.mode === 'states' && scopeModel.states.includes(state) ? ' selected' : ''}>${esc(state)}</option>
+  `).join('');
+  const tierOptions = ['D1', 'D2', 'D3', 'D4'].map((tier) => `
+    <label class="mkt-initiation-tier-option ${tier === 'D4' ? 'mkt-initiation-tier-option--disabled' : ''}">
+      <input type="checkbox" data-initiation-tier="${esc(tier)}" ${scopeModel.mode === 'district_tier' && scopeModel.tiers.includes(tier) ? 'checked' : ''} ${tier === 'D4' ? 'disabled' : ''}>
+      <span>${esc(tier)}${tier === 'D4' ? ' (unsupported)' : ''}</span>
+    </label>
+  `).join('');
+
+  const allChecked = scopeModel.mode === 'all_districts';
+  const statesChecked = scopeModel.mode === 'states';
+  const tierChecked = scopeModel.mode === 'district_tier';
+  const note = districtContext?.note ? `<p class="mkt-initiation-note">${esc(districtContext.note)}</p>` : '';
+
+  return `
+    <section class="mkt-initiation-section">
+      <h4>Target scope</h4>
+      ${note}
+      <label class="mkt-initiation-radio">
+        <input type="radio" name="initiation-target-mode" value="all_districts" ${allChecked ? 'checked' : ''}>
+        <span>All districts</span>
+      </label>
+      <label class="mkt-initiation-radio">
+        <input type="radio" name="initiation-target-mode" value="states" ${statesChecked ? 'checked' : ''}>
+        <span>Specific states</span>
+      </label>
+      <div class="mkt-initiation-subpanel" data-initiation-states ${statesChecked ? '' : 'hidden'}>
+        <select multiple size="8" data-initiation-states-select>
+          ${stateOptions}
+        </select>
+      </div>
+      <label class="mkt-initiation-radio">
+        <input type="radio" name="initiation-target-mode" value="district_tier" ${tierChecked ? 'checked' : ''}>
+        <span>By tier</span>
+      </label>
+      <div class="mkt-initiation-subpanel" data-initiation-tiers ${tierChecked ? '' : 'hidden'}>
+        <p class="mkt-initiation-note">D4 is shown for context but remains unsupported.</p>
+        <div class="mkt-initiation-tier-grid">${tierOptions}</div>
+      </div>
+    </section>
+  `;
+}
+
+function _renderSignalClusterRows(cluster) {
+  return cluster.map((signal) => {
+    const removable = signal.isPrimary ? 'data-initiation-signal-primary="true"' : '';
+    const title = signal.isPrimary ? 'Primary signal' : 'Corroborating signal';
+    return `
+      <article class="mkt-initiation-signal ${signal.isPrimary ? 'mkt-initiation-signal--primary' : ''}" data-initiation-signal-id="${esc(String(signal.signalId))}" ${removable}>
+        <div class="mkt-initiation-signal-topline">
+          <strong>${esc(signal.headline || 'Untitled signal')}</strong>
+          <span class="mkt-pill ${signal.isPrimary ? 'mkt-pill-live' : 'mkt-pill-active'}">${esc(title)}</span>
+        </div>
+        ${signal.summary ? `<p class="mkt-initiation-signal-summary">${esc(signal.summary)}</p>` : ''}
+        <div class="mkt-initiation-signal-meta">
+          <span>${esc(signal.campaignFamily || 'unknown family')}</span>
+          <span>${signal.state ? esc(signal.state) : '—'}</span>
+          <span>${signal.resolvedDistrictId ? `District ${esc(String(signal.resolvedDistrictId))}` : 'District unresolved'}</span>
+        </div>
+        <button class="mkt-btn-text mkt-initiation-signal-remove" type="button" data-initiation-signal-remove="${esc(String(signal.signalId))}" ${signal.isPrimary ? 'disabled' : ''}>
+          ${signal.isPrimary ? 'Primary signal' : 'Remove'}
+        </button>
+      </article>
+    `;
+  }).join('');
+}
+
+function _renderDeliverableRegistryRows(registry, recommendedSlugs) {
+  return registry.map((row) => {
+    const active = !!row.active;
+    const recommended = recommendedSlugs.includes(row.slug);
+    return `
+      <label class="mkt-initiation-deliverable ${active ? '' : 'mkt-initiation-deliverable--disabled'}">
+        <input
+          type="checkbox"
+          name="initiation-deliverable"
+          value="${esc(row.slug)}"
+          ${recommended ? 'checked' : ''}
+          ${active ? '' : 'disabled'}
+        >
+        <span>
+          ${esc(row.label)}
+          ${active ? '' : ' (coming soon)'}
+        </span>
+      </label>
+    `;
+  }).join('');
+}
+
+function _renderLineagePanel(lineage) {
+  if (!Array.isArray(lineage) || lineage.length === 0) return '';
+  return `
+    <section class="mkt-initiation-section">
+      <h4>Prior campaigns</h4>
+      <p class="mkt-initiation-note">Collateral only for v1. Outcomes/results are not tracked yet.</p>
+      <div class="mkt-initiation-lineage-list">
+        ${lineage.map((item) => `
+          <article class="mkt-initiation-lineage-item" data-lineage-candidate-id="${esc(String(item.candidateId))}">
+            <div class="mkt-initiation-lineage-head">
+              <strong>${esc(item.name || `Campaign ${item.candidateId}`)}</strong>
+              <span>${esc(item.objective || 'No objective recorded')}</span>
+            </div>
+            ${item.latestBrief ? `<p class="mkt-initiation-lineage-brief">Latest brief available</p>` : ''}
+            <div class="mkt-initiation-lineage-collateral">
+              <button class="mkt-btn-text" type="button" data-lineage-action="view" data-lineage-candidate-id="${esc(String(item.candidateId))}">View</button>
+              <button class="mkt-btn-text" type="button" data-lineage-action="clone" data-lineage-candidate-id="${esc(String(item.candidateId))}">Clone</button>
+              <button class="mkt-btn-text" type="button" data-lineage-action="adapt" data-lineage-candidate-id="${esc(String(item.candidateId))}">Adapt</button>
+            </div>
+            <div class="mkt-initiation-lineage-collateral-list">
+              ${(item.drafts || []).map((draft) => `<span class="mkt-initiation-chip">Draft ${esc(String(draft.draft_id || draft.id || ''))}</span>`).join('')}
+              ${(item.linkedAssets || []).map((asset) => `<span class="mkt-initiation-chip">${esc(asset.asset_type || 'asset')}</span>`).join('')}
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function _renderInitiationModal(campaign, bundle, accountInfo) {
+  const proposal = bundle?.proposal || campaign.initiationProposalJson || {};
+  const scopeModel = _scopeToFormModel(proposal.target_scope || proposal.targetScope, bundle?.defaultTargetScope);
+  const accountUser = _resolveAccountUser(accountInfo);
+  const ownerSelect = accountUser
+    ? `<option value="${esc(accountUser.id)}" selected>${esc(accountUser.label)} (current user)</option>`
+    : '<option value="" selected>Unassigned</option>';
+
+  return `
+    <div class="mkt-modal-backdrop mkt-initiation-backdrop" data-initiation-modal>
+      <div class="mkt-modal mkt-sp-modal mkt-initiation-modal">
+        <div class="mkt-initiation-header">
+          <div>
+            <div class="mkt-modal-eyebrow">Campaign initiation</div>
+            <h3>${esc(proposal.name || campaign.name || 'Pending initiation')}</h3>
+            <p>${esc(bundle?.districtContext?.label || 'All districts')}</p>
+          </div>
+          <button class="mkt-btn-text" type="button" data-initiation-close>Close</button>
+        </div>
+
+        <label class="mkt-initiation-field">
+          <span>Name</span>
+          <input type="text" data-initiation-field="name" value="${esc(proposal.name || campaign.name || '')}">
+        </label>
+
+        <label class="mkt-initiation-field">
+          <span>Objective</span>
+          <textarea rows="4" data-initiation-field="objective">${esc(proposal.objective || '')}</textarea>
+        </label>
+
+        <label class="mkt-initiation-field">
+          <span>Owner</span>
+          <select data-initiation-field="owner_user_id">
+            ${ownerSelect}
+          </select>
+        </label>
+
+        <section class="mkt-initiation-section">
+          <h4>Signal cluster</h4>
+          <p class="mkt-initiation-note">Primary signal is flagged. Removing a corroborating signal updates the preview only in v1.</p>
+          <div class="mkt-initiation-signals">
+            ${_renderSignalClusterRows(bundle?.signalCluster || [])}
+          </div>
+        </section>
+
+        <section class="mkt-initiation-section">
+          <h4>Deliverables</h4>
+          <div class="mkt-initiation-deliverables">
+            ${_renderDeliverableRegistryRows(bundle?.deliverableRegistry || [], proposal.recommended_deliverable_types || proposal.recommendedDeliverableTypes || [])}
+          </div>
+        </section>
+
+        ${_renderTargetScopeSection(scopeModel, bundle?.districtContext)}
+        ${_renderLineagePanel(bundle?.lineage || [])}
+
+        <div class="mkt-initiation-actions">
+          <button class="mkt-btn-secondary" type="button" data-initiation-close>Cancel</button>
+          <button class="mkt-btn-primary" type="button" data-initiation-confirm>Confirm and initiate</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderWorkspaceTab(campaign, tab) {
   switch (tab) {
     case 'brief':      return renderTabBrief(campaign);
@@ -807,6 +1045,214 @@ function renderWorkspaceTab(campaign, tab) {
     case 'approval-log': return renderTabApprovalLog(campaign);
     default:           return renderTabBrief(campaign);
   }
+}
+
+async function _maybeOpenInitiationProposal(container, campaign) {
+  if (!campaign || !campaign._fromApi || campaign.initiatedAt) return;
+  if (container.querySelector('[data-initiation-modal]')) return;
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'mkt-modal-backdrop mkt-initiation-backdrop';
+  backdrop.dataset.initiationModal = 'loading';
+  backdrop.innerHTML = `
+    <div class="mkt-modal mkt-sp-modal mkt-initiation-modal">
+      <p class="mkt-section-subtext">Loading initiation proposal…</p>
+    </div>
+  `;
+  container.appendChild(backdrop);
+
+  let bundle = null;
+  try {
+    bundle = _initiationProposalCache.get(campaign.id) || await getCampaignInitiationProposalApi(campaign.id);
+    _initiationProposalCache.set(campaign.id, bundle);
+  } catch (err) {
+    backdrop.innerHTML = `
+      <div class="mkt-modal mkt-sp-modal mkt-initiation-modal">
+        <div class="mkt-initiation-header">
+          <div>
+            <div class="mkt-modal-eyebrow">Campaign initiation</div>
+            <h3>Proposal unavailable</h3>
+          </div>
+          <button class="mkt-btn-text" type="button" data-initiation-close>Close</button>
+        </div>
+        <p class="mkt-error-text">${esc(err?.message || 'Missing initiation proposal.')}</p>
+      </div>
+    `;
+    _wireInitiationModal(container, campaign, null, null);
+    return;
+  }
+
+  let accountInfo = null;
+  try {
+    accountInfo = await fetchAccountInfo();
+  } catch {
+    accountInfo = null;
+  }
+
+  const activeCampaignId = (() => {
+    try { return localStorage.getItem(MKT_CAMPAIGN_KEY); } catch { return null; }
+  })();
+  if (String(activeCampaignId || '') !== String(campaign.id)) {
+    return;
+  }
+
+  backdrop.innerHTML = _renderInitiationModal(campaign, bundle, accountInfo);
+  _wireInitiationModal(container, campaign, bundle, accountInfo);
+}
+
+function _wireInitiationModal(container, campaign, bundle, accountInfo) {
+  const modal = container.querySelector('[data-initiation-modal]');
+  if (!modal) return;
+  modal.setAttribute('tabindex', '-1');
+  modal.focus({ preventScroll: true });
+
+  const closeModal = () => {
+    _initiationProposalCache.set(campaign.id, bundle || _initiationProposalCache.get(campaign.id) || null);
+    modal.remove();
+  };
+
+  const toggleScopePanels = () => {
+    const mode = modal.querySelector('input[name="initiation-target-mode"]:checked')?.value || 'all_districts';
+    const statesPanel = modal.querySelector('[data-initiation-states]');
+    const tiersPanel = modal.querySelector('[data-initiation-tiers]');
+    if (statesPanel) statesPanel.hidden = mode !== 'states';
+    if (tiersPanel) tiersPanel.hidden = mode !== 'district_tier';
+  };
+
+  const selectedScope = () => {
+    const mode = modal.querySelector('input[name="initiation-target-mode"]:checked')?.value || 'all_districts';
+    if (mode === 'states') {
+      const select = modal.querySelector('[data-initiation-states-select]');
+      const states = [...(select?.selectedOptions || [])].map((option) => option.value).filter(Boolean);
+      return { mode, states };
+    }
+    if (mode === 'district_tier') {
+      const tiers = [...modal.querySelectorAll('[data-initiation-tier]:checked')].map((el) => el.getAttribute('data-initiation-tier')).filter(Boolean);
+      return { mode, tiers };
+    }
+    return { mode: 'all_districts' };
+  };
+
+  const collectPayload = () => {
+    const name = modal.querySelector('[data-initiation-field="name"]')?.value?.trim() || '';
+    const objective = modal.querySelector('[data-initiation-field="objective"]')?.value?.trim() || '';
+    const ownerRaw = modal.querySelector('[data-initiation-field="owner_user_id"]')?.value || '';
+    const owner_user_id = ownerRaw === '' ? null : Number(ownerRaw);
+    const deliverable_type_slugs = [...modal.querySelectorAll('[name="initiation-deliverable"]:checked')]
+      .map((el) => el.value)
+      .filter(Boolean);
+    return {
+      name,
+      objective,
+      owner_user_id,
+      deliverable_type_slugs,
+      target_scope: selectedScope(),
+      actor: accountInfo ? (_resolveAccountUser(accountInfo)?.label || null) : null,
+    };
+  };
+
+  modal.querySelectorAll('[data-initiation-close]').forEach((btn) => {
+    btn.addEventListener('click', closeModal);
+  });
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeModal();
+  });
+  modal.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeModal();
+  });
+
+  modal.querySelectorAll('input[name="initiation-target-mode"]').forEach((input) => {
+    input.addEventListener('change', toggleScopePanels);
+  });
+  toggleScopePanels();
+
+  modal.querySelectorAll('[data-initiation-signal-remove]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('[data-initiation-signal-id]');
+      if (card) {
+        const hidden = card.getAttribute('data-removed') === 'true';
+        card.setAttribute('data-removed', hidden ? 'false' : 'true');
+        card.classList.toggle('mkt-initiation-signal--removed', !hidden);
+      }
+    });
+  });
+
+  modal.querySelectorAll('[data-lineage-action]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.lineageAction;
+      const candidateId = btn.dataset.lineageCandidateId;
+      if (action === 'view' && candidateId) {
+        closeModal();
+        try { localStorage.setItem(MKT_CAMPAIGN_KEY, candidateId); } catch {}
+        const opened = _campaignMap.get(_campaignMapKey(candidateId));
+        if (opened) {
+          const pane = container.querySelector('.mkt-workspace-pane');
+          if (pane) {
+            pane.innerHTML = renderCampaignWorkspace(opened);
+            _wireWorkspaceTabs(container, opened);
+            _wireWorkspaceActions(container, opened);
+            _wireWritingStudioBridge(container, opened);
+          }
+        }
+      }
+      if (action === 'clone' || action === 'adapt') {
+        btn.textContent = action === 'clone' ? 'Clone coming soon' : 'Adapt coming soon';
+        setTimeout(() => {
+          btn.textContent = action === 'clone' ? 'Clone' : 'Adapt';
+        }, 1600);
+      }
+    });
+  });
+
+  modal.querySelector('[data-initiation-confirm]')?.addEventListener('click', async () => {
+    const confirmBtn = modal.querySelector('[data-initiation-confirm]');
+    if (!confirmBtn) return;
+    const payload = collectPayload();
+    if (!payload.name) {
+      modal.querySelector('[data-initiation-field="name"]')?.focus();
+      return;
+    }
+    if (!payload.objective) {
+      modal.querySelector('[data-initiation-field="objective"]')?.focus();
+      return;
+    }
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Initiating…';
+    try {
+      const result = await initiateCampaignApi(campaign.id, payload);
+      closeModal();
+      const toast = document.createElement('div');
+      toast.className = 'mkt-signal-toast';
+      toast.textContent = `Campaign "${result.name || payload.name}" initiated; ${payload.deliverable_type_slugs.length} deliverable(s) queued`;
+      container.querySelector('.mkt-workspace')?.prepend(toast);
+      setTimeout(() => toast.remove(), 6500);
+      const overview = await fetchCampaignOpsOverview();
+      const liveCandidates = overview.campaigns || [];
+      const mergedCampaigns = liveCandidates.map((c) => _mergeWithStatic(c));
+      for (const c of mergedCampaigns) _campaignMap.set(_campaignMapKey(c.id), c);
+      const updated = _campaignMap.get(_campaignMapKey(campaign.id));
+      if (updated) {
+        const pane = container.querySelector('.mkt-workspace-pane');
+        if (pane) {
+          pane.innerHTML = renderCampaignWorkspace(updated);
+          _wireWorkspaceTabs(container, updated);
+          _wireWorkspaceActions(container, updated);
+          _wireWritingStudioBridge(container, updated);
+        }
+        _updateActiveCampaignCard(container, updated);
+      }
+    } catch (err) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Confirm and initiate';
+      const errEl = modal.querySelector('.mkt-initiation-error') || (() => {
+        const node = document.createElement('p');
+        node.className = 'mkt-initiation-error mkt-error-text';
+        modal.querySelector('.mkt-initiation-actions')?.before(node);
+        return node;
+      })();
+      errEl.textContent = err?.message || 'Failed to initiate campaign.';
+    }
+  });
 }
 
 function renderTabBrief(c) {
@@ -1958,7 +2404,7 @@ async function _fetchAndPatchDashboard(container) {
     ]);
     const liveCandidates = overview.campaigns || [];
     const mergedCampaigns = liveCandidates.map((c) => _mergeWithStatic(c));
-    for (const c of mergedCampaigns) _campaignMap.set(c.id, c);
+    for (const c of mergedCampaigns) _campaignMap.set(_campaignMapKey(c.id), c);
     const pendingCount = Array.isArray(approvals) ? approvals.length
       : APPROVALS_MOCK.filter((a) => a.status === 'pending').length;
     const signalsCount = signalResult && signalResult.total > 0
@@ -1996,7 +2442,7 @@ async function _fetchAndPatchCampaigns(container) {
     const overview = await fetchCampaignOpsOverview();
     const liveCandidates = overview.campaigns || [];
     const mergedCampaigns = liveCandidates.map((c) => _mergeWithStatic(c));
-    for (const c of mergedCampaigns) _campaignMap.set(c.id, c);
+    for (const c of mergedCampaigns) _campaignMap.set(_campaignMapKey(c.id), c);
 
     const storedId = (() => {
       try { return localStorage.getItem(MKT_CAMPAIGN_KEY); } catch { return null; }
@@ -2005,8 +2451,8 @@ async function _fetchAndPatchCampaigns(container) {
     const displayCampaigns = mergedCampaigns.length > 0 ? mergedCampaigns : CAMPAIGNS;
     container.innerHTML = renderMarketingCampaigns(displayCampaigns, storedId);
     _wireCampaignActions(container);
-    if (storedId && _campaignMap.has(storedId)) {
-      const campaign = _campaignMap.get(storedId);
+    if (storedId && _campaignMap.has(_campaignMapKey(storedId))) {
+      const campaign = _campaignMap.get(_campaignMapKey(storedId));
       _wireWorkspaceTabs(container, campaign);
       _wireWorkspaceActions(container, campaign);
       _wireWritingStudioBridge(container, campaign);
@@ -2427,8 +2873,9 @@ function _wireCampaignActions(container) {
     el.addEventListener('click', () => {
       const id = el.dataset.mktOpenCampaign;
       try { localStorage.setItem(MKT_CAMPAIGN_KEY, id); } catch {}
-      const campaign = _campaignMap.get(id);
+      const campaign = _campaignMap.get(_campaignMapKey(id));
       if (!campaign) return;
+      container.querySelector('[data-initiation-modal]')?.remove();
       const pane = container.querySelector('.mkt-workspace-pane');
       if (pane) {
         pane.innerHTML = renderCampaignWorkspace(campaign);
@@ -2438,11 +2885,20 @@ function _wireCampaignActions(container) {
       }
       _updateActiveCampaignCard(container, campaign);
       container.querySelectorAll('.mkt-campaign-list-item').forEach((item) => {
-        item.classList.toggle('active', item.dataset.mktOpenCampaign === id);
+        item.classList.toggle('active', String(item.dataset.mktOpenCampaign) === String(id));
       });
+      _maybeOpenInitiationProposal(container, campaign);
     });
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') el.click();
+    });
+  });
+
+  container.querySelectorAll('[data-mkt-initiation-open]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.mktInitiationOpen;
+      const campaign = _campaignMap.get(_campaignMapKey(id));
+      if (campaign) _maybeOpenInitiationProposal(container, campaign);
     });
   });
 
@@ -2450,11 +2906,12 @@ function _wireCampaignActions(container) {
     try { return localStorage.getItem(MKT_CAMPAIGN_KEY); } catch { return null; }
   })();
   if (storedId) {
-    const campaign = _campaignMap.get(storedId);
+    const campaign = _campaignMap.get(_campaignMapKey(storedId));
     if (campaign) {
       _wireWorkspaceTabs(container, campaign);
       _wireWorkspaceActions(container, campaign);
       _wireWritingStudioBridge(container, campaign);
+      _maybeOpenInitiationProposal(container, campaign);
     }
   }
 }
@@ -2764,7 +3221,7 @@ function _wireWorkspaceActions(container, campaign) {
           const updated = (overview.campaigns || []).find((c) => c.id === campaign.id);
           if (updated) {
             const merged = _mergeWithStatic(updated);
-            _campaignMap.set(campaign.id, merged);
+            _campaignMap.set(_campaignMapKey(campaign.id), merged);
             const pane = container.querySelector('.mkt-workspace-pane');
             if (pane) {
               pane.innerHTML = renderCampaignWorkspace(merged);

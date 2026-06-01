@@ -36,6 +36,7 @@ from artemis.marketing.routes import (
     campaign_deliverables,
     campaign_ops,
     content_assets,
+    initiation,
     scouts,
     signal_criteria,
     signal_queue,
@@ -177,6 +178,7 @@ app.include_router(scouts.router)
 app.include_router(signal_queue.router)
 app.include_router(signal_criteria.router)
 app.include_router(campaign_ops.router)
+app.include_router(initiation.router)
 app.include_router(campaign_deliverables.router)
 app.include_router(content_assets.router)
 app.include_router(approvals.router)
