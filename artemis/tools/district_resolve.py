@@ -70,24 +70,37 @@ ABBREVIATION_MAP: dict[str, str] = {
 }
 
 # Suffixes to strip when building "bare" names for suffix-insensitive matching.
-_STRIP_SUFFIXES = (
-    " school district",
-    " school districts",
-    " unified school district",
-    " city school district",
-    " public schools",
-    " independent school district",
-    " community school district",
-    " local school district",
-    " county schools",
-    " county public schools",
-    " county school district",
-    " city schools",
-    " schools",
-    " unified",
-    " isd",
-    " usd",
-    " csd",
+# Sorted longest-first so the most specific suffix is consumed before a shorter
+# one swallows it (e.g. " independent school district" before " school district",
+# otherwise "fort worth independent school district" bares to "fort worth
+# independent" instead of "fort worth" and never matches "fort worth isd").
+_STRIP_SUFFIXES: tuple[str, ...] = tuple(
+    sorted(
+        {
+            " independent school district",
+            " unified school district",
+            " community school district",
+            " city school district",
+            " local school district",
+            " county school district",
+            " county public schools",
+            " county community schools",
+            " public schools",
+            " community schools",
+            " county schools",
+            " school districts",
+            " school district",
+            " city schools",
+            " schools",
+            " county",
+            " unified",
+            " isd",
+            " usd",
+            " csd",
+        },
+        key=len,
+        reverse=True,
+    )
 )
 
 # Confidence thresholds

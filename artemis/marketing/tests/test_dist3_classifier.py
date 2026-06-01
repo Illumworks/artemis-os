@@ -360,3 +360,107 @@ async def test_lossless_legacy_district_id_preserved(db_session: AsyncSession) -
     assert refreshed.district_id == raw_name
     # Resolved FK set to the canonical district
     assert refreshed.resolved_district_id == seeded.id
+
+
+# ---------------------------------------------------------------------------
+# Test 7 (#105): suffix variants — scouts emit full forms ("Independent School
+# District", "County Public Schools"); NCES stores short forms ("ISD", short
+# name). Resolver must match across both. Genuine non-matches still return NULL.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fort_worth_isd() -> District:
+    return District(
+        id=4001,
+        nces_id="4823640",
+        name="FORT WORTH ISD",
+        state="TX",
+        enrollment=75000,
+        tier="D1",
+        supported=True,
+        on_skip_list=False,
+        classification_source="nces",
+    )
+
+
+@pytest.fixture
+def houston_isd() -> District:
+    return District(
+        id=4002,
+        nces_id="4823640",
+        name="HOUSTON ISD",
+        state="TX",
+        enrollment=200000,
+        tier="D1",
+        supported=True,
+        on_skip_list=False,
+        classification_source="nces",
+    )
+
+
+@pytest.fixture
+def duval() -> District:
+    return District(
+        id=4003,
+        nces_id="1200390",
+        name="DUVAL",
+        state="FL",
+        enrollment=130000,
+        tier="D1",
+        supported=True,
+        on_skip_list=False,
+        classification_source="nces",
+    )
+
+
+async def test_resolve_independent_school_district_variant(
+    fort_worth_isd: District, houston_isd: District, small_district: District
+) -> None:
+    """Scout emits 'Fort Worth Independent School District'; NCES has 'FORT WORTH ISD'."""
+    candidates = [fort_worth_isd, houston_isd, small_district]
+
+    result = resolve_district_from_list(
+        "Fort Worth Independent School District",
+        "TX",
+        candidates,
+    )
+    assert result.matched is True, result.message
+    assert result.district_id == fort_worth_isd.id
+    assert result.confidence >= 0.70
+
+    result_houston = resolve_district_from_list(
+        "Houston Independent School District",
+        "TX",
+        candidates,
+    )
+    assert result_houston.matched is True, result_houston.message
+    assert result_houston.district_id == houston_isd.id
+
+
+async def test_resolve_county_public_schools_variant(
+    duval: District, small_district: District
+) -> None:
+    """Scout emits 'Duval County Public Schools'; NCES has bare 'DUVAL'."""
+    result = resolve_district_from_list(
+        "Duval County Public Schools",
+        "FL",
+        [duval, small_district],
+    )
+    assert result.matched is True, result.message
+    assert result.district_id == duval.id
+    assert result.confidence >= 0.70
+
+
+async def test_resolve_non_match_still_returns_null_after_suffix_normalization(
+    fort_worth_isd: District, duval: District
+) -> None:
+    """A genuinely unrelated name must still return no-match (no fabrication)."""
+    result = resolve_district_from_list(
+        "Northern Lights Charter Academy",
+        "TX",
+        [fort_worth_isd, duval],
+    )
+    assert result.matched is False
+    assert result.district_id is None
+    assert result.match_method == "no_match"
