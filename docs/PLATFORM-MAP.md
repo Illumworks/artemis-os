@@ -467,6 +467,7 @@ When operator opens Builder for an agent:
 9. **Provenance framing** on LLM-generated content consumed by other LLMs (H3/H4 pattern).
 10. **Self-teaching error messages** in tool validation (H1 pattern) — runtime hallucinations become single-turn-recoverable.
 11. **Brief = model tier.** Every Codex/Worker brief states a recommended model + reasoning effort (see `briefs/CONVENTIONS.md`). Match the tier to the *reasoning* the task needs, not its importance — fully-specified work runs on `gpt-5.4-mini`/low; ambiguous debugging on the flagship/high. The Lead front-loads the thinking into the brief so a cheaper model can execute it correctly.
+12. **Scheduled agentic runs execute out-of-process.** The scout scheduler stays an in-process APScheduler timer, but every cycle runs as a `python -m artemis.marketing.scout_cli <agent_id>` subprocess (see `artemis/marketing/scout_scheduler.py`). The web process never spawns `claude` directly — when the child exits, the OS reaps its claude grandchild + every subscription-adapter semaphore. Established 2026-06-01 after #102: an orphaned `claude worker` from an in-loop `run_agent` call took down the FastAPI app.
 
 ---
 
