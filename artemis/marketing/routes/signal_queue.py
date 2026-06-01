@@ -37,7 +37,7 @@ from artemis.marketing.qualifier import (
     qualify_signal,
 )
 from artemis.marketing.repository import (
-    create_campaign_candidate_from_signal,
+    cluster_or_create_candidate,
     create_signal,
     find_signal_by_dedupe_key,
     get_active_ruleset_version,
@@ -339,12 +339,11 @@ async def approve_signal(
             "rulesetVersionsUsed": qual.get("rulesetVersionsUsed", {}),
         }
 
-    candidate = await create_campaign_candidate_from_signal(
-        session,
-        signal_id=signal_id,
-        ruleset_version_tag=ruleset_version_tag or "",
-        qualification_summary=qualification_summary,
-    )
+    candidate = await cluster_or_create_candidate(session, signal)
+    if candidate.source_signal_id == signal_id:
+        candidate.ruleset_version_at_qualification = ruleset_version_tag or ""
+        candidate.metrics_json = qualification_summary
+        await session.flush()
 
     # Update signal to approved via state machine
     updated = await transition(session, "signal", signal_id, SignalState.APPROVED)

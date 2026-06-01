@@ -9,22 +9,27 @@ conditions that callers should handle. Callers own the commit/rollback.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from pydantic import ValidationError
+from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.marketing.district_classifier import classify_tier, is_supported
+from artemis.marketing.initiation_schemas import TargetScope
 from artemis.marketing.models import (
     Approval,
     CampaignBrief,
     CampaignCandidate,
+    CampaignCandidateSignal,
     ContentAsset,
     ContentAssetLink,
+    DeliverableType,
     District,
     DistrictTierBand,
+    MarketingClusteringConfig,
     Ruleset,
     ScoutRun,
     SignalQueue,
@@ -216,6 +221,184 @@ async def get_candidate(session: AsyncSession, candidate_id: int) -> CampaignCan
     candidate = await session.get(CampaignCandidate, candidate_id)
     if candidate is None:
         raise ValueError(f"campaign_candidates id={candidate_id} not found")
+    return candidate
+
+
+async def list_deliverable_types(
+    session: AsyncSession, active_only: bool = True
+) -> list[DeliverableType]:
+    stmt = select(DeliverableType).order_by(DeliverableType.display_order, DeliverableType.id)
+    if active_only:
+        stmt = stmt.where(DeliverableType.active.is_(True))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_cluster_window_days(session: AsyncSession) -> int:
+    result = await session.execute(select(MarketingClusteringConfig.cluster_window_days).limit(1))
+    cluster_window_days = result.scalar_one_or_none()
+    return cluster_window_days if cluster_window_days is not None else 90
+
+
+async def _attach_signal_to_candidate(
+    session: AsyncSession,
+    candidate: CampaignCandidate,
+    signal: SignalQueue,
+    *,
+    is_primary: bool,
+) -> None:
+    existing = await session.execute(
+        select(CampaignCandidateSignal).where(
+            CampaignCandidateSignal.candidate_id == candidate.id,
+            CampaignCandidateSignal.signal_id == signal.id,
+        )
+    )
+    candidate_signal = existing.scalar_one_or_none()
+    if candidate_signal is not None:
+        return
+
+    session.add(
+        CampaignCandidateSignal(
+            candidate_id=candidate.id,
+            signal_id=signal.id,
+            is_primary=is_primary,
+        )
+    )
+    await session.flush()
+
+
+def _candidate_district_family_stmt(signal: SignalQueue) -> Select[tuple[CampaignCandidate]]:
+    return (
+        select(CampaignCandidate)
+        .join(SignalQueue, CampaignCandidate.source_signal_id == SignalQueue.id)
+        .where(
+            SignalQueue.resolved_district_id == signal.resolved_district_id,
+            CampaignCandidate.campaign_family == signal.campaign_family,
+        )
+    )
+
+
+async def cluster_or_create_candidate(
+    session: AsyncSession, signal: SignalQueue
+) -> CampaignCandidate:
+    """Deterministically group a signal into an open candidate or create a fresh one."""
+    existing = await session.execute(
+        select(CampaignCandidate)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.candidate_id == CampaignCandidate.id)
+        .where(CampaignCandidateSignal.signal_id == signal.id)
+        .order_by(CampaignCandidate.id.desc())
+        .limit(1)
+    )
+    attached_candidate = existing.scalar_one_or_none()
+    if attached_candidate is not None:
+        return attached_candidate
+
+    if signal.resolved_district_id is not None and signal.campaign_family:
+        cluster_window_days = await get_cluster_window_days(session)
+        cutoff = datetime.now(tz=UTC) - timedelta(days=cluster_window_days)
+        open_candidate_result = await session.execute(
+            _candidate_district_family_stmt(signal)
+            .where(
+                CampaignCandidate.initiated_at.is_(None),
+                CampaignCandidate.decision_state != "rejected",
+                CampaignCandidate.created_at >= cutoff,
+            )
+            .order_by(CampaignCandidate.created_at.desc(), CampaignCandidate.id.desc())
+            .limit(1)
+        )
+        open_candidate = open_candidate_result.scalar_one_or_none()
+        if open_candidate is not None:
+            await _attach_signal_to_candidate(session, open_candidate, signal, is_primary=False)
+            return open_candidate
+
+    predecessor_id: int | None = None
+    if signal.resolved_district_id is not None and signal.campaign_family:
+        predecessor_result = await session.execute(
+            _candidate_district_family_stmt(signal)
+            .where(
+                (CampaignCandidate.initiated_at.is_not(None))
+                | (CampaignCandidate.decision_state == "rejected")
+            )
+            .order_by(CampaignCandidate.created_at.desc(), CampaignCandidate.id.desc())
+            .limit(1)
+        )
+        predecessor = predecessor_result.scalar_one_or_none()
+        predecessor_id = predecessor.id if predecessor is not None else None
+
+    candidate = CampaignCandidate(
+        source_signal_id=signal.id,
+        campaign_family=signal.campaign_family,
+        stage="human_gate_1",
+        decision_state="in_inbox",
+        workspace_state=WorkspaceState.pending_content,
+        predecessor_id=predecessor_id,
+    )
+    session.add(candidate)
+    await session.flush()
+    await _attach_signal_to_candidate(session, candidate, signal, is_primary=True)
+    await session.refresh(candidate)
+    return candidate
+
+
+async def get_candidate_signals(
+    session: AsyncSession, candidate_id: int
+) -> list[CampaignCandidateSignal]:
+    await get_candidate(session, candidate_id)
+    result = await session.execute(
+        select(CampaignCandidateSignal)
+        .where(CampaignCandidateSignal.candidate_id == candidate_id)
+        .order_by(
+            CampaignCandidateSignal.is_primary.desc(),
+            CampaignCandidateSignal.attached_at.asc(),
+            CampaignCandidateSignal.id.asc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def initiate_campaign(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    name: str,
+    objective: str,
+    owner_user_id: int | None,
+    target_scope: TargetScope | dict[str, Any],
+    deliverable_type_slugs: list[str],
+    initiated_by: int,
+) -> CampaignCandidate:
+    candidate = await get_candidate(session, candidate_id)
+    if candidate.initiated_at is not None:
+        raise ValueError(f"campaign_candidates id={candidate_id} is already initiated")
+
+    try:
+        parsed_target_scope = (
+            target_scope
+            if isinstance(target_scope, TargetScope)
+            else TargetScope.model_validate(target_scope)
+        )
+    except ValidationError as exc:
+        message = exc.errors()[0].get("msg", "Invalid target_scope")
+        raise ValueError(message) from exc
+
+    active_deliverable_types = await list_deliverable_types(session, active_only=True)
+    active_slugs = {row.slug for row in active_deliverable_types}
+    invalid_slugs = [slug for slug in deliverable_type_slugs if slug not in active_slugs]
+    if invalid_slugs:
+        raise ValueError(
+            "deliverableTypeSlugs must be active deliverable types. "
+            f"Invalid: {', '.join(invalid_slugs)}. "
+            f"Active: {', '.join(sorted(active_slugs))}"
+        )
+
+    candidate.name = name
+    candidate.objective = objective
+    candidate.owner_user_id = owner_user_id
+    candidate.target_scope_json = parsed_target_scope.model_dump(mode="json")
+    candidate.deliverable_types_json = list(deliverable_type_slugs)
+    candidate.initiated_at = datetime.now(tz=UTC)
+    candidate.initiated_by = initiated_by
+    await session.flush()
     return candidate
 
 

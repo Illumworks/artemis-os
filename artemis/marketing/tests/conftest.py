@@ -65,6 +65,7 @@ _TRUNCATE_SQL = text(
     "content_asset_links, "
     "content_assets, "
     "campaign_briefs, "
+    "campaign_candidate_signals, "
     "campaign_candidates, "
     "scout_runs, "
     "qualifier_rule_applications, "

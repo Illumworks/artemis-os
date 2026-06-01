@@ -38,6 +38,7 @@ async def _clean_cc12_tables(db_session: AsyncSession) -> None:
         text(
             "TRUNCATE tool_invocations, campaign_state_transitions, approvals, "
             "campaign_deliverables, content_asset_links, content_assets, campaign_briefs, "
+            "campaign_candidate_signals, "
             "campaign_candidates, writing_sources, writing_examples, writing_rules, "
             "writing_folders, writing_profiles, agent_context, "
             "agent_run_trajectory_summaries, definition_proposals, agent_runs, "
