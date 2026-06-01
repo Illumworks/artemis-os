@@ -9,6 +9,14 @@ Model is loaded lazily on first embed() call. Thread-safe via asyncio.Lock.
 
 from __future__ import annotations
 
+# HuggingFace `tokenizers` forks worker processes by default and leaks
+# multiprocessing semaphores in a long-lived web process; disable before any
+# import path can pull tokenizers in (sentence_transformers → transformers →
+# tokenizers).
+import os
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -86,6 +94,14 @@ class MiniLMProvider:
 
 def _load_model_sync(model_name: str) -> Any:
     from sentence_transformers import SentenceTransformer
+
+    # Pin torch to one thread so intra-op workers don't leak in the web process.
+    try:
+        import torch
+
+        torch.set_num_threads(1)
+    except Exception:
+        pass
 
     return SentenceTransformer(model_name)
 
