@@ -211,9 +211,7 @@ async def test_dispatch_execution_spawn_failure_does_not_leak_task() -> None:
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
-    assert len(_BACKGROUND_TASKS) == initial_count, (
-        "Registry leaked after spawn failure"
-    )
+    assert len(_BACKGROUND_TASKS) == initial_count, "Registry leaked after spawn failure"
 
 
 # ── 6. run_cli module surface (sync) ──────────────────────────────────────────

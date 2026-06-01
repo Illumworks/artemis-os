@@ -108,9 +108,7 @@ async def _reap_run_subprocess(run_id: str, proc: asyncio.subprocess.Process) ->
     tail = (stdout or b"").decode(errors="replace").strip().splitlines()[-1:] if stdout else []
     last_line = tail[0] if tail else "(no output)"
     if proc.returncode == 0:
-        logger.info(
-            "pipeline run %s: subprocess exit=0 last_line=%s", run_id, last_line
-        )
+        logger.info("pipeline run %s: subprocess exit=0 last_line=%s", run_id, last_line)
     else:
         logger.warning(
             "pipeline run %s: subprocess exit=%s last_line=%s",
@@ -140,9 +138,7 @@ def _dispatch_execution(run_id: str) -> None:
                 stderr=asyncio.subprocess.STDOUT,
             )
         except OSError:
-            logger.exception(
-                "pipeline run %s: failed to spawn subprocess argv=%r", run_id, argv
-            )
+            logger.exception("pipeline run %s: failed to spawn subprocess argv=%r", run_id, argv)
             return
         await _reap_run_subprocess(run_id, proc)
 

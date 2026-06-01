@@ -312,6 +312,7 @@ async def test_district_data_refresh_endpoint_spawns_subprocess(
     """
     import asyncio
     import sys as _sys
+    from typing import Any
 
     from artemis.marketing import district_refresh_cli
     from artemis.marketing.routes import signal_criteria as sc_module
@@ -320,7 +321,7 @@ async def test_district_data_refresh_endpoint_spawns_subprocess(
     sc_module._REFRESH_STATE["task"] = None
     sc_module._REFRESH_STATE["started_at"] = None
 
-    captured: list[dict[str, object]] = []
+    captured: list[dict[str, Any]] = []
     proc_done = asyncio.Event()
 
     class _FakeProc:
@@ -331,7 +332,7 @@ async def test_district_data_refresh_endpoint_spawns_subprocess(
             await proc_done.wait()
             return b'{"status": "ok", "loaded": 0, "recomputed": 0}\n', None
 
-    async def _fake_create(*argv: str, **kwargs: object) -> _FakeProc:
+    async def _fake_create(*argv: str, **kwargs: Any) -> _FakeProc:
         captured.append({"argv": list(argv), "kwargs": kwargs})
         return _FakeProc()
 

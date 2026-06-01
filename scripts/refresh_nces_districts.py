@@ -75,9 +75,9 @@ API = "https://educationdata.urban.org/api/v1/school-districts/ccd/directory/{ye
 KEEP_AGENCY_TYPES = {1, 2}
 
 
-def fetch_all(year: int) -> list[dict]:
+def fetch_all(year: int) -> list[dict[str, object]]:
     url: str | None = API.format(year=year)
-    rows: list[dict] = []
+    rows: list[dict[str, object]] = []
     while url:
         with urllib.request.urlopen(url, timeout=180) as resp:  # noqa: S310 (trusted host)
             data = json.load(resp)
@@ -112,8 +112,8 @@ def main() -> int:
                 skipped += 1
                 continue
             leaid = str(r.get("leaid") or "").strip()
-            name = (r.get("lea_name") or "").strip()
-            state = (r.get("state_location") or "").strip().upper()
+            name = str(r.get("lea_name") or "").strip()
+            state = str(r.get("state_location") or "").strip().upper()
             if not leaid or not name:
                 skipped += 1
                 continue

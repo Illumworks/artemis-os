@@ -303,9 +303,7 @@ async def _recover_interrupted_runs() -> None:
             return
 
     if interrupted_ids:
-        logger.info(
-            "Recovering %d interrupted pipeline run(s) on startup", len(interrupted_ids)
-        )
+        logger.info("Recovering %d interrupted pipeline run(s) on startup", len(interrupted_ids))
 
     for run_id in interrupted_ids:
         try:

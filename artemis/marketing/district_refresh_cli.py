@@ -76,8 +76,8 @@ async def _refresh(year: int, csv_path: Path) -> dict[str, Any]:
                 skipped += 1
                 continue
             leaid = str(r.get("leaid") or "").strip()
-            name = (r.get("lea_name") or "").strip()
-            state = (r.get("state_location") or "").strip().upper()
+            name = str(r.get("lea_name") or "").strip()
+            state = str(r.get("state_location") or "").strip().upper()
             if not leaid or not name:
                 skipped += 1
                 continue
