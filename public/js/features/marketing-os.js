@@ -18,6 +18,7 @@ import {
   listReasonCodesApi, createReasonCodeApi, patchReasonCodeApi, exportReasonCodesMarkdownApi,
   getTerritoryConfigApi, upsertTerritoryStateApi,
   getTierBandsApi, upsertTierBandsApi, recomputeTierBandsApi, getDistrictDataStatusApi,
+  refreshDistrictDataApi,
   listSignalQueueApi, createSignalApi,
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
   qualifySignalApi,
@@ -2847,6 +2848,9 @@ const ddState = {
   status: /** @type {Object|null} */ (null),
   loading: false,
   error: /** @type {string|null} */ (null),
+  refreshing: false,
+  refreshError: /** @type {string|null} */ (null),
+  refreshStartedAt: /** @type {string|null} */ (null),
 };
 
 function _renderDistrictDataCard() {
@@ -2933,11 +2937,17 @@ function _renderDistrictDataCard() {
       <div class="mkt-dd-freshness">
         <span class="mkt-dd-badge ${esc(badgeClass)}">${badgeLabel}</span>
       </div>
-      <!-- TODO (Part E): Add a "Check for newer data" refresh button that POSTs to a
-           backend endpoint running refresh+load+recompute and returns the new status.
-           Must include: loading state, failure handling (network/API errors → show error,
-           don't corrupt existing data — loader upserts so partial failure is non-destructive),
-           and must call recompute_all_tiers after load. -->
+      <div class="mkt-dd-refresh">
+        <button class="mkt-btn mkt-btn--secondary" data-dd-refresh-btn ${ddState.refreshing ? 'disabled' : ''}>
+          ${ddState.refreshing ? 'Refreshing…' : 'Check for newer data'}
+        </button>
+        ${ddState.refreshing
+          ? '<span class="mkt-section-subtext mkt-dd-refresh-status">Pulling CCD directory + recomputing tiers… this can take a few minutes.</span>'
+          : ''}
+        ${ddState.refreshError
+          ? `<span class="mkt-section-subtext mkt-error-text">${esc(ddState.refreshError)}</span>`
+          : ''}
+      </div>
     </section>`;
 }
 
@@ -2952,14 +2962,79 @@ async function _loadDistrictDataCard(container) {
   } finally {
     ddState.loading = false;
   }
-  // Re-patch just the dd section inside the container (non-destructive)
+  _repatchDistrictDataCard(container);
+}
+
+function _repatchDistrictDataCard(container) {
   const section = container.querySelector("[data-dd-section]");
-  if (section) {
-    const replacement = document.createElement("div");
-    replacement.innerHTML = _renderDistrictDataCard();
-    const newSection = replacement.querySelector("[data-dd-section]");
-    if (newSection) section.replaceWith(newSection);
+  if (!section) return;
+  const replacement = document.createElement("div");
+  replacement.innerHTML = _renderDistrictDataCard();
+  const newSection = replacement.querySelector("[data-dd-section]");
+  if (newSection) {
+    section.replaceWith(newSection);
+    _attachDistrictDataHandlers(container);
   }
+}
+
+function _attachDistrictDataHandlers(container) {
+  const btn = container.querySelector("[data-dd-refresh-btn]");
+  if (!btn) return;
+  btn.addEventListener("click", () => _handleDistrictDataRefresh(container));
+}
+
+// Poll interval while a refresh is in flight. CCD pull + load + recompute
+// can take a few minutes — 20s is frequent enough to feel responsive
+// without hammering the endpoint.
+const _DD_REFRESH_POLL_MS = 20000;
+
+async function _handleDistrictDataRefresh(container) {
+  ddState.refreshing = true;
+  ddState.refreshError = null;
+  _repatchDistrictDataCard(container);
+
+  try {
+    const result = await refreshDistrictDataApi();
+    ddState.refreshStartedAt = result.started_at || result.startedAt || null;
+  } catch (err) {
+    if (err.status === 409) {
+      // Already in flight — fall through to polling so the panel still updates.
+      ddState.refreshError = null;
+    } else {
+      ddState.refreshing = false;
+      ddState.refreshError = err.message || "Could not start refresh.";
+      _repatchDistrictDataCard(container);
+      return;
+    }
+  }
+
+  // Poll the status endpoint until loaded_at advances past the moment we
+  // kicked off the refresh — that's our completion signal.
+  const startMs = Date.now();
+  const startedAt = ddState.refreshStartedAt ? Date.parse(ddState.refreshStartedAt) : startMs;
+  const watchdogMs = 10 * 60 * 1000; // 10 minutes — beyond which give up polling and let the user reload manually.
+  while (ddState.refreshing && Date.now() - startMs < watchdogMs) {
+    await new Promise((r) => setTimeout(r, _DD_REFRESH_POLL_MS));
+    try {
+      const status = await getDistrictDataStatusApi();
+      const loadedAtMs = status?.loaded_at ? Date.parse(status.loaded_at) : 0;
+      if (status?.loaded && loadedAtMs >= startedAt - 1000) {
+        ddState.status = status;
+        ddState.refreshing = false;
+        _repatchDistrictDataCard(container);
+        return;
+      }
+    } catch {
+      // Transient — keep polling until watchdog fires.
+    }
+  }
+
+  // Watchdog: stop the spinner; the user can refresh the page to re-check.
+  ddState.refreshing = false;
+  if (!ddState.refreshError) {
+    ddState.refreshError = "Refresh is still running — check back in a few minutes.";
+  }
+  _repatchDistrictDataCard(container);
 }
 
 // ── District Sizing section ────────────────────────────────────────────────
@@ -3135,6 +3210,7 @@ export async function loadMarketingRulesets(container) {
 function _renderSignalPlaybook(container) {
   container.innerHTML = _renderDistrictDataCard() + _renderDistrictSizing() + renderMarketingRulesets([], spState.codes);
   _attachDistrictSizingHandlers(container);
+  _attachDistrictDataHandlers(container);
   container.querySelectorAll("[data-sp-action]").forEach((btn) => btn.addEventListener("click", () => _handleSpAction(container, btn)));
   container.querySelectorAll("[data-sp-filter]").forEach((el) => el.addEventListener("change", () => {
     if (el.dataset.spFilter === "domain") spState.domain = el.value;

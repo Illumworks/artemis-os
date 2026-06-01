@@ -6,6 +6,8 @@ Tests:
   2. Freshness thresholds: 0 mo → "current"; 14 mo → "aging"; 20 mo → "stale".
   3. Empty district_data_meta → "no data loaded" shape (no crash, no fabricated numbers).
   4. Loader stamps district_data_meta on load (school_year + row_count correct).
+  5. #100 — POST /district-data-refresh spawns a subprocess and returns 202;
+     a second call while one is in flight returns 409.
 
 Run with:
   ARTEMIS_TEST_DB_URL=postgresql+asyncpg://artemis:artemis@localhost/artemis_test_dist5 \\
@@ -296,6 +298,76 @@ nces_id,name,state,enrollment
 1001002,Beta USD,TX,8000
 1001003,Gamma USD,FL,3000
 """
+
+
+async def test_district_data_refresh_endpoint_spawns_subprocess(
+    client: AsyncClient,
+    db_session: AsyncSession,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /district-data-refresh returns 202 and dispatches the refresh CLI subprocess.
+
+    Mocks asyncio.create_subprocess_exec so the test never touches the
+    Urban Institute API.
+    """
+    import asyncio
+    import sys as _sys
+
+    from artemis.marketing import district_refresh_cli
+    from artemis.marketing.routes import signal_criteria as sc_module
+
+    # Reset single-flight state so this test isn't gated by an earlier run.
+    sc_module._REFRESH_STATE["task"] = None
+    sc_module._REFRESH_STATE["started_at"] = None
+
+    captured: list[dict[str, object]] = []
+    proc_done = asyncio.Event()
+
+    class _FakeProc:
+        returncode = 0
+        pid = 12345
+
+        async def communicate(self) -> tuple[bytes, bytes | None]:
+            await proc_done.wait()
+            return b'{"status": "ok", "loaded": 0, "recomputed": 0}\n', None
+
+    async def _fake_create(*argv: str, **kwargs: object) -> _FakeProc:
+        captured.append({"argv": list(argv), "kwargs": kwargs})
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+
+    response = await client.post("/api/signal-criteria/district-data-refresh")
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["status"] == "started"
+    assert "started_at" in body
+
+    # Give the event loop a tick to run the spawn-and-reap task.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert len(captured) == 1, "exactly one subprocess spawned per request"
+    argv = captured[0]["argv"]
+    assert argv[0] == _sys.executable
+    assert argv[1] == "-m"
+    assert argv[2] == district_refresh_cli.MODULE_NAME == "artemis.marketing.district_refresh_cli"
+    assert captured[0]["kwargs"]["cwd"].endswith("artemis-os")
+
+    # While the subprocess is still pretending to run, a second click must
+    # 409 instead of spawning a duplicate.
+    second = await client.post("/api/signal-criteria/district-data-refresh")
+    assert second.status_code == 409, second.text
+    assert len(captured) == 1, "second click must NOT spawn a duplicate subprocess"
+
+    # Let the subprocess "finish" so the reaper task drains.
+    proc_done.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # After completion the state is cleared and a new refresh can start.
+    sc_module._REFRESH_STATE["task"] = None
+    sc_module._REFRESH_STATE["started_at"] = None
 
 
 async def test_loader_stamps_meta_on_load(

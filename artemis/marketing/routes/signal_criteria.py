@@ -12,12 +12,17 @@ Endpoints:
   PUT  /tier-bands            — upsert all 4 bands; validates tiling (no gaps/overlaps)
   POST /tier-bands/recompute  — recompute all district tiers; returns {updated: N}
   GET  /district-data-status  — live freshness + tier counts for the loaded NCES dataset
+  POST /district-data-refresh — start a background NCES refresh; returns 202 immediately
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -74,6 +79,19 @@ router = APIRouter(
     tags=["signal-criteria"],
     dependencies=[Depends(require_token)],
 )
+
+logger = logging.getLogger(__name__)
+
+# Repo root for the refresh subprocess cwd (parents[3]: this_file → routes →
+# marketing → artemis → repo-root).
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Single-flight guard for the refresh subprocess. A second click while one
+# is in flight returns 409 instead of spawning a duplicate.
+_REFRESH_STATE: dict[str, Any] = {"task": None, "started_at": None}
+
+# Reaper tasks need a strong reference to outlive the request handler.
+_REFRESH_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 
 
 # ── Rulesets ──────────────────────────────────────────────────────────────────
@@ -567,6 +585,86 @@ async def get_district_data_status(
         months_since_loaded=months,
         freshness=freshness,
     )
+
+
+# ── District Data Refresh ─────────────────────────────────────────────────────
+
+
+async def _spawn_district_refresh() -> None:
+    """Background reaper: spawn the refresh CLI subprocess and log its result.
+
+    Runs out-of-process for the same reason as #102/#103 — the refresh
+    pulls thousands of rows from a slow external API and recomputes every
+    district tier. Doing that in the web event loop would block uvicorn
+    for minutes. The CLI's load step is upsert-only, so a partial failure
+    is non-destructive (existing rows survive).
+    """
+    from artemis.marketing import district_refresh_cli
+
+    argv = [sys.executable, "-m", district_refresh_cli.MODULE_NAME]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(_REPO_ROOT),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except OSError:
+        logger.exception("district refresh: failed to spawn subprocess argv=%r", argv)
+        _REFRESH_STATE["task"] = None
+        _REFRESH_STATE["started_at"] = None
+        return
+
+    try:
+        stdout, _ = await proc.communicate()
+    except Exception:
+        logger.exception("district refresh: subprocess communicate() failed")
+        _REFRESH_STATE["task"] = None
+        _REFRESH_STATE["started_at"] = None
+        return
+
+    tail = (stdout or b"").decode(errors="replace").strip().splitlines()[-1:] if stdout else []
+    last_line = tail[0] if tail else "(no output)"
+    if proc.returncode == 0:
+        logger.info("district refresh: subprocess exit=0 last_line=%s", last_line)
+    else:
+        logger.warning(
+            "district refresh: subprocess exit=%s last_line=%s",
+            proc.returncode,
+            last_line,
+        )
+    _REFRESH_STATE["task"] = None
+    _REFRESH_STATE["started_at"] = None
+
+
+@router.post("/district-data-refresh", status_code=202)
+async def trigger_district_data_refresh() -> dict[str, Any]:
+    """Start a background NCES district refresh.
+
+    Returns 202 immediately. The freshness panel re-fetches
+    /district-data-status on its next load to see the new values. A second
+    request while a refresh is already in flight returns 409 instead of
+    spawning a duplicate, so a double-click can't fan out two concurrent
+    downloads.
+    """
+    existing = _REFRESH_STATE.get("task")
+    if existing is not None and not existing.done():
+        raise conflict(
+            "A district data refresh is already in progress.",
+            "district_data_refresh_in_progress",
+        )
+
+    started_at = datetime.now(tz=UTC)
+    task = asyncio.create_task(_spawn_district_refresh())
+    _REFRESH_STATE["task"] = task
+    _REFRESH_STATE["started_at"] = started_at
+    _REFRESH_BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_REFRESH_BACKGROUND_TASKS.discard)
+
+    return {
+        "status": "started",
+        "started_at": started_at.isoformat(),
+    }
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

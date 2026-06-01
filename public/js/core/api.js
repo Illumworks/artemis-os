@@ -2256,6 +2256,20 @@ export async function getDistrictDataStatusApi() {
   return res.json();
 }
 
+/** Start a background NCES refresh. Returns immediately (202) — the panel
+ *  re-fetches /district-data-status on completion or next load. 409 if a
+ *  refresh is already in flight. */
+export async function refreshDistrictDataApi() {
+  const res = await fetch("/api/signal-criteria/district-data-refresh", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || body.detail?.error || "refreshDistrictDataApi failed");
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 // ── Signal Queue ──────────────────────────────────────────────────────────
 
 export async function listSignalQueueApi(params = {}) {
