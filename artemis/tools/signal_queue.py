@@ -54,7 +54,14 @@ _DEF = Tool(
                 ],
             },
             "headline": {"type": "string"},
-            "campaignFamily": {"type": "string"},
+            "campaignFamily": {
+                "type": "string",
+                "description": (
+                    "Campaign family — one of: obc, dyslexia, biliteracy, hit, general_growth. "
+                    "Josh-spec labels (e.g. 'Dyslexia / structured literacy', "
+                    "'High-impact tutoring (HIT)') are also accepted and normalized to the slug."
+                ),
+            },
             "urgencyTier": {
                 "type": "string",
                 "enum": ["hot", "standard", "low"],

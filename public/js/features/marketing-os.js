@@ -57,7 +57,9 @@ const SP_SCOUTS = [
   "board_minutes", "federal_funding", "leadership_transition", "legislative",
   "linkedin_observer", "procurement", "regional_news", "starbridge_researcher", "state_doe",
 ];
-const SP_FAMILIES = ["obc", "state_screener", "biliteracy", "reading_growth", "OBC", "Dyslexia / structured literacy", "Biliteracy / DLL", "High-impact tutoring (HIT)", "General growth"];
+// Canonical campaign families (single source of truth: josh_spec §3, slugified).
+// Reconciled from the prior 4-slug + 5-label mix (#79/#80).
+const SP_FAMILIES = ["obc", "dyslexia", "biliteracy", "hit", "general_growth"];
 const SP_URGENCIES = ["hot", "standard", "low", "enrichment"];
 let spState = { codes: [], domain: "", scout: "", showRetired: false, editing: null };
 

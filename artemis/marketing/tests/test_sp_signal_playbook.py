@@ -84,7 +84,8 @@ async def test_post_validates_campaign_families(client: AsyncClient) -> None:
         json={"code": "TEST_SIGNAL", "domain": "TEST", "campaignFamilies": ["bogus_family"]},
     )
     assert response.status_code == 400
-    assert "reading_growth" in response.json()["error"]
+    # Error lists the canonical families (#79/#80 reconciled to Josh's spec 5).
+    assert "general_growth" in response.json()["error"]
 
 
 @pytest.mark.asyncio

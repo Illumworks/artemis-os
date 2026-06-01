@@ -72,6 +72,52 @@ def parse_spec(path: Path | None = None) -> JoshSpec:
     )
 
 
+# ── Campaign-family taxonomy (single source of truth) ────────────────────────
+# Josh's spec §3 campaign_type labels are the authoritative family set
+# (canonical decision, Jon 2026-05-31). Everything else — scout emissions, the
+# validation allowlist, the SP UI — normalizes through here so the taxonomy can
+# never drift again. (Resolves the #79/#80 label-vs-slug + 4-vs-5 mismatch.)
+CANONICAL_CAMPAIGN_FAMILIES: tuple[str, ...] = (
+    "obc",
+    "dyslexia",
+    "biliteracy",
+    "hit",
+    "general_growth",
+)
+
+# Maps every known label, canonical slug, and legacy alias -> canonical slug.
+# Keys are lowercased/stripped before lookup.
+_CAMPAIGN_FAMILY_ALIASES: dict[str, str] = {
+    # spec §3 labels
+    "obc": "obc",
+    "dyslexia / structured literacy": "dyslexia",
+    "biliteracy / dll": "biliteracy",
+    "high-impact tutoring (hit)": "hit",
+    "general growth": "general_growth",
+    # canonical slugs (pass-through)
+    "dyslexia": "dyslexia",
+    "biliteracy": "biliteracy",
+    "hit": "hit",
+    "general_growth": "general_growth",
+    # legacy pre-2026-05-31 4-slug taxonomy -> canonical
+    "reading_growth": "general_growth",
+    "state_screener": "dyslexia",
+}
+
+
+def normalize_campaign_family(value: str | None) -> str | None:
+    """Map any campaign-family label / slug / legacy alias to its canonical slug.
+
+    Returns None if unrecognized. Case- and whitespace-insensitive. This is the
+    one place campaign-family strings are reconciled — callers (scout intake,
+    candidate creation, UI) should normalize through here rather than hardcode
+    family sets.
+    """
+    if not value:
+        return None
+    return _CAMPAIGN_FAMILY_ALIASES.get(str(value).strip().lower())
+
+
 def reason_codes_for_scout(spec: JoshSpec, scout_slug: str) -> tuple[ReasonCodeSpec, ...]:
     """Return all reason codes whose primary_scouts contains scout_slug."""
     return tuple(row for row in spec.reason_codes if scout_slug in row.primary_scouts)

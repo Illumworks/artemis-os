@@ -21,6 +21,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from artemis.marketing.josh_spec import (
+    CANONICAL_CAMPAIGN_FAMILIES,
+    normalize_campaign_family,
+)
 from artemis.marketing.scout_schemas import (
     ReasonCodeAllowlistError,
     ScoutEmittedSignal,
@@ -42,14 +46,8 @@ VALID_SOURCE_TYPES: frozenset[str] = frozenset(
     }
 )
 
-VALID_CAMPAIGN_FAMILIES: frozenset[str] = frozenset(
-    {
-        "obc",
-        "state_screener",
-        "biliteracy",
-        "reading_growth",
-    }
-)
+# Canonical campaign-family slugs — single source of truth lives in josh_spec.
+VALID_CAMPAIGN_FAMILIES: frozenset[str] = frozenset(CANONICAL_CAMPAIGN_FAMILIES)
 
 VALID_URGENCY_TIERS: frozenset[str] = frozenset({"hot", "standard", "low"})
 
@@ -168,11 +166,14 @@ def normalize_intake_payload(
     if not raw_headline and not raw_snippet:
         errors.append("headline or verbatimSnippet is required")
 
-    # campaignFamily
-    campaign_family = payload.get("campaignFamily") or ""
-    if not campaign_family or campaign_family not in VALID_CAMPAIGN_FAMILIES:
+    # campaignFamily — normalize any label / canonical slug / legacy alias to the
+    # canonical slug (single source of truth in josh_spec), then validate.
+    campaign_family = normalize_campaign_family(payload.get("campaignFamily")) or ""
+    if not campaign_family:
         errors.append(
-            f"campaignFamily must be one of: {', '.join(sorted(VALID_CAMPAIGN_FAMILIES))}"
+            "campaignFamily must be one of: "
+            + ", ".join(CANONICAL_CAMPAIGN_FAMILIES)
+            + " (spec labels and legacy aliases are also accepted)"
         )
 
     # stateCode (optional — validate format when present)
