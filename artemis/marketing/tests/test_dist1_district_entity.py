@@ -132,6 +132,60 @@ async def test_upsert_district_inserts_then_updates_in_place(db_session: AsyncSe
         assert row_count == 1
 
 
+async def test_upsert_district_same_name_distinct_nces_ids_persist_separately(
+    db_session: AsyncSession,
+) -> None:
+    """#97: Ohio has multiple 'Buckeye Local', each with its own nces_id.
+
+    Before the fix, the loader matched by name+state even when nces_id was
+    present — the second row's nces_id overwrote the first, collapsing two
+    distinct districts onto one. ~59 districts were lost from the 2024-25
+    load this way. The fix: when nces_id is provided, it is the sole
+    identity key.
+    """
+    async with db_session.begin():
+        first = await upsert_district(
+            db_session,
+            nces_id="3904371",
+            name="Buckeye Local",
+            state="OH",
+            enrollment=2000,
+            source="nces",
+        )
+        second = await upsert_district(
+            db_session,
+            nces_id="3904380",
+            name="Buckeye Local",
+            state="OH",
+            enrollment=3000,
+            source="nces",
+        )
+
+        assert first.id != second.id
+        assert first.nces_id == "3904371"
+        assert second.nces_id == "3904380"
+
+        row_count = await db_session.scalar(
+            select(func.count())
+            .select_from(District)
+            .where(District.name == "Buckeye Local", District.state == "OH")
+        )
+        assert row_count == 2
+
+        # Re-upserting the first one by its nces_id must still hit the same row,
+        # not the second one (no name-collision crossover).
+        refreshed = await upsert_district(
+            db_session,
+            nces_id="3904371",
+            name="Buckeye Local",
+            state="OH",
+            enrollment=2100,
+            source="nces",
+        )
+        assert refreshed.id == first.id
+        assert refreshed.enrollment == 2100
+
+
 async def test_upsert_district_soft_flags_d4_without_deleting_row(
     db_session: AsyncSession,
 ) -> None:

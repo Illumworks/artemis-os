@@ -399,14 +399,22 @@ async def upsert_district(
 
     district: District | None = None
     if normalized_nces_id is not None:
+        # When an nces_id is supplied, it is the SOLE identity key. Do NOT
+        # fall back to name+state — distinct districts can share a name
+        # (Ohio has multiple "Buckeye Local", each with its own nces_id), so
+        # a fallback collapses them onto one row and the next CSV pass keeps
+        # overwriting nces_id back and forth.
         district = await session.scalar(
             select(District)
             .where(District.nces_id == normalized_nces_id)
             .order_by(District.id.desc())
             .limit(1)
         )
-    if district is None:
-        stmt = select(District).where(District.name == normalized_name)
+    else:
+        stmt = select(District).where(
+            District.name == normalized_name,
+            District.nces_id.is_(None),
+        )
         if normalized_state is None:
             stmt = stmt.where(District.state.is_(None))
         else:
