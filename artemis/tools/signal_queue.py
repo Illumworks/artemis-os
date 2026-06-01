@@ -65,7 +65,23 @@ _DEF = Tool(
                 "minItems": 1,
             },
             "evidence": {"type": "string"},
-            "districtId": {"type": "string"},
+            "districtId": {
+                "type": "string",
+                "description": (
+                    "The school district this signal is about, by NAME as commonly written "
+                    "(e.g. 'Fort Bend ISD', 'Grosse Pointe Schools', 'St. Louis Public Schools'). "
+                    "ALWAYS populate when the signal concerns a specific district — the system "
+                    "resolves it to the canonical NCES district and its size tier (D1-D4). "
+                    "Leave empty only for genuinely state/federal-level signals with no single district."
+                ),
+            },
+            "stateCode": {
+                "type": "string",
+                "description": (
+                    "2-letter US state of the district (e.g. 'TX', 'FL'). Populate whenever known; "
+                    "it disambiguates districts that share a name across states."
+                ),
+            },
             "sourceUrl": {"type": "string"},
             "whyFlagged": {"type": "string"},
         },

@@ -263,7 +263,13 @@ def normalize_intake_payload(
         else None
     )
 
-    district_raw = payload.get("district")
+    # Accept the canonical tool field `districtId` (camelCase, matches the
+    # signal_queue.write schema + every other field) with a fallback to the
+    # legacy `district` key. Without this, scouts that populate districtId per
+    # the tool schema had it silently dropped here — leaving district NULL and
+    # the DIST3 resolver with no input. (Resolves the districtId/district
+    # key-mismatch; required for scout geography emission to actually land.)
+    district_raw = payload.get("districtId") or payload.get("district")
     district: str | None = (
         str(district_raw).strip()
         if isinstance(district_raw, str) and district_raw.strip()
