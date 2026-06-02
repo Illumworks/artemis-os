@@ -82,6 +82,7 @@ Topic-specific, durable references. Read when you need to dig into that topic.
 
 | Doc | What |
 |---|---|
+| `docs/integrations/legiscan.md` | LegiScan API integration + operating contract (query limits, hashes, CC BY 4.0, key setup). First entry in `docs/integrations/` — pattern for future connectors. |
 | `docs/MARKETING-PIPELINE-CANONICAL.md` | Canonical marketing pipeline structure |
 | `docs/MEMORY-DURABILITY.md` | Memory durability invariants + backup/restore design |
 | `docs/marketing-slab-grounding.md` | Marketing-domain grounding for the agent architecture |

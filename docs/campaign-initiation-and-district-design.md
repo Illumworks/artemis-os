@@ -250,3 +250,58 @@ the **loop-closer**. Documenting the insertion points now so we don't hunt later
 ## Status: fully locked (2026-05-31; Stream-2 grouping + lineage added 2026-06-01)
 
 All decisions resolved. D-5 adopted (editable bands D1≥25k / D2 10–25k / D3 5–10k / D4 <5k). D-6 locked (dedicated name-resolution agent). Briefs cleared to draft. The NCES-lookup + pure-function-tier approach keeps the whole district-sizing path hallucination-free by construction, which is the stated bar.
+
+---
+
+## Stream 3: decouple campaign initiation from the discovery run (locked 2026-06-01, evening)
+
+### What the first end-to-end test surfaced
+Pushing a real campaign through approve → cluster → propose → **confirm** failed at confirm with
+`gate_node_not_found`. Root cause was architectural, not a bug: the confirm endpoint
+(`POST /api/marketing/campaigns/{id}/initiate`) was coupled to **resuming one pipeline run paused
+at a `gate_campaign_initiation` human-gate** — but **Stream-2 candidates span multiple discovery
+runs by design** (proven live: candidate 5's signals 296 + 298 came from runs `c9b57dbf` and
+`48c198d6`, both still parked at `gate_1_signals_inbox`). There is no single run to resume. The
+CI3 resume model assumed one-candidate-per-run; Stream-2 cross-run clustering invalidated it.
+`_resolve_candidate_run_id` resolved a *discovery* run (`signal.pipeline_run_id`), never a run
+paused at the initiation gate, so it only ever worked in CI3's single-run test fixture.
+
+Also: `initiate_campaign()` only flips candidate fields — the deliverable/draft work fires
+*downstream of the gate resume*. With no resumable gate, an initiated campaign would never draft.
+
+### The decision: the campaign is a first-class entity; its deliverable lifecycle is its own run
+The discovery pipeline's job **ends at Gate-1** (produce qualified, clustered signals + a
+proposal). Campaign initiation is a **UI action on the candidate** (the CI3 form), not a buried
+pipeline gate. Confirm starts a **fresh, on-demand deliverable run keyed to the candidate**.
+
+**Two pipelines (was one linear `marketing.main`):**
+1. **`marketing.main` (discovery → proposal):** `trigger → scouts → qualifiers →
+   gate_1_signals_inbox → content_brief_assembler (propose_initiation; clusters + writes
+   proposal) → END`. The `gate_campaign_initiation` gate and everything downstream of it are
+   **removed** from this pipeline.
+2. **`marketing.campaign_deliverables` (NEW, on-demand):** `trigger_manual →
+   content_asset_selector → content_writing_studio_adapter → deliverable_<slug>… →
+   gate_2_approval_drawer`. Started by the confirm endpoint, keyed by
+   `pipeline_runs.target_candidate_id`.
+
+**Candidate ↔ run link (NEW, explicit):** add `pipeline_runs.target_candidate_id` (nullable FK to
+`campaign_candidates`, `ON DELETE SET NULL`, indexed). Deliverable nodes resolve their candidate
+from `run.target_candidate_id` first; the legacy `list_run_candidates(run_id)` signal-join becomes
+a fallback. This replaces the brittle indirect `signal.pipeline_run_id` association.
+
+**Confirm endpoint flow (decoupled):** validate proposal+slugs → `initiate_campaign()` (flip
+fields) → create a `marketing.campaign_deliverables` run with `target_candidate_id` → commit →
+dispatch the new run. No discovery-run resume, no `gate_node_not_found`.
+
+**Proposal generation (lazy + robust):** the initiation-context GET lazily generates the proposal
+via `propose_campaign_initiation` if `initiation_proposal_json` is absent — so confirm no longer
+depends on the discovery run having executed `content_brief_assembler`. (brief_assembler stays in
+`marketing.main` as a pre-warm, but is no longer load-bearing for confirm.)
+
+**Why this is the solid design:** the campaign outlives any one discovery run (Stream-2 already
+made it so); modeling its deliverable lifecycle as its own run makes it observable, restartable,
+and queryable. **CMP-SEND (Gate-2 + send) operates on this deliverable run** — it finds "the
+deliverable run for candidate X" via `pipeline_runs.target_candidate_id`. The decoupling is the
+foundation the send stream builds on.
+
+**Implemented by:** CI4 brief (`briefs/ci4-decouple-campaign-initiation.md`).
