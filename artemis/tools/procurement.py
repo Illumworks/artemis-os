@@ -36,7 +36,7 @@ _DEF = Tool(
 def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
     async def _impl(arguments: dict[str, Any]) -> str:
         logger.warning("procurement_portal.fetch called (stub) by agent=%s", ctx.agent_id)
-        return "STUB: procurement_portal.fetch not yet implemented. Set PROCUREMENT_PORTAL_URL in Connectors panel."
+        return "STUB: procurement_portal.fetch not yet implemented. Set PROCUREMENT_PORTAL_URL (or SAM_API_KEY) in the .env file."
 
     return (_DEF, _impl)
 

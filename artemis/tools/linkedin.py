@@ -50,7 +50,7 @@ _DEF_DELTA = Tool(
 def _factory_fetch(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
     async def _impl(arguments: dict[str, Any]) -> str:
         logger.warning("linkedin_scraper.fetch_posts called (stub) by agent=%s", ctx.agent_id)
-        return "STUB: linkedin_scraper.fetch_posts not yet implemented. Set LINKEDIN_API_KEY in Connectors panel."
+        return "STUB: linkedin_scraper.fetch_posts not yet implemented. Set LINKEDIN_API_KEY in the .env file."
 
     return (_DEF_FETCH, _impl)
 
@@ -60,7 +60,7 @@ def _factory_delta(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
         logger.warning(
             "linkedin_scraper.check_profile_delta called (stub) by agent=%s", ctx.agent_id
         )
-        return "STUB: linkedin_scraper.check_profile_delta not yet implemented. Set LINKEDIN_API_KEY in Connectors panel."
+        return "STUB: linkedin_scraper.check_profile_delta not yet implemented. Set LINKEDIN_API_KEY in the .env file."
 
     return (_DEF_DELTA, _impl)
 

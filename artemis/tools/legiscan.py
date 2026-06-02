@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _BASE_URL = "https://api.legiscan.com/"
 _NEEDS_KEY = (
     "STUB: LegiScan needs a free API key — register at legiscan.com/legiscan "
-    "and add LEGISCAN_API_KEY in the Connectors panel."
+    "and set LEGISCAN_API_KEY in the .env file."
 )
 _DEFAULT_STATE = "ALL"
 

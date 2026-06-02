@@ -124,7 +124,7 @@ async def test_federal_register_search_http_500(monkeypatch: pytest.MonkeyPatch)
 
 _STUB = (
     "STUB: LegiScan needs a free API key — register at legiscan.com/legiscan "
-    "and add LEGISCAN_API_KEY in the Connectors panel."
+    "and set LEGISCAN_API_KEY in the .env file."
 )
 
 
