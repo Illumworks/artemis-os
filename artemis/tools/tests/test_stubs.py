@@ -118,8 +118,16 @@ async def test_unresolved_signals_stub() -> None:
 @pytest.mark.asyncio
 async def test_api_key_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     """All API-key-required stubs return STUB string."""
-    # legiscan is real-but-stub-until-key; ensure no key so it returns the stub.
-    monkeypatch.delenv("LEGISCAN_API_KEY", raising=False)
+    # These are real-but-stub-until-key; clear every gating env var so the test is
+    # hermetic regardless of what's in the developer's .env (e.g. a live SAM_API_KEY).
+    for _var in (
+        "LEGISCAN_API_KEY",
+        "SAM_API_KEY",
+        "PROCUREMENT_PORTAL_URL",
+        "STARBRIDGE_API_KEY",
+        "LINKEDIN_API_KEY",
+    ):
+        monkeypatch.delenv(_var, raising=False)
     stubs = [
         _legiscan_search(_ctx()),
         _legiscan_bill(_ctx()),
