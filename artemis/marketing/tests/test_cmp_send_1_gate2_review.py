@@ -5,10 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from sqlalchemy import select
 
 from artemis.marketing.models import Approval, CampaignCandidate, CampaignDeliverable, CampaignSend
 from artemis.marketing.repository import create_campaign_candidate_from_signal, create_signal
@@ -348,9 +346,9 @@ async def test_revision_requested_marks_revised_and_holds_via_rejected_gate_path
     send_result = await db_session.execute(
         select(CampaignSend).where(CampaignSend.deliverable_id == deliverable.id)
     )
-    assert (
-        send_result.scalars().first() is None
-    ), "No campaign_sends row expected on revision_requested"
+    assert send_result.scalars().first() is None, (
+        "No campaign_sends row expected on revision_requested"
+    )
 
     await db_session.commit()
     executor = PipelineExecutor(run_id)

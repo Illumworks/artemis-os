@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.marketing.contacts import create_contact
 from artemis.marketing.models import (
-    Approval,
     CampaignCandidate,
     CampaignDeliverable,
     CampaignSend,
@@ -34,7 +33,6 @@ from artemis.marketing.models import (
 from artemis.marketing.repository import create_campaign_candidate_from_signal, create_signal
 from artemis.marketing.sends import (
     enqueue_send_for_deliverable,
-    mark_send_sent,
     resolve_district_ids_for_candidate,
     resolve_recipients_for_candidate,
 )
@@ -233,9 +231,7 @@ async def _seed_gate2_run_with_scope(
 
     approval_id = (
         await session.execute(
-            text(
-                "SELECT id FROM approvals WHERE kind = 'content_draft' AND subject_id = :sid"
-            ),
+            text("SELECT id FROM approvals WHERE kind = 'content_draft' AND subject_id = :sid"),
             {"sid": f"{run.id}:gate_2_approval"},
         )
     ).scalar_one()
@@ -308,9 +304,7 @@ async def test_resolve_all_districts_mode(db_session: AsyncSession) -> None:
     d2 = await _make_district(db_session, name="Dist2", supported=True)
     d3 = await _make_district(db_session, name="Dist3", supported=True)
     d4 = await _make_district(db_session, name="Dist4_unsupported", supported=False)
-    candidate = await _make_candidate(
-        db_session, target_scope_json={"mode": "all_districts"}
-    )
+    candidate = await _make_candidate(db_session, target_scope_json={"mode": "all_districts"})
     await db_session.commit()
 
     ids = await resolve_district_ids_for_candidate(db_session, candidate)
@@ -389,7 +383,9 @@ async def test_resolve_fallback_to_resolved_district_id(db_session: AsyncSession
 async def test_resolve_recipients_returns_contact_snapshot(db_session: AsyncSession) -> None:
     d = await _make_district(db_session, name="Contact Dist", state="TX")
     await db_session.flush()
-    await create_contact(db_session, district_id=d.id, name="Alice", email="alice@example.com", title="Super")
+    await create_contact(
+        db_session, district_id=d.id, name="Alice", email="alice@example.com", title="Super"
+    )
     await create_contact(db_session, district_id=d.id, name="Bob", email="bob@example.com")
     candidate = await _make_candidate(
         db_session, target_scope_json={"mode": "states", "states": ["TX"]}
@@ -469,9 +465,7 @@ async def test_enqueue_wrong_state_raises(db_session: AsyncSession) -> None:
     await db_session.commit()
 
     with pytest.raises(ValueError, match="must be in state 'approved'"):
-        await enqueue_send_for_deliverable(
-            db_session, candidate=candidate, deliverable=deliverable
-        )
+        await enqueue_send_for_deliverable(db_session, candidate=candidate, deliverable=deliverable)
 
 
 # ── D. POST /api/marketing/sends/{id}/send ────────────────────────────────────
@@ -621,7 +615,9 @@ async def test_e2e_approve_with_contacts_creates_queued_send(
     # Seed a TX district with 1 contact
     tx_district = await _make_district(db_session, name="TX E2E Dist", state="TX")
     await db_session.flush()
-    await create_contact(db_session, district_id=tx_district.id, name="Frank", email="frank@e2e.com")
+    await create_contact(
+        db_session, district_id=tx_district.id, name="Frank", email="frank@e2e.com"
+    )
     await db_session.commit()
 
     # Seed gate-2 run with target_scope = {mode: "states", states: ["TX"]}
