@@ -253,11 +253,23 @@ export async function fetchEntityNeighborhoodApi(entityId, hops = 1) {
   return _readJsonOrThrow(res, "Failed to load entity neighborhood");
 }
 
-// E1b: Python doesn't have /overview yet — synthesize from /candidates so
-// the marketing dashboard can render live data instead of falling back to demo.
+export async function fetchMarketingCampaignsApi() {
+  const res = await fetch("/api/marketing/campaigns");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "fetchMarketingCampaignsApi failed");
+  }
+  const data = await res.json();
+  if (Array.isArray(data)) return data;
+  return data.campaigns || data.items || [];
+}
+
 export async function fetchCampaignOpsOverview() {
   const res = await fetch("/api/campaign-ops/candidates");
-  if (!res.ok) return { campaigns: [] };
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "fetchCampaignOpsOverview failed");
+  }
   const data = await res.json();
   const candidates = Array.isArray(data) ? data : (data.candidates || data.items || []);
   return { campaigns: candidates };

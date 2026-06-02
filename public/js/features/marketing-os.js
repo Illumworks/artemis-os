@@ -6,7 +6,7 @@ import {
 } from '../core/navigation.js';
 import {
   listApprovalsApi, decideApprovalApi,
-  fetchCampaignOpsOverview,
+  fetchMarketingCampaignsApi,
   decideCampaignCandidateApi, promoteCampaignCandidateApi, reopenCampaignCandidateApi,
   getCampaignInitiationProposalApi, initiateCampaignApi,
   createCampaignWritingHandoffApi,
@@ -95,316 +95,12 @@ const _assetLinksCache = new Map();
 // Keyed by campaignId → full initiation proposal payload.
 const _initiationProposalCache = new Map();
 
-// ── Mock data ─────────────────────────────────────────────────────────────
-// Three real campaigns seeded as the first workspace instances (MVP-1).
-
-const CAMPAIGNS = [
-  {
-    id: 'michigan-field-guide',
-    name: 'Michigan Field Guide',
-    family: 'State screener / field guide',
-    status: 'In play',
-    stage: 'Report',
-    priority: 'Live',
-    confidence: 88,
-    owner: 'Marketing team',
-    deadline: 'Ongoing',
-    brief: {
-      objective: 'Drive awareness and adoption of Amira Reading in Michigan districts navigating the MDE dyslexia screening mandate.',
-      signalSource: 'Michigan Department of Education — Dyslexia Screening Guidance (2024)',
-      targetDistricts: [
-        { name: 'Detroit Public Schools', status: 'in-outreach' },
-        { name: 'Flint Community Schools', status: 'qualified' },
-        { name: 'Grand Rapids Public Schools', status: 'in-outreach' },
-        { name: 'Lansing School District', status: 'qualified' },
-        { name: 'Ann Arbor Public Schools', status: 'warm' },
-        { name: 'Dearborn Public Schools', status: 'qualified' },
-      ],
-      keyMessaging: [
-        'Amira Reading is SOR-aligned and meets MDE\'s dyslexia screening criteria',
-        'Districts implementing Amira report measurable reading growth within one semester',
-        'Minimal IT lift — no new hardware; works within existing tech stacks',
-        'Field guide walks administrators through implementation step by step',
-      ],
-    },
-    audience: {
-      districts: [
-        { name: 'Detroit Public Schools', status: 'in-outreach', contacts: 3, fresh: '2025-04-10' },
-        { name: 'Flint Community Schools', status: 'qualified', contacts: 2, fresh: '2025-04-22' },
-        { name: 'Grand Rapids Public Schools', status: 'in-outreach', contacts: 2, fresh: '2025-04-15' },
-        { name: 'Lansing School District', status: 'qualified', contacts: 1, fresh: '2025-04-28' },
-        { name: 'Ann Arbor Public Schools', status: 'warm', contacts: 1, fresh: '2025-03-31' },
-        { name: 'Dearborn Public Schools', status: 'qualified', contacts: 2, fresh: '2025-04-20' },
-      ],
-    },
-    assets: [
-      { name: 'Michigan Field Guide (PDF)', type: 'Field Guide', status: 'shipped', updatedAt: '2025-04-01' },
-      { name: 'Email sequence — Michigan screener awareness', type: 'Email Sequence', status: 'shipped', updatedAt: '2025-04-05' },
-      { name: 'Landing page copy — Michigan field guide download', type: 'Landing Page', status: 'approved', updatedAt: '2025-04-08' },
-      { name: 'LinkedIn post — Michigan SOR mandate launch', type: 'Social', status: 'shipped', updatedAt: '2025-04-09' },
-    ],
-    sequence: {
-      emailCadence: [
-        { step: 1, subject: 'How Michigan districts are navigating the new screening mandate', sendOffset: 'Day 0', audience: 'All qualified contacts' },
-        { step: 2, subject: 'Field guide: step-by-step implementation for your district', sendOffset: 'Day 3', audience: 'Openers' },
-        { step: 3, subject: 'Quick question about your Q3 screener rollout', sendOffset: 'Day 7', audience: 'Non-responders' },
-        { step: 4, subject: 'One more resource before we wrap up', sendOffset: 'Day 14', audience: 'All remaining' },
-      ],
-      socialSchedule: [
-        { platform: 'LinkedIn', type: 'Awareness post', scheduledFor: '2025-04-09', status: 'shipped' },
-        { platform: 'LinkedIn', type: 'Case study teaser', scheduledFor: '2025-04-23', status: 'shipped' },
-      ],
-      bdrHandoffThreshold: 'Lead score ≥ 65 OR downloaded field guide AND opened ≥ 2 emails',
-    },
-    compliance: {
-      preferenceCenter: 'active',
-      optOutCount: 2,
-      legalFlags: [],
-      lastAudit: '2025-04-01',
-    },
-    approvalLog: [
-      { gate: 'Signal review', approvedBy: 'Josh + Angela', approvedAt: '2025-02-14', notes: 'Green-lit Michigan as the pilot field-guide campaign.' },
-      { gate: 'Content review — field guide draft', approvedBy: 'Josh', approvedAt: '2025-03-18', notes: 'Minor edits to implementation checklist on page 4.' },
-      { gate: 'Final approval — email sequence', approvedBy: 'Kristen', approvedAt: '2025-04-05', notes: 'Approved as-is. Enrolled in HubSpot.' },
-    ],
-    kpis: {
-      opens: 312,
-      clicks: 88,
-      downloads: 47,
-      bdrQueued: 6,
-      sparkline: [18, 24, 41, 57, 62, 72, 88],
-    },
-  },
-  {
-    id: 'florida-obc',
-    name: 'Florida OBC Campaign',
-    family: 'Outcomes-based contracts',
-    status: 'Ready for opportunity review',
-    stage: 'Human gate 1',
-    priority: 'P0',
-    confidence: 84,
-    owner: 'Josh + Angela',
-    deadline: '2025-06-30',
-    brief: {
-      objective: 'Position Amira Reading as the reference solution for Florida districts adopting outcomes-based contract models following the Florida DOE accountability framework.',
-      signalSource: 'Florida DOE — Accountability Framework update (Q1 2025) + Duval County OBC case study',
-      targetDistricts: [
-        { name: 'Duval County Public Schools', status: 'qualified' },
-        { name: 'Broward County Public Schools', status: 'qualified' },
-        { name: 'Orange County Public Schools', status: 'warm' },
-        { name: 'Palm Beach County School District', status: 'warm' },
-        { name: 'Hillsborough County Public Schools', status: 'cold' },
-      ],
-      keyMessaging: [
-        'Amira\'s OBC model ties payment to measurable reading outcomes — perfect fit for Florida\'s accountability framework',
-        'Duval County\'s pilot demonstrates 22% average reading growth in one year',
-        'Amira\'s OBC webinar (March 2025) provides plug-and-play proof for procurement conversations',
-        'Full compliance with Florida\'s public-school accountability reporting',
-      ],
-    },
-    audience: {
-      districts: [
-        { name: 'Duval County Public Schools', status: 'qualified', contacts: 4, fresh: '2025-04-18' },
-        { name: 'Broward County Public Schools', status: 'qualified', contacts: 3, fresh: '2025-04-12' },
-        { name: 'Orange County Public Schools', status: 'warm', contacts: 2, fresh: '2025-03-25' },
-        { name: 'Palm Beach County School District', status: 'warm', contacts: 2, fresh: '2025-03-20' },
-        { name: 'Hillsborough County Public Schools', status: 'cold', contacts: 1, fresh: '2025-02-14' },
-      ],
-    },
-    assets: [
-      { name: 'OBC webinar recording + transcript', type: 'Webinar', status: 'approved', updatedAt: '2025-03-10' },
-      { name: 'Duval case study (gated PDF)', type: 'Case Study', status: 'approved', updatedAt: '2025-03-22' },
-      { name: 'Florida OBC email sequence (draft)', type: 'Email Sequence', status: 'in-review', updatedAt: '2025-04-20' },
-      { name: 'OBC landing page copy (draft)', type: 'Landing Page', status: 'draft', updatedAt: '2025-04-25' },
-      { name: 'LinkedIn post — Florida OBC launch', type: 'Social', status: 'draft', updatedAt: '2025-04-27' },
-    ],
-    sequence: {
-      emailCadence: [
-        { step: 1, subject: 'How Duval County locked in reading outcomes without budget risk', sendOffset: 'Day 0', audience: 'All qualified + warm contacts' },
-        { step: 2, subject: 'The OBC model explained — 8-minute webinar replay', sendOffset: 'Day 4', audience: 'Openers' },
-        { step: 3, subject: 'Could [District Name] replicate the Duval results?', sendOffset: 'Day 9', audience: 'Non-responders' },
-      ],
-      socialSchedule: [
-        { platform: 'LinkedIn', type: 'OBC awareness post', scheduledFor: 'TBD', status: 'draft' },
-      ],
-      bdrHandoffThreshold: 'Lead score ≥ 60 OR opened webinar link AND replied to any email',
-    },
-    compliance: {
-      preferenceCenter: 'pending-setup',
-      optOutCount: 0,
-      legalFlags: ['Preference Center not yet configured — do not send until Kristen completes setup'],
-      lastAudit: null,
-    },
-    approvalLog: [
-      { gate: 'Signal review', approvedBy: 'Pending — Josh + Angela', approvedAt: null, notes: 'Awaiting Human Gate 1 approval to initiate campaign workflow.' },
-    ],
-    kpis: {
-      opens: 0,
-      clicks: 0,
-      downloads: 0,
-      bdrQueued: 0,
-      sparkline: [],
-    },
-  },
-  {
-    id: 'maryland-field-guide',
-    name: 'Maryland Screener Field Guide',
-    family: 'State screener / field guide',
-    status: 'Needs Ry validation',
-    stage: 'Evidence validation',
-    priority: 'P1',
-    confidence: 72,
-    owner: 'Josh + Ry',
-    deadline: '2025-07-31',
-    brief: {
-      objective: 'Support Maryland districts implementing the RISE Act dyslexia screening requirements with a practitioner field guide co-authored with Ry.',
-      signalSource: 'Maryland RISE Act (Reading Instruction Supports in Education) — effective SY 2025-26',
-      targetDistricts: [
-        { name: 'Montgomery County Public Schools', status: 'warm' },
-        { name: 'Prince George\'s County Public Schools', status: 'qualified' },
-        { name: 'Baltimore City Public Schools', status: 'warm' },
-        { name: 'Howard County Public Schools', status: 'cold' },
-        { name: 'Anne Arundel County Public Schools', status: 'cold' },
-      ],
-      keyMessaging: [
-        'Amira Reading aligns with Maryland RISE Act\'s evidence-based screening requirements',
-        'Field guide walks administrators through RISE Act compliance in 5 steps',
-        'Ry\'s policy accuracy review ensures every claim is defensible under Maryland law',
-        'Parallel to Michigan model — proven playbook, adapted for Maryland\'s specific statute',
-      ],
-    },
-    audience: {
-      districts: [
-        { name: 'Montgomery County Public Schools', status: 'warm', contacts: 2, fresh: '2025-03-14' },
-        { name: 'Prince George\'s County Public Schools', status: 'qualified', contacts: 2, fresh: '2025-04-02' },
-        { name: 'Baltimore City Public Schools', status: 'warm', contacts: 1, fresh: '2025-03-01' },
-        { name: 'Howard County Public Schools', status: 'cold', contacts: 1, fresh: '2025-01-20' },
-        { name: 'Anne Arundel County Public Schools', status: 'cold', contacts: 1, fresh: '2025-01-15' },
-      ],
-    },
-    assets: [
-      { name: 'Maryland field guide draft (pending Ry validation)', type: 'Field Guide', status: 'in-review', updatedAt: '2025-04-14' },
-      { name: 'RISE Act legislation summary', type: 'Research', status: 'approved', updatedAt: '2025-04-10' },
-      { name: 'Maryland email sequence (blocked — awaiting field guide approval)', type: 'Email Sequence', status: 'draft', updatedAt: null },
-    ],
-    sequence: {
-      emailCadence: [
-        { step: 1, subject: 'Maryland RISE Act: what your district needs to do before August', sendOffset: 'Day 0', audience: 'All qualified + warm contacts' },
-        { step: 2, subject: 'Field guide: RISE Act implementation in 5 steps', sendOffset: 'Day 5', audience: 'Openers' },
-        { step: 3, subject: 'Quick question about your RISE Act readiness', sendOffset: 'Day 10', audience: 'Non-responders' },
-      ],
-      socialSchedule: [
-        { platform: 'LinkedIn', type: 'RISE Act awareness post', scheduledFor: 'TBD', status: 'draft' },
-      ],
-      bdrHandoffThreshold: 'Lead score ≥ 55 OR downloaded field guide AND clicked any follow-up',
-    },
-    compliance: {
-      preferenceCenter: 'pending-setup',
-      optOutCount: 0,
-      legalFlags: ['Awaiting Ry\'s policy accuracy validation before any outreach begins'],
-      lastAudit: null,
-    },
-    approvalLog: [
-      { gate: 'Expert validation', approvedBy: 'Pending — Ry', approvedAt: null, notes: 'Field guide draft sent to Ry on 2025-04-14. Pending accuracy sign-off.' },
-    ],
-    kpis: {
-      opens: 0,
-      clicks: 0,
-      downloads: 0,
-      bdrQueued: 0,
-      sparkline: [],
-    },
-  },
-];
-
-const SIGNALS_MOCK = [
-  {
-    id: 'sig-1',
-    title: 'Indiana HB 1234 — dyslexia screening mandate signed into law',
-    state: 'Indiana',
-    source: 'Starbridge / Indiana General Assembly',
-    type: 'Legislation',
-    urgency: 'high',
-    deadline: '2025-08-01',
-    fitScore: 81,
-    campaignType: 'State screener / field guide',
-    summary: 'Indiana Governor signed HB 1234 requiring K-3 dyslexia screening statewide by SY 2026. 92 districts affected. Michigan field guide is a direct template.',
-    status: 'pending',
-  },
-  {
-    id: 'sig-2',
-    title: 'Missouri SB 610 — reading screener appropriation passed committee',
-    state: 'Missouri',
-    source: 'Starbridge / Missouri Senate',
-    type: 'Legislation',
-    urgency: 'medium',
-    deadline: '2025-09-15',
-    fitScore: 76,
-    campaignType: 'State screener / field guide',
-    summary: 'SB 610 passed Senate Education Committee with $4.2M appropriation for reading screeners. Full chamber vote expected in May.',
-    status: 'pending',
-  },
-  {
-    id: 'sig-3',
-    title: 'Illinois ISBE issues OBC pilot RFP for literacy vendors',
-    state: 'Illinois',
-    source: 'Regional News Scout / ISBE',
-    type: 'Funding',
-    urgency: 'high',
-    deadline: '2025-05-30',
-    fitScore: 79,
-    campaignType: 'Outcomes-based contracts',
-    summary: 'Illinois State Board of Education issued an RFP for literacy vendors willing to operate under outcomes-based contracts. Deadline May 30. Florida OBC playbook applies.',
-    status: 'pending',
-  },
-];
-
-const APPROVALS_MOCK = [
-  {
-    id: 'appr-1',
-    campaignId: 'florida-obc',
-    campaignName: 'Florida OBC Campaign',
-    gate: 'Signal review — Gate 1',
-    deliverable: 'Opportunity brief + recommended campaign scope',
-    requestedBy: 'System',
-    requestedAt: '2025-04-28',
-    reviewers: ['Josh', 'Angela'],
-    status: 'pending',
-    priority: 'P0',
-  },
-  {
-    id: 'appr-2',
-    campaignId: 'florida-obc',
-    campaignName: 'Florida OBC Campaign',
-    gate: 'Content review — Gate 2',
-    deliverable: 'Florida OBC email sequence (3-step draft)',
-    requestedBy: 'System',
-    requestedAt: '2025-04-29',
-    reviewers: ['Kristen'],
-    status: 'pending',
-    priority: 'P0',
-  },
-  {
-    id: 'appr-3',
-    campaignId: 'maryland-field-guide',
-    campaignName: 'Maryland Screener Field Guide',
-    gate: 'Expert validation — Gate 1',
-    deliverable: 'Maryland field guide draft (policy accuracy)',
-    requestedBy: 'System',
-    requestedAt: '2025-04-14',
-    reviewers: ['Ry'],
-    status: 'pending',
-    priority: 'P1',
-  },
-];
-
 // ── Module-level campaign map ──────────────────────────────────────────────
-// Merges static CAMPAIGNS with real API candidates. Updated by async patches.
 function _campaignMapKey(id) {
   return String(id ?? '');
 }
 
-let _campaignMap = new Map(CAMPAIGNS.map((c) => [_campaignMapKey(c.id), c]));
+let _campaignMap = new Map();
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -492,118 +188,129 @@ function freshnessBadge(dateStr) {
   return `<span class="mkt-freshness mkt-freshness-stale">${days}d ago</span>`;
 }
 
-// ── Normalize real API candidates ─────────────────────────────────────────
-// Real Campaign Ops candidates lack brief/audience/sequence/compliance; this
-// merges them with any matching static entry and flags them as live data.
-function _normCandidate(raw) {
+function _normalizeCampaignCandidate(raw) {
   return {
     id: raw.id,
-    name: raw.name || raw.initiationProposalJson?.name || '',
-    family: raw.family || '',
-    status: raw.status || '',
-    stage: raw.stage || '',
-    priority: raw.priority || '',
-    confidence: Number(raw.confidence || 0),
-    owner: raw.owner || '',
-    deadline: raw.deadline || '',
-    nextAction: raw.nextAction || '',
-    why: raw.why || '',
-    signals: Array.isArray(raw.signals) ? raw.signals : [],
-    deliverables: Array.isArray(raw.deliverables) ? raw.deliverables : [],
-    gates: Array.isArray(raw.gates) ? raw.gates : [],
-    decisionState: raw.decisionState || 'pending_review',
-    repositoryBucket: raw.repositoryBucket || null,
-    history: raw.history || [],
-    linkedDraftCount: Number(raw.linkedDraftCount || 0),
-    latestDraftId: raw.latestDraftId ? Number(raw.latestDraftId) : null,
-    latestDraftTitle: raw.latestDraftTitle || null,
-    kpis: raw.kpis || null,
+    name: raw.name || '',
+    objective: raw.objective || '',
+    state: raw.state || raw.decisionState || 'created',
+    family: raw.family || raw.campaignFamily || '',
+    initiatedAt: raw.initiatedAt || null,
+    initiatedBy: raw.initiatedBy || null,
+    signalClusterCount: Number(raw.signalClusterCount ?? raw.clusterCount ?? 0),
+    clusterCount: Number(raw.clusterCount ?? raw.signalClusterCount ?? 0),
+    primarySignalId: raw.primarySignalId ?? null,
+    primarySignalState: raw.primarySignalState || null,
+    primarySignalUrgencyTier: raw.primarySignalUrgencyTier || null,
+    primarySignalHeadline: raw.primarySignalHeadline || null,
+    decisionState: raw.state || raw.decisionState || 'created',
+    workspaceState: raw.workspaceState || null,
+    rulesetVersionAtQualification: raw.rulesetVersionAtQualification || null,
     initiationProposalJson: raw.initiationProposalJson || null,
     targetScopeJson: raw.targetScopeJson || null,
     deliverableTypesJson: raw.deliverableTypesJson || null,
-    initiatedAt: raw.initiatedAt || null,
-    initiatedBy: raw.initiatedBy || null,
+    sourceSignalId: raw.sourceSignalId || null,
     predecessorId: raw.predecessorId || null,
+    linkedDraftCount: Number(raw.linkedDraftCount || 0),
+    latestDraftId: raw.latestDraftId ? Number(raw.latestDraftId) : null,
+    latestDraftTitle: raw.latestDraftTitle || null,
+    history: Array.isArray(raw.history) ? raw.history : [],
+    kpis: raw.kpis || null,
     _fromApi: true,
   };
 }
 
-// Merge real API candidate data into a static CAMPAIGNS entry (or return
-// a normalized standalone if there is no static entry).
-function _mergeWithStatic(realCandidate) {
-  const staticEntry = _campaignMap.get(_campaignMapKey(realCandidate.id));
-  if (staticEntry && !staticEntry._fromApi) {
-    return {
-      ...staticEntry,
-      decisionState: realCandidate.decisionState,
-      history: realCandidate.history || staticEntry.approvalLog || [],
-      linkedDraftCount: Number(realCandidate.linkedDraftCount || 0),
-      latestDraftId: realCandidate.latestDraftId ? Number(realCandidate.latestDraftId) : null,
-      latestDraftTitle: realCandidate.latestDraftTitle || null,
-      _fromApi: true,
-    };
-  }
-  return _normCandidate(realCandidate);
+function _syncCampaignMap(campaigns = []) {
+  _campaignMap = new Map((campaigns || []).map((campaign) => [_campaignMapKey(campaign.id), campaign]));
+}
+
+function _campaignLifecycleLabel(campaign) {
+  return campaign?.initiatedAt ? 'Initiated' : 'Proposed';
+}
+
+function _campaignLifecycleBadge(campaign) {
+  const label = _campaignLifecycleLabel(campaign);
+  const pill = campaign?.initiatedAt ? 'mkt-badge-live' : 'mkt-badge-neutral';
+  return `<span class="mkt-badge ${pill}">${label}</span>`;
+}
+
+function _campaignDecisionPillClass(state) {
+  const s = String(state || '').toLowerCase();
+  if (s.includes('approved') || s.includes('active') || s.includes('initiated')) return 'mkt-pill-live';
+  if (s.includes('rejected')) return 'mkt-pill-cold';
+  if (s.includes('monitor')) return 'mkt-pill-active';
+  if (s.includes('change') || s.includes('pending') || s.includes('review') || s.includes('created')) return 'mkt-pill-pending';
+  return 'mkt-pill-neutral';
+}
+
+function _campaignDecisionDotClass(state) {
+  const s = String(state || '').toLowerCase();
+  if (s.includes('approved') || s.includes('active') || s.includes('initiated') || s.includes('live')) return 'mkt-list-dot-live';
+  if (s.includes('monitor')) return 'mkt-list-dot-active';
+  if (s.includes('rejected')) return 'mkt-list-dot-draft';
+  if (s.includes('change') || s.includes('pending') || s.includes('review') || s.includes('created') || s.includes('proposal')) return 'mkt-list-dot-pending';
+  return 'mkt-list-dot-draft';
+}
+
+function _campaignClusterCount(campaign) {
+  return Number(campaign?.signalClusterCount ?? campaign?.clusterCount ?? 0);
 }
 
 // ── Dashboard view ────────────────────────────────────────────────────────
 
 export function renderMarketingDashboard(
-  campaigns = CAMPAIGNS,
-  pendingApprovalCount = APPROVALS_MOCK.filter((a) => a.status === 'pending').length,
-  signalsCount = SIGNALS_MOCK.length,
+  campaigns = [],
+  pendingApprovalCount = 0,
+  signalsCount = 0,
 ) {
   const tiles = campaigns.map((c) => {
-    const kpis = c.kpis || { opens: 0, clicks: 0, downloads: 0, bdrQueued: 0, sparkline: [] };
-    const opens = kpis.opens;
-    const clicks = kpis.clicks;
-    const downloads = kpis.downloads;
-    const bdr = kpis.bdrQueued;
+    const clusterCount = _campaignClusterCount(c);
+    const primaryState = c.primarySignalState || '—';
+    const primaryTier = c.primarySignalUrgencyTier || '—';
+    const objective = c.objective || 'No objective recorded yet';
     return `
       <article class="mkt-campaign-tile" data-mkt-tile-id="${esc(c.id)}" role="button" tabindex="0"
                aria-label="Open ${esc(c.name)} workspace">
         <div class="mkt-tile-head">
           <div class="mkt-tile-title-row">
-            ${priorityBadge(c.priority)}
+            ${_campaignLifecycleBadge(c)}
             <h3 class="mkt-tile-name">${esc(c.name)}</h3>
           </div>
           <div class="mkt-tile-status-badges">
-            <span class="mkt-pill ${statusPillClass(c.status)}">${esc(c.status)}</span>
-            ${workspaceStateBadge(c)}
+            <span class="mkt-pill ${_campaignDecisionPillClass(c.state)}">${esc(c.state || 'created')}</span>
+            <span class="mkt-pill ${c.initiatedAt ? 'mkt-pill-live' : 'mkt-pill-neutral'}">${c.initiatedAt ? 'Initiated' : 'Proposed'}</span>
           </div>
         </div>
         <div class="mkt-tile-family">${esc(c.family)}</div>
+        <p class="mkt-tile-objective">${esc(objective)}</p>
         <div class="mkt-tile-kpi-row">
           <div class="mkt-tile-kpi">
-            <span class="mkt-kpi-value">${opens || '—'}</span>
-            <span class="mkt-kpi-label">opens</span>
+            <span class="mkt-kpi-value">${clusterCount}</span>
+            <span class="mkt-kpi-label">signals</span>
           </div>
           <div class="mkt-tile-kpi">
-            <span class="mkt-kpi-value">${clicks || '—'}</span>
-            <span class="mkt-kpi-label">clicks</span>
+            <span class="mkt-kpi-value">${esc(primaryState)}</span>
+            <span class="mkt-kpi-label">state</span>
           </div>
           <div class="mkt-tile-kpi">
-            <span class="mkt-kpi-value">${downloads || '—'}</span>
-            <span class="mkt-kpi-label">downloads</span>
+            <span class="mkt-kpi-value">${esc(primaryTier)}</span>
+            <span class="mkt-kpi-label">tier</span>
           </div>
           <div class="mkt-tile-kpi">
-            <span class="mkt-kpi-value">${bdr || '—'}</span>
-            <span class="mkt-kpi-label">BDR queue</span>
+            <span class="mkt-kpi-value">${c.initiatedAt ? 'yes' : 'no'}</span>
+            <span class="mkt-kpi-label">initiated</span>
           </div>
-        </div>
-        <div class="mkt-tile-spark-row">
-          ${sparklineHtml(kpis.sparkline)}
-          <span class="mkt-tile-stage">${esc(c.stage)}</span>
         </div>
         <div class="mkt-tile-footer">
-          <span class="mkt-tile-owner">${esc(c.owner)}</span>
+          <span class="mkt-tile-owner">${c.initiatedAt ? esc(new Date(c.initiatedAt).toLocaleDateString()) : 'Not initiated yet'}</span>
           <button class="mkt-tile-open-btn" data-mkt-open-campaign="${esc(c.id)}" type="button">Open workspace →</button>
         </div>
       </article>
     `;
   }).join('');
 
-  const liveCampaignCount = campaigns.filter((c) => c.priority === 'Live').length;
+  const liveCampaignCount = campaigns.filter((c) => Boolean(c.initiatedAt)).length;
+  const hasCampaigns = campaigns.length > 0;
 
   return `
     <div class="mkt-hero">
@@ -622,7 +329,12 @@ export function renderMarketingDashboard(
           <button class="mkt-btn-secondary" data-mkt-nav="marketing-campaigns" type="button">View all →</button>
         </div>
       </div>
-      <div class="mkt-tiles-grid">${tiles}</div>
+      ${hasCampaigns
+        ? `<div class="mkt-tiles-grid">${tiles}</div>`
+        : `<div class="mkt-empty-state">
+            <h4>No campaigns yet</h4>
+            <p>Approve signals at Gate 1 to start one.</p>
+          </div>`}
     </section>
   `;
 }
@@ -635,20 +347,23 @@ function _renderActiveCampaignCardInner(c) {
     <div class="mkt-panel-name">${esc(c.name)}</div>
     <div class="mkt-panel-family">${esc(c.family)}</div>
     <div class="mkt-panel-pills">
-      ${priorityBadge(c.priority)}
-      <span class="mkt-pill ${statusPillClass(c.status)} mkt-pill-wrap">${esc(c.status)}</span>
+      ${_campaignLifecycleBadge(c)}
+      <span class="mkt-pill ${_campaignDecisionPillClass(c.state)} mkt-pill-wrap">${esc(c.state || 'created')}</span>
     </div>
     <div class="mkt-panel-meta">
-      <span>${esc(c.owner)}</span>
+      <span>${esc(c.objective || 'No objective recorded yet')}</span>
       <span class="mkt-panel-sep">·</span>
-      <span>${esc(c.deadline)}</span>
+      <span>${_campaignClusterCount(c)} signals</span>
       <span class="mkt-panel-sep">·</span>
-      <span class="mkt-panel-confidence">
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        ${c.confidence}%
-      </span>
+      <span>${c.primarySignalState || 'No primary signal state'}</span>
     </div>
   `;
+}
+
+function _selectDefaultCampaignId(campaigns) {
+  if (!Array.isArray(campaigns) || campaigns.length === 0) return null;
+  const initiated = campaigns.find((campaign) => Boolean(campaign.initiatedAt));
+  return initiated?.id ?? campaigns[0]?.id ?? null;
 }
 
 // campaignsOrId: array of campaign objects (new callers) OR string/null selectedId (backward compat)
@@ -658,31 +373,45 @@ export function renderMarketingCampaigns(campaignsOrId = null, selectedId = null
     campaigns = campaignsOrId;
     resolvedSelectedId = selectedId;
   } else {
-    campaigns = CAMPAIGNS;
-    resolvedSelectedId = campaignsOrId; // original single-arg call: renderMarketingCampaigns(selectedId)
+    campaigns = [];
+    resolvedSelectedId = campaignsOrId;
+  }
+
+  if (!resolvedSelectedId && campaigns.length > 0) {
+    resolvedSelectedId = _selectDefaultCampaignId(campaigns);
   }
 
   const selected = resolvedSelectedId
     ? campaigns.find((c) => String(c.id) === String(resolvedSelectedId))
     : null;
 
-  const listItems = campaigns.map((c) => `
+  const listItems = campaigns.map((c) => {
+    const clusterCount = _campaignClusterCount(c);
+    const objective = c.objective || 'No objective recorded yet';
+    const statusLabel = c.initiatedAt ? 'Initiated' : 'Proposed';
+    return `
     <div class="mkt-campaign-list-item ${String(resolvedSelectedId) === String(c.id) ? 'active' : ''}"
          data-mkt-open-campaign="${esc(c.id)}" role="button" tabindex="0">
       <span class="mkt-list-item-name">${esc(c.name)}</span>
       <span class="mkt-list-item-family">${esc(c.family)}</span>
+      <p class="mkt-list-item-objective">${esc(objective)}</p>
       <div class="mkt-list-item-foot">
-        <span class="mkt-list-dot ${statusDotClass(c.status)}"></span>
-        <span class="mkt-list-item-foot-text">${esc(c.stage)} · ${esc(c.deadline)}</span>
+        <span class="mkt-list-dot ${_campaignDecisionDotClass(c.state)}"></span>
+        <span class="mkt-list-item-foot-text">${esc(c.state || 'created')} · ${statusLabel} · ${clusterCount} signal${clusterCount === 1 ? '' : 's'}</span>
       </div>
     </div>
-  `).join('');
+  `; }).join('');
 
   const activeCampaignCard = selected ? `
     <div class="mkt-panel-card mkt-active-campaign-card">
       ${_renderActiveCampaignCardInner(selected)}
     </div>
-  ` : '';
+  ` : `
+    <div class="mkt-panel-card mkt-campaigns-empty-card">
+      <div class="mkt-panel-eyebrow">Campaigns</div>
+      <h4>No campaigns yet</h4>
+      <p>Approve signals at Gate 1 to start one.</p>
+    </div>`;
 
   const workspaceHtml = selected
     ? renderCampaignWorkspace(selected)
@@ -690,7 +419,7 @@ export function renderMarketingCampaigns(campaignsOrId = null, selectedId = null
         <div class="mkt-workspace-empty-icon">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         </div>
-        <p>Select a campaign to open its workspace.</p>
+        <p>${campaigns.length > 0 ? 'Select a campaign to open its workspace.' : 'Approve signals at Gate 1 to start a campaign.'}</p>
       </div>`;
 
   return `
@@ -702,7 +431,7 @@ export function renderMarketingCampaigns(campaignsOrId = null, selectedId = null
             <span class="shell-eyebrow">All Campaigns</span>
             <span class="mkt-badge mkt-badge-neutral">${campaigns.length}</span>
           </div>
-          <div class="mkt-campaigns-browser-items">
+          <div class="mkt-campaigns-browser-items ${campaigns.length === 0 ? 'mkt-campaigns-browser-items--empty' : ''}">
             ${listItems}
           </div>
         </div>
@@ -716,7 +445,7 @@ export function renderMarketingCampaigns(campaignsOrId = null, selectedId = null
 
 function renderCampaignWorkspace(campaign) {
   const storedTab = (() => {
-    try { return localStorage.getItem(MKT_WORKSPACE_TAB_KEY) || 'brief'; } catch { return 'brief'; }
+    try { return localStorage.getItem(MKT_WORKSPACE_TAB_KEY) || 'audience'; } catch { return 'audience'; }
   })();
 
   const tabs = [
@@ -748,15 +477,15 @@ function renderCampaignWorkspace(campaign) {
         <div class="mkt-workspace-header-left">
           <div class="shell-eyebrow">${esc(campaign.family)}</div>
           <h2 class="mkt-workspace-title">${esc(campaign.name || 'Pending initiation')}</h2>
-          <div class="mkt-workspace-owner">${esc(campaign.owner || 'Unassigned')} · ${esc(campaign.deadline || '—')}</div>
+          <div class="mkt-workspace-owner">${esc(campaign.objective || 'No objective recorded yet')}</div>
         </div>
         <div class="mkt-workspace-header-meta">
-          ${priorityBadge(campaign.priority)}
-          <span class="mkt-pill ${statusPillClass(campaign.status)}">${esc(campaign.status)}</span>
+          ${_campaignLifecycleBadge(campaign)}
+          <span class="mkt-pill ${_campaignDecisionPillClass(campaign.state)}">${esc(campaign.state || 'created')}</span>
           ${workspaceStateBadge(campaign)}
           <span class="mkt-confidence-badge">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-            ${campaign.confidence}% confidence
+            ${_campaignClusterCount(campaign)} signal${_campaignClusterCount(campaign) === 1 ? '' : 's'}
           </span>
         </div>
       </div>
@@ -1226,10 +955,8 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
       toast.textContent = `Campaign "${result.name || payload.name}" initiated; ${payload.deliverable_type_slugs.length} deliverable(s) queued`;
       container.querySelector('.mkt-workspace')?.prepend(toast);
       setTimeout(() => toast.remove(), 6500);
-      const overview = await fetchCampaignOpsOverview();
-      const liveCandidates = overview.campaigns || [];
-      const mergedCampaigns = liveCandidates.map((c) => _mergeWithStatic(c));
-      for (const c of mergedCampaigns) _campaignMap.set(_campaignMapKey(c.id), c);
+      const liveCandidates = (await fetchMarketingCampaignsApi()).map((c) => _normalizeCampaignCandidate(c));
+      _syncCampaignMap(liveCandidates);
       const updated = _campaignMap.get(_campaignMapKey(campaign.id));
       if (updated) {
         const pane = container.querySelector('.mkt-workspace-pane');
@@ -1287,7 +1014,7 @@ function renderTabBrief(c) {
 
 function _renderLegacyBriefFields(c, prefixHtml) {
   const brief = c.brief || {};
-  const objective = brief.objective || c.why || '';
+  const objective = brief.objective || c.objective || c.why || '';
   const signalSource = brief.signalSource || c.signalSource || '';
   const keyMessaging = brief.keyMessaging || c.keyMessaging || [];
   const targetDistricts = brief.targetDistricts || c.targetDistricts || [];
@@ -1880,19 +1607,6 @@ function renderTabApprovalLog(c) {
   }
 
   const rows = log.map((entry) => {
-    if (entry.gate !== undefined) {
-      // Static CAMPAIGNS format: { gate, approvedBy, approvedAt, notes }
-      return `
-        <div class="mkt-approval-log-row">
-          <div class="mkt-approval-log-gate">${esc(entry.gate)}</div>
-          <div class="mkt-approval-log-meta">
-            <span>${esc(entry.approvedBy)}</span>
-            <span class="mkt-approval-log-date">${entry.approvedAt || 'Pending'}</span>
-          </div>
-          ${entry.notes ? `<div class="mkt-approval-log-notes">${esc(entry.notes)}</div>` : ''}
-        </div>
-      `;
-    }
     // Real API format: { action, actor, notes, to_decision_state, created_at }
     const date = entry.created_at
       ? new Date(entry.created_at * 1000).toLocaleDateString()
@@ -1914,36 +1628,6 @@ function renderTabApprovalLog(c) {
 }
 
 // ── Signals Inbox ─────────────────────────────────────────────────────────
-
-// Convert SIGNALS_MOCK demo entry to the normalized API signal shape.
-function _convertMockSignal(s) {
-  const tierMap = { high: 'hot', medium: 'standard', low: 'enrichment' };
-  return {
-    id: s.id,
-    signalStatus: 'in_inbox',
-    campaignFamily: s.campaignType || '',
-    headline: s.title || '',
-    whyFlagged: s.summary || '',
-    evidence: s.summary || '',
-    sourceType: (s.source || '').toLowerCase().includes('starbridge') ? 'starbridge' : 'news_article',
-    sourceUrl: null,
-    stateCode: s.state || '',
-    district: null,
-    reasonCodes: [],
-    fitScore: s.fitScore ? s.fitScore / 100 : null,
-    urgencyTier: tierMap[s.urgency] || 'standard',
-    urgencyDeadline: s.deadline || null,
-    discoveredAt: null,
-    discoveredBy: 'demo',
-    rulesetVersionAtQualification: null,
-    trainingNotes: null,
-    snoozeUntil: null,
-    campaignCandidateId: null,
-    createdAt: null,
-    updatedAt: null,
-    _isDemo: true,
-  };
-}
 
 const CAMPAIGN_FAMILY_LABELS = {
   obc: 'Outcomes-Based Contracts',
@@ -2126,118 +1810,46 @@ function _signalCardHtml(signal) {
     </article>`;
 }
 
-export function renderMarketingSignals(signals = [], isDemo = false) {
-  if (!isDemo) {
-    const completedRuns = MKT_SIGNAL_TREE_STATE.pipelineRuns
-      .filter((run) => ['succeeded', 'skipped', 'partial_complete'].includes(run.status));
-    return renderSignalInboxTree(signals, {
-      mode: MKT_SIGNAL_TREE_STATE.mode,
-      sort: MKT_SIGNAL_TREE_STATE.sort,
-      query: MKT_SIGNAL_TREE_STATE.query,
-      filters: MKT_SIGNAL_TREE_STATE.filters,
-      selectedId: MKT_SIGNAL_TREE_STATE.selectedId,
-      collapsed: readCollapsedSignalGroups(),
-      hideUnsupported: MKT_SIGNAL_TREE_STATE.hideUnsupported,
-      emptyMessage: completedRuns.length
-        ? `Last ${Math.min(3, completedRuns.length)} pipeline runs produced 0 signals. Configure scout connectors to start ingesting data.`
-        : null,
-    });
-  }
-  const items = signals.map((s) => _signalCardHtml(s)).join('');
-  const demoBanner = isDemo ? `
-    <div class="mkt-signals-demo-banner">
-      <span class="mkt-demo-label">Demo data</span>
-      No real signals yet — showing reference signals for field testing.
-    </div>` : '';
-  const addForm = `
-    <div class="mkt-signals-add-row">
-      <button class="mkt-btn-secondary mkt-signals-add-btn" type="button"
-              data-signal-action="add-open">+ Add Signal</button>
-    </div>
-    <div class="mkt-signal-add-form" hidden>
-      <h5 class="mkt-signal-add-title">New Signal</h5>
-      <label class="mkt-signal-add-label">Headline <span aria-hidden="true">*</span>
-        <input class="mkt-signal-add-input" name="headline" type="text" required
-               placeholder="e.g. Indiana HB 1234 — dyslexia screening mandate signed"/>
-      </label>
-      <label class="mkt-signal-add-label">Campaign family <span aria-hidden="true">*</span>
-        <select class="mkt-signal-add-select" name="campaignFamily">
-          <option value="obc">Outcomes-based contracts</option>
-          <option value="state_screener">State screener / field guide</option>
-          <option value="biliteracy">Biliteracy</option>
-          <option value="reading_growth">Reading growth</option>
-        </select>
-      </label>
-      <label class="mkt-signal-add-label">State code (optional)
-        <input class="mkt-signal-add-input mkt-signal-add-input--short"
-               name="stateCode" type="text" maxlength="2" placeholder="IN"/>
-      </label>
-      <label class="mkt-signal-add-label">Evidence / source quote (optional)
-        <textarea class="mkt-signal-add-textarea" name="evidence" rows="2"
-                  placeholder="Verbatim snippet from source..."></textarea>
-      </label>
-      <label class="mkt-signal-add-label">Urgency
-        <select class="mkt-signal-add-select" name="urgencyTier">
-          <option value="hot">Hot</option>
-          <option value="standard" selected>Standard</option>
-          <option value="enrichment">Enrichment</option>
-        </select>
-      </label>
-      <label class="mkt-signal-add-label">Deadline (optional)
-        <input class="mkt-signal-add-input" name="urgencyDeadline" type="date"/>
-      </label>
-      <div class="mkt-signal-form-actions">
-        <button class="mkt-btn-primary" data-signal-action="add-submit" type="button">Add Signal</button>
-        <button class="mkt-btn-ghost" data-signal-action="add-cancel" type="button">Cancel</button>
-      </div>
-    </div>`;
-
-  return `
-    <section class="mkt-section">
-      <div class="mkt-signals-hero">
-        <h3 class="mkt-signals-title">Signals Inbox</h3>
-        <p class="mkt-signals-sub">Review signals and approve to initiate a new campaign workspace.</p>
-      </div>
-      ${demoBanner}
-      ${addForm}
-      <div class="mkt-signals-list">${items || '<p class="mkt-signals-empty">No signals in inbox.</p>'}</div>
-    </section>`;
+export function renderMarketingSignals(signals = []) {
+  const completedRuns = MKT_SIGNAL_TREE_STATE.pipelineRuns
+    .filter((run) => ['succeeded', 'skipped', 'partial_complete'].includes(run.status));
+  return renderSignalInboxTree(signals, {
+    mode: MKT_SIGNAL_TREE_STATE.mode,
+    sort: MKT_SIGNAL_TREE_STATE.sort,
+    query: MKT_SIGNAL_TREE_STATE.query,
+    filters: MKT_SIGNAL_TREE_STATE.filters,
+    selectedId: MKT_SIGNAL_TREE_STATE.selectedId,
+    collapsed: readCollapsedSignalGroups(),
+    hideUnsupported: MKT_SIGNAL_TREE_STATE.hideUnsupported,
+    emptyMessage: completedRuns.length
+      ? `Last ${Math.min(3, completedRuns.length)} pipeline runs produced 0 signals. Configure scout connectors to start ingesting data.`
+      : null,
+  });
 }
 
 // ── Approval Queue ────────────────────────────────────────────────────────
 
-// Internal: renders only the mock approval item HTML (no section wrapper).
-function _renderMockApprovalItems() {
-  return APPROVALS_MOCK.filter((a) => a.status === 'pending').map((a) => `
-    <article class="mkt-approval-card" data-approval-id="${esc(a.id)}">
-      <div class="mkt-approval-head">
-        <div class="mkt-approval-title-row">
-          <span class="mkt-badge ${a.priority === 'P0' ? 'mkt-badge-p0' : 'mkt-badge-p1'}">${esc(a.priority)}</span>
-          <span class="mkt-approval-campaign">${esc(a.campaignName)}</span>
+export function renderMarketingApprovals(approvals = []) {
+  if (approvals.length === 0) {
+    return `
+      <section class="mkt-section">
+        <div class="mkt-section-header">
+          <h3 class="mkt-section-title">Approval Queue</h3>
         </div>
-        <span class="mkt-pill mkt-pill-pending">Pending</span>
-      </div>
-      <div class="mkt-approval-gate">${esc(a.gate)}</div>
-      <div class="mkt-approval-deliverable">${esc(a.deliverable)}</div>
-      <div class="mkt-approval-meta">
-        <span>Reviewers: ${esc(a.reviewers.join(', '))}</span>
-        <span>Requested: ${esc(a.requestedAt)}</span>
-      </div>
-      <div class="mkt-signal-actions">
-        <button class="mkt-btn-primary" type="button" disabled data-coming-soon>Approve</button>
-        <button class="mkt-btn-ghost" type="button" disabled data-coming-soon>Request edits</button>
-      </div>
-    </article>
-  `).join('');
-}
+        <div class="mkt-empty-state">
+          <h4>No approvals waiting</h4>
+          <p>New approvals will appear here when the workflow creates them.</p>
+        </div>
+      </section>
+    `;
+  }
 
-export function renderMarketingApprovals() {
   return `
     <section class="mkt-section">
       <div class="mkt-section-header">
         <h3 class="mkt-section-title">Approval Queue</h3>
       </div>
-      <div class="mkt-approvals-list">${_renderMockApprovalItems()}</div>
+      <div class="mkt-approvals-list">${approvals.map(_renderUnifiedApprovalCard).join('')}</div>
     </section>
   `;
 }
@@ -2376,103 +1988,116 @@ function _renderUnifiedApprovalCard(a) {
   `;
 }
 
-function _wireComingSoonButtons(container) {
-  container.querySelectorAll('[data-coming-soon]').forEach((btn) => {
-    const original = btn.textContent;
-    btn.addEventListener('click', () => {
-      btn.textContent = 'Coming in Phase B';
-      setTimeout(() => { btn.textContent = original; }, 1800);
-    });
-  });
-}
-
 // ── Shell loader functions (called by home.js) ────────────────────────────
 
-export function loadMarketingDashboard(container) {
+export async function loadMarketingDashboard(container) {
   if (!container) return;
-  container.innerHTML = renderMarketingDashboard();
+  container.innerHTML = `
+    <section class="mkt-section">
+      <div class="mkt-section-header">
+        <h3 class="mkt-section-title">Marketing Dashboard</h3>
+      </div>
+      <div class="mkt-placeholder-panel">
+        <p>Loading live campaign metrics…</p>
+      </div>
+    </section>
+  `;
   _wireDashboardActions(container);
-  _fetchAndPatchDashboard(container);
-}
-
-async function _fetchAndPatchDashboard(container) {
   try {
-    const [overview, approvals, signalResult] = await Promise.all([
-      fetchCampaignOpsOverview(),
+    const [campaigns, approvals, signalResult] = await Promise.all([
+      fetchMarketingCampaignsApi(),
       listApprovalsApi({ status: 'pending' }).catch(() => []),
       listSignalQueueApi({ status: 'in_inbox' }).catch(() => null),
     ]);
-    const liveCandidates = overview.campaigns || [];
-    const mergedCampaigns = liveCandidates.map((c) => _mergeWithStatic(c));
-    for (const c of mergedCampaigns) _campaignMap.set(_campaignMapKey(c.id), c);
-    const pendingCount = Array.isArray(approvals) ? approvals.length
-      : APPROVALS_MOCK.filter((a) => a.status === 'pending').length;
-    const signalsCount = signalResult && signalResult.total > 0
-      ? signalResult.total : SIGNALS_MOCK.length;
+    const liveCandidates = campaigns.map((c) => _normalizeCampaignCandidate(c));
+    _syncCampaignMap(liveCandidates);
+    const pendingCount = Array.isArray(approvals) ? approvals.length : 0;
+    const signalsCount = signalResult && typeof signalResult.total === 'number'
+      ? signalResult.total : 0;
     container.innerHTML = renderMarketingDashboard(
-      mergedCampaigns.length > 0 ? mergedCampaigns : CAMPAIGNS,
+      liveCandidates,
       pendingCount,
       signalsCount,
     );
     _wireDashboardActions(container);
-  } catch {
-    // API unavailable — static content already rendered; mark it as demo
-    const hero = container.querySelector('.mkt-hero');
-    if (hero && !hero.querySelector('.mkt-demo-banner')) {
-      const banner = document.createElement('div');
-      banner.className = 'mkt-demo-banner';
-      banner.innerHTML = '<span class="mkt-demo-label">Demo data</span> Live campaign data unavailable — showing reference campaigns.';
-      hero.appendChild(banner);
-    }
+  } catch (err) {
+    container.innerHTML = `
+      <section class="mkt-section">
+        <div class="mkt-section-header">
+          <h3 class="mkt-section-title">Marketing Dashboard</h3>
+        </div>
+        <div class="mkt-empty-state">
+          <h4>Dashboard unavailable</h4>
+          <p>${esc(err?.message || 'Live dashboard data could not be loaded.')}</p>
+        </div>
+      </section>
+    `;
   }
 }
 
-export function loadMarketingCampaigns(container) {
+export async function loadMarketingCampaigns(container) {
   if (!container) return;
-  const storedId = (() => {
-    try { return localStorage.getItem(MKT_CAMPAIGN_KEY); } catch { return null; }
-  })();
-  container.innerHTML = renderMarketingCampaigns(storedId);
+  container.innerHTML = `
+    <section class="mkt-section">
+      <div class="mkt-section-header">
+        <h3 class="mkt-section-title">Campaigns</h3>
+      </div>
+      <div class="mkt-placeholder-panel">
+        <p>Loading live campaign candidates…</p>
+      </div>
+    </section>
+  `;
   _wireCampaignActions(container);
-  _fetchAndPatchCampaigns(container);
-}
-
-async function _fetchAndPatchCampaigns(container) {
   try {
-    const overview = await fetchCampaignOpsOverview();
-    const liveCandidates = overview.campaigns || [];
-    const mergedCampaigns = liveCandidates.map((c) => _mergeWithStatic(c));
-    for (const c of mergedCampaigns) _campaignMap.set(_campaignMapKey(c.id), c);
+    const liveCandidates = (await fetchMarketingCampaignsApi()).map((c) => _normalizeCampaignCandidate(c));
+    _syncCampaignMap(liveCandidates);
 
     const storedId = (() => {
       try { return localStorage.getItem(MKT_CAMPAIGN_KEY); } catch { return null; }
     })();
 
-    const displayCampaigns = mergedCampaigns.length > 0 ? mergedCampaigns : CAMPAIGNS;
-    container.innerHTML = renderMarketingCampaigns(displayCampaigns, storedId);
+    const resolvedSelectedId = storedId && liveCandidates.some((c) => String(c.id) === String(storedId))
+      ? storedId
+      : _selectDefaultCampaignId(liveCandidates);
+    if (resolvedSelectedId) {
+      try { localStorage.setItem(MKT_CAMPAIGN_KEY, String(resolvedSelectedId)); } catch {}
+    }
+    container.innerHTML = renderMarketingCampaigns(liveCandidates, resolvedSelectedId);
     _wireCampaignActions(container);
-    if (storedId && _campaignMap.has(_campaignMapKey(storedId))) {
-      const campaign = _campaignMap.get(_campaignMapKey(storedId));
+    if (resolvedSelectedId && _campaignMap.has(_campaignMapKey(resolvedSelectedId))) {
+      const campaign = _campaignMap.get(_campaignMapKey(resolvedSelectedId));
       _wireWorkspaceTabs(container, campaign);
       _wireWorkspaceActions(container, campaign);
       _wireWritingStudioBridge(container, campaign);
     }
-  } catch {
-    // API unavailable — static content already rendered; mark the list header as demo
-    const header = container.querySelector('.mkt-campaigns-list-header');
-    if (header && !header.querySelector('.mkt-demo-label')) {
-      const label = document.createElement('span');
-      label.className = 'mkt-demo-label';
-      label.textContent = 'Demo data';
-      header.appendChild(label);
-    }
+  } catch (err) {
+    container.innerHTML = `
+      <section class="mkt-section">
+        <div class="mkt-section-header">
+          <h3 class="mkt-section-title">Campaigns</h3>
+        </div>
+        <div class="mkt-empty-state">
+          <h4>Campaigns unavailable</h4>
+          <p>${esc(err?.message || 'Live campaign data could not be loaded.')}</p>
+        </div>
+      </section>
+    `;
   }
 }
 
 export async function loadMarketingSignals(container) {
   if (!container) return;
-  // Synchronous skeleton so the section appears immediately
-  container.innerHTML = renderMarketingSignals(SIGNALS_MOCK.map(_convertMockSignal), true);
+  container.innerHTML = `
+    <section class="mkt-section">
+      <div class="mkt-signals-hero">
+        <h3 class="mkt-signals-title">Signals Inbox</h3>
+        <p class="mkt-signals-sub">Loading live signals…</p>
+      </div>
+      <div class="mkt-placeholder-panel">
+        <p>Fetching the current signal tree…</p>
+      </div>
+    </section>
+  `;
   _wireSignalActions(container);
   MKT_SIGNAL_TREE_STATE.mode = readSignalGroupMode();
   try {
@@ -2484,9 +2109,20 @@ export async function loadMarketingSignals(container) {
     MKT_SIGNAL_TREE_STATE.pipelineRuns = _latestPipelineRuns(pipelines);
     MKT_SIGNAL_TREE_STATE.signals = realSignals;
     MKT_SIGNAL_TREE_STATE.selectedId = realSignals[0]?.id || null;
-    container.innerHTML = renderMarketingSignals(realSignals, false);
-  } catch {
-    // API unavailable — keep the demo skeleton already rendered
+    container.innerHTML = renderMarketingSignals(realSignals);
+  } catch (err) {
+    container.innerHTML = `
+      <section class="mkt-section">
+        <div class="mkt-signals-hero">
+          <h3 class="mkt-signals-title">Signals Inbox</h3>
+          <p class="mkt-signals-sub">Unable to load live signals.</p>
+        </div>
+        <div class="mkt-empty-state">
+          <h4>Signals unavailable</h4>
+          <p>${esc(err?.message || 'Live signals could not be loaded.')}</p>
+        </div>
+      </section>
+    `;
   }
 }
 
@@ -2765,72 +2401,73 @@ function _wireSignalActions(container) {
 
 export async function loadMarketingApprovals(container) {
   if (!container) return;
-  // Synchronous skeleton — tests that don't await still see .mkt-approvals-list
-  container.innerHTML = `<section class="mkt-section"><div class="mkt-approvals-list"></div></section>`;
-
-  let liveApprovals = [];
-  try {
-    const res = await listApprovalsApi({ status: 'pending' });
-    liveApprovals = Array.isArray(res) ? res : [];
-  } catch { /* network error — fall through to mock view */ }
-
-  if (liveApprovals.length === 0) {
-    container.innerHTML = renderMarketingApprovals();
-    _wireComingSoonButtons(container);
-    return;
-  }
-
-  const liveCards = liveApprovals.map(_renderUnifiedApprovalCard).join('');
-  const mockItems = _renderMockApprovalItems();
   container.innerHTML = `
     <section class="mkt-section">
-      <div class="mkt-approvals-list">${liveCards}</div>
-    </section>
-    <section class="mkt-section">
-      <div class="mkt-approvals-demo-row">Campaign approvals <span class="mkt-demo-label">demo data</span></div>
-      <div class="mkt-approvals-list">${mockItems}</div>
+      <div class="mkt-section-header">
+        <h3 class="mkt-section-title">Approval Queue</h3>
+      </div>
+      <div class="mkt-placeholder-panel">
+        <p>Loading pending approvals…</p>
+      </div>
     </section>
   `;
 
-  container.querySelectorAll('[data-approve-id]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.approveId;
-      btn.disabled = true;
-      btn.textContent = 'Approving…';
-      try {
-        await decideApprovalApi(id, { decision: 'approve' });
-        await loadMarketingApprovals(container);
-      } catch {
-        btn.disabled = false;
-        btn.textContent = 'Approve';
-      }
+  try {
+    const res = await listApprovalsApi({ status: 'pending' });
+    const liveApprovals = Array.isArray(res) ? res : [];
+    container.innerHTML = renderMarketingApprovals(liveApprovals);
+    if (liveApprovals.length === 0) return;
+    container.querySelectorAll('[data-approve-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.approveId;
+        btn.disabled = true;
+        btn.textContent = 'Approving…';
+        try {
+          await decideApprovalApi(id, { decision: 'approve' });
+          await loadMarketingApprovals(container);
+        } catch {
+          btn.disabled = false;
+          btn.textContent = 'Approve';
+        }
+      });
     });
-  });
 
-  container.querySelectorAll('[data-reject-id]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.rejectId;
-      const originalLabel = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Submitting…';
-      try {
-        await decideApprovalApi(id, { decision: 'reject' });
-        await loadMarketingApprovals(container);
-      } catch {
-        btn.disabled = false;
-        btn.textContent = originalLabel;
-      }
+    container.querySelectorAll('[data-reject-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.rejectId;
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Submitting…';
+        try {
+          await decideApprovalApi(id, { decision: 'reject' });
+          await loadMarketingApprovals(container);
+        } catch {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+        }
+      });
     });
-  });
 
-  container.querySelectorAll('[data-ws-draft-id]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const draftId = Number(btn.dataset.wsDraftId);
-      if (draftId) _navigateToWritingStudio(draftId);
+    container.querySelectorAll('[data-ws-draft-id]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const draftId = Number(btn.dataset.wsDraftId);
+        if (draftId) _navigateToWritingStudio(draftId);
+      });
     });
-  });
 
-  _wireComingSoonButtons(container);
+  } catch (err) {
+    container.innerHTML = `
+      <section class="mkt-section">
+        <div class="mkt-section-header">
+          <h3 class="mkt-section-title">Approval Queue</h3>
+        </div>
+        <div class="mkt-empty-state">
+          <h4>Approvals unavailable</h4>
+          <p>${esc(err?.message || 'Live approvals could not be loaded.')}</p>
+        </div>
+      </section>
+    `;
+  }
 }
 
 // ── Action wiring ─────────────────────────────────────────────────────────
@@ -3216,12 +2853,12 @@ function _wireWorkspaceActions(container, campaign) {
       btn.textContent = '…';
       try {
         await decideCampaignCandidateApi(campaign.id, { action });
-        const overview = await fetchCampaignOpsOverview().catch(() => null);
-        if (overview) {
-          const updated = (overview.campaigns || []).find((c) => c.id === campaign.id);
+        const campaigns = await fetchMarketingCampaignsApi().catch(() => null);
+        if (campaigns) {
+          const updated = campaigns.find((c) => c.id === campaign.id);
           if (updated) {
-            const merged = _mergeWithStatic(updated);
-            _campaignMap.set(_campaignMapKey(campaign.id), merged);
+            const merged = _normalizeCampaignCandidate(updated);
+            _syncCampaignMap(campaigns.map((c) => _normalizeCampaignCandidate(c)));
             const pane = container.querySelector('.mkt-workspace-pane');
             if (pane) {
               pane.innerHTML = renderCampaignWorkspace(merged);
@@ -3876,7 +3513,7 @@ export async function loadMarketingScoutRuns(container) {
 
 // ── Exports for re-use / testing ──────────────────────────────────────────
 export {
-  CAMPAIGNS, SIGNALS_MOCK, APPROVALS_MOCK, sparklineHtml, statusPillClass,
+  sparklineHtml, statusPillClass,
   WORKSPACE_STATE_LABELS, WORKSPACE_STATE_PILL,
   renderTabBrief, renderAssembledBrief,
 };

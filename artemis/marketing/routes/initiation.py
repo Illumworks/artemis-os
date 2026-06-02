@@ -24,6 +24,7 @@ from artemis.marketing.repository import (
     get_candidate_signal_rows,
     get_district,
     initiate_campaign,
+    list_candidates,
     list_deliverable_types,
 )
 from artemis.marketing.routes._auth import require_token
@@ -46,6 +47,47 @@ class InitiateCampaignRequest(BaseModel):
     deliverable_type_slugs: list[str] = Field(default_factory=list, min_length=1)
     target_scope: TargetScope
     actor: str | None = None
+
+
+@router.get("")
+@router.get("/")
+async def list_campaigns(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return the real campaign candidate list for the marketing surface."""
+    candidates = await list_candidates(session, limit=200)
+    items: list[dict[str, Any]] = []
+    for candidate in candidates:
+        signal_rows = await get_candidate_signal_rows(session, candidate.id)
+        primary_signal = signal_rows[0] if signal_rows else None
+        proposal = (
+            candidate.initiation_proposal_json
+            if isinstance(candidate.initiation_proposal_json, dict)
+            else {}
+        )
+        items.append(
+            {
+                "id": candidate.id,
+                "name": candidate.name or proposal.get("name") or "",
+                "objective": candidate.objective or proposal.get("objective") or "",
+                "state": candidate.decision_state,
+                "family": candidate.campaign_family,
+                "initiatedAt": candidate.initiated_at.isoformat()
+                if candidate.initiated_at
+                else None,
+                "signalClusterCount": len(signal_rows),
+                "clusterCount": len(signal_rows),
+                "primarySignalId": primary_signal.id if primary_signal is not None else None,
+                "primarySignalState": primary_signal.state if primary_signal is not None else None,
+                "primarySignalUrgencyTier": primary_signal.urgency_tier
+                if primary_signal is not None
+                else None,
+                "primarySignalHeadline": primary_signal.headline
+                if primary_signal is not None
+                else None,
+            }
+        )
+    return {"campaigns": items, "total": len(items)}
 
 
 @router.get("/{candidate_id}/initiation-proposal")
