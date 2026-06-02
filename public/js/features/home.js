@@ -21,6 +21,7 @@ import {
   MARKETING_CAMPAIGNS_VIEW,
   MARKETING_SIGNALS_VIEW,
   MARKETING_APPROVALS_VIEW,
+  MARKETING_OUTBOX_VIEW,
   MARKETING_RULESETS_VIEW,
   MARKETING_SIGNAL_PLAYBOOK_VIEW,
   MARKETING_SCOUT_RUNS_VIEW,
@@ -82,6 +83,7 @@ import {
   loadMarketingCampaigns,
   loadMarketingSignals,
   loadMarketingApprovals,
+  loadMarketingOutbox,
   loadMarketingRulesets,
   loadMarketingScoutRuns,
 } from './marketing-os.js';
@@ -147,7 +149,7 @@ const dashboardCaptureState = { ...DASHBOARD_CAPTURE_DEFAULTS };
 const WIDE_PAGE_VIEWS = new Set([
   DEFAULT_APP_VIEW, CALENDAR_VIEW, MEETINGS_VIEW, JIRA_VIEW, OKR_VIEW, WRITING_STUDIO_VIEW,
   OPERATIONS_VIEW, MEMORY_VIEW,
-  MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SIGNAL_PLAYBOOK_VIEW, MARKETING_SCOUT_RUNS_VIEW,
+  MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_OUTBOX_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SIGNAL_PLAYBOOK_VIEW, MARKETING_SCOUT_RUNS_VIEW,
   'agents', 'skills', 'pipelines', PIPELINE_RUN_HISTORY_VIEW,
 ]);
 function isWidePageView(view) {
@@ -209,6 +211,8 @@ onState('view', (view) => {
       loadMarketingSignals(appShellContent);
     } else if (normalizedView === MARKETING_APPROVALS_VIEW) {
       loadMarketingApprovals(appShellContent);
+    } else if (normalizedView === MARKETING_OUTBOX_VIEW) {
+      loadMarketingOutbox(appShellContent);
     } else if (normalizedView === MARKETING_RULESETS_VIEW || normalizedView === MARKETING_SIGNAL_PLAYBOOK_VIEW) {
       loadMarketingRulesets(appShellContent);
     } else if (normalizedView === MARKETING_SCOUT_RUNS_VIEW) {
@@ -508,6 +512,7 @@ function renderShell(view) {
     view === MARKETING_CAMPAIGNS_VIEW ||
     view === MARKETING_SIGNALS_VIEW ||
     view === MARKETING_APPROVALS_VIEW ||
+    view === MARKETING_OUTBOX_VIEW ||
     view === MARKETING_RULESETS_VIEW ||
     view === MARKETING_SIGNAL_PLAYBOOK_VIEW
   ) {

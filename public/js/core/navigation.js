@@ -16,6 +16,7 @@ export const MARKETING_DASHBOARD_VIEW = "marketing-dashboard";
 export const MARKETING_CAMPAIGNS_VIEW = "marketing-campaigns";
 export const MARKETING_SIGNALS_VIEW = "marketing-signals";
 export const MARKETING_APPROVALS_VIEW = "marketing-approvals";
+export const MARKETING_OUTBOX_VIEW = "marketing-outbox";
 export const MARKETING_RULESETS_VIEW = "marketing-rulesets";
 export const MARKETING_SIGNAL_PLAYBOOK_VIEW = "signal-playbook";
 export const MARKETING_SCOUT_RUNS_VIEW = "marketing-scout-runs";
@@ -173,6 +174,14 @@ export const SECONDARY_NAV_DESTINATIONS = [
     view: MARKETING_APPROVALS_VIEW,
   },
   {
+    id: MARKETING_OUTBOX_VIEW,
+    label: "Outbox",
+    shortLabel: "Outbox",
+    description: "Approved drafts queued for human-gated send. Stub transport — no email is delivered until the ESP is configured.",
+    section: "Marketing",
+    view: MARKETING_OUTBOX_VIEW,
+  },
+  {
     id: MARKETING_SIGNAL_PLAYBOOK_VIEW,
     label: "Signal Playbook",
     shortLabel: "Playbook",
@@ -243,6 +252,7 @@ export function normalizeAppView(view) {
   if (view === "marketing-campaigns") return MARKETING_CAMPAIGNS_VIEW;
   if (view === "marketing-signals") return MARKETING_SIGNALS_VIEW;
   if (view === "marketing-approvals") return MARKETING_APPROVALS_VIEW;
+  if (view === "marketing-outbox") return MARKETING_OUTBOX_VIEW;
   if (view === "marketing-rulesets") return MARKETING_RULESETS_VIEW;
   if (view === "signal-playbook") return MARKETING_SIGNAL_PLAYBOOK_VIEW;
   if (view === "marketing-scout-runs") return MARKETING_SCOUT_RUNS_VIEW;
@@ -280,6 +290,7 @@ export function isShellView(view) {
     || normalizedView === MARKETING_CAMPAIGNS_VIEW
     || normalizedView === MARKETING_SIGNALS_VIEW
     || normalizedView === MARKETING_APPROVALS_VIEW
+    || normalizedView === MARKETING_OUTBOX_VIEW
     || normalizedView === MARKETING_RULESETS_VIEW
     || normalizedView === MARKETING_SIGNAL_PLAYBOOK_VIEW
     || normalizedView === LEGACY_DASHBOARD_VIEW

@@ -2747,6 +2747,25 @@ async function loadOutboxTab(container, { status = 'queued' } = {}) {
   });
 }
 
+// Shell-level entry: full-page Marketing Outbox surface. Mirrors
+// loadMarketingApprovals — injects the outbox panel skeleton, then delegates
+// to loadOutboxTab for fetch + render. Wired from home.js via
+// MARKETING_OUTBOX_VIEW.
+export async function loadMarketingOutbox(container) {
+  if (!container) return;
+  container.innerHTML = `
+    <section class="mkt-section">
+      <div class="mkt-section-header">
+        <h3 class="mkt-section-title">Outbox</h3>
+      </div>
+      <div class="mkt-tab-outbox" data-outbox-panel>
+        <p class="mkt-section-subtext">Loading outbox…</p>
+      </div>
+    </section>
+  `;
+  await loadOutboxTab(container);
+}
+
 // ── Action wiring ─────────────────────────────────────────────────────────
 
 function _wireDashboardActions(container) {
