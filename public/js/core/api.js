@@ -857,22 +857,6 @@ export async function submitDraftForReviewApi(draftId) {
   return body;
 }
 
-export async function regenerateDraftApi(draftId, { request, revisedContext, reviewerNote, providerId, modelId } = {}) {
-  const res = await fetch(`/api/writing-studio/drafts/${encodeURIComponent(draftId)}/regenerate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ request, revisedContext, reviewerNote, providerId, modelId }),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "regenerateDraft failed");
-  return body;
-}
-
-export async function getDraftEditHistoryApi(draftId) {
-  const res = await fetch(`/api/writing-studio/drafts/${encodeURIComponent(draftId)}/edit-history`);
-  return _readJsonOrThrow(res, "Failed to fetch draft edit history");
-}
-
 export async function listCampaignDeliverablesApi(campaignId) {
   const res = await fetch(`/api/campaign-deliverables?campaignId=${encodeURIComponent(campaignId)}`);
   return _readJsonOrThrow(res, "Failed to fetch campaign deliverables");
@@ -991,33 +975,6 @@ export async function deleteCampaignAssetLinkApi(campaignId, assetId) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "deleteCampaignAssetLinkApi failed");
   }
-}
-
-export async function createWritingDraftVersionApi(id, payload = {}) {
-  const res = await fetch(`/api/writing-studio/drafts/${encodeURIComponent(id)}/versions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return _readJsonOrThrow(res, "Failed to save writing draft version");
-}
-
-export async function createWritingTrainingCandidateApi(payload = {}) {
-  const res = await fetch("/api/writing-studio/training-candidates", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return _readJsonOrThrow(res, "Failed to create writing training candidate");
-}
-
-export async function decideWritingTrainingCandidateApi(id, status) {
-  const res = await fetch(`/api/writing-studio/training-candidates/${encodeURIComponent(id)}/decision`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status }),
-  });
-  return _readJsonOrThrow(res, "Failed to update writing training candidate");
 }
 
 export async function createWritingRuleApi(payload = {}) {

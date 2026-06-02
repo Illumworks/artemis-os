@@ -208,16 +208,28 @@ async def update_draft(
     """Update a draft: title, status, content, and/or folder_id.
 
     Accepted body fields (all optional):
-      title     — rename the draft
-      status    — transition status
-      content   — store as latest version body (appended to metadata.versions)
-      folder_id — move draft to folder
+      title       — rename the draft
+      status      — transition status
+      content     — store as latest version body (appended to metadata.versions)
+      folder_id   — move draft to folder
+      folderId    — camelCase alias for folder_id
+      campaignId  — update campaign_id
+      audience    — persist audience in metadata
+      channel     — persist channel in metadata
+      metadata    — merge extra metadata into deliverable_metadata
+      changeNote  — attach a note to the appended version row
+      source      — attach a source label to the appended version row
     """
     deliverable = await session.get(CampaignDeliverable, draft_id)
     if deliverable is None:
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
 
     meta: dict[str, Any] = dict(deliverable.deliverable_metadata or {})
+    metadata_patch = body.get("metadata")
+    if metadata_patch is not None:
+        if not isinstance(metadata_patch, dict):
+            raise bad_request("metadata must be an object", "invalid_metadata")
+        meta.update(metadata_patch)
 
     if "title" in body:
         title = body["title"]
@@ -225,11 +237,29 @@ async def update_draft(
             raise bad_request("title must be a non-empty string", "invalid_title")
         meta["title"] = title.strip()
 
-    if "folder_id" in body:
-        folder_id = body["folder_id"]
+    if "folder_id" in body or "folderId" in body:
+        folder_id = body["folder_id"] if "folder_id" in body else body.get("folderId")
         if folder_id is not None and not isinstance(folder_id, int):
             raise bad_request("folder_id must be an integer or null", "invalid_folder_id")
         meta["folder_id"] = folder_id
+
+    if "campaignId" in body:
+        campaign_id = body["campaignId"]
+        if campaign_id is not None and not isinstance(campaign_id, str):
+            raise bad_request("campaignId must be a string or null", "invalid_campaign_id")
+        deliverable.campaign_id = campaign_id
+
+    if "audience" in body:
+        audience = body["audience"]
+        if audience is not None and not isinstance(audience, str):
+            raise bad_request("audience must be a string or null", "invalid_audience")
+        meta["audience"] = audience
+
+    if "channel" in body:
+        channel = body["channel"]
+        if channel is not None and not isinstance(channel, str):
+            raise bad_request("channel must be a string or null", "invalid_channel")
+        meta["channel"] = channel
 
     if "status" in body:
         status_str = str(body["status"])
@@ -256,6 +286,18 @@ async def update_draft(
             "content": content_val,
             "created_at": datetime.now(UTC).isoformat(),
         }
+        change_note = body.get("changeNote")
+        if change_note is not None:
+            if not isinstance(change_note, str):
+                raise bad_request("changeNote must be a string", "invalid_change_note")
+            new_version["change_note"] = change_note
+        source = body.get("source")
+        if source is not None:
+            if not isinstance(source, str):
+                raise bad_request("source must be a string", "invalid_version_source")
+            new_version["source"] = source
+        if metadata_patch is not None:
+            new_version["metadata"] = metadata_patch
         versions.insert(0, new_version)
         meta["versions"] = versions
 
