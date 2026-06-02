@@ -37,9 +37,9 @@ export async function getSession(sessionId) {
 
 export async function ensureSession(sessionId) {
   try {
-    return await getSession(sessionId);
+    return await createSession(sessionId);
   } catch {
-    return createSession(sessionId);
+    return getSession(sessionId);
   }
 }
 

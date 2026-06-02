@@ -187,6 +187,37 @@ async def _seed_initiation_candidate(
 
 
 @pytest.mark.asyncio
+async def test_list_campaigns_returns_real_candidates_with_cluster_counts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    run_id = await _make_gate_run(db_session)
+    candidate_id = await _seed_initiation_candidate(db_session, run_id=run_id)
+    await db_session.commit()
+
+    resp = await client.get("/api/marketing/campaigns")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    campaigns = data["campaigns"]
+    assert len(campaigns) == 2
+
+    initiated = next(item for item in campaigns if item["initiatedAt"] is not None)
+    proposed = next(item for item in campaigns if item["initiatedAt"] is None)
+
+    assert initiated["name"] == "Prior Fort Bend Outreach"
+    assert initiated["family"] == "obc"
+    assert initiated["signalClusterCount"] == 1
+    assert proposed["id"] == candidate_id
+    assert proposed["name"] == "Fort Bend Follow-Up"
+    assert proposed["family"] == "obc"
+    assert proposed["signalClusterCount"] == 2
+    assert proposed["objective"] == "Build the next district campaign from the signal cluster."
+    assert proposed["state"]
+    assert proposed["primarySignalState"] == "TX"
+
+
+@pytest.mark.asyncio
 async def test_get_initiation_proposal_returns_proposal_cluster_registry_district_and_lineage(
     client: AsyncClient,
     db_session: AsyncSession,
