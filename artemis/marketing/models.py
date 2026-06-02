@@ -736,3 +736,37 @@ class CampaignStateTransition(Base):
     transitioned_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class DistrictContact(Base):
+    """District-side recipient for outbound campaign sends.
+
+    Lossless: never hard-deleted — only deactivated via active=False.
+    source enum: 'manual' | 'salesforce' (Salesforce sync seam, not built yet).
+    """
+
+    __tablename__ = "district_contacts"
+    __table_args__ = (
+        CheckConstraint("source IN ('manual','salesforce')", name="ck_district_contacts_source"),
+        Index("idx_district_contacts_district_active", "district_id", "active"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("districts.id", name="fk_district_contacts_district", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
+    external_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
