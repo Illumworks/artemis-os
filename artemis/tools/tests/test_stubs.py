@@ -64,7 +64,7 @@ def _ctx_with_mock_session(
     mock_session.execute = AsyncMock(return_value=mock_result)
 
     return ToolContext(
-        session=mock_session,  # type: ignore[arg-type]
+        session=mock_session,
         agent_id=agent_id,
         agent_db_id=1,
         agent_run_id="run-test",

@@ -10,7 +10,7 @@ E. GET /api/marketing/sends?status=queued: shape + camelCase keys.
 F. E2E approve hook: approve with contacts → deliverable=queued_for_send,
    send=queued, sends[] in response.
 G. No-contacts approve hook: approve with no contacts → deliverable=approved,
-   send=skipped, sends[0].status=skipped.
+   send=skipped, sends[0] status is skipped.
 """
 
 from __future__ import annotations
