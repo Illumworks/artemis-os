@@ -885,10 +885,11 @@ async def test_escalation_timeout_sends_audit_and_updates_state(db_session: Asyn
 
 
 async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) -> None:
-    """Smoke test: CI2 marketing pipeline traverses the initiation gate flow.
+    """Smoke test: discovery pipeline suspends at Gate 1, then completes at proposal.
 
     Mocks all agent invocations and Slack DMs.
-    Gate 1 and Gate 2 suspend → then resume with approved decision.
+    Gate 1 suspends; after approval the discovery run completes without any
+    campaign-initiation resume coupling.
     """
     from artemis.pipelines.seeds.marketing_pipeline import (
         AGENT_IDS,
@@ -911,7 +912,7 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
 
     # Seed marketing pipeline
     result = await seed_marketing_pipeline(db_session)
-    assert result["node_count"] == 19
+    assert result["pipelines"][PIPELINE_ID]["node_count"] == 14
 
     async with db_session.begin():
         run = await repo.create_pipeline_run(
@@ -975,7 +976,7 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
         ns["gate_1_signals_inbox"]["decided_by"] = "test@example.com"
         await repo.update_pipeline_run(db_session, run_id, node_states=ns, status="running")
 
-    # Second pass: runs from gate_1 onwards until the initiation gate suspends
+    # Second pass: runs from gate_1 onwards through content_brief_assembler to completion
     with (
         patch(
             "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
@@ -997,65 +998,9 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
     async with db_session.begin():
         run_obj = await repo.get_pipeline_run(db_session, run_id)
         ns = run_obj.node_states
-        assert ns.get("gate_campaign_initiation", {}).get("status") == "suspended", (
-            f"Expected initiation gate suspended; got {ns.get('gate_campaign_initiation')}"
+        assert run_obj.status == "succeeded", (
+            f"Expected succeeded after Gate 1 approval; got {run_obj.status}"
         )
-
-        # Approve initiation gate
-        ns["gate_campaign_initiation"]["decision"] = "approved"
-        ns["gate_campaign_initiation"]["decided_at"] = "2026-05-22T00:30:00+00:00"
-        ns["gate_campaign_initiation"]["decided_by"] = "test@example.com"
-        await repo.update_pipeline_run(db_session, run_id, node_states=ns, status="running")
-
-    # Third pass: runs until gate_2 suspends
-    with (
-        patch(
-            "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
-            new=_mock_execute_agent_node,
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._schedule_timeout",
-            return_value=None,
-        ),
-    ):
-        async with db_session.begin():
-            executor3 = PipelineExecutor(run_id)
-            await executor3.run(db_session)
-
-    async with db_session.begin():
-        run_obj = await repo.get_pipeline_run(db_session, run_id)
-        ns = run_obj.node_states
-        assert ns.get("gate_2_approval_drawer", {}).get("status") == "suspended", (
-            f"Expected gate_2 suspended; got {ns.get('gate_2_approval_drawer')}"
-        )
-
-        ns["gate_2_approval_drawer"]["decision"] = "approved"
-        ns["gate_2_approval_drawer"]["decided_at"] = "2026-05-22T01:00:00+00:00"
-        ns["gate_2_approval_drawer"]["decided_by"] = "test@example.com"
-        await repo.update_pipeline_run(db_session, run_id, node_states=ns, status="running")
-
-    # Fourth pass: completes remaining nodes
-    with (
-        patch(
-            "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
-            new=_mock_execute_agent_node,
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._schedule_timeout",
-            return_value=None,
-        ),
-    ):
-        async with db_session.begin():
-            executor4 = PipelineExecutor(run_id)
-            await executor4.run(db_session)
 
     async with db_session.begin():
         final = await repo.get_pipeline_run(db_session, run_id)
@@ -1064,14 +1009,12 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
         )
         ns = final.node_states
         total_nodes = len([k for k in ns if not k.startswith("_")])
-        assert total_nodes == 19, (
-            f"Expected 19 nodes in state, got {total_nodes}: {list(ns.keys())}"
+        assert total_nodes == 14, (
+            f"Expected 14 nodes in state, got {total_nodes}: {list(ns.keys())}"
         )
         assert ns["trigger_scheduled"]["status"] == "succeeded"
         assert ns["gate_1_signals_inbox"]["status"] == "succeeded"
-        assert ns["gate_campaign_initiation"]["status"] == "succeeded"
-        assert ns["gate_2_approval_drawer"]["status"] == "succeeded"
-        assert ns["deliverable_outreach_email"]["status"] == "succeeded"
+        assert ns["content_brief_assembler"]["status"] == "succeeded"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

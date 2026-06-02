@@ -10,7 +10,9 @@ from artemis.marketing.models import DeliverableType
 from artemis.pipelines.schemas import PipelineCreate
 
 PIPELINE_ID = "marketing.main"
+CAMPAIGN_DELIVERABLES_PIPELINE_ID = "marketing.campaign_deliverables"
 TRIGGER_CONFIG = {"type": "scheduled", "cron": "0 */4 * * *", "timezone": "America/Chicago"}
+MANUAL_TRIGGER_CONFIG = {"type": "manual"}
 SCOUT_SLUGS = "starbridge_researcher regional_news linkedin_observer legislative federal_funding state_doe procurement board_minutes leadership_transition".split()  # noqa: SIM905
 DOWNSTREAM = (
     ("marketing.qualifier.cross_reference", "qualifier_cross_reference", 420),
@@ -55,6 +57,22 @@ def _deliverable_node(node_id: str, label: str, deliverable_slug: str, x: int) -
     }
 
 
+def _gate_2_node() -> dict[str, Any]:
+    return {
+        "id": "gate_2_approval_drawer",
+        "type": "human_gate",
+        "label": "Gate 2 Approval Drawer",
+        "config": {
+            "approval_kind": "content_draft",
+            "approvers": ["josh@amiralearning.com", "angela@amiralearning.com"],
+            "timeout_hours": 72,
+            "on_timeout": "escalate",
+            "escalation_to": ["jon@amiralearning.com"],
+        },
+        "position": {"x": 800.0, "y": 1440.0},
+    }
+
+
 def _deliverable_definitions(
     deliverable_types: list[dict[str, Any]] | None = None,
 ) -> list[tuple[str, str, str, int]]:
@@ -74,7 +92,6 @@ def _deliverable_definitions(
 def build_marketing_pipeline(
     deliverable_types: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    deliverables = _deliverable_definitions(deliverable_types)
     nodes: list[dict[str, Any]] = [
         {
             "id": "trigger_scheduled",
@@ -108,39 +125,6 @@ def build_marketing_pipeline(
     )
     nodes.append(_agent_node(DOWNSTREAM[2][0], DOWNSTREAM[2][1], 800, DOWNSTREAM[2][2]))
     nodes[-1]["config"]["propose_initiation"] = True
-    nodes.append(
-        {
-            "id": "gate_campaign_initiation",
-            "type": "human_gate",
-            "label": "Campaign Initiation Confirm",
-            "config": {
-                "approval_kind": "campaign_initiation",
-                "approvers": ["josh@amiralearning.com", "angela@amiralearning.com"],
-                "timeout_hours": 72,
-            },
-            "position": {"x": 800.0, "y": 960.0},
-        }
-    )
-    nodes += [_agent_node(agent_id, node_id, 800, y) for agent_id, node_id, y in DOWNSTREAM[3:]]
-    nodes += [
-        _deliverable_node(node_id, label, deliverable_slug, x)
-        for node_id, label, deliverable_slug, x in deliverables
-    ]
-    nodes.append(
-        {
-            "id": "gate_2_approval_drawer",
-            "type": "human_gate",
-            "label": "Gate 2 Approval Drawer",
-            "config": {
-                "approval_kind": "content_draft",
-                "approvers": ["josh@amiralearning.com", "angela@amiralearning.com"],
-                "timeout_hours": 72,
-                "on_timeout": "escalate",
-                "escalation_to": ["jon@amiralearning.com"],
-            },
-            "position": {"x": 800.0, "y": 1440.0},
-        }
-    )
 
     scouts = [f"scout_{slug}" for slug in SCOUT_SLUGS]
     linear = [
@@ -148,15 +132,10 @@ def build_marketing_pipeline(
         "qualifier_brief_composer",
         "gate_1_signals_inbox",
         "content_brief_assembler",
-        "gate_campaign_initiation",
-        "content_asset_selector",
-        "content_writing_studio_adapter",
     ]
     pairs = [("trigger_scheduled", scout) for scout in scouts]
     pairs += [(scout, "qualifier_cross_reference") for scout in scouts]
     pairs += list(zip(linear, linear[1:], strict=False))
-    pairs += [("content_writing_studio_adapter", node_id) for node_id, *_ in deliverables]
-    pairs += [(node_id, "gate_2_approval_drawer") for node_id, *_ in deliverables]
     edges = [
         {
             "id": f"edge_{source}_to_{target}",
@@ -180,12 +159,82 @@ def build_marketing_pipeline(
     return pipeline
 
 
+def build_campaign_deliverables_pipeline(
+    deliverable_types: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    deliverables = _deliverable_definitions(deliverable_types)
+    nodes: list[dict[str, Any]] = [
+        {
+            "id": "trigger_manual",
+            "type": "trigger_manual",
+            "label": "Manual Trigger",
+            "config": MANUAL_TRIGGER_CONFIG,
+            "position": {"x": 800.0, "y": 40.0},
+        },
+        _agent_node(DOWNSTREAM[3][0], DOWNSTREAM[3][1], 800, DOWNSTREAM[3][2]),
+        _agent_node(DOWNSTREAM[4][0], DOWNSTREAM[4][1], 800, DOWNSTREAM[4][2]),
+    ]
+    nodes += [
+        _deliverable_node(node_id, label, deliverable_slug, x)
+        for node_id, label, deliverable_slug, x in deliverables
+    ]
+    nodes.append(_gate_2_node())
+
+    pairs: list[tuple[str, str]] = [
+        ("trigger_manual", "content_asset_selector"),
+        ("content_asset_selector", "content_writing_studio_adapter"),
+    ]
+    pairs += [("content_writing_studio_adapter", node_id) for node_id, *_ in deliverables]
+    pairs += [(node_id, "gate_2_approval_drawer") for node_id, *_ in deliverables]
+    edges = [
+        {
+            "id": f"edge_{source}_to_{target}",
+            "source_node_id": source,
+            "target_node_id": target,
+            "condition": None,
+            "data_shape": None,
+        }
+        for source, target in pairs
+    ]
+    pipeline = {
+        "id": CAMPAIGN_DELIVERABLES_PIPELINE_ID,
+        "name": "Marketing Campaign Deliverables",
+        "description": "Runs campaign deliverables on demand for one initiated campaign.",
+        "nodes": nodes,
+        "edges": edges,
+        "trigger_config": MANUAL_TRIGGER_CONFIG,
+        "status": "active",
+    }
+    PipelineCreate(**{k: v for k, v in pipeline.items() if k != "id"})
+    return pipeline
+
+
 async def _missing_agent_ids(session: AsyncSession) -> list[str]:
     stmt = text("SELECT agent_id FROM agents WHERE agent_id IN :agent_ids").bindparams(
         bindparam("agent_ids", expanding=True)
     )
     found = set((await session.execute(stmt, {"agent_ids": AGENT_IDS})).scalars().all())
     return [agent_id for agent_id in AGENT_IDS if agent_id not in found]
+
+
+async def _upsert_pipeline(session: AsyncSession, row: dict[str, Any]) -> bool:
+    cursor = await session.execute(
+        text(
+            """
+            INSERT INTO pipelines
+                (id, name, description, nodes, edges, trigger_config, status, updated_at)
+            VALUES (:id, :name, :description, CAST(:nodes AS jsonb), CAST(:edges AS jsonb),
+                    CAST(:trigger_config AS jsonb), :status, now())
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name, description = EXCLUDED.description, nodes = EXCLUDED.nodes,
+                edges = EXCLUDED.edges, trigger_config = EXCLUDED.trigger_config,
+                status = EXCLUDED.status, updated_at = now()
+            RETURNING (xmax = 0) AS inserted
+            """
+        ),
+        {**row, **{k: dumps(row[k]) for k in ("nodes", "edges", "trigger_config")}},
+    )
+    return bool(cursor.scalar_one())
 
 
 async def seed_marketing_pipeline(session: AsyncSession) -> dict[str, Any]:
@@ -204,29 +253,24 @@ async def seed_marketing_pipeline(session: AsyncSession) -> dict[str, Any]:
         {"slug": row.slug, "label": row.label, "display_order": row.display_order}
         for row in deliverable_rows.scalars().all()
     ]
-    row = build_marketing_pipeline(deliverable_types)
-    cursor = await session.execute(
-        text(
-            """
-            INSERT INTO pipelines
-                (id, name, description, nodes, edges, trigger_config, status, updated_at)
-            VALUES (:id, :name, :description, CAST(:nodes AS jsonb), CAST(:edges AS jsonb),
-                    CAST(:trigger_config AS jsonb), :status, now())
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name, description = EXCLUDED.description, nodes = EXCLUDED.nodes,
-                edges = EXCLUDED.edges, trigger_config = EXCLUDED.trigger_config,
-                status = EXCLUDED.status, updated_at = now()
-            RETURNING (xmax = 0) AS inserted
-            """
-        ),
-        {**row, **{k: dumps(row[k]) for k in ("nodes", "edges", "trigger_config")}},
+    discovery = build_marketing_pipeline(deliverable_types)
+    deliverables = build_campaign_deliverables_pipeline(deliverable_types)
+    inserted_count = int(await _upsert_pipeline(session, discovery)) + int(
+        await _upsert_pipeline(session, deliverables)
     )
     await session.commit()
     return {
-        "inserted": int(bool(cursor.scalar_one())),
-        "pipeline_id": PIPELINE_ID,
-        "node_count": len(row["nodes"]),
-        "edge_count": len(row["edges"]),
+        "inserted": inserted_count,
+        "pipelines": {
+            PIPELINE_ID: {
+                "node_count": len(discovery["nodes"]),
+                "edge_count": len(discovery["edges"]),
+            },
+            CAMPAIGN_DELIVERABLES_PIPELINE_ID: {
+                "node_count": len(deliverables["nodes"]),
+                "edge_count": len(deliverables["edges"]),
+            },
+        },
     }
 
 
@@ -235,8 +279,8 @@ async def run_seed() -> None:
 
     async with SessionLocal() as session:
         result = await seed_marketing_pipeline(session)
-        print(
-            f"seed_marketing_pipeline: inserted={result['inserted']} "
-            f"node_count={result['node_count']} edge_count={result['edge_count']}"
-        )
-        print(result["pipeline_id"])
+        print(f"seed_marketing_pipeline: inserted={result['inserted']}")
+        for pipeline_id, counts in result["pipelines"].items():
+            print(
+                f"{pipeline_id}: node_count={counts['node_count']} edge_count={counts['edge_count']}"
+            )

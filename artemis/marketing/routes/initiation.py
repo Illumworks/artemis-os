@@ -1,13 +1,8 @@
-"""Campaign initiation routes — /api/marketing/campaigns.
-
-CI3 surfaces the pending initiation proposal, the full signal cluster, the
-active deliverable registry, district context, and prior-campaign collateral.
-The confirm action calls ``initiate_campaign`` and releases PIPE4's
-``gate_campaign_initiation`` pause via the standard resume path.
-"""
+"""Campaign initiation routes — /api/marketing/campaigns."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -29,7 +24,9 @@ from artemis.marketing.repository import (
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found, validation_failed
-from artemis.pipelines.routes import _prepare_pipeline_resume
+from artemis.pipelines import repository as pipeline_repo
+from artemis.pipelines.routes import _dispatch_execution
+from artemis.pipelines.seeds.marketing_pipeline import CAMPAIGN_DELIVERABLES_PIPELINE_ID
 
 router = APIRouter(
     prefix="/api/marketing/campaigns",
@@ -37,7 +34,7 @@ router = APIRouter(
     dependencies=[Depends(require_token)],
 )
 
-_INITIATION_GATE_NODE_ID = "gate_campaign_initiation"
+logger = logging.getLogger(__name__)
 
 
 class InitiateCampaignRequest(BaseModel):
@@ -90,6 +87,7 @@ async def list_campaigns(
     return {"campaigns": items, "total": len(items)}
 
 
+@router.get("/{candidate_id}/initiation-context")
 @router.get("/{candidate_id}/initiation-proposal")
 async def get_initiation_proposal(
     candidate_id: int,
@@ -100,12 +98,7 @@ async def get_initiation_proposal(
     except ValueError as exc:
         raise not_found("Campaign candidate not found", "campaign_candidate_not_found") from exc
 
-    proposal_json = candidate.initiation_proposal_json
-    if not isinstance(proposal_json, dict):
-        raise conflict(
-            "Campaign initiation proposal is not available yet",
-            "initiation_proposal_missing",
-        )
+    proposal_json = await _load_or_generate_proposal(session, candidate)
 
     active_deliverables = await list_deliverable_types(session, active_only=False)
     active_slugs = [row.slug for row in active_deliverables if row.active]
@@ -125,8 +118,6 @@ async def get_initiation_proposal(
     lineage = await get_candidate_lineage_context(session, candidate_id)
     pipeline_run_id = _resolve_pipeline_run_id(signal_cluster)
 
-    default_target_scope = district_context["defaultTargetScope"]
-
     return {
         "candidateId": candidate.id,
         "campaignFamily": candidate.campaign_family,
@@ -145,10 +136,11 @@ async def get_initiation_proposal(
             for row in active_deliverables
         ],
         "districtContext": district_context,
-        "defaultTargetScope": default_target_scope,
+        "defaultTargetScope": district_context["defaultTargetScope"],
         "lineage": [_serialize_lineage_row(item) for item in lineage],
         "pipelineRunId": pipeline_run_id,
-        "gateNodeId": _INITIATION_GATE_NODE_ID,
+        "pipelineRunRole": "discovery",
+        "gateNodeId": None,
     }
 
 
@@ -190,15 +182,13 @@ async def initiate(
             }
         )
 
-    pipeline_run_id = await _resolve_candidate_run_id(session, candidate_id)
-    if pipeline_run_id is None:
+    try:
+        await pipeline_repo.get_pipeline(session, CAMPAIGN_DELIVERABLES_PIPELINE_ID)
+    except ValueError as exc:
         raise conflict(
-            "Campaign initiation gate context is missing",
-            "campaign_initiation_gate_missing",
-        )
-    actor = body.actor or (
-        f"user:{body.owner_user_id}" if body.owner_user_id is not None else "campaign_initiation_ui"
-    )
+            "Campaign deliverables pipeline is not seeded",
+            "campaign_deliverables_pipeline_missing",
+        ) from exc
 
     try:
         initiated = await initiate_campaign(
@@ -211,13 +201,6 @@ async def initiate(
             deliverable_type_slugs=body.deliverable_type_slugs,
             initiated_by=body.owner_user_id,
         )
-        await _prepare_pipeline_resume(
-            session,
-            pipeline_run_id,
-            node_id=_INITIATION_GATE_NODE_ID,
-            decision="approved",
-            actor=actor,
-        )
         await session.commit()
     except ValueError as exc:
         message = str(exc)
@@ -225,25 +208,44 @@ async def initiate(
             raise conflict(message, "campaign_already_initiated") from exc
         raise bad_request(message, "campaign_initiation_invalid") from exc
 
-    # Cancel the timeout + redispatch exactly like PIPE4's resume route.
-    from artemis.pipelines.routes import _dispatch_execution
+    new_run = await pipeline_repo.create_pipeline_run(
+        session,
+        pipeline_id=CAMPAIGN_DELIVERABLES_PIPELINE_ID,
+        status="queued",
+        trigger="manual",
+        triggered_by=body.actor
+        or (
+            f"user:{body.owner_user_id}"
+            if body.owner_user_id is not None
+            else "campaign_initiation_ui"
+        ),
+        target_candidate_id=candidate_id,
+        metadata_={
+            "source": "campaign_initiation",
+            "target_candidate_id": candidate_id,
+            "deliverable_type_slugs": body.deliverable_type_slugs,
+        },
+    )
+    await session.commit()
 
+    dispatch_error: str | None = None
     try:
-        import contextlib
-
-        from artemis.pipelines.scheduler import get_pipeline_scheduler
-
-        scheduler = get_pipeline_scheduler()
-        if scheduler.running:
-            with contextlib.suppress(Exception):
-                scheduler.remove_job(f"gate_timeout_{pipeline_run_id}_{_INITIATION_GATE_NODE_ID}")
-    except Exception:
-        pass
-
-    _dispatch_execution(pipeline_run_id)
+        _dispatch_execution(new_run.id)
+    except Exception as exc:  # noqa: BLE001
+        dispatch_error = str(exc)
+        logger.warning(
+            "campaign initiation dispatch failed for candidate %s run %s: %s",
+            candidate_id,
+            new_run.id,
+            exc,
+        )
 
     await session.refresh(initiated)
-    return _serialize_candidate(initiated)
+    payload = _serialize_candidate(initiated)
+    payload["deliverableRunId"] = new_run.id
+    if dispatch_error is not None:
+        payload["dispatchError"] = dispatch_error
+    return payload
 
 
 async def _build_district_context(
@@ -292,18 +294,6 @@ async def _build_district_context(
         "supported": district.supported,
         "defaultTargetScope": default_scope,
     }
-
-
-async def _resolve_candidate_run_id(
-    session: AsyncSession,
-    candidate_id: int,
-) -> str | None:
-    signals = await get_candidate_signal_rows(session, candidate_id)
-    run_ids = [signal.pipeline_run_id for signal in signals if signal.pipeline_run_id]
-    if not run_ids:
-        return None
-    unique = list(dict.fromkeys(run_ids))
-    return unique[0]
 
 
 def _resolve_pipeline_run_id(signal_cluster: list[dict[str, Any]]) -> str | None:
@@ -365,3 +355,45 @@ def _serialize_candidate(candidate: CampaignCandidate) -> dict[str, Any]:
         "createdAt": candidate.created_at.isoformat(),
         "updatedAt": candidate.updated_at.isoformat(),
     }
+
+
+async def _load_or_generate_proposal(
+    session: AsyncSession,
+    candidate: CampaignCandidate,
+) -> dict[str, Any]:
+    proposal_json = candidate.initiation_proposal_json
+    if isinstance(proposal_json, dict):
+        return proposal_json
+
+    from artemis.marketing.brief_assembler import propose_campaign_initiation
+    from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+
+    try:
+        result = await propose_campaign_initiation(
+            session,
+            candidate.id,
+            model_adapter=resolve_adapter("claude-code", "anthropic"),
+        )
+    except NoProviderAvailableError as exc:
+        raise bad_request(
+            "Campaign initiation proposal could not be generated: no LLM provider is available",
+            "initiation_proposal_generation_failed",
+        ) from exc
+    except Exception as exc:
+        raise bad_request(
+            f"Campaign initiation proposal could not be generated: {exc}",
+            "initiation_proposal_generation_failed",
+        ) from exc
+
+    if result.proposal is None:
+        raise bad_request(
+            "Campaign initiation proposal could not be generated: validation failed",
+            "initiation_proposal_generation_failed",
+        )
+
+    await session.commit()
+    await session.refresh(candidate)
+    generated = candidate.initiation_proposal_json
+    if not isinstance(generated, dict):
+        generated = result.proposal.model_dump(mode="json")
+    return generated

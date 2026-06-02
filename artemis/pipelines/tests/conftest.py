@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 import artemis.builders.models  # noqa: F401 — register models on Base.metadata
 import artemis.db
 import artemis.integrations.models  # noqa: F401 — register models on Base.metadata
+import artemis.marketing.models  # noqa: F401 — pipeline_runs now FK campaign_candidates
 import artemis.pipelines.models  # noqa: F401 — register models on Base.metadata
 from artemis.db import attach_pgvector_codec
 

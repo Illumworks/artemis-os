@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.marketing.models import CampaignDeliverable, District, SignalQueue
@@ -19,6 +20,7 @@ from artemis.marketing.repository import (
     save_initiation_proposal,
 )
 from artemis.pipelines import repository as pipeline_repo
+from artemis.pipelines.seeds.marketing_pipeline import AGENT_IDS, seed_marketing_pipeline
 
 
 async def _make_district(
@@ -67,6 +69,16 @@ async def _make_signal(
 
 
 async def _make_gate_run(db_session: AsyncSession) -> str:
+    await db_session.execute(
+        text(
+            "INSERT INTO agents (agent_id, name, tools, model, provider) "
+            "VALUES (:agent_id, :agent_id, '[]'::jsonb, 'claude-haiku-4-5', 'claude-code') "
+            "ON CONFLICT (agent_id) DO NOTHING"
+        ),
+        [{"agent_id": agent_id} for agent_id in AGENT_IDS],
+    )
+    await db_session.commit()
+    await seed_marketing_pipeline(db_session)
     pipeline = await pipeline_repo.create_pipeline(
         db_session,
         name="CI3 Test Pipeline",
@@ -248,7 +260,7 @@ async def test_get_initiation_proposal_returns_proposal_cluster_registry_distric
 
 
 @pytest.mark.asyncio
-async def test_post_initiate_calls_initiate_campaign_and_releases_gate(
+async def test_post_initiate_creates_deliverables_run_for_candidate(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
@@ -264,13 +276,18 @@ async def test_post_initiate_calls_initiate_campaign_and_releases_gate(
         "target_scope": {"mode": "states", "states": ["TX"]},
     }
 
-    with patch("artemis.pipelines.routes._dispatch_execution", new=MagicMock()) as dispatch_mock:
+    with patch(
+        "artemis.marketing.routes.initiation._dispatch_execution", new=MagicMock()
+    ) as dispatch_mock:
         resp = await client.post(f"/api/marketing/campaigns/{candidate_id}/initiate", json=payload)
 
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["name"] == "Fort Bend Follow-Up"
-    dispatch_mock.assert_called_once_with(run_id)
+    dispatch_mock.assert_called_once_with(data["deliverableRunId"])
+    run = await pipeline_repo.get_pipeline_run(db_session, data["deliverableRunId"])
+    assert run.pipeline_id == "marketing.campaign_deliverables"
+    assert run.target_candidate_id == candidate_id
 
     reget = await client.get(f"/api/marketing/campaigns/{candidate_id}/initiation-proposal")
     assert reget.status_code == 200
@@ -317,7 +334,7 @@ async def test_post_initiate_rejects_already_initiated_candidate(
         "target_scope": {"mode": "states", "states": ["TX"]},
     }
 
-    with patch("artemis.pipelines.routes._dispatch_execution", new=MagicMock()):
+    with patch("artemis.marketing.routes.initiation._dispatch_execution", new=MagicMock()):
         first = await client.post(f"/api/marketing/campaigns/{candidate_id}/initiate", json=payload)
     assert first.status_code == 200
 

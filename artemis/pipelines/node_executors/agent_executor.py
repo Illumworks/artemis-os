@@ -23,8 +23,10 @@ for claude-sonnet-4-6 pricing; these are approximate and rounded for display).
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -32,10 +34,20 @@ logger = logging.getLogger(__name__)
 # Approximate USD/token rates (sonnet-level; haiku is cheaper but we round up)
 _INPUT_COST_PER_TOKEN = 3e-6
 _OUTPUT_COST_PER_TOKEN = 15e-6
+_CANDIDATE_CONTEXT_AGENT_IDS = frozenset(
+    {
+        "marketing.content.asset_selector",
+        "marketing.content.writing_studio_adapter",
+    }
+)
 
 
 def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * _INPUT_COST_PER_TOKEN) + (output_tokens * _OUTPUT_COST_PER_TOKEN)
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
 async def execute_agent_node(
@@ -110,6 +122,38 @@ async def execute_agent_node(
         "pipeline_run_id": run_id,
         "triggering_node": node.get("id", ""),
     }
+    candidate = None
+    if deliverable_type_slug or agent_id in _CANDIDATE_CONTEXT_AGENT_IDS:
+        candidate = await _resolve_candidate_for_run(session, run_id, initiated_only=True)
+        if candidate is not None:
+            shared_context["campaign_candidate_id"] = candidate.id
+            shared_context["candidate_id"] = candidate.id
+            shared_context["campaign_family"] = candidate.campaign_family or ""
+            shared_context["campaign_name"] = candidate.name or ""
+            shared_context["confirmed_deliverable_type_slugs"] = (
+                candidate.deliverable_types_json or []
+            )
+            if candidate.target_scope_json is not None:
+                shared_context["target_scope"] = candidate.target_scope_json
+            from artemis.marketing.repository import get_campaign_brief
+
+            brief = await get_campaign_brief(session, candidate.id)
+            if brief is not None:
+                shared_context["campaign_brief_id"] = brief.id
+                shared_context["campaign_brief"] = brief.content
+            from artemis.writing_rules.models import WritingProfile
+
+            profile = (
+                await session.execute(
+                    select(WritingProfile)
+                    .where(WritingProfile.status != "archived")
+                    .order_by(WritingProfile.id.asc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if profile is not None:
+                shared_context["default_voice_profile_slug"] = _slug(profile.name)
+
     # Inject brief summary from qualifier node outputs if present
     for state_key, state_val in node_states.items():
         if isinstance(state_val, dict) and state_val.get("output_summary"):
@@ -287,9 +331,38 @@ async def _deliverable_enabled_for_run(
     run_id: str,
     deliverable_type_slug: str,
 ) -> bool | None:
-    from artemis.marketing.repository import list_run_candidates
+    candidate = await _resolve_candidate_for_run(session, run_id, initiated_only=True)
+    if candidate is None:
+        return None
+    return deliverable_type_slug in (candidate.deliverable_types_json or [])
 
-    candidates = await list_run_candidates(session, run_id, initiated_only=True)
+
+async def _resolve_candidate_for_run(
+    session: AsyncSession,
+    run_id: str,
+    *,
+    initiated_only: bool | None,
+) -> Any | None:
+    from artemis.marketing.repository import get_candidate, list_run_candidates
+    from artemis.pipelines.repository import get_pipeline_run
+
+    try:
+        run = await get_pipeline_run(session, run_id)
+    except ValueError:
+        return None
+
+    if run.target_candidate_id is not None:
+        try:
+            candidate = await get_candidate(session, run.target_candidate_id)
+        except ValueError:
+            return None
+        if initiated_only is True and candidate.initiated_at is None:
+            return None
+        if initiated_only is False and candidate.initiated_at is not None:
+            return None
+        return candidate
+
+    candidates = await list_run_candidates(session, run_id, initiated_only=initiated_only)
     if not candidates:
         return None
-    return deliverable_type_slug in (candidates[0].deliverable_types_json or [])
+    return candidates[0]

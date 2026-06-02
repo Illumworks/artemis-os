@@ -115,6 +115,7 @@ class PipelineRunRead(BaseModel):
     status: str
     trigger: str
     triggered_by: str | None = Field(default=None, alias="triggeredBy")
+    target_candidate_id: int | None = Field(default=None, alias="targetCandidateId")
     node_states: dict[str, Any] = Field(default_factory=dict, alias="nodeStates")
     started_at: datetime | None = Field(default=None, alias="startedAt")
     completed_at: datetime | None = Field(default=None, alias="completedAt")
@@ -204,6 +205,7 @@ def pipeline_run_to_schema(run: Any) -> PipelineRunRead:
         status=run.status,
         trigger=run.trigger,
         triggered_by=run.triggered_by,
+        target_candidate_id=getattr(run, "target_candidate_id", None),
         node_states=run.node_states or {},
         started_at=run.started_at,
         completed_at=run.completed_at,

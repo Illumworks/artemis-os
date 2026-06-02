@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 async def _amain(run_id: str) -> int:
     # Imported lazily so ``python -m artemis.pipelines.run_cli --help``
     # doesn't pay the full FastAPI / SQLAlchemy import cost.
+    import artemis.marketing.models  # noqa: F401
     from artemis.pipelines.routes import _execute_pipeline_run
 
     try:

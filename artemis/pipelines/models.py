@@ -88,6 +88,7 @@ class PipelineRun(Base):
             name="ck_pipeline_runs_trigger",
         ),
         Index("idx_pipeline_runs_pipeline_started", "pipeline_id", "started_at"),
+        Index("idx_pipeline_runs_target_candidate", "target_candidate_id"),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, nullable=False)
@@ -99,6 +100,15 @@ class PipelineRun(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     trigger: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
     triggered_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_candidate_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "campaign_candidates.id",
+            name="fk_pipeline_runs_target_candidate",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
     # ``MutableDict.as_mutable`` is load-bearing: PipelineExecutor mutates
     # ``run.node_states`` in place between each node transition, then calls
     # ``session.flush()``. Without this wrapper, SQLAlchemy snapshots the dict
