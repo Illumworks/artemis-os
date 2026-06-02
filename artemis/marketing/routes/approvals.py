@@ -383,29 +383,25 @@ async def _decide_content_draft_approval(
         fresh_deliverables = await _load_candidate_deliverables(session, _candidate_id)
         if fresh_candidate is not None:
             for d in fresh_deliverables:
-                if d.status in (
-                    DeliverableState.approved.value,
-                    DeliverableState.queued_for_send.value,
-                ):
-                    # For approved rows, enqueue; for already-queued_for_send, skip
-                    # (idempotency guard — transition() would raise on re-enqueue).
-                    if d.status == DeliverableState.approved.value:
-                        send = await enqueue_send_for_deliverable(
-                            session,
-                            candidate=fresh_candidate,
-                            deliverable=d,
-                            actor=decided_by,
-                        )
-                        sends_info.append(
-                            {
-                                "send_id": send.id,
-                                "status": send.status,
-                                "recipient_count": len(send.recipients)
-                                if isinstance(send.recipients, list)
-                                else 0,
-                                "skip_reason": send.skip_reason,
-                            }
-                        )
+                # Only enqueue approved rows — queued_for_send rows are already queued.
+                # (idempotency guard — transition() would raise on re-enqueue).
+                if d.status == DeliverableState.approved.value:
+                    send = await enqueue_send_for_deliverable(
+                        session,
+                        candidate=fresh_candidate,
+                        deliverable=d,
+                        actor=decided_by,
+                    )
+                    sends_info.append(
+                        {
+                            "send_id": send.id,
+                            "status": send.status,
+                            "recipient_count": len(send.recipients)
+                            if isinstance(send.recipients, list)
+                            else 0,
+                            "skip_reason": send.skip_reason,
+                        }
+                    )
 
     pipeline_decision = "approved" if decision == "approved" else "rejected"
     resumed = False

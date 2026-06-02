@@ -45,7 +45,7 @@ async def resolve_district_ids_for_candidate(
 
     Returns a deduplicated, sorted list of district ids.
     """
-    scope: dict[str, Any] | None = candidate.target_scope_json  # type: ignore[assignment]
+    scope: dict[str, Any] | None = candidate.target_scope_json
 
     if not scope:
         # Fallback: use the signal's resolved_district_id if available
@@ -70,7 +70,7 @@ async def resolve_district_ids_for_candidate(
         result = await session.execute(
             select(District.id).where(District.supported.is_(True)).order_by(District.id)
         )
-        return sorted(set(result.scalars().all()))
+        return sorted({x for x in result.scalars().all() if x is not None})
 
     if mode == "states":
         states: list[str] = scope.get("states") or []
@@ -81,7 +81,7 @@ async def resolve_district_ids_for_candidate(
             .where(District.state.in_(states), District.supported.is_(True))
             .order_by(District.id)
         )
-        return sorted(set(result.scalars().all()))
+        return sorted({x for x in result.scalars().all() if x is not None})
 
     if mode == "district_tier":
         tiers: list[str] = scope.get("tiers") or []
@@ -92,7 +92,7 @@ async def resolve_district_ids_for_candidate(
             .where(District.tier.in_(tiers), District.supported.is_(True))
             .order_by(District.id)
         )
-        return sorted(set(result.scalars().all()))
+        return sorted({x for x in result.scalars().all() if x is not None})
 
     if mode == "named_districts":
         district_ids: list[int] = scope.get("district_ids") or []
@@ -102,7 +102,7 @@ async def resolve_district_ids_for_candidate(
         result = await session.execute(
             select(District.id).where(District.id.in_(district_ids)).order_by(District.id)
         )
-        return sorted(set(result.scalars().all()))
+        return sorted({x for x in result.scalars().all() if x is not None})
 
     logger.warning(
         "resolve_district_ids_for_candidate: unknown mode %r for candidate_id=%s",
@@ -172,9 +172,7 @@ async def enqueue_send_for_deliverable(
             f"current state: {deliverable.status!r}"
         )
 
-    _district_ids, recipients_snapshot = await resolve_recipients_for_candidate(
-        session, candidate
-    )
+    _district_ids, recipients_snapshot = await resolve_recipients_for_candidate(session, candidate)
 
     if recipients_snapshot:
         send = CampaignSend(

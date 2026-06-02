@@ -77,9 +77,7 @@ async def _serialize_send(session: AsyncSession, send: CampaignSend) -> dict[str
             draft_preview = content[:400]
 
     # Resolve district names from recipients
-    recipients: list[dict[str, Any]] = (
-        send.recipients if isinstance(send.recipients, list) else []
-    )
+    recipients: list[dict[str, Any]] = send.recipients if isinstance(send.recipients, list) else []
     district_ids: list[int] = sorted(
         {r["district_id"] for r in recipients if isinstance(r.get("district_id"), int)}
     )
