@@ -343,9 +343,10 @@ async def test_apply_consolidation_links_evidence(db_session: AsyncSession) -> N
         )
 
     evidence = await list_evidence_for_observation(db_session, created[0].id)
+    # CC28: source_id is now TEXT; compare as strings
     src_ids = {ev.source_id for ev in evidence}
-    assert obs1.id in src_ids
-    assert obs2.id in src_ids
+    assert str(obs1.id) in src_ids
+    assert str(obs2.id) in src_ids
 
 
 async def test_apply_consolidation_is_lossless(db_session: AsyncSession) -> None:
@@ -403,7 +404,7 @@ async def test_apply_consolidation_forwards_drawer_evidence(db_session: AsyncSes
     from artemis.memory.store import link_evidence, list_evidence_for_observation
 
     async with db_session.begin():
-        await link_evidence(db_session, obs1.id, "drawer", drawer.id, weight=1.0)
+        await link_evidence(db_session, obs1.id, "drawer", str(drawer.id), weight=1.0)  # CC28: str
 
     proposal = ConsolidationProposal(
         category="discovery",
@@ -418,7 +419,7 @@ async def test_apply_consolidation_forwards_drawer_evidence(db_session: AsyncSes
     evidence = await list_evidence_for_observation(db_session, created[0].id)
     drawer_ev = [e for e in evidence if e.source_kind == "drawer"]
     assert len(drawer_ev) == 1
-    assert drawer_ev[0].source_id == drawer.id
+    assert drawer_ev[0].source_id == str(drawer.id)  # CC28: source_id is TEXT
     assert drawer_ev[0].weight == pytest.approx(0.9, abs=0.001)
 
 
@@ -661,6 +662,8 @@ def test_composite_score_user_confirmed_boosts() -> None:
 def test_compute_final_score_uses_score_features() -> None:
     weights = RetrievalWeights(fts=0.0, semantic=0.0, recency=0.0, score=1.0)
     sf = ScoreFeatureWeights(relevance=0.0, hits=0.0, quality=1.0, confirmed=0.0)
+    # M2: pass confidence=1.0 and evidence_count=1 (log10(1)=0, boost=1.0)
+    # so the score channel result equals the pre-M2 expected value.
     score = _compute_final_score(
         0.0,
         0.0,
@@ -669,6 +672,8 @@ def test_compute_final_score_uses_score_features() -> None:
         weights,
         source_quality=0.8,
         score_features=sf,
+        confidence=1.0,
+        evidence_count=1,
     )
     assert score == pytest.approx(0.8, rel=0.01)
 

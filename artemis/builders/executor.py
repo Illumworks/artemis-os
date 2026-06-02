@@ -5,22 +5,22 @@ Public function: run_agent()
 This module is the "execution" half of the Builders domain. It loads an Agent
 row, creates an AgentRun record, drives run_turn, writes results to
 agent_context, and returns the updated AgentRun.
-
-Tool resolution is deliberately stubbed for V1: if agent.tools is non-empty a
-warning is logged and the run proceeds with tools=None. Full tool resolution is
-a later slice.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from functools import lru_cache
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import artemis.tools  # noqa: F401 — registers tool factories at import time
 from artemis.agent import AnthropicAdapter, run_turn
 from artemis.agent.client import ModelAdapter
 from artemis.agent.hooks import HookRegistry
+from artemis.agent.tools import ToolRegistry
 from artemis.builders.models import AgentRun
 from artemis.builders.repository import (
     create_agent_run,
@@ -28,6 +28,9 @@ from artemis.builders.repository import (
     set_agent_context,
     set_agent_run_completed,
 )
+from artemis.marketing.josh_spec import JoshSpec, parse_spec, reason_codes_for_scout
+from artemis.tools.context import ToolContext
+from artemis.tools.registry import get_factory, known_tool_names
 from artemis.ws.events import (
     agent_completed_event,
     agent_failed_event,
@@ -39,6 +42,102 @@ from artemis.ws.events import (
 from artemis.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _cached_josh_spec() -> JoshSpec:
+    return parse_spec()
+
+
+def _build_system_prompt(
+    agent: Any,
+    shared_context: dict[str, Any] | None,
+) -> str | None:
+    """Compose the rich system prompt from agent row + Josh's spec.
+
+    Returns None only if every section would be empty (legacy compatibility for
+    agents with no system_prompt + no goal + no persona).
+    """
+    parts: list[str] = []
+
+    # Base system prompt
+    if agent.system_prompt:
+        parts.append(agent.system_prompt)
+
+    # Persona sections (populated by F3; gracefully absent pre-F3)
+    persona = agent.persona or {}
+    if isinstance(persona, dict):
+        voice_notes = persona.get("voice_notes") or ""
+        purpose = persona.get("purpose") or ""
+        if voice_notes:
+            parts.append(f"## Voice\n{voice_notes}")
+        if purpose:
+            parts.append(f"## Purpose\n{purpose}")
+
+    # Goal
+    if agent.goal:
+        parts.append(f"## Goal\n{agent.goal}")
+
+    # Scout-only: Josh-spec reason codes + state nuances
+    agent_id: str = agent.agent_id or ""
+    if agent_id.startswith("marketing.scout."):
+        scout_slug = agent_id.rsplit(".", 1)[-1]
+        spec = _cached_josh_spec()
+        scout_codes = reason_codes_for_scout(spec, scout_slug)
+        if scout_codes:
+            lines = [
+                "## Reason codes you may emit\n\n"
+                "You may emit ONLY these reason codes. Any other code will be rejected.\n"
+            ]
+            for rc in scout_codes:
+                lines.append(
+                    f"- **{rc.code}** ({rc.default_urgency}) — {rc.description}\n"
+                    f"  Scout's job: {rc.what_scout_looks_for}"
+                )
+            parts.append("\n".join(lines))
+
+        if spec.state_nuances:
+            nuance_lines = ["## State nuances to watch"]
+            for sn in spec.state_nuances:
+                nuance_lines.append(f"\n### {sn.state}\n{sn.text}")
+            parts.append("\n".join(nuance_lines))
+
+    # Urgency tiers (populated by F3; gracefully absent pre-F3)
+    urgency_tiers = agent.urgency_tiers
+    if urgency_tiers and isinstance(urgency_tiers, dict):
+        tier_lines = ["## Urgency discipline"]
+        for tier, desc in urgency_tiers.items():
+            tier_lines.append(f"- **{tier}**: {desc}")
+        parts.append("\n".join(tier_lines))
+
+    # Failure modes (populated by F3; gracefully absent pre-F3)
+    failure_modes = agent.failure_modes
+    if failure_modes and isinstance(failure_modes, list):
+        fm_lines = ["## Failure modes to avoid"]
+        for fm in failure_modes:
+            name = fm.get("name", "")
+            desc = fm.get("description", "")
+            fm_lines.append(f"- **{name}** — {desc}")
+        parts.append("\n".join(fm_lines))
+
+    # Implementation notes (populated by F3; gracefully absent pre-F3)
+    if agent.implementation_notes:
+        parts.append(f"## Implementation notes\n{agent.implementation_notes}")
+
+    # Inputs required (populated by F3; gracefully absent pre-F3)
+    inputs_required = agent.inputs_required
+    if inputs_required and isinstance(inputs_required, list):
+        inp_lines = ["## Inputs available"]
+        for inp in inputs_required:
+            inp_lines.append(f"- {inp}")
+        parts.append("\n".join(inp_lines))
+
+    # Shared context from upstream pipeline nodes
+    if shared_context:
+        ctx_lines = "\n".join(f"{k}: {v}" for k, v in shared_context.items())
+        parts.append(f"## Context\n{ctx_lines}")
+
+    return "\n\n".join(parts) if parts else None
 
 
 def _build_agent_hooks(run_id: str) -> HookRegistry:
@@ -120,6 +219,44 @@ def _build_agent_hooks(run_id: str) -> HookRegistry:
     return hooks
 
 
+def default_agent_instruction(agent_id: str, override: str | None = None) -> str:
+    """Imperative user message that makes an agent act immediately with its tools.
+
+    Autonomous (non-conversational) runs — pipeline ``agent_invocation`` nodes and
+    the scout scheduler — must pass a directive message, or a small model just
+    replies passively and calls no tools. Shared so both call sites stay in sync.
+    A caller-supplied override always wins.
+    """
+    if override:
+        return override
+    if agent_id.startswith("marketing.scout."):
+        return (
+            "Execute your scan NOW. Use your tools: call your fetch tools "
+            "(e.g. news_api.search, state_doe.fetch, board_minutes.fetch) to pull "
+            "current items from your sources, evaluate each against your allowed "
+            "reason codes, and call signal_queue.write for EACH qualifying signal "
+            "(one call per signal). Use reason_codes.get_allowlist if unsure which "
+            "codes you may emit. When done, briefly report how many signals you "
+            "emitted. If nothing qualifies this run, say so explicitly — do not ask "
+            "for clarification; you are running autonomously."
+        )
+    if agent_id.startswith("marketing.qualifier."):
+        return (
+            "Process the pending signals NOW. Use your tools to read context and "
+            "apply your qualification logic. Do not ask for clarification; act "
+            "autonomously and report your result."
+        )
+    if agent_id.startswith("marketing.content."):
+        return (
+            "Assemble your deliverable NOW from the qualified inputs in context. "
+            "Use your tools. Do not ask for clarification; act autonomously."
+        )
+    return (
+        "Execute your task now using your available tools. "
+        "Act autonomously; do not ask for clarification."
+    )
+
+
 async def run_agent(
     *,
     session: AsyncSession,
@@ -145,32 +282,30 @@ async def run_agent(
         The AgentRun row after completion (status='completed') or failure
         (status='failed').
     """
-    # Resolve adapter first — imported name shadows the parameter below
-    adapter = model_adapter if model_adapter is not None else AnthropicAdapter()
-
-    # Load agent definition
+    # Load agent definition first — its provider field drives adapter resolution
     agent = await get_agent(session, agent_id)
 
-    # Build system prompt
-    system_parts: list[str] = []
-    if agent.system_prompt:
-        system_parts.append(agent.system_prompt)
-    if agent.goal:
-        system_parts.append(f"## Goal\n{agent.goal}")
-    if shared_context:
-        ctx_lines = "\n".join(f"{k}: {v}" for k, v in shared_context.items())
-        system_parts.append(f"## Context\n{ctx_lines}")
-    system_prompt = "\n\n".join(system_parts) if system_parts else None
+    # Resolve adapter: explicit override > provider cascade from agent row >
+    # legacy AnthropicAdapter() as last resort.
+    if model_adapter is not None:
+        adapter = model_adapter
+    else:
+        from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
 
-    # Tool resolution — V1 stub
-    tools_list = agent.tools if isinstance(agent.tools, list) else []
-    if tools_list:
-        logger.warning(
-            "Agent '%s' has tools %r but tool resolution is not yet implemented. "
-            "Running with no tools.",
-            agent_id,
-            tools_list,
-        )
+        agent_provider = getattr(agent, "provider", None)
+        agent_fallback = getattr(agent, "fallback_provider", None)
+        try:
+            adapter = resolve_adapter(agent_provider, agent_fallback)
+        except NoProviderAvailableError:
+            logger.warning(
+                "No provider in cascade resolved for agent %r; "
+                "falling back to AnthropicAdapter (will error if API key absent)",
+                agent_id,
+            )
+            adapter = AnthropicAdapter()
+
+    # Build system prompt (rich injection: persona, Josh-spec reason codes, state nuances, etc.)
+    system_prompt = _build_system_prompt(agent, shared_context)
 
     # Choose the user message: explicit > agent.goal > generic
     effective_message: str = user_message or agent.goal or "Please proceed."
@@ -188,6 +323,35 @@ async def run_agent(
     )
     await session.flush()
 
+    # Build per-call tool registry from agent.tools (list of name strings).
+    # Unknown tool names are dropped with a single WARNING; they do not crash the run.
+    tool_context = ToolContext(
+        session=session,
+        agent_id=agent_id,
+        agent_db_id=agent.id,
+        agent_run_id=run_id,
+        pipeline_run_id=str(shared_context["pipeline_run_id"])
+        if shared_context and "pipeline_run_id" in shared_context
+        else None,
+    )
+    tool_registry = ToolRegistry()
+    unknown_tools: list[str] = []
+    for raw_name in agent.tools or []:
+        name = raw_name if isinstance(raw_name, str) else raw_name.get("name", "")
+        factory = get_factory(name)
+        if factory is None:
+            unknown_tools.append(name)
+            continue
+        tool_def, impl = factory(tool_context)
+        tool_registry.register(tool_def, impl)
+    if unknown_tools:
+        logger.warning(
+            "Agent %r declares unknown tools (dropped): %s. Known: %s",
+            agent_id,
+            unknown_tools,
+            known_tool_names(),
+        )
+
     # Broadcast run started
     await ws_manager.broadcast(
         run_id,
@@ -197,16 +361,53 @@ async def run_agent(
     # Build hook registry that streams events to WS subscribers
     hooks = _build_agent_hooks(run_id)
 
+    # Initialize result to None so it is always defined post-try/except
+    # (the except branch does not produce a RunResult).
+    result: Any = None
+
     try:
-        result = await run_turn(
-            adapter=adapter,
-            messages=[_user_msg(effective_message)],
-            system=system_prompt,
-            model=agent.model,
-            max_iterations=agent.max_iterations,
-            tools=None,
-            hooks=hooks,
-        )
+        if _is_claude_code_tool_run(adapter, tool_registry):
+            # claude-code IS the agent runtime for tool-using scouts: it spawns
+            # the per-run Artemis MCP server and runs its own fetch→call-tool loop
+            # on the user's subscription, returning a single final result. Signals
+            # are written directly to the DB by that MCP-server process, so no
+            # further artemis turns run here. (Anthropic/run_turn path unchanged.)
+            from typing import cast
+
+            from artemis.agent.client import CompletionRequest
+            from artemis.agent.types import RunResult, StopReason
+            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+            cc_adapter = cast(ClaudeCodeAdapter, adapter)
+            completion = await cc_adapter.run_with_tools(
+                CompletionRequest(
+                    messages=[_user_msg(effective_message)],
+                    system=system_prompt,
+                    model=agent.model,
+                ),
+                agent_id=agent_id,
+                run_id=run_id,
+                pipeline_run_id=tool_context.pipeline_run_id,
+                agent_tools=[t.name for t in tool_registry.specs()],
+            )
+            # Normalise the single CompletionResponse into the RunResult shape the
+            # downstream text/usage/finalize code expects (one assistant message).
+            result = RunResult(
+                messages=[_user_msg(effective_message), completion.message],
+                stop_reason=cast(StopReason, completion.stop_reason),
+                usage=completion.usage,
+                iterations=1,
+            )
+        else:
+            result = await run_turn(
+                adapter=adapter,
+                messages=[_user_msg(effective_message)],
+                system=system_prompt,
+                model=agent.model,
+                max_iterations=agent.max_iterations,
+                tools=tool_registry if len(tool_registry) > 0 else None,
+                hooks=hooks,
+            )
 
         # Extract final assistant text
         final_text = _extract_text(result)
@@ -235,12 +436,205 @@ async def run_agent(
         )
 
     await session.flush()
+
+    # CC14: commit the agent_run row NOW so it is globally visible before
+    # summarize_async fires.  The pipeline executor uses one long transaction
+    # across all nodes (flush-per-node, single commit at end in routes.py).
+    # The summarizer opens its OWN session — it cannot see rows that are only
+    # flushed but not committed in the caller's session, causing FK violations.
+    # Committing here is safe: run_agent is called with the caller's session
+    # but the caller (execute_agent_node / PipelineExecutor) only reads
+    # in-memory fields from the returned AgentRun object after this point,
+    # never relying on these rows being part of the outer transaction.
+    await session.commit()
+
+    # Fire-and-forget trajectory summary — does not block or affect run status.
+    # CC13: pass a snapshot built from the in-scope run object (already flushed
+    # into this session) rather than just run.id.  The background task's new
+    # session cannot see the unflushed row, so we pass the data directly and
+    # eliminate the DB lookup entirely.
+    # CC14: the commit above ensures the FK target (agent_runs.id) is visible
+    # to the summarizer's separate session before it attempts the INSERT.
+    # CC16: enrich snapshot with tool calls, signal count, final text, duration.
+    #   The signals_emitted query is safe post-commit (CC14 ensures agent_run is
+    #   committed; signal_queue rows written during the run are also committed
+    #   because run_agent's session.commit() flushes the full transaction).
+    # CC17: query tool_invocations for the real MCP-path tool calls first;
+    #   fall back to message-walking if empty (preserves CC16 for anthropic
+    #   in-process path which never writes to tool_invocations).
+    from sqlalchemy import func, select
+
+    from artemis.builder.trajectory_summarizer import summarize_async
+    from artemis.marketing.models import SignalQueue
+    from artemis.tools.models import ToolInvocation
+
+    # Count signals written by this run (provenance->>'agent_run_id' == run_id).
+    # Uses JSONB text-extraction operator (->>'agent_run_id') via SQLAlchemy's
+    # [] subscript + .as_string(). Safe post-commit because run_agent's
+    # session.commit() above flushed both agent_runs and signal_queue rows.
+    sig_result = await session.execute(
+        select(func.count())
+        .select_from(SignalQueue)
+        .where(SignalQueue.provenance["agent_run_id"].as_string() == run.run_id)
+    )
+    signals_emitted: int = sig_result.scalar_one() or 0
+
+    # CC17: fetch MCP-path tool invocations committed by mcp_server subprocess.
+    inv_result = await session.execute(
+        select(ToolInvocation)
+        .where(ToolInvocation.agent_run_id == run.run_id)
+        .order_by(ToolInvocation.invoked_at)
+    )
+    mcp_invocations: list[Any] = list(inv_result.scalars().all())
+
+    snapshot = _build_snapshot(run, result, signals_emitted, mcp_invocations)
+    await summarize_async(snapshot)
+
     return run
 
 
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _build_snapshot(
+    run: Any,
+    result: Any,
+    signals_emitted: int,
+    mcp_invocations: list[Any] | None = None,  # ToolInvocation rows from CC17 table
+) -> Any:  # returns AgentRunSnapshot; typed as Any to avoid cross-module import at module level
+    """Build an enriched AgentRunSnapshot from the completed run + RunResult.
+
+    CC17: extraction strategy — query tool_invocations first (MCP path); fall
+    back to message-walking if empty (anthropic in-process path, CC16).
+
+    The two paths are mutually exclusive in practice:
+    - claude-code runs write to tool_invocations via mcp_server; result.messages
+      contains only the final assistant text (tool blocks happen inside the
+      subprocess).
+    - anthropic/run_turn runs never write to tool_invocations; result.messages
+      contains full ToolUseBlock / ToolResultBlock pairs.
+
+    Keeping both paths means neither provider regresses.
+
+    Parameters
+    ----------
+    run:
+        The AgentRun ORM object after set_agent_run_completed. Provides
+        run_id, id, agent_id, status, user_message, error, started_at,
+        completed_at.
+    result:
+        The RunResult from run_turn / ClaudeCodeAdapter. Provides messages
+        with ToolUseBlock / ToolResultBlock / TextBlock content.
+    signals_emitted:
+        Pre-counted number of signal_queue rows attributed to this run.
+        Caller is responsible for querying this AFTER commit (CC14 safe).
+    mcp_invocations:
+        List of ToolInvocation ORM rows for this run_id (CC17).  When
+        non-empty, these are used as the authoritative tool_calls source and
+        message-walking is skipped.  When empty or None, falls back to
+        message-walking for the anthropic in-process path.
+
+    Returns
+    -------
+    AgentRunSnapshot
+        Frozen snapshot ready to pass to summarize_async().
+    """
+    from artemis.agent.types import TextBlock, ToolResultBlock, ToolUseBlock
+    from artemis.builder.trajectory_summarizer import AgentRunSnapshot, _ToolCallSummary
+
+    messages = result.messages if result is not None else []
+
+    tool_calls_list: list[_ToolCallSummary] = []
+
+    if mcp_invocations:
+        # CC17: MCP path — use ground-truth invocation log.
+        for inv in mcp_invocations:
+            tool_calls_list.append(
+                _ToolCallSummary(
+                    name=inv.tool_name,
+                    success=inv.success,
+                    result_preview=inv.result_preview or "",
+                )
+            )
+    else:
+        # CC16 fallback: anthropic in-process path — walk result.messages.
+        # Build a map from tool_use_id → ToolResultBlock first, then walk in order.
+        result_map: dict[str, ToolResultBlock] = {}
+        for msg in messages:
+            if msg.role == "user":
+                for block in msg.content:
+                    if isinstance(block, ToolResultBlock):
+                        result_map[block.tool_use_id] = block
+
+        for msg in messages:
+            if msg.role == "assistant":
+                for block in msg.content:
+                    if isinstance(block, ToolUseBlock):
+                        result_block = result_map.get(block.id)
+                        if result_block is not None:
+                            success = not result_block.is_error
+                            preview = (result_block.content or "")[:100]
+                        else:
+                            # Tool call with no result (end_turn before tool result)
+                            success = True
+                            preview = ""
+                        tool_calls_list.append(
+                            _ToolCallSummary(
+                                name=block.name,
+                                success=success,
+                                result_preview=preview,
+                            )
+                        )
+
+    # --- Extract final assistant text (last assistant message, ~500 chars) ---
+    final_text: str | None = None
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
+            if texts:
+                raw = " ".join(texts)
+                final_text = raw[:500] if len(raw) > 500 else raw
+            break
+
+    # --- Compute duration_ms --------------------------------------------------
+    duration_ms: int | None = None
+    started_at = getattr(run, "started_at", None)
+    completed_at = getattr(run, "completed_at", None)
+    if started_at is not None and completed_at is not None:
+        delta = completed_at - started_at
+        duration_ms = int(delta.total_seconds() * 1000)
+
+    return AgentRunSnapshot(
+        run_id=run.run_id,
+        run_pk=run.id,
+        agent_id=run.agent_id,
+        status=run.status,
+        user_message=run.user_message,
+        error=run.error,
+        tool_calls=tuple(tool_calls_list),
+        signals_emitted=signals_emitted,
+        final_text=final_text,
+        duration_ms=duration_ms,
+    )
+
+
+def _is_claude_code_tool_run(adapter: ModelAdapter, tool_registry: ToolRegistry) -> bool:
+    """True when claude-code should run its OWN tool loop instead of run_turn.
+
+    Detection is ``isinstance(adapter, ClaudeCodeAdapter)``: ``resolve_adapter``
+    returns a *bare* adapter instance (not a cascade wrapper — the cascade in
+    ``artemis/providers/resolver.py`` returns the first constructible adapter
+    directly), and the ``model_adapter`` override path passes an instance too. A
+    duck-typed ``provider`` string check would miss the override and the resolver
+    both return concrete instances, so isinstance is the precise test. Only fires
+    when the agent actually has tools — a no-tool claude-code run stays on the
+    text/``run_turn`` path.
+    """
+    from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+    return isinstance(adapter, ClaudeCodeAdapter) and len(tool_registry) > 0
 
 
 def _user_msg(text: str):  # type: ignore[no-untyped-def]

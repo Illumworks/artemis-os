@@ -3,11 +3,27 @@ import { escapeHtml, slugify } from "../core/utils.js";
 import {
   MEMORY_VIEW,
   OPERATIONS_VIEW,
+  PIPELINE_RUN_HISTORY_VIEW,
   WRITING_STUDIO_VIEW,
   normalizeAppView,
 } from "../core/navigation.js";
 import * as api from "../core/api.js";
 import { renderSkillsGuideHTML } from "./skills-guide.js";
+import {
+  renderAgentBuilderPage,
+  handleBuilderAction,
+  initBuilderSurface,
+} from "./agent-builder.js";
+import { initPipelinesPage } from "./pipelines.js";
+import { initPipelineRunHistoryPage } from "./pipeline-run-history.js";
+import { PROVIDER_LABELS, PROVIDER_PICKERS, getSourceModels } from "../ui/model-selector.js";
+import {
+  createCustomAgentTreeView,
+  createAgentTreeView,
+  getAgentHealth,
+  getAgentTrigger,
+  normalizeDisplayFolder,
+} from "../components/agent-tree.js";
 
 const SHELL_CONTENT_SELECTOR = "#app-shell-content";
 const AGENT_LOADING_THRESHOLD = 0;
@@ -20,6 +36,10 @@ const OPS_SKILL_TAB_KEY = "artemis-ops-skill-tab";
 const OPS_SKILL_SEARCH_KEY = "artemis-ops-skill-search";
 const OPS_AUTOMATION_SELECTION_KEY = "artemis-ops-selected-automation";
 const OPS_AGENT_DRAFT_KEY = "artemis-ops-agent-draft";
+const OPS_AGENT_TREE_COLLAPSED_KEY = "artemis.agents.tree.collapsed";
+const OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY = "artemis.agents.custom-tree.collapsed";
+const OPS_AGENT_VIEW_MODE_KEY = "artemis.agents.view-mode";
+const OPS_AGENT_EMPTY_FOLDERS_KEY = "artemis.agents.empty-folders";
 const OPS_WORKFLOW_DRAFT_KEY = "artemis-ops-workflow-draft";
 const OPS_CAMPAIGN_NOTE_KEY = "artemis-ops-campaign-notes";
 const WRITING_STUDIO_HANDOFF_KEY = "artemis-writing-studio-handoff";
@@ -63,14 +83,31 @@ function parseSkillFrontMatter(text) {
   return { meta, body: lines.slice(bodyStart).join("\n").trim() };
 }
 
-function showOpsImportToast(message, isError = false) {
+function showToast(label, title = "", { isError = false, ms = 4000 } = {}) {
   const container = document.getElementById("toast-container");
   if (!container) return;
   const toast = document.createElement("div");
-  toast.className = `toast${isError ? " error" : ""}`;
-  toast.textContent = message;
+  toast.className = `bg-toast${isError ? " toast-error" : ""}`;
+  toast.innerHTML = `
+    <span class="bg-toast-dot"></span>
+    <div class="bg-toast-body">
+      <div class="bg-toast-label"></div>
+      <div class="bg-toast-title"></div>
+    </div>
+    <button class="bg-toast-close" type="button" title="Dismiss">&times;</button>`;
+  toast.querySelector(".bg-toast-label").textContent = label;
+  toast.querySelector(".bg-toast-title").textContent = title;
+  const dismiss = () => {
+    toast.classList.add("toast-exit");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  };
+  toast.querySelector(".bg-toast-close")?.addEventListener("click", dismiss);
   container.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
+  setTimeout(() => { if (toast.parentNode) dismiss(); }, ms);
+}
+
+function showOpsImportToast(message, isError = false) {
+  showToast(isError ? "Action failed" : "Done", message, { isError });
 }
 
 function showOpsConfirm({ title, message, confirmLabel = "Delete", onConfirm }) {
@@ -450,6 +487,13 @@ let selectedAgentRunId = "";
 let selectedAgentRunDetail = null;
 let selectedAgentRunLoading = false;
 let selectedAgentRunError = "";
+let agentTreeSearch = "";
+let agentTreeSort = "name";
+let agentTreeFilters = { statuses: [], triggers: [] };
+let agentTreeCollapsed = readStorage(OPS_AGENT_TREE_COLLAPSED_KEY, {});
+let agentCustomTreeCollapsed = readStorage(OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY, {});
+let agentViewMode = readStorage(OPS_AGENT_VIEW_MODE_KEY, "slug") === "custom" ? "custom" : "slug";
+let agentEmptyFolders = readStorage(OPS_AGENT_EMPTY_FOLDERS_KEY, []);
 let workflowDraft = null;
 // Latest run data for the selected workflow, loaded on selection + refreshed on Run now.
 let _latestWorkflowRun = null;
@@ -462,6 +506,9 @@ let _enrichedAgentLoadedForId = null;   // tracks which agent ID we last attempt
 let _agentInstructionContent = null;
 let _agentInstructionLoading = false;
 let _agentSupportingFiles = [];
+let _reasonCodeOptions = [];
+let _reasonCodesLoaded = false;
+let _reasonCodesLoading = false;
 let campaignDecisionNotes = readStorage(OPS_CAMPAIGN_NOTE_KEY, {});
 
 // Legacy in-memory skill promotion/dismissal state removed — now API-driven
@@ -476,6 +523,59 @@ function escapeAttr(value) {
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function providerOptions(selected, allowEmpty = false) {
+  const empty = allowEmpty ? '<option value="">Not set — required</option>' : "";
+  return empty + Object.keys(PROVIDER_PICKERS).map((id) =>
+    `<option value="${escapeAttr(id)}"${selected === id ? " selected" : ""}>${escapeHtml(PROVIDER_LABELS[id] || id)}</option>`
+  ).join("");
+}
+
+function modelOptions(provider, selected) {
+  const models = getSourceModels(provider || "claude-code");
+  return models.map((m) =>
+    `<option value="${escapeAttr(m.value)}"${selected === m.value ? " selected" : ""}>${escapeHtml(m.label)}</option>`
+  ).join("");
+}
+
+function firstModelForProvider(provider) {
+  return getSourceModels(provider || "claude-code")[0]?.value || "";
+}
+
+function renderReasonCodeOptions(selectedCodes = []) {
+  const selected = new Set((selectedCodes || []).map(String));
+  return _reasonCodeOptions.map((rc) => {
+    const code = rc.code || rc;
+    const label = rc.description || code;
+    const domain = rc.domain || "CODE";
+    return `
+      <label class="ops-reason-code-option">
+        <input
+          type="checkbox"
+          value="${escapeAttr(code)}"
+          data-ops-field="reasonCodesEmitted"
+          ${selected.has(code) ? "checked" : ""}
+        >
+        <span class="ops-reason-code-copy">
+          <strong>${escapeHtml(code)}</strong>
+          <small>${escapeHtml(domain)} · ${escapeHtml(label)}</small>
+        </span>
+      </label>
+    `;
+  }).join("");
+}
+
+async function refreshReasonCodesFromApi() {
+  if (_reasonCodesLoading) return;
+  _reasonCodesLoading = true;
+  try {
+    const reasonCodes = await api.listReasonCodesApi();
+    _reasonCodeOptions = Array.isArray(reasonCodes) ? reasonCodes : [];
+    _reasonCodesLoaded = true;
+  } finally {
+    _reasonCodesLoading = false;
+  }
 }
 
 function readStorage(key, fallback) {
@@ -496,9 +596,10 @@ function isOperationsSurfaceView(view) {
   const normalized = normalizeAppView(view);
   return normalized === OPERATIONS_VIEW
     || normalized === "agents"
+    || normalized === "agents/builder"
     || normalized === "skills"
-    || normalized === "workflows"
-    || normalized === "automations";
+    || normalized === "pipelines"
+    || normalized === PIPELINE_RUN_HISTORY_VIEW;
 }
 
 function scheduleRender() {
@@ -697,6 +798,19 @@ function formatDuration(ms) {
   return `${hours}h`;
 }
 
+function formatCadenceSeconds(seconds) {
+  const value = Number(seconds || 0);
+  if (!value) return "Not specified";
+  if (value % 86400 === 0) return `Every ${value / 86400} day${value === 86400 ? "" : "s"}`;
+  if (value % 3600 === 0) return `Every ${value / 3600} hour${value === 3600 ? "" : "s"}`;
+  if (value % 60 === 0) return `Every ${value / 60} minute${value === 60 ? "" : "s"}`;
+  return `Every ${value} seconds`;
+}
+
+function formatLifecycleStatus(status) {
+  return status ? String(status).replace(/_/g, "-") : "Not specified";
+}
+
 function formatPercent(value) {
   if (value == null || Number.isNaN(Number(value))) return "—";
   return `${Math.round(Number(value))}%`;
@@ -712,7 +826,9 @@ function getAgentMetricRow(agent) {
 
 function buildAgentProfile(agent) {
   // Merge enriched real data when available for this agent.
-  const enriched = _enrichedAgent?.id === agent?.id ? _enrichedAgent : null;
+  const enriched = (_enrichedAgent?.agentId || _enrichedAgent?.id) === agent?.id ? _enrichedAgent : null;
+  const draft = agentDraft?.id === agent?.id ? agentDraft : null;
+  const config = draft || enriched || agent;
   const profile = lookupAgentProfile(agent);
   const metricRow = getAgentMetricRow(agent);
   const fallback = AGENT_FALLBACK_METRICS[normalizeAgentId(agent)] || {};
@@ -727,18 +843,34 @@ function buildAgentProfile(agent) {
   // Real linked skills from DB — fall back to hardcoded profile chips for display only.
   const linkedSkills = enriched?.linkedSkills ?? profile.linkedSkills;
 
+  // O2/O3: persona, supportingFiles list, and recentRuns from enriched API response
+  const persona = (enriched ?? agent).persona || null;
+  const supportingFiles = enriched?.supportingFiles ?? [];
+  const recentRunsFromDb = Array.isArray(enriched?.recentRuns) ? enriched.recentRuns : [];
+
   return {
     ...agent,
     // Policy fields from real agent config (enriched or raw agent record).
-    provider: (enriched ?? agent).provider || "",
-    model: (enriched ?? agent).model || "",
-    fallbackProvider: (enriched ?? agent).fallbackProvider || null,
-    fallbackModel: (enriched ?? agent).fallbackModel || null,
-    memoryPolicy: (enriched ?? agent).memoryPolicy || null,
-    permissionMode: (enriched ?? agent).permissionMode || null,
-    outputContract: (enriched ?? agent).outputContract || null,
+    provider: config.provider || "",
+    model: config.model || "",
+    fallbackProvider: config.fallbackProvider || null,
+    fallbackModel: config.fallbackModel || null,
+    memoryPolicy: config.memoryPolicy || null,
+    permissionMode: config.permissionMode || null,
+    outputContract: config.outputContract || null,
+    reasonCodesEmitted: config.reasonCodesEmitted || [],
+    cadenceSeconds: config.cadenceSeconds ?? null,
+    lifecycleStatus: config.lifecycleStatus ?? null,
+    urgencyTiers: config.urgencyTiers ?? null,
+    failureModes: Array.isArray(config.failureModes) ? config.failureModes : null,
+    dbTablesTouched: Array.isArray(config.dbTablesTouched) ? config.dbTablesTouched : null,
+    implementationNotes: config.implementationNotes || null,
+    inputsRequired: Array.isArray(config.inputsRequired) ? config.inputsRequired : null,
     instructionFileExists: enriched?.instructionFileExists ?? false,
     supportingFileCount: enriched?.supportingFileCount ?? 0,
+    persona,
+    supportingFiles,
+    recentRunsFromDb,
     linkedSkills,
     // Cosmetic display-only fields from hardcoded profile (not runtime-active).
     memorySummary: profile.memorySummary,
@@ -916,6 +1048,338 @@ function ensureAgentSelection(agents) {
   return agents.find((agent) => agent.id === selectedAgentId) || first;
 }
 
+function decorateAgentForTree(agent) {
+  const profile = buildAgentProfile(agent);
+  const persona = profile.persona;
+  const displayName = persona?.name || agent.title || agent.name || agent.agentId || "Unnamed";
+  return {
+    ...agent,
+    displayName,
+    description: persona?.purpose || agent.description || agent.goal || "",
+    health: profile.metrics.health,
+    lastRun: profile.metrics.lastRun || null,
+    lastRunAt: getAgentMetricRow(agent)?.last_run_at || agent.lastRunAt || agent.last_run_at || null,
+    modelLabel: profile.model || profile.provider || "",
+    avatarUrl: persona?.profile_image_path || null,
+  };
+}
+
+function isTreeCollapsed(kind, id) {
+  if (agentTreeSearch.trim()) return false;
+  const store = agentViewMode === "custom" ? agentCustomTreeCollapsed : agentTreeCollapsed;
+  return Boolean(store[`${kind}:${id}`]);
+}
+
+function getAgentFolders(agents = getAgents()) {
+  return [...new Set([
+    ...agents.map((agent) => normalizeDisplayFolder(agent.metadata?.display_folder)).filter(Boolean),
+    ...agentEmptyFolders.map((folder) => normalizeDisplayFolder(folder)).filter(Boolean),
+  ])]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function persistEmptyFolders() {
+  writeStorage(OPS_AGENT_EMPTY_FOLDERS_KEY, agentEmptyFolders);
+}
+
+function createEmptyFolder(basePath = "") {
+  const base = normalizeDisplayFolder(basePath);
+  const name = normalizeDisplayFolder(window.prompt?.("New folder name") || "");
+  if (!name) return;
+  const path = normalizeDisplayFolder([base, name].filter(Boolean).join("/"));
+  agentEmptyFolders = [...new Set([...agentEmptyFolders, path])];
+  persistEmptyFolders();
+  agentViewMode = "custom";
+  writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+  renderOperationsView("agents");
+}
+
+function renderAgentViewToggle() {
+  return `
+    <div class="ops-agent-view-toggle" aria-label="Agent tree view">
+      <span>View:</span>
+      ${["slug", "custom"].map((mode) => `
+        <button type="button" class="${agentViewMode === mode ? "active" : ""}" data-ops-action="set-agent-view-mode" data-view-mode="${mode}">
+          ${mode === "slug" ? "Slug" : "Custom"}
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderAgentTreeControls() {
+  const chips = [
+    ["status", "healthy", "Status: Healthy"],
+    ["status", "warning", "Status: Needs attention"],
+    ["status", "never", "Status: Never run"],
+    ["trigger", "manual", "Trigger: Manual"],
+    ["trigger", "scheduled", "Trigger: Scheduled"],
+  ];
+  return `
+    <div class="ops-agent-tree-controls">
+      <input class="ops-agent-tree-search" type="search" value="${escapeAttr(agentTreeSearch)}" placeholder="Search agents" aria-label="Search agents" data-ops-agent-tree-search>
+      <select class="ops-agent-tree-sort" aria-label="Sort agents" data-ops-agent-tree-sort>
+        <option value="name"${agentTreeSort === "name" ? " selected" : ""}>By name (A-Z)</option>
+        <option value="last_run"${agentTreeSort === "last_run" ? " selected" : ""}>By last run</option>
+        <option value="health"${agentTreeSort === "health" ? " selected" : ""}>By run health</option>
+      </select>
+      ${renderAgentViewToggle()}
+      ${agentViewMode === "custom" ? `<button type="button" class="ops-agent-new-folder" data-ops-action="create-agent-folder">+ New folder</button>` : ""}
+      <div class="ops-agent-tree-filters" aria-label="Filter agents">
+        ${chips.map(([group, value, label]) => {
+          const active = group === "status"
+            ? agentTreeFilters.statuses.includes(value)
+            : agentTreeFilters.triggers.includes(value);
+          return `<button type="button" class="ops-agent-filter-chip${active ? " active" : ""}" data-ops-action="toggle-agent-filter" data-filter-group="${group}" data-filter-value="${value}">${escapeHtml(label)}</button>`;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderAgentTreeRow(agent, selectedAgent, { custom = false } = {}) {
+  const active = agent.id === selectedAgent?.id;
+  const health = getAgentHealth(agent);
+  const trigger = getAgentTrigger(agent);
+  const initial = (agent.displayName || "A").charAt(0).toUpperCase();
+  return `
+    <button type="button" class="ops-agent-tree-row${active ? " active" : ""}" data-ops-action="select-agent" data-agent-id="${escapeAttr(agent.id)}"${custom ? ' draggable="true" data-drag-kind="agent"' : ""}>
+      <span class="ops-agent-tree-avatar">
+        ${agent.avatarUrl ? `<img src="${escapeAttr(agent.avatarUrl)}" alt="${escapeAttr(agent.displayName)} avatar">` : escapeHtml(initial)}
+      </span>
+      <span class="ops-agent-tree-main">
+        <span class="ops-agent-tree-name">${escapeHtml(agent.displayName)}</span>
+        <span class="ops-agent-tree-id">${escapeHtml(agent.id || agent.agentId || "")}</span>
+      </span>
+      <span class="ops-agent-tree-side">
+        <span class="ops-agent-tree-model">${escapeHtml(agent.modelLabel || "default")}</span>
+        <span class="ops-agent-tree-run"><i class="ops-agent-dot ops-agent-dot-${escapeAttr(health)}"></i>${escapeHtml(agent.lastRun || "never")} &middot; ${escapeHtml(trigger)}</span>
+      </span>
+      <span class="ops-agent-folder-action" data-ops-action="add-agent-to-folder" data-agent-id="${escapeAttr(agent.id)}" title="Add to folder">+</span>
+    </button>
+  `;
+}
+
+function renderCustomAgentNodes(nodes, selectedAgent) {
+  return nodes.map((node) => {
+    const collapsed = isTreeCollapsed("folder", node.id);
+    return `
+      <section class="ops-agent-tree-subdomain">
+        <button type="button" class="ops-agent-tree-folder ops-agent-tree-folder-subdomain ops-agent-custom-folder"
+          draggable="${node.id === "Unsorted" ? "false" : "true"}"
+          data-ops-action="toggle-agent-tree"
+          data-tree-kind="folder"
+          data-tree-id="${escapeAttr(node.id)}"
+          data-folder-path="${escapeAttr(node.id === "Unsorted" ? "" : node.id)}"
+          aria-expanded="${collapsed ? "false" : "true"}">
+          <span>${collapsed ? ">" : "v"} ${escapeHtml(node.label)}</span>
+          <span>${node.agents.length}/${node.total}</span>
+        </button>
+        <div class="ops-agent-tree-rows${collapsed ? " hidden" : ""}">
+          ${node.agents.length ? node.agents.map((item) => renderAgentTreeRow(item, selectedAgent, { custom: true })).join("") : ""}
+          ${node.children.length ? renderCustomAgentNodes(node.children, selectedAgent) : ""}
+          ${!node.agents.length && !node.children.length ? `<div class="ops-agent-tree-empty ops-agent-empty-dropzone">Drop agent here</div>` : ""}
+        </div>
+      </section>
+    `;
+  }).join("");
+}
+
+function renderAgentTree(agents, selectedAgent) {
+  if (agentViewMode === "custom") {
+    const view = createCustomAgentTreeView(agents, {
+      query: agentTreeSearch.trim(),
+      sort: agentTreeSort,
+      filters: agentTreeFilters,
+      emptyFolders: agentEmptyFolders,
+    });
+    return `
+      ${renderAgentTreeControls()}
+      <div class="ops-agent-tree ops-agent-tree-custom" data-localstorage-key="${escapeAttr(OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY)}">
+        ${renderCustomAgentNodes(view, selectedAgent)}
+      </div>
+    `;
+  }
+  const view = createAgentTreeView(agents, {
+    query: agentTreeSearch.trim(),
+    sort: agentTreeSort,
+    filters: agentTreeFilters,
+  });
+  return `
+    ${renderAgentTreeControls()}
+    <div class="ops-agent-tree" data-localstorage-key="${escapeAttr(OPS_AGENT_TREE_COLLAPSED_KEY)}">
+      ${view.map((domain) => {
+        const domainCollapsed = isTreeCollapsed("domain", domain.id);
+        return `
+          <section class="ops-agent-tree-domain">
+            <button type="button" class="ops-agent-tree-folder ops-agent-tree-folder-domain" data-ops-action="toggle-agent-tree" data-tree-kind="domain" data-tree-id="${escapeAttr(domain.id)}" aria-expanded="${domainCollapsed ? "false" : "true"}">
+              <span>${domainCollapsed ? ">" : "v"} ${escapeHtml(domain.label)}</span>
+              <span>${domain.total}</span>
+            </button>
+            <div class="ops-agent-tree-children${domainCollapsed ? " hidden" : ""}">
+              ${domain.subdomains.map((subdomain) => {
+                const subdomainKey = `${domain.id}/${subdomain.id}`;
+                const subdomainCollapsed = isTreeCollapsed("subdomain", subdomainKey);
+                return `
+                  <section class="ops-agent-tree-subdomain">
+                    <button type="button" class="ops-agent-tree-folder ops-agent-tree-folder-subdomain" data-ops-action="toggle-agent-tree" data-tree-kind="subdomain" data-tree-id="${escapeAttr(subdomainKey)}" aria-expanded="${subdomainCollapsed ? "false" : "true"}">
+                      <span>${subdomainCollapsed ? ">" : "v"} ${escapeHtml(subdomain.label)}</span>
+                      <span>${subdomain.agents.length}/${subdomain.total}</span>
+                    </button>
+                    <div class="ops-agent-tree-rows${subdomainCollapsed ? " hidden" : ""}">
+                      ${subdomain.agents.length
+                        ? subdomain.agents.map((item) => renderAgentTreeRow(item, selectedAgent)).join("")
+                        : `<div class="ops-agent-tree-empty">No agents matching filter.</div>`}
+                    </div>
+                  </section>
+                `;
+              }).join("")}
+            </div>
+          </section>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+async function patchAgentDisplayFolder(agentId, folderPath) {
+  const agent = getAgents().find((item) => item.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+  const nextFolder = normalizeDisplayFolder(folderPath);
+  const metadata = { ...(agent.metadata || {}) };
+  if (nextFolder) metadata.display_folder = nextFolder;
+  else delete metadata.display_folder;
+  await api.updateAgent(agentId, { metadata });
+}
+
+async function moveAgentToFolder(agentId, folderPath, { flipView = true } = {}) {
+  const nextFolder = normalizeDisplayFolder(folderPath);
+  await patchAgentDisplayFolder(agentId, folderPath);
+  if (flipView) {
+    agentViewMode = "custom";
+    writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+  }
+  await refreshAgentsFromApi();
+  renderOperationsView("agents");
+  showToast("Moved", nextFolder ? `Moved to ${nextFolder}.` : "Moved to Unsorted.");
+}
+
+async function moveFolderToFolder(sourcePath, targetPath) {
+  const source = normalizeDisplayFolder(sourcePath);
+  const target = normalizeDisplayFolder(targetPath);
+  if (!source || source === target || target.startsWith(`${source}/`)) return;
+  const moved = getAgents().filter((agent) => {
+    const folder = normalizeDisplayFolder(agent.metadata?.display_folder);
+    return folder === source || folder.startsWith(`${source}/`);
+  });
+  await Promise.all(moved.map((agent) => {
+    const folder = normalizeDisplayFolder(agent.metadata?.display_folder);
+    const suffix = folder === source ? "" : folder.slice(source.length + 1);
+    return patchAgentDisplayFolder(agent.id, [target, source.split("/").at(-1), suffix].filter(Boolean).join("/"));
+  }));
+  agentViewMode = "custom";
+  writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+  await refreshAgentsFromApi();
+  renderOperationsView("agents");
+}
+
+function promptFolderForAgent(agentId) {
+  document.querySelector(".ops-agent-folder-menu")?.remove();
+  const button = document.querySelector(`[data-ops-action="add-agent-to-folder"][data-agent-id="${CSS.escape(agentId)}"]`);
+  const rect = button?.getBoundingClientRect();
+  const menu = document.createElement("div");
+  menu.className = "ops-agent-folder-menu";
+  menu.style.left = `${Math.min(rect?.left || 16, window.innerWidth - 240)}px`;
+  menu.style.top = `${(rect?.bottom || 16) + 6}px`;
+  const folders = getAgentFolders();
+  menu.innerHTML = `
+    <div class="ops-agent-folder-menu-title">Add to folder</div>
+    ${folders.length ? folders.map((folder) => `<button type="button" data-folder="${escapeAttr(folder)}">${escapeHtml(folder)}</button>`).join("") : `<div class="ops-agent-folder-menu-empty">No folders yet</div>`}
+    <button type="button" data-folder="">Unsorted</button>
+    <hr>
+    <button type="button" data-new-folder>+ New folder...</button>
+  `;
+  menu.addEventListener("click", (event) => {
+    const item = event.target.closest("button");
+    if (!item) return;
+    event.stopPropagation();
+    menu.remove();
+    if (item.hasAttribute("data-new-folder")) {
+      const name = normalizeDisplayFolder(window.prompt?.("New folder name") || "");
+      if (name) void moveAgentToFolder(agentId, name).catch((err) => showToast("Move failed", err.message || "Could not move agent.", { isError: true }));
+      return;
+    }
+    void moveAgentToFolder(agentId, item.dataset.folder || "").catch((err) => showToast("Move failed", err.message || "Could not move agent.", { isError: true }));
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
+}
+
+function showFolderContextMenu(folderPath, x = 16, y = 16) {
+  const folder = normalizeDisplayFolder(folderPath);
+  document.querySelector(".ops-agent-folder-menu")?.remove();
+  const menu = document.createElement("div");
+  menu.className = "ops-agent-folder-menu ops-agent-context-menu";
+  menu.style.left = `${Math.min(x, window.innerWidth - 240)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 160)}px`;
+  menu.innerHTML = `
+    <button type="button" data-folder-action="create">Create subfolder...</button>
+    ${folder ? `<button type="button" data-folder-action="rename">Rename folder...</button><button type="button" data-folder-action="delete">Delete folder...</button>` : ""}
+  `;
+  menu.addEventListener("click", (event) => {
+    const action = event.target.closest("button")?.dataset.folderAction || "";
+    if (!action) return;
+    menu.remove();
+    if (action === "create") { createEmptyFolder(folder); return; }
+    if (action === "rename") {
+    const next = normalizeDisplayFolder(window.prompt?.("Rename folder to", folder));
+    if (!next) return;
+    const agents = getAgents().filter((agent) => {
+      const current = normalizeDisplayFolder(agent.metadata?.display_folder);
+      return current === folder || current.startsWith(`${folder}/`);
+    });
+    void Promise.all(agents.map((agent) => {
+      const current = normalizeDisplayFolder(agent.metadata?.display_folder);
+      const suffix = current === folder ? "" : current.slice(folder.length + 1);
+      return patchAgentDisplayFolder(agent.id, [next, suffix].filter(Boolean).join("/"));
+    })).then(async () => {
+      agentEmptyFolders = agentEmptyFolders.map((item) => {
+        const current = normalizeDisplayFolder(item);
+        if (current === folder) return next;
+        if (current.startsWith(`${folder}/`)) return [next, current.slice(folder.length + 1)].filter(Boolean).join("/");
+        return current;
+      });
+      await refreshAgentsFromApi();
+      persistEmptyFolders();
+      renderOperationsView("agents");
+      showToast("Saved", `Renamed to ${next}.`);
+    }).catch((err) => showToast("Save failed", err.message || "Rename failed.", { isError: true }));
+    return;
+  }
+    if (action === "delete") {
+    if (!window.confirm?.(`Delete "${folder}" and move agents to Unsorted?`)) return;
+    const agents = getAgents().filter((agent) => {
+      const current = normalizeDisplayFolder(agent.metadata?.display_folder);
+      return current === folder || current.startsWith(`${folder}/`);
+    });
+    void Promise.all(agents.map((agent) => patchAgentDisplayFolder(agent.id, "")))
+      .then(async () => {
+        await refreshAgentsFromApi();
+        agentEmptyFolders = agentEmptyFolders.filter((item) => {
+          const current = normalizeDisplayFolder(item);
+          return current !== folder && !current.startsWith(`${folder}/`);
+        });
+        persistEmptyFolders();
+        renderOperationsView("agents");
+        showToast("Saved", `${folder} deleted.`);
+      })
+      .catch((err) => showToast("Save failed", err.message || "Delete failed.", { isError: true }));
+    }
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
+}
+
 function ensureWorkflowSelection(workflows) {
   const first = workflows[0];
   if (!first) {
@@ -962,7 +1426,7 @@ function ensureAutomationSelection(automations) {
 function getAgentDraft(agent) {
   if (agentDraft && agentDraft.id === agent?.id) return agentDraft;
   // Prefer enriched data when available for the same agent.
-  const enriched = _enrichedAgent?.id === agent?.id ? _enrichedAgent : agent;
+  const enriched = (_enrichedAgent?.agentId || _enrichedAgent?.id) === agent?.id ? _enrichedAgent : agent;
   agentDraft = {
     id: enriched?.id || "",
     title: enriched?.title || "",
@@ -980,6 +1444,7 @@ function getAgentDraft(agent) {
     memoryPolicy: enriched?.memoryPolicy ? { ...enriched.memoryPolicy } : { scope: "project" },
     permissionMode: enriched?.permissionMode || "bypass",
     outputContract: enriched?.outputContract ? { ...enriched.outputContract } : { type: "run_summary" },
+    reasonCodesEmitted: enriched?.reasonCodesEmitted || [],
   };
   writeStorage(OPS_AGENT_DRAFT_KEY, agentDraft);
   return agentDraft;
@@ -999,6 +1464,15 @@ function updateAgentDraftField(field, value) {
   if (field === "title" || field === "description" || field === "goal" || field === "icon" ||
       field === "provider" || field === "model" || field === "fallbackProvider" || field === "fallbackModel") {
     agentDraft[field] = value;
+    if (field === "provider") {
+      const models = getSourceModels(value || "claude-code").map((model) => model.value);
+      if (!models.includes(agentDraft.model)) agentDraft.model = firstModelForProvider(value);
+    }
+    if (field === "fallbackProvider") {
+      const models = getSourceModels(value || "claude-code").map((model) => model.value);
+      if (!value) agentDraft.fallbackModel = "";
+      else if (!models.includes(agentDraft.fallbackModel)) agentDraft.fallbackModel = firstModelForProvider(value);
+    }
   } else if (field === "maxTurns") {
     agentDraft.constraints.maxTurns = Number(value || 0);
   } else if (field === "timeoutMs") {
@@ -1223,15 +1697,11 @@ function renderOpsPill(label, tone = "") {
 
 function renderOverviewPage() {
   const agents = getAgents();
-  const workflows = getWorkflows();
   const approvedSkills = getApprovedSkills();
   const pendingSkills = getPendingSkills();
-  const automations = _automations;
   const metrics = getAgentMetrics();
   const agentStats = getAgentOverviewStats(agents, metrics);
-  const workflowStats = getWorkflowOverviewStats(workflows);
   const skillStats = getSkillOverviewStats(approvedSkills, pendingSkills);
-  const automationStats = getAutomationOverviewStats(automations);
 
   return `
     ${renderOperationsHero(
@@ -1241,8 +1711,7 @@ function renderOverviewPage() {
       [
         renderSummaryChip("Agents", `${agentStats.activeAgents} rostered`),
         renderSummaryChip("Skills", `${skillStats.approved} approved`),
-        renderSummaryChip("Workflows", `${workflowStats.total} saved`),
-        renderSummaryChip("Automations", `${automationStats.active} active`),
+        renderSummaryChip("Pipelines", "Unified orchestration"),
       ],
     )}
     <section class="ops-launch-grid">
@@ -1250,7 +1719,7 @@ function renderOverviewPage() {
         <div class="ops-launch-head">
           <div>
             <div class="ops-launch-eyebrow">Agents</div>
-            <h3>Who does work</h3>
+            <h3>Who does work<span id="ops-inbox-badge-placeholder"></span></h3>
           </div>
           <span class="ops-pill">${escapeHtml(`${agentStats.activeAgents} rostered`)}</span>
         </div>
@@ -1285,37 +1754,19 @@ function renderOverviewPage() {
       <article class="ops-launch-card">
         <div class="ops-launch-head">
           <div>
-            <div class="ops-launch-eyebrow">Workflows</div>
-            <h3>Builder + inspector</h3>
+            <div class="ops-launch-eyebrow">Pipelines</div>
+            <h3>Canvas + run history</h3>
           </div>
-          <span class="ops-pill">${escapeHtml(`${workflowStats.active} active`)}</span>
+          <span class="ops-pill">D6 unified</span>
         </div>
-        <p>The recipe is the primary object. Schedule and runtime data travel with it, not instead of it.</p>
+        <p>Visual pipeline definitions, trigger nodes, execution state, and assistant-guided edits live in one place.</p>
         <div class="ops-launch-meta">
-          <span>${escapeHtml(String(workflowStats.steps))} steps total</span>
-          <span>${escapeHtml(String(workflowStats.paused))} paused</span>
+          <span>Nodes + edges</span>
+          <span>Runs + approvals</span>
         </div>
         <div class="operations-hero-actions">
-          ${renderOpsButton("Open Workflows", "open-shell-view", { "shell-view": "workflows" })}
-          ${renderOpsSecondaryButton("Open Operations", "open-shell-view", { "shell-view": "operations" })}
-        </div>
-      </article>
-      <article class="ops-launch-card">
-        <div class="ops-launch-head">
-          <div>
-            <div class="ops-launch-eyebrow">Automations</div>
-            <h3>Runtime registry</h3>
-          </div>
-          <span class="ops-pill">${escapeHtml(`${automationStats.paused} paused`)}</span>
-        </div>
-        <p>Fast list/toggle control for active or paused runtime schedules. No second workflow builder here.</p>
-        <div class="ops-launch-meta">
-          <span>${escapeHtml(String(automationStats.triggered))} triggered</span>
-          <span>${escapeHtml(String(automationStats.active))} active</span>
-        </div>
-        <div class="operations-hero-actions">
-          ${renderOpsButton("Open Automations", "open-shell-view", { "shell-view": "automations" })}
-          ${renderOpsSecondaryButton("Open Workflows", "open-shell-view", { "shell-view": "workflows" })}
+          ${renderOpsButton("Open Pipelines", "open-shell-view", { "shell-view": "pipelines" })}
+          ${renderOpsSecondaryButton("Open Run History", "open-shell-view", { "shell-view": PIPELINE_RUN_HISTORY_VIEW })}
         </div>
       </article>
     </section>
@@ -1388,6 +1839,9 @@ function renderAgentsPage() {
   if (!_skillsLoaded) {
     refreshSkillsFromApi().then(() => renderOperationsView("agents")).catch(() => {});
   }
+  if (!_reasonCodesLoaded && !_reasonCodesLoading) {
+    refreshReasonCodesFromApi().then(() => renderOperationsView("agents")).catch(() => {});
+  }
 
   const selectedAgent = ensureAgentSelection(agents);
   // If the enriched data isn't loaded yet for this agent, kick off the fetch and re-render when ready.
@@ -1397,6 +1851,7 @@ function renderAgentsPage() {
   // Ensure agentDraft is initialized for the selected agent (covers post-attach/detach re-renders).
   if (selectedAgent) getAgentDraft(selectedAgent);
   const selectedProfile = buildAgentProfile(selectedAgent);
+  const treeAgents = agents.map(decorateAgentForTree);
   const agentChips = [
     renderSummaryChip("Roster", `${agents.length} agents`),
     renderSummaryChip("Run health", selectedProfile.metrics.health),
@@ -1410,7 +1865,7 @@ function renderAgentsPage() {
       "Who does work",
       "A roster for scanning, plus a dedicated main-canvas profile for policy, memory, skills, and runtime health.",
       agentChips,
-      [renderOpsSecondaryButton("New agent", "new-agent"), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
+      [renderOpsButton("Build with Agent-Builder", "open-shell-view", { "shell-view": "agents/builder" }), renderOpsSecondaryButton("New agent", "new-agent"), ...(selectedAgent ? [renderOpsSecondaryButton("Edit with Builder", "edit-agent-with-builder", { "agent-id": selectedAgent.id, "agent-db-id": selectedAgent.dbId ?? (_enrichedAgent?.id ?? "") })] : []), renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })],
     )}
     <section class="ops-grid ops-agents-grid">
       <article class="ops-panel ops-list-panel">
@@ -1422,38 +1877,7 @@ function renderAgentsPage() {
           </div>
           <span class="ops-pill">${escapeHtml(String(agents.length))} rostered</span>
         </div>
-        <div class="ops-table">
-          <div class="ops-table-head">
-            <span>Agent</span>
-            <span>Provider</span>
-            <span>Runs</span>
-            <span>Success</span>
-            <span>Status</span>
-          </div>
-          <div class="ops-table-body">
-            ${agents.map((agent) => {
-              const profile = buildAgentProfile(agent);
-              const active = agent.id === selectedAgent?.id;
-              return `
-                <button
-                  type="button"
-                  class="ops-row ops-agent-row${active ? " active" : ""}"
-                  data-ops-action="select-agent"
-                  data-agent-id="${escapeAttr(agent.id)}"
-                >
-                  <span class="ops-row-main">
-                    <span class="ops-row-title">${escapeHtml(agent.title)}</span>
-                    <span class="ops-row-sub">${escapeHtml(agent.description || agent.goal || "Reusable worker")}</span>
-                  </span>
-                  <span class="ops-row-value">${escapeHtml(profile.preferredProvider)}</span>
-                  <span class="ops-row-value">${escapeHtml(String(profile.metrics.runs))}</span>
-                  <span class="ops-row-value">${escapeHtml(formatPercent(profile.metrics.successRate))}</span>
-                  <span class="ops-row-value"><span class="ops-pill ${profile.metrics.health === "Healthy" ? "ops-pill-success" : "ops-pill-warn"}">${escapeHtml(profile.metrics.health)}</span></span>
-                </button>
-              `;
-            }).join("")}
-          </div>
-        </div>
+        ${renderAgentTree(treeAgents, selectedAgent)}
       </article>
       <article class="ops-panel ops-detail-panel">
         ${renderAgentDetail(selectedProfile)}
@@ -1464,7 +1888,10 @@ function renderAgentsPage() {
 
 function renderAgentDetail(agent) {
   const metricRow = getAgentMetricRow(agent);
-  const recentRuns = agent.recentRuns || [];
+  // Prefer real DB runs from the enriched endpoint (recentRunsFromDb), fall back to metrics runs.
+  const recentRuns = (agent.recentRunsFromDb && agent.recentRunsFromDb.length > 0)
+    ? agent.recentRunsFromDb
+    : (agent.recentRuns || []);
   const selectedRun = selectedAgentRunDetail && normalizeAgentId({ id: selectedAgentRunDetail.agent_id, title: selectedAgentRunDetail.agent_title }) === normalizeAgentId(agent)
     ? selectedAgentRunDetail
     : recentRuns.find((run) => run.run_id && run.run_id === selectedAgentRunId) || null;
@@ -1482,11 +1909,45 @@ function renderAgentDetail(agent) {
     </div>
 
     <div class="ops-detail-stack">
+      <section class="ops-mini-card ops-persona-card">
+        <div class="ops-mini-card-label">Persona / soul
+          ${agent.persona ? "" : `<span class="ops-pill" style="margin-left:6px;font-size:0.7rem">Not set</span>`}
+        </div>
+        <div class="ops-form-grid">
+          <label class="ops-field">
+            <span>Name</span>
+            <input type="text" value="${escapeAttr(agent.persona?.name || "")}" data-ops-field="persona-name" placeholder="e.g. Iris">
+          </label>
+          <label class="ops-field">
+            <span>Ghostwrite</span>
+            <select data-ops-field="persona-ghostwrite">
+              <option value=""${!agent.persona?.ghostwrite ? " selected" : ""}>No — agent speaks as itself</option>
+              <option value="true"${agent.persona?.ghostwrite ? " selected" : ""}>Yes — output framed as Jon</option>
+            </select>
+          </label>
+        </div>
+        <label class="ops-field">
+          <span>Purpose (one line)</span>
+          <input type="text" value="${escapeAttr(agent.persona?.purpose || "")}" data-ops-field="persona-purpose" placeholder="e.g. Watches my Jira board and brings morning insight">
+        </label>
+        <label class="ops-field">
+          <span>Voice notes</span>
+          <input type="text" value="${escapeAttr(agent.persona?.voice_notes || "")}" data-ops-field="persona-voice-notes" placeholder="e.g. lowercase, concise, no greetings">
+        </label>
+        <div class="ops-detail-actions" style="margin-top:10px">
+          ${renderOpsButton("Save persona", "save-persona")}
+          ${renderOpsSecondaryButton("Cancel", "reset-persona")}
+        </div>
+        ${agent.persona?.ghostwrite ? `<p class="ops-muted-copy" style="margin-top:8px">Ghostwrite is active — this agent's output is framed as if Jon wrote it. Voice samples from the personality profile are prepended to the system prompt at run-time.</p>` : ""}
+      </section>
+
       <section class="ops-mini-card">
         <div class="ops-mini-card-label">Identity / purpose</div>
-        <div class="ops-mini-card-title">${escapeHtml(agent.title || "Untitled agent")}</div>
-        <p>${escapeHtml(agent.description || "No description yet.")}</p>
+        <div class="ops-mini-card-title">${escapeHtml(agent.persona?.name || agent.title || "Untitled agent")}</div>
+        <p>${escapeHtml(agent.persona?.purpose || agent.description || "No description yet.")}</p>
       </section>
+
+      ${renderOperatingBlueprint(agent)}
 
       <section class="ops-mini-card">
         <div class="ops-mini-card-label">Recent runs</div>
@@ -1559,29 +2020,40 @@ function renderAgentDetail(agent) {
       </section>
 
       <section class="ops-mini-card">
+        <div class="ops-mini-card-label">Reason codes emitted <span class="ops-badge-success">runtime-active</span></div>
+        <div class="ops-field">
+          <span>Allowed codes</span>
+          <div class="ops-reason-code-multiselect" data-ops-reason-code-multiselect>
+            ${renderReasonCodeOptions(agent.reasonCodesEmitted || []) || '<p class="ops-muted-copy">No active reason codes found.</p>'}
+          </div>
+        </div>
+        <p class="ops-muted-copy">When empty, runtime allows any active registry code.</p>
+      </section>
+
+      <section class="ops-mini-card">
         <div class="ops-mini-card-label">Provider policy</div>
         <div class="ops-form-grid">
           <label class="ops-field">
             <span>Preferred provider</span>
             <select data-ops-field="provider">
-              ${["", "claude-code", "codex", "gemini", "openrouter", "ollama"].map((p) =>
-                `<option value="${escapeAttr(p)}"${agent.provider === p ? " selected" : ""}>${escapeHtml(p || "— inherit from session —")}</option>`
-              ).join("")}
+              ${providerOptions(agent.provider || "claude-code")}
             </select>
           </label>
           <label class="ops-field">
             <span>Model</span>
-            <input type="text" value="${escapeAttr(agent.model || "")}" data-ops-field="model" placeholder="e.g. claude-sonnet-4-6">
+            <select data-ops-field="model">${modelOptions(agent.provider, agent.model || "")}</select>
           </label>
         </div>
         <div class="ops-form-grid" style="margin-top:8px">
           <div class="ops-field">
-            <span class="ops-field-label">Fallback provider <span class="ops-badge-coming">stored — runtime routing coming</span></span>
-            <input type="text" value="${escapeAttr(agent.fallbackProvider || "")}" data-ops-field="fallbackProvider" placeholder="e.g. claude-code">
+            <span class="ops-field-label">Fallback provider ${agent.fallbackProvider ? "" : '<span class="ops-pill ops-pill-warn">Not set — required</span>'}</span>
+            <select data-ops-field="fallbackProvider">
+              ${providerOptions(agent.fallbackProvider || "", true)}
+            </select>
           </div>
           <div class="ops-field">
-            <span class="ops-field-label">Fallback model <span class="ops-badge-coming">stored — runtime routing coming</span></span>
-            <input type="text" value="${escapeAttr(agent.fallbackModel || "")}" data-ops-field="fallbackModel" placeholder="e.g. claude-haiku-4-5-20251001">
+            <span class="ops-field-label">Fallback model</span>
+            <select data-ops-field="fallbackModel">${modelOptions(agent.fallbackProvider, agent.fallbackModel || "")}</select>
           </div>
         </div>
         ${agent.policyNote ? `<p class="ops-muted-copy" style="margin-top:8px">${escapeHtml(agent.policyNote)}</p>` : ""}
@@ -1609,6 +2081,20 @@ function renderAgentDetail(agent) {
               .join("")}
           </select>
           <button type="button" class="ops-secondary-btn" data-ops-action="attach-skill">Attach</button>
+        </div>
+      </section>
+
+      <section class="ops-mini-card" id="agent-connectors-section" data-agent-id="${escapeAttr(String(agent.dbId || ''))}">
+        <div class="ops-mini-card-label">Linked connectors</div>
+        <div class="ops-connectors-list" id="agent-connectors-list">
+          <div class="ops-loading-inline">Loading connectors…</div>
+        </div>
+        <div class="ops-attach-connector-row" style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <select data-ops-field="attach-connector-select" class="ops-attach-connector-select">
+            <option value="">— link a connector —</option>
+          </select>
+          <input type="text" data-ops-field="attach-connector-namespace" placeholder="tool namespace (e.g. starbridge)" style="flex:1;min-width:120px">
+          <button type="button" class="ops-secondary-btn" data-ops-action="attach-connector">Link</button>
         </div>
       </section>
 
@@ -1653,12 +2139,17 @@ function renderAgentDetail(agent) {
       </section>
 
       <section class="ops-mini-card">
-        <div class="ops-mini-card-label">Supporting files <span class="ops-badge-coming">reserved for future context files</span></div>
-        ${_agentSupportingFiles.length > 0
-          ? `<div class="ops-chip-row" style="flex-wrap:wrap;gap:6px">
-              ${_agentSupportingFiles.map((f) => `<span class="ops-pill">${escapeHtml(f.name)} <span class="ops-muted-copy">${escapeHtml(formatFileSize(f.size))}</span></span>`).join("")}
+        <div class="ops-mini-card-label">Supporting files</div>
+        ${Array.isArray(agent.supportingFiles) && agent.supportingFiles.length > 0
+          ? `<div class="ops-supporting-files-list">
+              ${agent.supportingFiles.map((f) => `
+                <div class="ops-supporting-file-row">
+                  <span class="ops-supporting-file-name">${escapeHtml(f.filename || f.name || "")}</span>
+                  <span class="ops-supporting-file-meta">${escapeHtml(formatFileSize(f.sizeBytes ?? f.size))} · ${escapeHtml(formatRelativeTime(f.modifiedAt))}</span>
+                </div>
+              `).join("")}
             </div>`
-          : `<p class="ops-muted-copy">No supporting files. Files placed in the agent's workspace directory will be listed here in future slices.</p>`}
+          : `<p class="ops-muted-copy">No supporting files. Upload files via the avatar/files APIs or place files in the agent's workspace directory.</p>`}
       </section>
 
       <section class="ops-mini-card">
@@ -1701,6 +2192,151 @@ function renderAgentDetail(agent) {
       </div>
     </div>
   `;
+}
+
+function renderOperatingBlueprint(agent) {
+  const inputs = agent.inputsRequired || [];
+  const tiers = agent.urgencyTiers || {};
+  const failures = agent.failureModes || [];
+  const tables = agent.dbTablesTouched || [];
+  return `
+    <section class="ops-mini-card ops-blueprint-card">
+      <details open>
+        <summary class="ops-blueprint-summary">
+          <span>Operating Blueprint</span>
+          <span class="ops-pill">${escapeHtml(formatLifecycleStatus(agent.lifecycleStatus))}</span>
+        </summary>
+        <div class="ops-blueprint-grid">
+          <div class="ops-blueprint-kv">
+            <span>Cadence</span>
+            <strong>${escapeHtml(formatCadenceSeconds(agent.cadenceSeconds))}</strong>
+          </div>
+          <div class="ops-blueprint-kv">
+            <span>Lifecycle</span>
+            <strong>${escapeHtml(formatLifecycleStatus(agent.lifecycleStatus))}</strong>
+          </div>
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Inputs required</div>
+          ${inputs.length ? `<div class="ops-blueprint-list">${inputs.map((input) => `
+            <div class="ops-blueprint-row">
+              <code>${escapeHtml(input.key || "Input")}</code>
+              <span>${escapeHtml(input.description || input.kind || "No description")}</span>
+            </div>
+          `).join("")}</div>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Urgency tiers</div>
+          ${Object.keys(tiers).length ? `<div class="ops-blueprint-list">${Object.entries(tiers).map(([tier, detail]) => `
+            <div class="ops-blueprint-row">
+              <code>${escapeHtml(tier)}</code>
+              <span>${escapeHtml(String(detail))}</span>
+            </div>
+          `).join("")}</div>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Failure modes</div>
+          ${failures.length ? `<ul class="ops-blueprint-bullets">${failures.map((mode) => `
+            <li><strong>${escapeHtml(mode.name || "Failure")}</strong>${mode.description ? ` — ${escapeHtml(mode.description)}` : ""}</li>
+          `).join("")}</ul>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">DB tables touched</div>
+          ${tables.length ? `<div class="ops-chip-row ops-blueprint-chips">${tables.map((table) => `<span class="ops-agent-meta-chip">${escapeHtml(table)}</span>`).join("")}</div>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+        <div class="ops-blueprint-block">
+          <div class="ops-mini-card-label">Implementation notes</div>
+          ${agent.implementationNotes ? `<pre class="ops-blueprint-notes">${escapeHtml(agent.implementationNotes)}</pre>` : `<p class="ops-muted-copy">Not specified</p>`}
+        </div>
+      </details>
+    </section>
+  `;
+}
+
+// ── Agent Connectors UI ───────────────────────────────────────────────────────
+
+async function loadAgentConnectors(agentDbId) {
+  const section = document.getElementById('agent-connectors-section');
+  if (!section || !agentDbId) return;
+  const list = section.querySelector('#agent-connectors-list');
+  if (!list) return;
+
+  // Populate the connector select
+  const selectEl = section.querySelector('[data-ops-field="attach-connector-select"]');
+  try {
+    const res = await fetch('/api/connectors?status=active');
+    if (res.ok) {
+      const connectors = await res.json();
+      if (selectEl) {
+        selectEl.innerHTML = '<option value="">— link a connector —</option>' +
+          connectors.map((c) => `<option value="${c.id}" data-kind="${c.kind}">[${c.kind}] ${c.name}</option>`).join('');
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // Load linked connectors
+  try {
+    const res = await fetch(`/api/agents/${agentDbId}/connectors`);
+    if (!res.ok) { list.innerHTML = '<div class="ops-muted-copy">Could not load linked connectors.</div>'; return; }
+    const links = await res.json();
+    if (!links.length) {
+      list.innerHTML = '<div class="ops-muted-copy">No connectors linked. Link a connector below to give this agent runtime credentials.</div>';
+      return;
+    }
+    list.innerHTML = links.map((link) => `
+      <div class="ops-connector-link-row">
+        <span class="ops-pill ops-pill-accent">${link.tool_namespace}</span>
+        <span class="ops-muted-copy" style="flex:1">${link.connector_id.slice(0, 8)}…</span>
+        <button type="button" class="ops-pill-detach" data-ops-action="detach-connector"
+          data-connector-id="${link.connector_id}" data-agent-id="${agentDbId}" title="Unlink connector">×</button>
+      </div>
+    `).join('');
+  } catch {
+    list.innerHTML = '<div class="ops-muted-copy">Could not load linked connectors.</div>';
+  }
+}
+
+async function handleAttachConnector(section) {
+  const agentDbId = section.dataset.agentId;
+  if (!agentDbId) return;
+  const selectEl = section.querySelector('[data-ops-field="attach-connector-select"]');
+  const nsInput = section.querySelector('[data-ops-field="attach-connector-namespace"]');
+  const connectorId = selectEl?.value;
+  const toolNamespace = nsInput?.value?.trim();
+  if (!connectorId || !toolNamespace) {
+    showToast('Missing field', 'Select a connector and enter a tool namespace.', { isError: true });
+    return;
+  }
+  try {
+    const res = await fetch(`/api/agents/${agentDbId}/connectors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connector_id: connectorId, tool_namespace: toolNamespace }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Link failed', err.error || res.statusText, { isError: true });
+      return;
+    }
+    if (nsInput) nsInput.value = '';
+    await loadAgentConnectors(agentDbId);
+    showToast('Linked', `Connector linked as "${toolNamespace}".`);
+  } catch (e) {
+    showToast('Link failed', String(e), { isError: true });
+  }
+}
+
+async function handleDetachConnector(btn) {
+  const connectorId = btn.dataset.connectorId;
+  const agentDbId = btn.dataset.agentId;
+  if (!connectorId || !agentDbId) return;
+  try {
+    await fetch(`/api/agents/${agentDbId}/connectors/${connectorId}`, { method: 'DELETE' });
+    await loadAgentConnectors(agentDbId);
+    showToast('Unlinked', 'Connector unlinked from agent.');
+  } catch (e) {
+    showToast('Unlink failed', String(e), { isError: true });
+  }
 }
 
 function formatFileSize(bytes) {
@@ -2728,6 +3364,16 @@ function renderOperationsError(title, message) {
   `;
 }
 
+function renderPipelinesPage() {
+  // Pipelines are rendered by the standalone pipelines.js module.
+  // We return a mount point and delegate rendering to initPipelinesPage.
+  return `<div id="pipelines-page-root"></div>`;
+}
+
+function renderPipelineRunHistoryPage() {
+  return `<div id="pipeline-run-history-root"></div>`;
+}
+
 function buildOperationsMarkup(view) {
   const normalized = normalizeAppView(view);
   switch (normalized) {
@@ -2735,12 +3381,14 @@ function buildOperationsMarkup(view) {
       return renderOverviewPage();
     case "agents":
       return renderAgentsPage();
+    case "agents/builder":
+      return renderAgentBuilderPage();
     case "skills":
       return renderSkillsPage();
-    case "workflows":
-      return renderWorkflowsPage();
-    case "automations":
-      return renderAutomationsPage();
+    case "pipelines":
+      return renderPipelinesPage();
+    case PIPELINE_RUN_HISTORY_VIEW:
+      return renderPipelineRunHistoryPage();
     default:
       return "";
   }
@@ -2757,6 +3405,17 @@ export function renderOperationsView(view = getState("view")) {
   const shell = getShellContent();
   if (shell) {
     shell.innerHTML = markup;
+  }
+  // For the Pipelines sub-view, delegate to the pipelines module after DOM is set.
+  if (normalizeAppView(view) === "pipelines") {
+    initPipelinesPage();
+  } else if (normalizeAppView(view) === PIPELINE_RUN_HISTORY_VIEW) {
+    initPipelineRunHistoryPage();
+  }
+  // Load agent connectors asynchronously after the agent detail DOM is ready.
+  const connSection = document.getElementById("agent-connectors-section");
+  if (connSection && connSection.dataset.agentId) {
+    void loadAgentConnectors(connSection.dataset.agentId);
   }
   return markup;
 }
@@ -2779,6 +3438,7 @@ async function refreshAgentsFromApi() {
     api.fetchDags(),
     api.fetchAgentMetrics().catch(() => null),
   ]);
+  await refreshReasonCodesFromApi().catch(() => {});
   setState("agents", agents);
   setState("agentChains", chains);
   setState("agentDags", dags);
@@ -2805,7 +3465,7 @@ async function loadEnrichedAgent(agentId) {
 }
 
 async function refreshWorkflowsFromApi() {
-  const workflows = await api.fetchWorkflows();
+  const workflows = Array.isArray(getState("workflows")) ? getState("workflows") : [];
   setState("workflows", workflows);
   setState("workflowsLoaded", true);
 }
@@ -2868,9 +3528,14 @@ async function saveAgentDraft() {
     memoryPolicy: agentDraft.memoryPolicy || null,
     permissionMode: agentDraft.permissionMode || null,
     outputContract: agentDraft.outputContract || null,
+    reasonCodesEmitted: agentDraft.reasonCodesEmitted || [],
   };
   if (!payload.title || !payload.goal) {
     window.alert?.("Title and goal are required.");
+    return;
+  }
+  if (!payload.provider || !payload.fallbackProvider || !payload.fallbackModel) {
+    window.alert?.("Both preferred and fallback provider are required — these protect your agent from upstream outages.");
     return;
   }
   if (agentDraft.id) {
@@ -2897,6 +3562,50 @@ async function saveAgentDraft() {
   await refreshAgentsFromApi();
   await loadEnrichedAgent(selectedAgentId);
   renderOperationsView("agents");
+  showToast("Saved", `${payload.title} updated.`);
+}
+
+async function savePersonaDraft() {
+  if (!selectedAgentId) return;
+  const nameEl = document.querySelector("[data-ops-field='persona-name']");
+  const purposeEl = document.querySelector("[data-ops-field='persona-purpose']");
+  const voiceEl = document.querySelector("[data-ops-field='persona-voice-notes']");
+  const ghostwriteEl = document.querySelector("[data-ops-field='persona-ghostwrite']");
+  const patch = {};
+  if (nameEl && nameEl.value.trim()) patch.name = nameEl.value.trim();
+  if (purposeEl && purposeEl.value.trim()) patch.purpose = purposeEl.value.trim();
+  if (voiceEl && voiceEl.value.trim()) patch.voiceNotes = voiceEl.value.trim();
+  if (ghostwriteEl) patch.ghostwrite = ghostwriteEl.value === "true";
+  if (Object.keys(patch).length === 0) return;
+  try {
+    await api.patchAgentPersonaApi(selectedAgentId, patch);
+    _enrichedAgent = null;
+    await loadEnrichedAgent(selectedAgentId);
+    renderOperationsView("agents");
+    const agent = getAgents().find((item) => item.id === selectedAgentId);
+    showToast("Saved", `${agent?.title || selectedAgentId} updated.`);
+  } catch (err) {
+    showToast("Save failed", err?.message || String(err), { isError: true });
+  }
+}
+
+async function saveAgentReasonCodes(fieldEl) {
+  if (!selectedAgentId) return;
+  const container = fieldEl.closest("[data-ops-reason-code-multiselect]");
+  if (!container) return;
+  const reasonCodesEmitted = Array.from(container.querySelectorAll("input[type='checkbox']:checked"))
+    .map((option) => option.value);
+  if (agentDraft?.id === selectedAgentId) agentDraft.reasonCodesEmitted = reasonCodesEmitted;
+  try {
+    await api.updateAgent(selectedAgentId, { reasonCodesEmitted });
+    _enrichedAgent = null;
+    await refreshAgentsFromApi();
+    await loadEnrichedAgent(selectedAgentId);
+    renderOperationsView("agents");
+    showToast("Saved", "Reason-code emit list updated.");
+  } catch (err) {
+    showToast("Save failed", err?.message || String(err), { isError: true });
+  }
 }
 
 async function saveWorkflowDraft() {
@@ -2938,9 +3647,9 @@ async function saveWorkflowDraft() {
     await api.updateWorkflow(workflowDraft.id, payload);
     selectedWorkflowId = workflowDraft.id;
   } else {
-    const created = await api.createWorkflow(payload);
-    selectedWorkflowId = created.id;
-    workflowDraft.id = created.id;
+    const createdId = workflowDraft.id || slugify(payload.title || "workflow");
+    selectedWorkflowId = createdId;
+    workflowDraft.id = createdId;
   }
   writeStorage(OPS_WORKFLOW_SELECTION_KEY, selectedWorkflowId);
   workflowDraft.meta = workflowDraft.meta || {};
@@ -3034,18 +3743,56 @@ async function handleSkillFileDrop(file) {
   }
 }
 
+function handleOperationsDragstart(event) {
+  const row = event.target.closest("[data-drag-kind='agent']");
+  if (row && agentViewMode === "custom") {
+    event.dataTransfer?.setData("application/x-artemis-agent", row.dataset.agentId || "");
+    return;
+  }
+  const folder = event.target.closest(".ops-agent-custom-folder[data-folder-path]");
+  if (folder && agentViewMode === "custom") {
+    event.dataTransfer?.setData("application/x-artemis-folder", folder.dataset.folderPath || "");
+  }
+}
+
+function handleOperationsContextMenu(event) {
+  const folder = event.target.closest(".ops-agent-custom-folder[data-folder-path]");
+  if (!folder || agentViewMode !== "custom") return;
+  event.preventDefault();
+  showFolderContextMenu(folder.dataset.folderPath || "", event.clientX, event.clientY);
+}
+
 function handleOperationsDragover(event) {
+  const agentFolder = event.target.closest(".ops-agent-custom-folder");
+  if (agentFolder && agentViewMode === "custom") {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    agentFolder.classList.add("ops-agent-folder-drop");
+    return;
+  }
   if (!getShellContent()?.querySelector(".ops-skills-grid")) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
   getShellContent()?.querySelector(".ops-list-panel")?.classList.add("ops-drop-active");
 }
 
-function handleOperationsDragleave() {
+function handleOperationsDragleave(event) {
+  event.target.closest(".ops-agent-custom-folder")?.classList.remove("ops-agent-folder-drop");
   getShellContent()?.querySelector(".ops-list-panel")?.classList.remove("ops-drop-active");
 }
 
 function handleOperationsDrop(event) {
+  const folder = event.target.closest(".ops-agent-custom-folder");
+  if (folder && agentViewMode === "custom") {
+    event.preventDefault();
+    folder.classList.remove("ops-agent-folder-drop");
+    const target = folder.dataset.folderPath || "";
+    const agentId = event.dataTransfer?.getData("application/x-artemis-agent") || "";
+    const sourceFolder = event.dataTransfer?.getData("application/x-artemis-folder") || "";
+    if (agentId) void moveAgentToFolder(agentId, target).catch((err) => showOpsImportToast(err.message || "Move failed", true));
+    else if (sourceFolder) void moveFolderToFolder(sourceFolder, target).catch((err) => showOpsImportToast(err.message || "Move failed", true));
+    return;
+  }
   if (!getShellContent()?.querySelector(".ops-skills-grid")) return;
   event.preventDefault();
   getShellContent()?.querySelector(".ops-list-panel")?.classList.remove("ops-drop-active");
@@ -3237,6 +3984,14 @@ async function createCampaignWritingDraft(campaignId) {
 }
 
 function handleOperationsClick(event) {
+  // Delegate builder actions
+  const builderBtn = event.target.closest("[data-builder-action]");
+  if (builderBtn) {
+    const builderAction = builderBtn.dataset.builderAction || "";
+    handleBuilderAction(builderAction, builderBtn);
+    return;
+  }
+
   const button = event.target.closest("[data-ops-action]");
   if (!button) return;
 
@@ -3253,6 +4008,48 @@ function handleOperationsClick(event) {
     renderOperationsView("agents");
     // Load enriched data asynchronously; re-render when ready.
     loadEnrichedAgent(selectedAgentId).then(() => renderOperationsView("agents")).catch(() => {});
+    return;
+  }
+  if (action === "set-agent-view-mode") {
+    agentViewMode = button.dataset.viewMode === "custom" ? "custom" : "slug";
+    writeStorage(OPS_AGENT_VIEW_MODE_KEY, agentViewMode);
+    renderOperationsView("agents");
+    return;
+  }
+  if (action === "create-agent-folder") {
+    createEmptyFolder();
+    return;
+  }
+  if (action === "add-agent-to-folder") {
+    event.preventDefault();
+    event.stopPropagation();
+    promptFolderForAgent(button.dataset.agentId || "");
+    return;
+  }
+  if (action === "toggle-agent-tree") {
+    const key = `${button.dataset.treeKind}:${button.dataset.treeId}`;
+    const current = agentViewMode === "custom" ? agentCustomTreeCollapsed : agentTreeCollapsed;
+    const next = { ...current, [key]: !current[key] };
+    if (!next[key]) delete next[key];
+    if (agentViewMode === "custom") {
+      agentCustomTreeCollapsed = next;
+      writeStorage(OPS_AGENT_CUSTOM_TREE_COLLAPSED_KEY, agentCustomTreeCollapsed);
+    } else {
+      agentTreeCollapsed = next;
+      writeStorage(OPS_AGENT_TREE_COLLAPSED_KEY, agentTreeCollapsed);
+    }
+    renderOperationsView("agents");
+    return;
+  }
+  if (action === "toggle-agent-filter") {
+    const group = button.dataset.filterGroup;
+    const value = button.dataset.filterValue;
+    const key = group === "status" ? "statuses" : "triggers";
+    const current = new Set(agentTreeFilters[key] || []);
+    if (current.has(value)) current.delete(value);
+    else current.add(value);
+    agentTreeFilters = { ...agentTreeFilters, [key]: [...current] };
+    renderOperationsView("agents");
     return;
   }
   if (action === "new-agent") {
@@ -3272,7 +4069,32 @@ function handleOperationsClick(event) {
     return;
   }
   if (action === "save-agent") {
-    void saveAgentDraft();
+    void saveAgentDraft().catch((err) => showToast("Save failed", err.message || "Could not save agent.", { isError: true }));
+    return;
+  }
+  if (action === "save-persona") {
+    void savePersonaDraft().catch((err) => showToast("Save failed", err.message || "Could not save persona.", { isError: true }));
+    return;
+  }
+  if (action === "reset-persona") {
+    // Re-render to discard unsaved persona edits
+    renderOperationsView("agents");
+    return;
+  }
+  if (action === "edit-agent-with-builder") {
+    const agentId = button.dataset.agentId || selectedAgentId;
+    // CC18: builder_sessions.target_id is the Agent INT PK, not the slug.
+    // We pass it through state so initBuilderSurface() can create a new
+    // target-scoped session that triggers read_recent_runs() automatically.
+    const rawDbId = button.dataset.agentDbId || "";
+    const agentDbId = rawDbId && !Number.isNaN(Number(rawDbId)) ? Number(rawDbId) : null;
+    if (agentId) {
+      writeStorage(OPS_AGENT_SELECTION_KEY, agentId);
+      setState("builderEditAgentId", agentId);
+    }
+    if (agentDbId) setState("builderEditAgentDbId", agentDbId);
+    setState("view", "agents/builder");
+    renderOperationsView("agents/builder");
     return;
   }
   if (action === "generate-instruction-from-goal") {
@@ -3314,6 +4136,15 @@ function handleOperationsClick(event) {
         showOpsImportToast(err.message || "Detach failed", true);
       }
     })();
+    return;
+  }
+  if (action === "attach-connector") {
+    const section = document.getElementById("agent-connectors-section");
+    if (section) void handleAttachConnector(section);
+    return;
+  }
+  if (action === "detach-connector") {
+    void handleDetachConnector(button);
     return;
   }
   if (action === "reset-agent") {
@@ -3670,6 +4501,20 @@ function handleOperationsClick(event) {
 }
 
 function handleOperationsInput(event) {
+  const treeSearch = event.target.closest("[data-ops-agent-tree-search]");
+  if (treeSearch) {
+    agentTreeSearch = treeSearch.value;
+    renderOperationsView("agents");
+    requestAnimationFrame(() => {
+      const next = document.querySelector("[data-ops-agent-tree-search]");
+      if (next) {
+        next.focus();
+        next.setSelectionRange(agentTreeSearch.length, agentTreeSearch.length);
+      }
+    });
+    return;
+  }
+
   const input = event.target.closest("[data-ops-field]");
   if (!input) return;
 
@@ -3739,6 +4584,13 @@ function handleOperationsInput(event) {
 }
 
 function handleOperationsChange(event) {
+  const treeSort = event.target.closest("[data-ops-agent-tree-sort]");
+  if (treeSort) {
+    agentTreeSort = treeSort.value || "name";
+    renderOperationsView("agents");
+    return;
+  }
+
   const field = event.target.closest("[data-ops-field]");
   if (!field) return;
   const opsField = field.dataset.opsField || "";
@@ -3750,6 +4602,11 @@ function handleOperationsChange(event) {
   // <select> elements fire "change" not "input" — mirror the policy-field logic from handleOperationsInput.
   if (["provider", "model", "fallbackProvider", "fallbackModel", "memoryScope", "permissionMode", "outputType"].includes(opsField)) {
     updateAgentDraftField(opsField, field.value);
+    if (opsField === "provider" || opsField === "fallbackProvider") renderOperationsView("agents");
+    return;
+  }
+  if (opsField === "reasonCodesEmitted") {
+    void saveAgentReasonCodes(field);
     return;
   }
   // Workflow step selects and checkboxes: type/destination changes need a re-render.
@@ -3773,6 +4630,15 @@ function handleOperationsChange(event) {
   }
 }
 
+function handleOperationsKeydown(event) {
+  const treeSearch = event.target.closest("[data-ops-agent-tree-search]");
+  if (treeSearch && event.key === "Escape") {
+    agentTreeSearch = "";
+    treeSearch.value = "";
+    renderOperationsView("agents");
+  }
+}
+
 onState("view", scheduleRender);
 onState("agents", scheduleRender);
 onState("agentChains", scheduleRender);
@@ -3786,10 +4652,78 @@ onState("workflowsLoaded", scheduleRender);
 onState("workflowsLoading", scheduleRender);
 onState("workflowsError", scheduleRender);
 
+// Init Agent-Builder surface when the view switches to "agents/builder"
+let _builderInitialized = false;
+onState("view", (view) => {
+  if (normalizeAppView(view) !== "agents/builder") return;
+  // CC18: when navigating with a pending "Edit with Builder" target, always
+  // re-init so initBuilderSurface() can spawn a new target-scoped session.
+  if (!_builderInitialized || getState("builderEditAgentDbId")) {
+    _builderInitialized = true;
+    void initBuilderSurface().then(() => renderOperationsView("agents/builder")).catch(() => {});
+  }
+});
+
+// Re-render when the builder triggers an internal state change
+document.addEventListener("builder:rerender", () => {
+  if (normalizeAppView(getState("view")) === "agents/builder") {
+    renderOperationsView("agents/builder");
+  }
+});
+
+// ── Proposals Inbox badge (J6a) ───────────────────────────────────────────────
+// Fetch the inbox count and inject a badge into the operations overview page's
+// Agents card.  Cache 30 s; clear on builder session close / proposal action.
+
+let _opsInboxCache = null;
+let _opsInboxCacheTs = 0;
+const _OPS_INBOX_TTL_MS = 30_000;
+
+async function _refreshOpsInboxBadge() {
+  const placeholder = document.getElementById("ops-inbox-badge-placeholder");
+  if (!placeholder) return;
+
+  const now = Date.now();
+  if (!_opsInboxCache || now - _opsInboxCacheTs >= _OPS_INBOX_TTL_MS) {
+    try {
+      _opsInboxCache = await api.builderFetchInbox();
+      _opsInboxCacheTs = now;
+    } catch {
+      return; // don't show a broken badge
+    }
+  }
+
+  const total =
+    (_opsInboxCache.agents_with_pending_proposals?.length ?? 0) +
+    (_opsInboxCache.agents_with_new_summaries?.length ?? 0);
+
+  if (total > 0) {
+    placeholder.innerHTML = `<span class="inbox-overview-badge">${total}</span>`;
+  } else {
+    placeholder.innerHTML = "";
+  }
+}
+
+// Invalidate ops inbox cache on proposal approval/rejection so the badge updates.
+document.addEventListener("builder:proposal-actioned", () => {
+  _opsInboxCache = null;
+});
+
+// After each operations overview render, inject the inbox badge asynchronously.
+onState("view", (view) => {
+  if (normalizeAppView(view) === OPERATIONS_VIEW) {
+    // Give the DOM a tick to settle after scheduleRender, then inject the badge.
+    queueMicrotask(() => _refreshOpsInboxBadge().catch(() => {}));
+  }
+});
+
 const shellContent = getShellContent();
 shellContent?.addEventListener("click", handleOperationsClick);
 shellContent?.addEventListener("input", handleOperationsInput);
 shellContent?.addEventListener("change", handleOperationsChange);
+shellContent?.addEventListener("keydown", handleOperationsKeydown);
+shellContent?.addEventListener("dragstart", handleOperationsDragstart);
+shellContent?.addEventListener("contextmenu", handleOperationsContextMenu);
 shellContent?.addEventListener("dragover", handleOperationsDragover);
 shellContent?.addEventListener("dragleave", handleOperationsDragleave);
 shellContent?.addEventListener("drop", handleOperationsDrop);
@@ -3808,6 +4742,14 @@ export async function loadAutomationsShell() {
     await refreshAutomationsFromApi();
   }
   renderOperationsView("automations");
+}
+
+export function loadPipelinesShell() {
+  renderOperationsView("pipelines");
+}
+
+export function loadPipelineRunHistoryShell() {
+  renderOperationsView(PIPELINE_RUN_HISTORY_VIEW);
 }
 
 export async function loadCampaignOpsShell() {

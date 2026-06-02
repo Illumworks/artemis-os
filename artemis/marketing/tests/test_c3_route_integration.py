@@ -29,6 +29,7 @@ from artemis.marketing.repository import (
     create_signal,
     link_content_asset_to_candidate,
 )
+from artemis.marketing.seeds.reason_codes import seed_reason_codes
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -95,6 +96,7 @@ async def _make_candidate(db: AsyncSession, signal: SignalQueue) -> CampaignCand
 async def test_intake_auto_qualifies_when_active_rulesets_exist(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    await seed_reason_codes(db_session)  # M1: registry must be populated for FK check
     await _make_active_ruleset(db_session, family="obc", version="v1")
     await _make_territory(db_session, family="obc")
     await db_session.commit()
@@ -104,7 +106,7 @@ async def test_intake_auto_qualifies_when_active_rulesets_exist(
         "headline": "District voted yes on measure",
         "campaignFamily": "obc",
         "stateCode": "CA",
-        "reasonCodes": [{"code": "DISTRICT_VOTED_YES", "confidence": 1.0}],
+        "reasonCodes": [{"code": "DISTRICT_STRATEGIC_LITERACY", "confidence": 1.0}],
     }
     resp = await client.post("/api/signal-queue/intake", json=payload)
     assert resp.status_code == 201
@@ -167,7 +169,7 @@ async def test_approve_locks_ruleset_version_from_qualification_json(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     await _make_active_ruleset(db_session, version="v99")
-    signal = await _make_signal(db_session)
+    signal = await _make_signal(db_session, signal_status="qualified")
     # Manually set qualification_json with a known version
     signal.qualification_json = {
         "qualifiedAt": "2026-05-16T00:00:00Z",
@@ -190,7 +192,7 @@ async def test_approve_falls_back_to_active_version_when_no_qual_json(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     await _make_active_ruleset(db_session, version="v2")
-    signal = await _make_signal(db_session)
+    signal = await _make_signal(db_session, signal_status="qualified")
     # No qualification_json
     await db_session.commit()
 
@@ -276,7 +278,8 @@ async def test_node_smoke_path_parity(client: AsyncClient, db_session: AsyncSess
     3. Approve signal → candidate created with locked version
     4. Assemble brief → non-stub output with signal evidence
     """
-    # Setup: active ruleset + territory
+    # Setup: reason-code registry (M1 FK enforcement), active ruleset + territory
+    await seed_reason_codes(db_session)  # M1: registry must be populated for FK check
     await _make_active_ruleset(db_session, family="obc", version="v1")
     await _make_territory(db_session, family="obc")
     await db_session.commit()
@@ -289,7 +292,7 @@ async def test_node_smoke_path_parity(client: AsyncClient, db_session: AsyncSess
             "headline": "District 42 board approved new curriculum",
             "campaignFamily": "obc",
             "stateCode": "CA",
-            "reasonCodes": [{"code": "DISTRICT_VOTED_YES", "confidence": 0.9}],
+            "reasonCodes": [{"code": "DISTRICT_STRATEGIC_LITERACY", "confidence": 0.9}],
         },
     )
     assert intake_resp.status_code == 201
@@ -316,4 +319,4 @@ async def test_node_smoke_path_parity(client: AsyncClient, db_session: AsyncSess
     assert "signal" in brief_content
     # Signal evidence flows through
     codes = brief_content["signal"]["reasonCodesWithEvidence"]
-    assert "DISTRICT_VOTED_YES" in codes
+    assert "DISTRICT_STRATEGIC_LITERACY" in codes

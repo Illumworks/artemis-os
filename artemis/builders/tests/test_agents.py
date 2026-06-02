@@ -8,6 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builders import repository as repo
 
+PROVIDER_FIELDS = {
+    "provider": "claude-code",
+    "model": "sonnet",
+    "fallbackProvider": "codex",
+    "fallbackModel": "gpt-5.4",
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Repository round-trip tests
 # ─────────────────────────────────────────────────────────────────────────────
@@ -56,6 +63,23 @@ async def test_update_agent(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_agent_metadata_does_not_change_agent_id(db_session: AsyncSession) -> None:
+    async with db_session.begin():
+        await repo.create_agent(
+            db_session,
+            agent_id="folder-agent",
+            name="Folder Agent",
+            metadata={"display_folder": "Old"},
+        )
+    async with db_session.begin():
+        updated = await repo.update_agent(
+            db_session, "folder-agent", metadata={"display_folder": "Top Picks"}
+        )
+    assert updated.agent_id == "folder-agent"
+    assert updated.metadata_ == {"display_folder": "Top Picks"}
+
+
+@pytest.mark.asyncio
 async def test_delete_agent(db_session: AsyncSession) -> None:
     async with db_session.begin():
         await repo.create_agent(db_session, agent_id="del-agent", name="Delete Me")
@@ -93,6 +117,7 @@ async def test_create_agent_http(client: AsyncClient) -> None:
         "description": "Created via HTTP",
         "tools": ["bash"],
         "maxIterations": 8,
+        **PROVIDER_FIELDS,
     }
     resp = await client.post("/api/agents/", json=payload)
     assert resp.status_code == 201
@@ -106,7 +131,7 @@ async def test_create_agent_http(client: AsyncClient) -> None:
 async def test_get_agent_http(client: AsyncClient) -> None:
     await client.post(
         "/api/agents/",
-        json={"agentId": "get-test-agent", "name": "Get Test"},
+        json={"agentId": "get-test-agent", "name": "Get Test", **PROVIDER_FIELDS},
     )
     resp = await client.get("/api/agents/get-test-agent")
     assert resp.status_code == 200
@@ -122,7 +147,7 @@ async def test_get_agent_not_found_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_create_agent_duplicate_http(client: AsyncClient) -> None:
-    payload = {"agentId": "dup-agent", "name": "Dup"}
+    payload = {"agentId": "dup-agent", "name": "Dup", **PROVIDER_FIELDS}
     await client.post("/api/agents/", json=payload)
     resp = await client.post("/api/agents/", json=payload)
     assert resp.status_code == 409
@@ -131,10 +156,42 @@ async def test_create_agent_duplicate_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_agent_http(client: AsyncClient) -> None:
-    await client.post("/api/agents/", json={"agentId": "patch-me", "name": "Old"})
+    await client.post(
+        "/api/agents/", json={"agentId": "patch-me", "name": "Old", **PROVIDER_FIELDS}
+    )
     resp = await client.patch("/api/agents/patch-me", json={"name": "New"})
     assert resp.status_code == 200
     assert resp.json()["name"] == "New"
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_metadata_http_keeps_agent_id(client: AsyncClient) -> None:
+    await client.post(
+        "/api/agents/", json={"agentId": "folder-http", "name": "Folder", **PROVIDER_FIELDS}
+    )
+    resp = await client.patch(
+        "/api/agents/folder-http", json={"metadata": {"display_folder": "Favorites"}}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["agentId"] == "folder-http"
+    assert data["metadata"] == {"display_folder": "Favorites"}
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_reason_codes_emitted_http(client: AsyncClient) -> None:
+    await client.post(
+        "/api/agents/", json={"agentId": "emit-http", "name": "Emit", **PROVIDER_FIELDS}
+    )
+    resp = await client.patch(
+        "/api/agents/emit-http",
+        json={"reasonCodesEmitted": ["POLICY_LIT_MANDATE", "VENDOR_APPROVED_LIST"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reasonCodesEmitted"] == [
+        "POLICY_LIT_MANDATE",
+        "VENDOR_APPROVED_LIST",
+    ]
 
 
 @pytest.mark.asyncio
@@ -145,7 +202,9 @@ async def test_patch_agent_not_found_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_agent_http(client: AsyncClient) -> None:
-    await client.post("/api/agents/", json={"agentId": "rm-agent", "name": "Remove"})
+    await client.post(
+        "/api/agents/", json={"agentId": "rm-agent", "name": "Remove", **PROVIDER_FIELDS}
+    )
     resp = await client.delete("/api/agents/rm-agent")
     assert resp.status_code == 204
     resp2 = await client.get("/api/agents/rm-agent")
@@ -160,7 +219,9 @@ async def test_delete_agent_not_found_http(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_list_agent_runs_for_agent(client: AsyncClient) -> None:
-    await client.post("/api/agents/", json={"agentId": "run-agent", "name": "Runner"})
+    await client.post(
+        "/api/agents/", json={"agentId": "run-agent", "name": "Runner", **PROVIDER_FIELDS}
+    )
     resp = await client.get("/api/agents/run-agent/runs")
     assert resp.status_code == 200
     assert resp.json()["runs"] == []

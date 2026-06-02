@@ -32,6 +32,10 @@ class ProviderAPIError(Exception):
         self.body = body
 
 
+class ClaudeCodeTimeoutError(ProviderAPIError):
+    """Raised when the Claude Code CLI exceeds its completion timeout."""
+
+
 class MissingCliBinaryError(Exception):
     """Raised at adapter construction time when the required CLI binary is absent.
 

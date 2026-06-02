@@ -328,12 +328,16 @@
 }
 
 /* ── Composer anchoring + gradient mask z-index fix ────────────── */
+/* v3: composer is sticky to the bottom of the main column so it's always
+   visible regardless of scroll position. */
 .dp-composer {
-  position: relative;
+  position: sticky;
+  bottom: 0;
   z-index: 2;
 }
 .dp-header {
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: 3;
 }
 /* If any fade/gradient-mask pseudo sits on .dp-main or .canvas-scroll, pin it
@@ -346,49 +350,8 @@
 }
 .dp-main > * { position: relative; z-index: 1; }
 
-/* ── Empty-state: mark-forward treatment ───────────────────────── */
-/* Option B: 96px mark (height:auto fixes squish), ghostly at rest,
-   brightens on cursor proximity; title at 22px weight 300; faint sub. */
-.dp-chat-empty { position: relative; }
-.dp-chat-empty-center { gap: 12px; }
-
-.dp-chat-mark {
-  width: 180px;
-  height: auto;           /* fixes the squish from the old 112×112 box */
-  opacity: 0.18;
-  filter: saturate(0.6);
-  transition: opacity .4s ease, filter .4s ease, transform .4s ease;
-  will-change: opacity, filter, transform;
-  margin-bottom: 4px;
-  cursor: pointer;
-}
-.dp-chat-empty[data-proximity] .dp-chat-mark {
-  opacity: var(--dp-chat-mark-opacity, 0.18);
-  filter: saturate(calc(0.6 + var(--dp-chat-mark-proximity, 0) * 0.55));
-}
-.dp-chat-empty:hover .dp-chat-mark {
-  opacity: 0.82;
-  filter: saturate(1);
-  transform: translateY(-2px);
-}
-
-/* Subtitle — fades in slightly on proximity, hidden at rest */
-.dp-chat-empty-sub--state {
-  font-size: 12px !important;
-  color: var(--ink-4) !important;
-  letter-spacing: 0.01em;
-  opacity: 0;
-  transition: opacity .4s ease;
-  max-width: 320px;
-  text-align: center;
-  line-height: 1.6;
-}
-.dp-chat-empty[data-proximity] .dp-chat-empty-sub--state {
-  opacity: calc(var(--dp-chat-mark-proximity, 0) * 0.7);
-}
-.dp-chat-empty:hover .dp-chat-empty-sub--state {
-  opacity: 0.7;
-}
+/* Empty-state rules removed in v3 port — the empty-state block is gone, and
+   the composer placeholder is the entirety of the empty-state UX. */
 
 /* ── Floating assistant orb ─────────────────────────────────────────── */
 .assistant-fab {

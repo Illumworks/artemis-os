@@ -13,7 +13,13 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.integrations.models import Integration, IntegrationConfig, SlackInboundMessage
+from artemis.integrations.models import (
+    Integration,
+    IntegrationConfig,
+    SlackChannel,
+    SlackInboundMessage,
+    SlackUser,
+)
 
 
 async def upsert_integration(
@@ -102,6 +108,24 @@ async def list_active(session: AsyncSession, provider: str | None = None) -> lis
     return list(result.scalars().all())
 
 
+async def list_for_ui(session: AsyncSession, provider: str | None = None) -> list[Integration]:
+    """Return active + needs_reauth rows for the Connectors modal.
+
+    Unlike list_active (active-only, used by service callers), this function
+    returns all rows a user should see in the UI — including needs_reauth rows
+    so the modal can surface them with an amber reconnect CTA.
+    """
+    stmt = (
+        select(Integration)
+        .where(Integration.status.in_(["active", "needs_reauth"]))
+        .order_by(Integration.connected_at.desc())
+    )
+    if provider:
+        stmt = stmt.where(Integration.provider == provider)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def mark_revoked(session: AsyncSession, integration_id: int) -> Integration:
     result = await session.execute(
         update(Integration)
@@ -120,6 +144,58 @@ async def mark_verified(session: AsyncSession, integration_id: int) -> None:
         update(Integration)
         .where(Integration.id == integration_id)
         .values(last_verified_at=datetime.now(UTC))
+    )
+
+
+# ── Token-refresh persistence (J10e) ──────────────────────────────────────────
+
+
+async def persist_refreshed_credentials(
+    session: AsyncSession,
+    *,
+    integration_id: int,
+    new_creds: dict[str, object],
+) -> None:
+    """Re-encrypt new_creds and update the row's credentials + verification stamps.
+
+    Caller owns commit. Used after a successful proactive token refresh.
+    """
+    from artemis.integrations.crypto import encrypt_credentials
+
+    encrypted = encrypt_credentials(new_creds)
+    now = datetime.now(UTC)
+    await session.execute(
+        update(Integration)
+        .where(Integration.id == integration_id)
+        .values(
+            encrypted_credentials=encrypted,
+            last_verified_at=now,
+            last_refresh_attempt_at=now,
+            # A successful refresh means the integration is usable again —
+            # flip needs_reauth rows back to active.
+            status="active",
+        )
+    )
+
+
+async def mark_needs_reauth(session: AsyncSession, integration_id: int) -> None:
+    """Mark the integration as needing user reauth; leave creds untouched."""
+    await session.execute(
+        update(Integration)
+        .where(Integration.id == integration_id)
+        .values(status="needs_reauth", last_refresh_attempt_at=datetime.now(UTC))
+    )
+
+
+async def mark_refresh_attempted(session: AsyncSession, integration_id: int) -> None:
+    """Bump last_refresh_attempt_at without touching status or creds.
+
+    Used on transient failure to ensure the cooldown guard triggers next tick.
+    """
+    await session.execute(
+        update(Integration)
+        .where(Integration.id == integration_id)
+        .values(last_refresh_attempt_at=datetime.now(UTC))
     )
 
 
@@ -223,6 +299,7 @@ async def upsert_slack_inbound(
     text: str | None,
     ts: str,
     thread_ts: str | None = None,
+    mention_type: str | None = None,
 ) -> bool:
     """Insert event; return True if newly inserted, False if duplicate."""
     stmt = (
@@ -235,8 +312,93 @@ async def upsert_slack_inbound(
             text=text,
             ts=ts,
             thread_ts=thread_ts,
+            mention_type=mention_type,
         )
         .on_conflict_do_nothing(index_elements=["event_id"])
     )
     result = await session.execute(stmt)
     return bool(getattr(result, "rowcount", 0))
+
+
+# ── Slack user / channel name caches (J9b) ────────────────────────────────────
+
+
+async def upsert_slack_user(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    name: str,
+    real_name: str | None = None,
+    is_bot: bool = False,
+) -> SlackUser:
+    """Cache a resolved Slack user; update name fields if already stored."""
+    now = datetime.now(UTC)
+    stmt = (
+        pg_insert(SlackUser)
+        .values(
+            id=user_id,
+            name=name,
+            real_name=real_name,
+            is_bot=is_bot,
+            fetched_at=now,
+        )
+        .on_conflict_do_update(
+            index_elements=["id"],
+            set_={"name": name, "real_name": real_name, "is_bot": is_bot, "fetched_at": now},
+        )
+    )
+    await session.execute(stmt)
+    result = await session.execute(select(SlackUser).where(SlackUser.id == user_id))
+    return result.scalar_one()
+
+
+async def get_slack_user(
+    session: AsyncSession,
+    user_id: str,
+) -> SlackUser | None:
+    """Return the cached SlackUser row, or None if not cached."""
+    result = await session.execute(select(SlackUser).where(SlackUser.id == user_id))
+    return result.scalar_one_or_none()
+
+
+async def upsert_slack_channel(
+    session: AsyncSession,
+    *,
+    channel_id: str,
+    name: str,
+    is_im: bool = False,
+    is_private: bool = False,
+) -> SlackChannel:
+    """Cache a resolved Slack channel; update name fields if already stored."""
+    now = datetime.now(UTC)
+    stmt = (
+        pg_insert(SlackChannel)
+        .values(
+            id=channel_id,
+            name=name,
+            is_im=is_im,
+            is_private=is_private,
+            fetched_at=now,
+        )
+        .on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "name": name,
+                "is_im": is_im,
+                "is_private": is_private,
+                "fetched_at": now,
+            },
+        )
+    )
+    await session.execute(stmt)
+    result = await session.execute(select(SlackChannel).where(SlackChannel.id == channel_id))
+    return result.scalar_one()
+
+
+async def get_slack_channel(
+    session: AsyncSession,
+    channel_id: str,
+) -> SlackChannel | None:
+    """Return the cached SlackChannel row, or None if not cached."""
+    result = await session.execute(select(SlackChannel).where(SlackChannel.id == channel_id))
+    return result.scalar_one_or_none()

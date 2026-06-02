@@ -5,6 +5,12 @@ Port of Node's server/scout-intake.js (157 lines).
 Validates and normalizes incoming signal payloads from scouts or operators.
 Anti-spoof: discoveredBy is unconditionally overridden to the scout_type param
 so no scout can claim a different identity.
+
+H2 addition: ``normalize_intake_payload`` now accepts an optional
+``reason_codes_allowlist`` parameter.  When provided it:
+  1. Parses the payload through ``ScoutEmittedSignal`` (strict Pydantic validation).
+  2. Validates every ``reasonCode.code`` against the allowlist.
+Both failures raise ``ValueError`` so the caller can reject the whole signal.
 """
 
 from __future__ import annotations
@@ -14,6 +20,18 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
+
+from artemis.marketing.josh_spec import (
+    CANONICAL_CAMPAIGN_FAMILIES,
+    CANONICAL_URGENCY_TIERS,
+    normalize_campaign_family,
+    normalize_urgency_tier,
+)
+from artemis.marketing.scout_schemas import (
+    ReasonCodeAllowlistError,
+    ScoutEmittedSignal,
+    validate_reason_codes_against_allowlist,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation constants (mirror Node exactly)
@@ -30,16 +48,11 @@ VALID_SOURCE_TYPES: frozenset[str] = frozenset(
     }
 )
 
-VALID_CAMPAIGN_FAMILIES: frozenset[str] = frozenset(
-    {
-        "obc",
-        "state_screener",
-        "biliteracy",
-        "reading_growth",
-    }
-)
+# Canonical campaign-family slugs — single source of truth lives in josh_spec.
+VALID_CAMPAIGN_FAMILIES: frozenset[str] = frozenset(CANONICAL_CAMPAIGN_FAMILIES)
 
-VALID_URGENCY_TIERS: frozenset[str] = frozenset({"hot", "standard", "low"})
+# Canonical urgency tiers — single source of truth lives in josh_spec.
+VALID_URGENCY_TIERS: frozenset[str] = frozenset(CANONICAL_URGENCY_TIERS)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Result type
@@ -91,7 +104,12 @@ def _derive_headline_from_snippet(snippet: str | None) -> str | None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def normalize_intake_payload(payload: dict[str, Any], scout_type: str) -> NormalizedFinding:
+def normalize_intake_payload(
+    payload: dict[str, Any],
+    scout_type: str,
+    *,
+    reason_codes_allowlist: list[str] | None = None,
+) -> NormalizedFinding:
     """Validate and normalize a single intake payload from a scout.
 
     Anti-spoof: discovered_by is unconditionally overridden to scout_type
@@ -100,6 +118,12 @@ def normalize_intake_payload(payload: dict[str, Any], scout_type: str) -> Normal
     Args:
         payload: Raw inbound dict (camelCase keys from HTTP body).
         scout_type: The identity of the calling scout (e.g. "starbridge", "manual").
+        reason_codes_allowlist: When provided (from agent.reason_codes_emitted),
+            the payload is first validated through ``ScoutEmittedSignal`` (Pydantic
+            strict shape), then every ``reasonCode.code`` is checked against the
+            allowlist.  A violation raises ``ValueError`` — the WHOLE signal is
+            rejected, not silently stripped.  Pass ``None`` for manual/legacy intake
+            paths that don't yet have an allowlist.
 
     Returns:
         NormalizedFinding ready for DB insertion.
@@ -107,6 +131,20 @@ def normalize_intake_payload(payload: dict[str, Any], scout_type: str) -> Normal
     Raises:
         ValueError: If validation fails. FastAPI catch-all converts to 422.
     """
+    # ── Pydantic strict-shape + allowlist check (H2) ──────────────────────────
+    if reason_codes_allowlist is not None:
+        from pydantic import ValidationError as PydanticValidationError
+
+        try:
+            parsed = ScoutEmittedSignal.model_validate(payload)
+        except PydanticValidationError as exc:
+            raise ValueError(f"Scout payload failed Pydantic validation: {exc}") from exc
+        try:
+            validate_reason_codes_against_allowlist(
+                parsed.reason_codes, reason_codes_allowlist, scout_type
+            )
+        except ReasonCodeAllowlistError as exc:
+            raise ValueError(str(exc)) from exc
     errors: list[str] = []
 
     source_type = payload.get("sourceType") or ""
@@ -131,11 +169,14 @@ def normalize_intake_payload(payload: dict[str, Any], scout_type: str) -> Normal
     if not raw_headline and not raw_snippet:
         errors.append("headline or verbatimSnippet is required")
 
-    # campaignFamily
-    campaign_family = payload.get("campaignFamily") or ""
-    if not campaign_family or campaign_family not in VALID_CAMPAIGN_FAMILIES:
+    # campaignFamily — normalize any label / canonical slug / legacy alias to the
+    # canonical slug (single source of truth in josh_spec), then validate.
+    campaign_family = normalize_campaign_family(payload.get("campaignFamily")) or ""
+    if not campaign_family:
         errors.append(
-            f"campaignFamily must be one of: {', '.join(sorted(VALID_CAMPAIGN_FAMILIES))}"
+            "campaignFamily must be one of: "
+            + ", ".join(CANONICAL_CAMPAIGN_FAMILIES)
+            + " (spec labels and legacy aliases are also accepted)"
         )
 
     # stateCode (optional — validate format when present)
@@ -156,14 +197,19 @@ def normalize_intake_payload(payload: dict[str, Any], scout_type: str) -> Normal
         except (ValueError, TypeError):
             errors.append("sourcePublishedAt must be a valid ISO date")
 
-    # urgencyTier (optional)
+    # urgencyTier (optional) — normalize legacy/alias slugs to the canonical
+    # set (single source of truth in josh_spec) before validating. Empty/None
+    # is allowed (defaults to "standard" below).
     urgency_tier_raw = payload.get("urgencyTier")
-    if (
-        urgency_tier_raw is not None
-        and urgency_tier_raw != ""
-        and urgency_tier_raw not in VALID_URGENCY_TIERS
-    ):
-        errors.append(f"urgencyTier must be one of: {', '.join(sorted(VALID_URGENCY_TIERS))}")
+    normalized_urgency: str | None = None
+    if urgency_tier_raw is not None and urgency_tier_raw != "":
+        normalized_urgency = normalize_urgency_tier(urgency_tier_raw)
+        if normalized_urgency is None:
+            errors.append(
+                "urgencyTier must be one of: "
+                + ", ".join(CANONICAL_URGENCY_TIERS)
+                + " (legacy alias 'low' is also accepted)"
+            )
 
     # fitScore (optional)
     fit_score_raw = payload.get("fitScore")
@@ -203,7 +249,7 @@ def normalize_intake_payload(payload: dict[str, Any], scout_type: str) -> Normal
                     entry["confidence"] = max(0.0, min(1.0, float(entry["confidence"])))
             normalized_reason_codes.append(entry)
 
-    normalized_urgency_tier = urgency_tier_raw or "standard"
+    normalized_urgency_tier = normalized_urgency or "standard"
 
     # Anti-spoof: unconditionally override discoveredBy to scout_type
     normalized_discovered_by = scout_type
@@ -226,7 +272,13 @@ def normalize_intake_payload(payload: dict[str, Any], scout_type: str) -> Normal
         else None
     )
 
-    district_raw = payload.get("district")
+    # Accept the canonical tool field `districtId` (camelCase, matches the
+    # signal_queue.write schema + every other field) with a fallback to the
+    # legacy `district` key. Without this, scouts that populate districtId per
+    # the tool schema had it silently dropped here — leaving district NULL and
+    # the DIST3 resolver with no input. (Resolves the districtId/district
+    # key-mismatch; required for scout geography emission to actually land.)
+    district_raw = payload.get("districtId") or payload.get("district")
     district: str | None = (
         str(district_raw).strip()
         if isinstance(district_raw, str) and district_raw.strip()

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Florida schools literacy curriculum board - Google News</title>
+    <link>https://news.google.com</link>
+    <description>Google News</description>
+    <item>
+      <title>Florida Board Approves New Literacy Curriculum for K-3 Schools</title>
+      <link>https://example.com/florida-literacy-curriculum</link>
+      <pubDate>Mon, 26 May 2026 10:00:00 GMT</pubDate>
+      <source>Florida Education Times</source>
+    </item>
+    <item>
+      <title>Duval County Schools Selects Reading Program, Board Votes 7-0</title>
+      <link>https://example.com/duval-reading-vote</link>
+      <pubDate>Sun, 25 May 2026 15:30:00 GMT</pubDate>
+      <source>Jacksonville Herald</source>
+    </item>
+    <item>
+      <title>State DOE Releases 2026 Literacy Assessment Results</title>
+      <link>https://example.com/fl-literacy-assessment</link>
+      <pubDate>Sat, 24 May 2026 09:00:00 GMT</pubDate>
+      <source>FL DOE News</source>
+    </item>
+  </channel>
+</rss>

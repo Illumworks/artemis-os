@@ -24,6 +24,11 @@ import {
   fetchMemoryDrawerApi,
   fetchMemoryEntitiesApi,
   fetchEntityNeighborhoodApi,
+  fetchMemoryShellStats,
+  fetchMemoryShellScopes,
+  fetchMemoryShellObservations,
+  fetchMemoryShellDrawers,
+  fetchMemoryShellObservationDetail,
 } from "../core/api.js";
 import { escapeHtml } from "../core/utils.js";
 
@@ -109,6 +114,18 @@ let memoryState = {
   evidenceByObs: new Map(), // observationId -> { loading, rows, error }
   wingFilter: null,         // null | { scopeKind, scopeId, label }
   roomFilter: null,         // null | { type: 'category'|'entity', value, label }
+};
+
+// M6 shell state
+let m6State = {
+  tab: "observations",        // "observations" | "drawers"
+  scopeFilter: null,          // null | { scope_kind, scope_id }
+  selectedObsId: null,        // int | null
+  stats: null,
+  scopes: [],
+  listData: null,             // { observations|drawers: [], total, offset }
+  detailData: null,           // { observation, evidence }
+  detailLoading: false,
 };
 
 function resetMemoryState() {
@@ -259,57 +276,261 @@ export async function loadMemoryShell(options = {}) {
   const shell = getShellContent();
   if (!shell) return;
 
-  const projectPath = getActiveProjectPath();
-  const projectLabel = getProjectLabel();
   const loadToken = ++memoryLoadToken;
 
-  if (!projectPath) {
-    memoryModel = null;
-    if (resetState) {
-      memoryState = resetMemoryState();
-    }
-    shell.innerHTML = renderMemoryShellPrompt();
-    return;
+  if (resetState) {
+    m6State = {
+      tab: "observations",
+      scopeFilter: null,
+      selectedObsId: null,
+      stats: null,
+      scopes: [],
+      listData: null,
+      detailData: null,
+      detailLoading: false,
+    };
   }
 
   shell.innerHTML = renderMemoryShellLoading();
 
   try {
-    const [memories, stats, sessions, agents] = await Promise.all([
-      fetchMemoryList(projectPath),
-      fetchMemoryStats(projectPath),
-      fetchSessions(projectPath),
-      fetchAgents(),
+    const [stats, scopes, listData] = await Promise.all([
+      fetchMemoryShellStats(),
+      fetchMemoryShellScopes(),
+      fetchMemoryShellObservations({ limit: 50, offset: 0 }),
     ]);
 
     if (loadToken !== memoryLoadToken || normalizeAppView(getState("view")) !== MEMORY_VIEW) {
       return;
     }
 
-    memoryModel = buildMemoryModel({
-      memories,
-      stats,
-      projectPath,
-      projectLabel,
-      sessions,
-      agents,
-    });
+    m6State.stats = stats;
+    m6State.scopes = Array.isArray(scopes) ? scopes : [];
+    m6State.listData = listData;
 
-    if (resetState) {
-      memoryState = resetMemoryState();
-    } else {
-      memoryState.editingRowId = null;
-      memoryState.addFormOpen = false;
-    }
-
-    renderCurrentMemoryShell();
+    renderM6Shell(shell);
   } catch (error) {
     if (loadToken !== memoryLoadToken || normalizeAppView(getState("view")) !== MEMORY_VIEW) {
       return;
     }
-    memoryModel = null;
     shell.innerHTML = renderMemoryShellError(error?.message || "The memory surface could not load.");
     console.error("Failed to load memory shell:", error);
+  }
+}
+
+// ── M6 render functions ──────────────────────────────────────────────────────
+
+function renderM6Shell(shell) {
+  const stats = m6State.stats || {};
+  const totalDrawers = stats.total_drawers ?? 0;
+  const totalObs = stats.total_observations ?? 0;
+  const totalEvidence = stats.total_evidence_links ?? 0;
+  const scopeCount = stats.scope_count ?? 0;
+
+  const scopes = m6State.scopes || [];
+  const listData = m6State.listData || { observations: [], drawers: [], total: 0, offset: 0 };
+  const items = m6State.tab === "observations"
+    ? (listData.observations || [])
+    : (listData.drawers || []);
+  const total = listData.total ?? 0;
+
+  const scopeFilterOptions = scopes.map((s) => {
+    const val = `${escapeHtml(s.scope_kind)}:${escapeHtml(s.scope_id)}`;
+    const sel = m6State.scopeFilter &&
+      m6State.scopeFilter.scope_kind === s.scope_kind &&
+      m6State.scopeFilter.scope_id === s.scope_id ? " selected" : "";
+    return `<option value="${val}"${sel}>${escapeHtml(s.scope_kind)} · ${escapeHtml(s.scope_id)} (${s.drawer_count}d / ${s.observation_count}o)</option>`;
+  }).join("");
+
+  const activeScope = m6State.scopeFilter
+    ? `${m6State.scopeFilter.scope_kind} · ${m6State.scopeFilter.scope_id}`
+    : "All";
+
+  shell.innerHTML = `
+    <section class="shell-hero memory-shell-hero">
+      <div class="shell-eyebrow">Memory</div>
+      <h2>Memory</h2>
+      <div class="memory-shell-summary">
+        <span class="memory-shell-summary-chip">${totalDrawers} drawers</span>
+        <span class="memory-shell-summary-chip">${totalObs} observations</span>
+        <span class="memory-shell-summary-chip">${totalEvidence} evidence links</span>
+        <span class="memory-shell-summary-chip">${scopeCount} scopes</span>
+      </div>
+    </section>
+    <div class="m6-shell-toolbar">
+      <div class="m6-shell-tabs">
+        <button type="button" class="m6-tab-btn${m6State.tab === "observations" ? " active" : ""}" data-m6-action="tab" data-m6-tab="observations">Observations</button>
+        <button type="button" class="m6-tab-btn${m6State.tab === "drawers" ? " active" : ""}" data-m6-action="tab" data-m6-tab="drawers">Drawers</button>
+      </div>
+      <div class="m6-shell-scope-filter">
+        <label class="m6-scope-label">Scope</label>
+        <select class="m6-scope-select" data-m6-action="scope-filter">
+          <option value=""${m6State.scopeFilter ? "" : " selected"}>All scopes</option>
+          ${scopeFilterOptions}
+        </select>
+      </div>
+    </div>
+    <section class="m6-shell-layout">
+      <article class="memory-shell-panel m6-list-panel">
+        ${renderM6ListPanel(items, total)}
+      </article>
+      <article class="memory-shell-panel m6-detail-panel">
+        ${renderM6DetailPanel()}
+      </article>
+    </section>
+  `;
+
+  shell.querySelectorAll("[data-m6-action]").forEach((el) => {
+    el.addEventListener("click", handleM6Action);
+    if (el.tagName === "SELECT") {
+      el.removeEventListener("click", handleM6Action);
+      el.addEventListener("change", handleM6Action);
+    }
+  });
+}
+
+function renderM6ListPanel(items, total) {
+  if (!items || items.length === 0) {
+    return `
+      <div class="memory-shell-detail-empty">
+        <strong>Memory is still populating</strong>
+        <span>New observations will appear here as agents run and signals qualify.</span>
+      </div>
+    `;
+  }
+  const rows = items.map((item) => {
+    const isObs = m6State.tab === "observations";
+    const preview = escapeHtml((item.content_preview || "").slice(0, 120));
+    const scope = `${escapeHtml(item.scope_kind)} · ${escapeHtml(item.scope_id)}`;
+    const ts = item.created_at ? new Date(item.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+    const active = isObs && m6State.selectedObsId === item.id ? " m6-list-row-active" : "";
+    const sup = isObs && item.superseded_by ? `<span class="m6-superseded-badge">superseded</span>` : "";
+    return `
+      <button type="button" class="m6-list-row${active}" data-m6-action="select" data-m6-id="${item.id}">
+        <div class="m6-list-row-scope">${scope}${sup}</div>
+        <div class="m6-list-row-preview">${preview}</div>
+        <div class="m6-list-row-meta">${ts}</div>
+      </button>
+    `;
+  }).join("");
+  const countLine = total > items.length
+    ? `<div class="m6-list-count">Showing ${items.length} of ${total}</div>`
+    : `<div class="m6-list-count">${total} total</div>`;
+  return `<div class="m6-list-rows">${rows}</div>${countLine}`;
+}
+
+function renderM6DetailPanel() {
+  if (m6State.detailLoading) {
+    return `<div class="memory-shell-detail-empty"><span>Loading…</span></div>`;
+  }
+  if (!m6State.detailData) {
+    const label = m6State.tab === "drawers" ? "Select a drawer" : "Select an observation";
+    return `
+      <div class="memory-shell-detail-empty">
+        <strong>${label}</strong>
+        <span>Click any row to see the full content and evidence chain.</span>
+      </div>
+    `;
+  }
+  const { observation: obs, evidence } = m6State.detailData;
+  const ts = obs.created_at ? new Date(obs.created_at).toLocaleString() : "";
+  const evRows = (evidence || []).map((ev) => {
+    const preview = escapeHtml(ev.source_preview || "");
+    return `
+      <div class="m6-evidence-row">
+        <div class="m6-evidence-kind">${escapeHtml(ev.source_kind)} #${ev.source_id}</div>
+        ${preview ? `<div class="m6-evidence-preview">${preview}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+  const supBadge = obs.superseded_by
+    ? `<div class="m6-detail-superseded">Superseded by observation #${obs.superseded_by}</div>`
+    : "";
+  return `
+    <div class="memory-shell-detail-head">
+      <div class="memory-shell-detail-eyebrow">Observation #${obs.id}</div>
+      <p class="m6-detail-scope">${escapeHtml(obs.scope_kind)} · ${escapeHtml(obs.scope_id)}</p>
+      <p class="m6-detail-ts">${ts}</p>
+    </div>
+    <div class="memory-shell-detail-quote">
+      <div class="memory-shell-detail-quote-mark">"</div>
+      <div>${escapeHtml(obs.content || "")}</div>
+    </div>
+    ${supBadge}
+    <div class="m6-evidence-section">
+      <div class="m6-evidence-label">Backed by (${(evidence || []).length})</div>
+      ${evRows || "<div class='m6-evidence-empty'>No evidence links yet.</div>"}
+    </div>
+  `;
+}
+
+async function handleM6Action(event) {
+  const el = event.currentTarget;
+  const action = el.dataset.m6Action;
+
+  if (action === "tab") {
+    const tab = el.dataset.m6Tab;
+    if (tab === m6State.tab) return;
+    m6State.tab = tab;
+    m6State.selectedObsId = null;
+    m6State.detailData = null;
+    const scf = m6State.scopeFilter;
+    try {
+      const listData = tab === "observations"
+        ? await fetchMemoryShellObservations({ scopeKind: scf?.scope_kind, scopeId: scf?.scope_id })
+        : await fetchMemoryShellDrawers({ scopeKind: scf?.scope_kind, scopeId: scf?.scope_id });
+      m6State.listData = listData;
+    } catch (err) {
+      console.error("M6 tab switch failed:", err);
+    }
+    const shell = getShellContent();
+    if (shell) renderM6Shell(shell);
+    return;
+  }
+
+  if (action === "scope-filter") {
+    const val = el.value;
+    if (!val) {
+      m6State.scopeFilter = null;
+    } else {
+      const [sk, ...rest] = val.split(":");
+      m6State.scopeFilter = { scope_kind: sk, scope_id: rest.join(":") };
+    }
+    m6State.selectedObsId = null;
+    m6State.detailData = null;
+    const scf = m6State.scopeFilter;
+    try {
+      const listData = m6State.tab === "observations"
+        ? await fetchMemoryShellObservations({ scopeKind: scf?.scope_kind, scopeId: scf?.scope_id })
+        : await fetchMemoryShellDrawers({ scopeKind: scf?.scope_kind, scopeId: scf?.scope_id });
+      m6State.listData = listData;
+    } catch (err) {
+      console.error("M6 scope filter failed:", err);
+    }
+    const shell = getShellContent();
+    if (shell) renderM6Shell(shell);
+    return;
+  }
+
+  if (action === "select" && m6State.tab === "observations") {
+    const obsId = parseInt(el.dataset.m6Id, 10);
+    if (!obsId) return;
+    m6State.selectedObsId = obsId;
+    m6State.detailLoading = true;
+    const shell = getShellContent();
+    if (shell) {
+      const detail = shell.querySelector(".m6-detail-panel");
+      if (detail) detail.innerHTML = renderM6DetailPanel();
+    }
+    try {
+      m6State.detailData = await fetchMemoryShellObservationDetail(obsId);
+    } catch (err) {
+      console.error("M6 observation detail failed:", err);
+      m6State.detailData = null;
+    }
+    m6State.detailLoading = false;
+    if (shell) renderM6Shell(shell);
+    return;
   }
 }
 

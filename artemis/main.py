@@ -18,19 +18,42 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from artemis import __version__
+from artemis.automations.routes import router as automations_router
+from artemis.automations.scheduler import (
+    start_automation_scheduler,
+    stop_automation_scheduler,
+)
+from artemis.builder.routes import agents_subresource_router as builder_agents_router
+from artemis.builder.routes import router as builder_router
+from artemis.connectors.routes import agents_router as connectors_agents_router
+from artemis.connectors.routes import router as connectors_router
+from artemis.integrations.token_refresh.scheduler import (
+    start_token_refresh_scheduler,
+    stop_token_refresh_scheduler,
+)
 from artemis.marketing.routes import (
     approvals,
     campaign_deliverables,
     campaign_ops,
     content_assets,
+    initiation,
     scouts,
     signal_criteria,
     signal_queue,
     writing_studio,
 )
+from artemis.marketing.scout_scheduler import start_scout_scheduler, stop_scout_scheduler
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
+from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
+from artemis.pipelines.routes import router as pipelines_router
+from artemis.pipelines.scheduler import (
+    start_pipeline_scheduler,
+    stop_pipeline_scheduler,
+)
 from artemis.routes import calendar as calendar_routes
+from artemis.routes import daily_brief as daily_brief_routes
+from artemis.routes import dev_projects as dev_projects_routes
 from artemis.routes import health, okr, parallel, status, writing_rules
 from artemis.routes import jira as jira_routes
 from artemis.routes import meetings as meetings_routes
@@ -51,6 +74,8 @@ from artemis.routes.floating_artemis import router as fa_router
 from artemis.routes.floating_artemis import ws_router as fa_ws_router
 from artemis.routes.integrations import router as integrations_router
 from artemis.routes.integrations_slack_events import router as slack_events_router
+from artemis.routes.memory import router as memory_router
+from artemis.routes.slack import router as slack_router
 from artemis.ws.routes import router as ws_router
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
@@ -60,12 +85,28 @@ PUBLIC_DIR = Path(__file__).parent.parent / "public"
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Subscribe the Writing Studio adapter to draft lifecycle events.
     ws_adapter.init_adapter()
+    # Start the meeting auto-summarizer scheduler.
+    start_meeting_scheduler()
+    # Start the proactive OAuth token refresh scheduler (J10e).
+    start_token_refresh_scheduler()
+    # Start the automation cron scheduler (OP1).
+    start_automation_scheduler()
+    # Start the scout execution scheduler (M5b).
+    start_scout_scheduler()
+    # Start the pipeline execution scheduler (PIPE4).
+    start_pipeline_scheduler()
     try:
         yield
     finally:
         # Unsubscribe the adapter on shutdown so tests / restarts start clean.
         ws_adapter.reset_adapter()
         ws_events.clear_subscribers()
+        # Stop the schedulers before process exit.
+        stop_meeting_scheduler()
+        stop_token_refresh_scheduler()
+        stop_automation_scheduler()
+        stop_scout_scheduler()
+        stop_pipeline_scheduler()
 
 
 app = FastAPI(
@@ -137,6 +178,7 @@ app.include_router(scouts.router)
 app.include_router(signal_queue.router)
 app.include_router(signal_criteria.router)
 app.include_router(campaign_ops.router)
+app.include_router(initiation.router)
 app.include_router(campaign_deliverables.router)
 app.include_router(content_assets.router)
 app.include_router(approvals.router)
@@ -153,8 +195,15 @@ app.include_router(agent_dags.router)
 # Phase F2b — Execution wiring (run agents / workflows / chains / DAGs)
 app.include_router(execution.router)
 
+# O1 — Agent-Builder + Self-Improvement
+app.include_router(builder_router)
+app.include_router(builder_agents_router)
+
 # Phase E2 — WebSocket relay for live run streaming
 app.include_router(ws_router)
+
+# Memory M2 — conflict management + observation history routes
+app.include_router(memory_router)
 
 # Phase H — OKR Studio + Writing Studio rules (dry-run + validator shipped; cutover pending)
 app.include_router(okr.router)
@@ -164,17 +213,38 @@ app.include_router(writing_rules.router)
 app.include_router(fa_router)
 app.include_router(fa_ws_router)
 app.include_router(parallel.router)  # B6 — parallel chat pane session allocation
+app.include_router(dev_projects_routes.router)
+app.include_router(dev_projects_routes.ws_router)
 
 # Phase J1 — Slack integration (OAuth, CRUD, events)
 app.include_router(integrations_router)
 app.include_router(slack_events_router)
 
+# J8 — Slack signals (Focus Rail card)
+app.include_router(slack_router)
+
 # Phase J3b — Calendar + Meetings overview endpoints
 app.include_router(calendar_routes.router)
 app.include_router(meetings_routes.router)
+app.include_router(meetings_routes.granola_compat_router)
+# J6c — personal todos
+app.include_router(meetings_routes.todos_router)
 
 # People search — merged Google Contacts + Slack users (attendee autocomplete)
 app.include_router(people_routes.router)
+
+# J7 — Daily brief
+app.include_router(daily_brief_routes.router)
+
+# OP1 — Automations registry
+app.include_router(automations_router)
+
+# Connectors — per-source credential management
+app.include_router(connectors_router)
+app.include_router(connectors_agents_router)
+
+# PIPE1 — Pipelines data model + CRUD
+app.include_router(pipelines_router)
 
 # J3c stubs — Jira overview, sessions, notifications, stats
 app.include_router(jira_routes.router)

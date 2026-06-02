@@ -83,6 +83,13 @@ async def client() -> AsyncIterator[AsyncClient]:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _clear_ambient_slack_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep empty-DB credential assertions independent from local `.env` secrets."""
+    for key in ("SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "SLACK_SIGNING_SECRET"):
+        monkeypatch.delenv(key, raising=False)
+
+
 def _slack_signature(body: bytes, secret: str, ts: int | None = None) -> tuple[str, str]:
     if ts is None:
         ts = int(time.time())

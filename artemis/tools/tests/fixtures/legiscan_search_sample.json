@@ -1,0 +1,33 @@
+{
+  "status": "OK",
+  "searchresult": {
+    "summary": {
+      "page": "1 of 3",
+      "range": "1 - 50",
+      "relevancy": "100% - 71%",
+      "count": 122,
+      "page_current": 1,
+      "page_total": 3
+    },
+    "0": {
+      "relevance": 100,
+      "state": "CO",
+      "bill_number": "HB1004",
+      "bill_id": 1849621,
+      "change_hash": "983e627cc15be727c85d4d9bd563e989",
+      "url": "https://legiscan.com/CO/bill/HB1004/2026",
+      "text_url": "https://legiscan.com/CO/text/HB1004/2026",
+      "title": "Universal Dyslexia Screening For Early Learners"
+    },
+    "1": {
+      "relevance": 88,
+      "state": "TX",
+      "bill_number": "SB2197",
+      "bill_id": 1731262,
+      "change_hash": "5b10d1d4288e161a01dbad10276ae7ed",
+      "url": "https://legiscan.com/TX/bill/SB2197/2025",
+      "text_url": "https://legiscan.com/TX/text/SB2197/2025",
+      "title": "Relating To Early Literacy And Reading Intervention"
+    }
+  }
+}

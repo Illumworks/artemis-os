@@ -1,0 +1,53 @@
+{
+  "errorcode": 0,
+  "msg": "Webservice Succeeds",
+  "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.IlR3NlQxOTNZVzdtMXV5SjZOMThkQXJGR1MwZDdIVGdnL3hWeXE2UW5IOUk9Ig.KFuygIj960SEdC3n7chj_mnNQkItINlfLT3_uy1f5uI",
+  "data": {
+    "hitCount": 96,
+    "startRecord": 0,
+    "oppHits": [
+      {
+        "id": "361808",
+        "number": "DOL-OESE-33831",
+        "title": "Innovative Approaches to Literacy 84.215G",
+        "agencyCode": "DOL-OESE",
+        "agency": "Office of Elementary and Secondary Education",
+        "openDate": "04/08/2026",
+        "closeDate": "06/09/2026",
+        "oppStatus": "posted",
+        "docType": "synopsis",
+        "cfdaList": [
+          "84.215"
+        ]
+      },
+      {
+        "id": "361754",
+        "number": "PA-FPH-27-001",
+        "title": "Title X Family Planning Services Grants",
+        "agencyCode": "HHS-OPHS",
+        "agency": "Office of the Assistant Secretary for Health",
+        "openDate": "04/03/2026",
+        "closeDate": "01/09/2027",
+        "oppStatus": "posted",
+        "docType": "synopsis",
+        "cfdaList": [
+          "93.217"
+        ]
+      },
+      {
+        "id": "362346",
+        "number": "ED-GRANTS-051126-001",
+        "title": "Office of Elementary and Secondary Education (OESE): Comprehensive Centers Program: National Comprehensive Center on Improving Literacy for Students with Disabilities; ALN 84.283D",
+        "agencyCode": "ED",
+        "agency": "Department of Education",
+        "openDate": "05/11/2026",
+        "closeDate": "06/30/2026",
+        "oppStatus": "posted",
+        "docType": "synopsis",
+        "cfdaList": [
+          "84.283"
+        ]
+      }
+    ]
+  }
+}

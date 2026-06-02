@@ -47,6 +47,7 @@ const VIEW_LABELS = {
   'marketing-signals': 'Signals',
   'marketing-approvals': 'Approvals',
   'marketing-rulesets': 'Rulesets',
+  'signal-playbook': 'Signal Playbook',
   'marketing-scout-runs': 'Scout Runs',
   agents: 'Agents',
   workflows: 'Workflows',

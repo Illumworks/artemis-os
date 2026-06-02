@@ -20,6 +20,7 @@ router = APIRouter(
 )
 
 
+@router.get("")
 @router.get("/")
 async def list_agent_runs(
     agent_id: str | None = Query(default=None, alias="agentId"),

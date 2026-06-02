@@ -134,8 +134,7 @@ async def get_calendar_event(
         "location": getattr(event, "location", None),
         "status": "scheduled",
         "attendees": [
-            {"email": a.email, "responseStatus": a.response_status}
-            for a in (event.attendees or [])
+            {"email": a.email, "responseStatus": a.response_status} for a in (event.attendees or [])
         ],
     }
 

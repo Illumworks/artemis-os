@@ -1,0 +1,1103 @@
+/* Dev Projects rebuild */
+.dev-projects-ready .dp-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* v3 port: scroll area anchors to bottom; composer is pinned to the viewport
+   bottom. The empty-state UX is the composer's placeholder copy — no
+   centered watermark, no seed chips, no project-aware empty-state block. */
+.dev-projects-ready .dp-main {
+  position: relative;
+  min-height: 0;
+}
+
+/* v3 port: suppress the canvas atmospheric aura on the Dev Projects surface.
+   artemis-design.css attaches a radial-gradient aura via .canvas::before
+   (inset:-15%, blur 50px) that bleeds through the sticky dp-header and reads
+   as a hazy gradient mask over the chat scroll area. The v3 surface is
+   opaque/sticky throughout, so the aura adds nothing here. Hidden only on
+   .dev-projects-ready, so other canvases (home, workspace, ops) keep theirs.
+   (Also kill any legacy .chat-area::before/::after fade for older shells.) */
+.canvas.dev-projects-ready::before,
+.chat-area.dev-projects-ready::before,
+.chat-area.dev-projects-ready::after {
+  display: none !important;
+  content: none !important;
+}
+/* v3 port: artemis-design.css attaches a top/bottom fade mask-image to
+   .canvas-scroll (linear-gradient(transparent 0, black 32px, ...)). Inside
+   the Dev Projects shell the .dp-header is sticky to the top of that scroll
+   container, so the 32px top fade cuts straight through the header and
+   reads as a hazy gradient on the top bar. Scoped to .dev-projects-ready
+   so other canvases keep their fade. */
+.chat-area.dev-projects-ready > .canvas-scroll {
+  -webkit-mask-image: none !important;
+          mask-image: none !important;
+}
+.dev-projects-ready #messages.dp-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  /* Subtle edge fade: content fades into view at the top of the messages
+     list and fades out just above the composer. Scoped to the inner scroll
+     container so the sticky .dp-header (a sibling) is never masked. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
+}
+.dev-projects-ready .dp-composer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+}
+
+/* When the right rail is open, inset the main column so the rail can sit at
+   the right edge without overlapping the composer card. Width is driven by
+   --dp-rail-width (set inline on .dp-shell by JS; default 360px). */
+.dev-projects-ready .dp-shell {
+  --dp-rail-width: 360px;
+}
+.dev-projects-ready .dp-shell.rail-open .dp-main {
+  margin-right: var(--dp-rail-width);
+}
+.dev-projects-ready .dp-shell.rail-open .dp-header {
+  margin-right: var(--dp-rail-width);
+}
+
+/* v3 top bar: sticky to the top of the scroll area. Padding now mirrors
+   claudeck's base .dp-header rule (artemis-design.css:3633 — 20px 36px 16px)
+   verbatim; the prior v3 override of 6px 16px was visibly tighter than
+   claudeck side-by-side. */
+.dev-projects-ready .dp-header {
+  padding: 20px 36px 16px;
+  position: sticky;
+  top: 0;
+  background: transparent;
+  z-index: 4;
+}
+.dev-projects-ready .dp-project-title {
+  padding: 4px 8px;
+  max-width: none;
+}
+.dev-projects-ready .dp-project-title-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.dev-projects-ready .dp-project-title-row {
+  font-size: 14px;
+}
+.dev-projects-ready .dp-project-title-meta {
+  font-size: 11px;
+}
+
+.dev-project-panel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.dev-project-panel-header {
+  display: flex;
+}
+
+.dev-project-list,
+.rdf-sessions {
+  display: grid;
+  gap: 6px;
+}
+
+.dev-btn {
+  border: 1px solid var(--line-2);
+  background: var(--surface-1);
+  color: var(--ink-2);
+  border-radius: 7px;
+  min-height: 30px;
+  padding: 0 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dev-btn.primary {
+  background: var(--ink-1);
+  border-color: var(--ink-1);
+  color: var(--surface-0);
+}
+
+.dev-btn.danger {
+  color: #9f2323;
+}
+
+.dev-project-row,
+.dev-session-row,
+.dev-annotation-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dev-project-row {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 7px;
+}
+
+.dev-project-row:hover,
+.dev-project-row.active,
+.dev-session-row:hover,
+.dev-session-row.active {
+  background: var(--surface-2);
+}
+
+.dev-project-name,
+.dev-session-title {
+  font-weight: 650;
+  color: var(--ink-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-project-path,
+.dev-session-meta,
+.dev-empty-small {
+  color: var(--ink-5);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-session-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 7px;
+}
+
+.dev-session-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6aa36f;
+}
+
+.dev-session-row.archived .dev-session-status {
+  background: var(--ink-6);
+}
+
+/* v3 Top-bar model picker — small button + dropdown matching Claude Desktop. */
+.dp-model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--rule, var(--line-2));
+  border-radius: var(--r-full, 999px);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.dp-model-btn:hover { background: var(--surface-sunken); color: var(--ink); }
+.dp-model-btn[aria-expanded="true"] {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.dp-model-btn-label {
+  font-family: var(--font-mono, inherit);
+  font-size: 12px;
+  letter-spacing: -0.005em;
+}
+.dp-model-btn-caret { color: var(--ink-4); flex-shrink: 0; }
+
+.dp-model-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 20px;
+  z-index: 50;
+  min-width: 220px;
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--rule, rgba(0,0,0,0.08));
+  border-radius: var(--r-lg, 12px);
+  padding: 6px;
+  box-shadow: 0 18px 40px -18px rgba(0,0,0,0.22), 0 3px 8px -3px rgba(0,0,0,0.08);
+}
+.dp-model-menu.hidden { display: none; }
+.dp-model-menu-group + .dp-model-menu-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule-2, rgba(0,0,0,0.05));
+}
+.dp-model-menu-group-label {
+  font-family: var(--font-mono, inherit);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  padding: 4px 8px;
+}
+.dp-model-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--ink, var(--ink-2));
+  padding: 7px 10px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.dp-model-menu-item:hover {
+  background: var(--surface-sunken);
+}
+.dp-model-menu-item.is-active {
+  color: var(--amber-ink, var(--ink-1));
+  font-weight: 600;
+  background: var(--amber-wash, var(--surface-sunken));
+}
+
+/* Composer-footer variant — picker sits next to mic/send; menu opens upward. */
+.dp-composer-bar-right { position: relative; }
+.dp-composer-model-btn { height: 28px; padding: 0 8px; font-size: 11.5px; }
+.dp-composer-model-btn .dp-model-btn-label { font-size: 11.5px; }
+.dp-composer-model-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+}
+
+/* Right-rail toggle — subtle icon button in the top-bar's icon row. */
+.dev-rail-toggle-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--r-full, 999px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.dev-rail-toggle-btn:hover { background: var(--surface-sunken); color: var(--ink); }
+.dev-rail-toggle-btn.active {
+  background: var(--surface-sunken);
+  border-color: var(--rule, var(--line-2));
+  color: var(--ink);
+}
+
+.dev-url-input,
+.dev-note-input {
+  border: 1px solid var(--line-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  border-radius: 7px;
+  min-height: 30px;
+  padding: 0 8px;
+  font: inherit;
+}
+
+.dev-legacy-hidden {
+  display: none !important;
+}
+
+.dev-project-panel {
+  gap: 10px;
+}
+
+.dev-project-panel-header {
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 4px;
+}
+
+.dev-panel-title {
+  color: var(--ink-5);
+  font-size: 14px;
+  font-weight: 520;
+}
+
+.dev-panel-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.dev-icon-button,
+.dev-project-new-session,
+.dev-project-more,
+.dev-row-action {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-5);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dev-icon-button:hover,
+.dev-project-new-session:hover,
+.dev-project-more:hover,
+.dev-row-action:hover {
+  background: var(--surface-2);
+  color: var(--ink-1);
+}
+
+.dev-project-list {
+  gap: 8px;
+}
+
+.dev-project-folder {
+  display: grid;
+  gap: 4px;
+}
+
+.dev-project-folder-row {
+  display: grid;
+  grid-template-columns: 14px 22px minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 32px;
+  padding: 2px 4px;
+  border-radius: 7px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.dev-project-folder-row:hover,
+.dev-project-folder.active > .dev-project-folder-row {
+  background: var(--surface-2);
+}
+
+.dev-project-folder-icon {
+  display: inline-flex;
+  color: var(--ink-4);
+}
+
+.dev-project-caret {
+  color: var(--ink-5);
+  font-size: 12px;
+}
+
+.dev-project-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.dev-project-new-session,
+.dev-project-more,
+.dev-session-actions {
+  opacity: 0;
+}
+
+.dev-project-folder-row:hover .dev-project-new-session,
+.dev-project-folder-row:hover .dev-project-more,
+.dev-session-row:hover .dev-session-actions,
+.dev-session-row.active .dev-session-actions {
+  opacity: 1;
+}
+
+.dev-project-session-list {
+  display: grid;
+  gap: 4px;
+}
+
+.dev-session-row {
+  grid-template-columns: 24px minmax(0, 1fr) auto 28px;
+  min-height: 36px;
+  padding: 4px 2px 4px 24px;
+  border-radius: 8px;
+}
+
+.dev-session-pin {
+  color: var(--ink-5);
+  font-size: 15px;
+}
+
+.dev-session-title {
+  font-weight: 520;
+}
+
+.dev-session-time {
+  color: var(--ink-5);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.dev-session-main {
+  min-width: 0;
+}
+
+.dev-start-session,
+.dev-show-more,
+.dev-empty-cta {
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-5);
+  text-align: left;
+  padding: 4px 8px 4px 52px;
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dev-start-session:hover,
+.dev-show-more:hover,
+.dev-empty-cta:hover {
+  background: var(--surface-2);
+  color: var(--ink-1);
+}
+
+.dev-project-empty {
+  display: grid;
+  min-height: 120px;
+  align-items: center;
+}
+
+.dev-modal-backdrop,
+.dev-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.dev-modal-backdrop {
+  display: grid;
+  place-items: center;
+  background: rgba(8, 7, 6, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.dev-modal,
+.dev-small-dialog,
+.dev-context-menu {
+  background: var(--bg-elevated, #ffffff);
+  color: var(--text, #262626);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.42);
+}
+
+html[data-theme="dark"] .dev-modal,
+html[data-theme="dark"] .dev-small-dialog,
+html[data-theme="dark"] .dev-context-menu {
+  background: #1d1916;
+  color: #f2e8d9;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dev-modal {
+  width: min(640px, calc(100vw - 28px));
+  max-height: min(760px, calc(100vh - 28px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.dev-modal-head,
+.dev-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+}
+
+.dev-modal-head h2,
+.dev-small-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.dev-modal-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.dev-modal-foot {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-bottom: 0;
+}
+
+.dev-field {
+  display: grid;
+  gap: 7px;
+  color: var(--text-secondary, #6b5d4f);
+  font-size: 13px;
+}
+
+.dev-text-input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 7px;
+  background: var(--input-fill, #ffffff);
+  color: var(--text, #262626);
+  padding: 0 10px;
+  font: inherit;
+}
+
+.dev-path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.dev-path-status,
+.dev-modal-error,
+.dev-folder-empty {
+  color: var(--text-secondary, #6b5d4f);
+  font-size: 12px;
+}
+
+.dev-path-status.ok {
+  color: #237a43;
+}
+
+.dev-path-status.warn,
+.dev-modal-error,
+.dev-context-menu .danger {
+  color: #a33b32;
+}
+
+.dev-folder-browser {
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-secondary, #f5f2ed);
+}
+
+.dev-folder-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+}
+
+.dev-folder-breadcrumb {
+  color: var(--text-secondary, #6b5d4f);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dev-folder-up {
+  min-height: 30px;
+  padding: 0 12px;
+}
+
+.dev-folder-list {
+  display: grid;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.dev-folder-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  background: transparent;
+  color: var(--text, #262626);
+  text-align: left;
+  min-height: 38px;
+  padding: 8px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dev-folder-item:last-child {
+  border-bottom: 0;
+}
+
+.dev-folder-item:hover,
+.dev-folder-item:focus,
+.dev-folder-item.focused {
+  background: var(--glass-fill-heavy, rgba(255, 255, 255, 0.8));
+  outline: none;
+}
+
+.dev-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-folder-git {
+  color: var(--text-secondary, #6b5d4f);
+  font-size: 12px;
+}
+
+.dev-folder-loading,
+.dev-folder-empty {
+  padding: 10px;
+}
+
+.dev-context-menu {
+  position: fixed;
+  z-index: 95;
+  min-width: 190px;
+  display: grid;
+  padding: 6px;
+}
+
+.dev-context-menu button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  min-height: 32px;
+  padding: 0 9px;
+  text-align: left;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dev-context-menu button:hover {
+  background: var(--glass-fill-heavy, rgba(255, 255, 255, 0.8));
+}
+
+.dev-small-dialog {
+  width: min(360px, calc(100vw - 28px));
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.dev-modal .dev-btn,
+.dev-small-dialog .dev-btn {
+  background: var(--bg-secondary, #f5f2ed);
+  border-color: var(--border, rgba(0, 0, 0, 0.12));
+  color: var(--text, #262626);
+}
+
+.dev-modal .dev-btn.primary,
+.dev-small-dialog .dev-btn.primary {
+  background: var(--accent, #d4891a);
+  border-color: var(--accent, #d4891a);
+  color: var(--btn-primary-text, #ffffff);
+}
+
+html[data-theme="dark"] .dev-text-input {
+  background: rgba(0, 0, 0, 0.32);
+  color: #f2e8d9;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+html[data-theme="dark"] .dev-folder-browser {
+  background: #161310;
+}
+
+html[data-theme="dark"] .dev-folder-item {
+  color: #f2e8d9;
+}
+
+html[data-theme="dark"] .dev-folder-item:hover,
+html[data-theme="dark"] .dev-folder-item:focus,
+html[data-theme="dark"] .dev-folder-item.focused,
+html[data-theme="dark"] .dev-context-menu button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme="dark"] .dev-modal .dev-btn,
+html[data-theme="dark"] .dev-small-dialog .dev-btn {
+  background: #26211d;
+  color: #f2e8d9;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dev-message {
+  max-width: 820px;
+  margin: 0 auto 14px;
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.dev-message-role {
+  color: var(--ink-5);
+  font-size: 12px;
+  text-transform: capitalize;
+  padding-top: 7px;
+}
+
+.dev-message-body {
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.dev-message-user .dev-message-body {
+  background: var(--surface-2);
+}
+
+.dev-message pre,
+.dev-tool-card pre,
+.dev-tool-result pre,
+.dev-permission-card pre {
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 8px 0 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+
+.dev-tool-card,
+.dev-tool-result,
+.dev-permission-card {
+  border: 1px solid var(--line-2);
+  background: var(--surface-0);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.dev-tool-result.error,
+.dev-permission-card {
+  border-color: #c74c4c;
+}
+
+.dev-fork-btn {
+  grid-column: 2;
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: var(--ink-5);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.dev-permission-top,
+.dev-permission-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dev-permission-actions {
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+/* v3 Right preview rail — slides in from the right when toggle is opened.
+   Width matches Claude Desktop (~360px). Single-session only (parallel mode
+   hides the toggle and prevents opening). */
+.dp-rail {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: var(--dp-rail-width, 360px);
+  background: var(--surface-raised, var(--surface-0));
+  border-left: 1px solid var(--rule, var(--line-2));
+  box-shadow: -12px 0 30px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  z-index: 5;
+  transform: translateX(100%);
+  transition: transform 180ms cubic-bezier(.22,.9,.3,1.08);
+}
+
+.rail-open .dp-rail {
+  transform: translateX(0);
+}
+
+/* Resize handle — thin invisible strip on the left edge; widens to a soft
+   amber tick on hover/drag. Same pattern as VSCode / Claude Desktop. */
+.dp-rail-resize {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 6;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.dp-rail-resize:hover,
+.dp-rail-resize.is-dragging {
+  background: var(--amber-soft, rgba(0,0,0,0.08));
+}
+body.dp-rail-resizing {
+  cursor: ew-resize !important;
+  user-select: none;
+}
+body.dp-rail-resizing .dp-rail {
+  transition: none;
+}
+
+.dp-rail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dp-rail-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink, var(--ink-1));
+  letter-spacing: -0.005em;
+}
+
+.dev-icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  cursor: pointer;
+  font: inherit;
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+}
+.dev-icon-btn:hover { background: var(--surface-sunken); color: var(--ink); }
+
+.dp-rail-body {
+  flex: 1;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.dp-rail-body[data-empty="true"] {
+  align-content: center;
+  justify-items: center;
+}
+
+.dp-rail-empty {
+  color: var(--ink-4);
+  font-size: 12.5px;
+  text-align: center;
+  max-width: 240px;
+  line-height: 1.55;
+  padding: 24px 8px;
+}
+
+.dp-rail-tools {
+  display: grid;
+  gap: 8px;
+}
+.dp-rail-tools[hidden] { display: none; }
+
+.dp-rail-url {
+  border: 1px solid var(--rule, var(--line-2));
+  background: var(--surface-0);
+  color: var(--ink-1);
+  border-radius: 7px;
+  min-height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.dp-rail-preview {
+  position: relative;
+  min-height: 160px;
+}
+
+.dp-rail-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+  border: 1px solid var(--rule, var(--line-2));
+  border-radius: 8px;
+  background: #fff;
+}
+
+.dp-rail-target-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--ink-4);
+  border-radius: 8px;
+  background: rgba(20, 24, 30, 0.22);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: crosshair;
+  font: inherit;
+  font-weight: 650;
+}
+.dp-rail-target-overlay.hidden { display: none; }
+
+.dp-rail-note {
+  padding: 8px;
+  resize: vertical;
+  border: 1px solid var(--rule, var(--line-2));
+  background: var(--surface-0);
+  color: var(--ink-1);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.dp-rail-tool-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dev-annotation-item {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule, var(--line-2));
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.dev-annotation-item:hover {
+  background: var(--surface-sunken);
+}
+.dev-annotation-item span {
+  color: var(--ink-4);
+  font-size: 11.5px;
+}
+
+.dev-parallel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px;
+}
+
+.dev-parallel-pane {
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-0);
+}
+
+.dev-parallel-pane-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-2);
+  font-weight: 650;
+}
+
+.dev-parallel-pane-body {
+  padding: 12px;
+  color: var(--ink-5);
+}
+
+/* ── Project switcher popover — verbatim port of claudeck .rdf-dropdown ── */
+.dp-proj-switcher {
+  margin-top: -4px;
+  padding: 0;
+  min-width: min(360px, calc(100vw - 24px));
+  max-width: min(360px, calc(100vw - 24px));
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--rule, rgba(30,26,21,0.10));
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 10px 24px -12px rgba(30,26,21,0.14),
+    0 18px 40px -18px rgba(0,0,0,0.22),
+    0 3px 8px -3px rgba(0,0,0,0.08);
+}
+.dp-proj-rows { display: block; }
+.dp-proj-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--rule-2, rgba(30,26,21,0.06));
+  background: transparent;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--ink, #1E1A15);
+  font: inherit;
+  transition: background .12s;
+}
+.dp-proj-row:last-child { border-bottom: 0; }
+.dp-proj-row:hover { background: var(--surface-sunken, rgba(250,244,232,0.5)); }
+/* Active row: amber-wash fill PLUS an inset amber ring for the "glow"
+   indicator. Mirrors the .rail-dev-session.active pattern in claudeck
+   (artemis-design.css:757) — border-color amber + 3px amber-wash halo,
+   adapted as inset shadows so the row keeps its flush left/right edges. */
+.dp-proj-row.is-active {
+  background: var(--amber-wash, rgba(199,126,43,0.08));
+  box-shadow:
+    inset 0 0 0 1px var(--amber, #C77E2B),
+    inset 0 0 0 3px var(--amber-wash, rgba(199,126,43,0.08));
+}
+/* Bare folder icon to match claudeck's rdf-dropdown-item rendering
+   (projects.js line 168: inline 13×13 svg with no surrounding mark box).
+   The previous boxed 26×26 icon was making rows ~6px taller than claudeck. */
+.dp-proj-row-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  color: var(--ink-4, #8F8576);
+}
+.dp-proj-row.is-active .dp-proj-row-icon { color: var(--amber-ink, #A46220); }
+.dp-proj-row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.dp-proj-row-name {
+  font-size: 12.5px; font-weight: 500; color: var(--ink, #1E1A15);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dp-proj-row-path {
+  font-size: 10.5px; color: var(--ink-4, #8F8576); margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dp-proj-row-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--amber, #C77E2B);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px var(--amber-wash, rgba(199,126,43,0.08));
+}
+.dp-proj-new {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--amber-ink, #A46220);
+  font: inherit; font-size: 12.5px; font-weight: 500;
+  transition: background .12s;
+}
+.dp-proj-new:hover { background: var(--surface-sunken, rgba(250,244,232,0.5)); }
+html[data-theme="dark"] .dp-proj-switcher {
+  background: rgba(255,255,255,0.02);
+  border-color: rgba(255,255,255,0.06);
+}

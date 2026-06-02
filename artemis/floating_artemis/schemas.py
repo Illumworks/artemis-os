@@ -132,6 +132,10 @@ class ToolConfirmResponse(BaseModel):
 class TurnRequest(BaseModel):
     message: str = Field(..., min_length=1)
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+    reasoning_effort: str | None = Field(default=None, alias="reasoningEffort")
+    speed_tier: str | None = Field(default=None, alias="speedTier")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 # ── Voice corpus (internal, not fully exposed via routes) ─────────────────────

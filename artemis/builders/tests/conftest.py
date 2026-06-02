@@ -20,12 +20,21 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+import artemis.builder.repository  # noqa: F401 — ensure O1 models are registered
 import artemis.builders.models  # noqa: F401 — registers all builder models on Base.metadata
 import artemis.db
-from artemis.config import settings
+import artemis.marketing.models  # noqa: F401 — SignalQueue is queried by run_agent (CC16)
+import artemis.tools.models  # noqa: F401 — registers tool_invocations on Base.metadata
 from artemis.db import attach_pgvector_codec
 
-_db_url = os.environ.get("ARTEMIS_TEST_DB_URL", settings.db_url)
+# Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
+# if ARTEMIS_DB_URL does not contain "artemis_test", refuse to load.
+_db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
+if "artemis_test" not in _db_url:
+    raise RuntimeError(
+        f"REFUSING TO LOAD {__name__}: db_url={_db_url!r} is not the test database. "
+        "TRUNCATE on the live DB would destroy production data. Set ARTEMIS_DB_URL=...artemis_test."
+    )
 
 _test_engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
 attach_pgvector_codec(_test_engine)
@@ -38,17 +47,24 @@ artemis.db.SessionLocal = __import__(
     class_=AsyncSession,
 )
 
-# Child tables first (FK constraints)
+# Child tables first (FK constraints).
+# O1 tables (agent_run_trajectory_summaries, definition_proposals, builder_sessions)
+# are included so builder tests start with a clean state too.
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "tool_invocations, "
     "agent_context, "
+    "agent_run_trajectory_summaries, "
+    "definition_proposals, "
     "agent_runs, "
+    "agent_skills, "
     "workflow_runs, "
     "agents, "
     "skills, "
     "workflows, "
     "agent_chains, "
-    "agent_dags "
+    "agent_dags, "
+    "builder_sessions "
     "RESTART IDENTITY CASCADE"
 )
 

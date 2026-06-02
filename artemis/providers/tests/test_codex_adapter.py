@@ -74,8 +74,31 @@ async def test_complete_parses_single_json_line(tmp_path: Path) -> None:
     with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
         response = await adapter.complete(_simple_request())
 
-    assert response.message.content[0].text == "print('hello')"
+    block = response.message.content[0]
+    assert isinstance(block, TextBlock)
+    assert block.text == "print('hello')"
     assert response.stop_reason == "end_turn"
+
+
+async def test_complete_forwards_effort_and_speed_flags(tmp_path: Path) -> None:
+    binary = _make_executable(tmp_path)
+    adapter = CodexAdapter(binary_path=str(binary))
+    line = json.dumps({"type": "result", "result": "ok"})
+    proc = _mock_proc(line.encode())
+    req = _simple_request("Hi")
+    req.model = "gpt-5.5"
+    req.reasoning_effort = "xhigh"
+    req.speed_tier = "fast"
+
+    create = AsyncMock(return_value=proc)
+    with patch("asyncio.create_subprocess_exec", new=create):
+        await adapter.complete(req)
+
+    assert create.await_args is not None
+    args = create.await_args.args
+    pairs = list(zip(args, args[1:], strict=False))
+    assert ("-c", 'model_reasoning_effort="xhigh"') in pairs
+    assert ("-c", "service_tier=fast") in pairs
 
 
 async def test_complete_raises_on_nonzero_exit(tmp_path: Path) -> None:
@@ -123,10 +146,12 @@ async def test_complete_raises_on_empty_output(tmp_path: Path) -> None:
 
 
 def test_parse_ndjson_concatenates_multiple_result_lines() -> None:
-    lines = "\n".join([
-        json.dumps({"type": "result", "result": "Part 1"}),
-        json.dumps({"type": "result", "result": "Part 2"}),
-    ])
+    lines = "\n".join(
+        [
+            json.dumps({"type": "result", "result": "Part 1"}),
+            json.dumps({"type": "result", "result": "Part 2"}),
+        ]
+    )
     text, usage = _parse_ndjson_output(lines)
     assert "Part 1" in text
     assert "Part 2" in text
@@ -134,10 +159,12 @@ def test_parse_ndjson_concatenates_multiple_result_lines() -> None:
 
 
 def test_parse_ndjson_reads_usage_from_last_usage_object() -> None:
-    lines = "\n".join([
-        json.dumps({"type": "result", "result": "text"}),
-        json.dumps({"usage": {"input_tokens": 100, "output_tokens": 50}}),
-    ])
+    lines = "\n".join(
+        [
+            json.dumps({"type": "result", "result": "text"}),
+            json.dumps({"usage": {"input_tokens": 100, "output_tokens": 50}}),
+        ]
+    )
     _, usage = _parse_ndjson_output(lines)
     assert usage.input_tokens == 100
     assert usage.output_tokens == 50

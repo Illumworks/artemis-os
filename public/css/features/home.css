@@ -1538,3 +1538,74 @@ html[data-theme="light"] .home-legend-cell[data-level="4"] { background: var(--a
 .dashboard-brief-actions {
   margin-top: 4px;
 }
+
+/* ── J9b Slack triage panel ──────────────────────────────────────────────── */
+
+/* Smaller button variant used inside triage rows */
+.shell-action-btn-xs {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 10px;
+}
+
+/* Grouped sender card — one card per unique sender+channel run */
+.slack-triage-group {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(185, 152, 109, 0.06);
+  border: 1px solid rgba(185, 152, 109, 0.12);
+}
+
+.slack-triage-group:last-child {
+  margin-bottom: 0;
+}
+
+.slack-triage-meta {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+
+/* Individual message sub-row inside a group */
+.slack-triage-sub-row {
+  padding: 6px 0;
+  border-top: 1px solid rgba(185, 152, 109, 0.08);
+}
+
+.slack-triage-sub-row:first-child {
+  border-top: none;
+}
+
+.slack-triage-snippet {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+  margin: 0 0 6px 0;
+}
+
+/* Action row — all three buttons vertically centered on the same baseline */
+.slack-triage-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Ensure <a> styled as a button aligns with adjacent <button> elements */
+.slack-triage-actions .shell-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  line-height: 1;
+}
+
+.slack-triage-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 8px 0;
+  margin: 0;
+}

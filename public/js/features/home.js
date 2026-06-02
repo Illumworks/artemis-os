@@ -22,7 +22,9 @@ import {
   MARKETING_SIGNALS_VIEW,
   MARKETING_APPROVALS_VIEW,
   MARKETING_RULESETS_VIEW,
+  MARKETING_SIGNAL_PLAYBOOK_VIEW,
   MARKETING_SCOUT_RUNS_VIEW,
+  PIPELINE_RUN_HISTORY_VIEW,
   isShellView,
   normalizeAppView,
 } from '../core/navigation.js';
@@ -62,12 +64,19 @@ import {
   fetchCalendarEventsApi,
   updateCalendarEventApi,
   fetchSlackSignalsApi,
+  fetchSlackMentionsApi,
+  resolveSlackMentionApi,
   fetchLatestBriefApi,
   generateBriefApi,
 } from '../core/api.js';
+import {
+  handleMeetingsRowClick as _meetingsRowClick,
+  renderMeetingsPastList as _renderMeetingsPastList,
+  renderMeetingsGranolaTodayCanvas as _renderGranolaTodayCanvas,
+  renderMeetingsPastCanvas as _renderMeetingsPastCanvas,
+} from './meetings.js';
 import { loadAgents } from './agents.js';
-import { loadWorkflows } from './workflows.js';
-import { renderOperationsView, loadSkillsShell, loadAutomationsShell, loadCampaignOpsShell } from './operations-shell.js';
+import { renderOperationsView, loadSkillsShell, loadPipelinesShell, loadPipelineRunHistoryShell } from './operations-shell.js';
 import {
   loadMarketingDashboard,
   loadMarketingCampaigns,
@@ -138,8 +147,8 @@ const dashboardCaptureState = { ...DASHBOARD_CAPTURE_DEFAULTS };
 const WIDE_PAGE_VIEWS = new Set([
   DEFAULT_APP_VIEW, CALENDAR_VIEW, MEETINGS_VIEW, JIRA_VIEW, OKR_VIEW, WRITING_STUDIO_VIEW,
   OPERATIONS_VIEW, MEMORY_VIEW,
-  MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SCOUT_RUNS_VIEW,
-  'agents', 'skills', 'workflows', 'automations',
+  MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SIGNAL_PLAYBOOK_VIEW, MARKETING_SCOUT_RUNS_VIEW,
+  'agents', 'skills', 'pipelines', PIPELINE_RUN_HISTORY_VIEW,
 ]);
 function isWidePageView(view) {
   return WIDE_PAGE_VIEWS.has(view);
@@ -184,14 +193,14 @@ onState('view', (view) => {
       loadMemoryShell();
     } else if (normalizedView === WRITING_STUDIO_VIEW) {
       loadWritingStudio();
-    } else if (normalizedView === 'workflows') {
-      loadWorkflowsShell();
     } else if (normalizedView === 'agents') {
       loadAgentsShell();
     } else if (normalizedView === 'skills') {
       loadSkillsShell();
-    } else if (normalizedView === 'automations') {
-      loadAutomationsShell();
+    } else if (normalizedView === 'pipelines') {
+      loadPipelinesShell();
+    } else if (normalizedView === PIPELINE_RUN_HISTORY_VIEW) {
+      loadPipelineRunHistoryShell();
     } else if (normalizedView === MARKETING_DASHBOARD_VIEW) {
       loadMarketingDashboard(appShellContent);
     } else if (normalizedView === MARKETING_CAMPAIGNS_VIEW) {
@@ -200,7 +209,7 @@ onState('view', (view) => {
       loadMarketingSignals(appShellContent);
     } else if (normalizedView === MARKETING_APPROVALS_VIEW) {
       loadMarketingApprovals(appShellContent);
-    } else if (normalizedView === MARKETING_RULESETS_VIEW) {
+    } else if (normalizedView === MARKETING_RULESETS_VIEW || normalizedView === MARKETING_SIGNAL_PLAYBOOK_VIEW) {
       loadMarketingRulesets(appShellContent);
     } else if (normalizedView === MARKETING_SCOUT_RUNS_VIEW) {
       loadMarketingScoutRuns(appShellContent);
@@ -490,7 +499,7 @@ function renderShell(view) {
     appShellContent.innerHTML = renderWritingStudioLoading();
     return;
   }
-  if (view === OPERATIONS_VIEW || view === 'agents' || view === 'skills' || view === 'workflows' || view === 'automations') {
+  if (view === OPERATIONS_VIEW || view === 'agents' || view === 'skills' || view === 'pipelines' || view === PIPELINE_RUN_HISTORY_VIEW) {
     renderOperationsView(view);
     return;
   }
@@ -498,7 +507,9 @@ function renderShell(view) {
     view === MARKETING_DASHBOARD_VIEW ||
     view === MARKETING_CAMPAIGNS_VIEW ||
     view === MARKETING_SIGNALS_VIEW ||
-    view === MARKETING_APPROVALS_VIEW
+    view === MARKETING_APPROVALS_VIEW ||
+    view === MARKETING_RULESETS_VIEW ||
+    view === MARKETING_SIGNAL_PLAYBOOK_VIEW
   ) {
     appShellContent.innerHTML = `
       <section class="mkt-hero" aria-busy="true">
@@ -652,10 +663,10 @@ function renderAgentsShell(viewModel) {
 }
 
 async function handleShellActionClick(event) {
-  // Past meetings row click
+  // Past/Today meetings row click — delegated to meetings.js
   const meetingRow = event.target.closest('[data-meeting-id]');
   if (meetingRow) {
-    handleMeetingsRowClick(meetingRow.dataset.meetingId, meetingRow.dataset.meetingTitle || '');
+    _meetingsRowClick(meetingRow.dataset.meetingId, meetingRow.dataset.meetingTitle || '', appShellContent);
     return;
   }
 
@@ -988,6 +999,35 @@ async function handleShellActionClick(event) {
       queueMicrotask(() => applyStoredOperationsFocus());
     }
   }
+  if (action === 'slack-mention-resolve') {
+    const mentionId = button.dataset.mentionId;
+    if (!mentionId) return;
+    // Optimistic removal: hide the row immediately, then POST to persist.
+    const row = button.closest('[data-mention-id]');
+    const group = row ? row.closest('.slack-triage-group') : null;
+    if (row) row.remove();
+    // If the parent group card is now empty of sub-rows, remove the whole card
+    // so a stale header doesn't linger after the last message in a group is resolved.
+    if (group && !group.querySelector('.slack-triage-sub-row')) {
+      group.remove();
+    }
+    // Update the header count if the counter element is present.
+    const countEl = document.getElementById('slack-triage-count');
+    if (countEl) {
+      const current = parseInt(countEl.textContent.replace(/\D/g, ''), 10) || 0;
+      const next = Math.max(0, current - 1);
+      countEl.textContent = `(${next} unresolved)`;
+    }
+    // Check if the list is now empty and show the empty state.
+    const listEl = document.getElementById('slack-triage-list');
+    if (listEl && !listEl.querySelector('[data-mention-id]')) {
+      listEl.innerHTML = '<p class="slack-triage-empty">Slack queue clear. Nicely done.</p>';
+    }
+    resolveSlackMentionApi(mentionId).catch((err) => {
+      console.warn('slack-mention-resolve failed, will sync on next reload', err);
+    });
+    return;
+  }
   if (action === 'meetings-tab-switch') {
     const tab = button.dataset.tab;
     handleMeetingsTabSwitch(tab);
@@ -1040,7 +1080,7 @@ async function loadCommandCenter() {
 
   try {
     const projectPath = getActiveProjectPath();
-    const [analytics, notifications, sessions, calendarOverview, meetingsOverview, jiraOverview, okrOverview, slackSignals, briefResult] = await Promise.all([
+    const [analytics, notifications, sessions, calendarOverview, meetingsOverview, jiraOverview, okrOverview, slackSignals, briefResult, slackMentions] = await Promise.all([
       fetchAnalytics(projectPath || undefined).catch(() => ({})),
       fetchNotificationHistory({ limit: 12, unreadOnly: true }).catch(() => []),
       fetchSessions(projectPath || undefined).catch(() => []),
@@ -1050,6 +1090,7 @@ async function loadCommandCenter() {
       fetchOkrOverviewApi().catch(() => null),
       fetchSlackSignalsApi().catch(() => ({ connected: false, status: 'unavailable' })),
       fetchLatestBriefApi().catch(() => ({ brief: null, exists: false })),
+      fetchSlackMentionsApi().catch(() => ({ mentions: [], total_unresolved: 0 })),
     ]);
 
     if (loadToken !== commandCenterLoadToken || normalizeAppView(getState('view')) !== DEFAULT_APP_VIEW) {
@@ -1068,6 +1109,7 @@ async function loadCommandCenter() {
       jiraOverview,
       okrOverview,
       slackSignals,
+      slackMentions,
       brief: briefResult?.brief ?? null,
     });
     appShellContent.innerHTML = renderCommandCenter(viewModel);
@@ -1238,11 +1280,24 @@ async function loadMeetingsShell() {
 
     const timeReality = readTimeReality();
     const granolaConnected = granolaOverview?.connected === true;
-    const viewModel = buildMeetingsModuleViewModel({ timeReality, meetingsOverview, granolaConnected });
+    const viewModel = buildMeetingsModuleViewModel({ timeReality, meetingsOverview, granolaConnected, granolaOverview });
     appShellContent.innerHTML = renderMeetingsShell(viewModel);
 
     if (granolaConnected) {
-      renderMeetingsPastList(granolaOverview.meetings || []);
+      _renderMeetingsPastList(granolaOverview.meetings || [], appShellContent);
+    }
+
+    // Auto-select the most recent meeting so the right detail panel has
+    // content on page load. Prefer today's first meeting if any, else the
+    // most recent past meeting from the granola overview.
+    if (granolaConnected) {
+      const todayList = Array.isArray(viewModel.todayMeetings) ? viewModel.todayMeetings : [];
+      const all = Array.isArray(granolaOverview?.meetings) ? granolaOverview.meetings : [];
+      const recentPast = all.slice().sort((a, b) => (b.date_ms || 0) - (a.date_ms || 0))[0];
+      const pick = todayList[0] || recentPast;
+      if (pick && pick.id) {
+        _meetingsRowClick(pick.id, pick.title || '', appShellContent);
+      }
     }
   } catch (error) {
     if (loadToken !== meetingsLoadToken || normalizeAppView(getState('view')) !== MEETINGS_VIEW) {
@@ -1700,10 +1755,6 @@ function _collectOkrKrs(container) {
     id: Number(el.dataset.krId),
     title: el.dataset.krTitle || el.querySelector('.okr-kr-title')?.textContent?.trim() || `KR ${el.dataset.krId}`,
   })).filter((kr) => Number.isFinite(kr.id));
-}
-
-async function loadWorkflowsShell() {
-  await loadWorkflows();
 }
 
 async function loadAgentsShell() {
@@ -2863,6 +2914,35 @@ function handleMeetingsTabSwitch(tab) {
   tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
 }
 
+// Best-effort action-item extraction from Granola's summary/transcript text.
+// Granola's notes often contain markdown bullets, "Action items:" headers,
+// or "TODO:"-style prefixes. We grab any line that looks like an action.
+function extractActionItemsFromText(text) {
+  if (!text || typeof text !== 'string') return [];
+  const items = [];
+  const lines = text.split(/\r?\n/);
+  let inActionBlock = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { inActionBlock = false; continue; }
+    if (/^#{1,6}\s*(action items?|next steps?|todos?|follow[- ]?ups?)\b/i.test(line)) {
+      inActionBlock = true;
+      continue;
+    }
+    // bullet line
+    const bullet = line.match(/^[-*•]\s+(.+)$/);
+    if (bullet && (inActionBlock || /\b(todo|action|follow up|will|should|owner)\b/i.test(bullet[1]))) {
+      items.push(bullet[1].replace(/\s+/g, ' ').trim());
+      continue;
+    }
+    // explicit prefix
+    const prefixed = line.match(/^(?:todo|action(?: item)?|follow[- ]?up)\s*[:–-]\s*(.+)$/i);
+    if (prefixed) items.push(prefixed[1].trim());
+  }
+  // Dedupe + cap
+  return Array.from(new Set(items)).slice(0, 20);
+}
+
 async function handleMeetingsRowClick(meetingId, meetingTitle) {
   if (!meetingId || !appShellContent) return;
 
@@ -2873,15 +2953,61 @@ async function handleMeetingsRowClick(meetingId, meetingTitle) {
 
   try {
     const result = await fetchGranolaTranscriptApi(meetingId);
-    if (!result.connected || !result.transcript) {
-      panel.innerHTML = `<div class="page-section-footnote">${result.notFound ? 'No transcript available for this meeting.' : 'Could not load transcript.'}</div>`;
+    if (!result.connected) {
+      panel.innerHTML = `<div class="page-section-footnote">Could not load this meeting.</div>`;
       return;
     }
+    if (result.found === false) {
+      panel.innerHTML = `<div class="page-section-footnote">No transcript available for this meeting.</div>`;
+      return;
+    }
+
+    // Granola payload shape varies; surface what we have. Action items are
+    // sometimes a structured array, sometimes embedded in summary text.
+    const summary = result.summary || result.notes || '';
+    const transcript = result.transcript || '';
+    const actionItems = Array.isArray(result.action_items)
+      ? result.action_items
+      : extractActionItemsFromText(summary || transcript);
+    const attendees = Array.isArray(result.attendees) ? result.attendees.join(', ') : '';
+
+    const sectionsHtml = [];
+    if (summary) {
+      sectionsHtml.push(`
+        <section class="meetings-detail-section">
+          <h4 class="meetings-detail-heading">Summary</h4>
+          <div class="meetings-detail-body">${escapeHtml(summary)}</div>
+        </section>
+      `);
+    }
+    if (actionItems.length) {
+      sectionsHtml.push(`
+        <section class="meetings-detail-section">
+          <h4 class="meetings-detail-heading">Action items</h4>
+          <ul class="meetings-detail-list">
+            ${actionItems.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+          </ul>
+        </section>
+      `);
+    }
+    if (transcript) {
+      sectionsHtml.push(`
+        <section class="meetings-detail-section">
+          <h4 class="meetings-detail-heading">Transcript</h4>
+          <pre class="meetings-transcript-body">${escapeHtml(transcript)}</pre>
+        </section>
+      `);
+    }
+    if (!sectionsHtml.length) {
+      sectionsHtml.push(`<div class="page-section-footnote">No transcript or notes captured for this meeting yet.</div>`);
+    }
+
     panel.innerHTML = `
       <div class="meetings-transcript-header">
-        <strong>${escapeHtml(meetingTitle || 'Transcript')}</strong>
+        <strong>${escapeHtml(meetingTitle || 'Meeting')}</strong>
+        ${attendees ? `<div class="page-section-meta">${escapeHtml(attendees)}</div>` : ''}
       </div>
-      <pre class="meetings-transcript-body">${escapeHtml(result.transcript)}</pre>
+      ${sectionsHtml.join('')}
     `;
   } catch {
     panel.innerHTML = `<div class="page-section-footnote">Failed to load transcript.</div>`;
@@ -2947,57 +3073,7 @@ function renderMeetingsPastList(meetings) {
 }
 
 function renderMeetingsPastCanvas(granolaConnected) {
-  if (!granolaConnected) {
-    return `
-      <section class="page-canvas" data-meetings-canvas="past">
-        <article class="page-section col-span-12">
-          <div class="page-empty-state">
-            <h3>Connect Granola to browse past meetings</h3>
-            <p>Past meeting transcripts are pulled from Granola. Connect it through the Connectors hub.</p>
-            <button type="button" class="shell-action-btn" data-shell-action="open-connectors" data-connector-scope="meetings">Open Connectors</button>
-          </div>
-        </article>
-      </section>
-    `;
-  }
-
-  return `
-    <section class="page-canvas meetings-past-canvas" data-meetings-canvas="past">
-      <article class="page-section col-span-4" data-page-section="meetings-past-list-col">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Last 30 days</div>
-            <h3 class="page-section-title">Past Meetings</h3>
-          </div>
-        </div>
-        <div class="meetings-search-row">
-          <input
-            type="search"
-            class="meetings-search-input"
-            placeholder="Search meetings…"
-            data-meetings-search-input
-            aria-label="Search meetings"
-          />
-          <button type="button" class="shell-action-btn" data-shell-action="meetings-search-submit">Search</button>
-        </div>
-        <div data-meetings-search-results class="meetings-search-results hidden"></div>
-        <div class="page-list" data-meetings-past-list>
-          <div class="meetings-transcript-loading">Loading meetings…</div>
-        </div>
-      </article>
-      <article class="page-section col-span-8" data-page-section="meetings-transcript">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Transcript</div>
-            <h3 class="page-section-title">Select a meeting</h3>
-          </div>
-        </div>
-        <div class="meetings-transcript-panel" data-meetings-transcript-panel>
-          <div class="page-section-footnote">Click a meeting to view its transcript.</div>
-        </div>
-      </article>
-    </section>
-  `;
+  return _renderMeetingsPastCanvas(granolaConnected);
 }
 
 function renderMeetingsShell(viewModel) {
@@ -3035,6 +3111,39 @@ function renderMeetingsShell(viewModel) {
   `).join('');
 
   const granolaConnected = viewModel.granolaConnected === true;
+  const granolaTodayMode = viewModel.granolaTodayMode === true;
+
+  // Granola post-meeting mode: slim header (no lede, no hero buttons),
+  // compact stats inline with the title row, and a dedicated Today canvas
+  // that mirrors Past (list + transcript/actions panel).
+  if (granolaTodayMode) {
+    const compactStats = (viewModel.summary || [])
+      .map((item) => `<span class="page-section-meta">${escapeHtml(item.label)}: <strong>${escapeHtml(item.value)}</strong></span>`)
+      .join('');
+    return `
+      <section class="page-hero page-hero--slim">
+        <div class="page-hero-titleblock">
+          <div class="page-hero-eyebrow-row">
+            <span class="page-hero-eyebrow">Meetings</span>
+            <span class="page-hero-status" data-tone="${statusTone}">${escapeHtml(viewModel.badge || 'Live')}</span>
+            ${viewModel.dateLabel ? `<span class="page-section-meta">${escapeHtml(viewModel.dateLabel)}</span>` : ''}
+            ${compactStats}
+          </div>
+          <h1>Meetings</h1>
+        </div>
+      </section>
+      <nav class="meetings-tab-strip">
+        <button type="button" class="meetings-tab-btn active" data-shell-action="meetings-tab-switch" data-tab="today" data-meetings-tab-btn>Today</button>
+        <button type="button" class="meetings-tab-btn" data-shell-action="meetings-tab-switch" data-tab="past" data-meetings-tab-btn>Past</button>
+      </nav>
+      <div data-meetings-canvas="today">
+        ${renderMeetingsGranolaTodayCanvas(viewModel)}
+      </div>
+      <div data-meetings-canvas="past" class="hidden">
+        ${renderMeetingsPastCanvas(granolaConnected)}
+      </div>
+    `;
+  }
 
   return `
     <section class="page-hero">
@@ -3061,6 +3170,11 @@ function renderMeetingsShell(viewModel) {
       ${renderMeetingsPastCanvas(granolaConnected)}
     </div>
   `;
+}
+
+// Today canvas for the Granola post-meeting workflow — delegated to meetings.js.
+function renderMeetingsGranolaTodayCanvas(viewModel) {
+  return _renderGranolaTodayCanvas(viewModel);
 }
 
 function renderMeetingsLiveCanvas(viewModel) {
@@ -3100,8 +3214,9 @@ function renderMeetingsLiveCanvas(viewModel) {
       `).join('')
     : `<p class="page-section-footnote">Follow-up queue is empty.</p>`;
 
+  // Prep Lens and Follow-up Pressure columns removed (J6c — post-meeting surface only).
   return `
-    <section class="page-canvas">
+    <section class="page-canvas meetings-past-canvas">
       <article class="page-section col-span-4" data-page-section="meetings-today">
         <div class="page-section-header">
           <div>
@@ -3112,38 +3227,16 @@ function renderMeetingsLiveCanvas(viewModel) {
         </div>
         <div class="page-list">${meetingsList}</div>
       </article>
-      <article class="page-section col-span-5" data-page-section="meetings-prep">
+      <article class="page-section col-span-8" data-page-section="meetings-transcript">
         <div class="page-section-header">
           <div>
-            <div class="page-section-eyebrow">Readiness</div>
-            <h3 class="page-section-title">Prep Lens</h3>
+            <div class="page-section-eyebrow">Post-meeting</div>
+            <h3 class="page-section-title">Select a meeting</h3>
           </div>
         </div>
-        <div>
-          <div class="page-section-eyebrow" style="margin-bottom:6px">Notes</div>
-          ${readinessList}
+        <div class="meetings-transcript-panel" data-meetings-transcript-panel>
+          <div class="page-section-footnote">Click a meeting to view its action items and transcript.</div>
         </div>
-        <div>
-          <div class="page-section-eyebrow" style="margin-bottom:6px">Prep items</div>
-          <div class="page-list">${prepList}</div>
-        </div>
-        <div class="shell-actions">
-          ${(viewModel.actions || []).slice(0, 2).map((action) => `
-            <button type="button" class="shell-action-btn" data-shell-action="open-chat-from-shell" data-shell-intent="${escapeAttribute(action.intent)}">
-              ${escapeHtml(action.label)}
-            </button>
-          `).join('')}
-        </div>
-      </article>
-      <article class="page-section col-span-3" data-page-section="meetings-followup">
-        <div class="page-section-header">
-          <div>
-            <div class="page-section-eyebrow">Follow-Up</div>
-            <h3 class="page-section-title">Pressure</h3>
-          </div>
-        </div>
-        <div class="page-list">${followUpList}</div>
-        <p class="page-section-footnote">${escapeHtml(viewModel.sourceNote || '')}</p>
       </article>
     </section>
   `;
@@ -5115,12 +5208,13 @@ function buildCommandCenterViewModel({
   jiraOverview = null,
   okrOverview = null,
   slackSignals = null,
+  slackMentions = null,
   brief = null,
 }) {
   const timeReality = readTimeReality();
   const jiraToday = buildDashboardJiraTodayModel(jiraOverview, timeReality);
   const okrThisWeek = buildDashboardOkrWeekModel(okrOverview, timeReality);
-  const replyWork = buildDashboardReplyWorkModel(notifications, slackSignals);
+  const replyWork = buildDashboardReplyWorkModel(notifications, slackSignals, slackMentions);
   const resumeWork = buildResumeWorkModel({
     analytics,
     sessions,
@@ -5252,8 +5346,161 @@ function renderResumeWork(resumeWork) {
   `;
 }
 
+function _slackTsAgo(tsSeconds) {
+  const diffMs = Date.now() - tsSeconds * 1000;
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+/** Resolve sender name from J9b API shape (mention.sender.name) or legacy flat fields. */
+function _mentionSenderLabel(mention) {
+  if (mention.sender && mention.sender.name) return mention.sender.name;
+  return mention.sender_name || mention.sender_user_id || 'someone';
+}
+
+/** Resolve channel label from J9b API shape (mention.channel.name/is_im) or legacy flat fields. */
+function _mentionChannelLabel(mention) {
+  if (mention.channel) {
+    if (mention.channel.is_im) return 'DM';
+    return '#' + (mention.channel.name || mention.channel.id || 'unknown');
+  }
+  const rawId = mention.channel_name || mention.channel_id || 'unknown';
+  return '#' + rawId;
+}
+
+/** Render a single message sub-row inside a grouped sender card. */
+function _renderSlackMentionSubRow(mention) {
+  const senderLabel = _mentionSenderLabel(mention);
+  const channelLabel = _mentionChannelLabel(mention);
+  const snippet = mention.text
+    ? mention.text.slice(0, 120) + (mention.text.length > 120 ? '…' : '')
+    : '';
+
+  const draftIntent = `Help me draft a short Slack reply to ${senderLabel} in ${channelLabel}. They said: '${mention.text || ''}'. Match my voice (concise, direct, lowercase). Don't invent context — if I haven't given you enough info, ask me.`;
+
+  return `
+    <div class="slack-triage-sub-row" data-mention-id="${escapeAttribute(mention.id)}">
+      ${snippet ? `<p class="slack-triage-snippet">• ${escapeHtml(snippet)}</p>` : ''}
+      <div class="slack-triage-actions">
+        <button
+          type="button"
+          class="shell-action-btn shell-action-btn-xs"
+          data-shell-action="open-chat-from-shell"
+          data-shell-intent="${escapeAttribute(draftIntent)}"
+        >Draft reply</button>
+        <a
+          href="${escapeAttribute(mention.permalink || '#')}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="shell-action-btn shell-action-btn-xs shell-action-btn-secondary"
+        >Open in Slack</a>
+        <button
+          type="button"
+          class="shell-action-btn shell-action-btn-xs shell-action-btn-secondary"
+          data-shell-action="slack-mention-resolve"
+          data-mention-id="${escapeAttribute(mention.id)}"
+        >Mark resolved</button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Group consecutive mentions by sender+channel and render as grouped cards.
+ *
+ * Mentions from the same sender+channel that appear consecutively are collapsed
+ * into a single card with one header row and individual sub-rows per message.
+ */
+function _renderSlackMentionList(mentions) {
+  if (!mentions.length) return '';
+
+  // Build groups: consecutive runs with the same (sender.id, channel.id) key
+  const groups = [];
+  let currentKey = null;
+  let currentGroup = null;
+
+  for (const m of mentions) {
+    const senderId = (m.sender && m.sender.id) || m.sender_user_id || '';
+    const channelId = (m.channel && m.channel.id) || m.channel_id || '';
+    const key = `${senderId}::${channelId}`;
+
+    if (key !== currentKey) {
+      if (currentGroup) groups.push(currentGroup);
+      currentGroup = { key, mentions: [m], first: m };
+      currentKey = key;
+    } else {
+      currentGroup.mentions.push(m);
+    }
+  }
+  if (currentGroup) groups.push(currentGroup);
+
+  return groups.map(({ first, mentions: groupMentions }) => {
+    const senderLabel = _mentionSenderLabel(first);
+    const channelLabel = _mentionChannelLabel(first);
+    const tsNum = parseFloat(first.ts || '0');
+    const timeLabel = tsNum > 0 ? _slackTsAgo(tsNum) : '';
+    const headerParts = [senderLabel, channelLabel, timeLabel].filter(Boolean);
+
+    return `
+      <article class="slack-triage-group">
+        <div class="slack-triage-meta">${escapeHtml(headerParts.join(' · '))}</div>
+        ${groupMentions.map(_renderSlackMentionSubRow).join('')}
+      </article>
+    `;
+  }).join('');
+}
+
+function _buildTriageChatIntent(mentionItems) {
+  const top5 = mentionItems.slice(0, 5);
+  const bullets = top5.map((m) => {
+    const sender = _mentionSenderLabel(m);
+    const channel = _mentionChannelLabel(m);
+    const snippet = m.text ? m.text.slice(0, 80) + (m.text.length > 80 ? '…' : '') : '';
+    return `- ${sender} in ${channel}: ${snippet}`;
+  }).join('\n');
+  return `Help me triage these Slack mentions. Here are the top ${top5.length}:\n${bullets}\nWhich need a reply now, which can wait, what's the fastest response?`;
+}
+
 function renderNeedsYourReply(radar) {
   const cards = Array.isArray(radar?.cards) ? radar.cards : [];
+  const mentionItems = Array.isArray(radar?.slackMentionItems) ? radar.slackMentionItems : [];
+  const totalUnresolved = radar?.slackTotalUnresolved ?? 0;
+
+  const slackQueueSection = (() => {
+    const headerCount = totalUnresolved > 0
+      ? `Slack mentions <span class="slack-triage-count" id="slack-triage-count">(${totalUnresolved} unresolved)</span>`
+      : 'Slack mentions';
+    const triageChatIntent = mentionItems.length > 0 ? _buildTriageChatIntent(mentionItems) : '';
+
+    const listHtml = mentionItems.length > 0
+      ? _renderSlackMentionList(mentionItems)
+      : '<p class="slack-triage-empty">Slack queue clear. Nicely done.</p>';
+
+    return `
+      <div class="command-subsection" id="slack-triage-section">
+        <div class="command-subsection-title command-subsection-title-flex">
+          <span>${headerCount}</span>
+          ${triageChatIntent ? `
+            <button
+              type="button"
+              class="shell-action-btn shell-action-btn-xs"
+              data-shell-action="open-chat-from-shell"
+              data-shell-intent="${escapeAttribute(triageChatIntent)}"
+            >Triage in Chat</button>
+          ` : ''}
+        </div>
+        <div class="slack-triage-list" id="slack-triage-list">
+          ${listHtml}
+        </div>
+      </div>
+    `;
+  })();
+
   return `
     <article class="shell-card command-card dashboard-card dashboard-card-radar">
       <div class="command-card-header">
@@ -5263,26 +5510,7 @@ function renderNeedsYourReply(radar) {
         </div>
         <span class="command-card-badge">Personal</span>
       </div>
-      ${radar?.topSlackFollowup ? `
-        <div class="command-subsection">
-          <div class="command-subsection-title">Top Slack Signal</div>
-          <article class="dashboard-radar-item">
-            <div class="shell-eyebrow dashboard-radar-eyebrow">${escapeHtml(radar.topSlackFollowup.eyebrow || 'Slack')}</div>
-            <h4>${escapeHtml(radar.topSlackFollowup.title || '')}</h4>
-            <p>${escapeHtml(radar.topSlackFollowup.detail || '')}</p>
-            <div class="shell-actions dashboard-radar-actions">
-              <button
-                type="button"
-                class="shell-action-btn"
-                data-shell-action="open-chat-from-shell"
-                data-shell-intent="${escapeAttribute(radar.topSlackFollowup.intent || '')}"
-              >
-                ${escapeHtml(radar.topSlackFollowup.actionLabel || 'Ask Artemis')}
-              </button>
-            </div>
-          </article>
-        </div>
-      ` : ''}
+      ${slackQueueSection}
       <div class="dashboard-radar-grid">
         ${cards.map((card) => `
           <article class="dashboard-radar-item">
@@ -5809,7 +6037,7 @@ function buildModuleRail() {
     { title: 'Meetings', body: 'Prep, notes, follow-up, and decision extraction surface.', state: 'Read-only', shellView: MEETINGS_VIEW, actionLabel: 'Open Meetings' },
     { title: 'Jira Board', body: 'Operational risk, deadlines, and execution queue entry point.', state: 'Read-only', shellView: 'workspace', shellFocus: 'jira-board', actionLabel: 'Open Jira Board' },
     { title: 'OKR Studio', body: 'Goal health, evidence capture, and update-risk workspace.', state: 'Read-only', shellView: 'workspace', shellFocus: 'okr-studio', actionLabel: 'Open OKR Studio' },
-    { title: 'Campaign Ops', body: 'Marketing campaign portfolio, gates, handoffs, and reporting.', state: 'Preview', shellView: 'automations', actionLabel: 'Open Campaign Ops' },
+    { title: 'Pipelines', body: 'Unified orchestration canvas for scheduled, triggered, and multi-step work.', state: 'Live', shellView: 'pipelines', actionLabel: 'Open Pipelines' },
     { title: 'Agents', body: 'Durable worker profiles will live here once the agent surfaces fully settle.', state: 'Deferred', shellView: 'agents', actionLabel: 'Open Agents' },
   ];
 }
@@ -5822,8 +6050,8 @@ function buildOperationsRail() {
   return [
     { title: 'Agents', body: 'Open the dedicated agent roster, profile, and run-health surface.', state: 'Live', shellView: 'agents', actionLabel: 'Open Agents' },
     { title: 'Skills', body: 'Open the approved capability library and proposal review surface.', state: 'Live', shellView: 'skills', actionLabel: 'Open Skills' },
-    { title: 'Workflows', body: 'Open the workflow builder and inspector for saved recipes.', state: 'Live', shellView: 'workflows', actionLabel: 'Open Workflows' },
-    { title: 'Campaign Ops', body: 'Open the marketing campaign portfolio, human gates, rejected repository, and reporting contract.', state: 'Preview', shellView: 'automations', actionLabel: 'Open Campaign Ops' },
+    { title: 'Pipelines', body: 'Open the unified orchestration canvas for trigger nodes, sequential edges, and run state.', state: 'Live', shellView: 'pipelines', actionLabel: 'Open Pipelines' },
+    { title: 'Run History', body: 'Open pipeline execution history, replay links, and terminal run actions.', state: 'Live', shellView: PIPELINE_RUN_HISTORY_VIEW, actionLabel: 'Open Run History' },
     { title: 'Memory', body: 'Open the memory surface for scoped knowledge and cleanup.', state: 'Live', shellView: MEMORY_VIEW, actionLabel: 'Open Memory' },
   ];
 }
@@ -5835,12 +6063,19 @@ function buildMeetingsModuleViewModel({
   timeReality,
   meetingsOverview = null,
   granolaConnected = false,
+  granolaOverview = null,
 }) {
   if (meetingsOverview?.status === 'ready') {
     return { ...buildLiveMeetingsModuleViewModel(meetingsOverview, timeReality), granolaConnected };
   }
   if (meetingsOverview?.status === 'not_configured' || meetingsOverview?.status === 'source_error') {
     return { ...buildMeetingsSetupViewModel(meetingsOverview, timeReality), granolaConnected };
+  }
+  // J6a path: /api/meetings/overview no longer emits the Node-era 'ready'
+  // shape, but Granola is connected and has real meeting data. Surface a
+  // Live view filtered to today's meetings.
+  if (granolaConnected) {
+    return buildGranolaLiveMeetingsViewModel({ granolaOverview, timeReality });
   }
 
   return {
@@ -5860,6 +6095,69 @@ function buildMeetingsModuleViewModel({
       { label: 'Prep a Meeting', intent: 'Help me prep for today\'s most important meeting.' },
       { label: 'Sort Follow-Up', intent: 'Help me turn today\'s meeting follow-up into a compact action list.' },
       { label: 'Reframe the Day', intent: 'Help me reorganize today around my meeting load and hard stop.' },
+    ],
+  };
+}
+
+// Build a Live-style viewmodel from Granola's meeting list. Filters to today
+// using either `date_ms` (preferred) or by parsing `date` text.
+function buildGranolaLiveMeetingsViewModel({ granolaOverview, timeReality }) {
+  const all = Array.isArray(granolaOverview?.meetings) ? granolaOverview.meetings : [];
+  const now = new Date();
+  const sod = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const eod = sod + 86_400_000;
+
+  const meetingMs = (m) => {
+    if (typeof m.date_ms === 'number' && m.date_ms > 0) return m.date_ms;
+    const parsed = m.date ? Date.parse(m.date) : NaN;
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const todayMeetings = all
+    .map((m) => ({ m, ts: meetingMs(m) }))
+    .filter(({ ts }) => ts >= sod && ts < eod)
+    .sort((a, b) => a.ts - b.ts)
+    .map(({ m, ts }) => {
+      const d = ts > 0 ? new Date(ts) : null;
+      const startLabel = d
+        ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+        : (m.date || '');
+      return {
+        id: m.id,
+        title: m.title || 'Untitled meeting',
+        startLabel,
+        endLabel: '',
+        location: (m.participants || []).join(', '),
+        status: ts < Date.now() ? 'past' : 'scheduled',
+      };
+    });
+
+  const nextUpcoming = todayMeetings.find((m) => m.status === 'scheduled');
+  const nextLabel = nextUpcoming
+    ? `${nextUpcoming.startLabel} · ${nextUpcoming.title}`
+    : (todayMeetings.length ? 'All today\'s meetings done' : 'No meetings today');
+
+  return {
+    badge: 'Live',
+    statusTone: 'live',
+    granolaConnected: true,
+    granolaTodayMode: true,
+    dateLabel: now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }),
+    sourceLabel: 'Granola',
+    nextMeetingLabel: nextLabel,
+    todayMeetings,
+    summary: [
+      { label: 'Today', value: `${todayMeetings.length} meeting${todayMeetings.length === 1 ? '' : 's'}` },
+      { label: 'Next', value: nextLabel },
+      { label: 'Source', value: 'Granola' },
+    ],
+    readinessNotes: [],
+    prepLens: [],
+    followUpPressure: [],
+    actions: [
+      { label: 'Prep a Meeting', intent: 'Help me prep for today\'s next meeting using my Granola schedule.' },
+      { label: 'Sort Follow-Up', intent: 'Help me turn today\'s meeting follow-up into a compact action list.' },
+      { label: 'Reframe the Day', intent: 'Help me reorganize today around my Granola meetings.' },
     ],
   };
 }
@@ -7704,7 +8002,7 @@ function saveDashboardCaptureLocalNote(text) {
   }
 }
 
-function buildDashboardReplyWorkModel(notifications = [], slackSignals = null) {
+function buildDashboardReplyWorkModel(notifications = [], slackSignals = null, slackMentions = null) {
   const approvalItems = notifications
     .filter((item) => item.type === 'approval' && !item.read_at)
     .slice(0, 3)
@@ -7722,18 +8020,9 @@ function buildDashboardReplyWorkModel(notifications = [], slackSignals = null) {
   const topSlackFollowup = buildTopSlackFollowup(slackSignals);
   const slackCards = [];
   if (slackSignals?.connected) {
-    if (safePositiveNumber(slackSignals.missedMentions)) {
-      slackCards.push({
-        eyebrow: 'Slack mentions',
-        title: `${slackSignals.missedMentions} missed mention${slackSignals.missedMentions === 1 ? '' : 's'}`,
-        detail: 'Direct mentions are now surfacing here so Slack can feed follow-up without becoming the center of the product.',
-        primaryAction: 'Ask Artemis',
-        secondaryIntent: buildAttentionIntent(
-          `${slackSignals.missedMentions} missed Slack mention${slackSignals.missedMentions === 1 ? '' : 's'}`,
-          'Help me triage the missed mentions and decide which ones need a reply now.',
-        ),
-      });
-    }
+    // J9b: missedMentions is now surfaced directly in the triage queue above
+    // the cards grid, so we skip the redundant "N missed mentions" card here.
+    // Only unread DMs and reply-needed threads get their own cards.
     if (safePositiveNumber(slackSignals.unreadDMs)) {
       slackCards.push({
         eyebrow: 'Slack DMs',
@@ -7760,22 +8049,33 @@ function buildDashboardReplyWorkModel(notifications = [], slackSignals = null) {
     }
   }
 
+  // J9: attach the raw mentions list so renderNeedsYourReply can render the triage queue.
+  const mentionItems = Array.isArray(slackMentions?.mentions) ? slackMentions.mentions.slice(0, 5) : [];
+  const totalUnresolved = typeof slackMentions?.total_unresolved === 'number' ? slackMentions.total_unresolved : 0;
+
+  // J9c: when the Slack mentions triage queue above is non-empty, skip the
+  // "No urgent replies right now" fallback card — it contradicts the populated queue.
+  const hasMentionTriage = mentionItems.length > 0 || totalUnresolved > 0;
   const cards = approvalItems.length || slackCards.length
     ? approvalItems.concat(slackCards).slice(0, 3)
-    : [{
-        eyebrow: 'Slack',
-        title: 'No urgent replies right now',
-        detail: slackSignals?.connected
-          ? 'Slack is connected, but no missed mentions, unread DMs, or reply-needed threads were elevated into this reply lane.'
-          : 'Slack follow-up is available when connected, but no missed mentions, unread DMs, or reply-needed threads are being elevated here yet. Use Connectors if you want to verify the link.',
-        primaryAction: 'Open Connectors',
-        connectorScope: 'slack',
-      }];
+    : hasMentionTriage
+      ? []
+      : [{
+          eyebrow: 'Slack',
+          title: 'No urgent replies right now',
+          detail: slackSignals?.connected
+            ? 'Slack is connected, but no missed mentions, unread DMs, or reply-needed threads were elevated into this reply lane.'
+            : 'Slack follow-up is available when connected, but no missed mentions, unread DMs, or reply-needed threads are being elevated here yet. Use Connectors if you want to verify the link.',
+          primaryAction: 'Open Connectors',
+          connectorScope: 'slack',
+        }];
 
   return {
     cards,
     topSlackFollowup,
-    footnote: approvalItems.length || slackCards.length
+    slackMentionItems: mentionItems,
+    slackTotalUnresolved: totalUnresolved,
+    footnote: approvalItems.length || slackCards.length || hasMentionTriage
       ? 'Keep this section focused on things waiting on you directly, not general system noise.'
       : 'If the reply queue is quiet, use Capture today\'s work to route progress into Jira, OKRs, or a saved note.',
   };

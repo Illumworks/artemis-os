@@ -165,6 +165,34 @@ export async function fetchMemoryEmbeddingStatus() {
   return _readJsonOrThrow(res, "Failed to load semantic memory status");
 }
 
+// M6 — Memory shell read endpoints
+export async function fetchMemoryShellStats() {
+  const res = await fetch("/api/memory/stats");
+  return _readJsonOrThrow(res, "Failed to load memory stats");
+}
+
+export async function fetchMemoryShellScopes() {
+  const res = await fetch("/api/memory/scopes");
+  return _readJsonOrThrow(res, "Failed to load memory scopes");
+}
+
+export async function fetchMemoryShellDrawers({ scopeKind, scopeId, limit = 50, offset = 0 } = {}) {
+  const qs = _buildQueryString({ scope_kind: scopeKind, scope_id: scopeId, limit, offset });
+  const res = await fetch(`/api/memory/drawers${qs}`);
+  return _readJsonOrThrow(res, "Failed to load memory drawers");
+}
+
+export async function fetchMemoryShellObservations({ scopeKind, scopeId, limit = 50, offset = 0 } = {}) {
+  const qs = _buildQueryString({ scope_kind: scopeKind, scope_id: scopeId, limit, offset });
+  const res = await fetch(`/api/memory/observations${qs}`);
+  return _readJsonOrThrow(res, "Failed to load memory observations");
+}
+
+export async function fetchMemoryShellObservationDetail(observationId) {
+  const res = await fetch(`/api/memory/observations/${encodeURIComponent(observationId)}`);
+  return _readJsonOrThrow(res, "Failed to load observation detail");
+}
+
 export async function ensureMemoryEmbeddings() {
   const res = await fetch("/api/memory/embeddings/ensure", {
     method: "POST",
@@ -225,11 +253,23 @@ export async function fetchEntityNeighborhoodApi(entityId, hops = 1) {
   return _readJsonOrThrow(res, "Failed to load entity neighborhood");
 }
 
-// E1b: Python doesn't have /overview yet — synthesize from /candidates so
-// the marketing dashboard can render live data instead of falling back to demo.
+export async function fetchMarketingCampaignsApi() {
+  const res = await fetch("/api/marketing/campaigns");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "fetchMarketingCampaignsApi failed");
+  }
+  const data = await res.json();
+  if (Array.isArray(data)) return data;
+  return data.campaigns || data.items || [];
+}
+
 export async function fetchCampaignOpsOverview() {
   const res = await fetch("/api/campaign-ops/candidates");
-  if (!res.ok) return { campaigns: [] };
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "fetchCampaignOpsOverview failed");
+  }
   const data = await res.json();
   const candidates = Array.isArray(data) ? data : (data.candidates || data.items || []);
   return { campaigns: candidates };
@@ -475,6 +515,20 @@ export async function importGoogleDocApi(data = {}) {
 export async function fetchSlackSignalsApi() {
   const res = await fetch("/api/slack/signals");
   return _readJsonOrThrow(res, "Failed to load Slack signals");
+}
+
+export async function fetchSlackMentionsApi() {
+  const res = await fetch("/api/slack/signals/mentions");
+  return _readJsonOrThrow(res, "Failed to load Slack mentions");
+}
+
+export async function resolveSlackMentionApi(eventId) {
+  const res = await fetch(`/api/slack/signals/mentions/${encodeURIComponent(eventId)}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  return _readJsonOrThrow(res, "Failed to resolve Slack mention");
 }
 
 // ── Daily Brief ───────────────────────────────────────────────────────────────
@@ -850,6 +904,25 @@ export async function getCampaignBriefApi(candidateId) {
   return _readJsonOrThrow(res, "Failed to fetch campaign brief");
 }
 
+export async function getCampaignInitiationProposalApi(candidateId) {
+  const res = await fetch(
+    `/api/marketing/campaigns/${encodeURIComponent(candidateId)}/initiation-proposal`,
+  );
+  return _readJsonOrThrow(res, "Failed to fetch campaign initiation proposal");
+}
+
+export async function initiateCampaignApi(candidateId, payload = {}) {
+  const res = await fetch(
+    `/api/marketing/campaigns/${encodeURIComponent(candidateId)}/initiate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return _readJsonOrThrow(res, "Failed to initiate campaign");
+}
+
 export async function deleteWritingDraftApi(id) {
   const res = await fetch(`/api/writing-studio/drafts/${encodeURIComponent(id)}`, {
     method: "DELETE",
@@ -1071,23 +1144,22 @@ function _slugify(name = "") {
 
 /** Map a Python AgentRead → Node agent shape */
 function _normaliseAgent(a) {
+  // Preserve the Postgres int PK as `dbId` — needed by callers that have to
+  // address the agent by its row id (e.g. builder_sessions.target_id is INT).
+  // The slug overrides `id` for legacy Node-shape compatibility.
+  const dbId = typeof a.id === "number" ? a.id : (a.dbId ?? null);
   return {
     ...a,
     // Python: agentId / name → Node: id / title
     id: a.agentId ?? a.id,
+    dbId,
     title: a.name ?? a.title ?? a.agentId ?? "",
+    reasonCodesEmitted: a.reasonCodesEmitted ?? a.reason_codes_emitted ?? [],
   };
 }
 
-/** Map a Python WorkflowRead → Node workflow shape */
-function _normaliseWorkflow(w) {
-  return {
-    ...w,
-    // Python: workflowId / name → Node: id / title
-    id: w.workflowId ?? w.id,
-    title: w.name ?? w.title ?? w.workflowId ?? "",
-  };
-}
+// Historical note: _normaliseWorkflow was removed with the PIPE6 frontend
+// prune; workflow payloads are now dead front-end surface area.
 
 /** Map a Python AgentChainRead → Node chain shape
  *  Python stores per-step agent refs inside steps[].agentId; Node stores a
@@ -1134,94 +1206,6 @@ function _normaliseDag(d) {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-export async function fetchWorkflows() {
-  const res = await fetch("/api/workflows");
-  const body = await res.json();
-  // Python returns { workflows: [...] }; Node expected a flat array
-  const raw = Array.isArray(body) ? body : (body.workflows ?? []);
-  return raw.map(_normaliseWorkflow);
-}
-
-export async function createWorkflow(workflow) {
-  // Send Node shape → Python expects workflowId / name
-  const payload = {
-    workflowId: workflow.id ?? workflow.workflowId ?? _slugify(workflow.title),
-    name: workflow.title ?? workflow.name,
-    description: workflow.description || "",
-    steps: workflow.steps || [],
-  };
-  const res = await fetch("/api/workflows", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to create workflow");
-  }
-  return _normaliseWorkflow(await res.json());
-}
-
-export async function updateWorkflow(id, workflow) {
-  // Python uses PATCH; Node used PUT.  Send only the changed fields.
-  const payload = {};
-  if (workflow.title != null || workflow.name != null) payload.name = workflow.title ?? workflow.name;
-  if (workflow.description != null) payload.description = workflow.description;
-  if (workflow.steps != null) payload.steps = workflow.steps;
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to update workflow");
-  }
-  return _normaliseWorkflow(await res.json());
-}
-
-export async function deleteWorkflowApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to delete workflow");
-  }
-  // Python returns 204 No Content — no JSON body
-}
-
-export async function runWorkflowApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
-    method: "POST",
-  });
-  if (res.status === 404) {
-    // F2b execution endpoints not yet wired — graceful no-op
-    return { __notYetWired: true, message: "Run not yet wired (Phase F2b in progress)" };
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.[0]?.msg ?? err.error ?? "Failed to start workflow run");
-  }
-  return res.json(); // { runId }
-}
-
-export async function listWorkflowRunsApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs`);
-  if (!res.ok) return [];
-  const body = await res.json();
-  return Array.isArray(body) ? body : (body.runs ?? []);
-}
-
-export async function getLatestWorkflowRunApi(id) {
-  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs/latest`);
-  if (res.status === 404) return null;
-  if (!res.ok) return null;
-  return res.json();
-}
-
 export async function fetchAgents() {
   const res = await fetch("/api/agents");
   const body = await res.json();
@@ -1241,7 +1225,10 @@ export async function createAgent(agent) {
     tools: agent.tools || [],
     model: agent.model || "claude-sonnet-4-5",
     provider: agent.provider || "anthropic",
+    fallbackProvider: agent.fallbackProvider || agent.provider || "anthropic",
+    fallbackModel: agent.fallbackModel || agent.model || "claude-sonnet-4-5",
     max_iterations: agent.constraints?.maxTurns ?? agent.maxIterations ?? 50,
+    reasonCodesEmitted: agent.reasonCodesEmitted || [],
   };
   const res = await fetch("/api/agents", {
     method: "POST",
@@ -1265,7 +1252,11 @@ export async function updateAgent(id, agent) {
   if (agent.tools != null) payload.tools = agent.tools;
   if (agent.model != null) payload.model = agent.model;
   if (agent.provider != null) payload.provider = agent.provider;
+  if (agent.fallbackProvider != null) payload.fallbackProvider = agent.fallbackProvider;
+  if (agent.fallbackModel != null) payload.fallbackModel = agent.fallbackModel;
   if (agent.constraints?.maxTurns != null) payload.max_iterations = agent.constraints.maxTurns;
+  if (agent.metadata != null) payload.metadata = agent.metadata;
+  if (agent.reasonCodesEmitted != null) payload.reasonCodesEmitted = agent.reasonCodesEmitted;
   const res = await fetch(`/api/agents/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -1907,65 +1898,136 @@ export async function fetchAgentRunById(runId) {
   return res.json();
 }
 
-// ── Automations ───────────────────────────────────────────────────────────────
+// ── Pipelines (PIPE1) ─────────────────────────────────────────────────────────
 
-export async function listAutomationsApi() {
-  const res = await fetch("/api/automations");
-  if (!res.ok) throw new Error("listAutomationsApi failed");
+export async function listPipelinesApi({ status, hasTrigger, limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (hasTrigger !== undefined) params.set("hasTrigger", String(hasTrigger));
+  if (limit !== 50) params.set("limit", String(limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/pipelines${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("listPipelinesApi failed");
   return res.json();
 }
 
-export async function createAutomationApi(data) {
-  const res = await fetch("/api/automations", {
+export async function createPipelineApi(data) {
+  const res = await fetch("/api/pipelines/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "createAutomationApi failed");
+    throw new Error(body.error || "createPipelineApi failed");
   }
   return res.json();
 }
 
-export async function updateAutomationApi(id, data) {
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}`, {
-    method: "PUT",
+export async function getPipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error("getPipelineApi failed");
+  return res.json();
+}
+
+export async function exportPipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/export`);
+  if (!res.ok) throw new Error("exportPipelineApi failed");
+  return res.json();
+}
+
+export async function importPipelineApi(bundle) {
+  const res = await fetch("/api/pipelines/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bundle),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || body.detail?.[0]?.msg || "importPipelineApi failed");
+  }
+  return res.json();
+}
+
+export async function updatePipelineApi(id, data) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "updateAutomationApi failed");
+    throw new Error(body.error || "updatePipelineApi failed");
   }
   return res.json();
 }
 
-export async function deleteAutomationApi(id) {
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("deleteAutomationApi failed");
+export async function deletePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("deletePipelineApi failed");
+}
+
+export async function permanentDeletePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/permanent`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "permanentDeletePipelineApi failed");
+  }
+}
+
+export async function enablePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/enable`, { method: "POST" });
+  if (!res.ok) throw new Error("enablePipelineApi failed");
   return res.json();
 }
 
-export async function runAutomationApi(id, opts = {}) {
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}/run`, {
+export async function disablePipelineApi(id) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/disable`, { method: "POST" });
+  if (!res.ok) throw new Error("disablePipelineApi failed");
+  return res.json();
+}
+
+export async function runPipelineApi(id, opts = {}) {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(opts),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "runAutomationApi failed");
+    throw new Error(body.error || "runPipelineApi failed");
   }
   return res.json();
 }
 
-export async function listAutomationRunsApi(id, { limit = 20, cursor } = {}) {
+export async function listPipelineRunsApi(id, { limit = 20, cursor, sort } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", String(cursor));
-  const res = await fetch(`/api/automations/${encodeURIComponent(id)}/runs?${params}`);
-  if (!res.ok) throw new Error("listAutomationRunsApi failed");
+  if (sort) params.set("sort", String(sort));
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(id)}/runs?${params}`);
+  if (!res.ok) throw new Error("listPipelineRunsApi failed");
   return res.json();
+}
+
+export async function cancelPipelineRunApi(runId) {
+  const res = await fetch(`/api/pipeline-runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("cancelPipelineRunApi failed");
+  return res.json();
+}
+
+export async function listAllPipelineRunsApi({ status, limit = 50, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set("status", status);
+  if (cursor) params.set("cursor", String(cursor));
+  const res = await fetch(`/api/pipeline-runs?${params}`);
+  if (!res.ok) throw new Error("listAllPipelineRunsApi failed");
+  return res.json();
+}
+
+export async function retryPipelineRunApi(pipelineId) {
+  return runPipelineApi(pipelineId, {});
 }
 
 // ── Approvals ─────────────────────────────────────────────────────────────────
@@ -2045,13 +2107,74 @@ export async function listAgentSkillsApi(id) {
   return res.json();
 }
 
+// O2/O3 — persona PATCH
+export async function patchAgentPersonaApi(id, patch) {
+  const res = await fetch(`/api/agents/${encodeURIComponent(id)}/persona`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "patchAgentPersonaApi failed");
+  }
+  return res.json();
+}
+
+// O2/O3 — avatar upload
+export async function uploadAgentAvatarApi(id, file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`/api/agents/${encodeURIComponent(id)}/avatar`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "uploadAgentAvatarApi failed");
+  }
+  return res.json();
+}
+
 // ── Signal Criteria / Scout Ruleset Lite ──────────────────────────────────
 
 export async function listReasonCodesApi({ includeRetired = false } = {}) {
-  const qs = includeRetired ? "?includeRetired=true" : "";
+  const qs = includeRetired ? "?include_inactive=true" : "";
   const res = await fetch(`/api/signal-criteria/reason-codes${qs}`);
   if (!res.ok) throw new Error("listReasonCodesApi failed");
   return res.json();
+}
+
+export async function createReasonCodeApi(payload = {}) {
+  const res = await fetch("/api/signal-criteria/reason-codes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail?.error || body.error || "createReasonCodeApi failed");
+  }
+  return res.json();
+}
+
+export async function patchReasonCodeApi(code, patch = {}) {
+  const res = await fetch(`/api/signal-criteria/reason-codes/${encodeURIComponent(code)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail?.error || body.error || "patchReasonCodeApi failed");
+  }
+  return res.json();
+}
+
+export async function exportReasonCodesMarkdownApi() {
+  const res = await fetch("/api/signal-criteria/reason-codes/markdown-export");
+  if (!res.ok) throw new Error("exportReasonCodesMarkdownApi failed");
+  return res.text();
 }
 
 export async function listCampaignRulesetsApi() {
@@ -2121,6 +2244,59 @@ export async function upsertTerritoryStateApi(family, _stateCode, payload = {}) 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "upsertTerritoryStateApi failed");
+  }
+  return res.json();
+}
+
+// ── District Tier Bands ───────────────────────────────────────────────────
+
+export async function getTierBandsApi() {
+  const res = await fetch("/api/signal-criteria/tier-bands");
+  if (!res.ok) throw new Error("getTierBandsApi failed");
+  return res.json();
+}
+
+export async function upsertTierBandsApi(bands) {
+  const res = await fetch("/api/signal-criteria/tier-bands", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bands }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "upsertTierBandsApi failed");
+  }
+  return res.json();
+}
+
+export async function recomputeTierBandsApi() {
+  const res = await fetch("/api/signal-criteria/tier-bands/recompute", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "recomputeTierBandsApi failed");
+  }
+  return res.json();
+}
+
+// ── District Data Status ───────────────────────────────────────────────────
+
+/** Fetch district data provenance + freshness from the DIST5 meta singleton. */
+export async function getDistrictDataStatusApi() {
+  const res = await fetch("/api/signal-criteria/district-data-status");
+  if (!res.ok) throw new Error("getDistrictDataStatusApi failed");
+  return res.json();
+}
+
+/** Start a background NCES refresh. Returns immediately (202) — the panel
+ *  re-fetches /district-data-status on completion or next load. 409 if a
+ *  refresh is already in flight. */
+export async function refreshDistrictDataApi() {
+  const res = await fetch("/api/signal-criteria/district-data-refresh", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || body.detail?.error || "refreshDistrictDataApi failed");
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -2273,5 +2449,139 @@ export async function runScoutHarnessApi(payload = {}) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || "runScoutHarnessApi failed");
+  return body;
+}
+
+// ── Builder API (O1) ──────────────────────────────────────────────────────────
+
+export async function builderFetchSessions({ status, limit } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (limit !== undefined) params.set("limit", String(limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/builder/sessions${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "builderFetchSessions failed");
+  }
+  return res.json();
+}
+
+export async function builderCreateSession({ builder_kind = "agent", target_id, user_id } = {}) {
+  const res = await fetch("/api/builder/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ builder_kind, target_id, user_id }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderCreateSession failed");
+  return body;
+}
+
+export async function builderGetSession(sessionId) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `builderGetSession(${sessionId}) failed`);
+  }
+  return res.json();
+}
+
+export async function builderSendMessage(sessionId, content) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderSendMessage failed");
+  return body;
+}
+
+export async function builderAbandonSession(sessionId) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+  if (res.status === 204) return;
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderAbandonSession failed");
+  return body;
+}
+
+export async function builderTestRun(sessionId, { prompt, allow_writes = false } = {}) {
+  const res = await fetch(`/api/builder/sessions/${encodeURIComponent(sessionId)}/test-run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, allow_writes }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderTestRun failed");
+  return body;
+}
+
+export async function builderFetchProposals({ status = "pending", kind, limit } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (kind) params.set("kind", kind);
+  if (limit !== undefined) params.set("limit", String(limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/builder/proposals${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "builderFetchProposals failed");
+  }
+  return res.json();
+}
+
+export async function builderGetAgentContext(agentId) {
+  const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/builder-context`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `builderGetAgentContext(${agentId}) failed`);
+  }
+  return res.json();
+}
+
+export async function builderApproveProposal(proposalId) {
+  const res = await fetch(`/api/builder/proposals/${encodeURIComponent(proposalId)}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderApproveProposal failed");
+  return body;
+}
+
+export async function builderRejectProposal(proposalId, reason = null) {
+  // CC22: optional reason body — backend accepts empty body for one-click reject.
+  const init = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  };
+  if (reason && typeof reason === "string" && reason.trim()) {
+    init.body = JSON.stringify({ reason: reason.trim().slice(0, 2000) });
+  }
+  const res = await fetch(`/api/builder/proposals/${encodeURIComponent(proposalId)}/reject`, init);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderRejectProposal failed");
+  return body;
+}
+
+// ── Proposals Inbox (J6a) ─────────────────────────────────────────────────────
+
+export async function builderFetchInbox() {
+  const res = await fetch("/api/builder/inbox");
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderFetchInbox failed");
+  return body;
+}
+
+export async function builderMarkAgentReviewed(agentId) {
+  const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/mark-reviewed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "builderMarkAgentReviewed failed");
   return body;
 }

@@ -111,6 +111,58 @@ class QualificationResult:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DIST4 — District tier soft-flag annotation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def annotate_district_tier(
+    qual_dict: dict[str, Any],
+    *,
+    district_id: int | None,
+    district_name: str | None,
+    district_state: str | None,
+    district_tier: str | None,
+    district_enrollment: int | None,
+    district_supported: bool | None,
+) -> dict[str, Any]:
+    """Annotate a qualification dict with district tier metadata (DIST4).
+
+    Pure: no DB, no I/O.  Callers pre-load the district row and pass fields.
+
+    Soft-flag only: sets ``tier_flag="unsupported_tier"`` when
+    ``district_supported=False``, else ``tier_flag=None``.  The signal is
+    NEVER dropped, rejected, or auto-skipped — the flag is metadata for the
+    human reviewer and for UI filtering.
+
+    When ``district_id`` is None (unresolved signal), the dict gains a
+    ``districtContext`` key with ``resolved=False`` and no fabricated data.
+
+    Returns a new dict (does not mutate the input).
+    """
+    result = dict(qual_dict)
+
+    if district_id is None:
+        result["districtContext"] = {"resolved": False}
+        return result
+
+    tier_flag: str | None = None
+    if district_supported is False:
+        tier_flag = "unsupported_tier"
+
+    result["districtContext"] = {
+        "resolved": True,
+        "districtId": district_id,
+        "districtName": district_name,
+        "districtState": district_state,
+        "districtTier": district_tier,
+        "districtEnrollment": district_enrollment,
+        "districtSupported": district_supported,
+        "tierFlag": tier_flag,
+    }
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Input types (thin wrappers around ORM / dict data)
 # ─────────────────────────────────────────────────────────────────────────────
 

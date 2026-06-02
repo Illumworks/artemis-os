@@ -7,6 +7,7 @@ export const MEETINGS_VIEW = "meetings";
 export const JIRA_VIEW = "jira";
 export const OKR_VIEW = "okr";
 export const OPERATIONS_VIEW = "operations";
+export const PIPELINE_RUN_HISTORY_VIEW = "pipeline-run-history";
 export const MEMORY_VIEW = "memory";
 export const DEV_PROJECTS_VIEW = "dev-projects";
 export const WRITING_STUDIO_VIEW = "writing-studio";
@@ -16,6 +17,7 @@ export const MARKETING_CAMPAIGNS_VIEW = "marketing-campaigns";
 export const MARKETING_SIGNALS_VIEW = "marketing-signals";
 export const MARKETING_APPROVALS_VIEW = "marketing-approvals";
 export const MARKETING_RULESETS_VIEW = "marketing-rulesets";
+export const MARKETING_SIGNAL_PLAYBOOK_VIEW = "signal-playbook";
 export const MARKETING_SCOUT_RUNS_VIEW = "marketing-scout-runs";
 export const INTEGRATIONS_VIEW = "integrations";
 
@@ -36,7 +38,7 @@ export const PRIMARY_NAV_DESTINATIONS = [
     id: OPERATIONS_VIEW,
     label: "Operations",
     shortLabel: "Operations",
-    description: "Agents, Skills, Workflows, Campaign Ops, and Memory.",
+    description: "Agents, Skills, Pipelines, Run History, and Memory.",
   },
   {
     id: MARKETING_OS_VIEW,
@@ -104,22 +106,22 @@ export const SECONDARY_NAV_DESTINATIONS = [
     focus: "skills",
   },
   {
-    id: "workflows",
-    label: "Workflows",
-    shortLabel: "Flows",
-    description: "Workflow builder and inspector for saved recipes.",
+    id: "pipelines",
+    label: "Pipelines",
+    shortLabel: "Pipelines",
+    description: "Unified orchestration primitives — nodes, edges, and trigger config. Visual canvas in PIPE2.",
     section: "Operations",
-    view: "workflows",
-    focus: "workflows",
+    view: "pipelines",
+    focus: "pipelines",
   },
   {
-    id: "automations",
-    label: "Automations",
-    shortLabel: "Automations",
-    description: "Scheduled and triggered rules that control when workflows and agents run.",
+    id: PIPELINE_RUN_HISTORY_VIEW,
+    label: "Run History",
+    shortLabel: "Runs",
+    description: "Pipeline execution history, replay links, and terminal run actions.",
     section: "Operations",
-    view: "automations",
-    focus: "automations",
+    view: PIPELINE_RUN_HISTORY_VIEW,
+    focus: "pipelines",
   },
   {
     id: "memory",
@@ -171,12 +173,12 @@ export const SECONDARY_NAV_DESTINATIONS = [
     view: MARKETING_APPROVALS_VIEW,
   },
   {
-    id: MARKETING_RULESETS_VIEW,
-    label: "Scout Rulesets",
-    shortLabel: "Rulesets",
-    description: "Campaign trigger criteria, territory priorities, and reason-code registry.",
+    id: MARKETING_SIGNAL_PLAYBOOK_VIEW,
+    label: "Signal Playbook",
+    shortLabel: "Playbook",
+    description: "Editable campaign-signal criteria and reason-code registry.",
     section: "Marketing",
-    view: MARKETING_RULESETS_VIEW,
+    view: MARKETING_SIGNAL_PLAYBOOK_VIEW,
   },
   {
     id: MARKETING_SCOUT_RUNS_VIEW,
@@ -219,6 +221,7 @@ const KNOWN_VIEWS = new Set([
   WRITING_STUDIO_VIEW,
   LEGACY_DASHBOARD_VIEW,
   INTEGRATIONS_VIEW,
+  "agents/builder",
   ...PRIMARY_NAV_DESTINATIONS.map((item) => item.id),
   ...SECONDARY_NAV_DESTINATIONS.map((item) => item.id),
 ]);
@@ -232,6 +235,7 @@ export function normalizeAppView(view) {
   if (view === "jira" || view === "jira-board") return JIRA_VIEW;
   if (view === "okr" || view === "okr-studio") return OKR_VIEW;
   if (view === "operations") return OPERATIONS_VIEW;
+  if (view === "pipeline-run-history" || view === "operations/pipeline-run-history") return PIPELINE_RUN_HISTORY_VIEW;
   if (view === "memory") return MEMORY_VIEW;
   if (view === "writing-studio") return WRITING_STUDIO_VIEW;
   if (view === "marketing-os") return MARKETING_OS_VIEW;
@@ -240,7 +244,9 @@ export function normalizeAppView(view) {
   if (view === "marketing-signals") return MARKETING_SIGNALS_VIEW;
   if (view === "marketing-approvals") return MARKETING_APPROVALS_VIEW;
   if (view === "marketing-rulesets") return MARKETING_RULESETS_VIEW;
+  if (view === "signal-playbook") return MARKETING_SIGNAL_PLAYBOOK_VIEW;
   if (view === "marketing-scout-runs") return MARKETING_SCOUT_RUNS_VIEW;
+  if (view === "pipelines") return "pipelines";
   if (view === "dev-projects") return "chat";
   if (view === "integrations") return INTEGRATIONS_VIEW;
   if (view === "command-center") return DEFAULT_APP_VIEW;
@@ -264,15 +270,18 @@ export function isShellView(view) {
     || normalizedView === OPERATIONS_VIEW
     || normalizedView === MEMORY_VIEW
     || normalizedView === WRITING_STUDIO_VIEW
-    || normalizedView === "workflows"
     || normalizedView === "agents"
+    || normalizedView === "agents/builder"
     || normalizedView === "skills"
-    || normalizedView === "automations"
+    || normalizedView === "pipelines"
+    || normalizedView === PIPELINE_RUN_HISTORY_VIEW
     || normalizedView === MARKETING_OS_VIEW
     || normalizedView === MARKETING_DASHBOARD_VIEW
     || normalizedView === MARKETING_CAMPAIGNS_VIEW
     || normalizedView === MARKETING_SIGNALS_VIEW
     || normalizedView === MARKETING_APPROVALS_VIEW
+    || normalizedView === MARKETING_RULESETS_VIEW
+    || normalizedView === MARKETING_SIGNAL_PLAYBOOK_VIEW
     || normalizedView === LEGACY_DASHBOARD_VIEW
     || normalizedView === INTEGRATIONS_VIEW;
 }

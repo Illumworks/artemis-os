@@ -12,8 +12,16 @@ import pytest
 
 from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
-from artemis.providers.claude_code.adapter import ClaudeCodeAdapter, _flatten_to_prompt
-from artemis.providers.errors import MissingCliBinaryError, ProviderAPIError
+from artemis.providers.claude_code.adapter import (
+    ClaudeCodeAdapter,
+    _flatten_to_prompt,
+    _timeout_seconds,
+)
+from artemis.providers.errors import (
+    ClaudeCodeTimeoutError,
+    MissingCliBinaryError,
+    ProviderAPIError,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -90,10 +98,12 @@ async def test_complete_parses_json_result(tmp_path: Path) -> None:
 async def test_complete_parses_json_result_with_usage(tmp_path: Path) -> None:
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
-    payload = json.dumps({
-        "result": "answer",
-        "usage": {"input_tokens": 42, "output_tokens": 17},
-    }).encode()
+    payload = json.dumps(
+        {
+            "result": "answer",
+            "usage": {"input_tokens": 42, "output_tokens": 17},
+        }
+    ).encode()
     proc = _mock_proc(payload)
 
     with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
@@ -126,11 +136,12 @@ async def test_complete_raises_on_timeout(tmp_path: Path) -> None:
 
     with (
         patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)),
-        patch("asyncio.wait_for", side_effect=asyncio.TimeoutError),
-        pytest.raises(ProviderAPIError) as exc_info,
+        pytest.raises(ClaudeCodeTimeoutError) as exc_info,
     ):
         await adapter.complete(_simple_request())
     assert exc_info.value.status_code == 408
+    assert _timeout_seconds() == 900.0
+    assert "timed out after 900s" in exc_info.value.body
 
 
 async def test_complete_raises_on_non_json_output(tmp_path: Path) -> None:

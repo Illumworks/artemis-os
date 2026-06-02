@@ -59,6 +59,27 @@ def _extract_result_text(result: dict[str, Any] | None) -> str:
     return "\n".join(c.get("text", "") for c in items if c.get("type") == "text").strip()
 
 
+_GRANOLA_DATE_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S",  # ISO (legacy)
+    "%b %d, %Y %I:%M %p %Z",  # "May 18, 2026 11:45 AM EDT"
+    "%b %d, %Y %I:%M %p",  # without tz
+    "%B %d, %Y %I:%M %p %Z",  # full month name
+    "%B %d, %Y %I:%M %p",
+)
+
+
+def _parse_granola_date_ms(date_raw: str) -> int:
+    """Parse a Granola date string into Unix epoch ms; 0 on failure."""
+    if not date_raw:
+        return 0
+    for fmt in _GRANOLA_DATE_FORMATS:
+        try:
+            return int(time.mktime(time.strptime(date_raw, fmt)) * 1000)
+        except (ValueError, OverflowError):
+            continue
+    return 0
+
+
 def _parse_meetings(text: str) -> list[Meeting]:
     """Parse <meeting …> XML-attribute tags from Granola list_meetings result text."""
     if not text:
@@ -73,10 +94,7 @@ def _parse_meetings(text: str) -> list[Meeting]:
             continue
         title = attrs.get("title", "")
         date_raw = attrs.get("date", "")
-        try:
-            date_ms = int(time.mktime(time.strptime(date_raw, "%Y-%m-%dT%H:%M:%S")) * 1000)
-        except (ValueError, OverflowError):
-            date_ms = 0
+        date_ms = _parse_granola_date_ms(date_raw)
         pattr = attrs.get("participants", "")
         participants = [s.strip() for s in pattr.split(",") if s.strip()] if pattr else []
         meetings.append(

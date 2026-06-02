@@ -17,23 +17,31 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import Ruleset, SignalQueue, TerritoryConfig
+from artemis.marketing.models import (
+    Approval,
+    Ruleset,
+    SignalQueue,
+    SignalReasonCode,
+    TerritoryConfig,
+)
 from artemis.marketing.qualifier import (
     RulesetInput,
     SignalInput,
     TerritoryEntry,
+    annotate_district_tier,
     qualify_signal,
 )
 from artemis.marketing.repository import (
-    create_campaign_candidate_from_signal,
+    cluster_or_create_candidate,
     create_signal,
     find_signal_by_dedupe_key,
     get_active_ruleset_version,
+    get_district,
     get_signal,
     list_signals,
     save_signal_qualification,
@@ -42,6 +50,8 @@ from artemis.marketing.repository import (
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
 from artemis.marketing.scout_intake import normalize_intake_payload
+from artemis.marketing.state_machine import SignalState, transition
+from artemis.pipelines.models import Pipeline, PipelineRun
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +61,7 @@ router = APIRouter(
     dependencies=[Depends(require_token)],
 )
 
-_VALID_STATUSES = {"in_inbox", "approved", "rejected", "snoozed", "archived", "expired"}
+_VALID_STATUSES = {s.value for s in SignalState}
 
 
 # ── Intake ────────────────────────────────────────────────────────────────────
@@ -93,12 +103,37 @@ async def intake(
     except ValueError as exc:
         validation_error = str(exc)
 
+    # FK validation: reject unknown reason codes against the registry (active only).
+    # Runs after normalization, on non-dry-run paths only (dry-run also checks).
+    unknown_codes: list[str] = []
+    if not validation_error and normalized is not None:
+        codes_in_payload = [
+            rc["code"] for rc in normalized.reason_codes if isinstance(rc.get("code"), str)
+        ]
+        if codes_in_payload:
+            result = await session.execute(
+                select(SignalReasonCode.code).where(
+                    SignalReasonCode.code.in_(codes_in_payload),
+                    SignalReasonCode.is_active.is_(True),
+                )
+            )
+            active_codes = set(result.scalars().all())
+            unknown_codes = [c for c in codes_in_payload if c not in active_codes]
+
     if dry_run:
         if validation_error:
             return {
                 "dryRun": True,
                 "valid": False,
                 "errors": [validation_error],
+                "wouldCreate": None,
+                "duplicate": None,
+            }
+        if unknown_codes:
+            return {
+                "dryRun": True,
+                "valid": False,
+                "errors": [f"unknown reason codes: {unknown_codes}"],
                 "wouldCreate": None,
                 "duplicate": None,
             }
@@ -118,6 +153,12 @@ async def intake(
     if validation_error:
         raise bad_request(validation_error)  # noqa: B904
 
+    if unknown_codes:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "unknown reason codes", "codes": unknown_codes},
+        )
+
     assert normalized is not None  # mypy: validation_error is None → normalized set
     dup = await find_signal_by_dedupe_key(
         session,
@@ -136,6 +177,7 @@ async def intake(
         campaign_family=normalized.campaign_family,
         source_type=normalized.source_type,
         source_url=normalized.source_url,
+        pipeline_run_id=body.get("pipelineRunId") or body.get("pipeline_run_id"),
         summary=normalized.why_flagged or "",
         urgency_tier=normalized.urgency_tier,
         discovered_by=normalized.discovered_by,
@@ -158,9 +200,20 @@ async def intake(
     return {"signal": _serialize_signal(signal)}
 
 
+@router.post("")
+async def intake_compat(
+    body: dict[str, Any],
+    response: Response,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Any:
+    """Compat: frontend posts signal creation to /api/signal-queue."""
+    return await intake(body, response, session)
+
+
 # ── List ──────────────────────────────────────────────────────────────────────
 
 
+@router.get("")
 @router.get("/")
 async def list_queue(
     status: str | None = Query(default=None),
@@ -179,8 +232,9 @@ async def list_queue(
         limit=limit,
         cursor=cursor,
     )
+    contexts = await _load_signal_contexts(session, signals)
     return {
-        "signals": [_serialize_signal(s) for s in signals],
+        "signals": [_serialize_signal(s, contexts.get(s.id)) for s in signals],
         "total": len(signals),
     }
 
@@ -198,7 +252,8 @@ async def get_signal_route(
         signal = await get_signal(session, signal_id)
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
-    return _serialize_signal(signal)
+    contexts = await _load_signal_contexts(session, [signal])
+    return _serialize_signal(signal, contexts.get(signal.id))
 
 
 # ── Qualify (C3 real implementation) ─────────────────────────────────────────
@@ -225,6 +280,9 @@ async def qualify_signal_route(
             "No active rulesets found — cannot qualify signal",
             "no_active_rulesets",
         )
+    # Advance signal from pending_qualification → qualified if not already there
+    if signal.signal_status == SignalState.pending_qualification:
+        await transition(session, "signal", signal.id, SignalState.qualified)
     await session.commit()
     await session.refresh(signal)
     return result
@@ -244,7 +302,7 @@ async def approve_signal(
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
 
-    if signal.signal_status != "in_inbox":
+    if signal.signal_status != SignalState.qualified:
         raise conflict(
             "invalid_transition",
             code="invalid_transition",
@@ -281,22 +339,31 @@ async def approve_signal(
             "rulesetVersionsUsed": qual.get("rulesetVersionsUsed", {}),
         }
 
-    candidate = await create_campaign_candidate_from_signal(
-        session,
-        signal_id=signal_id,
-        ruleset_version_tag=ruleset_version_tag or "",
-        qualification_summary=qualification_summary,
-    )
+    candidate = await cluster_or_create_candidate(session, signal)
+    if candidate.source_signal_id == signal_id:
+        candidate.ruleset_version_at_qualification = ruleset_version_tag or ""
+        candidate.metrics_json = qualification_summary
+        await session.flush()
 
-    # Update signal to approved
-    updated = await update_signal(
-        session,
-        signal_id,
-        signal_status="approved",
-    )
+    # Update signal to approved via state machine
+    updated = await transition(session, "signal", signal_id, SignalState.APPROVED)
     await session.commit()
     await session.refresh(updated)
     await session.refresh(candidate)
+
+    # MC2: fire-and-forget memory carryover (failure must not break approval)
+    import asyncio as _asyncio
+
+    from artemis.builder.memory_carryover import write_signal_gate1_approval_observation
+
+    _asyncio.create_task(
+        write_signal_gate1_approval_observation(
+            signal_id=signal_id,
+            new_status=updated.signal_status,
+            decided_by="operator",
+            decision_payload={"headline": updated.headline},
+        )
+    )
 
     return {
         "signal": _serialize_signal(updated),
@@ -321,18 +388,30 @@ async def reject_signal(
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
 
-    if signal.signal_status != "in_inbox":
+    if signal.signal_status != SignalState.qualified:
         raise conflict("invalid_transition", code="invalid_transition")  # noqa: B904
 
     reason = body.get("reason") or body.get("trainingNotes")
-    updated = await update_signal(
-        session,
-        signal_id,
-        signal_status="rejected",
-        rejected_reason=reason,
-    )
+    if reason is not None:
+        await update_signal(session, signal_id, rejected_reason=reason)
+    updated = await transition(session, "signal", signal_id, SignalState.REJECTED_AT_GATE_1)
     await session.commit()
     await session.refresh(updated)
+
+    # MC2: fire-and-forget memory carryover (failure must not break rejection)
+    import asyncio as _asyncio
+
+    from artemis.builder.memory_carryover import write_signal_gate1_approval_observation
+
+    _asyncio.create_task(
+        write_signal_gate1_approval_observation(
+            signal_id=signal_id,
+            new_status=updated.signal_status,
+            decided_by="operator",
+            decision_payload={"headline": updated.headline},
+        )
+    )
+
     return _serialize_signal(updated)
 
 
@@ -352,7 +431,7 @@ async def snooze_signal(
     except ValueError:
         raise not_found("Signal not found", "signal_not_found")  # noqa: B904
 
-    if signal.signal_status != "in_inbox":
+    if signal.signal_status != SignalState.qualified:
         raise conflict("invalid_transition", code="invalid_transition")  # noqa: B904
 
     days_raw = body.get("days", 14)
@@ -365,18 +444,34 @@ async def snooze_signal(
         raise bad_request("days must be an integer between 1 and 90")  # noqa: B904
 
     snoozed_until = datetime.now(UTC) + timedelta(days=days)
-    updated = await update_signal(
-        session,
-        signal_id,
-        signal_status="snoozed",
-        snoozed_until=snoozed_until,
-    )
+    await update_signal(session, signal_id, snoozed_until=snoozed_until)
+    updated = await transition(session, "signal", signal_id, SignalState.SNOOZED)
     await session.commit()
     await session.refresh(updated)
     return _serialize_signal(updated)
 
 
-# ── Ask (archive) ─────────────────────────────────────────────────────────────
+# ── Archive ───────────────────────────────────────────────────────────────────
+
+
+@router.post("/{signal_id}/archive")
+async def archive_signal(
+    signal_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> Any:
+    """Archive a signal."""
+    try:
+        signal = await get_signal(session, signal_id)
+    except ValueError:
+        raise not_found("Signal not found", "signal_not_found")  # noqa: B904
+
+    if signal.signal_status == SignalState.ARCHIVED:
+        raise conflict("invalid_transition", code="invalid_transition")  # noqa: B904
+
+    updated = await transition(session, "signal", signal_id, SignalState.ARCHIVED)
+    await session.commit()
+    await session.refresh(updated)
+    return _serialize_signal(updated)
 
 
 @router.post("/{signal_id}/ask")
@@ -384,19 +479,8 @@ async def ask_signal(
     signal_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Any:
-    """Archive a signal (maps to the Node /ask endpoint which archives signals)."""
-    try:
-        signal = await get_signal(session, signal_id)
-    except ValueError:
-        raise not_found("Signal not found", "signal_not_found")  # noqa: B904
-
-    if signal.signal_status == "archived":
-        raise conflict("invalid_transition", code="invalid_transition")  # noqa: B904
-
-    updated = await update_signal(session, signal_id, signal_status="archived")
-    await session.commit()
-    await session.refresh(updated)
-    return _serialize_signal(updated)
+    """Deprecated alias for /archive kept for one frontend release cycle."""
+    return await archive_signal(signal_id, session)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -458,23 +542,90 @@ async def _run_and_store_qualification(
     qual = qualify_signal(signal_input, ruleset_inputs, territories_by_family)
     qual_dict = qual.to_dict()
 
+    # DIST4: annotate district tier soft-flag (no migration — stored in qualification_json)
+    district = None
+    if signal.resolved_district_id is not None:
+        district = await get_district(session, signal.resolved_district_id)
+    qual_dict = annotate_district_tier(
+        qual_dict,
+        district_id=district.id if district else None,
+        district_name=district.name if district else None,
+        district_state=district.state if district else None,
+        district_tier=district.tier if district else None,
+        district_enrollment=district.enrollment if district else None,
+        district_supported=district.supported if district else None,
+    )
+
     # Store on signal
     await save_signal_qualification(session, signal.id, qual_dict)
     return qual_dict
 
 
-def _serialize_signal(signal: SignalQueue) -> dict[str, Any]:
+async def _load_signal_contexts(
+    session: AsyncSession,
+    signals: list[SignalQueue],
+) -> dict[int, dict[str, Any]]:
+    contexts: dict[int, dict[str, Any]] = {s.id: {} for s in signals}
+    run_ids = [s.pipeline_run_id for s in signals if s.pipeline_run_id]
+    if run_ids:
+        rows = await session.execute(
+            select(PipelineRun, Pipeline)
+            .join(Pipeline, Pipeline.id == PipelineRun.pipeline_id)
+            .where(PipelineRun.id.in_(run_ids))
+        )
+        runs = {run.id: (run, pipe) for run, pipe in rows.all()}
+        for signal in signals:
+            if signal.pipeline_run_id in runs:
+                run, pipe = runs[signal.pipeline_run_id]
+                contexts[signal.id]["pipelineRun"] = {
+                    "id": run.id,
+                    "pipelineId": run.pipeline_id,
+                    "pipelineName": pipe.name,
+                    "status": run.status,
+                    "startedAt": run.started_at.isoformat() if run.started_at else None,
+                    "createdAt": run.created_at.isoformat(),
+                }
+
+    pending = await session.execute(select(Approval).where(Approval.status == "pending"))
+    wanted = {str(s.id): s.id for s in signals}
+    for approval in pending.scalars().all():
+        payload = approval.decision_payload or {}
+        metadata = payload.get("metadata") or payload.get("context") or payload
+        signal_ids = metadata.get("signal_ids") or metadata.get("signalIds") or []
+        for raw_id in signal_ids if isinstance(signal_ids, list) else []:
+            signal_id = wanted.get(str(raw_id))
+            if signal_id and "approval" not in contexts[signal_id]:
+                contexts[signal_id]["approval"] = {
+                    "id": approval.id,
+                    "label": "Awaiting Gate 1",
+                    "href": f"#approvals/{approval.id}",
+                }
+    return contexts
+
+
+def _serialize_signal(signal: SignalQueue, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    context = context or {}
+    qual = signal.qualification_json
+    # DIST4: surface districtContext from qualification_json (written by annotate_district_tier)
+    district_context: dict[str, Any] | None = None
+    if isinstance(qual, dict):
+        district_context = qual.get("districtContext")
     return {
         "id": signal.id,
         "sourceType": signal.source_type,
         "sourceUrl": signal.source_url,
         "sourceId": signal.source_id,
+        "pipelineRunId": signal.pipeline_run_id,
+        "pipelineRun": context.get("pipelineRun"),
+        "approval": context.get("approval"),
         "headline": signal.headline,
         "summary": signal.summary,
         "campaignFamily": signal.campaign_family,
         "urgencyTier": signal.urgency_tier,
         "discoveredBy": signal.discovered_by,
         "districtId": signal.district_id,
+        "resolvedDistrictId": signal.resolved_district_id,
+        "districtContext": district_context,
         "state": signal.state,
         "reasonCodes": signal.reason_codes or [],
         "provenance": signal.provenance,

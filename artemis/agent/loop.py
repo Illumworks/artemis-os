@@ -53,6 +53,8 @@ async def run_turn(
     tools: ToolRegistry | None = None,
     system: str | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
+    speed_tier: str | None = None,
     max_tokens: int = 4096,
     max_iterations: int = 10,
     hooks: HookRegistry | None = None,
@@ -79,6 +81,8 @@ async def run_turn(
             system=system,
             tools=tool_specs,
             model=model,
+            reasoning_effort=reasoning_effort,
+            speed_tier=speed_tier,
             max_tokens=max_tokens,
             cache_system=cache_system,
             cache_tools=cache_tools,
@@ -151,6 +155,16 @@ async def _execute_tool(
 
     entry = tools.get(use.name)
     assert entry is not None  # name-in-registry check above
+
+    # H1: validate input against the tool's JSONSchema before execution.
+    # Returns a self-teaching error string on failure, None on success.
+    validation_error = tools.validate_input(use.name, use.input)
+    if validation_error is not None:
+        return ToolResultBlock(
+            tool_use_id=use.id,
+            content=validation_error,
+            is_error=True,
+        )
 
     payload = {"name": use.name, "input": use.input, "tool_use_id": use.id}
     if hooks:

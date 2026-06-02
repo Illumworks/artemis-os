@@ -244,7 +244,7 @@ async def jira_get_team_members(
                     continue
                 try:
                     for user in await client.get_assignable_users(key):
-                        if (acc_id := user.get("accountId")):
+                        if acc_id := user.get("accountId"):
                             seen.setdefault(acc_id, user)
                 except JiraAPIError:
                     continue  # skip projects we can't query

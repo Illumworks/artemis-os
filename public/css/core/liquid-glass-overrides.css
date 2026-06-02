@@ -719,7 +719,6 @@ html[data-theme="dark"] .tip-card {
 .agent-sidebar-body .monitor-card,
 .agent-sidebar-body .chain-card,
 .agent-sidebar-body .dag-card,
-.agent-sidebar-body .wf-card,
 .agent-sidebar-body .agent-card {
   border-left: none !important;
 }

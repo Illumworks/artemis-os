@@ -1,0 +1,87 @@
+ruleset_id: biliteracy
+version: 1
+description: |
+  Biliteracy / dual-language campaign qualification.
+  Targets districts implementing biliteracy initiatives, seeking Spanish-English
+  language assessment, or operating dual-language programs needing growth measurement.
+focus_areas:
+  - State biliteracy initiatives (seal of biliteracy, dual-language mandates)
+  - District dual-language program expansion
+  - English Learner population indicators
+  - Spanish reading assessment needs
+
+hard_filters:
+  - id: priority_state
+    type: deterministic
+    check: signal.geography.state IN territory_config.priority_states
+    fail_action: reject_signal
+
+  - id: district_min_enrollment
+    type: deterministic
+    check: district.enrollment >= 5000
+    fail_action: reject_signal
+
+  - id: has_contact_or_stub
+    type: deterministic
+    check: contact_db_stub.has_contact(signal.geography.district_id)
+    fail_action: reject_signal
+
+weighted_signals:
+  - id: bilit_w1
+    description: State has active biliteracy initiative
+    check: signal_has_reason_code('STATE_BILITERACY_INITIATIVE')
+    weight: 0.25
+
+  - id: bilit_w2
+    description: Bill enacted (state-level) related to biliteracy or dual-language
+    check: |
+      signal_has_reason_code('BILL_ENACTED')
+      AND signal_has_reason_code('STATE_BILITERACY_INITIATIVE')
+    weight: 0.20
+
+  - id: bilit_w3
+    description: Federal grant cycle open targeting EL / biliteracy
+    check: signal_has_reason_code('FEDERAL_GRANT_OPEN')
+    weight: 0.10
+
+  - id: bilit_w4
+    description: District board reviewing biliteracy / dual-language curriculum
+    check: signal_has_reason_code('BOARD_LITERACY_CURRICULUM_REVIEW')
+    weight: 0.15
+
+qualitative_rubrics:
+  - id: bilit_q1
+    description: Evidence explicitly references Spanish-language reading assessment or dual-language program growth measurement
+    prompt: |
+      You are evaluating one qualitative rubric against one signal's evidence.
+      Apply strictly — do not stretch interpretation.
+
+      Rubric: "District is actively seeking Spanish-language reading assessment OR
+      growth measurement for an existing dual-language / biliteracy program. Generic
+      references to 'English Learners' or 'ELL services' alone do NOT qualify."
+
+      Evidence:
+      {{signal.source.verbatim_snippet}}
+
+      Speaker: {{signal.source.speaker_attribution}}
+
+      Return JSON: { "applies": true|false, "confidence": 0.0-1.0, "reasoning": "..." }
+    fires_when: applies == true AND confidence > 0.7
+    weight_when_fires: 0.30
+
+fit_score_formula: |
+  fit_score = min(1.0,
+    sum(weight for each weighted_signal that fired)
+    + sum(weight_when_fires for each qualitative_rubric that fired)
+  )
+
+routing:
+  primary_threshold: 0.7
+  secondary_threshold: 0.6
+  redundancy_check: []
+
+author: seed
+notes: |
+  Light seed for v1. Most biliteracy signals will originate from state DoE
+  scout (1.6) and legislative scout (1.4). Rule weights set conservatively
+  pending hit-rate data.

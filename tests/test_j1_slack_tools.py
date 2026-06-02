@@ -52,8 +52,8 @@ async def test_post_message_sends_correct_payload() -> None:
     mock_http.post.assert_called_once()
     call_kwargs = mock_http.post.call_args
     assert "chat.postMessage" in call_kwargs.args[0]
-    assert call_kwargs.kwargs["json"]["channel"] == "C123"
-    assert call_kwargs.kwargs["json"]["text"] == "Hello world"
+    assert call_kwargs.kwargs["data"]["channel"] == "C123"
+    assert call_kwargs.kwargs["data"]["text"] == "Hello world"
     assert call_kwargs.kwargs["headers"]["Authorization"] == "Bearer xoxb-test-token"
     assert result["ts"] == "111.222"
 
@@ -68,7 +68,7 @@ async def test_post_message_with_thread_ts() -> None:
     with patch("httpx.AsyncClient", return_value=mock_http):
         await _make_client().post_message("C123", "Reply", thread_ts="111.222")
 
-    payload = mock_http.post.call_args.kwargs["json"]
+    payload = mock_http.post.call_args.kwargs["data"]
     assert payload["thread_ts"] == "111.222"
 
 
@@ -104,9 +104,9 @@ async def test_get_channel_history_returns_messages() -> None:
         result = await _make_client().get_channel_history("C456", limit=10)
 
     assert result == messages
-    payload = mock_http.post.call_args.kwargs["json"]
+    payload = mock_http.post.call_args.kwargs["data"]
     assert payload["channel"] == "C456"
-    assert payload["limit"] == 10
+    assert payload["limit"] == "10"
     assert "conversations.history" in mock_http.post.call_args.args[0]
 
 
@@ -123,7 +123,7 @@ async def test_add_reaction_correct_payload() -> None:
     with patch("httpx.AsyncClient", return_value=mock_http):
         await _make_client().add_reaction("C789", "123.456", "thumbsup")
 
-    payload = mock_http.post.call_args.kwargs["json"]
+    payload = mock_http.post.call_args.kwargs["data"]
     assert payload["channel"] == "C789"
     assert payload["timestamp"] == "123.456"
     assert payload["name"] == "thumbsup"
@@ -145,9 +145,9 @@ async def test_list_channels_returns_channels() -> None:
         result = await _make_client().list_channels(limit=50)
 
     assert result == channels
-    payload = mock_http.post.call_args.kwargs["json"]
+    payload = mock_http.post.call_args.kwargs["data"]
     assert payload["types"] == "public_channel,private_channel"
-    assert payload["limit"] == 50
+    assert payload["limit"] == "50"
     assert "conversations.list" in mock_http.post.call_args.args[0]
 
 
@@ -196,7 +196,7 @@ async def test_post_dm_opens_then_sends() -> None:
     second_url = mock_http.post.call_args_list[1].args[0]
     assert "conversations.open" in first_url
     assert "chat.postMessage" in second_url
-    second_payload = mock_http.post.call_args_list[1].kwargs["json"]
+    second_payload = mock_http.post.call_args_list[1].kwargs["data"]
     assert second_payload["channel"] == "D999"
     assert second_payload["text"] == "Hey there"
     assert result["ts"] == "7.0"

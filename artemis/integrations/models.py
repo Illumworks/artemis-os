@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ARRAY, TIMESTAMP, Text, UniqueConstraint
+from sqlalchemy import ARRAY, TIMESTAMP, Boolean, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,6 +14,12 @@ from artemis.db import Base
 _KNOWN_PROVIDERS = frozenset(
     {"slack", "gcal", "gmail", "jira", "granola", "anthropic", "openai", "gemini"}
 )
+
+# Status string constants. The `status` column is free-form Text — no enum
+# migration is required — but referencing these constants prevents typos.
+STATUS_ACTIVE = "active"
+STATUS_NEEDS_REAUTH = "needs_reauth"
+STATUS_REVOKED = "revoked"
 
 
 class Integration(Base):
@@ -31,6 +37,7 @@ class Integration(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
     last_verified_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_refresh_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="'active'")
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="'{}'::jsonb"
@@ -51,6 +58,40 @@ class IntegrationConfig(Base):
     updated_by: Mapped[str | None] = mapped_column(Text)
 
 
+class SlackUser(Base):
+    """Cache of resolved Slack user identities (id → human name).
+
+    Populated on demand by triage.resolve_user(); stale after 7 days.
+    """
+
+    __tablename__ = "slack_users"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    real_name: Mapped[str | None] = mapped_column(Text)
+    is_bot: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    fetched_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default="now()"
+    )
+
+
+class SlackChannel(Base):
+    """Cache of resolved Slack channel names (id → name, is_im).
+
+    Populated on demand by triage.resolve_channel(); stale after 7 days.
+    """
+
+    __tablename__ = "slack_channels"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    is_im: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    fetched_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default="now()"
+    )
+
+
 class SlackInboundMessage(Base):
     __tablename__ = "slack_inbound_messages"
 
@@ -65,3 +106,7 @@ class SlackInboundMessage(Base):
     received_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # J9b: mention type classifier.  Values: 'direct'|'channel'|'group'|'keyword'.
+    # NULL treated as 'direct' for backwards compatibility.
+    mention_type: Mapped[str | None] = mapped_column(Text, nullable=True)

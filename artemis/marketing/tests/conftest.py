@@ -28,11 +28,18 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 import artemis.db
-import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata
-from artemis.config import settings
+import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata (incl. QualifierRuleApplication, SkippedSignal, DistrictDataMeta)
+import artemis.pipelines.models  # noqa: F401 — pipeline_runs is a FK dep of signal_queue; needed for ORM sort_tables
 from artemis.db import attach_pgvector_codec
 
-_db_url = os.environ.get("ARTEMIS_TEST_DB_URL", settings.db_url)
+# Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
+# if ARTEMIS_DB_URL does not contain "artemis_test", refuse to load.
+_db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
+if "artemis_test" not in _db_url:
+    raise RuntimeError(
+        f"REFUSING TO LOAD {__name__}: db_url={_db_url!r} is not the test database. "
+        "TRUNCATE on the live DB would destroy production data. Set ARTEMIS_DB_URL=...artemis_test."
+    )
 
 # Replace the main app engine with a NullPool engine at import time.
 # This prevents "Future attached to a different loop" errors when the ASGI
@@ -48,19 +55,28 @@ artemis.db.SessionLocal = __import__(
     class_=AsyncSession,
 )
 
-# Order matters: child tables first (FK constraints)
+# Order matters: child tables first (FK constraints).
+# signal_reason_codes has no FK children from marketing tables — safe to truncate last.
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "campaign_state_transitions, "
     "approvals, "
     "campaign_deliverables, "
     "content_asset_links, "
     "content_assets, "
     "campaign_briefs, "
+    "campaign_candidate_signals, "
     "campaign_candidates, "
     "scout_runs, "
+    "qualifier_rule_applications, "
+    "skipped_signals, "
+    "districts, "
+    "district_tier_bands, "
+    "district_data_meta, "
     "signal_queue, "
     "rulesets, "
-    "territory_config "
+    "territory_config, "
+    "signal_reason_codes "
     "RESTART IDENTITY CASCADE"
 )
 

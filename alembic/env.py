@@ -8,16 +8,16 @@ so `target_metadata` picks them up automatically once they exist.
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from artemis.config import settings
-from artemis.db import Base
-
 # Import all model modules so they register on Base.metadata.
 # As B1 / B2 / B3 / B4 land their models, add imports here.
+import artemis.marketing.models  # noqa: F401 — registers marketing OS models
 import artemis.memory.models  # noqa: F401 — registers memory keystone models
+from alembic import context
+from artemis.config import settings
+from artemis.db import Base
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.db_url)

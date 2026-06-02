@@ -27,6 +27,7 @@ from artemis.marketing.repository import (
     create_scout_run,
     create_signal,
 )
+from artemis.marketing.state_machine import SignalState
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -221,13 +222,13 @@ class TestSignalQueueList:
     async def test_list_filter_by_status(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        await _make_signal(db_session, signal_status="in_inbox")
-        await _make_signal(db_session, signal_status="approved")
+        await _make_signal(db_session, signal_status=SignalState.qualified.value)
+        await _make_signal(db_session, signal_status=SignalState.APPROVED.value)
         await db_session.commit()
-        r = await client.get("/api/signal-queue/?status=in_inbox")
+        r = await client.get(f"/api/signal-queue/?status={SignalState.qualified.value}")
         assert r.status_code == 200
         signals = r.json()["signals"]
-        assert all(s["signalStatus"] == "in_inbox" for s in signals)
+        assert all(s["signalStatus"] == SignalState.qualified.value for s in signals)
 
     async def test_list_invalid_status_returns_all(
         self, client: AsyncClient, db_session: AsyncSession
@@ -292,6 +293,17 @@ class TestSignalQueueIntake:
         assert body["dryRun"] is True
         assert body["valid"] is True
 
+    async def test_intake_root_alias_matches_intake_response_shape(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        payload = {"dryRun": True, "headline": "Big news", "campaignFamily": "obc"}
+
+        intake_resp = await client.post("/api/signal-queue/intake", json=payload)
+        alias_resp = await client.post("/api/signal-queue", json=payload)
+
+        assert alias_resp.status_code == intake_resp.status_code == 200
+        assert alias_resp.json() == intake_resp.json()
+
     async def test_intake_creates_signal(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -349,18 +361,18 @@ class TestSignalQueueActions:
     async def test_approve_wrong_status(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        signal = await _make_signal(db_session, signal_status="approved")
+        signal = await _make_signal(db_session, signal_status=SignalState.APPROVED.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/approve")
         assert r.status_code == 409
 
     async def test_approve_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/approve")
         assert r.status_code == 200
         body = r.json()
-        assert body["signal"]["signalStatus"] == "approved"
+        assert body["signal"]["signalStatus"] == SignalState.APPROVED.value
         assert "candidateId" in body
 
     async def test_reject_not_found(self, client: AsyncClient, db_session: AsyncSession) -> None:
@@ -368,13 +380,13 @@ class TestSignalQueueActions:
         assert r.status_code == 404
 
     async def test_reject_wrong_status(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="rejected")
+        signal = await _make_signal(db_session, signal_status=SignalState.REJECTED_AT_GATE_1.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/reject", json={})
         assert r.status_code == 409
 
     async def test_reject_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(
             f"/api/signal-queue/{signal.id}/reject",
@@ -382,7 +394,7 @@ class TestSignalQueueActions:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["signalStatus"] == "rejected"
+        assert body["signalStatus"] == SignalState.REJECTED_AT_GATE_1.value
         assert body["rejectedReason"] == "Not relevant"
 
     async def test_snooze_not_found(self, client: AsyncClient, db_session: AsyncSession) -> None:
@@ -390,18 +402,18 @@ class TestSignalQueueActions:
         assert r.status_code == 404
 
     async def test_snooze_invalid_days(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/snooze", json={"days": 0})
         assert r.status_code == 400
 
     async def test_snooze_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/snooze", json={"days": 7})
         assert r.status_code == 200
         body = r.json()
-        assert body["signalStatus"] == "snoozed"
+        assert body["signalStatus"] == SignalState.SNOOZED.value
         assert body["snoozedUntil"] is not None
 
     async def test_ask_not_found(self, client: AsyncClient, db_session: AsyncSession) -> None:
@@ -409,16 +421,39 @@ class TestSignalQueueActions:
         assert r.status_code == 404
 
     async def test_ask_ok(self, client: AsyncClient, db_session: AsyncSession) -> None:
-        signal = await _make_signal(db_session, signal_status="in_inbox")
+        signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/ask")
         assert r.status_code == 200
-        assert r.json()["signalStatus"] == "archived"
+        assert r.json()["signalStatus"] == SignalState.ARCHIVED.value
+
+    async def test_archive_alias_matches_ask_response_shape(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        ask_signal = await _make_signal(db_session, signal_status=SignalState.qualified.value)
+        archive_signal = await _make_signal(
+            db_session,
+            signal_status=SignalState.qualified.value,
+            headline="Archive alias",
+            source_url="http://example.com/archive-alias",
+        )
+        await db_session.commit()
+
+        ask = await client.post(f"/api/signal-queue/{ask_signal.id}/ask")
+        archive = await client.post(f"/api/signal-queue/{archive_signal.id}/archive")
+
+        assert archive.status_code == ask.status_code == 200
+        assert archive.json().keys() == ask.json().keys()
+        assert (
+            archive.json()["signalStatus"]
+            == ask.json()["signalStatus"]
+            == SignalState.ARCHIVED.value
+        )
 
     async def test_ask_already_archived(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        signal = await _make_signal(db_session, signal_status="archived")
+        signal = await _make_signal(db_session, signal_status=SignalState.ARCHIVED.value)
         await db_session.commit()
         r = await client.post(f"/api/signal-queue/{signal.id}/ask")
         assert r.status_code == 409
@@ -643,6 +678,30 @@ class TestCampaignDeliverables:
         assert r.status_code == 200
         assert r.json() == []
 
+    async def test_list_deliverables_query_alias_matches_path(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        signal = await _make_signal(db_session)
+        candidate = await _make_candidate(db_session, signal)
+        await db_session.commit()
+        await client.post(
+            "/api/campaign-deliverables/",
+            json={"candidateId": candidate.id, "status": "generating"},
+        )
+
+        path = await client.get(f"/api/campaign-deliverables/{candidate.id}")
+        alias = await client.get(f"/api/campaign-deliverables?campaignId={candidate.id}")
+
+        assert alias.status_code == 200
+        assert alias.json() == path.json()
+
+    async def test_list_deliverables_query_alias_without_campaign_returns_empty(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        r = await client.get("/api/campaign-deliverables")
+        assert r.status_code == 200
+        assert r.json() == []
+
     async def test_list_deliverables_candidate_not_found(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -701,7 +760,7 @@ class TestCampaignDeliverables:
             f"/api/campaign-deliverables/{deliverable_id}/submit-review", json={}
         )
         assert r2.status_code == 200
-        assert r2.json()["status"] == "review_pending"
+        assert r2.json()["status"] == "draft_ready"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -815,6 +874,31 @@ class TestContentAssetLinks:
         assert body["assetId"] == asset.id
         assert body["linkRole"] == "reference"
 
+    async def test_list_links_query_alias_filters_by_campaign(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        signal = await _make_signal(db_session)
+        candidate = await _make_candidate(db_session, signal)
+        other = await _make_candidate(db_session, signal)
+        asset = await _make_asset(db_session)
+        other_asset = await _make_asset(db_session)
+        await db_session.commit()
+        created = await client.post(
+            "/api/content-assets/links",
+            json={"candidateId": candidate.id, "assetId": asset.id},
+        )
+        await client.post(
+            "/api/content-assets/links",
+            json={"candidateId": other.id, "assetId": other_asset.id},
+        )
+
+        alias = await client.get(f"/api/content-assets/links?campaignId={candidate.id}")
+        all_links = await client.get("/api/content-assets/links")
+
+        assert alias.status_code == 200
+        assert alias.json() == [created.json()]
+        assert len(all_links.json()) == 2
+
     async def test_create_link_duplicate_returns_409(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -852,6 +936,24 @@ class TestContentAssetLinks:
         link_id = r_create.json()["id"]
         r_delete = await client.delete(f"/api/content-assets/links/{link_id}")
         assert r_delete.status_code == 204
+
+    async def test_delete_link_campaign_asset_alias_matches_link_delete(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        signal = await _make_signal(db_session)
+        candidate = await _make_candidate(db_session, signal)
+        asset = await _make_asset(db_session)
+        await db_session.commit()
+        await client.post(
+            "/api/content-assets/links",
+            json={"candidateId": candidate.id, "assetId": asset.id},
+        )
+
+        r_delete = await client.delete(f"/api/content-assets/links/{candidate.id}/{asset.id}")
+        r_repeat = await client.delete(f"/api/content-assets/links/{candidate.id}/{asset.id}")
+
+        assert r_delete.status_code == 204
+        assert r_repeat.status_code == 204
 
 
 # ─────────────────────────────────────────────────────────────────────────────

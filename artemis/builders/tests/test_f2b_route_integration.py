@@ -23,13 +23,12 @@ from artemis.builders import repository as repo
 # ---------------------------------------------------------------------------
 
 
-def _fake_adapter(text: str = "ok") -> FakeAdapter:
-    """An adapter that always returns *text*."""
-    return FakeAdapter([ScriptedReply(text=text)])
-
-
 def _multi_fake(*texts: str) -> FakeAdapter:
     return FakeAdapter([ScriptedReply(text=t) for t in texts])
+
+
+def _fake_adapter(text: str = "ok") -> FakeAdapter:
+    return _multi_fake(text)
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +62,7 @@ async def test_agent_run_endpoint_happy_path(seeded_client: AsyncClient) -> None
     """POST /api/agents/{id}/run returns a completed AgentRun JSON."""
     adapter = _fake_adapter("agent says hello")
 
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await seeded_client.post(
             "/api/agents/route-agent-1/run",
             json={"userMessage": "Do something"},
@@ -81,7 +80,7 @@ async def test_agent_run_endpoint_with_shared_context(seeded_client: AsyncClient
     """POST /run with sharedContext passes it through to the executor."""
     adapter = _fake_adapter("used context")
 
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await seeded_client.post(
             "/api/agents/route-agent-2/run",
             json={"sharedContext": {"key": "value"}},
@@ -104,37 +103,11 @@ async def test_agent_run_endpoint_unknown_agent(seeded_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_workflow_run_endpoint_happy_path(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    """POST /api/workflows/{id}/run returns a completed WorkflowRun JSON."""
-    async with db_session.begin():
-        await repo.create_workflow(
-            db_session,
-            workflow_id="route-wf-1",
-            name="Route WF 1",
-            steps=[{"name": "step1", "prompt": "Do it"}],
-        )
-
-    adapter = _fake_adapter("workflow step done")
-    with patch("artemis.builders.workflow_executor.AnthropicAdapter", return_value=adapter):
-        resp = await client.post(
-            "/api/workflows/route-wf-1/run",
-            json={"initialMessage": "go"},
-        )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "completed"
-    assert data["workflowId"] == "route-wf-1"
-    assert "runId" in data
-
-
-@pytest.mark.asyncio
-async def test_workflow_run_endpoint_unknown(client: AsyncClient) -> None:
-    """POST /run on unknown workflow returns 404."""
+async def test_workflow_run_endpoint_deprecated(client: AsyncClient) -> None:
+    """POST /api/workflows/{id}/run returns PIPE6 410 after sunset."""
     resp = await client.post("/api/workflows/no-such-wf/run", json={})
-    assert resp.status_code == 404
+    assert resp.status_code == 410
+    assert resp.json()["error"] == "workflows_deprecated"
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +135,7 @@ async def test_chain_run_endpoint_happy_path(client: AsyncClient, db_session: As
         )
 
     adapter = _fake_adapter("chain step done")
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await client.post(
             "/api/agent-chains/route-chain-1/run",
             json={"initialMessage": "start chain"},
@@ -207,7 +180,7 @@ async def test_dag_run_endpoint_happy_path(client: AsyncClient, db_session: Asyn
         )
 
     adapter = _fake_adapter("dag node done")
-    with patch("artemis.builders.executor.AnthropicAdapter", return_value=adapter):
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
         resp = await client.post(
             "/api/agent-dags/route-dag-1/run",
             json={"initialInputs": {"N1": "my input"}},

@@ -9,24 +9,55 @@ conditions that callers should handle. Callers own the commit/rollback.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from pydantic import ValidationError
+from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.district_classifier import classify_tier, is_supported
+from artemis.marketing.initiation_schemas import CampaignInitiationProposal, TargetScope
 from artemis.marketing.models import (
     Approval,
     CampaignBrief,
     CampaignCandidate,
+    CampaignCandidateSignal,
+    CampaignDeliverable,
     ContentAsset,
     ContentAssetLink,
+    DeliverableType,
+    District,
+    DistrictTierBand,
+    MarketingClusteringConfig,
     Ruleset,
     ScoutRun,
     SignalQueue,
     TerritoryConfig,
 )
+from artemis.marketing.state_machine import WorkspaceState
+
+
+@dataclass(slots=True)
+class CandidatePredecessorContext:
+    candidate_id: int
+    name: str | None
+    objective: str | None
+    latest_brief: dict[str, Any] | None
+    linked_assets: list[dict[str, Any]]
+
+
+@dataclass(slots=True)
+class CandidateLineageContext:
+    candidate_id: int
+    name: str | None
+    objective: str | None
+    latest_brief: dict[str, Any] | None
+    linked_assets: list[dict[str, Any]]
+    drafts: list[dict[str, Any]]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Signal Queue
@@ -56,7 +87,7 @@ async def find_signal_by_dedupe_key(
         .where(
             SignalQueue.source_url == source_url,
             SignalQueue.headline == headline,
-            SignalQueue.signal_status.in_(["in_inbox", "approved"]),
+            SignalQueue.signal_status.in_(["pending_qualification", "qualified", "approved"]),
         )
         .limit(1)
     )
@@ -168,16 +199,17 @@ async def create_campaign_candidate_from_signal(
 ) -> CampaignCandidate:
     """Promote a qualified signal to a campaign candidate.
 
-    Sets decision_state='approved' and workspace_state='created' on creation
-    to match Node app's insertCandidateFromSignal behavior.
+    Sets decision_state='in_inbox' (awaiting Gate 1 decision) and
+    workspace_state='pending_content' on creation. Use transition() to
+    advance decision_state to approved/rejected/etc.
     """
     signal = await get_signal(session, signal_id)
     candidate = CampaignCandidate(
         source_signal_id=signal_id,
         campaign_family=signal.campaign_family,
         stage="human_gate_1",
-        decision_state="approved",
-        workspace_state="created",
+        decision_state="in_inbox",
+        workspace_state=WorkspaceState.pending_content,
         ruleset_version_at_qualification=ruleset_version_tag,
         metrics_json=qualification_summary,
     )
@@ -211,6 +243,229 @@ async def get_candidate(session: AsyncSession, candidate_id: int) -> CampaignCan
     candidate = await session.get(CampaignCandidate, candidate_id)
     if candidate is None:
         raise ValueError(f"campaign_candidates id={candidate_id} not found")
+    return candidate
+
+
+async def list_deliverable_types(
+    session: AsyncSession, active_only: bool = True
+) -> list[DeliverableType]:
+    stmt = select(DeliverableType).order_by(DeliverableType.display_order, DeliverableType.id)
+    if active_only:
+        stmt = stmt.where(DeliverableType.active.is_(True))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_cluster_window_days(session: AsyncSession) -> int:
+    result = await session.execute(select(MarketingClusteringConfig.cluster_window_days).limit(1))
+    cluster_window_days = result.scalar_one_or_none()
+    return cluster_window_days if cluster_window_days is not None else 90
+
+
+async def _attach_signal_to_candidate(
+    session: AsyncSession,
+    candidate: CampaignCandidate,
+    signal: SignalQueue,
+    *,
+    is_primary: bool,
+) -> None:
+    existing = await session.execute(
+        select(CampaignCandidateSignal).where(
+            CampaignCandidateSignal.candidate_id == candidate.id,
+            CampaignCandidateSignal.signal_id == signal.id,
+        )
+    )
+    candidate_signal = existing.scalar_one_or_none()
+    if candidate_signal is not None:
+        return
+
+    session.add(
+        CampaignCandidateSignal(
+            candidate_id=candidate.id,
+            signal_id=signal.id,
+            is_primary=is_primary,
+        )
+    )
+    await session.flush()
+
+
+def _candidate_district_family_stmt(signal: SignalQueue) -> Select[tuple[CampaignCandidate]]:
+    return (
+        select(CampaignCandidate)
+        .join(SignalQueue, CampaignCandidate.source_signal_id == SignalQueue.id)
+        .where(
+            SignalQueue.resolved_district_id == signal.resolved_district_id,
+            CampaignCandidate.campaign_family == signal.campaign_family,
+        )
+    )
+
+
+async def cluster_or_create_candidate(
+    session: AsyncSession, signal: SignalQueue
+) -> CampaignCandidate:
+    """Deterministically group a signal into an open candidate or create a fresh one."""
+    existing = await session.execute(
+        select(CampaignCandidate)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.candidate_id == CampaignCandidate.id)
+        .where(CampaignCandidateSignal.signal_id == signal.id)
+        .order_by(CampaignCandidate.id.desc())
+        .limit(1)
+    )
+    attached_candidate = existing.scalar_one_or_none()
+    if attached_candidate is not None:
+        return attached_candidate
+
+    if signal.resolved_district_id is not None and signal.campaign_family:
+        cluster_window_days = await get_cluster_window_days(session)
+        cutoff = datetime.now(tz=UTC) - timedelta(days=cluster_window_days)
+        open_candidate_result = await session.execute(
+            _candidate_district_family_stmt(signal)
+            .where(
+                CampaignCandidate.initiated_at.is_(None),
+                CampaignCandidate.decision_state != "rejected",
+                CampaignCandidate.created_at >= cutoff,
+            )
+            .order_by(CampaignCandidate.created_at.desc(), CampaignCandidate.id.desc())
+            .limit(1)
+        )
+        open_candidate = open_candidate_result.scalar_one_or_none()
+        if open_candidate is not None:
+            await _attach_signal_to_candidate(session, open_candidate, signal, is_primary=False)
+            return open_candidate
+
+    predecessor_id: int | None = None
+    if signal.resolved_district_id is not None and signal.campaign_family:
+        predecessor_result = await session.execute(
+            _candidate_district_family_stmt(signal)
+            .where(
+                (CampaignCandidate.initiated_at.is_not(None))
+                | (CampaignCandidate.decision_state == "rejected")
+            )
+            .order_by(CampaignCandidate.created_at.desc(), CampaignCandidate.id.desc())
+            .limit(1)
+        )
+        predecessor = predecessor_result.scalar_one_or_none()
+        predecessor_id = predecessor.id if predecessor is not None else None
+
+    candidate = CampaignCandidate(
+        source_signal_id=signal.id,
+        campaign_family=signal.campaign_family,
+        stage="human_gate_1",
+        decision_state="in_inbox",
+        workspace_state=WorkspaceState.pending_content,
+        predecessor_id=predecessor_id,
+    )
+    session.add(candidate)
+    await session.flush()
+    await _attach_signal_to_candidate(session, candidate, signal, is_primary=True)
+    await session.refresh(candidate)
+    return candidate
+
+
+async def get_candidate_signals(
+    session: AsyncSession, candidate_id: int
+) -> list[CampaignCandidateSignal]:
+    await get_candidate(session, candidate_id)
+    result = await session.execute(
+        select(CampaignCandidateSignal)
+        .where(CampaignCandidateSignal.candidate_id == candidate_id)
+        .order_by(
+            CampaignCandidateSignal.is_primary.desc(),
+            CampaignCandidateSignal.attached_at.asc(),
+            CampaignCandidateSignal.id.asc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_candidate_signal_rows(session: AsyncSession, candidate_id: int) -> list[SignalQueue]:
+    await get_candidate(session, candidate_id)
+    result = await session.execute(
+        select(SignalQueue)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.signal_id == SignalQueue.id)
+        .where(CampaignCandidateSignal.candidate_id == candidate_id)
+        .order_by(
+            CampaignCandidateSignal.is_primary.desc(),
+            CampaignCandidateSignal.attached_at.asc(),
+            CampaignCandidateSignal.id.asc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_candidate_primary_signal(
+    session: AsyncSession, candidate_id: int
+) -> SignalQueue | None:
+    result = await session.execute(
+        select(SignalQueue)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.signal_id == SignalQueue.id)
+        .where(
+            CampaignCandidateSignal.candidate_id == candidate_id,
+            CampaignCandidateSignal.is_primary.is_(True),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def save_initiation_proposal(
+    session: AsyncSession,
+    candidate_id: int,
+    proposal: CampaignInitiationProposal | dict[str, Any] | None,
+) -> CampaignCandidate:
+    candidate = await get_candidate(session, candidate_id)
+    candidate.initiation_proposal_json = (
+        proposal.model_dump(mode="json")
+        if isinstance(proposal, CampaignInitiationProposal)
+        else proposal
+    )
+    await session.flush()
+    return candidate
+
+
+async def initiate_campaign(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    name: str,
+    objective: str,
+    owner_user_id: int | None,
+    target_scope: TargetScope | dict[str, Any],
+    deliverable_type_slugs: list[str],
+    initiated_by: int | None,
+) -> CampaignCandidate:
+    candidate = await get_candidate(session, candidate_id)
+    if candidate.initiated_at is not None:
+        raise ValueError(f"campaign_candidates id={candidate_id} is already initiated")
+
+    try:
+        parsed_target_scope = (
+            target_scope
+            if isinstance(target_scope, TargetScope)
+            else TargetScope.model_validate(target_scope)
+        )
+    except ValidationError as exc:
+        message = exc.errors()[0].get("msg", "Invalid target_scope")
+        raise ValueError(message) from exc
+
+    active_deliverable_types = await list_deliverable_types(session, active_only=True)
+    active_slugs = {row.slug for row in active_deliverable_types}
+    invalid_slugs = [slug for slug in deliverable_type_slugs if slug not in active_slugs]
+    if invalid_slugs:
+        raise ValueError(
+            "deliverableTypeSlugs must be active deliverable types. "
+            f"Invalid: {', '.join(invalid_slugs)}. "
+            f"Active: {', '.join(sorted(active_slugs))}"
+        )
+
+    candidate.name = name
+    candidate.objective = objective
+    candidate.owner_user_id = owner_user_id
+    candidate.target_scope_json = parsed_target_scope.model_dump(mode="json")
+    candidate.deliverable_types_json = list(deliverable_type_slugs)
+    candidate.initiated_at = datetime.now(tz=UTC)
+    candidate.initiated_by = initiated_by
+    await session.flush()
     return candidate
 
 
@@ -248,6 +503,135 @@ async def get_campaign_brief(session: AsyncSession, candidate_id: int) -> Campai
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_candidate_predecessor_context(
+    session: AsyncSession,
+    candidate_id: int,
+) -> CandidatePredecessorContext | None:
+    candidate = await get_candidate(session, candidate_id)
+    if candidate.predecessor_id is None:
+        return None
+
+    predecessor = await get_candidate(session, candidate.predecessor_id)
+    latest_brief = await get_campaign_brief(session, predecessor.id)
+    asset_rows = (
+        await session.execute(
+            select(ContentAsset, ContentAssetLink.link_role)
+            .join(ContentAssetLink, ContentAssetLink.asset_id == ContentAsset.id)
+            .where(ContentAssetLink.candidate_id == predecessor.id)
+            .order_by(ContentAsset.id.asc())
+        )
+    ).all()
+
+    return CandidatePredecessorContext(
+        candidate_id=predecessor.id,
+        name=predecessor.name,
+        objective=predecessor.objective,
+        latest_brief=latest_brief.content if latest_brief is not None else None,
+        linked_assets=[
+            {
+                "asset_id": asset.id,
+                "asset_type": asset.asset_type,
+                "summary": asset.summary,
+                "metadata": asset.asset_metadata,
+                "link_role": link_role,
+            }
+            for asset, link_role in asset_rows
+        ],
+    )
+
+
+async def get_candidate_lineage_context(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    max_depth: int = 10,
+) -> list[CandidateLineageContext]:
+    """Return the predecessor chain, nearest first, with collateral payloads."""
+    lineage: list[CandidateLineageContext] = []
+    seen: set[int] = set()
+    current = await get_candidate(session, candidate_id)
+    predecessor_id = current.predecessor_id
+
+    while predecessor_id is not None and len(lineage) < max_depth and predecessor_id not in seen:
+        seen.add(predecessor_id)
+        predecessor = await get_candidate(session, predecessor_id)
+        latest_brief = await get_campaign_brief(session, predecessor.id)
+        asset_rows = (
+            await session.execute(
+                select(ContentAsset, ContentAssetLink.link_role)
+                .join(ContentAssetLink, ContentAssetLink.asset_id == ContentAsset.id)
+                .where(ContentAssetLink.candidate_id == predecessor.id)
+                .order_by(ContentAsset.id.asc())
+            )
+        ).all()
+        draft_rows = (
+            (
+                await session.execute(
+                    select(CampaignDeliverable)
+                    .where(CampaignDeliverable.candidate_id == predecessor.id)
+                    .order_by(CampaignDeliverable.created_at.desc(), CampaignDeliverable.id.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        lineage.append(
+            CandidateLineageContext(
+                candidate_id=predecessor.id,
+                name=predecessor.name,
+                objective=predecessor.objective,
+                latest_brief=latest_brief.content if latest_brief is not None else None,
+                linked_assets=[
+                    {
+                        "asset_id": asset.id,
+                        "asset_type": asset.asset_type,
+                        "summary": asset.summary,
+                        "metadata": asset.asset_metadata,
+                        "link_role": link_role,
+                    }
+                    for asset, link_role in asset_rows
+                ],
+                drafts=[
+                    {
+                        "draft_id": draft.id,
+                        "deliverable_id": draft.deliverable_id,
+                        "campaign_id": draft.campaign_id,
+                        "status": draft.status,
+                        "metadata": draft.deliverable_metadata,
+                    }
+                    for draft in draft_rows
+                ],
+            )
+        )
+
+        predecessor_id = predecessor.predecessor_id
+
+    return lineage
+
+
+async def list_run_candidates(
+    session: AsyncSession,
+    pipeline_run_id: str,
+    *,
+    initiated_only: bool | None = None,
+) -> list[CampaignCandidate]:
+    stmt = (
+        select(CampaignCandidate)
+        .join(CampaignCandidateSignal, CampaignCandidateSignal.candidate_id == CampaignCandidate.id)
+        .join(SignalQueue, SignalQueue.id == CampaignCandidateSignal.signal_id)
+        .where(SignalQueue.pipeline_run_id == pipeline_run_id)
+        .distinct()
+        .order_by(CampaignCandidate.id.asc())
+    )
+    if initiated_only is True:
+        stmt = stmt.where(CampaignCandidate.initiated_at.is_not(None))
+    elif initiated_only is False:
+        stmt = stmt.where(CampaignCandidate.initiated_at.is_(None))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -303,6 +687,20 @@ async def list_campaign_asset_links(
     return list(result.scalars().all())
 
 
+async def list_approved_content_assets(
+    session: AsyncSession, *, campaign_family: str | None = None, limit: int = 50
+) -> list[ContentAsset]:
+    """Return approved reusable assets, optionally filtered by metadata campaign family."""
+    bounded_limit = max(1, min(limit, 200))
+    stmt = select(ContentAsset).where(ContentAsset.status == "approved")
+    if campaign_family:
+        stmt = stmt.where(
+            ContentAsset.asset_metadata["campaign_family"].as_string() == campaign_family
+        )
+    result = await session.execute(stmt.order_by(ContentAsset.id.desc()).limit(bounded_limit))
+    return list(result.scalars().all())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Approvals
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,6 +741,109 @@ async def decide_approval(
         approval.decision_payload = decision_payload
     await session.flush()
     return approval
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Districts
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def get_district(session: AsyncSession, district_id: int) -> District | None:
+    return await session.get(District, district_id)
+
+
+async def get_tier_bands(session: AsyncSession) -> list[DistrictTierBand]:
+    result = await session.execute(
+        select(DistrictTierBand).order_by(DistrictTierBand.display_order)
+    )
+    return list(result.scalars().all())
+
+
+async def upsert_district(
+    session: AsyncSession,
+    *,
+    nces_id: str | None,
+    name: str,
+    state: str | None,
+    enrollment: int | None,
+    on_skip_list: bool = False,
+    source: str,
+) -> District:
+    normalized_nces_id = nces_id.strip() if nces_id else None
+    normalized_name = name.strip()
+    normalized_state = state.strip().upper() if state else None
+    bands = await get_tier_bands(session)
+    tier = classify_tier(enrollment, bands)
+    classified_at = datetime.now(tz=UTC)
+
+    district: District | None = None
+    if normalized_nces_id is not None:
+        # When an nces_id is supplied, it is the SOLE identity key. Do NOT
+        # fall back to name+state — distinct districts can share a name
+        # (Ohio has multiple "Buckeye Local", each with its own nces_id), so
+        # a fallback collapses them onto one row and the next CSV pass keeps
+        # overwriting nces_id back and forth.
+        district = await session.scalar(
+            select(District)
+            .where(District.nces_id == normalized_nces_id)
+            .order_by(District.id.desc())
+            .limit(1)
+        )
+    else:
+        stmt = select(District).where(
+            District.name == normalized_name,
+            District.nces_id.is_(None),
+        )
+        if normalized_state is None:
+            stmt = stmt.where(District.state.is_(None))
+        else:
+            stmt = stmt.where(District.state == normalized_state)
+        district = await session.scalar(stmt.order_by(District.id.desc()).limit(1))
+
+    if district is None:
+        district = District(
+            nces_id=normalized_nces_id,
+            name=normalized_name,
+            state=normalized_state,
+            enrollment=enrollment,
+            tier=tier,
+            supported=is_supported(tier),
+            on_skip_list=on_skip_list,
+            classification_source=source,
+            classified_at=classified_at,
+        )
+        session.add(district)
+    else:
+        district.nces_id = normalized_nces_id
+        district.name = normalized_name
+        district.state = normalized_state
+        district.enrollment = enrollment
+        district.tier = tier
+        district.supported = is_supported(tier)
+        district.on_skip_list = on_skip_list
+        district.classification_source = source
+        district.classified_at = classified_at
+
+    district.updated_at = classified_at
+    await session.flush()
+    await session.refresh(district)
+    return district
+
+
+async def recompute_all_tiers(session: AsyncSession) -> int:
+    bands = await get_tier_bands(session)
+    result = await session.execute(select(District).order_by(District.id))
+    districts = list(result.scalars().all())
+    now = datetime.now(tz=UTC)
+
+    for district in districts:
+        district.tier = classify_tier(district.enrollment, bands)
+        district.supported = is_supported(district.tier)
+        district.classified_at = now
+        district.updated_at = now
+
+    await session.flush()
+    return len(districts)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

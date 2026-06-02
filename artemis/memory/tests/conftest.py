@@ -24,18 +24,28 @@ import pytest
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-import artemis.memory.models  # noqa: F401 — registers all models on Base.metadata
-from artemis.config import settings
+import artemis.memory.models  # noqa: F401 — registers all models on Base.metadata including MemoryConflict
 from artemis.db import attach_pgvector_codec
 
-_db_url = os.environ.get("ARTEMIS_TEST_DB_URL", settings.db_url)
+# Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
+# if ARTEMIS_DB_URL does not contain "artemis_test", refuse to load.
+_db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
+if "artemis_test" not in _db_url:
+    raise RuntimeError(
+        f"REFUSING TO LOAD {__name__}: db_url={_db_url!r} is not the test database. "
+        "TRUNCATE on the live DB would destroy production data. Set ARTEMIS_DB_URL=...artemis_test."
+    )
 _engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
 attach_pgvector_codec(_engine)
 
 _TRUNCATE_SQL = text(
-    # Graph tables first (depend on memory_entities + memory_observations)
-    "TRUNCATE memory_relation_rejections, memory_relations, "
+    # M2: conflicts depend on memory_observations; truncate first
+    "TRUNCATE memory_conflicts, "
+    # Graph tables (depend on memory_entities + memory_observations)
+    "memory_relation_rejections, memory_relations, "
     "memory_entity_mentions, memory_entity_aliases, memory_entities, "
+    # MW1: join table (CASCADE from memory_observations handles it, but list explicitly)
+    "memory_observation_scopes, "
     # B1/B2 tables
     "memory_embeddings, memory_evidence, memory_observations, "
     "memory_drawers, memory_scopes, "

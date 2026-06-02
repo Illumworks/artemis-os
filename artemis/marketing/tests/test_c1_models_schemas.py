@@ -357,7 +357,7 @@ class TestReadSchemasFromAttributes:
             "reason_codes": [],
             "provenance": None,
             "qualification_json": None,
-            "signal_status": "in_inbox",
+            "signal_status": "pending_qualification",
             "snoozed_until": None,
             "rejected_reason": None,
             "owner_user_id": None,

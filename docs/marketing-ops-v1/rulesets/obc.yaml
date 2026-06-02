@@ -1,0 +1,126 @@
+ruleset_id: OBC
+version: 1
+description: |
+  Outcomes-Based Contract campaign qualification.
+  Targets districts publicly signaling readiness for performance-guarantee
+  procurement structures.
+focus_areas:
+  - Prior reading-program churn
+  - State-approved screener requirements
+  - Vendor accountability signals
+  - ESSER cliff pressure
+  - Active RFPs with efficacy / outcomes language
+
+hard_filters:
+  - id: priority_state
+    type: deterministic
+    check: signal.geography.state IN territory_config.priority_states
+    fail_action: reject_signal
+
+  - id: district_min_enrollment
+    type: deterministic
+    check: district.enrollment >= 5000
+    fail_action: reject_signal
+
+  - id: has_contact_or_stub
+    type: deterministic
+    check: contact_db_stub.has_contact(signal.geography.district_id)
+    fail_action: reject_signal
+
+weighted_signals:
+  - id: obc_w1
+    description: Prior reading-program churn in past 24 months
+    check: |
+      EXISTS (SELECT 1 FROM signal_queue
+              WHERE signal->'geography'->>'district_id' = :district_id
+                AND signal->'reason_codes' @> '[{"code": "SUPERINTENDENT_TRANSITION"}]'
+                AND discovered_at > NOW() - INTERVAL '24 months')
+    weight: 0.15
+
+  - id: obc_w2
+    description: State has state-approved screener (dyslexia mandate)
+    check: signal_has_reason_code('STATE_DYSLEXIA_MANDATE')
+    weight: 0.10
+
+  - id: obc_w3
+    description: Board-level curriculum review activity
+    check: signal_has_reason_code('BOARD_LITERACY_CURRICULUM_REVIEW')
+    weight: 0.20
+
+  - id: obc_w4
+    description: ESSER cliff reference (per mention, capped)
+    check: signal_has_reason_code('ESSER_CLIFF_REFERENCE')
+    weight: 0.10
+    per_mention: true
+    cap: 0.30
+
+  - id: obc_w5
+    description: Active RFP with explicit efficacy language
+    check: signal_has_reason_code('RFP_EFFICACY_LANGUAGE')
+    weight: 0.25
+
+  - id: obc_w6
+    description: Board approved an OBC-structured RFP
+    check: signal_has_reason_code('BOARD_OBC_RFP_APPROVED')
+    weight: 0.30
+
+  - id: obc_w7
+    description: RFP with outcomes-based contract language
+    check: signal_has_reason_code('RFP_OUTCOMES_BASED_LANGUAGE')
+    weight: 0.30
+
+qualitative_rubrics:
+  - id: obc_q1
+    description: Board minutes show frustration with current vendor accountability
+    prompt: |
+      You are evaluating one qualitative rubric against one signal's evidence.
+      Apply strictly — do not stretch interpretation.
+      False positives cost more than false negatives.
+
+      Rubric: "Board minutes show frustration with current vendor accountability"
+
+      Evidence:
+      {{signal.source.verbatim_snippet}}
+
+      Speaker: {{signal.source.speaker_attribution}}
+
+      Return JSON: { "applies": true|false, "confidence": 0.0-1.0, "reasoning": "..." }
+    fires_when: applies == true AND confidence > 0.6
+    weight_when_fires: 0.20
+
+  - id: obc_q2
+    description: Public statement implying performance-based purchasing preference
+    prompt: |
+      You are evaluating one qualitative rubric against one signal's evidence.
+      Apply strictly — do not stretch interpretation.
+
+      Rubric: "District publicly states preference for performance-based / outcomes-based
+      vendor relationships (e.g., 'we want vendors accountable to results',
+      'pay-for-performance', 'risk-sharing with vendors')"
+
+      Evidence:
+      {{signal.source.verbatim_snippet}}
+
+      Speaker: {{signal.source.speaker_attribution}}
+
+      Return JSON: { "applies": true|false, "confidence": 0.0-1.0, "reasoning": "..." }
+    fires_when: applies == true AND confidence > 0.7
+    weight_when_fires: 0.25
+
+fit_score_formula: |
+  fit_score = min(1.0,
+    sum(weight for each weighted_signal that fired)
+    + sum(weight_when_fires for each qualitative_rubric that fired)
+  )
+
+routing:
+  primary_threshold: 0.7
+  secondary_threshold: 0.6
+  redundancy_check:
+    - primary: OBC
+      cannot_have_secondary: [general_growth]
+
+author: seed
+notes: |
+  v1 light seed. 7 weighted signals + 2 qualitative rubrics.
+  Will be revised by Josh via Ruleset Manager Agent based on hit-rate analysis.

@@ -1,7 +1,7 @@
 /* ── Print Styles ───────────────────────────────────── */
 @media print {
   .sidebar, .top-header, .input-bar, .toolbox-panel,
-  .workflow-panel, .thinking-bar, .modal-overlay,
+  .thinking-bar, .modal-overlay,
   .code-copy-btn, .tool-indicator, .session-delete,
   #send-btn, #stop-btn, .mode-toggle { display: none !important; }
 

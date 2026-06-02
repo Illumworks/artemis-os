@@ -516,6 +516,45 @@
   resize: vertical;
 }
 
+.ops-reason-code-multiselect {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 88%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-card) 94%, transparent);
+}
+
+.ops-reason-code-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.ops-reason-code-option:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ops-reason-code-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ops-reason-code-copy strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.ops-reason-code-copy small {
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
 .ops-search input:focus,
 .ops-field input:focus,
 .ops-field textarea:focus,
@@ -1358,4 +1397,616 @@ button.ops-run-row {
   color: var(--text-secondary);
   margin-bottom: 4px;
   display: block;
+}
+
+/* ── O2/O3 — Agent catalog cards ─────────────────────────────────── */
+
+.ops-agent-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+}
+
+.ops-agent-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms;
+}
+
+.ops-agent-card:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--surface-outline));
+}
+
+.ops-agent-card.active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--surface-outline));
+}
+
+.ops-agent-card-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-panel-soft));
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ops-agent-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ops-agent-avatar-placeholder {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.ops-agent-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ops-agent-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ops-agent-card-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.ops-agent-no-persona {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.ops-agent-card-model {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ops-agent-card-purpose {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ops-agent-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.ops-agent-meta-chip {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-outline) 40%, transparent);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.ops-agent-meta-run {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.ops-agent-tree-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ops-agent-tree-search,
+.ops-agent-tree-sort {
+  min-height: 34px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+.ops-agent-tree-filters {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ops-agent-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 3px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.ops-agent-view-toggle button {
+  min-height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 8px;
+}
+
+.ops-agent-view-toggle button.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-panel));
+  color: var(--accent);
+}
+
+.ops-agent-new-folder {
+  min-height: 34px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 0 10px;
+}
+
+.ops-agent-filter-chip {
+  border: 1px solid var(--surface-outline);
+  border-radius: 999px;
+  background: var(--surface-panel-soft);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  padding: 5px 8px;
+}
+
+.ops-agent-filter-chip:hover,
+.ops-agent-filter-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-outline));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  color: var(--accent);
+}
+
+.ops-agent-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ops-agent-tree-domain,
+.ops-agent-tree-subdomain {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ops-agent-tree-folder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+  text-align: left;
+}
+
+.ops-agent-tree-folder-domain {
+  min-height: 36px;
+  padding: 0 2px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ops-agent-tree-folder-subdomain {
+  min-height: 32px;
+  padding: 0 0 0 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ops-agent-custom-folder {
+  border-radius: 6px;
+}
+
+.ops-agent-folder-drop {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.ops-agent-tree-folder span:last-child {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.ops-agent-tree-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 14px;
+}
+
+.ops-agent-tree-row {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 50px;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-panel) 94%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 9px;
+  text-align: left;
+}
+
+.ops-agent-tree-row[draggable="true"] {
+  cursor: grab;
+}
+
+.ops-agent-tree-row:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--surface-outline));
+}
+
+.ops-agent-tree-row.active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--surface-outline));
+}
+
+.ops-agent-tree-row.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+.ops-agent-tree-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-panel-soft));
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 72%, transparent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.ops-agent-tree-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ops-agent-tree-main,
+.ops-agent-tree-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ops-agent-tree-name,
+.ops-agent-tree-model {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ops-agent-tree-name {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ops-agent-tree-id,
+.ops-agent-tree-run,
+.ops-agent-tree-model {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+.ops-agent-tree-side {
+  align-items: flex-end;
+}
+
+.ops-agent-folder-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.ops-agent-tree-row:hover .ops-agent-folder-action,
+.ops-agent-folder-action:focus {
+  opacity: 1;
+}
+
+.ops-agent-folder-action:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.ops-agent-folder-menu {
+  position: fixed;
+  z-index: 10020;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 210px;
+  padding: 7px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.ops-agent-folder-menu-title,
+.ops-agent-folder-menu-empty {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 5px 7px;
+}
+
+.ops-agent-folder-menu button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 7px;
+  text-align: left;
+}
+
+.ops-agent-folder-menu button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.ops-agent-folder-menu hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--surface-outline);
+  margin: 3px 0;
+}
+
+.ops-agent-empty-dropzone {
+  border: 1px dashed color-mix(in srgb, var(--accent) 36%, var(--surface-outline));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  padding: 8px 10px;
+}
+
+.ops-agent-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: var(--text-muted);
+}
+
+.ops-agent-dot-healthy { background: var(--success); }
+.ops-agent-dot-warning { background: var(--warning); }
+.ops-agent-dot-never { background: var(--text-muted); }
+
+.ops-agent-tree-empty {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding-left: 9px;
+}
+
+/* ── O2/O3 — Persona section ─────────────────────────────────────── */
+
+.ops-persona-card {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* ── Agent operating blueprint ───────────────────────────────────── */
+
+.ops-blueprint-card {
+  border-left: 3px solid color-mix(in srgb, var(--success) 46%, transparent);
+}
+
+.ops-blueprint-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.ops-blueprint-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ops-blueprint-kv,
+.ops-blueprint-row {
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-panel) 88%, transparent);
+  padding: 8px 10px;
+}
+
+.ops-blueprint-kv span {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.ops-blueprint-kv strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+}
+
+.ops-blueprint-block {
+  margin-top: 12px;
+}
+
+.ops-blueprint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ops-blueprint-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.ops-blueprint-row code,
+.ops-blueprint-notes {
+  font-family: var(--font-mono);
+}
+
+.ops-blueprint-row span {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.ops-blueprint-bullets {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ops-blueprint-chips {
+  flex-wrap: wrap;
+}
+
+.ops-blueprint-notes {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+/* ── O2/O3 — Supporting files list ──────────────────────────────── */
+
+.ops-supporting-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ops-supporting-file-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+}
+
+.ops-supporting-file-name {
+  font-size: 13px;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-supporting-file-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }

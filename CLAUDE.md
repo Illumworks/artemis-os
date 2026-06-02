@@ -116,3 +116,9 @@ See `../claudeck-artemis/decisions/rebuild-phased-plan.md` for the current phase
 - `lead/<scope>-<short-desc>` — Lead branches.
 - `worker/<scope>-<short-desc>` — Worker branches.
 - `main` — local integration. Lead merges; Worker proposes via diff.
+
+## Multi-Agent Handoff Protocol
+
+### Commit Discipline
+
+Run `git diff --staged` before every commit that touches file renames or moves, and confirm the staged hunks match what you intended. On 2026-05-18 a migration renumber landed as two commits where `git mv` recorded the rename but the corresponding `Edit` changes to the file's `revision`/`down_revision` strings were never staged — HEAD ended up with three migration files all claiming `revision="0017"`, a broken alembic chain that worked locally only because the unstaged working-tree content was correct. `git diff --staged` would have caught it in two seconds. Apply the same reflex to any commit that mixes a rename with a content edit (renamed module + import-path fixup, moved file + path-string update, etc.).

@@ -32,6 +32,35 @@
   box-shadow: var(--surface-shadow-soft);
 }
 
+/* Slim variant for "always-on" surfaces like Meetings post-meeting mode —
+   compact stats live inline with the title row, no lede, no buttons. */
+.page-hero--slim {
+  padding: 16px 24px 14px;
+  gap: 8px 24px;
+}
+.page-hero--slim h1 {
+  font-size: 22px;
+  line-height: 1.15;
+  margin: 0;
+}
+.page-hero--slim .page-hero-eyebrow-row {
+  gap: 10px 14px;
+}
+
+/* Post-meeting detail panel sub-sections (Summary / Action items / Transcript). */
+.meetings-detail-section { margin-top: 16px; }
+.meetings-detail-section:first-of-type { margin-top: 8px; }
+.meetings-detail-heading {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 0 0 6px;
+}
+.meetings-detail-body { font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+.meetings-detail-list { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+.meetings-detail-list li { margin-bottom: 4px; }
+
 .page-hero-titleblock {
   min-width: 0;
   display: flex;
@@ -568,6 +597,20 @@
   align-items: start;
 }
 
+/* Override the .page-canvas col-span cascade so the two-column meetings
+ * layout stays side-by-side at narrower widths (the generic responsive
+ * rule collapses col-span-4/col-span-8 onto their own rows). */
+.meetings-past-canvas > .col-span-4,
+.meetings-past-canvas > .col-span-8 {
+  grid-column: auto;
+}
+
+@media (max-width: 720px) {
+  .meetings-past-canvas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .meetings-past-row {
   cursor: pointer;
   display: grid;
@@ -679,4 +722,120 @@
   font-size: var(--text-sm, 13px);
   padding: 8px 0;
   font-style: italic;
+}
+
+/* ── J6c — Meetings action rows ─────────────────────────────────── */
+
+.meetings-actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.meetings-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface-alt, var(--surface));
+}
+
+.meetings-action-text {
+  flex: 1;
+  font-size: var(--text-sm, 13px);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.meetings-action-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.meeting-action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.meeting-action-pill a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.meetings-action-kebab {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.meetings-action-kebab:hover {
+  color: var(--text);
+  background: var(--surface-hover, rgba(0,0,0,0.06));
+}
+
+.meetings-action-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 200;
+  background: var(--surface);
+  border: 1px solid var(--surface-outline);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+  min-width: 180px;
+  padding: 4px 0;
+}
+
+.meetings-action-menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.meetings-action-menu-item:hover {
+  background: var(--surface-hover, rgba(0,0,0,0.06));
+}
+
+/* ── J6c — Ask composer ─────────────────────────────────────────── */
+
+.meetings-ask-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--surface-outline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.meetings-ask-answer {
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  margin-bottom: 12px;
+  white-space: pre-wrap;
 }

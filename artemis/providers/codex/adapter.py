@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 
 from artemis.agent.client import CompletionRequest, CompletionResponse
@@ -28,21 +29,47 @@ from artemis.agent.types import Message, TextBlock, Usage
 from artemis.providers._bin_path import find_cli_binary
 from artemis.providers.errors import MissingCliBinaryError, ProviderAPIError
 
+logger = logging.getLogger(__name__)
+
 _TIMEOUT_SECONDS = 120.0
+_VALID_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 
 
 class CodexAdapter:
     """Conforms to the ModelAdapter protocol. Streaming not supported."""
 
-    def __init__(self, *, binary_path: str | None = None, default_model: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        binary_path: str | None = None,
+        default_model: str | None = None,
+        default_reasoning_effort: str | None = None,
+        default_speed_tier: str | None = None,
+    ) -> None:
         resolved = binary_path or find_cli_binary("codex")
         if not resolved:
             raise MissingCliBinaryError("codex", "codex")
         self._binary = resolved
         self._default_model = default_model or os.environ.get("CODEX_DEFAULT_MODEL", "")
+        self._default_reasoning_effort = default_reasoning_effort
+        self._default_speed_tier = default_speed_tier
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
-        """Run a single completion via the codex CLI."""
+        """Run a single completion via the codex CLI.
+
+        Note: CodexAdapter is text-only and does not support tool execution.
+        Tools passed in ``request.tools`` will be silently ignored.
+        Route tool-using surfaces to a tool-capable provider (anthropic, claude-code,
+        gemini, openai, or openrouter).
+        """
+        if request.tools:
+            logger.warning(
+                "%s adapter received request.tools but does not support tool execution. "
+                "Tools will be ignored. Consider routing tool-using surfaces to a "
+                "tool-capable provider.",
+                type(self).__name__,
+            )
+        model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
 
         cmd = [
@@ -52,8 +79,19 @@ class CodexAdapter:
             "--skip-git-repo-check",
             "--full-auto",
             "--quiet",
-            prompt,
         ]
+        # Codex CLI accepts `-m <model>` to pick the model. Empty string means
+        # "let Codex use its subscription default" — matches the Node reference
+        # (claudeck-artemis/server/providers/codex/index.js).
+        if model:
+            cmd.extend(["-m", model])
+        effort = request.reasoning_effort or self._default_reasoning_effort
+        if effort in _VALID_REASONING_EFFORTS:
+            cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
+        speed = request.speed_tier or self._default_speed_tier
+        if speed == "fast":
+            cmd.extend(["-c", "service_tier=fast"])
+        cmd.append(prompt)
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

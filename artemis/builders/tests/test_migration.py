@@ -40,7 +40,15 @@ async def test_agents_table_columns(db_session: AsyncSession) -> None:
         )
     )
     cols = {row[0] for row in result.fetchall()}
-    for col in ("agent_id", "model", "provider", "max_iterations", "owner_user_id", "tools"):
+    for col in (
+        "agent_id",
+        "model",
+        "provider",
+        "max_iterations",
+        "owner_user_id",
+        "tools",
+        "reason_codes_emitted",
+    ):
         assert col in cols, f"Column '{col}' missing from agents table"
 
 

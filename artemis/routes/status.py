@@ -33,12 +33,16 @@ _AVAILABLE_SURFACES = {
     "writing-rules",
     # Phase G1 — Floating Artemis backend
     "floating-artemis",
+    # Dev Projects rebuild — project-scoped Claude Code / Codex style sessions
+    "dev-projects",
     # Phase J1 — Integrations (Slack live; Cal/Gmail/Jira/Granola pending)
     "integrations",
     # Phase J5 — Jira board backend ported
     "jira-board",
     # Phase J6a — Granola meeting notes integration
     "meetings",
+    # J7 — Daily brief
+    "daily-brief",
 }
 _UNAVAILABLE_SURFACES = {
     # Node-only surfaces — backends not ported yet.

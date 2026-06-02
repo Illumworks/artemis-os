@@ -13,9 +13,32 @@ Guardrails:
 
 from __future__ import annotations
 
+import json
+import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+from pydantic import ValidationError
+
+from artemis.agent.client import CompletionRequest
+from artemis.agent.types import Message, TextBlock
+from artemis.marketing.initiation_schemas import CampaignInitiationProposal
+
+logger = logging.getLogger(__name__)
+
+_PROMPT_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "marketing-ops-v1"
+    / "agents"
+    / "content"
+    / "5.1-campaign-brief-assembler.md"
+)
+_PROPOSAL_MODEL = "claude-haiku-4-5"
+_JSON_RE = re.compile(r"\{[\s\S]*\}", re.DOTALL)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Priority → urgency tier mapping (mirrors Node)
@@ -108,6 +131,16 @@ class CampaignBrief:
 
     def to_dict(self) -> dict[str, Any]:
         return self.content
+
+
+@dataclass(slots=True)
+class InitiationProposalResult:
+    candidate_id: int
+    proposal: CampaignInitiationProposal | None
+    prompt: str
+    context: dict[str, Any]
+    retries_used: int
+    raw_output: str | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -313,3 +346,167 @@ def format_brief_for_writing_studio(brief: CampaignBrief) -> str:
         lines.append("[Audience tier distribution not available]")
 
     return "\n".join(lines)
+
+
+def _load_brief_assembler_prompt() -> str:
+    return _PROMPT_PATH.read_text(encoding="utf-8")
+
+
+async def build_campaign_initiation_context(
+    session: Any,
+    candidate_id: int,
+) -> dict[str, Any]:
+    from artemis.marketing.repository import (
+        get_candidate,
+        get_candidate_predecessor_context,
+        get_candidate_primary_signal,
+        get_candidate_signal_rows,
+        get_district,
+        list_deliverable_types,
+    )
+
+    candidate = await get_candidate(session, candidate_id)
+    signals = await get_candidate_signal_rows(session, candidate_id)
+    primary_signal = await get_candidate_primary_signal(session, candidate_id)
+    predecessor = await get_candidate_predecessor_context(session, candidate_id)
+    active_deliverables = await list_deliverable_types(session, active_only=True)
+    active_slugs = [row.slug for row in active_deliverables]
+
+    default_target_scope: dict[str, Any] = {"mode": "all_districts"}
+    if primary_signal is not None and primary_signal.resolved_district_id is not None:
+        district = await get_district(session, primary_signal.resolved_district_id)
+        district_state = district.state if district is not None else primary_signal.state
+        if district_state:
+            default_target_scope = {"mode": "states", "states": [str(district_state).upper()]}
+
+    return {
+        "candidate": {
+            "id": candidate.id,
+            "campaign_family": candidate.campaign_family,
+            "decision_state": candidate.decision_state,
+            "predecessor_id": candidate.predecessor_id,
+        },
+        "signals": [
+            {
+                "id": signal.id,
+                "headline": signal.headline,
+                "summary": signal.summary,
+                "state": signal.state,
+                "district_id": signal.district_id,
+                "resolved_district_id": signal.resolved_district_id,
+                "urgency_tier": signal.urgency_tier,
+                "reason_codes": signal.reason_codes or [],
+                "source_url": signal.source_url,
+            }
+            for signal in signals
+        ],
+        "predecessor": (
+            {
+                "candidate_id": predecessor.candidate_id,
+                "name": predecessor.name,
+                "objective": predecessor.objective,
+                "latest_brief": predecessor.latest_brief,
+                "linked_assets": predecessor.linked_assets,
+            }
+            if predecessor is not None
+            else None
+        ),
+        "default_target_scope": default_target_scope,
+        "active_deliverable_type_slugs": active_slugs,
+        "default_recommended_deliverable_types": ["outreach_email"]
+        if "outreach_email" in active_slugs
+        else active_slugs[:1],
+    }
+
+
+def _build_campaign_initiation_prompt(context: dict[str, Any]) -> str:
+    prompt_scaffold = _load_brief_assembler_prompt().strip()
+    context_json = json.dumps(context, indent=2, sort_keys=True)
+    return (
+        f"{prompt_scaffold}\n\n"
+        "## Runtime Task\n"
+        "Read the full candidate signal cluster and produce exactly one "
+        "CampaignInitiationProposal JSON object. Return JSON only.\n\n"
+        "## Candidate Context\n"
+        f"{context_json}\n"
+    )
+
+
+async def propose_campaign_initiation(
+    session: Any,
+    candidate_id: int,
+    *,
+    model_adapter: Any | None = None,
+    max_retries: int = 1,
+) -> InitiationProposalResult:
+    from artemis.marketing.repository import save_initiation_proposal
+    from artemis.providers.resolver import resolve_adapter
+
+    context = await build_campaign_initiation_context(session, candidate_id)
+    prompt = _build_campaign_initiation_prompt(context)
+    adapter = model_adapter or resolve_adapter("claude-code", "anthropic")
+    last_error: str | None = None
+    raw_output: str | None = None
+
+    for attempt in range(max_retries + 1):
+        current_prompt = prompt
+        if last_error is not None:
+            current_prompt = (
+                f"{prompt}\n\n"
+                "[CORRECTION NEEDED] Your previous response failed schema validation:\n"
+                f"{last_error}\n"
+                "Return one valid CampaignInitiationProposal JSON object only."
+            )
+
+        response = await adapter.complete(
+            CompletionRequest(
+                messages=[Message(role="user", content=[TextBlock(text=current_prompt)])],
+                system=(
+                    "You are a JSON-output assistant. Return ONLY valid JSON matching "
+                    "CampaignInitiationProposal. No markdown fences. No prose."
+                ),
+                max_tokens=1024,
+                model=_PROPOSAL_MODEL,
+            )
+        )
+        raw_output = "".join(
+            block.text for block in response.message.content if isinstance(block, TextBlock)
+        )
+
+        match = _JSON_RE.search(raw_output)
+        if not match:
+            last_error = f"No JSON object found in response: {raw_output[:200]!r}"
+            continue
+
+        try:
+            proposal = CampaignInitiationProposal.validate_with_active_slugs(
+                json.loads(match.group(0)),
+                context["active_deliverable_type_slugs"],
+            )
+        except (ValidationError, json.JSONDecodeError) as exc:
+            last_error = str(exc)
+            continue
+
+        await save_initiation_proposal(session, candidate_id, proposal)
+        return InitiationProposalResult(
+            candidate_id=candidate_id,
+            proposal=proposal,
+            prompt=current_prompt,
+            context=context,
+            retries_used=attempt,
+            raw_output=raw_output,
+        )
+
+    logger.warning(
+        "Campaign initiation proposal validation failed for candidate %s: %s",
+        candidate_id,
+        last_error,
+    )
+    return InitiationProposalResult(
+        candidate_id=candidate_id,
+        proposal=None,
+        prompt=prompt,
+        context=context,
+        retries_used=max_retries,
+        raw_output=raw_output,
+    )

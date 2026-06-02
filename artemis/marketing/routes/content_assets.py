@@ -79,6 +79,39 @@ async def create_link(
     return _serialize_link(link)
 
 
+@router.get("/links")
+async def list_links(
+    campaign_id: int | None = Query(default=None, alias="campaignId"),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[dict[str, Any]]:
+    """List content-asset links, optionally filtered by campaign candidate."""
+    q = select(ContentAssetLink)
+    if campaign_id is not None:
+        q = q.where(ContentAssetLink.candidate_id == campaign_id)
+    q = q.order_by(ContentAssetLink.id.desc())
+    result = await session.execute(q)
+    return [_serialize_link(link) for link in result.scalars().all()]
+
+
+@router.delete("/links/{campaign_id}/{asset_id}", status_code=204)
+async def delete_link_by_campaign_asset(
+    campaign_id: int,
+    asset_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> None:
+    """Compat delete by frontend's campaign/asset pair; missing link is already gone."""
+    result = await session.execute(
+        select(ContentAssetLink).where(
+            ContentAssetLink.candidate_id == campaign_id,
+            ContentAssetLink.asset_id == asset_id,
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        return None
+    return await delete_link(link.id, session)
+
+
 @router.delete("/links/{link_id}", status_code=204)
 async def delete_link(
     link_id: int,
@@ -95,6 +128,7 @@ async def delete_link(
 # ── Content Assets CRUD ───────────────────────────────────────────────────────
 
 
+@router.get("")
 @router.get("/")
 async def list_assets(
     status: str | None = Query(default=None),

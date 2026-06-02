@@ -27,6 +27,9 @@
   <link rel="stylesheet" href="css/features/calendar-page.css">
   <link rel="stylesheet" href="css/features/marketing-os.css">
   <link rel="stylesheet" href="css/features/integrations.css">
+  <link rel="stylesheet" href="css/features/dev-projects.css">
+  <link rel="stylesheet" href="css/features/agent-builder.css">
+  <link rel="stylesheet" href="css/features/pipelines.css">
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.6/dist/driver.css">
   <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.6/dist/driver.js.iife.js"></script>
@@ -127,13 +130,6 @@
         </button>
         <div class="rail-section-body">
           <div class="rail-section-body-inner">
-            <div class="rail-item" data-nav="automations" role="button" tabindex="0">
-              <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-              </svg>
-              <span>Automations</span>
-              <span class="rail-item-badge">6</span>
-            </div>
             <div class="rail-item" data-nav="skills" role="button" tabindex="0">
               <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
@@ -141,19 +137,18 @@
               <span>Skills</span>
               <span class="rail-item-badge">3</span>
             </div>
+            <div class="rail-item" data-nav="pipelines" role="button" tabindex="0">
+              <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+              </svg>
+              <span>Pipelines</span>
+            </div>
             <div class="rail-item" data-nav="agents" role="button" tabindex="0">
               <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 2l2.09 6.26L20 9l-5 4.3L16.18 20 12 16.77 7.82 20 9 13.3 4 9l5.91-.74L12 2z"/>
               </svg>
               <span>Agents</span>
               <span class="rail-item-badge">9</span>
-            </div>
-            <div class="rail-item" data-nav="workflows" role="button" tabindex="0">
-              <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M6 9v3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V9"/>
-              </svg>
-              <span>Workflows</span>
-              <span class="rail-item-badge">4</span>
             </div>
             <div class="rail-item" data-nav="memory" role="button" tabindex="0">
               <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -204,6 +199,12 @@
                 <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
               </svg>
               <span>Approval Queue</span>
+            </div>
+            <div class="rail-item" data-nav="signal-playbook" role="button" tabindex="0">
+              <svg class="rail-item-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M8 7h8"/><path d="M8 11h6"/>
+              </svg>
+              <span>Signal Playbook</span>
             </div>
           </div>
         </div>
@@ -313,37 +314,6 @@
             </div>
 
             <div class="dp-header-actions">
-              <!-- Parallel segmented control -->
-              <div class="dp-parallel-seg" role="radiogroup" aria-label="Run in parallel">
-                <span class="dp-parallel-seg-label">Run in parallel</span>
-                <div class="dp-parallel-seg-track">
-                  <button type="button" role="radio" aria-checked="true" class="dp-parallel-seg-btn active" data-parallel="1" title="Single">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                  <button type="button" role="radio" aria-checked="false" class="dp-parallel-seg-btn" data-parallel="2" title="Pair">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="5.25" height="12" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="1" width="5.25" height="12" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                  <button type="button" role="radio" aria-checked="false" class="dp-parallel-seg-btn" data-parallel="3" title="Trio">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="5.25" height="12" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="1" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="7.75" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                  <button type="button" role="radio" aria-checked="false" class="dp-parallel-seg-btn" data-parallel="4" title="Quad">
-                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="1" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="1" y="7.75" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="7.75" y="7.75" width="5.25" height="5.25" rx="1.4" fill="currentColor" opacity="0.72"/></svg>
-                  </button>
-                </div>
-              </div>
-
-              <!-- CLAUDE.md editor button -->
-              <button type="button" class="dp-cfg-btn" id="claude-md-btn" title="Edit CLAUDE.md">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                  <polyline points="10 9 9 9 8 9"/>
-                </svg>
-                <span class="dp-cfg-btn-label">CLAUDE.md</span>
-              </button>
-
               <!-- Session Config button -->
               <button type="button" class="dp-cfg-btn" id="header-project-pill-btn" title="Session Config">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -369,16 +339,8 @@
 
           <!-- Chat main area -->
           <main class="dp-main">
-            <!-- Empty state: centered mark + prompt -->
-            <div class="dp-chat-empty" id="dp-chat-empty">
-              <div class="dp-chat-empty-center">
-                <img src="/icons/artemis-mark.png" alt="Artemis" class="dp-chat-mark"/>
-                <div class="dp-chat-empty-sub dp-chat-empty-sub--state">Start a conversation, or pick up where you left off.</div>
-              </div>
-            </div>
-
-            <!-- Messages (populated when session active) -->
-            <div id="messages" class="messages dp-chat-scroll hidden"></div>
+            <!-- Messages scroll area — empty state is the composer's placeholder. -->
+            <div id="messages" class="messages dp-chat-scroll"></div>
 
             <!-- Image preview strip -->
             <div id="image-preview-strip" class="image-preview-strip hidden"></div>
@@ -391,7 +353,7 @@
 
             <!-- Composer -->
             <div class="dp-composer" id="dp-composer">
-              <textarea id="message-input" class="dp-composer-input" rows="1" placeholder="Ask a question, plan a task, or start a repo change..."></textarea>
+              <textarea id="message-input" class="dp-composer-input" rows="1" placeholder="Ask a question, plan a task, or start a repo change…"></textarea>
               <div class="dp-composer-bar">
                 <div class="dp-composer-bar-left">
                   <button type="button" class="dp-composer-plus" id="composer-plus-btn" title="Add…" aria-haspopup="menu" aria-expanded="false">
@@ -468,6 +430,11 @@
                       <button class="cgp-cta hidden" id="cgp-cta" type="button">New session →</button>
                     </div>
                   </span>
+                  <button type="button" class="dp-model-btn dp-composer-model-btn" id="composer-model-btn" title="Model" aria-haspopup="menu" aria-expanded="false">
+                    <span class="dp-model-btn-label" id="composer-model-btn-label">Opus 4.7</span>
+                    <svg class="dp-model-btn-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                  <div class="dp-model-menu dp-composer-model-menu hidden" id="composer-model-menu" role="menu"></div>
                   <button type="button" class="dp-composer-mic" id="mic-btn" title="Dictate" aria-label="Dictate">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                       <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/>
@@ -512,7 +479,7 @@
   <aside id="agent-sidebar" class="agent-sidebar hidden" aria-hidden="true">
     <div class="agent-sidebar-header">
       <div class="agent-sidebar-title-row">
-        <span class="agent-sidebar-title">Agents &amp; Workflows</span>
+        <span class="agent-sidebar-title">Agents</span>
       </div>
       <button id="agent-sidebar-close" class="agent-sidebar-close" title="Close">&times;</button>
     </div>
@@ -563,8 +530,6 @@
       <option value="0">unlimited</option>
     </select>
     <button id="agent-btn"></button>
-    <button id="workflow-btn"></button>
-    <div id="workflow-panel"></div>
     <button id="system-prompt-badge"></button>
     <button id="system-prompt-edit-btn"></button>
     <button id="telegram-settings-btn"></button>
@@ -585,12 +550,15 @@
   </div>
 
   <!-- Modals (Web Components) -->
+  <!-- J6c meeting action pickers (loaded lazily by meetings.js) -->
+  <artemis-meeting-jira-picker></artemis-meeting-jira-picker>
+  <artemis-meeting-okr-picker></artemis-meeting-okr-picker>
+  <artemis-meeting-slack-picker></artemis-meeting-slack-picker>
   <artemis-orchestrate-modal></artemis-orchestrate-modal>
   <artemis-agent-monitor-modal></artemis-agent-monitor-modal>
   <artemis-dag-editor></artemis-dag-editor>
   <artemis-chain-modal></artemis-chain-modal>
   <artemis-agent-modal></artemis-agent-modal>
-  <artemis-workflow-modal></artemis-workflow-modal>
   <artemis-prompt-modal></artemis-prompt-modal>
   <artemis-system-prompt-modal></artemis-system-prompt-modal>
   <artemis-file-picker></artemis-file-picker>

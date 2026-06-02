@@ -87,14 +87,35 @@ def get_retrieval_config() -> RetrievalConfig:
 # ── Scoring helpers ───────────────────────────────────────────────────────────
 
 
-def _recency_score(created_at: datetime, as_of: datetime, decay_days: float) -> float:
+def _recency_score(
+    created_at: datetime,
+    as_of: datetime,
+    decay_days: float,
+    valid_from: datetime | None = None,
+    valid_until: datetime | None = None,
+) -> float:
     """Exponential decay: score = exp(-ln(2) * days / half_life).
+
+    M2: uses valid_from as the "birth" timestamp when set (preferred over created_at).
+    An observation that is currently valid (valid_until IS NULL or in the future)
+    anchors at valid_from; one that has expired anchors at valid_until so it
+    naturally decays toward 0 after expiry.
 
     At t=0 → 1.0. At t=half_life → 0.5. At t=∞ → 0.
     """
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=UTC)
-    delta = as_of - created_at
+    # M2: pick the best anchor timestamp
+    anchor = valid_from if valid_from is not None else created_at
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=UTC)
+
+    # If valid_until is in the past, decay from valid_until instead (expired claims decay faster)
+    if valid_until is not None:
+        if valid_until.tzinfo is None:
+            valid_until = valid_until.replace(tzinfo=UTC)
+        if valid_until < as_of:
+            anchor = valid_until
+
+    delta = as_of - anchor
     days = max(delta.total_seconds() / 86400.0, 0.0)
     return math.exp(-math.log(2) * days / max(decay_days, 1.0))
 
@@ -129,16 +150,32 @@ def _compute_final_score(
     user_confirmed: bool = False,
     score_features: ScoreFeatureWeights | None = None,
     graph_proximity: float = 0.0,
+    confidence: float = 0.5,
+    evidence_count: int = 1,
 ) -> float:
+    """M2: final score is the fusion weighted sum, then multiplied by confidence,
+    then boosted by log-scale evidence_count.
+
+    score *= confidence
+    score *= 1 + log10(evidence_count)
+
+    A 0.6-confidence observation ranks below a 0.9-confidence one with
+    otherwise equal components. Three corroborating sources doesn't 3× the
+    score — log10 compresses it — but decisively beats one source.
+    """
     sf = score_features or ScoreFeatureWeights()
     score_contrib = _composite_score(obs_score, hit_count, source_quality, user_confirmed, sf)
-    return (
+    base = (
         weights.fts * min(fts_rank, 1.0)
         + weights.semantic * max(0.0, semantic_sim)
         + weights.recency * recency
         + weights.score * score_contrib
         + weights.graph_proximity * max(0.0, min(1.0, graph_proximity))
     )
+    # M2 multipliers
+    clamped_confidence = max(0.0, min(1.0, confidence))
+    evidence_boost = 1.0 + math.log10(max(1, evidence_count))
+    return base * clamped_confidence * evidence_boost
 
 
 # ── SQL helpers ───────────────────────────────────────────────────────────────
@@ -240,7 +277,11 @@ async def search_observations(
         _provider = provider or get_default_provider()
         try:
             query_vec = await _provider.embed(query)
-            vec_str = "[" + ",".join(f"{x:.8f}" for x in query_vec) + "]"
+            # asyncpg has the pgvector codec registered (see artemis.db) and
+            # encodes Python lists/ndarrays straight to vector binary format.
+            # Pre-serializing to a "[0.1,0.2,…]" text blob trips the codec
+            # ("could not convert string to float") and quietly drops every
+            # semantic candidate — pass the list through unchanged instead.
             scope_clause_o, _ = _scope_sql_parts(scope_set, prefix="o.")
             sem_sql = text(f"""
                 SELECT o.id,
@@ -258,7 +299,7 @@ async def search_observations(
             """)
             sem_params = {
                 **base_params,
-                "_qvec": vec_str,
+                "_qvec": query_vec,
                 "_model_version": _provider.model_version,
             }
             result = await session.execute(sem_sql, sem_params)
@@ -324,7 +365,16 @@ async def search_observations(
     # ── Fusion scoring ────────────────────────────────────────────────────────
     scored: list[ScoredObservation] = []
     for obs_id, obs in observations.items():
-        recency = _recency_score(obs.created_at, _as_of, cfg.recency_decay_days)
+        # M2: use valid_from/valid_until for recency anchor
+        obs_confidence: float = getattr(obs, "confidence", 0.5)
+        obs_evidence_count: int = getattr(obs, "evidence_count", 1)
+        recency = _recency_score(
+            obs.created_at,
+            _as_of,
+            cfg.recency_decay_days,
+            valid_from=obs.valid_from,
+            valid_until=obs.valid_until,
+        )
         fts_r = fts_scores.get(obs_id, 0.0)
         sem_r = semantic_scores.get(obs_id, 0.0)
         graph_prox = graph_scores.get(obs_id, 0.0)
@@ -339,6 +389,8 @@ async def search_observations(
             user_confirmed=obs.user_confirmed,
             score_features=cfg.score_features,
             graph_proximity=graph_prox,
+            confidence=obs_confidence,
+            evidence_count=obs_evidence_count,
         )
         scored.append(
             ScoredObservation(
@@ -357,6 +409,9 @@ async def search_observations(
                 owner_user_id=obs.owner_user_id,
                 created_at=obs.created_at,
                 accessed_at=obs.accessed_at,
+                confidence=obs_confidence,
+                supersedes=getattr(obs, "supersedes", None),
+                evidence_count=obs_evidence_count,
                 final_score=final,
                 fts_rank=fts_r,
                 semantic_sim=sem_r,

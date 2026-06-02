@@ -1,10 +1,11 @@
 """SQLAlchemy 2.x async ORM models for the memory keystone.
 
 Core tables:
-  memory_scopes             — scope catalog (UX helper, not query-critical)
-  memory_drawers            — verbatim layer; immutable evidence floor
-  memory_observations       — curated layer; what retrieval reads at prompt time
-  memory_evidence           — many-to-many link: drawer/obs → observation
+  memory_scopes                — scope catalog (UX helper, not query-critical)
+  memory_drawers               — verbatim layer; immutable evidence floor
+  memory_observations          — curated layer; what retrieval reads at prompt time
+  memory_evidence              — many-to-many link: drawer/obs → observation
+  memory_observation_scopes    — MW1: many-to-many join: observation ↔ scope
 
 Graph layer (B4):
   memory_entities           — named entities extracted from observations
@@ -121,7 +122,13 @@ class MemoryDrawer(Base):
 class MemoryObservation(Base):
     """Curated layer. Retrieved at prompt-build time. Consolidated from drawers.
     Retired via superseded_by — never deleted. The partial index on active
-    (superseded_by IS NULL) keeps active-only queries fast."""
+    (superseded_by IS NULL) keeps active-only queries fast.
+
+    M2 additions:
+      confidence     — belief in claim (0.0–1.0); CHECK enforced in DB.
+      supersedes     — FK to the prior observation this one replaces (M2 supersession chain).
+      evidence_count — corroborating raw_inputs count; incremented on corroboration.
+    """
 
     __tablename__ = "memory_observations"
     __table_args__ = (
@@ -173,12 +180,25 @@ class MemoryObservation(Base):
         nullable=True,
     )
 
+    # M2: validity + confidence + supersession chain
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
+    supersedes: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("memory_observations.id", name="fk_obs_supersedes", ondelete="SET NULL"),
+        nullable=True,
+    )
+    evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
     # Graph extraction tracking (B4 additive columns)
     graph_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     graph_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     graph_last_attempt_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+
+    # MW1: multi-scope metadata
+    wing: Mapped[str] = mapped_column(Text, nullable=False, server_default="durable")
+    confidence_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     evidence: Mapped[list[MemoryEvidence]] = relationship(
         "MemoryEvidence",
@@ -212,7 +232,11 @@ class MemoryEvidence(Base):
         nullable=False,
     )
     source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    source_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # CC28: widened from BigInteger to Text — supports slugs, UUIDs, numeric strings.
+    # Existing rows had BigInt values; migration 0049 stringified them (e.g. 182 → "182").
+    # Rows written before CC28 with SHA-256 hashes (MC3/MC4/MC5 smokes: obs ids 29–31)
+    # retain their hash strings verbatim — lossless invariant, do not modify.
+    source_id: Mapped[str] = mapped_column(Text, nullable=False)
     source_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
     weight: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
     created_at: Mapped[datetime] = mapped_column(
@@ -225,6 +249,44 @@ class MemoryEvidence(Base):
         "MemoryObservation",
         back_populates="evidence",
         lazy="noload",
+    )
+
+
+class MemoryObservationScope(Base):
+    """MW1: many-to-many join between memory_observations and memory_scopes.
+
+    One row per (observation_id, scope_kind, scope_id). is_primary=True marks
+    the primary scope — the one that also lives in memory_observations.scope_kind
+    / scope_id for backward-compat reads (M6 endpoints keep working via those
+    legacy columns). Secondary scopes only exist in this table.
+
+    LOSSLESS: rows are never deleted directly; CASCADE from observation delete
+    (which is itself never called) is the only removal path.
+    """
+
+    __tablename__ = "memory_observation_scopes"
+    __table_args__ = (
+        Index("idx_memory_observation_scopes_obs", "observation_id"),
+        Index("idx_memory_observation_scopes_scope", "scope_kind", "scope_id"),
+    )
+
+    observation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "memory_observations.id",
+            name="fk_obs_scopes_observation",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    scope_kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    scope_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
 
 
@@ -301,6 +363,16 @@ class MemoryEntity(Base):
     superseded_by: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("memory_entities.id", name="fk_entity_superseded_by"),
+        nullable=True,
+    )
+
+    # M2 additive columns
+    valid_from: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    entity_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    entity_supersedes: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("memory_entities.id", name="fk_entity_supersedes", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -446,3 +518,40 @@ class MemoryRelationRejection(Base):
     rejected_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ── Memory M2 — Conflict detection ───────────────────────────────────────────
+
+
+class MemoryConflict(Base):
+    """Records when two observations make contradictory claims.
+
+    The pair (observation_a_id, observation_b_id) is stored sorted (LEAST/GREATEST)
+    at the DB level via a functional unique index — the ORM normalises the pair
+    before insert. resolution=NULL means unresolved; auto-resolution sets 'auto'.
+    LOSSLESS: resolving a conflict does NOT delete observations; it sets valid_until
+    on the losing observation and updates supersedes on the winner.
+    """
+
+    __tablename__ = "memory_conflicts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    scope_id: Mapped[str] = mapped_column(Text, nullable=False)
+    observation_a_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("memory_observations.id", name="fk_conflict_obs_a", ondelete="CASCADE"),
+        nullable=False,
+    )
+    observation_b_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("memory_observations.id", name="fk_conflict_obs_b", ondelete="CASCADE"),
+        nullable=False,
+    )
+    conflict_type: Mapped[str] = mapped_column(Text, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(Text, nullable=True)

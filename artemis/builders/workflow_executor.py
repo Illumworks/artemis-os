@@ -42,6 +42,7 @@ async def run_workflow(
     *,
     session: AsyncSession,
     workflow_id: str,
+    run_id: str | None = None,
     initial_message: str | None = None,
     owner_user_id: int | None = None,
     model_adapter: ModelAdapter | None = None,
@@ -63,15 +64,18 @@ async def run_workflow(
 
     workflow = await get_workflow(session, workflow_id)
 
-    run_id = str(uuid.uuid4())
-    wf_run = await create_workflow_run(
-        session,
-        run_id=run_id,
-        workflow_id=workflow_id,
-        status="running",
-        current_step=0,
-        owner_user_id=owner_user_id,
-    )
+    if run_id is None:
+        run_id = str(uuid.uuid4())
+        wf_run = await create_workflow_run(
+            session,
+            run_id=run_id,
+            workflow_id=workflow_id,
+            status="running",
+            current_step=0,
+            owner_user_id=owner_user_id,
+        )
+    else:
+        wf_run = await update_workflow_run_status(session, run_id, "running", current_step=0)
     await session.flush()
 
     # Broadcast workflow started

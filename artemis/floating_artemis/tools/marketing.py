@@ -93,6 +93,23 @@ async def _approve_signal(inp: dict[str, Any]) -> str:
         async with _db.SessionLocal() as session:
             await repo.update_signal(session, int(signal_id), signal_status="approved")
             await session.commit()
+
+        # MC5: fire-and-forget memory carryover (failure must not break approval)
+        import asyncio as _asyncio
+
+        from artemis.builder.memory_carryover import write_fa_marketing_approval_observation
+
+        fa_session_id = str(inp.get("session_id") or inp.get("fa_session_id") or "unknown")
+        user_directive = str(inp.get("directive") or inp.get("user_directive") or "")
+        _asyncio.create_task(
+            write_fa_marketing_approval_observation(
+                signal_id=int(signal_id),
+                new_status="approved",
+                fa_session_id=fa_session_id,
+                user_directive=user_directive or None,
+            )
+        )
+
         return f"Signal {signal_id} approved."
     except Exception as exc:
         return f"approve_signal failed: {exc}"

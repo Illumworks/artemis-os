@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -39,9 +40,7 @@ _PROVIDER_NAMES: dict[str, str] = {
     "openrouter": "OpenRouter",
 }
 
-_LM_STUDIO_MODELS_URL = os.environ.get(
-    "LM_STUDIO_BASE_URL", "http://localhost:1234/v1"
-) + "/models"
+_LM_STUDIO_MODELS_URL = os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1") + "/models"
 
 
 async def _lm_studio_is_reachable() -> bool:
@@ -116,6 +115,25 @@ class ProviderStatusOut(BaseModel):
     healthy: bool | None
 
 
+class AgentMetricsOverview(BaseModel):
+    total_runs: int = 0
+    completed: int = 0
+    total_cost: float = 0.0
+    avg_duration: float = 0.0
+    avg_turns: float = 0.0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+
+
+class AgentMetricsOut(BaseModel):
+    overview: AgentMetricsOverview
+    agents: list[dict[str, Any]] = []
+    # Preserve the Node-compatible JSON wire shape for /api/stats/agent-metrics.
+    byType: list[dict[str, Any]] = []  # noqa: N815
+    daily: list[dict[str, Any]] = []
+    recent: list[dict[str, Any]] = []
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -130,6 +148,16 @@ async def stats_analytics(
         cost_today_usd=0.0,
         runs_today=0,
     )
+
+
+@router.get("/agent-metrics", response_model=AgentMetricsOut)
+async def stats_agent_metrics() -> AgentMetricsOut:
+    """Return empty-state agent metrics stub.
+
+    Shape matches frontend consumer in public/js/features/agent-monitor.js.
+    # TODO(J11-followup): wire real metrics from agent_runs table.
+    """
+    return AgentMetricsOut(overview=AgentMetricsOverview())
 
 
 @router.get("/providers", response_model=list[ProviderStatusOut])
@@ -150,3 +178,9 @@ async def stats_providers(
             )
         )
     return results
+
+
+@router.get("/alerts")
+async def stats_alerts() -> dict[str, object]:
+    """Return active alert list (stub — alert system not yet implemented)."""
+    return {"alerts": [], "count": 0}

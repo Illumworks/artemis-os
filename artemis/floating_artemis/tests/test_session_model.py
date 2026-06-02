@@ -69,7 +69,17 @@ async def test_list_models_returns_all_providers() -> None:
     data = resp.json()
     assert "providers" in data
     provider_ids = {p["id"] for p in data["providers"]}
-    assert {"anthropic", "gemini", "openrouter", "claude-code", "codex", "lm-studio"} <= provider_ids
+    assert {
+        "anthropic",
+        "gemini",
+        "openrouter",
+        "claude-code",
+        "codex",
+        "lm-studio",
+    } <= provider_ids
+    codex = next(p for p in data["providers"] if p["id"] == "codex")
+    assert [o["value"] for o in codex["effort"]["options"]] == ["low", "medium", "high", "xhigh"]
+    assert codex["speed"]["supportsSpeedFor"] == ["gpt-5.4", "gpt-5.5"]
 
 
 async def test_list_models_anthropic_has_expected_models() -> None:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from artemis.marketing.models import CampaignDeliverable
 from artemis.marketing.repository import get_candidate
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.state_machine import DeliverableState, transition
 
 router = APIRouter(
     prefix="/api/campaign-deliverables",
@@ -27,8 +28,19 @@ router = APIRouter(
 )
 
 
-@router.get("/{candidate_id}")
+@router.get("")
 async def list_deliverables(
+    campaign_id: int | None = Query(default=None, alias="campaignId"),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[dict[str, Any]]:
+    """Compat: frontend calls ?campaignId= instead of the path candidate id."""
+    if campaign_id is None:
+        return []
+    return await list_deliverables_for_candidate(campaign_id, session)
+
+
+@router.get("/{candidate_id}")
+async def list_deliverables_for_candidate(
     candidate_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> list[dict[str, Any]]:
@@ -100,17 +112,15 @@ async def submit_review(
     if deliverable is None:
         raise not_found("Deliverable not found", "campaign_deliverables_not_found")  # noqa: B904
 
-    from datetime import UTC, datetime
-
-    deliverable.status = "review_pending"
-    deliverable.updated_at = datetime.now(tz=UTC)
     if body and body.get("metadata"):
         deliverable.deliverable_metadata = {
             **(deliverable.deliverable_metadata or {}),
             **body["metadata"],
         }
+        await session.flush()
 
-    await session.flush()
+    await transition(session, "deliverable", deliverable_id, DeliverableState.draft_ready)
+
     await session.commit()
     await session.refresh(deliverable)
     return _serialize(deliverable)

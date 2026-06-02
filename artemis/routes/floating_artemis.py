@@ -188,7 +188,12 @@ async def send_message(
 
     # Fire and forget — client receives events over WebSocket
     asyncio.create_task(
-        handle_turn(session_id=session_id, user_text=body.message),
+        handle_turn(
+            session_id=session_id,
+            user_text=body.message,
+            reasoning_effort=body.reasoning_effort,
+            speed_tier=body.speed_tier,
+        ),
         name=f"fa_turn_{session_id}",
     )
     return {"accepted": True, "session_id": session_id}
@@ -288,6 +293,46 @@ _ANTHROPIC_PICKER_MODELS = [
 _SUBSCRIPTION_MODEL_LIST = [{"id": "default", "label": "Subscription default", "default": True}]
 _LOCAL_MODEL_LIST = [{"id": "default", "label": "Loaded model", "default": True}]
 
+# Claude Code CLI accepts the same model identifiers as the Anthropic API
+# (forwarded via `claude --model <id>` in claude_code/adapter.py). Expose the
+# same short list as the Anthropic picker so users can pick Opus/Sonnet/Haiku
+# under their Claude Max subscription. Default mirrors _DEFAULT_MODEL in the
+# adapter (claude-sonnet-4-6).
+_CLAUDE_CODE_MODEL_LIST = [
+    {"id": "claude-opus-4-7", "label": "Opus 4.7", "default": False},
+    {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "default": True},
+    {"id": "claude-haiku-4-5", "label": "Haiku 4.5", "default": False},
+]
+
+# Codex CLI accepts `-m <model>` (see artemis/providers/codex/adapter.py).
+# Catalog mirrors the curated list shipped in the Node reference UI
+# (claudeck-artemis/public/js/ui/model-selector.js). Empty id means "Auto" —
+# let Codex pick its subscription default.
+_CODEX_MODEL_LIST = [
+    {"id": "", "label": "Auto", "default": False},
+    {"id": "gpt-5.5", "label": "GPT-5.5", "default": False},
+    {"id": "gpt-5.4", "label": "GPT-5.4", "default": True},
+    {"id": "gpt-5.4-mini", "label": "GPT-5.4-Mini", "default": False},
+    {"id": "gpt-5.3-codex", "label": "GPT-5.3-Codex", "default": False},
+    {"id": "gpt-5.2", "label": "GPT-5.2", "default": False},
+]
+_CODEX_EFFORT = {
+    "label": "Effort",
+    "defaultValue": "medium",
+    "options": [
+        {"value": "low", "label": "Low"},
+        {"value": "medium", "label": "Medium"},
+        {"value": "high", "label": "High"},
+        {"value": "xhigh", "label": "Extra High"},
+    ],
+}
+_CODEX_SPEED = {
+    "label": "Speed",
+    "supportsSpeedFor": ["gpt-5.4", "gpt-5.5"],
+    "defaultValue": "standard",
+    "options": [{"value": "standard", "label": "Standard"}, {"value": "fast", "label": "Fast"}],
+}
+
 
 def _build_provider_model_list() -> list[dict[str, Any]]:
     """Build the {providers: [...]} payload consumed by the picker UI.
@@ -322,14 +367,16 @@ def _build_provider_model_list() -> list[dict[str, Any]]:
             "name": "Claude Code CLI",
             "configured": claude_code_configured,
             "subscriptionOrLocal": True,
-            "models": _SUBSCRIPTION_MODEL_LIST,
+            "models": _CLAUDE_CODE_MODEL_LIST,
         },
         {
             "id": "codex",
             "name": "Codex CLI",
             "configured": codex_configured,
             "subscriptionOrLocal": True,
-            "models": _SUBSCRIPTION_MODEL_LIST,
+            "models": _CODEX_MODEL_LIST,
+            "effort": _CODEX_EFFORT,
+            "speed": _CODEX_SPEED,
         },
         {"id": "gemini", "name": "Google Gemini", "models": gemini_models},
         {

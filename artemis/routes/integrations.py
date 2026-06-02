@@ -48,6 +48,7 @@ class IntegrationOut(BaseModel):
     display_name: str | None
     connected_at: datetime
     status: str
+    last_refresh_attempt_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -83,7 +84,59 @@ async def list_integrations(
     provider: str | None = Query(default=None),
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
 ) -> list[Integration]:
-    return await repo.list_active(session, provider=provider)
+    # list_for_ui returns active + needs_reauth so the Connectors modal can
+    # surface needs_reauth rows with an amber reconnect CTA.  Service callers
+    # that need only usable rows should call repo.list_active() directly.
+    return await repo.list_for_ui(session, provider=provider)
+
+
+@router.post("/{integration_id}/refresh")
+async def refresh_integration(
+    integration_id: int,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, object]:
+    """Trigger one proactive-refresh attempt for a single integration (J10e).
+
+    Returns `{outcome, new_expires_at}`. `outcome` is the string value of the
+    `RefreshOutcome` enum (`refreshed`, `still_valid`, `no_refresh_token`,
+    `refresh_token_expired`, `transient_failure`, `no_refresher`).
+    """
+    from artemis.integrations.crypto import decrypt_credentials
+    from artemis.integrations.token_refresh.base import RefreshOutcome
+    from artemis.integrations.token_refresh.providers import REFRESHERS
+
+    try:
+        integration = await repo.get_by_id(session, integration_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    refresher = REFRESHERS.get(integration.provider)
+    if refresher is None:
+        return {"outcome": "no_refresher", "new_expires_at": None}
+
+    try:
+        creds = decrypt_credentials(bytes(integration.encrypted_credentials))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"could not decrypt creds: {exc}") from exc
+
+    result = await refresher.refresh(creds)
+    new_expires_at: float | None = None
+    if result.outcome == RefreshOutcome.REFRESHED and result.new_creds is not None:
+        raw = result.new_creds.get("expires_at")
+        try:
+            new_expires_at = float(raw) if raw is not None else None  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            new_expires_at = None
+        await repo.persist_refreshed_credentials(
+            session, integration_id=integration.id, new_creds=result.new_creds
+        )
+    elif result.outcome == RefreshOutcome.REFRESH_TOKEN_EXPIRED:
+        await repo.mark_needs_reauth(session, integration.id)
+    elif result.outcome == RefreshOutcome.TRANSIENT_FAILURE:
+        await repo.mark_refresh_attempted(session, integration.id)
+    await session.commit()
+
+    return {"outcome": result.outcome.value, "new_expires_at": new_expires_at}
 
 
 @router.delete("/{integration_id}", status_code=204)
@@ -494,7 +547,10 @@ def _granola_redirect_uri(request: Request) -> str:
         request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost:8000"
     )
     port_match = _re.search(r":(\d+)$", host_header)
-    port = f":{port_match.group(1)}" if port_match else ""
+    # Always include an explicit port. When accessed via a tunnel host (no
+    # port in Host), default to :8000 — the local uvicorn port — so the
+    # OAuth callback lands on the running server, not port 80.
+    port = f":{port_match.group(1)}" if port_match else ":8000"
     return f"http://localhost{port}/api/integrations/granola/oauth/callback"
 
 
