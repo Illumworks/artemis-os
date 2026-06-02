@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,7 +32,12 @@ from artemis.marketing.models import Approval, CampaignCandidate, CampaignDelive
 from artemis.marketing.repository import decide_approval
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
-from artemis.marketing.state_machine import DeliverableState, WorkspaceState, transition
+from artemis.marketing.state_machine import (
+    WORKSPACE_TRANSITIONS,
+    DeliverableState,
+    WorkspaceState,
+    transition,
+)
 from artemis.pipelines import repository as pipeline_repo
 
 logger = logging.getLogger(__name__)
@@ -425,14 +431,55 @@ async def _recompute_workspace_state_from_deliverables(
     candidate = await session.get(CampaignCandidate, candidate_id)
     if candidate is None or candidate.workspace_state == target.value:
         return
-    await transition(
-        session,
-        "workspace",
-        candidate_id,
-        target,
-        actor="approval_router",
-        reason="content_draft_decision",
-    )
+
+    # The deliverable run does not (yet) advance workspace_state as it drafts, so
+    # at decision time a candidate is typically still at `pending_content` while
+    # the derived target is several legal hops away (e.g. all_content_approved).
+    # The state machine only permits single-step transitions, so walk the shortest
+    # legal path rather than attempting an illegal one-hop jump (which 500s).
+    try:
+        current = WorkspaceState(candidate.workspace_state)
+    except ValueError:
+        # Legacy/unknown state — let transition() raise its descriptive error.
+        current = None
+    path = _workspace_path(current, target) if current is not None else None
+    # Fall back to a direct transition so transition() raises a clear,
+    # actionable IllegalTransition instead of silently desyncing.
+    steps = path if path else [target]
+    for step in steps:
+        await transition(
+            session,
+            "workspace",
+            candidate_id,
+            step,
+            actor="approval_router",
+            reason="content_draft_decision",
+        )
+
+
+def _workspace_path(
+    from_state: WorkspaceState, to_state: WorkspaceState
+) -> list[WorkspaceState] | None:
+    """Shortest legal WORKSPACE_TRANSITIONS path from *from_state* to *to_state*.
+
+    Returns the list of intermediate+final states to step through (exclusive of
+    from_state, inclusive of to_state), or None if to_state is unreachable.
+    """
+    if from_state == to_state:
+        return []
+    queue: deque[tuple[WorkspaceState, list[WorkspaceState]]] = deque([(from_state, [])])
+    seen: set[WorkspaceState] = {from_state}
+    while queue:
+        current, path = queue.popleft()
+        for nxt in WORKSPACE_TRANSITIONS.get(current, set()):
+            if nxt in seen:
+                continue
+            next_path = [*path, nxt]
+            if nxt == to_state:
+                return next_path
+            seen.add(nxt)
+            queue.append((nxt, next_path))
+    return None
 
 
 def _parse_gate_subject_id(subject_id: str) -> tuple[str | None, str | None]:
