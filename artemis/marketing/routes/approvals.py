@@ -18,17 +18,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.models import Approval
+from artemis.marketing.models import Approval, CampaignCandidate, CampaignDeliverable
 from artemis.marketing.repository import decide_approval
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.state_machine import (
+    WORKSPACE_TRANSITIONS,
+    DeliverableState,
+    WorkspaceState,
+    transition,
+)
+from artemis.pipelines import repository as pipeline_repo
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +48,25 @@ router = APIRouter(
     dependencies=[Depends(require_token)],
 )
 
-_VALID_DECISIONS = {"approved", "rejected"}
+_VALID_DECISIONS = {"approved", "rejected", "revision_requested"}
+_CONTENT_DRAFT_STATUS_MAP = {
+    "approved": DeliverableState.approved,
+    "rejected": DeliverableState.rejected,
+    "revision_requested": DeliverableState.revised,
+}
+
+
+class ApprovalDecisionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    decision: str | None = None
+    status: str | None = None
+    reason: str | None = None
+    reviewer: str | None = None
+    decided_by_camel: str | None = Field(default=None, alias="decidedBy")
+    decided_by: str | None = None
+    decision_payload_camel: dict[str, Any] | None = Field(default=None, alias="decisionPayload")
+    decision_payload: dict[str, Any] | None = None
 
 
 @router.get("")
@@ -57,7 +85,8 @@ async def list_approvals_route(
         q = q.where(Approval.kind == kind)
     q = q.order_by(Approval.created_at.desc()).limit(limit)
     result = await session.execute(q)
-    return [_serialize(a) for a in result.scalars().all()]
+    rows = result.scalars().all()
+    return [await _serialize_with_session(session, a) for a in rows]
 
 
 @router.get("/{approval_id}")
@@ -69,13 +98,13 @@ async def get_approval_route(
     approval = await session.get(Approval, approval_id)
     if approval is None:
         raise not_found("Approval not found", "approval_not_found")  # noqa: B904
-    return _serialize(approval)
+    return await _serialize_with_session(session, approval)
 
 
 @router.post("/{approval_id}/decision")
 async def decide(
     approval_id: int,
-    body: dict[str, Any],
+    body: ApprovalDecisionRequest,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
     """Record an approve or reject decision on a pending approval.
@@ -97,27 +126,48 @@ async def decide(
         )
 
     # Accept both "approve" → "approved" and the direct form "approved"
-    raw_decision = body.get("status") or body.get("decision") or ""
-    decision_map = {"approve": "approved", "reject": "rejected"}
+    raw_decision = body.status or body.decision or ""
+    decision_map = {
+        "approve": "approved",
+        "reject": "rejected",
+        "request_revision": "revision_requested",
+        "request_changes": "revision_requested",
+    }
     decision = decision_map.get(raw_decision, raw_decision)
 
     if decision not in _VALID_DECISIONS:
         raise bad_request(
-            "status must be 'approved' or 'rejected' (or 'approve'/'reject')",
+            "decision must be 'approved', 'rejected', or 'revision_requested'",
+            "approval_invalid_decision",
+        )
+    if decision == "revision_requested" and approval.kind != "content_draft":
+        raise bad_request(
+            "revision_requested is only supported for content_draft approvals",
             "approval_invalid_decision",
         )
 
-    decided_by = body.get("decidedBy") or body.get("decided_by") or "unknown"
-    decision_payload = body.get("decisionPayload") or body.get("decision_payload")
+    decided_by = body.reviewer or body.decided_by_camel or body.decided_by or "operator"
+    decision_payload = _merge_decision_payload(approval, body, decision, decided_by)
 
-    updated = await decide_approval(
-        session,
-        approval_id=approval_id,
-        decision=decision,
-        decided_by=decided_by,
-        decision_payload=decision_payload,
-    )
-    await session.commit()
+    resume_result: dict[str, Any] | None = None
+    if approval.kind == "content_draft":
+        resume_result = await _decide_content_draft_approval(
+            session,
+            approval=approval,
+            decision=decision,
+            decided_by=decided_by,
+            decision_payload=decision_payload,
+        )
+    else:
+        updated = await decide_approval(
+            session,
+            approval_id=approval_id,
+            decision=decision,
+            decided_by=decided_by,
+            decision_payload=decision_payload,
+        )
+        await session.commit()
+        approval = updated
 
     # OP1 approval-resume side effect: if this approval is for an automation_run
     # and it was just approved, dispatch the run in-process.
@@ -146,7 +196,10 @@ async def decide(
                 )
             )
 
-    return _serialize(updated)
+    payload = await _serialize_with_session(session, approval)
+    if resume_result is not None:
+        payload["resume"] = resume_result
+    return payload
 
 
 async def _resume_automation_run(run_id: str) -> None:
@@ -190,3 +243,261 @@ def _serialize(a: Approval) -> dict[str, Any]:
         "payload": None,
         "createdAt": a.created_at.isoformat(),
     }
+
+
+async def _serialize_with_session(session: AsyncSession, a: Approval) -> dict[str, Any]:
+    payload = _serialize(a)
+    payload["pipe4Context"] = await _hydrate_pipe4_context(session, a)
+    return payload
+
+
+def _merge_decision_payload(
+    approval: Approval,
+    body: ApprovalDecisionRequest,
+    decision: str,
+    decided_by: str,
+) -> dict[str, Any]:
+    payload = (
+        dict(approval.decision_payload or {}) if isinstance(approval.decision_payload, dict) else {}
+    )
+    extra_payload = body.decision_payload_camel or body.decision_payload or {}
+    if isinstance(extra_payload, dict):
+        payload.update(extra_payload)
+    if body.reason:
+        payload["reason"] = body.reason
+    payload["decision"] = decision
+    payload["decided_by"] = decided_by
+    payload["decided_at"] = datetime.now(UTC).isoformat()
+    return payload
+
+
+async def _hydrate_pipe4_context(
+    session: AsyncSession, approval: Approval
+) -> dict[str, Any] | None:
+    if not isinstance(approval.pipe4_context, dict):
+        return approval.pipe4_context
+
+    pipe4_context = dict(approval.pipe4_context)
+    run_id = pipe4_context.get("pipeline_run_id")
+    if not run_id and isinstance(approval.subject_id, str) and ":" in approval.subject_id:
+        run_id = approval.subject_id.split(":", 1)[0]
+        pipe4_context["pipeline_run_id"] = run_id
+    if not run_id:
+        return pipe4_context
+
+    from artemis.pipelines.node_executors.human_gate_executor import _build_pipe4_context
+
+    try:
+        run = await pipeline_repo.get_pipeline_run(session, str(run_id))
+    except ValueError:
+        return pipe4_context
+
+    pipe4_context["context"] = await _build_pipe4_context(
+        approval.kind,
+        dict(run.node_states or {}),
+        session=session,
+        run_id=run.id,
+    )
+    return pipe4_context
+
+
+async def _decide_content_draft_approval(
+    session: AsyncSession,
+    *,
+    approval: Approval,
+    decision: str,
+    decided_by: str,
+    decision_payload: dict[str, Any],
+) -> dict[str, Any]:
+    run_id, node_id = _parse_gate_subject_id(approval.subject_id)
+    if run_id is None or node_id is None:
+        raise bad_request(
+            "content_draft approval is missing a PIPE4 gate subject_id",
+            "approval_missing_gate_subject",
+        )
+
+    try:
+        run = await pipeline_repo.get_pipeline_run(session, run_id)
+    except ValueError as exc:
+        raise not_found(str(exc), "pipeline_run_not_found") from exc
+
+    if run.target_candidate_id is None:
+        raise bad_request(
+            "content_draft approval is not attached to a campaign candidate",
+            "approval_missing_target_candidate",
+        )
+
+    deliverables = await _load_candidate_deliverables(session, run.target_candidate_id)
+    target_deliverables = [d for d in deliverables if d.status == DeliverableState.draft_ready]
+    if not target_deliverables:
+        raise bad_request(
+            "No draft_ready deliverables are available for this Gate-2 decision",
+            "approval_no_reviewable_deliverables",
+        )
+
+    target_state = _CONTENT_DRAFT_STATUS_MAP[decision]
+    for deliverable in target_deliverables:
+        await transition(
+            session,
+            "deliverable",
+            deliverable.id,
+            target_state,
+            actor=decided_by,
+            reason=f"content_draft_{decision}",
+        )
+
+    approval = await decide_approval(
+        session,
+        approval_id=approval.id,
+        decision=decision,
+        decided_by=decided_by,
+        decision_payload=decision_payload,
+    )
+
+    candidate = await session.get(CampaignCandidate, run.target_candidate_id)
+    if candidate is not None:
+        if decision == "revision_requested":
+            await transition(
+                session,
+                "workspace",
+                candidate.id,
+                WorkspaceState.revision_needed,
+                actor=decided_by,
+                reason="content_draft_revision_requested",
+            )
+        else:
+            await _recompute_workspace_state_from_deliverables(session, candidate.id)
+
+    pipeline_decision = "approved" if decision == "approved" else "rejected"
+    resumed = False
+    post_commit_status = run.status
+    if decision in {"approved", "rejected", "revision_requested"}:
+        from artemis.pipelines.routes import _dispatch_execution, _prepare_pipeline_resume
+
+        run, _ = await _prepare_pipeline_resume(
+            session,
+            run_id,
+            node_id=node_id,
+            decision=pipeline_decision,
+            actor=decided_by,
+        )
+        await session.commit()
+        _cancel_gate_timeout(run_id, node_id)
+        _dispatch_execution(run_id)
+        resumed = True
+        post_commit_status = run.status
+    else:
+        await session.commit()
+
+    return {
+        "runId": run_id,
+        "nodeId": node_id,
+        "pipelineDecision": pipeline_decision,
+        "resumed": resumed,
+        "runStatus": post_commit_status,
+    }
+
+
+async def _load_candidate_deliverables(
+    session: AsyncSession,
+    candidate_id: int,
+) -> list[CampaignDeliverable]:
+    result = await session.execute(
+        select(CampaignDeliverable)
+        .where(CampaignDeliverable.candidate_id == candidate_id)
+        .order_by(CampaignDeliverable.id)
+    )
+    return list(result.scalars().all())
+
+
+async def _recompute_workspace_state_from_deliverables(
+    session: AsyncSession,
+    candidate_id: int,
+) -> None:
+    deliverables = await _load_candidate_deliverables(session, candidate_id)
+    if not deliverables:
+        return
+
+    statuses = [d.status for d in deliverables]
+    if any(status == DeliverableState.rejected for status in statuses):
+        target = WorkspaceState.revision_needed
+    elif all(status == DeliverableState.approved for status in statuses):
+        target = WorkspaceState.all_content_approved
+    elif any(status == DeliverableState.draft_ready for status in statuses):
+        target = WorkspaceState.content_in_review
+    else:
+        target = WorkspaceState.in_content_preparation
+
+    candidate = await session.get(CampaignCandidate, candidate_id)
+    if candidate is None or candidate.workspace_state == target.value:
+        return
+
+    # The deliverable run does not (yet) advance workspace_state as it drafts, so
+    # at decision time a candidate is typically still at `pending_content` while
+    # the derived target is several legal hops away (e.g. all_content_approved).
+    # The state machine only permits single-step transitions, so walk the shortest
+    # legal path rather than attempting an illegal one-hop jump (which 500s).
+    try:
+        current = WorkspaceState(candidate.workspace_state)
+    except ValueError:
+        # Legacy/unknown state — let transition() raise its descriptive error.
+        current = None
+    path = _workspace_path(current, target) if current is not None else None
+    # Fall back to a direct transition so transition() raises a clear,
+    # actionable IllegalTransition instead of silently desyncing.
+    steps = path if path else [target]
+    for step in steps:
+        await transition(
+            session,
+            "workspace",
+            candidate_id,
+            step,
+            actor="approval_router",
+            reason="content_draft_decision",
+        )
+
+
+def _workspace_path(
+    from_state: WorkspaceState, to_state: WorkspaceState
+) -> list[WorkspaceState] | None:
+    """Shortest legal WORKSPACE_TRANSITIONS path from *from_state* to *to_state*.
+
+    Returns the list of intermediate+final states to step through (exclusive of
+    from_state, inclusive of to_state), or None if to_state is unreachable.
+    """
+    if from_state == to_state:
+        return []
+    queue: deque[tuple[WorkspaceState, list[WorkspaceState]]] = deque([(from_state, [])])
+    seen: set[WorkspaceState] = {from_state}
+    while queue:
+        current, path = queue.popleft()
+        for nxt in WORKSPACE_TRANSITIONS.get(current, set()):
+            if nxt in seen:
+                continue
+            next_path = [*path, nxt]
+            if nxt == to_state:
+                return next_path
+            seen.add(nxt)
+            queue.append((nxt, next_path))
+    return None
+
+
+def _parse_gate_subject_id(subject_id: str) -> tuple[str | None, str | None]:
+    if ":" not in subject_id:
+        return None, None
+    run_id, node_id = subject_id.split(":", 1)
+    return run_id or None, node_id or None
+
+
+def _cancel_gate_timeout(run_id: str, node_id: str) -> None:
+    try:
+        import contextlib
+
+        from artemis.pipelines.scheduler import get_pipeline_scheduler
+
+        scheduler = get_pipeline_scheduler()
+        if scheduler.running:
+            with contextlib.suppress(Exception):
+                scheduler.remove_job(f"gate_timeout_{run_id}_{node_id}")
+    except Exception:
+        logger.warning("Could not cancel timeout job for run %s gate %s", run_id, node_id)

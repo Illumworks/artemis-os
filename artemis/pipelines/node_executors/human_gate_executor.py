@@ -190,6 +190,7 @@ async def _get_slack_token(session: AsyncSession) -> str | None:
 # MCP era the agents' real effects live in signal_queue (committed via tool calls),
 # not in node_states — so the card context must be READ FROM THE DB.
 _SIGNAL_GATE_KINDS = frozenset({"signal_brief"})
+_CONTENT_GATE_KINDS = frozenset({"content_draft"})
 
 _PREVIEW_MAX = 400
 
@@ -217,6 +218,10 @@ async def _build_pipe4_context(
     """
     if session is not None and run_id is not None and approval_kind in _SIGNAL_GATE_KINDS:
         return await _build_signal_gate_context_from_db(approval_kind, session, run_id)
+    if session is not None and run_id is not None and approval_kind in _CONTENT_GATE_KINDS:
+        ctx = await _build_content_gate_context_from_db(approval_kind, session, run_id)
+        if ctx.get("candidate_id") is not None:
+            return ctx
     return _build_pipe4_context_from_node_states(approval_kind, node_states)
 
 
@@ -296,6 +301,178 @@ async def _build_signal_gate_context_from_db(
                 break
     if preview:
         ctx["brief_preview"] = str(preview)[:_PREVIEW_MAX]
+
+    return ctx
+
+
+def _draft_preview_from_metadata(metadata: dict[str, Any]) -> str | None:
+    """Return the best available real draft preview from deliverable metadata."""
+    versions = metadata.get("versions")
+    if isinstance(versions, list):
+        for version in versions:
+            if isinstance(version, dict):
+                content = version.get("content")
+                if isinstance(content, str) and content.strip():
+                    return _compact_preview(content)
+    for key in ("draftBody", "content", "brief"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return _compact_preview(value)
+    return None
+
+
+def _compact_preview(value: str) -> str:
+    normalized = " ".join(value.split())
+    return normalized[:_PREVIEW_MAX] if normalized else ""
+
+
+async def _build_content_gate_context_from_db(
+    approval_kind: str,
+    session: AsyncSession,
+    run_id: str,
+) -> dict[str, Any]:
+    """Build a content-review gate card context from campaign deliverables + candidate state."""
+    from sqlalchemy import select
+
+    from artemis.marketing.models import (
+        CampaignBrief,
+        CampaignCandidate,
+        CampaignCandidateSignal,
+        CampaignDeliverable,
+        District,
+        SignalQueue,
+    )
+    from artemis.pipelines.models import PipelineRun
+
+    ctx: dict[str, Any] = {
+        "approval_kind": approval_kind,
+        "candidate_id": None,
+        "campaign_name": None,
+        "campaign_family": None,
+        "workspace_state": None,
+        "deliverable_count": 0,
+        "ready_deliverable_count": 0,
+        "deliverables": [],
+        "signal_count": 0,
+        "reason_codes": [],
+        "districts": [],
+        "district_label": None,
+        "brief_preview": None,
+        "draft_summary": None,
+        "deliverable_ids": [],
+    }
+
+    run = await session.get(PipelineRun, run_id)
+    if run is None or run.target_candidate_id is None:
+        return ctx
+
+    candidate = await session.get(CampaignCandidate, run.target_candidate_id)
+    if candidate is None:
+        return ctx
+
+    ctx["candidate_id"] = candidate.id
+    ctx["campaign_name"] = candidate.name or f"{candidate.campaign_family} campaign"
+    ctx["campaign_family"] = candidate.campaign_family
+    ctx["workspace_state"] = candidate.workspace_state
+
+    deliverables = (
+        (
+            await session.execute(
+                select(CampaignDeliverable)
+                .where(CampaignDeliverable.candidate_id == candidate.id)
+                .order_by(CampaignDeliverable.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    deliverable_cards: list[dict[str, Any]] = []
+    first_preview: str | None = None
+    for deliverable in deliverables:
+        metadata = (
+            dict(deliverable.deliverable_metadata)
+            if isinstance(deliverable.deliverable_metadata, dict)
+            else {}
+        )
+        preview = _draft_preview_from_metadata(metadata)
+        title = (
+            metadata.get("draftTitle")
+            or metadata.get("title")
+            or metadata.get("externalTitle")
+            or f"Draft {deliverable.id}"
+        )
+        deliverable_cards.append(
+            {
+                "id": deliverable.id,
+                "status": deliverable.status,
+                "title": title,
+                "campaignId": deliverable.campaign_id,
+                "externalDraftId": metadata.get("externalDraftId") or deliverable.deliverable_id,
+                "deliverableTypeSlug": metadata.get("deliverableTypeSlug")
+                or metadata.get("deliverable_type_slug"),
+                "draftPreview": preview,
+                "updatedAt": (
+                    deliverable.updated_at.isoformat() if deliverable.updated_at else None
+                ),
+            }
+        )
+        if first_preview is None and preview:
+            first_preview = preview
+
+    ctx["deliverables"] = deliverable_cards
+    ctx["deliverable_ids"] = [card["id"] for card in deliverable_cards]
+    ctx["deliverable_count"] = len(deliverable_cards)
+    ctx["ready_deliverable_count"] = sum(
+        1 for card in deliverable_cards if card["status"] == "draft_ready"
+    )
+    ctx["draft_summary"] = first_preview
+
+    signal_rows = (
+        await session.execute(
+            select(SignalQueue, CampaignCandidateSignal, District)
+            .join(
+                CampaignCandidateSignal,
+                CampaignCandidateSignal.signal_id == SignalQueue.id,
+            )
+            .outerjoin(District, District.id == SignalQueue.resolved_district_id)
+            .where(CampaignCandidateSignal.candidate_id == candidate.id)
+            .order_by(CampaignCandidateSignal.is_primary.desc(), SignalQueue.id.asc())
+        )
+    ).all()
+    ctx["signal_count"] = len(signal_rows)
+    reason_codes: set[str] = set()
+    districts: list[str] = []
+    for signal, _, district in signal_rows:
+        raw_codes = signal.reason_codes if isinstance(signal.reason_codes, list) else []
+        for code in raw_codes:
+            label = code.get("code") if isinstance(code, dict) else code
+            if label:
+                reason_codes.add(str(label))
+        district_label = None
+        if district is not None:
+            district_label = (
+                f"{district.name} ({district.state})" if district.state else district.name
+            )
+        elif signal.state:
+            district_label = signal.state
+        if district_label and district_label not in districts:
+            districts.append(district_label)
+    ctx["reason_codes"] = sorted(reason_codes)
+    ctx["districts"] = districts
+    ctx["district_label"] = districts[0] if districts else None
+
+    latest_brief = (
+        await session.execute(
+            select(CampaignBrief)
+            .where(CampaignBrief.candidate_id == candidate.id)
+            .order_by(CampaignBrief.generated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if latest_brief is not None and isinstance(latest_brief.content, dict):
+        preview = latest_brief.content.get("preview") or latest_brief.content.get("body")
+        if isinstance(preview, str) and preview.strip():
+            ctx["brief_preview"] = _compact_preview(preview)
 
     return ctx
 

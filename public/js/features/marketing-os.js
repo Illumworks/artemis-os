@@ -1860,6 +1860,17 @@ function _parseApprovalPayload(a) {
   try { return JSON.parse(a.payload); } catch { return {}; }
 }
 
+function _showMarketingApprovalToast(container, message, isError = false) {
+  const host = container?.querySelector('.mkt-section') || container;
+  if (!host) return;
+  const toast = document.createElement('div');
+  toast.className = 'mkt-signal-toast';
+  if (isError) toast.style.background = 'rgba(120, 24, 24, 0.9)';
+  toast.textContent = message;
+  host.prepend(toast);
+  setTimeout(() => toast.remove(), 5000);
+}
+
 // Internal: renders a PIPE4 approval card with pipeline/node/signal context.
 function _renderPipe4ApprovalCard(a) {
   const p4 = a.pipe4Context || {};
@@ -1871,6 +1882,67 @@ function _renderPipe4ApprovalCard(a) {
   const runHref = p4.pipeline_run_id
     ? `#pipelines/runs/${esc(p4.pipeline_run_id)}`
     : null;
+
+  if (ctx.approval_kind === 'content_draft') {
+    const deliverables = Array.isArray(ctx.deliverables) ? ctx.deliverables : [];
+    const campaignName = ctx.campaign_name || 'Campaign draft review';
+    const districtLabel = ctx.district_label || (Array.isArray(ctx.districts) ? ctx.districts[0] : null);
+    const reasonCodes = Array.isArray(ctx.reason_codes) && ctx.reason_codes.length
+      ? ctx.reason_codes.map(esc).join(', ')
+      : '';
+    const deliverableCards = deliverables.length
+      ? deliverables.map((draft) => {
+          const preview = draft.draftPreview
+            ? `<div class="mkt-approval-excerpt">${esc(draft.draftPreview)}</div>`
+            : `<div class="mkt-pipe4-empty">No draft preview available yet. Current status: ${esc(draft.status || 'unknown')}</div>`;
+          const typeLabel = draft.deliverableTypeSlug
+            ? draft.deliverableTypeSlug.replaceAll('_', ' ')
+            : 'deliverable';
+          return `
+            <div class="mkt-approval-draft-card">
+              <div class="mkt-approval-draft-head">
+                <strong>${esc(draft.title || `Draft ${draft.id}`)}</strong>
+                <span class="mkt-pill mkt-pill-neutral">${esc(typeLabel)}</span>
+              </div>
+              <div class="mkt-approval-meta">
+                <span>Status: ${esc(draft.status || 'unknown')}</span>
+                ${draft.updatedAt ? `<span>Updated: ${esc(new Date(draft.updatedAt).toLocaleString())}</span>` : ''}
+              </div>
+              ${preview}
+              <div class="mkt-signal-actions">
+                <button class="mkt-btn-secondary" type="button" data-ws-draft-id="${esc(String(draft.id))}">Open draft →</button>
+              </div>
+            </div>
+          `;
+        }).join('')
+      : `<div class="mkt-pipe4-empty">No deliverables are attached to this approval.</div>`;
+
+    return `
+      <article class="mkt-approval-card mkt-pipe4-card" data-unified-approval-id="${esc(String(a.id))}">
+        <div class="mkt-approval-head">
+          <div class="mkt-approval-title-row">
+            <span class="mkt-badge mkt-badge-content">Content review</span>
+            <span class="mkt-approval-campaign">${esc(campaignName)}</span>
+          </div>
+          <span class="mkt-pill mkt-pill-pending">Pending</span>
+        </div>
+        <div class="mkt-approval-meta">
+          <span>Requested: ${esc(requestedAt)}</span>
+          ${districtLabel ? `<span>District: ${esc(districtLabel)}</span>` : ''}
+          ${ctx.campaign_family ? `<span>Family: ${esc(ctx.campaign_family)}</span>` : ''}
+        </div>
+        ${reasonCodes ? `<div class="mkt-pipe4-brief"><span class="mkt-pipe4-label">Signals</span> ${reasonCodes}</div>` : ''}
+        ${ctx.brief_preview ? `<div class="mkt-pipe4-brief"><span class="mkt-pipe4-label">Brief</span> ${esc(ctx.brief_preview)}</div>` : ''}
+        <div class="mkt-approvals-list">${deliverableCards}</div>
+        <div class="mkt-signal-actions">
+          <button class="mkt-btn-primary" type="button" data-approve-id="${esc(String(a.id))}">Approve</button>
+          <button class="mkt-btn-ghost" type="button" data-revision-id="${esc(String(a.id))}">Request revision</button>
+          <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-reject-id="${esc(String(a.id))}">Reject</button>
+          ${runHref ? `<a class="mkt-btn-link" href="${runHref}">View pipeline run →</a>` : ''}
+        </div>
+      </article>
+    `;
+  }
 
   // Signals section
   let signalSection = '';
@@ -2424,10 +2496,12 @@ export async function loadMarketingApprovals(container) {
         btn.textContent = 'Approving…';
         try {
           await decideApprovalApi(id, { decision: 'approve' });
+          _showMarketingApprovalToast(container, 'Approval recorded. Pipeline resumed.');
           await loadMarketingApprovals(container);
-        } catch {
+        } catch (err) {
           btn.disabled = false;
           btn.textContent = 'Approve';
+          _showMarketingApprovalToast(container, err?.message || 'Approval failed.', true);
         }
       });
     });
@@ -2440,10 +2514,30 @@ export async function loadMarketingApprovals(container) {
         btn.textContent = 'Submitting…';
         try {
           await decideApprovalApi(id, { decision: 'reject' });
+          _showMarketingApprovalToast(container, 'Rejection recorded. Pipeline resumed.');
           await loadMarketingApprovals(container);
-        } catch {
+        } catch (err) {
           btn.disabled = false;
           btn.textContent = originalLabel;
+          _showMarketingApprovalToast(container, err?.message || 'Rejection failed.', true);
+        }
+      });
+    });
+
+    container.querySelectorAll('[data-revision-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.revisionId;
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Requesting…';
+        try {
+          await decideApprovalApi(id, { decision: 'request_revision' });
+          _showMarketingApprovalToast(container, 'Revision requested. Draft marked revised.');
+          await loadMarketingApprovals(container);
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          _showMarketingApprovalToast(container, err?.message || 'Revision request failed.', true);
         }
       });
     });
