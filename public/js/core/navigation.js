@@ -22,6 +22,43 @@ export const MARKETING_SIGNAL_PLAYBOOK_VIEW = "signal-playbook";
 export const MARKETING_SCOUT_RUNS_VIEW = "marketing-scout-runs";
 export const INTEGRATIONS_VIEW = "integrations";
 
+function normalizeHashPath(pathname) {
+  const raw = String(pathname || "").trim();
+  if (!raw) return DEFAULT_APP_VIEW;
+  if (raw.startsWith("/")) return raw.slice(1);
+  return raw;
+}
+
+export function parseAppHash(hash = typeof window !== "undefined" ? window.location?.hash || "" : "") {
+  const rawHash = String(hash || "");
+  if (!rawHash.startsWith("#")) {
+    return { view: null, params: new URLSearchParams() };
+  }
+  const fragment = rawHash.slice(1);
+  if (!fragment) {
+    return { view: DEFAULT_APP_VIEW, params: new URLSearchParams() };
+  }
+  const [pathname = "", search = ""] = fragment.split("?", 2);
+  const normalizedPath = normalizeHashPath(pathname);
+  return {
+    view: normalizeAppView(decodeURIComponent(normalizedPath)),
+    params: new URLSearchParams(search || ""),
+  };
+}
+
+export function writingStudioDraftHref(deliverableId) {
+  return `#${WRITING_STUDIO_VIEW}?draft=${encodeURIComponent(String(deliverableId))}`;
+}
+
+export function parseWritingStudioDraftId(hash = typeof window !== "undefined" ? window.location?.hash || "" : "") {
+  const route = parseAppHash(hash);
+  if (route.view !== WRITING_STUDIO_VIEW) return null;
+  const rawDraftId = route.params.get("draft");
+  if (!rawDraftId) return null;
+  const draftId = Number(rawDraftId);
+  return Number.isInteger(draftId) && draftId > 0 ? draftId : null;
+}
+
 export const PRIMARY_NAV_DESTINATIONS = [
   {
     id: DASHBOARD_VIEW,

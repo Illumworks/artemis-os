@@ -318,6 +318,71 @@ class TestDraftUpdate:
         assert len(body["versions"]) == 1
         assert body["versions"][0]["content"] == "New content body"
 
+    async def test_update_draft_content_appends_lossless_version_history(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        clear_subscribers()
+        candidate = await _make_candidate(db_session)
+        deliverable = CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="stub-existing-version",
+            campaign_id=str(candidate.id),
+            status="generating",
+            deliverable_metadata={
+                "title": "Versioned Draft",
+                "versions": [
+                    {
+                        "id": "v1",
+                        "version_number": 1,
+                        "content": "Original body",
+                        "created_at": "2026-06-01T12:00:00+00:00",
+                    }
+                ],
+            },
+        )
+        db_session.add(deliverable)
+        await db_session.flush()
+        await db_session.refresh(deliverable)
+        await db_session.commit()
+        draft_id = deliverable.id
+
+        resp = await client.put(
+            f"/api/writing-studio/drafts/{draft_id}",
+            json={
+                "content": "Updated body",
+                "changeNote": "Manual save from Draft Canvas",
+                "source": "manual",
+                "folderId": 9,
+                "campaignId": "cmp-77",
+                "audience": "District leaders",
+                "channel": "email",
+                "metadata": {"brief": "Carry the revised CTA forward."},
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["content"] == "Updated body"
+        assert len(body["versions"]) == 2
+        assert body["versions"][0]["content"] == "Updated body"
+        assert body["versions"][0]["change_note"] == "Manual save from Draft Canvas"
+        assert body["versions"][0]["source"] == "manual"
+        assert body["versions"][1]["content"] == "Original body"
+        assert body["folder_id"] == 9
+        assert body["campaign_id"] == "cmp-77"
+
+        db_session.expire_all()
+        refreshed = await db_session.get(CampaignDeliverable, draft_id)
+        assert refreshed is not None
+        assert refreshed.campaign_id == "cmp-77"
+        assert isinstance(refreshed.deliverable_metadata, dict)
+        assert refreshed.deliverable_metadata["audience"] == "District leaders"
+        assert refreshed.deliverable_metadata["channel"] == "email"
+        assert refreshed.deliverable_metadata["brief"] == "Carry the revised CTA forward."
+        versions = refreshed.deliverable_metadata["versions"]
+        assert len(versions) == 2
+        assert versions[0]["content"] == "Updated body"
+        assert versions[1]["content"] == "Original body"
+
     async def test_update_draft_folder_move(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:

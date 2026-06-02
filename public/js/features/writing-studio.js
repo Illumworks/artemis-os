@@ -3,12 +3,9 @@ import {
   composeWritingDraftApi,
   createWritingDraftApi,
   createWritingDraftFromGoogleDocApi,
-  createWritingDraftVersionApi,
   deleteWritingDraftApi,
   deleteWritingFolderApi,
   createWritingFolderApi,
-  createWritingTrainingCandidateApi,
-  decideWritingTrainingCandidateApi,
   exportWritingDraftToGoogleDocApi,
   exportWritingStudioSyncApi,
   fetchWritingDraft,
@@ -19,8 +16,6 @@ import {
   reconcileWritingStudioSyncApi,
   importWritingStudioSyncApi,
   importWritingSeedApi,
-  regenerateDraftApi,
-  getDraftEditHistoryApi,
   submitDraftForReviewApi,
   unlinkWritingDraftGoogleDocApi,
   updateWritingExampleApi,
@@ -30,7 +25,12 @@ import {
   updateWritingSourceApi,
 } from "../core/api.js";
 import { getState, on as onState } from "../core/store.js";
-import { WRITING_STUDIO_VIEW, normalizeAppView } from "../core/navigation.js";
+import {
+  WRITING_STUDIO_VIEW,
+  normalizeAppView,
+  parseWritingStudioDraftId,
+  writingStudioDraftHref,
+} from "../core/navigation.js";
 import { PROVIDER_LABELS, PROVIDER_PICKERS } from "../ui/model-selector.js";
 
 const SHELL_CONTENT_SELECTOR = "#app-shell-content";
@@ -119,7 +119,8 @@ export async function loadWritingStudio({ selectedDraftId = null } = {}) {
 
     let selectedDraft = null;
     const drafts = overview.drafts || [];
-    const handoff = readWritingStudioHandoff();
+    const routeDraftId = parseWritingStudioDraftId();
+    const handoff = selectedDraftId || routeDraftId ? null : readWritingStudioHandoff();
     const nextFilters = resolveWritingFilters({
       handoff,
       filters: writingState.filters,
@@ -129,6 +130,7 @@ export async function loadWritingStudio({ selectedDraftId = null } = {}) {
     });
     const visibleDrafts = filterWritingDrafts(drafts, nextFilters);
     const targetId = selectedDraftId
+      || routeDraftId
       || handoff?.draftId
       || (handoff?.campaignId ? visibleDrafts.find((draft) => draft.campaign_id === handoff.campaignId)?.id : null)
       || writingState.selectedDraft?.id
@@ -171,6 +173,7 @@ export async function loadWritingStudio({ selectedDraftId = null } = {}) {
       googleOverview,
       editHistoryMap: writingState.editHistoryMap || {},
     };
+    syncWritingStudioDraftLocation(selectedDraft?.id || null);
     renderWritingStudio();
   } catch (error) {
     writingState = { ...writingState, error, status: "" };
@@ -261,14 +264,6 @@ export function handleWritingStudioAction(button) {
     writingState.activePanel = "version-history";
     writingState.activePopover = null;
     renderWritingStudio();
-    // Kick off edit-history fetch; re-render when data arrives if still on this panel
-    const histDraftId = writingState.selectedDraft?.id;
-    if (histDraftId && !writingState.editHistoryMap?.[histDraftId]) {
-      getDraftEditHistoryApi(histDraftId).then((history) => {
-        writingState.editHistoryMap = { ...writingState.editHistoryMap, [histDraftId]: history };
-        if (writingState.activePanel === "version-history") renderWritingStudio();
-      }).catch(() => {});
-    }
     return true;
   }
   if (action === "writing-open-proposed-modal") {
@@ -545,12 +540,10 @@ async function runWritingAction(action, button) {
       const folderId = readFolderField("[data-writing-input='draft-folder-id']");
       const brief = readValue("[data-writing-input='draft-brief']");
       const engine = readWritingEngine("draft");
-      await createWritingDraftVersionApi(draftId, {
+      await updateWritingDraftApi(draftId, {
         content: writingState.draftContent || "",
         changeNote: readValue("[data-writing-input='change-note']") || "Manual save from Draft Canvas",
         source: "manual",
-      });
-      await updateWritingDraftApi(draftId, {
         status: status || undefined,
         folderId,
         campaignId,
@@ -579,35 +572,14 @@ async function runWritingAction(action, button) {
       return;
     }
 
-    if (action === "writing-regenerate-from-feedback") {
-      const draftId = writingState.selectedDraft?.id;
-      if (!draftId) return;
-      if (button) { button.disabled = true; button.textContent = "Regenerating…"; }
-      const result = await regenerateDraftApi(draftId);
-      if (result.status === "failed") {
-        if (button) { button.disabled = false; button.textContent = "Regenerate from feedback"; }
-        setWritingStatus(`Regeneration failed: ${result.error || "unknown error"}`, true);
-        return;
-      }
-      // Invalidate cached edit history so the next open fetches fresh data
-      if (writingState.editHistoryMap?.[draftId]) {
-        const { [draftId]: _removed, ...rest } = writingState.editHistoryMap;
-        writingState.editHistoryMap = rest;
-      }
-      await loadWritingStudio({ selectedDraftId: draftId });
-      setWritingStatus("Regenerated. Status returned to Draft — submit for review when ready.");
-      return;
-    }
-
     if (action === "writing-restore-version") {
       const draftId = writingState.selectedDraft?.id;
-      const versionId = Number(button.dataset.writingVersionId);
+      const versionId = String(button.dataset.writingVersionId || "");
       if (!draftId || !versionId) return;
-      const version = writingState.selectedDraft?.versions?.find((v) => v.id === versionId);
+      const version = writingState.selectedDraft?.versions?.find((v) => String(v.id) === versionId);
       if (!version) return;
       if (!window.confirm(`Restore version ${version.version_number}? Your current draft content will be replaced.`)) return;
-      await updateWritingDraftApi(draftId, { content: version.content });
-      await createWritingDraftVersionApi(draftId, {
+      await updateWritingDraftApi(draftId, {
         content: version.content,
         changeNote: `Restored from version ${version.version_number}`,
         source: "restore",
@@ -820,41 +792,6 @@ async function runWritingAction(action, button) {
     if (action === "writing-toggle-propose") {
       const dropdown = document.querySelector(".writing-propose-dropdown");
       if (dropdown) dropdown.hidden = !dropdown.hidden;
-      return;
-    }
-
-    if (action === "writing-propose-learning") {
-      const draftId = writingState.selectedDraft?.id ?? null;
-      const proposedText = readValue("[data-writing-input='learning-text']");
-      if (!proposedText) {
-        setWritingStatus("Add a learning before proposing it.", true);
-        return;
-      }
-      await createWritingTrainingCandidateApi({
-        draftId,
-        proposedText,
-        candidateType: readValue("[data-writing-input='learning-type']") || "rule",
-        rationale: "Proposed from Writing Studio review.",
-        scope: {
-          assetType: writingState.selectedDraft?.asset_type || null,
-          channel: writingState.selectedDraft?.channel || null,
-        },
-      });
-      await loadWritingStudio({ selectedDraftId: draftId });
-      setWritingStatus("Learning candidate added for review.");
-      return;
-    }
-
-    if (action === "writing-candidate-decision") {
-      const id = Number(button.dataset.writingCandidateId);
-      const decision = button.dataset.writingDecision;
-      if (!id || !decision) return;
-      await decideWritingTrainingCandidateApi(id, decision);
-      await loadWritingStudio({ selectedDraftId: writingState.selectedDraft?.id || null });
-      const remaining = (writingState.overview?.trainingCandidates || []).filter((c) => c.status === "proposed");
-      if (remaining.length === 0) writingState.activeModal = null;
-      renderWritingStudio();
-      setWritingStatus(`Candidate marked ${decision.replaceAll("_", " ")}.`);
       return;
     }
 
@@ -1382,7 +1319,6 @@ function renderDraftCanvas(draft, content) {
         <div class="writing-canvas-actions">
           ${_draftStatusPill(draft)}
           ${(draft.status === "changes_requested" && parseWritingMetadata(draft).review?.note) ? `<span class="writing-changes-note" title="${escAttr(parseWritingMetadata(draft).review.note)}">${esc(parseWritingMetadata(draft).review.note.slice(0, 80))}${parseWritingMetadata(draft).review.note.length > 80 ? "…" : ""}</span>` : ""}
-          ${draft.status === "changes_requested" ? `<button type="button" class="writing-button writing-button-regenerate" data-writing-action="writing-regenerate-from-feedback" title="Generate a new version using the reviewer feedback. Status returns to Draft — you must submit for review again.">Regenerate from feedback</button>` : ""}
           ${(!draft.status || draft.status === "draft" || draft.status === "changes_requested") ? `<button type="button" class="writing-button writing-button-submit-review" data-writing-action="writing-submit-for-review">Submit for Review</button>` : ""}
           ${reviewCount > 0 ? `<button type="button" class="writing-meta-pill writing-meta-pill-alert writing-meta-pill-btn" data-writing-action="writing-open-proposed-modal">${reviewCount} proposed</button>` : ""}
           <div class="writing-rules-pill-wrap">
@@ -1516,9 +1452,7 @@ function renderProposedModal(candidates) {
                 </div>
                 <p>${esc(c.proposed_text)}</p>
                 <div class="writing-candidate-actions">
-                  <button type="button" class="writing-mini-button writing-mini-button-approve" data-writing-action="writing-candidate-decision" data-writing-candidate-id="${c.id}" data-writing-decision="approved">Approve</button>
-                  <button type="button" class="writing-mini-button" data-writing-action="writing-candidate-decision" data-writing-candidate-id="${c.id}" data-writing-decision="one_time">One-time</button>
-                  <button type="button" class="writing-mini-button writing-mini-button-reject" data-writing-action="writing-candidate-decision" data-writing-candidate-id="${c.id}" data-writing-decision="rejected">Reject</button>
+                  <small>Review actions are not wired in this rebuild yet.</small>
                 </div>
               </div>
             `).join("")}
@@ -1684,14 +1618,7 @@ function renderContextStrip(draft, engine, brief) {
           <button type="button" class="writing-ctx-brief-trigger" data-writing-action="writing-toggle-propose">+ Propose</button>
           <div class="writing-propose-dropdown" hidden>
             <div class="writing-propose-form">
-              <select data-writing-input="learning-type" class="writing-select">
-                <option value="rule">Rule</option>
-                <option value="preference">Preference</option>
-                <option value="anti_pattern">Anti-pattern</option>
-                <option value="example">Example</option>
-              </select>
-              <textarea data-writing-input="learning-text" class="writing-learning-input" placeholder="Capture a durable voice rule from this draft."></textarea>
-              <button type="button" class="writing-button" data-writing-action="writing-propose-learning">Add to Review</button>
+              <p class="writing-empty">Proposal review routing is not wired in this rebuild yet, so this stays read-only for now.</p>
             </div>
           </div>
         </div>
@@ -2111,13 +2038,7 @@ function renderCandidate(candidate) {
       </div>
       <p>${esc(candidate.proposed_text)}</p>
       ${candidate.draft_title ? `<small>From ${esc(candidate.draft_title)}</small>` : ""}
-      ${proposed ? `
-        <div class="writing-candidate-actions">
-          <button type="button" class="writing-mini-button" data-writing-action="writing-candidate-decision" data-writing-candidate-id="${candidate.id}" data-writing-decision="approved">Approve</button>
-          <button type="button" class="writing-mini-button" data-writing-action="writing-candidate-decision" data-writing-candidate-id="${candidate.id}" data-writing-decision="one_time">One-time</button>
-          <button type="button" class="writing-mini-button" data-writing-action="writing-candidate-decision" data-writing-candidate-id="${candidate.id}" data-writing-decision="rejected">Reject</button>
-        </div>
-      ` : ""}
+      ${proposed ? `<small>Review actions are unavailable in this rebuild right now.</small>` : ""}
     </div>
   `;
 }
@@ -2286,6 +2207,7 @@ function _draftStatusPill(draft) {
 }
 
 function parseWritingMetadata(draft) {
+  if (draft?.metadata && typeof draft.metadata === "object") return draft.metadata;
   if (!draft?.metadata_json) return {};
   if (typeof draft.metadata_json === "object") return draft.metadata_json;
   try {
@@ -2574,7 +2496,7 @@ async function saveWritingChatReplyAsVersion(entryId) {
   setWritingBusy(true);
   setWritingStatus("Saving generated reply as a draft version...");
   try {
-    await createWritingDraftVersionApi(draftId, {
+    await updateWritingDraftApi(draftId, {
       content: entry.text,
       changeNote: "Saved generated Writing Studio reply",
       source: "agent",
@@ -3299,6 +3221,20 @@ function readWritingStudioHandoff() {
   } catch {
     return null;
   }
+}
+
+function syncWritingStudioDraftLocation(draftId) {
+  if (typeof window === "undefined" || typeof window.history?.replaceState !== "function") return;
+  const nextHash = draftId ? writingStudioDraftHref(draftId) : "#/writing-studio";
+  if (window.location.hash === nextHash) return;
+  window.history.replaceState(
+    {
+      ...(window.history.state || {}),
+      view: WRITING_STUDIO_VIEW,
+    },
+    "",
+    nextHash,
+  );
 }
 
 function setWritingBusy(isBusy) {

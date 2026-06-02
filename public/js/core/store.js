@@ -1,5 +1,5 @@
 // Centralized reactive state store
-import { DEFAULT_APP_VIEW, normalizeAppView } from "./navigation.js";
+import { DEFAULT_APP_VIEW, normalizeAppView, parseAppHash } from "./navigation.js";
 
 const HISTORY_COMPANION_KEYS = ["builderAgentId", "builderEditAgentId", "sessionId"];
 
@@ -9,13 +9,7 @@ function hasBrowserHistory() {
 
 function parseHashView() {
   if (typeof window === "undefined") return null;
-  const hash = window.location?.hash || "";
-  if (!hash.startsWith("#/")) return null;
-  try {
-    return normalizeAppView(decodeURIComponent(hash.slice(2)));
-  } catch {
-    return DEFAULT_APP_VIEW;
-  }
+  return parseAppHash(window.location?.hash || "").view;
 }
 
 function buildHistoryState(view) {
