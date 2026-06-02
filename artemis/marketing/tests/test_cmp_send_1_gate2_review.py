@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.marketing.models import Approval, CampaignCandidate, CampaignDeliverable
+from artemis.marketing.models import Approval, CampaignCandidate, CampaignDeliverable, CampaignSend
 from artemis.marketing.repository import create_campaign_candidate_from_signal, create_signal
 from artemis.marketing.state_machine import DeliverableState
 from artemis.pipelines import repository as pipeline_repo
@@ -227,10 +227,25 @@ async def test_decide_approved_transitions_deliverable_and_resume_flow(
         run_id,
     )
     assert approval.status == "approved"
-    assert deliverable.status == DeliverableState.approved.value
+    # SEND2-B: no contacts are seeded in this test → deliverable stays 'approved'
+    # (the skipped-send path leaves the deliverable at approved, not queued_for_send)
+    assert deliverable.status in (
+        DeliverableState.approved.value,
+        DeliverableState.queued_for_send.value,
+    )
     assert candidate.workspace_state == "all_content_approved"
     assert run.status == "running"
     assert run.node_states["gate_2_approval_drawer"]["decision"] == "approved"
+
+    # SEND2-B: additive behavior — a campaign_sends row should exist with
+    # status='skipped' because no contacts are seeded in this test.
+    send_result = await db_session.execute(
+        select(CampaignSend).where(CampaignSend.deliverable_id == deliverable.id)
+    )
+    send_row = send_result.scalars().first()
+    assert send_row is not None, "SEND2-B: expected a campaign_sends row after approve"
+    assert send_row.status == "skipped"
+    assert send_row.skip_reason == "no_contacts_on_file"
 
     with patch(
         "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
@@ -277,6 +292,12 @@ async def test_decide_rejected_transitions_deliverable_and_workspace_state(
     assert candidate.workspace_state == "revision_needed"
     assert run.status == "running"
 
+    # SEND2-B: rejected decisions should NOT create any campaign_sends rows.
+    send_result = await db_session.execute(
+        select(CampaignSend).where(CampaignSend.deliverable_id == deliverable.id)
+    )
+    assert send_result.scalars().first() is None, "No campaign_sends row expected on rejection"
+
     await db_session.commit()
     executor = PipelineExecutor(run_id)
     await executor.run(db_session)
@@ -320,6 +341,14 @@ async def test_revision_requested_marks_revised_and_holds_via_rejected_gate_path
     assert deliverable.status == DeliverableState.revised.value
     assert candidate.workspace_state == "revision_needed"
     assert run.status == "running"
+
+    # SEND2-B: revision_requested decisions should NOT create any campaign_sends rows.
+    send_result = await db_session.execute(
+        select(CampaignSend).where(CampaignSend.deliverable_id == deliverable.id)
+    )
+    assert send_result.scalars().first() is None, (
+        "No campaign_sends row expected on revision_requested"
+    )
 
     await db_session.commit()
     executor = PipelineExecutor(run_id)

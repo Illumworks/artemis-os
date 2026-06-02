@@ -3183,3 +3183,16 @@
   gap: 6px;
   align-items: center;
 }
+
+/* ── Outbox tab — stub-transport notice ───────────────────────────────── */
+
+.mkt-outbox-stub-notice {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim, #888);
+  background: color-mix(in srgb, #b8860b 8%, var(--surface-panel-soft));
+  border: 1px solid color-mix(in srgb, #b8860b 18%, transparent);
+  border-radius: 8px;
+  padding: 7px 12px;
+  line-height: 1.5;
+}

@@ -50,7 +50,9 @@ _DEF_GET_DOC = Tool(
 def _factory_search(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
     async def _impl(arguments: dict[str, Any]) -> str:
         logger.warning("starbridge.search called (stub) by agent=%s", ctx.agent_id)
-        return "STUB: starbridge.search not yet implemented. Set STARBRIDGE_API_KEY in the .env file."
+        return (
+            "STUB: starbridge.search not yet implemented. Set STARBRIDGE_API_KEY in the .env file."
+        )
 
     return (_DEF_SEARCH, _impl)
 

@@ -28,7 +28,7 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 import artemis.db
-import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata (incl. QualifierRuleApplication, SkippedSignal, DistrictDataMeta)
+import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata (incl. QualifierRuleApplication, SkippedSignal, DistrictDataMeta, CampaignSend)
 import artemis.pipelines.models  # noqa: F401 — pipeline_runs is a FK dep of signal_queue; needed for ORM sort_tables
 from artemis.db import attach_pgvector_codec
 
@@ -61,6 +61,7 @@ _TRUNCATE_SQL = text(
     "TRUNCATE "
     "campaign_state_transitions, "
     "approvals, "
+    "campaign_sends, "
     "campaign_deliverables, "
     "content_asset_links, "
     "content_assets, "
@@ -70,6 +71,7 @@ _TRUNCATE_SQL = text(
     "scout_runs, "
     "qualifier_rule_applications, "
     "skipped_signals, "
+    "district_contacts, "
     "districts, "
     "district_tier_bands, "
     "district_data_meta, "

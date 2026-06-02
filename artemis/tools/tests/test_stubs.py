@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -38,6 +40,38 @@ def _ctx(agent_id: str = "marketing.scout.regional_news") -> ToolContext:
     )
 
 
+def _ctx_with_mock_session(
+    agent_id: str = "marketing.scout.regional_news",
+    scalar_one_or_none_return: Any = None,
+    scalars_all_return: list[Any] | None = None,
+) -> ToolContext:
+    """Return a ToolContext whose session is a mock that handles execute() calls.
+
+    scalar_one_or_none_return: returned by .scalar_one_or_none() on execute result (for
+      DistrictContact.id query).
+    scalars_all_return: returned by .scalars().all() on execute result (for
+      SignalQueue.resolved_district_id query).
+    """
+    mock_session = MagicMock()
+
+    # execute() is async; create a mock result that supports both access patterns
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = scalar_one_or_none_return
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = scalars_all_return or []
+    mock_result.scalars.return_value = mock_scalars
+
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    return ToolContext(
+        session=mock_session,
+        agent_id=agent_id,
+        agent_db_id=1,
+        agent_run_id="run-test",
+        pipeline_run_id=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_memory_layer_stubs() -> None:
     _, impl_u = _factory_upsert(_ctx())
@@ -49,9 +83,29 @@ async def test_memory_layer_stubs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_contact_db_stub() -> None:
-    _, impl = _contact_factory(_ctx())
-    assert await impl({"districtId": "d1"}) == "true"
+async def test_contact_db_stub_numeric_true() -> None:
+    """Numeric districtId with an existing active contact → 'true'."""
+    # scalar_one_or_none returns a contact id (non-None) → has_contact returns "true"
+    ctx = _ctx_with_mock_session(scalar_one_or_none_return=42)
+    _, impl = _contact_factory(ctx)
+    assert await impl({"districtId": "123"}) == "true"
+
+
+@pytest.mark.asyncio
+async def test_contact_db_stub_numeric_false() -> None:
+    """Numeric districtId with no active contact → 'false'."""
+    ctx = _ctx_with_mock_session(scalar_one_or_none_return=None)
+    _, impl = _contact_factory(ctx)
+    assert await impl({"districtId": "123"}) == "false"
+
+
+@pytest.mark.asyncio
+async def test_contact_db_stub_text_id_no_signal() -> None:
+    """Non-numeric districtId with no matching signal_queue row → 'false'."""
+    # scalars().all() returns [] (no resolved_district_id for text id "d1")
+    ctx = _ctx_with_mock_session(scalars_all_return=[])
+    _, impl = _contact_factory(ctx)
+    assert await impl({"districtId": "d1"}) == "false"
 
 
 @pytest.mark.asyncio

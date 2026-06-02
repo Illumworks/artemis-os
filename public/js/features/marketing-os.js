@@ -26,6 +26,8 @@ import {
   qualifySignalApi,
   listScoutRunsApi, listScoutPackagesApi,
   listPipelinesApi,
+  fetchMarketingQueuedSends,
+  sendMarketingOutboxItem,
 } from '../core/api.js';
 import {
   filterSignals,
@@ -456,6 +458,7 @@ function renderCampaignWorkspace(campaign) {
     { id: 'compliance', label: 'Compliance' },
     { id: 'performance', label: 'Performance' },
     { id: 'approval-log', label: 'Approval Log' },
+    { id: 'outbox', label: 'Outbox' },
   ];
 
   const tabNav = tabs.map((t) => `
@@ -772,6 +775,7 @@ function renderWorkspaceTab(campaign, tab) {
     case 'compliance': return renderTabCompliance(campaign);
     case 'performance':return renderTabPerformance(campaign);
     case 'approval-log': return renderTabApprovalLog(campaign);
+    case 'outbox':       return renderTabOutbox();
     default:           return renderTabBrief(campaign);
   }
 }
@@ -2564,6 +2568,204 @@ export async function loadMarketingApprovals(container) {
   }
 }
 
+// ── Outbox tab (campaign workspace) ──────────────────────────────────────
+//
+// renderTabOutbox() returns the loading skeleton; actual content is populated
+// by loadOutboxTab(container) which is called from _wireWorkspaceTabs.
+// The Outbox is intentionally global (not campaign-scoped) — it shows all
+// queued sends across all campaigns, mirroring how loadMarketingApprovals works.
+
+function renderTabOutbox() {
+  return `
+    <div class="mkt-tab-outbox" data-outbox-panel>
+      <p class="mkt-section-subtext">Loading outbox…</p>
+    </div>
+  `;
+}
+
+function _renderOutboxCard(send) {
+  const campaign = esc(send.candidateName || 'Untitled campaign');
+  const districts = Array.isArray(send.districtNames) && send.districtNames.length
+    ? esc(send.districtNames.join(', '))
+    : send.districtIds && send.districtIds.length
+      ? `${send.districtIds.length} district(s)`
+      : '—';
+  const deliverableTitle = esc(send.deliverableTitle || '—');
+  const deliverableSlug = send.deliverableSlug
+    ? `<span class="mkt-pill mkt-pill-neutral" style="font-size:10px;">${esc(send.deliverableSlug.replaceAll('_', ' '))}</span>`
+    : '';
+  const preview = send.draftPreview
+    ? send.draftPreview.length >= 400
+      ? esc(send.draftPreview.slice(0, 400)) + '…'
+      : esc(send.draftPreview)
+    : '';
+  const previewHtml = preview
+    ? `<div class="mkt-approval-excerpt">${preview}</div>`
+    : '';
+
+  // Recipients block — show up to 5, then "and N more…"
+  const recipients = Array.isArray(send.recipients) ? send.recipients : [];
+  const visibleRecipients = recipients.slice(0, 5);
+  const hiddenCount = recipients.length - visibleRecipients.length;
+  const recipientRows = visibleRecipients.map((r) => `
+    <div style="font-size:12px; color:var(--text); line-height:1.4;">
+      <span>${esc(r.name || '—')}</span>
+      <span style="color:var(--text-secondary);">&lt;${esc(r.email || '')}&gt;</span>
+      ${r.title ? `<span style="color:var(--text-dim); margin-left:4px;">${esc(r.title)}</span>` : ''}
+    </div>
+  `).join('');
+  const recipientMore = hiddenCount > 0
+    ? `<div style="font-size:11px; color:var(--text-dim);">and ${hiddenCount} more…</div>`
+    : '';
+  const recipientsHtml = recipients.length > 0
+    ? `<div class="mkt-approval-meta" style="flex-direction:column; gap:4px;">${recipientRows}${recipientMore}</div>`
+    : '';
+
+  const n = send.recipientCount ?? recipients.length;
+  const queuedAt = send.queuedAt
+    ? new Date(send.queuedAt).toLocaleString()
+    : '—';
+
+  return `
+    <article class="mkt-approval-card" data-outbox-send-id="${esc(String(send.id))}">
+      <div class="mkt-approval-head">
+        <div class="mkt-approval-title-row">
+          <span class="mkt-badge mkt-badge-neutral">Outbox</span>
+          <span class="mkt-approval-campaign">${campaign}</span>
+        </div>
+        <span class="mkt-pill mkt-pill-pending">Ready to send</span>
+      </div>
+      <div class="mkt-approval-meta">
+        <span>District(s): ${districts}</span>
+        <span>Queued: ${esc(queuedAt)}</span>
+      </div>
+      <div class="mkt-approval-deliverable">
+        ${deliverableTitle}&nbsp;${deliverableSlug}
+      </div>
+      ${previewHtml}
+      ${recipientsHtml}
+      <div class="mkt-outbox-stub-notice" data-outbox-stub-notice>
+        Stub transport — clicking Send records the send and resolved recipients. No email is delivered until the ESP is configured.
+      </div>
+      <div class="mkt-signal-actions">
+        <button class="mkt-btn-primary" type="button"
+                data-outbox-send-btn="${esc(String(send.id))}">
+          Send to ${n} recipient${n === 1 ? '' : 's'}
+        </button>
+      </div>
+    </article>
+  `;
+}
+
+async function loadOutboxTab(container, { status = 'queued' } = {}) {
+  const panel = container.querySelector('[data-outbox-panel]');
+  if (!panel) return;
+  panel.innerHTML = `<p class="mkt-section-subtext">Loading outbox…</p>`;
+
+  let sends;
+  try {
+    sends = await fetchMarketingQueuedSends({ status });
+  } catch (err) {
+    panel.innerHTML = `
+      <div class="mkt-empty-state">
+        <h4>Outbox unavailable</h4>
+        <p>${esc(err?.message || 'Could not load the outbox.')}</p>
+        <button class="mkt-btn-secondary" type="button" data-outbox-retry>Retry</button>
+      </div>
+    `;
+    panel.querySelector('[data-outbox-retry]')?.addEventListener('click', () => {
+      loadOutboxTab(container, { status });
+    });
+    return;
+  }
+
+  if (!Array.isArray(sends) || sends.length === 0) {
+    panel.innerHTML = `
+      <section class="mkt-section">
+        <div class="mkt-section-header">
+          <h3 class="mkt-section-title">Outbox</h3>
+        </div>
+        <div class="mkt-empty-state">
+          <h4>Nothing in the outbox</h4>
+          <p>Approve a draft at Gate-2 to queue it for review here.</p>
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  panel.innerHTML = `
+    <section class="mkt-section">
+      <div class="mkt-section-header">
+        <h3 class="mkt-section-title">Outbox</h3>
+        <span class="mkt-badge mkt-badge-neutral">${sends.length}</span>
+      </div>
+      <div class="mkt-approvals-list">${sends.map(_renderOutboxCard).join('')}</div>
+    </section>
+  `;
+
+  panel.querySelectorAll('[data-outbox-send-btn]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const sendId = btn.dataset.outboxSendBtn;
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      try {
+        await sendMarketingOutboxItem(sendId, { actor: 'operator' });
+        _showMarketingApprovalToast(container, 'Recorded — transport pending ESP setup');
+        await loadOutboxTab(container, { status });
+      } catch (err) {
+        // 409 = already sent / not queued — surface inline + remove card
+        const card = btn.closest('[data-outbox-send-id]');
+        if (err?.message?.includes('send_not_queued') || err?.message?.includes('409') || err?.message?.includes('not_queued')) {
+          if (card) {
+            const notice = card.querySelector('[data-outbox-stub-notice]');
+            if (notice) {
+              notice.textContent = 'Already recorded — no email sent';
+              notice.style.color = 'var(--text-dim)';
+            }
+            btn.disabled = true;
+            btn.textContent = 'Already recorded';
+          }
+          setTimeout(() => card?.remove(), 2000);
+        } else {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          if (card) {
+            let errEl = card.querySelector('[data-outbox-err]');
+            if (!errEl) {
+              errEl = document.createElement('div');
+              errEl.dataset.outboxErr = '';
+              errEl.style.cssText = 'font-size:12px; color:var(--error,#c0392b); margin-top:4px;';
+              btn.parentElement.insertBefore(errEl, btn);
+            }
+            errEl.textContent = err?.message || 'Send failed — please retry.';
+          }
+        }
+      }
+    });
+  });
+}
+
+// Shell-level entry: full-page Marketing Outbox surface. Mirrors
+// loadMarketingApprovals — injects the outbox panel skeleton, then delegates
+// to loadOutboxTab for fetch + render. Wired from home.js via
+// MARKETING_OUTBOX_VIEW.
+export async function loadMarketingOutbox(container) {
+  if (!container) return;
+  container.innerHTML = `
+    <section class="mkt-section">
+      <div class="mkt-section-header">
+        <h3 class="mkt-section-title">Outbox</h3>
+      </div>
+      <div class="mkt-tab-outbox" data-outbox-panel>
+        <p class="mkt-section-subtext">Loading outbox…</p>
+      </div>
+    </section>
+  `;
+  await loadOutboxTab(container);
+}
+
 // ── Action wiring ─────────────────────────────────────────────────────────
 
 function _wireDashboardActions(container) {
@@ -2921,10 +3123,13 @@ function _wireWorkspaceTabs(container, campaign) {
           _loadAndRenderBriefTab(container, campaign);
         }
       }
+      if (tab === 'outbox') {
+        loadOutboxTab(container);
+      }
     });
   });
 
-  // If the initial active tab is assets or brief, trigger the async fetch immediately
+  // If the initial active tab is assets, brief, or outbox, trigger the async fetch immediately
   const initialActive = container.querySelector('[data-mkt-tab].active');
   if (initialActive && campaign._fromApi) {
     if (initialActive.dataset.mktTab === 'assets') {
@@ -2934,6 +3139,8 @@ function _wireWorkspaceTabs(container, campaign) {
       if (!_briefCache.has(campaign.id)) {
         _loadAndRenderBriefTab(container, campaign);
       }
+    } else if (initialActive.dataset.mktTab === 'outbox') {
+      loadOutboxTab(container);
     }
   }
 }

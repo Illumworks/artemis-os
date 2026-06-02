@@ -2055,6 +2055,23 @@ export async function decideApprovalApi(id, { decision, note, reviewer } = {}) {
   return res.json();
 }
 
+// ── Outbox / Send queue ───────────────────────────────────────────────────
+
+export async function fetchMarketingQueuedSends({ status = 'queued', limit = 50 } = {}) {
+  const params = new URLSearchParams({ status, limit: String(limit) });
+  const res = await fetch(`/api/marketing/sends?${params}`);
+  return _readJsonOrThrow(res, 'Failed to fetch outbox');
+}
+
+export async function sendMarketingOutboxItem(sendId, { actor } = {}) {
+  const res = await fetch(`/api/marketing/sends/${encodeURIComponent(sendId)}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ actor: actor || 'operator' }),
+  });
+  return _readJsonOrThrow(res, 'Failed to send outbox item');
+}
+
 // ── Agent Packages Lite helpers ───────────────────────────────────────────
 
 export async function getAgentEnrichedApi(id) {

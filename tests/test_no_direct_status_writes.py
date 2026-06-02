@@ -32,6 +32,12 @@ EXCLUDED_FILES = {
     # temporary stubs (TODO(M3) comments inline) until M3 transition() is
     # guaranteed merged. Brief §6 explicitly permits this pattern. Removal
     # tracked in m3b-attribution-cleanup.
+    "artemis/marketing/sends.py",
+    # SEND2-B mark_send_sent writes send.status = "sent" directly.
+    # campaign_sends.status is a queue lifecycle (queued|sent|failed|skipped)
+    # separate from the 5 campaign state-machine columns — same category as
+    # Approval.status and ContentAsset.status above. The deliverable side of
+    # the send (queued_for_send → sent) still flows through transition().
 }
 
 # The state_machine.py internals legitimately use setattr() for the actual
