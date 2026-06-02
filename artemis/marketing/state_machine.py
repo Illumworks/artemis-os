@@ -77,12 +77,23 @@ class WorkspaceState(enum.StrEnum):
 
 
 class DeliverableState(enum.StrEnum):
-    """campaign_deliverables.status lifecycle."""
+    """campaign_deliverables.status lifecycle.
+
+    SEND2-B adds two send-pipeline states:
+      queued_for_send — deliverable has been enqueued for outbound send;
+                        one campaign_sends row exists with status='queued'.
+      sent            — terminal; transport stub has recorded the send.
+
+    Full happy-path: queued → generating → draft_ready → approved
+                     → queued_for_send → sent.
+    """
 
     queued = "queued"
     generating = "generating"
     draft_ready = "draft_ready"
-    approved = "approved"  # terminal
+    approved = "approved"
+    queued_for_send = "queued_for_send"
+    sent = "sent"  # terminal
     revised = "revised"
     rejected = "rejected"  # terminal
     generation_failed = "generation_failed"  # terminal
@@ -158,7 +169,11 @@ DELIVERABLE_TRANSITIONS: dict[DeliverableState, set[DeliverableState]] = {
         DeliverableState.revised,
         DeliverableState.rejected,
     },
-    DeliverableState.approved: set(),
+    # approved is no longer terminal — enqueue_send_for_deliverable transitions to
+    # queued_for_send when contacts are available (or leaves at approved when skipped).
+    DeliverableState.approved: {DeliverableState.queued_for_send},
+    DeliverableState.queued_for_send: {DeliverableState.sent},
+    DeliverableState.sent: set(),  # terminal
     DeliverableState.revised: {DeliverableState.generating},
     DeliverableState.rejected: {DeliverableState.draft_ready},  # revision after gate-2 rejection
     DeliverableState.generation_failed: set(),
