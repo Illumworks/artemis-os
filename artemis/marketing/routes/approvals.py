@@ -375,33 +375,37 @@ async def _decide_content_draft_approval(
     if decision == "approved" and candidate is not None:
         from artemis.marketing.sends import enqueue_send_for_deliverable
 
-        # Reload deliverables under their current state (post-transition flush)
-        session.expire_all()
-        fresh_deliverables = await _load_candidate_deliverables(session, candidate.id)
-        for d in fresh_deliverables:
-            if d.status in (
-                DeliverableState.approved.value,
-                DeliverableState.queued_for_send.value,
-            ):
-                # For approved rows, enqueue; for already-queued_for_send, skip
-                # (idempotency guard — transition() would raise on re-enqueue).
-                if d.status == DeliverableState.approved.value:
-                    send = await enqueue_send_for_deliverable(
-                        session,
-                        candidate=candidate,
-                        deliverable=d,
-                        actor=decided_by,
-                    )
-                    sends_info.append(
-                        {
-                            "send_id": send.id,
-                            "status": send.status,
-                            "recipient_count": len(send.recipients)
-                            if isinstance(send.recipients, list)
-                            else 0,
-                            "skip_reason": send.skip_reason,
-                        }
-                    )
+        # Capture candidate_id before any expiry/reload so we don't trigger sync load.
+        _candidate_id = candidate.id
+        # Reload deliverables under their current state (post-transition flush).
+        # Re-fetch candidate to avoid stale state after expire.
+        fresh_candidate = await session.get(CampaignCandidate, _candidate_id)
+        fresh_deliverables = await _load_candidate_deliverables(session, _candidate_id)
+        if fresh_candidate is not None:
+            for d in fresh_deliverables:
+                if d.status in (
+                    DeliverableState.approved.value,
+                    DeliverableState.queued_for_send.value,
+                ):
+                    # For approved rows, enqueue; for already-queued_for_send, skip
+                    # (idempotency guard — transition() would raise on re-enqueue).
+                    if d.status == DeliverableState.approved.value:
+                        send = await enqueue_send_for_deliverable(
+                            session,
+                            candidate=fresh_candidate,
+                            deliverable=d,
+                            actor=decided_by,
+                        )
+                        sends_info.append(
+                            {
+                                "send_id": send.id,
+                                "status": send.status,
+                                "recipient_count": len(send.recipients)
+                                if isinstance(send.recipients, list)
+                                else 0,
+                                "skip_reason": send.skip_reason,
+                            }
+                        )
 
     pipeline_decision = "approved" if decision == "approved" else "rejected"
     resumed = False
