@@ -368,6 +368,41 @@ async def _decide_content_draft_approval(
         else:
             await _recompute_workspace_state_from_deliverables(session, candidate.id)
 
+    # SEND2-B: enqueue send rows for each deliverable transitioned to 'approved'.
+    # Only fires on decision == "approved" (not rejected/revision_requested).
+    # Additive — does not affect the pipeline resume flow below.
+    sends_info: list[dict[str, Any]] = []
+    if decision == "approved" and candidate is not None:
+        from artemis.marketing.sends import enqueue_send_for_deliverable
+
+        # Reload deliverables under their current state (post-transition flush)
+        session.expire_all()
+        fresh_deliverables = await _load_candidate_deliverables(session, candidate.id)
+        for d in fresh_deliverables:
+            if d.status in (
+                DeliverableState.approved.value,
+                DeliverableState.queued_for_send.value,
+            ):
+                # For approved rows, enqueue; for already-queued_for_send, skip
+                # (idempotency guard — transition() would raise on re-enqueue).
+                if d.status == DeliverableState.approved.value:
+                    send = await enqueue_send_for_deliverable(
+                        session,
+                        candidate=candidate,
+                        deliverable=d,
+                        actor=decided_by,
+                    )
+                    sends_info.append(
+                        {
+                            "send_id": send.id,
+                            "status": send.status,
+                            "recipient_count": len(send.recipients)
+                            if isinstance(send.recipients, list)
+                            else 0,
+                            "skip_reason": send.skip_reason,
+                        }
+                    )
+
     pipeline_decision = "approved" if decision == "approved" else "rejected"
     resumed = False
     post_commit_status = run.status
@@ -395,6 +430,7 @@ async def _decide_content_draft_approval(
         "pipelineDecision": pipeline_decision,
         "resumed": resumed,
         "runStatus": post_commit_status,
+        "sends": sends_info,
     }
 
 
