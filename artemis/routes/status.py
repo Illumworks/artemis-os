@@ -9,6 +9,8 @@ No auth required — it is intentionally a public, zero-state endpoint.
 
 from fastapi import APIRouter
 
+from artemis.config import settings
+
 router = APIRouter(tags=["status"])
 
 # Hand-maintained inventory of which UI surfaces have a Python backend
@@ -65,5 +67,8 @@ async def get_status() -> dict[str, object]:
         "version": "0.0.1",
         "available_surfaces": sorted(_AVAILABLE_SURFACES),
         "unavailable_surfaces": sorted(_UNAVAILABLE_SURFACES),
+        "features": {
+            "outbound_send_enabled": settings.outbound_send_enabled,
+        },
         "available": True,
     }

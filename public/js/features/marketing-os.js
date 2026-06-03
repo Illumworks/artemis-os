@@ -3,7 +3,9 @@ import { escapeHtml } from '../core/utils.js';
 import {
   MARKETING_CAMPAIGNS_VIEW,
   WRITING_STUDIO_VIEW,
+  writingStudioDraftHref,
 } from '../core/navigation.js';
+import { getStatus } from '../core/status.js';
 import {
   listApprovalsApi, decideApprovalApi,
   fetchMarketingCampaignsApi,
@@ -96,6 +98,7 @@ const _assetLinksCache = new Map();
 // ── Initiation proposal cache ──────────────────────────────────────────────
 // Keyed by campaignId → full initiation proposal payload.
 const _initiationProposalCache = new Map();
+const _pendingDraftApprovalsByCandidate = new Map();
 
 // ── Module-level campaign map ──────────────────────────────────────────────
 function _campaignMapKey(id) {
@@ -105,6 +108,35 @@ function _campaignMapKey(id) {
 let _campaignMap = new Map();
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+function _isOutboundSendEnabled() {
+  return Boolean(getStatus()?.features?.outbound_send_enabled);
+}
+
+function _pendingDraftApprovalCandidateId(approval) {
+  const candidateId = approval?.pipe4Context?.context?.candidate_id;
+  return candidateId == null ? null : String(candidateId);
+}
+
+function _primaryApprovalDeliverableId(approval) {
+  const ctx = approval?.pipe4Context?.context || {};
+  if (Array.isArray(ctx.deliverable_ids) && ctx.deliverable_ids.length > 0) {
+    return Number(ctx.deliverable_ids[0]) || null;
+  }
+  if (Array.isArray(ctx.deliverables) && ctx.deliverables.length > 0) {
+    return Number(ctx.deliverables[0]?.id) || null;
+  }
+  return null;
+}
+
+function _refreshPendingDraftApprovals(approvals = []) {
+  _pendingDraftApprovalsByCandidate.clear();
+  for (const approval of approvals) {
+    const candidateId = _pendingDraftApprovalCandidateId(approval);
+    if (!candidateId || approval?.status !== 'pending') continue;
+    _pendingDraftApprovalsByCandidate.set(candidateId, approval);
+  }
+}
 
 function esc(s) {
   return escapeHtml(String(s ?? ''));
@@ -446,6 +478,7 @@ export function renderMarketingCampaigns(campaignsOrId = null, selectedId = null
 }
 
 function renderCampaignWorkspace(campaign) {
+  const pendingApproval = _pendingDraftApprovalsByCandidate.get(_campaignMapKey(campaign.id)) || null;
   const storedTab = (() => {
     try { return localStorage.getItem(MKT_WORKSPACE_TAB_KEY) || 'audience'; } catch { return 'audience'; }
   })();
@@ -458,18 +491,20 @@ function renderCampaignWorkspace(campaign) {
     { id: 'compliance', label: 'Compliance' },
     { id: 'performance', label: 'Performance' },
     { id: 'approval-log', label: 'Approval Log' },
-    { id: 'outbox', label: 'Outbox' },
+    ...(_isOutboundSendEnabled() ? [{ id: 'outbox', label: 'Outbox' }] : []),
   ];
+  const activeTab = storedTab === 'outbox' && !_isOutboundSendEnabled() ? 'brief' : storedTab;
 
   const tabNav = tabs.map((t) => `
-    <button class="mkt-tab-btn ${storedTab === t.id ? 'active' : ''}"
+    <button class="mkt-tab-btn ${activeTab === t.id ? 'active' : ''}"
             data-mkt-tab="${esc(t.id)}" type="button">${esc(t.label)}</button>
   `).join('');
 
-  const tabContent = renderWorkspaceTab(campaign, storedTab);
+  const tabContent = renderWorkspaceTab(campaign, activeTab);
 
   const actionsHtml = campaign._fromApi ? _renderWorkspaceActions(campaign) : '';
-  const writingStudioHtml = campaign._fromApi ? _renderWritingStudioSection(campaign) : '';
+  const writingStudioHtml = campaign._fromApi ? _renderWritingStudioSection(campaign, pendingApproval) : '';
+  const pendingApprovalHtml = campaign._fromApi ? _renderCampaignPendingApprovalSection(pendingApproval) : '';
   const initiationActionHtml = campaign._fromApi && !campaign.initiatedAt
     ? `<button class="mkt-btn-secondary mkt-initiation-open-btn" type="button" data-mkt-initiation-open="${esc(campaign.id)}">Review initiation proposal</button>`
     : '';
@@ -495,6 +530,7 @@ function renderCampaignWorkspace(campaign) {
       ${initiationActionHtml}
       ${actionsHtml}
       ${writingStudioHtml}
+      ${pendingApprovalHtml}
       <nav class="mkt-tab-nav" aria-label="Campaign workspace tabs">
         ${tabNav}
       </nav>
@@ -541,17 +577,37 @@ function _renderWorkspaceActions(c) {
   `;
 }
 
-function _renderWritingStudioSection(c) {
+function _renderCampaignPendingApprovalSection(approval) {
+  if (!approval || approval.status !== 'pending') return '';
+  const deliverableId = _primaryApprovalDeliverableId(approval);
+  return `
+    <div class="mkt-writing-studio-review-card" data-campaign-approval-card="${esc(String(approval.id))}">
+      <div class="mkt-writing-studio-review-head">
+        <span class="mkt-writing-studio-label">Content review pending</span>
+        <span class="mkt-pill mkt-pill-pending">Pending</span>
+      </div>
+      <div class="mkt-workspace-actions">
+        ${deliverableId ? `<a class="mkt-btn-secondary mkt-ws-open-draft-btn" href="${writingStudioDraftHref(deliverableId)}" data-ws-draft-id="${esc(String(deliverableId))}">Edit in Writing Studio</a>` : ''}
+        <button class="mkt-btn-primary" type="button" data-campaign-approve-id="${esc(String(approval.id))}">Approve</button>
+        <button class="mkt-btn-ghost" type="button" data-campaign-revision-id="${esc(String(approval.id))}">Request revision</button>
+        <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-campaign-reject-id="${esc(String(approval.id))}">Reject</button>
+      </div>
+    </div>
+  `;
+}
+
+function _renderWritingStudioSection(c, approval = null) {
   const count = c.linkedDraftCount || 0;
   const latestId = c.latestDraftId;
-  const latestTitle = c.latestDraftTitle;
+  const reviewDeliverableId = _primaryApprovalDeliverableId(approval);
+  const buttonDraftId = reviewDeliverableId || latestId;
 
   return `
     <div class="mkt-writing-studio-section">
       <span class="mkt-writing-studio-label">Writing Studio</span>
       ${count > 0 ? `
         <span class="mkt-writing-draft-count">${count} draft${count !== 1 ? 's' : ''}</span>
-        ${latestId ? `<button class="mkt-btn-secondary mkt-ws-open-draft-btn" data-ws-draft-id="${esc(String(latestId))}" type="button">Open latest draft →</button>` : ''}
+        ${buttonDraftId ? `<a class="mkt-btn-secondary mkt-ws-open-draft-btn" href="${writingStudioDraftHref(buttonDraftId)}" data-ws-draft-id="${esc(String(buttonDraftId))}">Edit in Writing Studio</a>` : ''}
       ` : `<span class="mkt-writing-no-drafts">No drafts yet</span>`}
       <button class="mkt-btn-secondary mkt-ws-create-draft-btn" type="button">Create draft in Writing Studio</button>
     </div>
@@ -1914,7 +1970,7 @@ function _renderPipe4ApprovalCard(a) {
               </div>
               ${preview}
               <div class="mkt-signal-actions">
-                <button class="mkt-btn-secondary" type="button" data-ws-draft-id="${esc(String(draft.id))}">Open draft →</button>
+                <a class="mkt-btn-secondary" href="${writingStudioDraftHref(draft.id)}" data-ws-draft-id="${esc(String(draft.id))}">Edit in Writing Studio</a>
               </div>
             </div>
           `;
@@ -2031,7 +2087,7 @@ function _renderUnifiedApprovalCard(a) {
           ${payload.versionNumber ? `<span>Version ${esc(String(payload.versionNumber))}</span>` : ''}
         </div>
         <div class="mkt-signal-actions">
-          ${draftId ? `<button class="mkt-btn-secondary" type="button" data-ws-draft-id="${esc(String(draftId))}">Open draft →</button>` : ''}
+          ${draftId ? `<a class="mkt-btn-secondary" href="${writingStudioDraftHref(draftId)}" data-ws-draft-id="${esc(String(draftId))}">Edit in Writing Studio</a>` : ''}
           <button class="mkt-btn-primary" type="button" data-approve-id="${esc(a.id)}">Approve</button>
           <button class="mkt-btn-ghost" type="button" data-reject-id="${esc(a.id)}">Request changes</button>
         </div>
@@ -2125,7 +2181,12 @@ export async function loadMarketingCampaigns(container) {
   `;
   _wireCampaignActions(container);
   try {
-    const liveCandidates = (await fetchMarketingCampaignsApi()).map((c) => _normalizeCampaignCandidate(c));
+    const [campaigns, approvals] = await Promise.all([
+      fetchMarketingCampaignsApi(),
+      listApprovalsApi({ status: 'pending', kind: 'content_draft' }).catch(() => []),
+    ]);
+    const liveCandidates = campaigns.map((c) => _normalizeCampaignCandidate(c));
+    _refreshPendingDraftApprovals(Array.isArray(approvals) ? approvals : []);
     _syncCampaignMap(liveCandidates);
 
     const storedId = (() => {
@@ -3225,16 +3286,74 @@ function _wireWritingStudioBridge(container, campaign) {
   });
 
   container.querySelectorAll('[data-ws-draft-id]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
       const draftId = Number(btn.dataset.wsDraftId);
       if (draftId) _navigateToWritingStudio(draftId);
+    });
+  });
+
+  container.querySelectorAll('[data-campaign-approve-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const approvalId = btn.dataset.campaignApproveId;
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Approving…';
+      try {
+        await decideApprovalApi(approvalId, { decision: 'approve' });
+        _showMarketingApprovalToast(container, 'Approval recorded. Pipeline resumed.');
+        await loadMarketingCampaigns(container);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        _showMarketingApprovalToast(container, err?.message || 'Approval failed.', true);
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-campaign-reject-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const approvalId = btn.dataset.campaignRejectId;
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Submitting…';
+      try {
+        await decideApprovalApi(approvalId, { decision: 'reject' });
+        _showMarketingApprovalToast(container, 'Rejection recorded. Pipeline resumed.');
+        await loadMarketingCampaigns(container);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        _showMarketingApprovalToast(container, err?.message || 'Rejection failed.', true);
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-campaign-revision-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const approvalId = btn.dataset.campaignRevisionId;
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Requesting…';
+      try {
+        await decideApprovalApi(approvalId, { decision: 'request_revision' });
+        _showMarketingApprovalToast(container, 'Revision requested. Draft marked revised.');
+        await loadMarketingCampaigns(container);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        _showMarketingApprovalToast(container, err?.message || 'Revision request failed.', true);
+      }
     });
   });
 }
 
 function _navigateToWritingStudio(draftId) {
   try { localStorage.setItem('artemis-writing-studio-handoff', JSON.stringify({ draftId })); } catch {}
-  setState('view', WRITING_STUDIO_VIEW);
+  if (typeof window !== 'undefined') {
+    window.location.hash = writingStudioDraftHref(draftId);
+  }
+  setState('view', WRITING_STUDIO_VIEW, { fromHistory: true });
 }
 
 // ── District Data provenance card (DIST5) ─────────────────────────────────

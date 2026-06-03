@@ -39,6 +39,12 @@ def build_approval_dm_blocks(
     evidence = ctx.get("evidence", "")
     urgency = ctx.get("urgency", "")
     approval_kind = ctx.get("approval_kind", "signal")
+    deliverable_ids = ctx.get("deliverable_ids")
+    primary_deliverable_id = None
+    if isinstance(deliverable_ids, list) and deliverable_ids:
+        candidate = deliverable_ids[0]
+        if candidate is not None and str(candidate).strip():
+            primary_deliverable_id = str(candidate)
 
     header_text = f":bell: *{pipeline_name}* — {node_label}"
 
@@ -86,32 +92,54 @@ def build_approval_dm_blocks(
     approve_value = f"{run_id}:{node_id}:approved"
     reject_value = f"{run_id}:{node_id}:rejected"
     view_url = f"{app_base_url}/approvals" if app_base_url else "/approvals"
+    edit_url = (
+        f"{app_base_url}/#writing-studio?draft={primary_deliverable_id}"
+        if approval_kind == "content_draft" and app_base_url and primary_deliverable_id
+        else None
+    )
+
+    action_elements: list[dict[str, Any]] = [
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Approve", "emoji": True},
+            "style": "primary",
+            "value": approve_value,
+            "action_id": f"{_CALLBACK_ACTION_ID_PREFIX}_approve",
+        },
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Reject", "emoji": True},
+            "style": "danger",
+            "value": reject_value,
+            "action_id": f"{_CALLBACK_ACTION_ID_PREFIX}_reject",
+        },
+    ]
+    if edit_url:
+        action_elements.append(
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Edit in Writing Studio",
+                    "emoji": True,
+                },
+                "url": edit_url,
+                "action_id": f"{_CALLBACK_ACTION_ID_PREFIX}_edit_draft",
+            }
+        )
+    action_elements.append(
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "View in Artemis →", "emoji": True},
+            "url": view_url,
+            "action_id": f"{_CALLBACK_ACTION_ID_PREFIX}_view",
+        }
+    )
 
     blocks.append(
         {
             "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Approve", "emoji": True},
-                    "style": "primary",
-                    "value": approve_value,
-                    "action_id": f"{_CALLBACK_ACTION_ID_PREFIX}_approve",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Reject", "emoji": True},
-                    "style": "danger",
-                    "value": reject_value,
-                    "action_id": f"{_CALLBACK_ACTION_ID_PREFIX}_reject",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "View in Artemis →", "emoji": True},
-                    "url": view_url,
-                    "action_id": f"{_CALLBACK_ACTION_ID_PREFIX}_view",
-                },
-            ],
+            "elements": action_elements,
         }
     )
 

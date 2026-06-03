@@ -35,6 +35,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.config import settings
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_HOURS = 72
@@ -70,6 +72,7 @@ async def _send_approval_dm(
     run_id: str,
     node_id: str,
     context: dict[str, Any] | None = None,
+    app_base_url: str = "",
     escalation: bool = False,
     original_approvers: list[str] | None = None,
     timeout_hours: int = _DEFAULT_TIMEOUT_HOURS,
@@ -108,6 +111,7 @@ async def _send_approval_dm(
             context=context,
             original_approvers=original_approvers,
             timeout_hours=timeout_hours,
+            app_base_url=app_base_url,
         )
     else:
         blocks = build_approval_dm_blocks(
@@ -116,6 +120,7 @@ async def _send_approval_dm(
             run_id=run_id,
             node_id=node_id,
             context=context,
+            app_base_url=app_base_url,
         )
 
     fallback_text = build_plain_approval_text(
@@ -726,6 +731,7 @@ async def execute_human_gate_node(
     delivery_log: list[dict[str, Any]] = []
 
     if slack_token:
+        app_base_url = settings.app_base_url.rstrip("/")
         for email in approvers:
             entry = await _send_approval_dm(
                 email=email,
@@ -735,6 +741,7 @@ async def execute_human_gate_node(
                 run_id=run_id,
                 node_id=node_id,
                 context=dm_context,
+                app_base_url=app_base_url,
                 escalation=escalation,
                 original_approvers=original_approvers,
                 timeout_hours=timeout_hours,

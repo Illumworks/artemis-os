@@ -23,6 +23,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.config import settings
 from artemis.marketing.contacts import create_contact
 from artemis.marketing.models import (
     CampaignCandidate,
@@ -611,7 +612,9 @@ async def test_list_sends_returns_queued_rows(
 async def test_e2e_approve_with_contacts_creates_queued_send(
     client: AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(settings, "outbound_send_enabled", True)
     # Seed a TX district with 1 contact
     tx_district = await _make_district(db_session, name="TX E2E Dist", state="TX")
     await db_session.flush()
@@ -663,7 +666,9 @@ async def test_e2e_approve_with_contacts_creates_queued_send(
 async def test_e2e_approve_no_contacts_creates_skipped_send(
     client: AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(settings, "outbound_send_enabled", True)
     # No contacts in AK
     candidate, deliverable, run_id, approval_id = await _seed_gate2_run_with_scope(
         db_session, target_scope_json={"mode": "states", "states": ["AK"]}
