@@ -124,6 +124,7 @@ def annotate_district_tier(
     district_tier: str | None,
     district_enrollment: int | None,
     district_supported: bool | None,
+    district_on_skip_list: bool | None = None,
 ) -> dict[str, Any]:
     """Annotate a qualification dict with district tier metadata (DIST4).
 
@@ -157,6 +158,7 @@ def annotate_district_tier(
         "districtTier": district_tier,
         "districtEnrollment": district_enrollment,
         "districtSupported": district_supported,
+        "onSkipList": district_on_skip_list,
         "tierFlag": tier_flag,
     }
     return result

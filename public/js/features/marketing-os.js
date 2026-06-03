@@ -637,7 +637,34 @@ function _scopeToFormModel(targetScope, defaultTargetScope) {
   };
 }
 
-function _renderTargetScopeSection(scopeModel, districtContext) {
+function _computeScopeCount(scopeModel, counts) {
+  if (!counts || typeof counts !== 'object') return null;
+  if (scopeModel.mode === 'all_districts') return Number(counts.allDistricts || 0);
+  if (scopeModel.mode === 'states') {
+    return scopeModel.states.reduce((sum, state) => sum + Number(counts.byState?.[state] || 0), 0);
+  }
+  if (scopeModel.mode === 'district_tier') {
+    return scopeModel.tiers.reduce((sum, tier) => sum + Number(counts.byTier?.[tier] || 0), 0);
+  }
+  return null;
+}
+
+function _renderSkipListBadge(districtContext) {
+  if (!districtContext?.onSkipList) return '';
+  return '<span class="mkt-badge mkt-badge-warn">⚠ Do-not-contact (skip list)</span>';
+}
+
+function _renderDistrictHeaderMeta(districtContext) {
+  const meta = [];
+  if (districtContext?.tier) meta.push(districtContext.tier);
+  if (districtContext?.enrollment != null) meta.push(`${Number(districtContext.enrollment).toLocaleString()} students`);
+  if (districtContext?.supported === true) meta.push('supported');
+  if (districtContext?.supported === false) meta.push('unsupported tier');
+  if (districtContext?.onSkipList === true) meta.push('skip-listed');
+  return meta.length ? `<div class="mkt-initiation-header-meta">${meta.map((item) => `<span class="mkt-initiation-chip">${esc(item)}</span>`).join('')}</div>` : '';
+}
+
+function _renderTargetScopeSection(scopeModel, districtContext, targetScopeCounts) {
   const stateOptions = US_STATES.map((state) => `
     <option value="${esc(state)}"${scopeModel.mode === 'states' && scopeModel.states.includes(state) ? ' selected' : ''}>${esc(state)}</option>
   `).join('');
@@ -652,11 +679,15 @@ function _renderTargetScopeSection(scopeModel, districtContext) {
   const statesChecked = scopeModel.mode === 'states';
   const tierChecked = scopeModel.mode === 'district_tier';
   const note = districtContext?.note ? `<p class="mkt-initiation-note">${esc(districtContext.note)}</p>` : '';
+  const currentScopeCount = _computeScopeCount(scopeModel, targetScopeCounts);
 
   return `
     <section class="mkt-initiation-section">
       <h4>Target scope</h4>
       ${note}
+      <p class="mkt-initiation-note" data-initiation-scope-count>
+        ${currentScopeCount == null ? 'District count unavailable.' : `→ ${esc(String(currentScopeCount))} districts`}
+      </p>
       <label class="mkt-initiation-radio">
         <input type="radio" name="initiation-target-mode" value="all_districts" ${allChecked ? 'checked' : ''}>
         <span>All districts</span>
@@ -682,10 +713,42 @@ function _renderTargetScopeSection(scopeModel, districtContext) {
   `;
 }
 
+function _renderSignalEvidenceExpand(signal) {
+  const reasonCodes = Array.isArray(signal.reasonCodes)
+    ? signal.reasonCodes.map((entry) => {
+      if (typeof entry === 'string') return entry;
+      const code = entry?.code || entry?.reasonCode || entry?.label || 'reason';
+      const confidence = Number(entry?.confidence);
+      return Number.isFinite(confidence) ? `${code} ${Math.round(confidence * 100)}%` : code;
+    })
+    : [];
+  return `
+    <details class="mkt-initiation-signal-expand">
+      <summary>Expand evidence</summary>
+      ${signal.whyFlagged ? `<p class="mkt-initiation-signal-summary"><strong>Why flagged:</strong> ${esc(signal.whyFlagged)}</p>` : ''}
+      ${reasonCodes.length ? `<p class="mkt-initiation-signal-summary"><strong>Reason codes:</strong> ${esc(reasonCodes.join(' · '))}</p>` : ''}
+      <div class="mkt-initiation-signal-meta">
+        <span>${esc(signal.discoveredBy || 'manual')}</span>
+        ${signal.agentRunId ? `<span>run ${esc(String(signal.agentRunId).slice(0, 12))}</span>` : ''}
+        ${signal.sourcePublishedAt ? `<span>${esc(signal.sourcePublishedAt)}</span>` : ''}
+      </div>
+      <div class="mkt-initiation-signal-meta">
+        ${signal.sourceTitle ? `<span>${esc(signal.sourceTitle)}</span>` : ''}
+        ${signal.sourceUrl ? `<a href="${esc(signal.sourceUrl)}" target="_blank" rel="noreferrer">Open source →</a>` : ''}
+      </div>
+    </details>
+  `;
+}
+
 function _renderSignalClusterRows(cluster) {
   return cluster.map((signal) => {
     const removable = signal.isPrimary ? 'data-initiation-signal-primary="true"' : '';
     const title = signal.isPrimary ? 'Primary signal' : 'Corroborating signal';
+    const reasonCodes = Array.isArray(signal.reasonCodes)
+      ? signal.reasonCodes
+        .map((entry) => entry?.code || entry?.reasonCode || entry?.label || (typeof entry === 'string' ? entry : ''))
+        .filter(Boolean)
+      : [];
     return `
       <article class="mkt-initiation-signal ${signal.isPrimary ? 'mkt-initiation-signal--primary' : ''}" data-initiation-signal-id="${esc(String(signal.signalId))}" ${removable}>
         <div class="mkt-initiation-signal-topline">
@@ -693,11 +756,14 @@ function _renderSignalClusterRows(cluster) {
           <span class="mkt-pill ${signal.isPrimary ? 'mkt-pill-live' : 'mkt-pill-active'}">${esc(title)}</span>
         </div>
         ${signal.summary ? `<p class="mkt-initiation-signal-summary">${esc(signal.summary)}</p>` : ''}
+        ${signal.whyFlagged ? `<p class="mkt-initiation-signal-summary"><strong>Why flagged:</strong> ${esc(signal.whyFlagged)}</p>` : ''}
+        ${reasonCodes.length ? `<p class="mkt-initiation-signal-summary"><strong>Reason codes:</strong> ${esc(reasonCodes.join(' · '))}</p>` : ''}
         <div class="mkt-initiation-signal-meta">
           <span>${esc(signal.campaignFamily || 'unknown family')}</span>
           <span>${signal.state ? esc(signal.state) : '—'}</span>
           <span>${signal.resolvedDistrictId ? `District ${esc(String(signal.resolvedDistrictId))}` : 'District unresolved'}</span>
         </div>
+        ${_renderSignalEvidenceExpand(signal)}
         <button class="mkt-btn-text mkt-initiation-signal-remove" type="button" data-initiation-signal-remove="${esc(String(signal.signalId))}" ${signal.isPrimary ? 'disabled' : ''}>
           ${signal.isPrimary ? 'Primary signal' : 'Remove'}
         </button>
@@ -741,15 +807,15 @@ function _renderLineagePanel(lineage) {
               <strong>${esc(item.name || `Campaign ${item.candidateId}`)}</strong>
               <span>${esc(item.objective || 'No objective recorded')}</span>
             </div>
-            ${item.latestBrief ? `<p class="mkt-initiation-lineage-brief">Latest brief available</p>` : ''}
+            ${item.latestBriefSummary ? `<p class="mkt-initiation-lineage-brief">${esc(item.latestBriefSummary)}</p>` : (item.latestBrief ? '<p class="mkt-initiation-lineage-brief">Latest brief available</p>' : '')}
             <div class="mkt-initiation-lineage-collateral">
               <button class="mkt-btn-text" type="button" data-lineage-action="view" data-lineage-candidate-id="${esc(String(item.candidateId))}">View</button>
               <button class="mkt-btn-text" type="button" data-lineage-action="clone" data-lineage-candidate-id="${esc(String(item.candidateId))}">Clone</button>
               <button class="mkt-btn-text" type="button" data-lineage-action="adapt" data-lineage-candidate-id="${esc(String(item.candidateId))}">Adapt</button>
             </div>
             <div class="mkt-initiation-lineage-collateral-list">
-              ${(item.drafts || []).map((draft) => `<span class="mkt-initiation-chip">Draft ${esc(String(draft.draft_id || draft.id || ''))}</span>`).join('')}
-              ${(item.linkedAssets || []).map((asset) => `<span class="mkt-initiation-chip">${esc(asset.asset_type || 'asset')}</span>`).join('')}
+              ${(item.drafts || []).map((draft) => `<span class="mkt-initiation-chip">${esc(draft.metadata?.title || `Draft ${String(draft.draft_id || draft.id || '')}`)}</span>`).join('')}
+              ${(item.linkedAssets || []).map((asset) => `<span class="mkt-initiation-chip">${esc(asset.summary || asset.asset_type || 'asset')}</span>`).join('')}
             </div>
           </article>
         `).join('')}
@@ -774,6 +840,8 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
             <div class="mkt-modal-eyebrow">Campaign initiation</div>
             <h3>${esc(proposal.name || campaign.name || 'Pending initiation')}</h3>
             <p>${esc(bundle?.districtContext?.label || 'All districts')}</p>
+            ${_renderDistrictHeaderMeta(bundle?.districtContext)}
+            ${_renderSkipListBadge(bundle?.districtContext)}
           </div>
           <button class="mkt-btn-text" type="button" data-initiation-close>Close</button>
         </div>
@@ -787,6 +855,25 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
           <span>Objective</span>
           <textarea rows="4" data-initiation-field="objective">${esc(proposal.objective || '')}</textarea>
         </label>
+
+        ${proposal.rationale ? `
+          <section class="mkt-initiation-section">
+            <h4>Campaign rationale</h4>
+            <p class="mkt-initiation-signal-summary">${esc(proposal.rationale)}</p>
+          </section>
+        ` : ''}
+
+        ${bundle?.metricsJson ? `
+          <section class="mkt-initiation-section">
+            <h4>Promotion score</h4>
+            <p class="mkt-initiation-signal-summary">
+              Qualified at score ${esc(String(bundle.metricsJson.adjustedScore ?? '—'))}
+              ${Array.isArray(bundle.metricsJson.recommendedFamilies) && bundle.metricsJson.recommendedFamilies.length
+                ? ` · recommended ${esc(bundle.metricsJson.recommendedFamilies.join(', '))}`
+                : ''}
+            </p>
+          </section>
+        ` : ''}
 
         <label class="mkt-initiation-field">
           <span>Owner</span>
@@ -810,7 +897,16 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
           </div>
         </section>
 
-        ${_renderTargetScopeSection(scopeModel, bundle?.districtContext)}
+        ${_renderTargetScopeSection(scopeModel, bundle?.districtContext, bundle?.targetScopeCounts)}
+        ${bundle?.districtContext?.onSkipList ? `
+          <section class="mkt-initiation-section mkt-initiation-warning">
+            <h4>Skip-list acknowledgment required</h4>
+            <label class="mkt-initiation-radio">
+              <input type="checkbox" data-initiation-skip-ack>
+              <span>I understand this district is on the do-not-contact skip list and still want to initiate.</span>
+            </label>
+          </section>
+        ` : ''}
         ${_renderLineagePanel(bundle?.lineage || [])}
 
         <div class="mkt-initiation-actions">
@@ -908,6 +1004,17 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
     if (tiersPanel) tiersPanel.hidden = mode !== 'district_tier';
   };
 
+  const syncSkipAckRequirement = () => {
+    const confirmBtn = modal.querySelector('[data-initiation-confirm]');
+    if (!confirmBtn) return;
+    const ack = modal.querySelector('[data-initiation-skip-ack]');
+    if (!ack) {
+      confirmBtn.disabled = false;
+      return;
+    }
+    confirmBtn.disabled = !ack.checked;
+  };
+
   const selectedScope = () => {
     const mode = modal.querySelector('input[name="initiation-target-mode"]:checked')?.value || 'all_districts';
     if (mode === 'states') {
@@ -920,6 +1027,13 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
       return { mode, tiers };
     }
     return { mode: 'all_districts' };
+  };
+
+  const refreshScopeCount = () => {
+    const node = modal.querySelector('[data-initiation-scope-count]');
+    if (!node) return;
+    const count = _computeScopeCount(_scopeToFormModel(selectedScope(), bundle?.defaultTargetScope), bundle?.targetScopeCounts);
+    node.textContent = count == null ? 'District count unavailable.' : `→ ${count} districts`;
   };
 
   const collectPayload = () => {
@@ -937,6 +1051,7 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
       deliverable_type_slugs,
       target_scope: selectedScope(),
       actor: accountInfo ? (_resolveAccountUser(accountInfo)?.label || null) : null,
+      skip_list_acknowledged: !!modal.querySelector('[data-initiation-skip-ack]')?.checked,
     };
   };
 
@@ -951,9 +1066,20 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
   });
 
   modal.querySelectorAll('input[name="initiation-target-mode"]').forEach((input) => {
-    input.addEventListener('change', toggleScopePanels);
+    input.addEventListener('change', () => {
+      toggleScopePanels();
+      refreshScopeCount();
+    });
   });
   toggleScopePanels();
+  refreshScopeCount();
+
+  modal.querySelector('[data-initiation-states-select]')?.addEventListener('change', refreshScopeCount);
+  modal.querySelectorAll('[data-initiation-tier]').forEach((input) => {
+    input.addEventListener('change', refreshScopeCount);
+  });
+  modal.querySelector('[data-initiation-skip-ack]')?.addEventListener('change', syncSkipAckRequirement);
+  syncSkipAckRequirement();
 
   modal.querySelectorAll('[data-initiation-signal-remove]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1003,6 +1129,10 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
     }
     if (!payload.objective) {
       modal.querySelector('[data-initiation-field="objective"]')?.focus();
+      return;
+    }
+    if (bundle?.districtContext?.onSkipList && !payload.skip_list_acknowledged) {
+      modal.querySelector('[data-initiation-skip-ack]')?.focus();
       return;
     }
     confirmBtn.disabled = true;
