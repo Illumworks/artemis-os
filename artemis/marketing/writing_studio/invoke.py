@@ -222,11 +222,14 @@ async def create_draft_from_candidate(
     campaign_name = candidate.name or family
     title = f"{family} — Draft"
 
-    # --- Get-or-create per-campaign folder ---
-    folder = await wr_repo.get_or_create_folder_by_campaign(
+    # --- Get-or-create per-candidate folder ---
+    # Keyed on candidate_id (stored as str in writing_folders.campaign_id).
+    # The folder's display name is derived at read time from the live
+    # candidate — folder.name here is just a creation-time snapshot.
+    folder = await wr_repo.get_or_create_folder_by_candidate(
         session,
-        family,
-        name=campaign_name,
+        candidate_id,
+        candidate_name=campaign_name,
     )
 
     # --- External WS call ---
@@ -248,7 +251,7 @@ async def create_draft_from_candidate(
             "externalDraftId": external_draft.external_id,
             "externalTitle": external_draft.title,
             "folder_id": folder.id,
-            "folder_name": folder.name,
+            "folder_name": campaign_name,  # live name snapshot for clients reading metadata
         },
     )
     session.add(deliverable)
@@ -367,24 +370,36 @@ class BackfillResult:
     rows_updated: int
     folders_created: int
     skipped_no_candidate: int
+    family_folders_removed: int
 
 
 async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
-    """One-time idempotent backfill: assign per-campaign folders to existing deliverables.
+    """Idempotent backfill: one folder per campaign candidate.
 
-    For each campaign_deliverable row that either:
-      (a) has campaign_id = str(candidate_id)  (old numeric form), or
-      (b) has metadata.folder_id not set,
+    Pass 1 — Deliverables
+    ─────────────────────
+    For every ``campaign_deliverable`` row:
+      1. Look up the linked ``CampaignCandidate``.
+      2. Get-or-create a ``WritingFolder`` keyed on ``str(candidate_id)``
+         (stored in ``writing_folders.campaign_id``).
+      3. Patch ``deliverable_metadata`` with the correct ``folder_id``
+         and a snapshot ``folder_name``.
+      4. Ensure ``campaign_deliverables.campaign_id`` equals the family
+         string (unchanged semantic).
 
-    this function:
-      1. Looks up the linked CampaignCandidate to get campaign_family.
-      2. Gets-or-creates a WritingFolder keyed on campaign_family.
-      3. Updates campaign_id to the family string.
-      4. Patches metadata with folder_id and folder_name.
+    A row is considered already-correct when its ``metadata.folder_id``
+    equals the id of the per-candidate folder for its candidate.  Only
+    those rows are skipped; all others are updated (idempotent re-runs are
+    safe).
 
-    Rows whose metadata.folder_id is already set to a non-null integer and
-    whose campaign_id already equals the candidate's campaign_family are left
-    untouched (idempotent).
+    Pass 2 — Orphaned family-level folders
+    ──────────────────────────────────────
+    After all deliverables have been migrated, any ``WritingFolder`` whose
+    ``campaign_id`` value is NOT a pure-integer string (i.e. it is an old
+    family name like ``"obc"`` rather than a candidate id like ``"42"``) is
+    deleted.  This removes the misleadingly-named family-level folders
+    created by the previous implementation without touching per-candidate
+    folders that are already correct.
 
     Does NOT commit — caller owns the transaction.
     """
@@ -396,19 +411,27 @@ async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
     deliverables = list(result.scalars())
 
     # Pre-fetch all referenced candidates in one query.
-    candidate_ids = {d.candidate_id for d in deliverables}
-    cand_result = await session.execute(
-        select(CampaignCandidate).where(CampaignCandidate.id.in_(candidate_ids))
-    )
-    candidates_by_id = {c.id: c for c in cand_result.scalars()}
+    candidate_ids = {d.candidate_id for d in deliverables if d.candidate_id is not None}
+    candidates_by_id: dict[int, CampaignCandidate] = {}
+    if candidate_ids:
+        cand_result = await session.execute(
+            select(CampaignCandidate).where(CampaignCandidate.id.in_(candidate_ids))
+        )
+        candidates_by_id = {c.id: c for c in cand_result.scalars()}
 
     rows_examined = 0
     rows_updated = 0
     folders_created_ids: set[int] = set()
     skipped = 0
 
+    # Track per-candidate folder ids so we can check idempotency cheaply.
+    candidate_folder_cache: dict[int, Any] = {}  # candidate_id -> WritingFolder
+
     for d in deliverables:
         rows_examined += 1
+        if d.candidate_id is None:
+            skipped += 1
+            continue
         candidate = candidates_by_id.get(d.candidate_id)
         if candidate is None:
             skipped += 1
@@ -418,35 +441,49 @@ async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
         campaign_name = candidate.name or family
         meta: dict[str, Any] = dict(d.deliverable_metadata or {})
 
-        # Check if already correctly backfilled.
-        already_correct_campaign = d.campaign_id == family
-        already_has_folder = isinstance(meta.get("folder_id"), int)
-        if already_correct_campaign and already_has_folder:
-            continue
-
-        folder = await wr_repo.get_or_create_folder_by_campaign(session, family, name=campaign_name)
-        if folder.id not in folders_created_ids:
-            # We can't distinguish create vs. get here; track by id.
+        # Get-or-create the per-candidate folder (cached within this run).
+        if d.candidate_id not in candidate_folder_cache:
+            folder = await wr_repo.get_or_create_folder_by_candidate(
+                session,
+                d.candidate_id,
+                candidate_name=campaign_name,
+            )
+            candidate_folder_cache[d.candidate_id] = folder
             folders_created_ids.add(folder.id)
+        else:
+            folder = candidate_folder_cache[d.candidate_id]
+
+        # Check if this deliverable is already pointing at the correct folder.
+        if meta.get("folder_id") == folder.id and d.campaign_id == family:
+            continue
 
         d.campaign_id = family
         meta["folder_id"] = folder.id
-        meta["folder_name"] = folder.name
+        meta["folder_name"] = campaign_name  # live-name snapshot
         d.deliverable_metadata = meta
         rows_updated += 1
 
     await session.flush()
 
-    # Count folders that were just created vs. pre-existing.
-    # We approximate: any folder whose id is in folders_created_ids and was
-    # freshly inserted (no pre-existing rows share that id) counts as created.
-    # Since get_or_create only creates when none exists, all folders we touched
-    # whose campaign_id was not previously mapped count as created.
-    # This is a best-effort counter; correctness of the data matters more.
+    # Pass 2: remove old family-level folders (campaign_id is not a digit string).
+    from artemis.writing_rules.models import WritingFolder
+
+    all_folders_result = await session.execute(select(WritingFolder))
+    all_folders = list(all_folders_result.scalars())
+    family_folders_removed = 0
+    for f in all_folders:
+        cid = f.campaign_id or ""
+        if cid and not cid.isdigit():
+            # Old family-level folder — remove it.
+            await session.delete(f)
+            family_folders_removed += 1
+
+    await session.flush()
 
     return BackfillResult(
         rows_examined=rows_examined,
         rows_updated=rows_updated,
         folders_created=len(folders_created_ids),
         skipped_no_candidate=skipped,
+        family_folders_removed=family_folders_removed,
     )

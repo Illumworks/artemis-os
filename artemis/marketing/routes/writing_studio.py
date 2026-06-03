@@ -83,19 +83,26 @@ async def get_overview(
     except Exception:  # noqa: BLE001
         drafts = []
 
-    # --- folders ---
-    try:
-        folder_rows = await wr_repo.list_folders(session)
-        folders = [_serialize_folder(f) for f in folder_rows]
-    except Exception:  # noqa: BLE001
-        folders = []
-
-    # --- campaigns (id + name for filter dropdown) ---
+    # --- campaigns (id + name for filter dropdown) — fetched BEFORE folders so
+    # that we can derive live folder names from the candidate name. ---
     try:
         candidate_rows = await _list_campaigns(session)
         campaigns = [_serialize_campaign(c) for c in candidate_rows]
     except Exception:  # noqa: BLE001
+        candidate_rows = []
         campaigns = []
+
+    # Build a lookup from str(candidate_id) -> candidate for folder name derivation.
+    _candidate_name_by_str_id: dict[str, str] = {
+        str(c.id): (c.name or c.campaign_family or f"Campaign {c.id}") for c in candidate_rows
+    }
+
+    # --- folders ---
+    try:
+        folder_rows = await wr_repo.list_folders(session)
+        folders = [_serialize_folder(f, _candidate_name_by_str_id) for f in folder_rows]
+    except Exception:  # noqa: BLE001
+        folders = []
 
     # --- rules, examples, sources, profiles ---
     try:
@@ -486,17 +493,40 @@ def _serialize_deliverable_detail(d: CampaignDeliverable) -> dict[str, Any]:
     return base
 
 
-def _serialize_folder(f: Any) -> dict[str, Any]:
+def _serialize_folder(
+    f: Any,
+    candidate_name_by_str_id: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Serialize a WritingFolder for the overview.
 
-    Frontend reads: id, name, parent_folder_id, campaign_id.
+    Frontend reads: id, name, parent_folder_id, campaign_id, candidate_id.
     (draftCount is computed client-side from drafts array — not precomputed here.)
+
+    When ``candidate_name_by_str_id`` is provided and the folder's
+    ``campaign_id`` is a pure-integer string (i.e. a per-candidate folder),
+    the folder's display ``name`` is derived from the live candidate name
+    rather than the creation-time snapshot stored in ``writing_folders.name``.
+    This ensures the folder name always reflects the current campaign name
+    without requiring any rename-sync hook.
     """
+    cid: str | None = f.campaign_id
+    # Derive candidate_id (int) if campaign_id is a numeric string.
+    candidate_id_int: int | None = None
+    if cid and cid.isdigit():
+        candidate_id_int = int(cid)
+
+    # Use live candidate name when available; fall back to stored snapshot.
+    if candidate_name_by_str_id is not None and cid and cid.isdigit():
+        display_name: str = candidate_name_by_str_id.get(cid, f.name)
+    else:
+        display_name = f.name
+
     return {
         "id": f.id,
-        "name": f.name,
+        "name": display_name,
         "parent_folder_id": f.parent_folder_id,
         "campaign_id": f.campaign_id,
+        "candidate_id": candidate_id_int,
         "description": f.description,
         "sync_id": f.sync_id,
     }
