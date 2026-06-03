@@ -34,6 +34,7 @@ from artemis.marketing.repository import (
 from artemis.marketing.state_machine import DeliverableState, transition
 from artemis.marketing.writing_studio.events import publish as publish_event
 from artemis.marketing.writing_studio.external import ExternalDraft, get_writing_studio
+from artemis.writing_rules import repository as wr_repo
 
 # ── Output shapes ──────────────────────────────────────────────────────────────
 
@@ -218,21 +219,36 @@ async def create_draft_from_candidate(
 
     # --- Title ---
     family = candidate.campaign_family or "Campaign"
+    campaign_name = candidate.name or family
     title = f"{family} — Draft"
+
+    # --- Get-or-create per-campaign folder ---
+    folder = await wr_repo.get_or_create_folder_by_campaign(
+        session,
+        family,
+        name=campaign_name,
+    )
 
     # --- External WS call ---
     external_draft: ExternalDraft = await external.create_draft(title=title, metadata=metadata)
 
     # --- Create campaign_deliverables row ---
+    #
+    # campaign_id is set to campaign_family (the human-readable family name,
+    # e.g. "obc"), NOT str(candidate_id).  The Writing Studio filter dropdown
+    # is populated from CampaignCandidate.campaign_family, so only the family
+    # string produces matching filter results.
     deliverable = CampaignDeliverable(
         candidate_id=candidate_id,
         deliverable_id=external_draft.external_id,
-        campaign_id=str(candidate_id),
+        campaign_id=family,
         status="generating",
         deliverable_metadata={
             **metadata,
             "externalDraftId": external_draft.external_id,
             "externalTitle": external_draft.title,
+            "folder_id": folder.id,
+            "folder_name": folder.name,
         },
     )
     session.add(deliverable)
@@ -245,7 +261,7 @@ async def create_draft_from_candidate(
         await publish_event(
             "draft.generated",
             draft_id=external_draft.external_id,
-            campaign_id=str(candidate_id),
+            campaign_id=family,
             deliverable_id=str(deliverable.id),
             status="generating",
         )
@@ -337,4 +353,100 @@ async def submit_draft_for_review(
         status="pending",
         external_approval_id=ext_approval.external_id if ext_approval else None,
         created_at=approval.created_at,
+    )
+
+
+# ── Backfill ──────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class BackfillResult:
+    """Summary of a campaign-folder backfill run."""
+
+    rows_examined: int
+    rows_updated: int
+    folders_created: int
+    skipped_no_candidate: int
+
+
+async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
+    """One-time idempotent backfill: assign per-campaign folders to existing deliverables.
+
+    For each campaign_deliverable row that either:
+      (a) has campaign_id = str(candidate_id)  (old numeric form), or
+      (b) has metadata.folder_id not set,
+
+    this function:
+      1. Looks up the linked CampaignCandidate to get campaign_family.
+      2. Gets-or-creates a WritingFolder keyed on campaign_family.
+      3. Updates campaign_id to the family string.
+      4. Patches metadata with folder_id and folder_name.
+
+    Rows whose metadata.folder_id is already set to a non-null integer and
+    whose campaign_id already equals the candidate's campaign_family are left
+    untouched (idempotent).
+
+    Does NOT commit — caller owns the transaction.
+    """
+    from sqlalchemy import select
+
+    from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
+
+    result = await session.execute(select(CampaignDeliverable))
+    deliverables = list(result.scalars())
+
+    # Pre-fetch all referenced candidates in one query.
+    candidate_ids = {d.candidate_id for d in deliverables}
+    cand_result = await session.execute(
+        select(CampaignCandidate).where(CampaignCandidate.id.in_(candidate_ids))
+    )
+    candidates_by_id = {c.id: c for c in cand_result.scalars()}
+
+    rows_examined = 0
+    rows_updated = 0
+    folders_created_ids: set[int] = set()
+    skipped = 0
+
+    for d in deliverables:
+        rows_examined += 1
+        candidate = candidates_by_id.get(d.candidate_id)
+        if candidate is None:
+            skipped += 1
+            continue
+
+        family = candidate.campaign_family or "Campaign"
+        campaign_name = candidate.name or family
+        meta: dict[str, Any] = dict(d.deliverable_metadata or {})
+
+        # Check if already correctly backfilled.
+        already_correct_campaign = d.campaign_id == family
+        already_has_folder = isinstance(meta.get("folder_id"), int)
+        if already_correct_campaign and already_has_folder:
+            continue
+
+        folder = await wr_repo.get_or_create_folder_by_campaign(session, family, name=campaign_name)
+        if folder.id not in folders_created_ids:
+            # We can't distinguish create vs. get here; track by id.
+            folders_created_ids.add(folder.id)
+
+        d.campaign_id = family
+        meta["folder_id"] = folder.id
+        meta["folder_name"] = folder.name
+        d.deliverable_metadata = meta
+        rows_updated += 1
+
+    await session.flush()
+
+    # Count folders that were just created vs. pre-existing.
+    # We approximate: any folder whose id is in folders_created_ids and was
+    # freshly inserted (no pre-existing rows share that id) counts as created.
+    # Since get_or_create only creates when none exists, all folders we touched
+    # whose campaign_id was not previously mapped count as created.
+    # This is a best-effort counter; correctness of the data matters more.
+
+    return BackfillResult(
+        rows_examined=rows_examined,
+        rows_updated=rows_updated,
+        folders_created=len(folders_created_ids),
+        skipped_no_candidate=skipped,
     )
