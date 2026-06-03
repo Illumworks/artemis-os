@@ -91,6 +91,44 @@ async def get_folder_by_sync_id(session: AsyncSession, sync_id: str) -> WritingF
     return result.scalar_one_or_none()
 
 
+async def get_folder_by_campaign(session: AsyncSession, campaign_id: str) -> WritingFolder | None:
+    """Return the first folder whose campaign_id matches the given campaign family."""
+    result = await session.execute(
+        select(WritingFolder)
+        .where(WritingFolder.campaign_id == campaign_id)
+        .order_by(WritingFolder.id)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_or_create_folder_by_campaign(
+    session: AsyncSession,
+    campaign_id: str,
+    *,
+    name: str | None = None,
+) -> WritingFolder:
+    """Return an existing per-campaign folder, or create one if none exists.
+
+    Uses campaign_id (the campaign_family string) as the lookup key so that
+    all drafts for the same campaign family are grouped under a single folder.
+
+    ``name`` overrides the folder display name; when omitted, campaign_id is
+    used as-is.  The caller is responsible for flushing / committing.
+    """
+    folder = await get_folder_by_campaign(session, campaign_id)
+    if folder is not None:
+        return folder
+    folder = WritingFolder(
+        name=name or campaign_id,
+        campaign_id=campaign_id,
+    )
+    session.add(folder)
+    await session.flush()
+    await session.refresh(folder)
+    return folder
+
+
 async def create_folder(session: AsyncSession, **kwargs: Any) -> WritingFolder:
     folder = WritingFolder(**kwargs)
     session.add(folder)

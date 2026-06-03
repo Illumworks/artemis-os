@@ -503,11 +503,20 @@ def _serialize_folder(f: Any) -> dict[str, Any]:
 
 
 def _serialize_campaign(c: CampaignCandidate) -> dict[str, Any]:
-    """Serialize a CampaignCandidate for the campaign filter dropdown."""
+    """Serialize a CampaignCandidate for the campaign filter dropdown.
+
+    ``id`` is the campaign_family string (e.g. "obc"), not the numeric
+    candidate id.  The frontend filter compares draft.campaign_id against
+    filters.campaignId, and both are now the family name string, so they
+    match correctly.  Multiple candidates from the same family collapse to a
+    single filter option via deduplication on the frontend (or are harmless
+    duplicates since the value is identical).
+    """
     return {
-        "id": c.id,
+        "id": c.campaign_family,
         "name": c.campaign_family,
         "status": c.decision_state,
+        "candidate_id": c.id,
     }
 
 
