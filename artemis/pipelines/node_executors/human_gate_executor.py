@@ -164,6 +164,77 @@ async def _send_approval_dm(
     return log_entry
 
 
+# Marketing approval gates that should also post to the shared marketing channel.
+_MARKETING_CHANNEL_KINDS = frozenset({"content_draft", "signal_brief", "campaign_initiation"})
+
+
+async def _post_approval_to_channel(
+    *,
+    channel_id: str,
+    token: str,
+    pipeline_name: str,
+    node_label: str,
+    run_id: str,
+    node_id: str,
+    context: dict[str, Any] | None = None,
+    app_base_url: str = "",
+) -> dict[str, Any]:
+    """Post the approval review notification to a shared Slack channel (once, not per-approver).
+
+    Mirrors the DM blocks (approve/reject + Edit-in-Writing-Studio) so the team's channel is the
+    shared review surface. Non-fatal: a failure logs + falls back, never breaks the gate.
+    """
+    from artemis.integrations.slack.client import SlackAPIError, SlackClient
+    from artemis.integrations.slack.messages import (
+        build_approval_dm_blocks,
+        build_plain_approval_text,
+    )
+
+    log_entry: dict[str, Any] = {
+        "target": "channel",
+        "channel": channel_id,
+        "sent_at": datetime.now(UTC).isoformat(),
+        "error": None,
+        "fallback": False,
+    }
+    blocks = build_approval_dm_blocks(
+        pipeline_name=pipeline_name,
+        node_label=node_label,
+        run_id=run_id,
+        node_id=node_id,
+        context=context,
+        app_base_url=app_base_url,
+    )
+    fallback_text = build_plain_approval_text(
+        pipeline_name=pipeline_name,
+        node_label=node_label,
+        run_id=run_id,
+        node_id=node_id,
+    )
+    try:
+        await SlackClient(token)._post(
+            "chat.postMessage",
+            channel=channel_id,
+            text=fallback_text,
+            blocks=blocks,
+        )
+        logger.info(
+            "Posted approval notification to channel %s for run %s node %s",
+            channel_id,
+            run_id,
+            node_id,
+        )
+    except SlackAPIError as exc:
+        log_entry["error"] = f"Slack API error: {exc}"
+        log_entry["fallback"] = True
+        logger.warning("Channel approval post failed for %s: %s", channel_id, exc)
+    except Exception as exc:
+        log_entry["error"] = f"Unexpected error: {exc}"
+        log_entry["fallback"] = True
+        logger.exception("Unexpected channel approval post error for %s", channel_id)
+    return log_entry
+
+
 async def _get_slack_token(session: AsyncSession) -> str | None:
     """Retrieve active Slack bot_token from integrations table."""
     try:
@@ -732,7 +803,11 @@ async def execute_human_gate_node(
 
     if slack_token:
         app_base_url = settings.app_base_url.rstrip("/")
-        for email in approvers:
+        # TEST/STAGING override: route DMs to a single person instead of the real approvers,
+        # so testing doesn't ping the configured reviewers. Channel post is unaffected.
+        notify_override = settings.approval_notify_override.strip()
+        notify_emails = [notify_override] if notify_override else approvers
+        for email in notify_emails:
             entry = await _send_approval_dm(
                 email=email,
                 token=slack_token,
@@ -747,6 +822,21 @@ async def execute_human_gate_node(
                 timeout_hours=timeout_hours,
             )
             delivery_log.append(entry)
+        # Post ONCE to the shared marketing channel (in addition to DMs) for marketing gates.
+        channel_id = settings.marketing_campaigns_slack_channel.strip()
+        if channel_id and kind in _MARKETING_CHANNEL_KINDS:
+            delivery_log.append(
+                await _post_approval_to_channel(
+                    channel_id=channel_id,
+                    token=slack_token,
+                    pipeline_name=pipeline_name,
+                    node_label=node_label,
+                    run_id=run_id,
+                    node_id=node_id,
+                    context=dm_context,
+                    app_base_url=app_base_url,
+                )
+            )
     else:
         # No Slack configured — log fallback for all approvers
         for email in approvers:
