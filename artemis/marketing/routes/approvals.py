@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,11 +33,11 @@ from artemis.marketing.repository import decide_approval
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
 from artemis.marketing.state_machine import (
-    WORKSPACE_TRANSITIONS,
     DeliverableState,
     WorkspaceState,
     transition,
 )
+from artemis.marketing.workspace import recompute_workspace_state_from_deliverables
 from artemis.pipelines import repository as pipeline_repo
 
 logger = logging.getLogger(__name__)
@@ -367,7 +366,12 @@ async def _decide_content_draft_approval(
                 reason="content_draft_revision_requested",
             )
         else:
-            await _recompute_workspace_state_from_deliverables(session, candidate.id)
+            await recompute_workspace_state_from_deliverables(
+                session,
+                candidate.id,
+                actor=decided_by,
+                reason="content_draft_decision",
+            )
 
     # SEND2-B: enqueue send rows for each deliverable transitioned to 'approved'.
     # Guarded behind the outbound-send feature flag so Gate-2 can remain an
@@ -445,78 +449,6 @@ async def _load_candidate_deliverables(
         .order_by(CampaignDeliverable.id)
     )
     return list(result.scalars().all())
-
-
-async def _recompute_workspace_state_from_deliverables(
-    session: AsyncSession,
-    candidate_id: int,
-) -> None:
-    deliverables = await _load_candidate_deliverables(session, candidate_id)
-    if not deliverables:
-        return
-
-    statuses = [d.status for d in deliverables]
-    if any(status == DeliverableState.rejected for status in statuses):
-        target = WorkspaceState.revision_needed
-    elif all(status == DeliverableState.approved for status in statuses):
-        target = WorkspaceState.all_content_approved
-    elif any(status == DeliverableState.draft_ready for status in statuses):
-        target = WorkspaceState.content_in_review
-    else:
-        target = WorkspaceState.in_content_preparation
-
-    candidate = await session.get(CampaignCandidate, candidate_id)
-    if candidate is None or candidate.workspace_state == target.value:
-        return
-
-    # The deliverable run does not (yet) advance workspace_state as it drafts, so
-    # at decision time a candidate is typically still at `pending_content` while
-    # the derived target is several legal hops away (e.g. all_content_approved).
-    # The state machine only permits single-step transitions, so walk the shortest
-    # legal path rather than attempting an illegal one-hop jump (which 500s).
-    try:
-        current = WorkspaceState(candidate.workspace_state)
-    except ValueError:
-        # Legacy/unknown state — let transition() raise its descriptive error.
-        current = None
-    path = _workspace_path(current, target) if current is not None else None
-    # Fall back to a direct transition so transition() raises a clear,
-    # actionable IllegalTransition instead of silently desyncing.
-    steps = path if path else [target]
-    for step in steps:
-        await transition(
-            session,
-            "workspace",
-            candidate_id,
-            step,
-            actor="approval_router",
-            reason="content_draft_decision",
-        )
-
-
-def _workspace_path(
-    from_state: WorkspaceState, to_state: WorkspaceState
-) -> list[WorkspaceState] | None:
-    """Shortest legal WORKSPACE_TRANSITIONS path from *from_state* to *to_state*.
-
-    Returns the list of intermediate+final states to step through (exclusive of
-    from_state, inclusive of to_state), or None if to_state is unreachable.
-    """
-    if from_state == to_state:
-        return []
-    queue: deque[tuple[WorkspaceState, list[WorkspaceState]]] = deque([(from_state, [])])
-    seen: set[WorkspaceState] = {from_state}
-    while queue:
-        current, path = queue.popleft()
-        for nxt in WORKSPACE_TRANSITIONS.get(current, set()):
-            if nxt in seen:
-                continue
-            next_path = [*path, nxt]
-            if nxt == to_state:
-                return next_path
-            seen.add(nxt)
-            queue.append((nxt, next_path))
-    return None
 
 
 def _parse_gate_subject_id(subject_id: str) -> tuple[str | None, str | None]:
