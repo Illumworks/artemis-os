@@ -21,7 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from artemis.marketing.state_machine import DeliverableState, WorkspaceState, transition
+from artemis.marketing.state_machine import DeliverableState, transition
+from artemis.marketing.workspace import recompute_workspace_state_from_deliverables
 
 logger = logging.getLogger(__name__)
 
@@ -73,48 +74,22 @@ async def _recompute_workspace_state(
 ) -> None:
     """Recompute and persist the campaign candidate's workspace_state.
 
-    Mirrors Node's computeWorkspaceStateFromDeliverables + updateCampaignWorkspaceState.
-    Rules:
-      - Any deliverable rejected_at_gate_2 → 'revision_needed'
-      - All deliverables approved → 'all_content_approved'
-      - Any ready_for_review → 'content_in_review'
-      - Otherwise → 'content_in_progress'
+    Delegates to the shared FIX115 helper so the path-walk is used and the
+    adapter no longer eats IllegalTransition from one-hop jumps.
     """
-    from sqlalchemy import select
+    from artemis.marketing.state_machine import IllegalTransition
 
-    from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
-
-    result = await session.execute(
-        select(CampaignDeliverable).where(CampaignDeliverable.candidate_id == candidate_id)
-    )
-    deliverables = list(result.scalars().all())
-
-    if not deliverables:
-        return
-
-    statuses = [d.status for d in deliverables]
-
-    if any(s == DeliverableState.rejected for s in statuses):
-        target_ws = WorkspaceState.revision_needed
-    elif all(s == DeliverableState.approved for s in statuses):
-        target_ws = WorkspaceState.all_content_approved
-    elif any(s == DeliverableState.draft_ready for s in statuses):
-        target_ws = WorkspaceState.content_in_review
-    else:
-        target_ws = WorkspaceState.in_content_preparation
-
-    candidate = await session.get(CampaignCandidate, candidate_id)
-    if candidate is not None and candidate.workspace_state != target_ws.value:
-        from artemis.marketing.state_machine import IllegalTransition
-
-        try:
-            await transition(session, "workspace", candidate_id, target_ws)
-        except IllegalTransition as exc:
-            # Log but do not raise — workspace recomputation is advisory.
-            # In production the workspace should already be at a state that
-            # allows this transition; illegal transitions indicate test setup
-            # skipped intermediate states or a data inconsistency.
-            logger.warning("[writing-studio-adapter] workspace transition skipped: %s", exc)
+    try:
+        await recompute_workspace_state_from_deliverables(
+            session,
+            candidate_id,
+            actor="writing_studio_adapter",
+            reason="draft_event_recompute",
+        )
+    except IllegalTransition as exc:
+        # Recomputation is advisory — if a terminal/legacy state blocks the
+        # walk, log and move on. The draft event itself must still succeed.
+        logger.warning("[writing-studio-adapter] workspace recompute skipped: %s", exc)
 
 
 # ── Deliverable state update ───────────────────────────────────────────────────

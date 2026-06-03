@@ -268,6 +268,31 @@ async def execute_agent_node(
     if output_text:
         summary += f": {output_text[:120]}…" if len(output_text) > 120 else f": {output_text}"
 
+    # FIX115: advance candidate.workspace_state along its legal path as the
+    # deliverable run progresses. Only fires when this node resolved a
+    # candidate (content_asset_selector / writing_studio_adapter / a
+    # deliverable_X node) so non-content pipelines are untouched.
+    if candidate is not None:
+        from artemis.marketing.workspace import advance_workspace_for_node
+
+        try:
+            await advance_workspace_for_node(
+                session,
+                candidate.id,
+                node.get("id", ""),
+                actor="deliverable_run",
+            )
+        except Exception:
+            # Workspace sync is advisory — never fail a successful agent run
+            # because a transition was illegal. advance_workspace_for_node
+            # already swallows IllegalTransition; this guards everything else.
+            logger.warning(
+                "advance_workspace_for_node failed for candidate=%s node=%s",
+                candidate.id,
+                node.get("id", ""),
+                exc_info=True,
+            )
+
     return {
         "status": "succeeded",
         "output_summary": summary,
