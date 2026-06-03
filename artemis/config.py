@@ -30,6 +30,21 @@ class Settings(BaseSettings):
         default=False,
         description="Enable CMP-SEND-2 outbound send surfaces and enqueue-on-approve hook.",
     )
+    marketing_campaigns_slack_channel: str = Field(
+        default="",
+        description=(
+            "Slack channel ID (e.g. C0B8QE17DGQ) where marketing approval gates post a "
+            "review notification, in addition to approver DMs. Empty = no channel post."
+        ),
+    )
+    approval_notify_override: str = Field(
+        default="",
+        description=(
+            "TEST/STAGING: if set to an email, ALL human-gate approval DMs route only to this "
+            "person instead of the configured approvers (channel post is unaffected). Empty = "
+            "normal routing to the gate's approvers."
+        ),
+    )
 
     db_url: str = Field(
         default="postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os",
