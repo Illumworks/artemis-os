@@ -651,7 +651,6 @@ async def slack_pipeline_approval_callback(
     validate via the action_id prefix to ensure it's a pipeline approval action.
     """
     import json
-    from datetime import UTC, datetime
 
     form = await request.form()
     payload_raw = form.get("payload", "")
@@ -693,26 +692,26 @@ async def slack_pipeline_approval_callback(
     if decision not in ("approved", "rejected"):
         return {"ok": True}
 
+    # Stage the gate release through the shared helper so the Slack seam honors
+    # the same contract as the HTTP resume route — crucially including
+    # ``flag_modified(run, "node_states")``. Without it, the shallow-copy +
+    # in-place nested mutation this endpoint used to do never marked the JSONB
+    # column dirty (the mutated gate dict is shared with the loaded value, so
+    # SQLAlchemy detected no change), the decision never persisted, and the run
+    # silently re-suspended on resume.
     try:
-        run = await repo.get_pipeline_run(session, run_id)
-    except ValueError:
+        await _prepare_pipeline_resume(
+            session,
+            run_id,
+            node_id=node_id,
+            decision=decision,
+            actor=actor_email or "slack_user",
+        )
+        await session.commit()
+    except HTTPException:
+        # Unknown run, gate not suspended, or invalid decision: ack silently.
+        # Slack interaction endpoints must always 200 or the button errors out.
         return {"ok": True}
-
-    if run.status not in ("awaiting_approval", "running"):
-        return {"ok": True}
-
-    node_states: dict[str, Any] = dict(run.node_states or {})
-    gate_state = node_states.get(node_id, {})
-    if not isinstance(gate_state, dict) or gate_state.get("status") not in ("suspended", "running"):
-        return {"ok": True}
-
-    gate_state["decision"] = decision
-    gate_state["decided_at"] = datetime.now(UTC).isoformat()
-    gate_state["decided_by"] = actor_email
-    node_states[node_id] = gate_state
-    run.node_states = node_states
-    run.status = "running"
-    await session.commit()
 
     _dispatch_execution(run_id)
 

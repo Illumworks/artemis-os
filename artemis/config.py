@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     )
     marketing_campaigns_slack_channel: str = Field(
         default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_MARKETING_CAMPAIGNS_SLACK_CHANNEL",
+            "MARKETING_CAMPAIGNS_SLACK_CHANNEL",
+        ),
         description=(
             "Slack channel ID (e.g. C0B8QE17DGQ) where marketing approval gates post a "
             "review notification, in addition to approver DMs. Empty = no channel post."
@@ -39,6 +43,10 @@ class Settings(BaseSettings):
     )
     approval_notify_override: str = Field(
         default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_APPROVAL_NOTIFY_OVERRIDE",
+            "APPROVAL_NOTIFY_OVERRIDE",
+        ),
         description=(
             "TEST/STAGING: if set to an email, ALL human-gate approval DMs route only to this "
             "person instead of the configured approvers (channel post is unaffected). Empty = "

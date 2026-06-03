@@ -202,6 +202,52 @@ async def test_post_dm_opens_then_sends() -> None:
     assert result["ts"] == "7.0"
 
 
+# ── SlackClient — lookup_user_by_email ────────────────────────────────────────
+
+
+async def test_lookup_user_by_email_returns_id() -> None:
+    ok_resp = _mock_response({"ok": True, "user": {"id": "U09F3EPJXSQ", "real_name": "Jon Fila"}})
+    mock_http = AsyncMock()
+    mock_http.post.return_value = ok_resp
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("httpx.AsyncClient", return_value=mock_http):
+        user_id = await _make_client().lookup_user_by_email("jon.fila@amiralearning.com")
+
+    assert user_id == "U09F3EPJXSQ"
+    call = mock_http.post.call_args
+    assert "users.lookupByEmail" in call.args[0]
+    assert call.kwargs["data"]["email"] == "jon.fila@amiralearning.com"
+
+
+async def test_lookup_user_by_email_not_found_returns_none() -> None:
+    # Slack returns ok=false with error=users_not_found for an unknown email;
+    # SlackClient._post raises SlackAPIError, which the method maps to None.
+    not_found = _mock_response({"ok": False, "error": "users_not_found"})
+    mock_http = AsyncMock()
+    mock_http.post.return_value = not_found
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("httpx.AsyncClient", return_value=mock_http):
+        user_id = await _make_client().lookup_user_by_email("nobody@example.com")
+
+    assert user_id is None
+
+
+async def test_lookup_user_by_email_other_error_raises() -> None:
+    err = _mock_response({"ok": False, "error": "invalid_auth"})
+    mock_http = AsyncMock()
+    mock_http.post.return_value = err
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("httpx.AsyncClient", return_value=mock_http):  # noqa: SIM117
+        with pytest.raises(SlackAPIError):
+            await _make_client().lookup_user_by_email("x@example.com")
+
+
 # ── Tool registration ─────────────────────────────────────────────────────────
 
 

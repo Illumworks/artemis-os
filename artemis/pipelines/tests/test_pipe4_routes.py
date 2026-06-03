@@ -179,7 +179,7 @@ async def test_slack_callback_valid_approve(client: AsyncClient, db_session: Asy
         "user": {"id": "USLACK123", "name": "approver"},
     }
 
-    with patch("artemis.pipelines.routes._execute_pipeline_run", new=AsyncMock()):
+    with patch("artemis.pipelines.routes._dispatch_execution") as dispatch:
         resp = await client.post(
             "/api/slack/pipeline-approval-callback",
             data={"payload": json.dumps(payload)},
@@ -188,6 +188,79 @@ async def test_slack_callback_valid_approve(client: AsyncClient, db_session: Asy
 
     assert resp.status_code == 200
     assert resp.json().get("ok") is True
+    # The callback must dispatch the resume...
+    dispatch.assert_called_once_with(run_id)
+    # ...and the decision must actually PERSIST. Regression guard: the callback
+    # previously mutated a shared nested node_states dict without
+    # flag_modified(), so SQLAlchemy emitted no UPDATE — the run silently
+    # re-suspended. Read committed state from an independent session.
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT status, node_states->'gate1'->>'decision', "
+                "node_states->'gate1'->>'decided_by' "
+                "FROM pipeline_runs WHERE id = :i"
+            ),
+            {"i": run_id},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == "running"
+    assert row[1] == "approved"
+    assert row[2] == "approver"
+
+
+async def test_slack_callback_reject_persists_decision(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    run_id_holder: list[str] = []
+    run_id = await _setup_suspended_gate(db_session, run_id_holder)
+
+    payload = {
+        "actions": [
+            {
+                "action_id": "pipeline_approval_reject",
+                "value": f"{run_id}:gate1:rejected",
+            }
+        ],
+        "user": {"id": "USLACK123", "name": "approver"},
+    }
+
+    with patch("artemis.pipelines.routes._dispatch_execution") as dispatch:
+        resp = await client.post(
+            "/api/slack/pipeline-approval-callback",
+            data={"payload": json.dumps(payload)},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    assert resp.status_code == 200
+    dispatch.assert_called_once_with(run_id)
+    row = (
+        await db_session.execute(
+            text("SELECT node_states->'gate1'->>'decision' FROM pipeline_runs WHERE id = :i"),
+            {"i": run_id},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == "rejected"
+
+
+async def test_slack_callback_unknown_run_acks_silently(client: AsyncClient) -> None:
+    payload = {
+        "actions": [
+            {"action_id": "pipeline_approval_approve", "value": "no-such-run:gate1:approved"}
+        ],
+        "user": {"id": "USLACK123", "name": "approver"},
+    }
+    with patch("artemis.pipelines.routes._dispatch_execution") as dispatch:
+        resp = await client.post(
+            "/api/slack/pipeline-approval-callback",
+            data={"payload": json.dumps(payload)},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    assert resp.status_code == 200
+    assert resp.json().get("ok") is True
+    dispatch.assert_not_called()
 
 
 async def test_slack_callback_empty_payload_ok(client: AsyncClient) -> None:

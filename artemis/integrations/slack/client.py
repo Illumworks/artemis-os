@@ -93,6 +93,26 @@ class SlackClient:
         channels: list[dict[str, object]] = data.get("channels", [])  # type: ignore[assignment]
         return channels
 
+    async def lookup_user_by_email(self, email: str) -> str | None:
+        """Resolve a Slack user ID from an email via ``users.lookupByEmail``.
+
+        This is the canonical email→user resolution and works regardless of
+        workspace size. The older ``list_users`` path only fetched the first
+        ``users.list`` page (no pagination), so members past the first page were
+        silently missed. Returns ``None`` when Slack reports ``users_not_found``.
+        """
+        try:
+            data = await self._post("users.lookupByEmail", email=email)
+        except SlackAPIError as exc:
+            if "users_not_found" in str(exc):
+                return None
+            raise
+        user = data.get("user")
+        if isinstance(user, dict):
+            user_id = user.get("id")
+            return str(user_id) if user_id else None
+        return None
+
     async def list_users(
         self, query: str | None = None, limit: int = 200
     ) -> list[dict[str, object]]:

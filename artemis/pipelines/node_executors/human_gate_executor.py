@@ -51,11 +51,7 @@ async def _lookup_slack_user_id(
 
     client = SlackClient(token)
     try:
-        members = await client.list_users(query=email.lower())
-        for m in members:
-            profile: dict[str, object] = m.get("profile", {})  # type: ignore[assignment]
-            if str(profile.get("email", "")).lower() == email.lower():
-                return str(m.get("id", ""))
+        return await client.lookup_user_by_email(email)
     except SlackAPIError:
         logger.warning("Slack user lookup failed for %r", email)
     except Exception:
