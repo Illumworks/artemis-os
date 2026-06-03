@@ -52,6 +52,9 @@ SELECT_BLUEPRINT = text(
     "db_tables_touched, implementation_notes, inputs_required "
     "FROM agents WHERE agent_id = :agent_id"
 )
+SELECT_PROMPT_AND_TOOLS = text(
+    "SELECT system_prompt, tools FROM agents WHERE agent_id = :agent_id"
+)
 UPDATE_BLUEPRINT = text(
     "UPDATE agents SET cadence_seconds = 123, lifecycle_status = 'operator_edit' "
     "WHERE agent_id = 'marketing.scout.starbridge_researcher'"
@@ -291,3 +294,43 @@ async def test_reseed_preserves_existing_blueprint_when_markdown_is_silent(
     )
     assert row["cadence_seconds"] == 123
     assert row["lifecycle_status"] == "operator_edit"
+
+
+async def test_content_agent_prompts_are_explicitly_tool_grounded(
+    db_session: AsyncSession,
+) -> None:
+    await _reset(db_session)
+    await seed_marketing_agents(db_session)
+
+    adapter = (
+        await db_session.execute(
+            SELECT_PROMPT_AND_TOOLS,
+            {"agent_id": "marketing.content.writing_studio_adapter"},
+        )
+    ).mappings().one()
+    assert adapter["tools"] == ["writing_studio.enqueue"]
+    assert "writing_studio.enqueue" in adapter["system_prompt"]
+    assert "Bash" in adapter["system_prompt"]
+    assert "HTTP status codes" in adapter["system_prompt"]
+    assert "POST payload" not in adapter["system_prompt"]
+
+    selector = (
+        await db_session.execute(
+            SELECT_PROMPT_AND_TOOLS,
+            {"agent_id": "marketing.content.asset_selector"},
+        )
+    ).mappings().one()
+    assert selector["tools"] == ["content_registry.list_approved_assets"]
+    assert "content_registry.list_approved_assets" in selector["system_prompt"]
+    assert "CALL YOUR TOOL FIRST" in selector["system_prompt"]
+    assert "claude.complete" not in selector["system_prompt"]
+
+    assembler = (
+        await db_session.execute(
+            SELECT_PROMPT_AND_TOOLS,
+            {"agent_id": "marketing.content.brief_assembler"},
+        )
+    ).mappings().one()
+    assert assembler["tools"] == ["campaign_brief.read", "campaign_brief.write"]
+    assert "campaign_brief.write" in assembler["system_prompt"]
+    assert "NO TOOL CALLS IN PROPOSAL MODE" in assembler["system_prompt"]
