@@ -124,10 +124,12 @@ export function normalizeSignal(signal = {}) {
     signalStatus: signal.signalStatus || signal.status || "pending_qualification",
     headline: signal.headline || codeLabels[0] || "Untitled signal",
     summary: signal.summary || signal.whyFlagged || signal.evidence || "",
+    whyFlagged: signal.whyFlagged || provenance.why_flagged || provenance.whyFlagged || signal.summary || "",
     sourceType: signal.sourceType || provenance.sourceType || "manual",
     sourceUrl: signal.sourceUrl || provenance.sourceUrl || null,
     sourceTitle: signal.sourceTitle || provenance.sourceTitle || null,
     sourceAuthor: signal.sourceAuthor || provenance.sourceAuthor || provenance.speakerAttribution || null,
+    sourcePublishedAt: signal.sourcePublishedAt || provenance.sourcePublishedAt || provenance.source_published_at || null,
     speakerAttribution: signal.speakerAttribution || provenance.speakerAttribution || signal.sourceAuthor || null,
     stateCode,
     district,
@@ -135,6 +137,9 @@ export function normalizeSignal(signal = {}) {
     reasonCodeLabels: codeLabels,
     urgencyTier: normalizeUrgency(signal.urgencyTier),
     discoveredAt,
+    discoveredBy: signal.discoveredBy || provenance.discovered_by || provenance.discoveredBy || "manual",
+    agentRunId: signal.agentRunId || provenance.agent_run_id || provenance.agentRunId || null,
+    relatedSignalsCount: Number(signal.relatedSignalsCount || 0),
     qualificationJson: signal.qualificationJson || null,
     briefId: signal.briefId || signal.campaignBriefId || null,
     pipelineRun,
@@ -386,10 +391,24 @@ function renderDistrictContextBlock(ctx) {
   const supportedBadge = ctx.districtSupported === false
     ? `<span class="mkt-signal-district-badge mkt-signal-district-badge--warn" title="This district tier is not currently supported — signal is still actionable">⚠ unsupported tier (filtered)</span>`
     : `<span class="mkt-signal-district-badge mkt-signal-district-badge--ok">supported ✓</span>`;
+  const skipListBadge = ctx.onSkipList === true
+    ? `<span class="mkt-signal-district-badge mkt-signal-district-badge--warn" title="This district is on the do-not-contact skip list">⚠ do-not-contact (skip list)</span>`
+    : "";
   return `<section class="mkt-signal-district${ctx.districtSupported === false ? " mkt-signal-district--unsupported" : ""}">
     <h5>District</h5>
-    <p class="mkt-signal-district-line">${esc(location)} · ${esc(tier)} · ${esc(enrollment)} ${supportedBadge}</p>
+    <p class="mkt-signal-district-line">${esc(location)} · ${esc(tier)} · ${esc(enrollment)} ${supportedBadge} ${skipListBadge}</p>
   </section>`;
+}
+
+function renderTraceLink(signal) {
+  if (!signal.agentRunId) return "";
+  const shortId = String(signal.agentRunId).slice(0, 12);
+  return `<a href="#operations" title="Open Operations shell to inspect this scout run">Trace ${esc(shortId)} →</a>`;
+}
+
+function renderWhyFlagged(signal) {
+  if (!signal.whyFlagged) return '<p class="mkt-signal-detail-muted">No scout reasoning captured.</p>';
+  return `<p class="mkt-signal-detail-snippet">${esc(signal.whyFlagged)}</p>`;
 }
 
 export function renderSignalDetailPanel(signal) {
@@ -409,6 +428,8 @@ export function renderSignalDetailPanel(signal) {
         <span>${esc(signal.signalStatus.replace(/_/g, " "))}</span>
         <span>${esc(signal.urgencyTier)}</span>
         ${signal.stateCode ? `<span>${esc(signal.stateCode)}</span>` : ""}
+        <span>${esc(signal.discoveredBy || "manual")}</span>
+        <span>${esc(`${signal.relatedSignalsCount || 0} related signals seen`)}</span>
       </div>
       ${run ? `<section class="mkt-signal-pipeline">
         <h5>Pipeline Run</h5>
@@ -421,21 +442,36 @@ export function renderSignalDetailPanel(signal) {
       ${approval ? `<a class="mkt-signal-approval-badge" href="${esc(approval.href || "#approvals")}">Awaiting Gate 1</a>` : ""}
       ${renderDistrictContextBlock(signal.districtContext)}
       <section>
-        <h5>Source</h5>
-        <p class="mkt-signal-detail-snippet">${esc(signal.summary || "No source snippet captured.")}</p>
+        <h5>Why flagged</h5>
+        ${renderWhyFlagged(signal)}
+      </section>
+      <section>
+        <h5>Scout</h5>
         <div class="mkt-signal-detail-source">
-          ${signal.sourceUrl ? `<a href="${esc(signal.sourceUrl)}" target="_blank" rel="noreferrer">${esc(signal.sourceTitle || signal.sourceUrl)}</a>` : `<span>${esc(signal.sourceType || "manual")}</span>`}
-          ${signal.speakerAttribution ? `<span>${esc(signal.speakerAttribution)}</span>` : ""}
+          <span>${esc(signal.discoveredBy || "manual")}</span>
+          ${renderTraceLink(signal)}
         </div>
       </section>
       <section>
         <h5>Reason Codes</h5>
         <div class="mkt-signal-detail-chips">${renderReasonChips(signal)}</div>
       </section>
-      <section>
-        <h5>Qualifier Audit</h5>
-        <div class="mkt-signal-audit">${renderQualifierAudit(signal)}</div>
-      </section>
+      <details class="mkt-signal-full-details">
+        <summary>Expand to full signal</summary>
+        <section>
+          <h5>Source</h5>
+          <p class="mkt-signal-detail-snippet">${esc(signal.summary || "No source snippet captured.")}</p>
+          <div class="mkt-signal-detail-source">
+            ${signal.sourceUrl ? `<a href="${esc(signal.sourceUrl)}" target="_blank" rel="noreferrer">${esc(signal.sourceTitle || signal.sourceUrl)}</a>` : `<span>${esc(signal.sourceType || "manual")}</span>`}
+            ${signal.speakerAttribution ? `<span>${esc(signal.speakerAttribution)}</span>` : ""}
+            ${signal.sourcePublishedAt ? `<span>${esc(signal.sourcePublishedAt)}</span>` : ""}
+          </div>
+        </section>
+        <section>
+          <h5>Qualifier Audit</h5>
+          <div class="mkt-signal-audit">${renderQualifierAudit(signal)}</div>
+        </section>
+      </details>
       <section>
         <h5>Brief Preview</h5>
         ${signal.briefId || signal.campaignCandidateId

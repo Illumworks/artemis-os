@@ -28,6 +28,7 @@ async def _make_district(
     *,
     name: str = "Fort Bend ISD",
     state: str = "TX",
+    on_skip_list: bool = False,
 ) -> District:
     district = District(
         name=name,
@@ -35,7 +36,7 @@ async def _make_district(
         enrollment=20000,
         tier="D2",
         supported=True,
-        on_skip_list=False,
+        on_skip_list=on_skip_list,
         classification_source="manual",
     )
     session.add(district)
@@ -249,12 +250,19 @@ async def test_get_initiation_proposal_returns_proposal_cluster_registry_distric
     assert data["signalCluster"][0]["isPrimary"] is True
     assert data["districtContext"]["resolved"] is True
     assert data["districtContext"]["state"] == "TX"
+    assert data["districtContext"]["enrollment"] == 20000
+    assert data["districtContext"]["onSkipList"] is False
     assert data["districtContext"]["defaultTargetScope"] == {"mode": "states", "states": ["TX"]}
+    assert data["metricsJson"] == {}
+    assert data["targetScopeCounts"]["byState"]["TX"] >= 1
+    assert data["selectedTargetScopeCount"] >= 1
+    assert data["signalCluster"][0]["whyFlagged"] == "Summary for Board vote"
     assert any(
         row["slug"] == "outreach_email" and row["active"] for row in data["deliverableRegistry"]
     )
     assert any(row["slug"] == "social" and not row["active"] for row in data["deliverableRegistry"])
     assert len(data["lineage"]) == 1
+    assert data["lineage"][0]["latestBriefSummary"] == "Prior brief context"
     assert data["lineage"][0]["drafts"][0]["deliverable_id"] == "draft-1"
     assert data["lineage"][0]["linkedAssets"][0]["summary"] == "Prior collateral summary"
 
@@ -292,6 +300,57 @@ async def test_post_initiate_creates_deliverables_run_for_candidate(
     reget = await client.get(f"/api/marketing/campaigns/{candidate_id}/initiation-proposal")
     assert reget.status_code == 200
     assert reget.json()["initiatedAt"] is not None
+
+
+@pytest.mark.asyncio
+async def test_post_initiate_requires_skip_list_acknowledgment(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    run_id = await _make_gate_run(db_session)
+    district = await _make_district(
+        db_session,
+        name="Skip List ISD",
+        state="TX",
+        on_skip_list=True,
+    )
+    first_signal = await _make_signal(
+        db_session,
+        headline="Skip list superintendent transition",
+        district_id=district.id,
+        pipeline_run_id=run_id,
+    )
+    candidate = await cluster_or_create_candidate(db_session, first_signal)
+    await save_initiation_proposal(
+        db_session,
+        candidate.id,
+        {
+            "name": "Skip List Follow-Up",
+            "objective": "Proceed intentionally despite the district flag.",
+            "recommended_deliverable_types": ["outreach_email"],
+            "target_scope": {"mode": "states", "states": ["TX"]},
+            "rationale": "Operator review still wants the option available.",
+        },
+    )
+    await db_session.commit()
+
+    payload = {
+        "name": "Skip List Follow-Up",
+        "objective": "Proceed intentionally despite the district flag.",
+        "owner_user_id": 7,
+        "deliverable_type_slugs": ["outreach_email"],
+        "target_scope": {"mode": "states", "states": ["TX"]},
+    }
+    resp = await client.post(f"/api/marketing/campaigns/{candidate.id}/initiate", json=payload)
+    assert resp.status_code == 422
+    assert "skip_list_acknowledged" in resp.text
+
+    with patch("artemis.marketing.routes.initiation._dispatch_execution", new=MagicMock()):
+        acked = await client.post(
+            f"/api/marketing/campaigns/{candidate.id}/initiate",
+            json={**payload, "skip_list_acknowledged": True},
+        )
+    assert acked.status_code == 200
 
 
 @pytest.mark.asyncio

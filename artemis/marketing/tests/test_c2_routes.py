@@ -257,6 +257,63 @@ class TestSignalQueueGet:
         assert body["headline"] == "Test Headline"
         assert "signalStatus" in body
 
+    async def test_get_surfaces_related_count_and_skip_list_context(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        from artemis.marketing.models import District
+
+        district = District(
+            name="Pinellas County",
+            state="FL",
+            enrollment=9800,
+            tier="D2",
+            supported=True,
+            on_skip_list=True,
+            classification_source="manual",
+        )
+        db_session.add(district)
+        await db_session.flush()
+
+        provenance = {
+            "why_flagged": "The board agenda elevated literacy purchasing to an action item.",
+            "agent_run_id": "run-enrich1-test-001",
+        }
+        signal = await _make_signal(
+            db_session,
+            headline="Pinellas agenda item",
+            source_url="https://example.org/agenda",
+            signal_status=SignalState.qualified.value,
+            provenance=provenance,
+            resolved_district_id=district.id,
+            qualification_json={
+                "districtContext": {
+                    "resolved": True,
+                    "districtId": district.id,
+                    "districtName": district.name,
+                    "districtState": district.state,
+                    "districtTier": district.tier,
+                    "districtEnrollment": district.enrollment,
+                    "districtSupported": True,
+                    "onSkipList": True,
+                    "tierFlag": None,
+                }
+            },
+        )
+        await _make_signal(
+            db_session,
+            headline="Pinellas agenda item",
+            source_url="https://example.org/agenda",
+            signal_status=SignalState.qualified.value,
+        )
+        await db_session.commit()
+
+        r = await client.get(f"/api/signal-queue/{signal.id}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["relatedSignalsCount"] == 1
+        assert body["districtContext"]["onSkipList"] is True
+        assert body["provenance"]["agent_run_id"] == "run-enrich1-test-001"
+
 
 class TestSignalQueueIntake:
     async def test_intake_missing_headline(

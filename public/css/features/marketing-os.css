@@ -139,6 +139,12 @@
   border: 1px solid color-mix(in srgb, var(--surface-outline) 88%, transparent);
 }
 
+.mkt-badge-warn {
+  background: rgba(212, 137, 26, 0.16);
+  color: var(--warning);
+  border: 1px solid rgba(212, 137, 26, 0.28);
+}
+
 /* Status pills ───────────────────────────────────────── */
 
 .mkt-pill {
@@ -3045,6 +3051,13 @@
   font-size: 12px;
 }
 
+.mkt-initiation-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .mkt-initiation-signals,
 .mkt-initiation-deliverables,
 .mkt-initiation-lineage-list {
@@ -3089,6 +3102,16 @@
   font-size: 13px;
 }
 
+.mkt-initiation-signal-expand {
+  margin-top: 8px;
+}
+
+.mkt-initiation-signal-expand summary {
+  cursor: pointer;
+  color: var(--accent-primary, #7dcfff);
+  font-size: 12px;
+}
+
 .mkt-initiation-signal-meta {
   margin-top: 8px;
   display: flex;
@@ -3131,6 +3154,13 @@
 
 .mkt-initiation-tier-option--disabled {
   opacity: .55;
+}
+
+.mkt-initiation-warning {
+  border: 1px solid rgba(255, 184, 77, .35);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 184, 77, .08);
 }
 
 .mkt-initiation-actions {

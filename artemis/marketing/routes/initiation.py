@@ -7,11 +7,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
 from artemis.marketing.initiation_schemas import CampaignInitiationProposal, TargetScope
-from artemis.marketing.models import CampaignCandidate, SignalQueue
+from artemis.marketing.models import CampaignCandidate, District, SignalQueue
 from artemis.marketing.repository import (
     get_candidate,
     get_candidate_lineage_context,
@@ -44,6 +45,7 @@ class InitiateCampaignRequest(BaseModel):
     deliverable_type_slugs: list[str] = Field(default_factory=list, min_length=1)
     target_scope: TargetScope
     actor: str | None = None
+    skip_list_acknowledged: bool = False
 
 
 @router.get("")
@@ -116,6 +118,7 @@ async def get_initiation_proposal(
 
     district_context = await _build_district_context(session, primary_signal)
     lineage = await get_candidate_lineage_context(session, candidate_id)
+    proposal_scope = proposal.target_scope.model_dump(mode="json")
     pipeline_run_id = _resolve_pipeline_run_id(signal_cluster)
 
     return {
@@ -137,6 +140,9 @@ async def get_initiation_proposal(
         ],
         "districtContext": district_context,
         "defaultTargetScope": district_context["defaultTargetScope"],
+        "metricsJson": candidate.metrics_json if isinstance(candidate.metrics_json, dict) else {},
+        "targetScopeCounts": await _build_target_scope_counts(session),
+        "selectedTargetScopeCount": await _count_districts_for_scope(session, proposal_scope),
         "lineage": [_serialize_lineage_row(item) for item in lineage],
         "pipelineRunId": pipeline_run_id,
         "pipelineRunRole": "discovery",
@@ -154,6 +160,24 @@ async def initiate(
         candidate = await get_candidate(session, candidate_id)
     except ValueError as exc:
         raise not_found("Campaign candidate not found", "campaign_candidate_not_found") from exc
+
+    primary_signal = await get_candidate_primary_signal(session, candidate_id)
+    district_context = await _build_district_context(session, primary_signal)
+    if district_context.get("onSkipList") is True and not body.skip_list_acknowledged:
+        raise validation_failed(
+            {
+                "errors": [
+                    {
+                        "loc": ["body", "skip_list_acknowledged"],
+                        "msg": (
+                            "skip_list_acknowledged must be true before initiating a "
+                            "skip-listed district campaign"
+                        ),
+                        "type": "value_error",
+                    }
+                ]
+            }
+        )
 
     proposal_json = candidate.initiation_proposal_json
     if not isinstance(proposal_json, dict):
@@ -261,7 +285,9 @@ async def _build_district_context(
             "name": None,
             "state": None,
             "tier": None,
+            "enrollment": None,
             "supported": None,
+            "onSkipList": None,
             "defaultTargetScope": {"mode": "all_districts"},
         }
 
@@ -276,7 +302,9 @@ async def _build_district_context(
             "name": None,
             "state": state,
             "tier": None,
+            "enrollment": None,
             "supported": None,
+            "onSkipList": None,
             "defaultTargetScope": {"mode": "all_districts"},
         }
 
@@ -291,7 +319,9 @@ async def _build_district_context(
         "name": district.name,
         "state": district.state,
         "tier": district.tier,
+        "enrollment": district.enrollment,
         "supported": district.supported,
+        "onSkipList": district.on_skip_list,
         "defaultTargetScope": default_scope,
     }
 
@@ -306,6 +336,7 @@ def _serialize_signal_row(
     signal: SignalQueue, primary_signal: SignalQueue | None
 ) -> dict[str, Any]:
     district_id = signal.resolved_district_id
+    provenance = signal.provenance if isinstance(signal.provenance, dict) else {}
     return {
         "signalId": signal.id,
         "headline": signal.headline,
@@ -315,6 +346,22 @@ def _serialize_signal_row(
         "resolvedDistrictId": district_id,
         "pipelineRunId": signal.pipeline_run_id,
         "reasonCodes": signal.reason_codes or [],
+        "whyFlagged": provenance.get("why_flagged")
+        or provenance.get("whyFlagged")
+        or signal.summary,
+        "sourceUrl": signal.source_url,
+        "sourceTitle": provenance.get("source_title")
+        or provenance.get("sourceTitle")
+        or signal.source_url,
+        "sourcePublishedAt": provenance.get("source_published_at")
+        or provenance.get("sourcePublishedAt"),
+        "sourceAuthor": provenance.get("source_author")
+        or provenance.get("sourceAuthor")
+        or provenance.get("speakerAttribution"),
+        "discoveredBy": signal.discovered_by,
+        "agentRunId": provenance.get("agent_run_id") or provenance.get("agentRunId"),
+        "provenance": provenance,
+        "qualificationJson": signal.qualification_json,
         "isPrimary": primary_signal is not None and signal.id == primary_signal.id,
     }
 
@@ -325,6 +372,7 @@ def _serialize_lineage_row(item: Any) -> dict[str, Any]:
         "name": item.name,
         "objective": item.objective,
         "latestBrief": item.latest_brief,
+        "latestBriefSummary": _summarize_latest_brief(item.latest_brief),
         "linkedAssets": item.linked_assets,
         "drafts": item.drafts,
         "actions": {
@@ -397,3 +445,97 @@ async def _load_or_generate_proposal(
     if not isinstance(generated, dict):
         generated = result.proposal.model_dump(mode="json")
     return generated
+
+
+async def _build_target_scope_counts(session: AsyncSession) -> dict[str, Any]:
+    all_districts = await session.scalar(
+        select(func.count(District.id)).where(District.supported.is_(True))
+    )
+    by_state_rows = await session.execute(
+        select(District.state, func.count(District.id))
+        .where(District.supported.is_(True))
+        .group_by(District.state)
+    )
+    by_tier_rows = await session.execute(
+        select(District.tier, func.count(District.id))
+        .where(District.supported.is_(True))
+        .group_by(District.tier)
+    )
+    return {
+        "allDistricts": int(all_districts or 0),
+        "byState": {
+            str(state).upper(): int(count)
+            for state, count in by_state_rows.all()
+            if state is not None
+        },
+        "byTier": {
+            str(tier).upper(): int(count) for tier, count in by_tier_rows.all() if tier is not None
+        },
+    }
+
+
+async def _count_districts_for_scope(
+    session: AsyncSession,
+    target_scope: TargetScope | dict[str, Any] | None,
+) -> int:
+    if isinstance(target_scope, TargetScope):
+        scope = target_scope.model_dump(mode="json")
+    elif isinstance(target_scope, dict):
+        scope = target_scope
+    else:
+        scope = {}
+
+    mode = str(scope.get("mode") or "all_districts")
+    if mode == "all_districts":
+        value = await session.scalar(
+            select(func.count(District.id)).where(District.supported.is_(True))
+        )
+        return int(value or 0)
+    if mode == "states":
+        states = [str(state).upper() for state in scope.get("states") or [] if state]
+        if not states:
+            return 0
+        value = await session.scalar(
+            select(func.count(District.id)).where(
+                District.supported.is_(True),
+                District.state.in_(states),
+            )
+        )
+        return int(value or 0)
+    if mode == "district_tier":
+        tiers = [str(tier).upper() for tier in scope.get("tiers") or [] if tier]
+        if not tiers:
+            return 0
+        value = await session.scalar(
+            select(func.count(District.id)).where(
+                District.supported.is_(True),
+                District.tier.in_(tiers),
+            )
+        )
+        return int(value or 0)
+    if mode == "named_districts":
+        district_ids = [
+            district_id for district_id in scope.get("district_ids") or [] if district_id
+        ]
+        if not district_ids:
+            return 0
+        value = await session.scalar(
+            select(func.count(District.id)).where(District.id.in_(district_ids))
+        )
+        return int(value or 0)
+    return 0
+
+
+def _summarize_latest_brief(latest_brief: dict[str, Any] | None) -> str | None:
+    if not isinstance(latest_brief, dict):
+        return None
+    for key in ("summary", "briefSummary", "executiveSummary"):
+        value = latest_brief.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    signal = latest_brief.get("signal")
+    if isinstance(signal, dict):
+        verbatim = signal.get("verbatimEvidence")
+        if isinstance(verbatim, str) and verbatim.strip():
+            return verbatim.strip()
+    return None

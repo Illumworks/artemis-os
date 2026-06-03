@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
@@ -62,6 +62,11 @@ router = APIRouter(
 )
 
 _VALID_STATUSES = {s.value for s in SignalState}
+_RELATED_SIGNAL_STATUSES = {
+    SignalState.pending_qualification.value,
+    SignalState.qualified.value,
+    SignalState.APPROVED.value,
+}
 
 
 # ── Intake ────────────────────────────────────────────────────────────────────
@@ -554,6 +559,7 @@ async def _run_and_store_qualification(
         district_tier=district.tier if district else None,
         district_enrollment=district.enrollment if district else None,
         district_supported=district.supported if district else None,
+        district_on_skip_list=district.on_skip_list if district else None,
     )
 
     # Store on signal
@@ -600,6 +606,27 @@ async def _load_signal_contexts(
                     "label": "Awaiting Gate 1",
                     "href": f"#approvals/{approval.id}",
                 }
+
+    dedupe_pairs: dict[tuple[str, str], list[int]] = {}
+    for signal in signals:
+        source_url = (signal.source_url or "").strip()
+        headline = (signal.headline or "").strip()
+        if not source_url or not headline:
+            contexts[signal.id]["relatedSignalsCount"] = 0
+            continue
+        dedupe_pairs.setdefault((source_url, headline), []).append(signal.id)
+
+    for (source_url, headline), signal_ids in dedupe_pairs.items():
+        total = await session.scalar(
+            select(func.count(SignalQueue.id)).where(
+                SignalQueue.source_url == source_url,
+                SignalQueue.headline == headline,
+                SignalQueue.signal_status.in_(_RELATED_SIGNAL_STATUSES),
+            )
+        )
+        related_count = max(int(total or 0) - 1, 0)
+        for signal_id in signal_ids:
+            contexts[signal_id]["relatedSignalsCount"] = related_count
     return contexts
 
 
@@ -618,6 +645,7 @@ def _serialize_signal(signal: SignalQueue, context: dict[str, Any] | None = None
         "pipelineRunId": signal.pipeline_run_id,
         "pipelineRun": context.get("pipelineRun"),
         "approval": context.get("approval"),
+        "relatedSignalsCount": context.get("relatedSignalsCount", 0),
         "headline": signal.headline,
         "summary": signal.summary,
         "campaignFamily": signal.campaign_family,
