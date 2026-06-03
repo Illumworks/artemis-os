@@ -92,7 +92,12 @@ async def get_folder_by_sync_id(session: AsyncSession, sync_id: str) -> WritingF
 
 
 async def get_folder_by_campaign(session: AsyncSession, campaign_id: str) -> WritingFolder | None:
-    """Return the first folder whose campaign_id matches the given campaign family."""
+    """Return the first folder whose campaign_id column matches the given value.
+
+    ``campaign_id`` here is the TEXT key stored in ``writing_folders.campaign_id``.
+    For per-candidate folders this will be ``str(candidate_id)``; for legacy
+    family-level folders it will be the family string (e.g. ``"obc"``).
+    """
     result = await session.execute(
         select(WritingFolder)
         .where(WritingFolder.campaign_id == campaign_id)
@@ -102,19 +107,60 @@ async def get_folder_by_campaign(session: AsyncSession, campaign_id: str) -> Wri
     return result.scalar_one_or_none()
 
 
+async def get_folder_by_candidate(session: AsyncSession, candidate_id: int) -> WritingFolder | None:
+    """Return the per-campaign folder for a given candidate id, or None.
+
+    Looks up ``writing_folders`` whose ``campaign_id`` column equals
+    ``str(candidate_id)``.  This is the canonical lookup key for the new
+    one-folder-per-campaign behaviour.
+    """
+    return await get_folder_by_campaign(session, str(candidate_id))
+
+
+async def get_or_create_folder_by_candidate(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    candidate_name: str | None = None,
+) -> WritingFolder:
+    """Return an existing per-candidate folder, or create one if none exists.
+
+    The folder is keyed on ``str(candidate_id)`` stored in
+    ``writing_folders.campaign_id``.  The folder's ``name`` is set once at
+    creation time (as a snapshot) but is **always overridden at read/serialize
+    time** by deriving it from the live ``CampaignCandidate.name``; callers
+    should never rely on ``folder.name`` being current.
+
+    ``candidate_name`` provides the initial snapshot name for the folder.
+    When omitted the folder is named ``"Campaign {candidate_id}"``.
+
+    The caller is responsible for flushing / committing.
+    """
+    folder = await get_folder_by_candidate(session, candidate_id)
+    if folder is not None:
+        return folder
+    snapshot_name = candidate_name or f"Campaign {candidate_id}"
+    folder = WritingFolder(
+        name=snapshot_name,
+        campaign_id=str(candidate_id),
+    )
+    session.add(folder)
+    await session.flush()
+    await session.refresh(folder)
+    return folder
+
+
 async def get_or_create_folder_by_campaign(
     session: AsyncSession,
     campaign_id: str,
     *,
     name: str | None = None,
 ) -> WritingFolder:
-    """Return an existing per-campaign folder, or create one if none exists.
+    """Deprecated shim — prefer ``get_or_create_folder_by_candidate``.
 
-    Uses campaign_id (the campaign_family string) as the lookup key so that
-    all drafts for the same campaign family are grouped under a single folder.
-
-    ``name`` overrides the folder display name; when omitted, campaign_id is
-    used as-is.  The caller is responsible for flushing / committing.
+    Retained for backward compatibility with callers that use the old
+    family-string keying.  New code should always call
+    ``get_or_create_folder_by_candidate`` with a numeric candidate id.
     """
     folder = await get_folder_by_campaign(session, campaign_id)
     if folder is not None:
