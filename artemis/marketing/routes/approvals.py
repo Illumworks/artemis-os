@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.config import settings
 from artemis.db import get_session
 from artemis.marketing.models import Approval, CampaignCandidate, CampaignDeliverable
 from artemis.marketing.repository import decide_approval
@@ -369,10 +370,10 @@ async def _decide_content_draft_approval(
             await _recompute_workspace_state_from_deliverables(session, candidate.id)
 
     # SEND2-B: enqueue send rows for each deliverable transitioned to 'approved'.
-    # Only fires on decision == "approved" (not rejected/revision_requested).
-    # Additive — does not affect the pipeline resume flow below.
+    # Guarded behind the outbound-send feature flag so Gate-2 can remain an
+    # internal review-only workflow until Artemis is ready to expose sends.
     sends_info: list[dict[str, Any]] = []
-    if decision == "approved" and candidate is not None:
+    if settings.outbound_send_enabled and decision == "approved" and candidate is not None:
         from artemis.marketing.sends import enqueue_send_for_deliverable
 
         # Capture candidate_id before any expiry/reload so we don't trigger sync load.

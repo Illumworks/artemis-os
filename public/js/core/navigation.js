@@ -1,3 +1,5 @@
+import { getStatus } from "./status.js";
+
 export const DEFAULT_APP_VIEW = "command-center";
 export const LEGACY_DASHBOARD_VIEW = "analytics-dashboard";
 export const DASHBOARD_VIEW = "dashboard";
@@ -49,6 +51,8 @@ export function parseAppHash(hash = typeof window !== "undefined" ? window.locat
 export function writingStudioDraftHref(deliverableId) {
   return `#${WRITING_STUDIO_VIEW}?draft=${encodeURIComponent(String(deliverableId))}`;
 }
+
+const OUTBOUND_SEND_ENABLED = Boolean(getStatus()?.features?.outbound_send_enabled);
 
 export function parseWritingStudioDraftId(hash = typeof window !== "undefined" ? window.location?.hash || "" : "") {
   const route = parseAppHash(hash);
@@ -210,14 +214,16 @@ export const SECONDARY_NAV_DESTINATIONS = [
     section: "Marketing",
     view: MARKETING_APPROVALS_VIEW,
   },
-  {
-    id: MARKETING_OUTBOX_VIEW,
-    label: "Outbox",
-    shortLabel: "Outbox",
-    description: "Approved drafts queued for human-gated send. Stub transport — no email is delivered until the ESP is configured.",
-    section: "Marketing",
-    view: MARKETING_OUTBOX_VIEW,
-  },
+  ...(OUTBOUND_SEND_ENABLED
+    ? [{
+        id: MARKETING_OUTBOX_VIEW,
+        label: "Outbox",
+        shortLabel: "Outbox",
+        description: "Approved drafts queued for human-gated send. Stub transport — no email is delivered until the ESP is configured.",
+        section: "Marketing",
+        view: MARKETING_OUTBOX_VIEW,
+      }]
+    : []),
   {
     id: MARKETING_SIGNAL_PLAYBOOK_VIEW,
     label: "Signal Playbook",

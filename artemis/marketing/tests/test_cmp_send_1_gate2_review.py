@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.config import settings
 from artemis.marketing.models import Approval, CampaignCandidate, CampaignDeliverable, CampaignSend
 from artemis.marketing.repository import create_campaign_candidate_from_signal, create_signal
 from artemis.marketing.state_machine import DeliverableState
@@ -202,10 +203,11 @@ async def test_gate_2_suspension_creates_reviewable_content_draft_approval(
     assert ctx["deliverables"][0]["draftPreview"].startswith("Draft intro for Fort Bend")
 
 
-async def test_decide_approved_transitions_deliverable_and_resume_flow(
+async def test_decide_approved_skips_enqueue_when_outbound_send_flag_off(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
+    assert settings.outbound_send_enabled is False
     candidate, deliverable, run_id, approval_id = await _seed_gate_2_review_run(db_session)
 
     with patch("artemis.pipelines.routes._dispatch_execution", return_value=None):
@@ -227,25 +229,17 @@ async def test_decide_approved_transitions_deliverable_and_resume_flow(
         run_id,
     )
     assert approval.status == "approved"
-    # SEND2-B: no contacts are seeded in this test → deliverable stays 'approved'
-    # (the skipped-send path leaves the deliverable at approved, not queued_for_send)
-    assert deliverable.status in (
-        DeliverableState.approved.value,
-        DeliverableState.queued_for_send.value,
-    )
+    assert deliverable.status == DeliverableState.approved.value
     assert candidate.workspace_state == "all_content_approved"
     assert run.status == "running"
     assert run.node_states["gate_2_approval_drawer"]["decision"] == "approved"
 
-    # SEND2-B: additive behavior — a campaign_sends row should exist with
-    # status='skipped' because no contacts are seeded in this test.
+    # Part E: outbound send is dormant by default, so approve stays terminal
+    # and no campaign_sends row is created.
     send_result = await db_session.execute(
         select(CampaignSend).where(CampaignSend.deliverable_id == deliverable.id)
     )
-    send_row = send_result.scalars().first()
-    assert send_row is not None, "SEND2-B: expected a campaign_sends row after approve"
-    assert send_row.status == "skipped"
-    assert send_row.skip_reason == "no_contacts_on_file"
+    assert send_result.scalars().first() is None
 
     with patch(
         "artemis.pipelines.node_executors.agent_executor.execute_agent_node",

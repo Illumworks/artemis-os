@@ -22,6 +22,14 @@ class Settings(BaseSettings):
 
     env: Literal["development", "test", "production"] = "development"
     log_level: Literal["debug", "info", "warning", "error"] = "info"
+    app_base_url: str = Field(
+        default="",
+        description="Absolute Artemis app base URL used for Slack deep-links.",
+    )
+    outbound_send_enabled: bool = Field(
+        default=False,
+        description="Enable CMP-SEND-2 outbound send surfaces and enqueue-on-approve hook.",
+    )
 
     db_url: str = Field(
         default="postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os",
