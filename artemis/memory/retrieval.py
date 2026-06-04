@@ -10,6 +10,7 @@ Fusion scoring is done in Python after fetching the candidate rows.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from datetime import UTC, datetime
@@ -18,9 +19,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from pydantic import BaseModel
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import artemis.db as _db
 from artemis.memory.models import MemoryObservation
 from artemis.memory.schemas import Scope, ScoredObservation
 
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "memory-retrieval.yaml"
+_BACKGROUND_USAGE_TASKS: set[asyncio.Task[None]] = set()
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -204,6 +207,68 @@ def _validity_sql(as_of_param: str = ":_as_of", prefix: str = "") -> str:
         f"AND ({prefix}valid_from IS NULL OR {prefix}valid_from <= {as_of_param})\n"
         f"    AND ({prefix}valid_until IS NULL OR {prefix}valid_until >= {as_of_param})"
     )
+
+
+async def _record_observation_usage(
+    observation_ids: list[int],
+    accessed_at: datetime | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
+    """Best-effort retrieval feedback write.
+
+    Uses its own session so the hot retrieval path can return immediately and
+    remains isolated from any caller-managed transaction.
+    """
+    if not observation_ids:
+        return
+
+    timestamp = accessed_at or datetime.now(UTC)
+    factory = session_factory or _db.SessionLocal
+    async with factory() as session:
+        try:
+            await session.execute(
+                update(MemoryObservation)
+                .where(MemoryObservation.id.in_(observation_ids))
+                .values(
+                    hit_count=MemoryObservation.hit_count + 1,
+                    accessed_at=timestamp,
+                )
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            _logger.warning(
+                "Observation usage update failed for %d results",
+                len(observation_ids),
+                exc_info=True,
+            )
+
+
+def _schedule_observation_usage_update(
+    observation_ids: list[int],
+    accessed_at: datetime | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
+    """Launch the usage write without awaiting it.
+
+    A strong reference prevents the task from being garbage-collected before
+    completion on long-lived event loops.
+    """
+    if not observation_ids:
+        return
+    try:
+        task = asyncio.create_task(
+            _record_observation_usage(
+                observation_ids,
+                accessed_at,
+                session_factory=session_factory,
+            )
+        )
+    except RuntimeError:
+        _logger.debug("Skipping observation usage update: no running event loop")
+        return
+    _BACKGROUND_USAGE_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_USAGE_TASKS.discard)
 
 
 # ── Main retrieval function ───────────────────────────────────────────────────
@@ -421,4 +486,17 @@ async def search_observations(
         )
 
     scored.sort(key=lambda x: x.final_score, reverse=True)
-    return scored[:limit]
+    results = scored[:limit]
+    session_factory: async_sessionmaker[AsyncSession] | None = None
+    if session.bind is not None:
+        session_factory = async_sessionmaker(
+            bind=session.bind,
+            expire_on_commit=False,
+            class_=AsyncSession,
+        )
+    _schedule_observation_usage_update(
+        [obs.id for obs in results],
+        _as_of,
+        session_factory=session_factory,
+    )
+    return results

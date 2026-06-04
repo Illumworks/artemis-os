@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
 from artemis.marketing.routes._auth import require_token
+from artemis.memory.maintenance import run_maintenance
 from artemis.memory.repository import (
     get_memory_stats,
     get_observation_detail,
@@ -129,6 +130,15 @@ async def observation_history(
 async def embeddings_status() -> dict[str, object]:
     """Return embedding job queue status (stub — embedding pipeline not yet implemented)."""
     return {"queued": 0, "processing": 0, "completed_today": 0, "last_error": None}
+
+
+@router.post("/maintain")
+async def maintain_memory_endpoint(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, int]:
+    """Run one maintenance pass and return updated row counts per category."""
+    async with session.begin():
+        return await run_maintenance(session)
 
 
 # ── M6 Shell read endpoints (all require token) ───────────────────────────────

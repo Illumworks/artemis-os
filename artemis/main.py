@@ -48,6 +48,7 @@ from artemis.marketing.scout_scheduler import start_scout_scheduler, stop_scout_
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
+from artemis.memory.scheduler import start_memory_scheduler, stop_memory_scheduler
 from artemis.pipelines.routes import router as pipelines_router
 from artemis.pipelines.scheduler import (
     start_pipeline_scheduler,
@@ -97,6 +98,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_scout_scheduler()
     # Start the pipeline execution scheduler (PIPE4).
     start_pipeline_scheduler()
+    # Start daily memory maintenance (quick-win gap #4).
+    start_memory_scheduler()
     try:
         yield
     finally:
@@ -109,6 +112,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_automation_scheduler()
         stop_scout_scheduler()
         stop_pipeline_scheduler()
+        stop_memory_scheduler()
 
 
 app = FastAPI(
