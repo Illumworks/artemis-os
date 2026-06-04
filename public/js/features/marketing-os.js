@@ -592,6 +592,9 @@ function _renderCampaignPendingApprovalSection(approval) {
         <button class="mkt-btn-ghost" type="button" data-campaign-revision-id="${esc(String(approval.id))}">Request revision</button>
         <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-campaign-reject-id="${esc(String(approval.id))}">Reject</button>
       </div>
+      <div class="mkt-reject-reason-form" data-campaign-reject-reason-for="${esc(String(approval.id))}" hidden>
+        <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
+      </div>
     </div>
   `;
 }
@@ -2130,6 +2133,9 @@ function _renderPipe4ApprovalCard(a) {
           <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-reject-id="${esc(String(a.id))}">Reject</button>
           ${runHref ? `<a class="mkt-btn-link" href="${runHref}">View pipeline run →</a>` : ''}
         </div>
+        <div class="mkt-reject-reason-form" data-reject-reason-for="${esc(String(a.id))}" hidden>
+          <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
+        </div>
       </article>
     `;
   }
@@ -2182,6 +2188,9 @@ function _renderPipe4ApprovalCard(a) {
         <button class="mkt-btn-ghost" type="button" data-reject-id="${esc(String(a.id))}">Reject</button>
         ${runHref ? `<a class="mkt-btn-link" href="${runHref}">View pipeline run →</a>` : ''}
       </div>
+      <div class="mkt-reject-reason-form" data-reject-reason-for="${esc(String(a.id))}" hidden>
+        <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
+      </div>
     </article>
   `;
 }
@@ -2221,6 +2230,9 @@ function _renderUnifiedApprovalCard(a) {
           <button class="mkt-btn-primary" type="button" data-approve-id="${esc(a.id)}">Approve</button>
           <button class="mkt-btn-ghost" type="button" data-reject-id="${esc(a.id)}">Request changes</button>
         </div>
+        <div class="mkt-reject-reason-form" data-reject-reason-for="${esc(a.id)}" hidden>
+          <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
+        </div>
       </article>
     `;
   }
@@ -2245,6 +2257,9 @@ function _renderUnifiedApprovalCard(a) {
       <div class="mkt-signal-actions">
         <button class="mkt-btn-primary" type="button" data-approve-id="${esc(a.id)}">Approve</button>
         <button class="mkt-btn-ghost" type="button" data-reject-id="${esc(a.id)}">Reject</button>
+      </div>
+      <div class="mkt-reject-reason-form" data-reject-reason-for="${esc(a.id)}" hidden>
+        <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
       </div>
     </article>
   `;
@@ -2705,10 +2720,21 @@ export async function loadMarketingApprovals(container) {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.rejectId;
         const originalLabel = btn.textContent;
+        // Find the optional reason form attached to this approval card
+        const card = btn.closest('[data-unified-approval-id], article');
+        const reasonForm = card?.querySelector(`[data-reject-reason-for="${CSS.escape(String(id))}"]`);
+        // First click: show the reason form so the operator can (optionally) add a reason
+        if (reasonForm && reasonForm.hasAttribute('hidden')) {
+          reasonForm.removeAttribute('hidden');
+          btn.textContent = 'Confirm reject';
+          return;
+        }
+        // Second click (or no reason form): submit with optional reason
+        const note = reasonForm?.querySelector('.mkt-signal-notes-input')?.value?.trim() || undefined;
         btn.disabled = true;
         btn.textContent = 'Submitting…';
         try {
-          await decideApprovalApi(id, { decision: 'reject' });
+          await decideApprovalApi(id, { decision: 'reject', note });
           _showMarketingApprovalToast(container, 'Rejection recorded. Pipeline resumed.');
           await loadMarketingApprovals(container);
         } catch (err) {
@@ -3445,10 +3471,19 @@ function _wireWritingStudioBridge(container, campaign) {
     btn.addEventListener('click', async () => {
       const approvalId = btn.dataset.campaignRejectId;
       const originalLabel = btn.textContent;
+      const card = btn.closest('[data-campaign-approval-card], [data-mkt-candidate-id], article');
+      const reasonForm = card?.querySelector(`[data-campaign-reject-reason-for="${CSS.escape(String(approvalId))}"]`);
+      // First click: show the reason form
+      if (reasonForm && reasonForm.hasAttribute('hidden')) {
+        reasonForm.removeAttribute('hidden');
+        btn.textContent = 'Confirm reject';
+        return;
+      }
+      const note = reasonForm?.querySelector('.mkt-signal-notes-input')?.value?.trim() || undefined;
       btn.disabled = true;
       btn.textContent = 'Submitting…';
       try {
-        await decideApprovalApi(approvalId, { decision: 'reject' });
+        await decideApprovalApi(approvalId, { decision: 'reject', note });
         _showMarketingApprovalToast(container, 'Rejection recorded. Pipeline resumed.');
         await loadMarketingCampaigns(container);
       } catch (err) {

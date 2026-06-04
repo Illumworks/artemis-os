@@ -187,12 +187,20 @@ async def decide(
         except Exception:
             signal_id_for_mc2 = None
         if signal_id_for_mc2 is not None:
+            # Capture reason from decision_payload defensively (may be any type)
+            _mc2_reason: str | None = None
+            if isinstance(decision_payload, dict):
+                raw_reason = decision_payload.get("reason")
+                if isinstance(raw_reason, str) and raw_reason:
+                    _mc2_reason = raw_reason
             asyncio.create_task(
                 write_signal_gate1_approval_observation(
                     signal_id=signal_id_for_mc2,
                     new_status=decision,
                     decided_by=decided_by,
                     decision_payload=decision_payload,
+                    rejection_reason=_mc2_reason if decision == "rejected" else None,
+                    agent_slug="marketing.qualifier.cross_reference",
                 )
             )
 
@@ -408,6 +416,13 @@ async def _decide_content_draft_approval(
                         }
                     )
 
+    # Extract rejection reason from decision_payload defensively (payload is dict[str, Any])
+    _content_rejection_reason: str | None = None
+    if isinstance(decision_payload, dict):
+        raw_reason = decision_payload.get("reason")
+        if isinstance(raw_reason, str) and raw_reason:
+            _content_rejection_reason = raw_reason
+
     pipeline_decision = "approved" if decision == "approved" else "rejected"
     resumed = False
     post_commit_status = run.status
@@ -420,12 +435,31 @@ async def _decide_content_draft_approval(
             node_id=node_id,
             decision=pipeline_decision,
             actor=decided_by,
+            reason=_content_rejection_reason,
         )
         await session.commit()
         _cancel_gate_timeout(run_id, node_id)
         _dispatch_execution(run_id)
         resumed = True
         post_commit_status = run.status
+
+        # MC4: fire-and-forget for content_draft gate decisions.
+        # The generic resume_run HTTP route fires MC4 for pipeline-gate resumes,
+        # but content_draft approvals go through _decide_content_draft_approval
+        # directly — NOT through the resume_run route — so MC4 is not fired there.
+        # We fire it explicitly here.
+        # Fallback agent slug: writing_studio_adapter is the upstream agent for all
+        # content-draft gates in the standard marketing pipeline.
+        asyncio.create_task(
+            _fire_mc4_content_draft(
+                run_id=run_id,
+                pipeline_id=run.pipeline_id,
+                node_id=node_id,
+                decision=pipeline_decision,
+                decided_by=decided_by,
+                rejection_reason=_content_rejection_reason,
+            )
+        )
     else:
         await session.commit()
 
@@ -437,6 +471,36 @@ async def _decide_content_draft_approval(
         "runStatus": post_commit_status,
         "sends": sends_info,
     }
+
+
+async def _fire_mc4_content_draft(
+    *,
+    run_id: str,
+    pipeline_id: str,
+    node_id: str,
+    decision: str,
+    decided_by: str,
+    rejection_reason: str | None,
+) -> None:
+    """Fire-and-forget MC4 observation for content_draft gate decisions.
+
+    Agent slug defaults to marketing.content.writing_studio_adapter which is
+    the upstream agent for all standard content-draft gates in the marketing
+    pipeline. If a future pipeline uses a different content agent, pass its
+    slug explicitly.
+    """
+    from artemis.builder.memory_carryover import write_pipeline_gate_decision_observation
+
+    await write_pipeline_gate_decision_observation(
+        pipeline_run_id=run_id,
+        pipeline_id=pipeline_id,
+        node_id=node_id,
+        decision=decision,
+        decided_by=decided_by,
+        decision_payload={"pipeline_name": pipeline_id},
+        rejection_reason=rejection_reason,
+        agent_slug="marketing.content.writing_studio_adapter",
+    )
 
 
 async def _load_candidate_deliverables(

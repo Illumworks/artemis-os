@@ -159,6 +159,53 @@ def _pipeline_to_dict(p: Any, latest_run: Any | None = None) -> dict[str, Any]:
     return pipeline_to_schema(p, latest_run).model_dump(by_alias=True)
 
 
+def _resolve_upstream_agent_slug(
+    gate_node_id: str,
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> str | None:
+    """Walk the pipeline graph backwards from gate_node_id to find the nearest
+    upstream agent_invocation node and return its configured agent_id.
+
+    Returns None if no upstream agent_invocation node can be found (non-fatal).
+    This enables MC4 to attach an agent:<slug> scope to the gate observation so
+    the agent can query its own past rejections (C-3 read path).
+    """
+    # Build reverse adjacency: target_node_id → list[source_node_id]
+    reverse: dict[str, list[str]] = {}
+    for edge in edges:
+        src = edge.get("source_node_id", "")
+        tgt = edge.get("target_node_id", "")
+        if src and tgt:
+            reverse.setdefault(tgt, []).append(src)
+
+    # Build node lookup: node_id → node dict
+    node_by_id: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        nid = node.get("id", "")
+        if nid:
+            node_by_id[nid] = node
+
+    # BFS backwards from the gate node
+    visited: set[str] = set()
+    queue: list[str] = list(reverse.get(gate_node_id, []))
+    while queue:
+        nid = queue.pop(0)
+        if nid in visited:
+            continue
+        visited.add(nid)
+        candidate_node: dict[str, Any] | None = node_by_id.get(nid)
+        if candidate_node is not None and candidate_node.get("type") == "agent_invocation":
+            config: dict[str, Any] = candidate_node.get("config") or {}
+            raw_agent_id = config.get("agent_id", "")
+            agent_id: str = str(raw_agent_id) if raw_agent_id else ""
+            if agent_id:
+                return agent_id
+        # Continue searching upstream
+        queue.extend(reverse.get(nid, []))
+    return None
+
+
 # ── List ──────────────────────────────────────────────────────────────────────
 
 
@@ -516,6 +563,7 @@ class ResumeRunRequest(BaseModel):
     node_id: str
     decision: str  # "approved" | "rejected"
     actor: str  # email of the human who decided
+    reason: str | None = None  # optional reject reason (C1.1: never required)
 
 
 async def _prepare_pipeline_resume(
@@ -525,11 +573,14 @@ async def _prepare_pipeline_resume(
     node_id: str,
     decision: str,
     actor: str,
+    reason: str | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Validate + stage a gate resume without committing.
 
     Shared by the PIPE4 HTTP resume route and the marketing initiation confirm
     route so both seams honor the same gate-release contract.
+    When reason is provided (optional), it is stored in gate_state["reason"]
+    so downstream memory-carryover calls can attach it to the observation.
     """
     try:
         run = await repo.get_pipeline_run(session, run_id)
@@ -565,6 +616,8 @@ async def _prepare_pipeline_resume(
     gate_state["decision"] = decision
     gate_state["decided_at"] = datetime.now(UTC).isoformat()
     gate_state["decided_by"] = actor
+    if reason:
+        gate_state["reason"] = reason
     node_states[node_id] = gate_state
     run.node_states = node_states
     flag_modified(run, "node_states")
@@ -592,6 +645,7 @@ async def resume_run(
         node_id=body.node_id,
         decision=body.decision,
         actor=body.actor,
+        reason=body.reason,
     )
     await session.commit()
 
@@ -613,6 +667,18 @@ async def resume_run(
     _dispatch_execution(run_id)
 
     # MC4: fire-and-forget memory carryover (failure must not break resume)
+    # Resolve the upstream agent slug by inspecting the pipeline definition.
+    # Fall back to None (no agent scope) if the pipeline cannot be loaded or
+    # the gate has no identifiable upstream agent_invocation node.
+    _agent_slug_mc4: str | None = None
+    try:
+        _pipeline = await repo.get_pipeline(session, run.pipeline_id)
+        _agent_slug_mc4 = _resolve_upstream_agent_slug(
+            body.node_id, _pipeline.nodes or [], _pipeline.edges or []
+        )
+    except Exception:
+        pass  # non-fatal; falls back to None (no agent scope)
+
     import asyncio as _asyncio
 
     from artemis.builder.memory_carryover import write_pipeline_gate_decision_observation
@@ -625,6 +691,8 @@ async def resume_run(
             decision=body.decision,
             decided_by=body.actor or "operator",
             decision_payload={"pipeline_name": run.pipeline_id},
+            rejection_reason=body.reason,
+            agent_slug=_agent_slug_mc4,
         )
     )
 
