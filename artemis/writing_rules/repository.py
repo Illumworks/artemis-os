@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.writing_rules.models import (
+    WritingDraftThreadMessage,
     WritingExample,
     WritingFolder,
     WritingProfile,
@@ -409,3 +410,58 @@ async def delete_source(session: AsyncSession, source_id: int) -> bool:
     await session.delete(source)
     await session.flush()
     return True
+
+
+# ── Thread messages ───────────────────────────────────────────────────────────
+
+
+async def create_thread_message(
+    session: AsyncSession,
+    draft_id: int,
+    role: str,
+    content: str,
+    *,
+    label: str | None = None,
+    attachments: Any | None = None,
+    trace: Any | None = None,
+    engine: Any | None = None,
+    prompt: Any | None = None,
+) -> WritingDraftThreadMessage:
+    """Persist one conversation turn for a draft.
+
+    ``role`` must be ``"user"`` or ``"assistant"`` (not enforced at the repo
+    layer — the compose endpoint owns that constraint).
+
+    Mirrors Node's ``createWritingDraftThreadMessage`` in db/sqlite.js.
+    Callers own commit / rollback.
+    """
+    msg = WritingDraftThreadMessage(
+        draft_id=draft_id,
+        role=role,
+        label=label,
+        content=content,
+        attachments=attachments,
+        trace=trace,
+        engine=engine,
+        prompt=prompt,
+    )
+    session.add(msg)
+    await session.flush()
+    await session.refresh(msg)
+    return msg
+
+
+async def list_thread_messages_for_draft(
+    session: AsyncSession,
+    draft_id: int,
+) -> list[WritingDraftThreadMessage]:
+    """Return all messages for a draft in chronological order (created_at ASC, id ASC).
+
+    Mirrors Node's ``listThreadMessages`` prepared statement in db/sqlite.js.
+    """
+    result = await session.execute(
+        select(WritingDraftThreadMessage)
+        .where(WritingDraftThreadMessage.draft_id == draft_id)
+        .order_by(WritingDraftThreadMessage.created_at, WritingDraftThreadMessage.id)
+    )
+    return list(result.scalars())

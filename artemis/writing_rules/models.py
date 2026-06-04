@@ -7,8 +7,11 @@ Tables migrated (per Phase H spec):
   writing_examples   — reference examples
   writing_sources    — imported reference documents
 
+Phase 2 substrate (ws-thread-messages, migration 0063):
+  writing_draft_thread_messages — per-draft AI conversation thread
+
 NOT here (per Phase H, explicitly excluded):
-  writing_drafts, writing_draft_versions, writing_draft_thread_messages,
+  writing_drafts, writing_draft_versions,
   writing_training_candidates, writing_deliverable_links, writing_draft_events
 
 All timestamps are TIMESTAMPTZ. JSON-in-TEXT columns from Node are JSONB.
@@ -204,4 +207,68 @@ class WritingSource(Base):
 
     profile: Mapped[WritingProfile | None] = relationship(
         "WritingProfile", back_populates="sources"
+    )
+
+
+class WritingDraftThreadMessage(Base):
+    """One turn in the per-draft AI conversation thread.
+
+    Mirrors the Node ``writing_draft_thread_messages`` table in db/sqlite.js,
+    with these adaptations for Postgres / the Python rebuild:
+
+    - ``draft_id`` FKs to ``campaign_deliverables.id`` (Python rebuild's draft
+      row) rather than the Node's ``writing_drafts.id``. The Python app stores
+      draft state on ``campaign_deliverables``; there is no ``writing_drafts``
+      table yet.
+    - ``created_at`` is TIMESTAMPTZ (not a Unix integer as in SQLite).
+    - Node's ``*_json`` TEXT columns become JSONB:
+        - ``attachments_json`` → ``attachments``
+        - ``trace_json``       → ``trace``
+        - ``engine_json``      → ``engine``
+        - ``prompt_json``      → ``prompt``
+      The JSONB rename drops the ``_json`` suffix because Postgres can query
+      them natively; the compose endpoint (Phase 2 piece ②) uses the same
+      names when reading rows back.
+
+    Node columns carried over without change: ``role``, ``label``, ``text``.
+
+    Column-purpose notes (ambiguity from the Node reference):
+    - ``label``:   human-readable sender label (e.g. "System", "Artemis"),
+                   nullable — Node callers set it but it's display-only.
+    - ``trace``:   JSONB snapshot of rules/examples/draft context used in the
+                   generation turn; written on assistant messages only.
+    - ``engine``:  JSONB: {providerId, modelId, resolvedModelId, sessionId};
+                   written on assistant messages only.
+    - ``prompt``:  JSONB: {systemPrompt, userPrompt}; written on assistant
+                   messages only for audit/debugging. May be large.
+    - ``attachments``: JSONB array of attachment excerpts passed with the
+                   user message; written on user messages only.
+    """
+
+    __tablename__ = "writing_draft_thread_messages"
+    __table_args__ = (
+        Index(
+            "idx_writing_thread_messages_draft",
+            "draft_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    draft_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("campaign_deliverables.id", name="fk_wdtm_draft", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Node column name is ``text``; keep it for semantic parity.
+    content: Mapped[str] = mapped_column("text", Text, nullable=False)
+    attachments: Mapped[Any | None] = mapped_column("attachments_json", JSONB, nullable=True)
+    trace: Mapped[Any | None] = mapped_column("trace_json", JSONB, nullable=True)
+    engine: Mapped[Any | None] = mapped_column("engine_json", JSONB, nullable=True)
+    prompt: Mapped[Any | None] = mapped_column("prompt_json", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
