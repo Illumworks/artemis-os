@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -28,6 +29,9 @@ from artemis.marketing.routes._errors import bad_request, conflict, not_found, v
 from artemis.pipelines import repository as pipeline_repo
 from artemis.pipelines.routes import _dispatch_execution
 from artemis.pipelines.seeds.marketing_pipeline import CAMPAIGN_DELIVERABLES_PIPELINE_ID
+
+# Decision-history categories surfaced in the trendContext enrichment
+_DECISION_HISTORY_CATEGORIES = frozenset({"signal_gate1_decision", "pipeline_gate_decision"})
 
 router = APIRouter(
     prefix="/api/marketing/campaigns",
@@ -117,6 +121,7 @@ async def get_initiation_proposal(
     signal_cluster = [_serialize_signal_row(signal, primary_signal) for signal in signals]
 
     district_context = await _build_district_context(session, primary_signal)
+    trend_context = await _build_trend_context(session, primary_signal)
     lineage = await get_candidate_lineage_context(session, candidate_id)
     proposal_scope = proposal.target_scope.model_dump(mode="json")
     pipeline_run_id = _resolve_pipeline_run_id(signal_cluster)
@@ -147,6 +152,7 @@ async def get_initiation_proposal(
         "pipelineRunId": pipeline_run_id,
         "pipelineRunRole": "discovery",
         "gateNodeId": None,
+        "trendContext": trend_context,
     }
 
 
@@ -323,6 +329,178 @@ async def _build_district_context(
         "supported": district.supported,
         "onSkipList": district.on_skip_list,
         "defaultTargetScope": default_scope,
+    }
+
+
+async def _fetch_decision_history(
+    session: AsyncSession,
+    *,
+    theme: str,
+    region: str | None,
+    limit: int = 25,
+    top_matches: int = 5,
+) -> dict[str, Any]:
+    """Read Gate-1 and pipeline gate decisions from the memory keystone for this theme+region.
+
+    Queries via search_observations with scope=(workspace, marketing), filtered to
+    categories signal_gate1_decision and pipeline_gate_decision.
+    Returns counts (priorApproves, priorRejects) and top N observation snippets.
+
+    Query strategy: theme + region combined (e.g. "obc TX") so FTS + semantic
+    retrieval biases toward the most relevant past decisions first.  When region is
+    None, uses theme alone; category filtering is applied post-retrieval in Python
+    because search_observations does not accept a category allowlist parameter.
+    """
+    from artemis.memory.retrieval import search_observations
+    from artemis.memory.schemas import Scope
+
+    scope_set = [Scope(scope_kind="workspace", scope_id="marketing")]
+    query_terms = theme if region is None else f"{theme} {region}"
+
+    try:
+        results = await search_observations(
+            session,
+            scope_set=scope_set,
+            query=query_terms,
+            limit=limit,
+        )
+    except Exception:
+        logger.warning("decision_history search failed", exc_info=True)
+        return {"priorApproves": 0, "priorRejects": 0, "topMatches": []}
+
+    # Filter to the two target categories
+    filtered = [r for r in results if r.category in _DECISION_HISTORY_CATEGORIES]
+
+    prior_approves = 0
+    prior_rejects = 0
+    for obs in filtered:
+        content_lower = obs.content.lower()
+        if "reject" in content_lower or "rejected" in content_lower or "declined" in content_lower:
+            prior_rejects += 1
+        else:
+            # approved, gate1_approved, gate_approved, etc.
+            prior_approves += 1
+
+    top: list[dict[str, Any]] = []
+    for obs in filtered[:top_matches]:
+        # Derive a short decision label from content text
+        content_lower = obs.content.lower()
+        if "reject" in content_lower or "rejected" in content_lower or "declined" in content_lower:
+            decision_label = "rejected"
+        else:
+            decision_label = "approved"
+        # Trim content to a short snippet (first 200 chars)
+        summary = obs.content[:200].strip()
+        if len(obs.content) > 200:
+            summary += "…"
+        top.append(
+            {
+                "observationId": obs.id,
+                "category": obs.category,
+                "decision": decision_label,
+                "summary": summary,
+                "createdAt": obs.created_at.isoformat(),
+            }
+        )
+
+    return {
+        "priorApproves": prior_approves,
+        "priorRejects": prior_rejects,
+        "topMatches": top,
+    }
+
+
+async def _build_trend_context(
+    session: AsyncSession,
+    primary_signal: SignalQueue | None,
+    *,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """Build the trendContext enrichment block for the initiation-proposal response.
+
+    Computes momentum (weekly signal time-series), comparable districts count,
+    and decision history from the memory keystone — all deterministic, no LLM.
+
+    Returns a minimal block with resolved=False when the primary signal is missing
+    or has no campaign_family / state, so the rest of the proposal is unaffected.
+    """
+    from artemis.marketing.intel.trends import compute_momentum, count_comparable_districts
+
+    if primary_signal is None or not primary_signal.campaign_family:
+        return {"resolved": False, "reason": "no_primary_signal"}
+
+    theme: str = primary_signal.campaign_family
+    region: str | None = primary_signal.state or None
+    _as_of = as_of or datetime.now(UTC)
+
+    try:
+        momentum = await compute_momentum(
+            session,
+            theme=theme,
+            region=region,
+            as_of=_as_of,
+            window_days=90,
+            bucket_days=7,
+        )
+        comparables = await count_comparable_districts(
+            session,
+            theme=theme,
+            region=region,
+            as_of=_as_of,
+            window_days=90,
+        )
+        decision_history = await _fetch_decision_history(
+            session,
+            theme=theme,
+            region=region,
+        )
+    except Exception:
+        logger.warning("trend_context computation failed", exc_info=True)
+        return {"resolved": False, "reason": "computation_error"}
+
+    # Optionally persist a trend snapshot — wrap in try/except so a write failure
+    # never breaks the enrichment response.
+    try:
+        from artemis.marketing.intel.schemas import TrendSnapshot
+        from artemis.marketing.intel.trends import persist_trend_snapshot
+
+        snapshot = TrendSnapshot(
+            as_of=_as_of,
+            theme=theme,
+            region=region,
+            snapshot_kind="momentum",
+            content_summary=(
+                f"Momentum snapshot for {theme}/{region or 'all'} at {_as_of.isoformat()}: "
+                f"current={momentum.current_window_count}, prior={momentum.prior_window_count}, "
+                f"delta_ratio={momentum.delta_ratio}"
+            ),
+            payload={
+                "momentum": momentum.model_dump(mode="json"),
+                "comparables": comparables.model_dump(mode="json"),
+            },
+        )
+        await persist_trend_snapshot(
+            session,
+            snapshot=snapshot,
+            primary_scope_kind="workspace",
+            primary_scope_id="marketing",
+            additional_scopes=(
+                [("state", region), ("campaign_family", theme)]
+                if region is not None
+                else [("campaign_family", theme)]
+            ),
+        )
+    except Exception:
+        logger.warning("trend_snapshot persistence failed (non-fatal)", exc_info=True)
+
+    return {
+        "resolved": True,
+        "asOf": _as_of.isoformat(),
+        "theme": theme,
+        "region": region,
+        "momentum": momentum.model_dump(mode="json"),
+        "comparables": comparables.model_dump(mode="json"),
+        "decisionHistory": decision_history,
     }
 
 
