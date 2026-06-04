@@ -10,9 +10,12 @@ Tables migrated (per Phase H spec):
 Phase 2 substrate (ws-thread-messages, migration 0063):
   writing_draft_thread_messages — per-draft AI conversation thread
 
+Phase 3 Piece B (migration 0064):
+  writing_training_candidates — proposed / approved / rejected learning candidates
+
 NOT here (per Phase H, explicitly excluded):
   writing_drafts, writing_draft_versions,
-  writing_training_candidates, writing_deliverable_links, writing_draft_events
+  writing_deliverable_links, writing_draft_events
 
 All timestamps are TIMESTAMPTZ. JSON-in-TEXT columns from Node are JSONB.
 PKs are BIGSERIAL.
@@ -57,6 +60,9 @@ class WritingProfile(Base):
         "WritingExample", back_populates="profile"
     )
     sources: Mapped[list[WritingSource]] = relationship("WritingSource", back_populates="profile")
+    training_candidates: Mapped[list[WritingTrainingCandidate]] = relationship(
+        "WritingTrainingCandidate", back_populates="profile"
+    )
 
 
 class WritingFolder(Base):
@@ -271,4 +277,51 @@ class WritingDraftThreadMessage(Base):
     prompt: Mapped[Any | None] = mapped_column("prompt_json", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WritingTrainingCandidate(Base):
+    """Proposed learning candidate from a Writing Studio compose turn.
+
+    A candidate is created when the AI detects a "Proposed learning: ..." line
+    in its response. A human reviewer then approves (→ promotes to WritingRule
+    or WritingExample) or rejects it. Rejected candidates are never deleted
+    (lossless memory rule); they simply carry status='rejected' + decided_at.
+
+    Node reference: db/sqlite.js writing_training_candidates (lines 616-632).
+    Adaptations:
+      - draft_id FKs to campaign_deliverables.id (Python draft row).
+      - scope_json is JSONB (not TEXT as in SQLite).
+    """
+
+    __tablename__ = "writing_training_candidates"
+    __table_args__ = (
+        Index("idx_writing_training_candidates_profile", "profile_id"),
+        Index("idx_writing_training_candidates_status", "status"),
+        Index("idx_writing_training_candidates_draft", "draft_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("writing_profiles.id", name="fk_wtc_profile"), nullable=True
+    )
+    draft_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("campaign_deliverables.id", name="fk_wtc_draft", ondelete="SET NULL"),
+        nullable=True,
+    )
+    candidate_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="rule")
+    proposed_text: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="proposed")
+    scope_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    source_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    approved_memory_observation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    profile: Mapped[WritingProfile | None] = relationship(
+        "WritingProfile", back_populates="training_candidates"
     )

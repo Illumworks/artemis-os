@@ -23,6 +23,8 @@ import {
   updateWritingFolderApi,
   updateWritingRuleApi,
   updateWritingSourceApi,
+  createWritingTrainingCandidateApi,
+  decideWritingTrainingCandidateApi,
 } from "../core/api.js";
 import { getState, on as onState } from "../core/store.js";
 import {
@@ -319,6 +321,20 @@ export function handleWritingStudioAction(button) {
   if (action === "writing-toggle-propose") {
     const dropdown = document.querySelector(".writing-propose-dropdown");
     if (dropdown) dropdown.hidden = !dropdown.hidden;
+    return true;
+  }
+  if (action === "writing-approve-candidate") {
+    const candidateId = Number(button?.dataset?.writingCandidateId);
+    if (candidateId) void applyWritingCandidateDecision(candidateId, "approved");
+    return true;
+  }
+  if (action === "writing-reject-candidate") {
+    const candidateId = Number(button?.dataset?.writingCandidateId);
+    if (candidateId) void applyWritingCandidateDecision(candidateId, "rejected");
+    return true;
+  }
+  if (action === "writing-submit-propose") {
+    void applyWritingPropose(button);
     return true;
   }
   if (action === "writing-toggle-rules") {
@@ -1452,7 +1468,12 @@ function renderProposedModal(candidates) {
                 </div>
                 <p>${esc(c.proposed_text)}</p>
                 <div class="writing-candidate-actions">
-                  <small>Review actions are not wired in this rebuild yet.</small>
+                  <button type="button" class="writing-button writing-button-approve"
+                    data-writing-action="writing-approve-candidate"
+                    data-writing-candidate-id="${c.id}">Approve</button>
+                  <button type="button" class="writing-button writing-button-reject"
+                    data-writing-action="writing-reject-candidate"
+                    data-writing-candidate-id="${c.id}">Reject</button>
                 </div>
               </div>
             `).join("")}
@@ -1618,7 +1639,15 @@ function renderContextStrip(draft, engine, brief) {
           <button type="button" class="writing-ctx-brief-trigger" data-writing-action="writing-toggle-propose">+ Propose</button>
           <div class="writing-propose-dropdown" hidden>
             <div class="writing-propose-form">
-              <p class="writing-empty">Proposal review routing is not wired in this rebuild yet, so this stays read-only for now.</p>
+              <textarea class="writing-learning-input writing-propose-textarea"
+                data-writing-input="propose-text"
+                placeholder="Describe a voice rule or pattern to add (at least 10 chars)."
+                rows="3"></textarea>
+              <div class="writing-ctx-brief-meta">
+                <button type="button" class="writing-button"
+                  data-writing-action="writing-submit-propose"
+                  data-writing-draft-id="${writingState.selectedDraft?.id || ""}">Submit proposal</button>
+              </div>
             </div>
           </div>
         </div>
@@ -3266,5 +3295,54 @@ function setWritingStatus(message, isError = false) {
       const el = document.querySelector("[data-writing-status]");
       if (el) { el.textContent = ""; el.classList.remove("visible", "error"); }
     }, 3500);
+  }
+}
+
+async function applyWritingCandidateDecision(candidateId, decision) {
+  try {
+    setWritingBusy(true);
+    await decideWritingTrainingCandidateApi(candidateId, decision);
+    // Refresh overview so training_candidates list is current.
+    const overview = await fetchWritingStudioOverview();
+    writingState.overview = overview;
+    syncWritingModalPortal();
+    renderWritingStudio();
+    setWritingStatus(decision === "approved" ? "Rule approved and added." : "Proposal rejected.");
+  } catch (err) {
+    console.error("Writing candidate decision failed:", err);
+    setWritingStatus(err.message || "Failed to record decision.", true);
+  } finally {
+    setWritingBusy(false);
+  }
+}
+
+async function applyWritingPropose(button) {
+  const proposedText = (document.querySelector("[data-writing-input='propose-text']")?.value || "").trim();
+  if (!proposedText || proposedText.length < 10) {
+    setWritingStatus("Proposal must be at least 10 characters.", true);
+    return;
+  }
+  const draftId = Number(button?.dataset?.writingDraftId || writingState.selectedDraft?.id || 0) || null;
+  try {
+    setWritingBusy(true);
+    await createWritingTrainingCandidateApi({
+      proposedText,
+      candidateType: "rule",
+      draftId,
+    });
+    // Close dropdown + refresh overview.
+    const dropdown = document.querySelector(".writing-propose-dropdown");
+    if (dropdown) dropdown.hidden = true;
+    const textarea = document.querySelector("[data-writing-input='propose-text']");
+    if (textarea) textarea.value = "";
+    const overview = await fetchWritingStudioOverview();
+    writingState.overview = overview;
+    renderWritingStudio();
+    setWritingStatus("Proposal submitted for review.");
+  } catch (err) {
+    console.error("Writing propose failed:", err);
+    setWritingStatus(err.message || "Failed to submit proposal.", true);
+  } finally {
+    setWritingBusy(false);
   }
 }
