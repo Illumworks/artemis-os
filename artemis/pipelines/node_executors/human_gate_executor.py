@@ -265,6 +265,10 @@ _SIGNAL_GATE_KINDS = frozenset({"signal_brief"})
 _CONTENT_GATE_KINDS = frozenset({"content_draft"})
 
 _PREVIEW_MAX = 400
+# Upper bound for the full draft body stored in context (content_draft cards).
+# Slack section blocks cap at ~3000 chars each; the builder chunks beyond that.
+# We store up to 10 000 chars here — more than any realistic outreach email.
+_DRAFT_BODY_MAX = 10_000
 
 
 async def _build_pipe4_context(
@@ -311,15 +315,21 @@ async def _build_signal_gate_context_from_db(
     """
     from sqlalchemy import select
 
-    from artemis.marketing.models import SignalQueue
+    from artemis.marketing.models import District, SignalQueue
 
     ctx: dict[str, Any] = {
         "approval_kind": approval_kind,
         "signal_count": 0,
         "reason_codes": [],
         "districts": [],
+        "district_label": None,
+        "headline": None,
+        "urgency": None,
+        "score": None,
         "evidence_quote": None,
+        "evidence_snippets": [],
         "brief_preview": None,
+        "brief_body": None,
         "draft_summary": None,
     }
 
@@ -343,7 +353,34 @@ async def _build_signal_gate_context_from_db(
 
     ctx["signal_count"] = len(rows)
     codes: set[str] = set()
-    districts: set[str] = set()
+    raw_districts: list[str] = []
+    evidence_snippets: list[str] = []
+
+    # Resolve district labels for the primary signal (first row).
+    top_row = rows[0]
+    ctx["headline"] = top_row.headline or None
+    ctx["urgency"] = top_row.urgency_tier or None
+
+    # Look up District row for the primary signal to get a human label.
+    if top_row.resolved_district_id is not None:
+        district_obj = await session.get(District, top_row.resolved_district_id)
+        if district_obj is not None:
+            label = (
+                f"{district_obj.name} ({district_obj.state})"
+                if district_obj.state
+                else district_obj.name
+            )
+            ctx["district_label"] = label
+    if ctx["district_label"] is None and (top_row.district_id or top_row.state):
+        ctx["district_label"] = top_row.district_id or top_row.state
+
+    # Score from qualification_json (top signal).
+    top_qual = top_row.qualification_json or {}
+    if isinstance(top_qual, dict):
+        score_val = top_qual.get("adjustedScore") or top_qual.get("rawScore")
+        if score_val is not None:
+            ctx["score"] = score_val
+
     for row in rows:
         raw_codes = row.reason_codes if isinstance(row.reason_codes, list) else []
         for rc in raw_codes:
@@ -351,28 +388,33 @@ async def _build_signal_gate_context_from_db(
             if code:
                 codes.add(str(code))
         geo = row.district_id or row.state
-        if geo:
-            districts.add(str(geo))
-        if not ctx["evidence_quote"]:
-            quote = _brief_field(row.qualification_json, "evidence_quote")
-            if quote:
-                ctx["evidence_quote"] = str(quote)[:_PREVIEW_MAX]
+        if geo and geo not in raw_districts:
+            raw_districts.append(str(geo))
+        # Collect all evidence quotes (one per signal, deduplicated by content).
+        quote = _brief_field(row.qualification_json, "evidence_quote")
+        if quote and str(quote) not in evidence_snippets:
+            evidence_snippets.append(str(quote))
 
     ctx["reason_codes"] = sorted(codes)
-    ctx["districts"] = sorted(districts)
+    ctx["districts"] = raw_districts
+    if evidence_snippets:
+        ctx["evidence_quote"] = evidence_snippets[0]
+    ctx["evidence_snippets"] = evidence_snippets
 
-    # Brief preview: prefer the top signal's brief preview, then its body.
+    # Brief preview and full body: prefer the top signal's brief.
     top = rows[0].qualification_json
-    preview = _brief_field(top, "preview") or _brief_field(top, "body")
-    if not preview:
+    preview = _brief_field(top, "preview")
+    body = _brief_field(top, "body")
+    if not preview and not body:
         for row in rows[1:]:
-            preview = _brief_field(row.qualification_json, "preview") or _brief_field(
-                row.qualification_json, "body"
-            )
-            if preview:
+            preview = _brief_field(row.qualification_json, "preview")
+            body = _brief_field(row.qualification_json, "body")
+            if preview or body:
                 break
     if preview:
         ctx["brief_preview"] = str(preview)[:_PREVIEW_MAX]
+    if body:
+        ctx["brief_body"] = str(body)[:_PREVIEW_MAX]
 
     return ctx
 
@@ -431,6 +473,9 @@ async def _build_content_gate_context_from_db(
         "district_label": None,
         "brief_preview": None,
         "draft_summary": None,
+        "draft_title": None,
+        "draft_body": None,
+        "deliverable_type_slug": None,
         "deliverable_ids": [],
     }
 
@@ -460,6 +505,9 @@ async def _build_content_gate_context_from_db(
     )
     deliverable_cards: list[dict[str, Any]] = []
     first_preview: str | None = None
+    first_draft_title: str | None = None
+    first_draft_body: str | None = None
+    first_deliverable_type_slug: str | None = None
     for deliverable in deliverables:
         metadata = (
             dict(deliverable.deliverable_metadata)
@@ -473,6 +521,12 @@ async def _build_content_gate_context_from_db(
             or metadata.get("externalTitle")
             or f"Draft {deliverable.id}"
         )
+        type_slug = metadata.get("deliverableTypeSlug") or metadata.get("deliverable_type_slug")
+        # Full draft body — written by writing_studio.enqueue into draftBody.
+        raw_body = metadata.get("draftBody") or metadata.get("content")
+        draft_body_full: str | None = None
+        if isinstance(raw_body, str) and raw_body.strip():
+            draft_body_full = raw_body.strip()[:_DRAFT_BODY_MAX]
         deliverable_cards.append(
             {
                 "id": deliverable.id,
@@ -480,9 +534,9 @@ async def _build_content_gate_context_from_db(
                 "title": title,
                 "campaignId": deliverable.campaign_id,
                 "externalDraftId": metadata.get("externalDraftId") or deliverable.deliverable_id,
-                "deliverableTypeSlug": metadata.get("deliverableTypeSlug")
-                or metadata.get("deliverable_type_slug"),
+                "deliverableTypeSlug": type_slug,
                 "draftPreview": preview,
+                "draftBody": draft_body_full,
                 "updatedAt": (
                     deliverable.updated_at.isoformat() if deliverable.updated_at else None
                 ),
@@ -490,6 +544,12 @@ async def _build_content_gate_context_from_db(
         )
         if first_preview is None and preview:
             first_preview = preview
+        if first_draft_title is None:
+            first_draft_title = title
+        if first_draft_body is None and draft_body_full:
+            first_draft_body = draft_body_full
+        if first_deliverable_type_slug is None and type_slug:
+            first_deliverable_type_slug = type_slug
 
     ctx["deliverables"] = deliverable_cards
     ctx["deliverable_ids"] = [card["id"] for card in deliverable_cards]
@@ -498,6 +558,9 @@ async def _build_content_gate_context_from_db(
         1 for card in deliverable_cards if card["status"] == "draft_ready"
     )
     ctx["draft_summary"] = first_preview
+    ctx["draft_title"] = first_draft_title
+    ctx["draft_body"] = first_draft_body
+    ctx["deliverable_type_slug"] = first_deliverable_type_slug
 
     signal_rows = (
         await session.execute(
