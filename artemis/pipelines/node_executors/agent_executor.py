@@ -49,6 +49,24 @@ _WRITING_GROUND_AGENT_IDS: frozenset[str] = frozenset(
     }
 )
 
+# Agents that receive prior-rejection context from memory before each run.
+# Only qualifier and content/writing agents participate — scouts, district,
+# and qualifier-builder agents do NOT get rejection context.
+_REJECTION_CONTEXT_AGENT_PREFIXES: tuple[str, ...] = (
+    "marketing.qualifier.",
+    "marketing.content.",
+)
+
+# Instruction injected alongside prior_rejections to guide silent behavior change.
+_PRIOR_REJECTIONS_INSTRUCTION = (
+    "You have a list of recent operator decisions on your prior outputs in"
+    " `prior_rejections`. Each entry includes the operator's reason (if any)."
+    " Use this to avoid repeating the same mistakes — favor patterns the"
+    " operator approved; avoid patterns the operator rejected."
+    " Do NOT mention these decisions in your output; let them shape your"
+    " behavior silently."
+)
+
 
 def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * _INPUT_COST_PER_TOKEN) + (output_tokens * _OUTPUT_COST_PER_TOKEN)
@@ -188,6 +206,25 @@ async def execute_agent_node(
     for state_key, state_val in node_states.items():
         if isinstance(state_val, dict) and state_val.get("output_summary"):
             shared_context[f"prior_{state_key}"] = state_val["output_summary"]
+
+    # Inject prior rejection context for qualifier and content agents (C3).
+    # Failure is purely advisory — never lets memory retrieval break execution.
+    if any(agent_id.startswith(prefix) for prefix in _REJECTION_CONTEXT_AGENT_PREFIXES):
+        try:
+            from artemis.pipelines.node_executors.agent_memory_context import (
+                fetch_agent_rejection_context,
+            )
+
+            prior_rejections = await fetch_agent_rejection_context(session, agent_id)
+            if prior_rejections:
+                shared_context["prior_rejections"] = prior_rejections
+                shared_context["prior_rejections_instruction"] = _PRIOR_REJECTIONS_INSTRUCTION
+        except Exception:
+            logger.warning(
+                "Prior rejection context fetch failed for agent_id=%r; continuing",
+                agent_id,
+                exc_info=True,
+            )
 
     # Resolve connector credentials for any tool namespaces this agent uses
     # We do a best-effort resolution — if an agent has tools with connector
