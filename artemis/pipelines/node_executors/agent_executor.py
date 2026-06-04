@@ -41,6 +41,14 @@ _CANDIDATE_CONTEXT_AGENT_IDS = frozenset(
     }
 )
 
+# Agent IDs that should receive full writing-ruleset grounding in shared_context.
+# Grows as more content agents need voice-rule awareness.
+_WRITING_GROUND_AGENT_IDS: frozenset[str] = frozenset(
+    {
+        "marketing.content.writing_studio_adapter",
+    }
+)
+
 
 def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * _INPUT_COST_PER_TOKEN) + (output_tokens * _OUTPUT_COST_PER_TOKEN)
@@ -153,6 +161,28 @@ async def execute_agent_node(
             ).scalar_one_or_none()
             if profile is not None:
                 shared_context["default_voice_profile_slug"] = _slug(profile.name)
+
+            # For writing-grounded agents: inject approved ruleset + anti-fabrication
+            # guardrail so the first auto-draft sees the same voice rules as compose
+            # conversations do.  Only added when the active profile + rules/examples
+            # are non-empty to avoid noise in shared_context.
+            if agent_id in _WRITING_GROUND_AGENT_IDS:
+                from artemis.marketing.writing_studio.compose_engine import (
+                    build_ruleset_grounding_block,
+                )
+                from artemis.writing_rules.repository import list_examples, list_rules
+
+                all_rules = await list_rules(session)
+                all_examples = await list_examples(session)
+                grounding = build_ruleset_grounding_block(profile, all_rules, all_examples)
+                if grounding:
+                    shared_context["writing_ruleset_block"] = grounding[
+                        "system_prompt_grounding_block"
+                    ]
+                    shared_context["writing_anti_fabrication_guardrail"] = grounding[
+                        "anti_fabrication_guardrail"
+                    ]
+                    shared_context["writing_ruleset_trace"] = grounding["trace"]
 
     # Inject brief summary from qualifier node outputs if present
     for state_key, state_val in node_states.items():

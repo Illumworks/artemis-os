@@ -16,6 +16,13 @@ GUARDRAIL (ported from Node):
   the rules and draft context provided — it MUST NOT fabricate efficacy
   claims, impact statistics, or outcomes not present in the source material.
   See _RUNTIME_GUARDRAIL and _build_runtime_context below.
+
+Public helpers exposed for reuse by other callers (e.g. agent_executor):
+  build_ruleset_grounding_block — formats the "Approved rules:" + examples
+    block from a profile/rules/examples triple, capped at PROMPT_RULE_LIMIT /
+    PROMPT_EXAMPLE_LIMIT and profile-filtered, WITHOUT draft-specific parts.
+    Returns a dict with keys: system_prompt_grounding_block,
+    anti_fabrication_guardrail, trace.
 """
 
 from __future__ import annotations
@@ -33,6 +40,15 @@ PROMPT_ATTACHMENT_LIMIT = 1800
 # Added for the Python rebuild: hard cap for the rules/examples block length
 # to ensure the system prompt stays cache-friendly across turns.
 PROMPT_SYSTEM_CACHE_BLOCK_LIMIT = 12_000
+
+# Anti-fabrication guardrail text — single source of truth shared by both
+# compose conversations and the initial auto-draft pipeline path.
+ANTI_FABRICATION_GUARDRAIL = (
+    "NEVER fabricate efficacy claims, impact statistics, outcome numbers, "
+    "or 'proof points' not present in the campaign brief or source material. "
+    "If information is missing, say what is missing or make the lightest "
+    "reasonable assumption instead of inventing unseen source text."
+)
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
@@ -139,6 +155,157 @@ def _latest_draft_content(draft: Any) -> str:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+def build_ruleset_grounding_block(
+    profile: Any | None,
+    rules: list[Any],
+    examples: list[Any],
+    *,
+    asset_type: str | None = None,
+    channel: str | None = None,
+) -> dict[str, Any]:
+    """Build the reusable rules/examples grounding block for a given profile.
+
+    Used by both ``build_writing_memory_prompt`` (compose conversations) and
+    ``agent_executor`` (first auto-draft in the deliverables pipeline) so both
+    callers share one source of truth for the approved ruleset block and the
+    anti-fabrication guardrail.
+
+    Args:
+        profile:    Active ``WritingProfile`` ORM object or None.
+        rules:      All ``WritingRule`` rows to filter/rank.
+        examples:   All ``WritingExample`` rows to filter/rank.
+        asset_type: Optional asset_type hint for example relevance scoring
+                    (mirrors deliverable_metadata["assetType"]).
+        channel:    Optional channel hint for example relevance scoring.
+
+    Returns:
+        Dict with keys:
+          ``system_prompt_grounding_block`` — formatted "Approved rules:" +
+              "Relevant examples and templates:" text, profile-filtered,
+              capped at PROMPT_RULE_LIMIT / PROMPT_EXAMPLE_LIMIT.
+          ``anti_fabrication_guardrail`` — the guardrail text (ANTI_FABRICATION_GUARDRAIL).
+          ``trace`` — dict with keys ``profile``, ``rules``, ``examples``
+              (same shape as the corresponding sub-objects in
+              ``build_writing_memory_prompt`` trace).
+
+    Returns an empty dict ``{}`` when profile is None AND both lists are empty,
+    signalling to callers that no grounding data is available.
+    """
+    profile_id: int | None = getattr(profile, "id", None)
+
+    # ── Filter + rank rules ───────────────────────────────────────────────────
+    prompt_rules = [
+        r
+        for r in rules
+        if (profile_id is None or getattr(r, "profile_id", None) == profile_id)
+        and (getattr(r, "status", "active") or "active") == "active"
+    ][:PROMPT_RULE_LIMIT]
+
+    # ── Filter + rank examples ────────────────────────────────────────────────
+    # Build a minimal draft-like object for the relevance scorer when the
+    # caller passed explicit asset_type / channel hints.
+    class _HintDraft:
+        deliverable_metadata: dict[str, Any] = {}
+
+    if asset_type or channel:
+        hint_draft = _HintDraft()
+        hint_draft.deliverable_metadata = {
+            "assetType": asset_type or "",
+            "channel": channel or "",
+        }
+        draft_for_scoring: Any = hint_draft
+    else:
+        draft_for_scoring = _HintDraft()
+
+    filtered_examples = [
+        e for e in examples if profile_id is None or getattr(e, "profile_id", None) == profile_id
+    ]
+    filtered_examples.sort(
+        key=lambda e: _example_relevance_score(e, draft_for_scoring),
+        reverse=True,
+    )
+    prompt_examples = filtered_examples[:PROMPT_EXAMPLE_LIMIT]
+
+    # Guard: nothing to inject
+    if not prompt_rules and not prompt_examples and profile is None:
+        return {}
+
+    # ── Format the grounding block ────────────────────────────────────────────
+    rules_text = (
+        "\n".join(
+            f"{i + 1}. [{getattr(r, 'rule_type', 'voice') or 'voice'}] {r.title}: {r.body}"
+            for i, r in enumerate(prompt_rules)
+        )
+        if prompt_rules
+        else "- No approved rules are available yet."
+    )
+    examples_text = (
+        "\n\n".join(
+            f"{i + 1}. {e.title} "
+            f"({getattr(e, 'example_type', 'reference') or 'reference'}"
+            f"{f', {e.asset_type}' if getattr(e, 'asset_type', None) else ''}"
+            f"{f', {e.channel}' if getattr(e, 'channel', None) else ''})\n"
+            f"{_compact_text(e.body, 1600)}"
+            for i, e in enumerate(prompt_examples)
+        )
+        if prompt_examples
+        else "- No reusable examples matched this context yet."
+    )
+
+    block_parts = [
+        (
+            "Use the approved Writing Studio memory bank below as explicit drafting context. "
+            "Proposed training candidates are not durable memory and must not be treated as "
+            "rules until a human approves them."
+        ),
+        "",
+        "Approved rules:",
+        rules_text,
+        "",
+        "Relevant examples and templates:",
+        examples_text,
+    ]
+    grounding_block = "\n".join(block_parts)
+
+    # ── Trace ─────────────────────────────────────────────────────────────────
+    trace: dict[str, Any] = {
+        "profile": (
+            {
+                "id": profile.id,
+                "name": profile.name,
+                "hasSystemPrompt": bool(getattr(profile, "system_prompt", None)),
+            }
+            if profile
+            else None
+        ),
+        "rules": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "type": getattr(r, "rule_type", "voice") or "voice",
+                "sourceCandidateId": getattr(r, "source_candidate_id", None),
+            }
+            for r in prompt_rules
+        ],
+        "examples": [
+            {
+                "id": e.id,
+                "title": e.title,
+                "type": getattr(e, "example_type", "reference") or "reference",
+                "assetType": getattr(e, "asset_type", None),
+                "channel": getattr(e, "channel", None),
+            }
+            for e in prompt_examples
+        ],
+    }
+
+    return {
+        "system_prompt_grounding_block": grounding_block,
+        "anti_fabrication_guardrail": ANTI_FABRICATION_GUARDRAIL,
+        "trace": trace,
+    }
+
+
 def build_writing_memory_prompt(
     *,
     draft: Any,
@@ -163,31 +330,37 @@ def build_writing_memory_prompt(
     Conversation history is carried forward so the model has context for follow-up turns.
 
     Port of buildWritingMemoryPrompt from server/writing-studio-invoke.js.
+    Internally delegates rules/examples block assembly to build_ruleset_grounding_block.
     """
-    profile_id: int | None = getattr(profile, "id", None)
     meta: dict[str, Any] = {}
     if hasattr(draft, "deliverable_metadata") and isinstance(draft.deliverable_metadata, dict):
         meta = draft.deliverable_metadata
     brief: str | None = _optional_string(meta.get("brief") or "")
     latest_content = _latest_draft_content(draft)
 
-    # ── Filter + rank rules ───────────────────────────────────────────────────
-    prompt_rules = [
-        r
-        for r in rules
-        if (profile_id is None or getattr(r, "profile_id", None) == profile_id)
-        and (getattr(r, "status", "active") or "active") == "active"
-    ][:PROMPT_RULE_LIMIT]
+    # ── Extract asset_type + channel hints from draft metadata ────────────────
+    draft_asset_type: str | None = meta.get("assetType") or meta.get("asset_type") or None
+    draft_channel: str | None = meta.get("channel") or None
 
-    # ── Filter + rank examples ────────────────────────────────────────────────
-    filtered_examples = [
-        e for e in examples if profile_id is None or getattr(e, "profile_id", None) == profile_id
-    ]
-    filtered_examples.sort(
-        key=lambda e: _example_relevance_score(e, draft),
-        reverse=True,
+    # ── Delegate rules/examples block to reusable helper ─────────────────────
+    grounding = build_ruleset_grounding_block(
+        profile,
+        rules,
+        examples,
+        asset_type=draft_asset_type,
+        channel=draft_channel,
     )
-    prompt_examples = filtered_examples[:PROMPT_EXAMPLE_LIMIT]
+    # grounding may be empty dict if no profile/rules/examples — use a fallback block
+    if grounding:
+        grounding_block = grounding["system_prompt_grounding_block"]
+        block_trace: dict[str, Any] = grounding["trace"]
+    else:
+        grounding_block = (
+            "Use the approved Writing Studio memory bank below as explicit drafting context.\n\n"
+            "Approved rules:\n- No approved rules are available yet.\n\n"
+            "Relevant examples and templates:\n- No reusable examples matched this context yet."
+        )
+        block_trace = {"profile": None, "rules": [], "examples": []}
 
     # ── Attachments ───────────────────────────────────────────────────────────
     raw_attachments: list[dict[str, Any]] = [
@@ -216,35 +389,7 @@ def build_writing_memory_prompt(
         "",
         runtime_context,
         "",
-        (
-            "Use the approved Writing Studio memory bank below as explicit drafting context. "
-            "Proposed training candidates are not durable memory and must not be treated as "
-            "rules until a human approves them."
-        ),
-        "",
-        "Approved rules:",
-        (
-            "\n".join(
-                f"{i + 1}. [{getattr(r, 'rule_type', 'voice') or 'voice'}] {r.title}: {r.body}"
-                for i, r in enumerate(prompt_rules)
-            )
-            if prompt_rules
-            else "- No approved rules are available yet."
-        ),
-        "",
-        "Relevant examples and templates:",
-        (
-            "\n\n".join(
-                f"{i + 1}. {e.title} "
-                f"({getattr(e, 'example_type', 'reference') or 'reference'}"
-                f"{f', {e.asset_type}' if getattr(e, 'asset_type', None) else ''}"
-                f"{f', {e.channel}' if getattr(e, 'channel', None) else ''})\n"
-                f"{_compact_text(e.body, 1600)}"
-                for i, e in enumerate(prompt_examples)
-            )
-            if prompt_examples
-            else "- No reusable examples matched this draft yet."
-        ),
+        grounding_block,
     ]
     system_prompt = "\n".join(system_parts)
 
@@ -297,36 +442,9 @@ def build_writing_memory_prompt(
             if role in ("user", "assistant") and content:
                 prior_turns.append({"role": role, "content": content})
 
-    # ── Trace ─────────────────────────────────────────────────────────────────
+    # ── Trace — merges helper trace with draft-specific fields ────────────────
     trace: dict[str, Any] = {
-        "profile": (
-            {
-                "id": profile.id,
-                "name": profile.name,
-                "hasSystemPrompt": bool(getattr(profile, "system_prompt", None)),
-            }
-            if profile
-            else None
-        ),
-        "rules": [
-            {
-                "id": r.id,
-                "title": r.title,
-                "type": getattr(r, "rule_type", "voice") or "voice",
-                "sourceCandidateId": getattr(r, "source_candidate_id", None),
-            }
-            for r in prompt_rules
-        ],
-        "examples": [
-            {
-                "id": e.id,
-                "title": e.title,
-                "type": getattr(e, "example_type", "reference") or "reference",
-                "assetType": getattr(e, "asset_type", None),
-                "channel": getattr(e, "channel", None),
-            }
-            for e in prompt_examples
-        ],
+        **block_trace,
         "draft": {
             "id": getattr(draft, "id", None),
             "title": draft_title,
