@@ -3214,6 +3214,177 @@
   align-items: center;
 }
 
+/* ── Marketing Intelligence Phase 1 — trend context (initiation modal) ─── */
+
+.mkt-trend-context .mkt-trend-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-color, #2a2a2a);
+}
+
+.mkt-trend-context .mkt-trend-row:first-of-type {
+  border-top: 0;
+}
+
+.mkt-trend-row-label {
+  color: var(--text-secondary, #aaa);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.mkt-trend-row-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-primary, #f4f4f5);
+}
+
+.mkt-trend-row-detail {
+  grid-column: 2 / 3;
+  color: var(--text-secondary, #aaa);
+  font-size: 12px;
+}
+
+.mkt-trend-sparkline {
+  color: var(--accent-primary, #7dcfff);
+  vertical-align: middle;
+}
+
+.mkt-trend-momentum--up .mkt-trend-momentum-label {
+  color: #6cc28a;
+}
+
+.mkt-trend-momentum--down .mkt-trend-momentum-label {
+  color: #c98a8a;
+}
+
+.mkt-trend-momentum--flat .mkt-trend-momentum-label,
+.mkt-trend-momentum--new .mkt-trend-momentum-label {
+  color: var(--text-secondary, #aaa);
+}
+
+.mkt-trend-top-matches {
+  grid-column: 2 / 3;
+  margin-top: 4px;
+}
+
+.mkt-trend-top-matches-list {
+  list-style: none;
+  padding: 8px 0 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.mkt-trend-top-match {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #aaa);
+}
+
+.mkt-trend-top-match-summary {
+  flex: 1;
+}
+
+/* ── Marketing Intelligence Phase 1 — "Where to focus" prioritization view */
+
+.mkt-prioritization-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.mkt-prioritization-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #aaa);
+}
+
+.mkt-prioritization-controls select {
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  background: var(--bg-secondary, #1c1c1e);
+  color: var(--text-primary, #f4f4f5);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.mkt-prioritization-disclaimer {
+  font-size: 12px;
+  color: var(--text-dim, #888);
+  background: color-mix(in srgb, #b8860b 6%, var(--surface-panel-soft));
+  border: 1px solid color-mix(in srgb, #b8860b 16%, transparent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.mkt-prioritization-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mkt-prioritization-table thead th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-secondary, #aaa);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color, #2a2a2a);
+}
+
+.mkt-prioritization-table tbody td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-color, #2a2a2a);
+  vertical-align: top;
+}
+
+.mkt-prioritization-rank {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #aaa);
+  width: 32px;
+}
+
+.mkt-prioritization-name {
+  font-weight: 600;
+}
+
+.mkt-prioritization-why {
+  color: var(--text-secondary, #aaa);
+  font-size: 12px;
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+.mkt-prioritization-deadline-est {
+  color: #c9a86a;
+  font-size: 11px;
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.mkt-prioritization-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary, #aaa);
+}
+
 /* ── Outbox tab — stub-transport notice ───────────────────────────────── */
 
 .mkt-outbox-stub-notice {

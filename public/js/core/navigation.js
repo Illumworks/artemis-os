@@ -22,6 +22,7 @@ export const MARKETING_OUTBOX_VIEW = "marketing-outbox";
 export const MARKETING_RULESETS_VIEW = "marketing-rulesets";
 export const MARKETING_SIGNAL_PLAYBOOK_VIEW = "signal-playbook";
 export const MARKETING_SCOUT_RUNS_VIEW = "marketing-scout-runs";
+export const MARKETING_PRIORITIZATION_VIEW = "marketing-prioritization";
 export const INTEGRATIONS_VIEW = "integrations";
 
 function normalizeHashPath(pathname) {
@@ -241,6 +242,14 @@ export const SECONDARY_NAV_DESTINATIONS = [
     view: MARKETING_SCOUT_RUNS_VIEW,
   },
   {
+    id: MARKETING_PRIORITIZATION_VIEW,
+    label: "Where to focus",
+    shortLabel: "Focus",
+    description: "Phase 1 intel: ranked districts by velocity + time-sensitivity proxy (estimate, not hard deadlines).",
+    section: "Marketing",
+    view: MARKETING_PRIORITIZATION_VIEW,
+  },
+  {
     id: "files",
     label: "Files",
     shortLabel: "Files",
@@ -299,6 +308,7 @@ export function normalizeAppView(view) {
   if (view === "marketing-rulesets") return MARKETING_RULESETS_VIEW;
   if (view === "signal-playbook") return MARKETING_SIGNAL_PLAYBOOK_VIEW;
   if (view === "marketing-scout-runs") return MARKETING_SCOUT_RUNS_VIEW;
+  if (view === "marketing-prioritization") return MARKETING_PRIORITIZATION_VIEW;
   if (view === "pipelines") return "pipelines";
   if (view === "dev-projects") return "chat";
   if (view === "integrations") return INTEGRATIONS_VIEW;
@@ -336,6 +346,7 @@ export function isShellView(view) {
     || normalizedView === MARKETING_OUTBOX_VIEW
     || normalizedView === MARKETING_RULESETS_VIEW
     || normalizedView === MARKETING_SIGNAL_PLAYBOOK_VIEW
+    || normalizedView === MARKETING_PRIORITIZATION_VIEW
     || normalizedView === LEGACY_DASHBOARD_VIEW
     || normalizedView === INTEGRATIONS_VIEW;
 }

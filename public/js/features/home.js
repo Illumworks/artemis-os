@@ -25,6 +25,7 @@ import {
   MARKETING_RULESETS_VIEW,
   MARKETING_SIGNAL_PLAYBOOK_VIEW,
   MARKETING_SCOUT_RUNS_VIEW,
+  MARKETING_PRIORITIZATION_VIEW,
   PIPELINE_RUN_HISTORY_VIEW,
   isShellView,
   normalizeAppView,
@@ -86,6 +87,7 @@ import {
   loadMarketingOutbox,
   loadMarketingRulesets,
   loadMarketingScoutRuns,
+  loadMarketingPrioritization,
 } from './marketing-os.js';
 import {
   handleMemoryShellAction,
@@ -149,7 +151,7 @@ const dashboardCaptureState = { ...DASHBOARD_CAPTURE_DEFAULTS };
 const WIDE_PAGE_VIEWS = new Set([
   DEFAULT_APP_VIEW, CALENDAR_VIEW, MEETINGS_VIEW, JIRA_VIEW, OKR_VIEW, WRITING_STUDIO_VIEW,
   OPERATIONS_VIEW, MEMORY_VIEW,
-  MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_OUTBOX_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SIGNAL_PLAYBOOK_VIEW, MARKETING_SCOUT_RUNS_VIEW,
+  MARKETING_DASHBOARD_VIEW, MARKETING_CAMPAIGNS_VIEW, MARKETING_SIGNALS_VIEW, MARKETING_APPROVALS_VIEW, MARKETING_OUTBOX_VIEW, MARKETING_RULESETS_VIEW, MARKETING_SIGNAL_PLAYBOOK_VIEW, MARKETING_SCOUT_RUNS_VIEW, MARKETING_PRIORITIZATION_VIEW,
   'agents', 'skills', 'pipelines', PIPELINE_RUN_HISTORY_VIEW,
 ]);
 function isWidePageView(view) {
@@ -217,6 +219,8 @@ onState('view', (view) => {
       loadMarketingRulesets(appShellContent);
     } else if (normalizedView === MARKETING_SCOUT_RUNS_VIEW) {
       loadMarketingScoutRuns(appShellContent);
+    } else if (normalizedView === MARKETING_PRIORITIZATION_VIEW) {
+      loadMarketingPrioritization(appShellContent);
     } else if (normalizedView === 'integrations') {
       // Integrations is now a modal — open it and stay on the current view
       openIntegrationsModal();
@@ -514,7 +518,8 @@ function renderShell(view) {
     view === MARKETING_APPROVALS_VIEW ||
     view === MARKETING_OUTBOX_VIEW ||
     view === MARKETING_RULESETS_VIEW ||
-    view === MARKETING_SIGNAL_PLAYBOOK_VIEW
+    view === MARKETING_SIGNAL_PLAYBOOK_VIEW ||
+    view === MARKETING_PRIORITIZATION_VIEW
   ) {
     appShellContent.innerHTML = `
       <section class="mkt-hero" aria-busy="true">
