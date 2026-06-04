@@ -9,12 +9,15 @@ Backfill tests use an in-memory engine per test to isolate state.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.memory.models import MemoryObservation
 from artemis.memory.retrieval import (
     RetrievalConfig,
     RetrievalWeights,
@@ -28,6 +31,22 @@ from artemis.memory.store import write_observation
 from artemis.memory.tests.test_b2_embeddings import _SCOPE, MockProvider
 
 _SCOPE2 = Scope(scope_kind="project", scope_id="project-alpha")
+
+
+@pytest.fixture(autouse=True)
+async def _drain_usage_tasks() -> None:
+    import artemis.memory.retrieval as retrieval_mod
+
+    pending_before = list(retrieval_mod._BACKGROUND_USAGE_TASKS)
+    if pending_before:
+        await asyncio.gather(*pending_before, return_exceptions=True)
+
+    yield
+
+    pending_after = list(retrieval_mod._BACKGROUND_USAGE_TASKS)
+    if pending_after:
+        await asyncio.gather(*pending_after, return_exceptions=True)
+
 
 # ── Config tests ──────────────────────────────────────────────────────────────
 
@@ -391,6 +410,96 @@ async def test_search_observations_limit_respected(db_session: AsyncSession) -> 
         db_session, [_SCOPE], "observation", limit=2, modes=["recency"], provider=provider
     )
     assert len(results) <= 2
+
+
+async def test_search_observations_records_usage_for_returned_results(
+    db_session: AsyncSession,
+) -> None:
+    import artemis.memory.retrieval as retrieval_mod
+
+    provider = MockProvider()
+    stale_access = datetime.now(UTC) - timedelta(days=1)
+    async with db_session.begin():
+        obs = await write_observation(
+            db_session, _SCOPE, "sticky memory retrieval target", embedding_provider=provider
+        )
+        await db_session.execute(
+            update(MemoryObservation)
+            .where(MemoryObservation.id == obs.id)
+            .values(hit_count=0, accessed_at=stale_access)
+        )
+
+    results = await search_observations(
+        db_session,
+        [_SCOPE],
+        "sticky memory",
+        limit=1,
+        modes=["fts", "recency"],
+        provider=provider,
+    )
+    assert [r.id for r in results] == [obs.id]
+    assert results[0].hit_count == 0  # returned payload reflects pre-write state
+
+    tasks = list(retrieval_mod._BACKGROUND_USAGE_TASKS)
+    assert tasks
+    await asyncio.gather(*tasks)
+
+    db_session.expire_all()
+    refreshed = await db_session.get(MemoryObservation, obs.id)
+    assert refreshed is not None
+    assert refreshed.hit_count == 1
+    assert refreshed.accessed_at > stale_access
+
+
+async def test_search_observations_usage_write_is_fire_and_forget(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import artemis.memory.retrieval as retrieval_mod
+
+    provider = MockProvider()
+    async with db_session.begin():
+        await write_observation(
+            db_session, _SCOPE, "non blocking retrieval target", embedding_provider=provider
+        )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _blocked_usage_write(
+        observation_ids: list[int],
+        accessed_at: datetime | None = None,
+        session_factory: object | None = None,
+    ) -> None:
+        assert observation_ids
+        _ = accessed_at
+        _ = session_factory
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(retrieval_mod, "_record_observation_usage", _blocked_usage_write)
+
+    results = await asyncio.wait_for(
+        search_observations(
+            db_session,
+            [_SCOPE],
+            "non blocking",
+            limit=1,
+            modes=["fts", "recency"],
+            provider=provider,
+        ),
+        timeout=0.1,
+    )
+
+    assert len(results) == 1
+    await asyncio.wait_for(started.wait(), timeout=0.1)
+
+    tasks = list(retrieval_mod._BACKGROUND_USAGE_TASKS)
+    assert tasks
+    assert any(not task.done() for task in tasks)
+
+    release.set()
+    await asyncio.gather(*tasks)
 
 
 # ── Retrieval quality fixture ─────────────────────────────────────────────────
