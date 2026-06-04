@@ -56,7 +56,9 @@ async def _reset_pipeline_tables(session: AsyncSession) -> None:
 
 async def _seed_gate_2_review_run(
     session: AsyncSession,
-) -> tuple[CampaignCandidate, CampaignDeliverable, str, int]:
+    *,
+    include_deliverable: bool = True,
+) -> tuple[CampaignCandidate, CampaignDeliverable | None, str, int | None]:
     await _reset_pipeline_tables(session)
 
     signal = await create_signal(
@@ -77,25 +79,27 @@ async def _seed_gate_2_review_run(
     candidate.name = "Fort Bend Follow-Up"
     candidate.workspace_state = "content_in_review"
 
-    deliverable = CampaignDeliverable(
-        candidate_id=candidate.id,
-        deliverable_id="stub-draft-1",
-        campaign_id=str(candidate.id),
-        status=DeliverableState.draft_ready.value,
-        deliverable_metadata={
-            "externalTitle": "Outreach Email Draft",
-            "deliverableTypeSlug": "outreach_email",
-            "versions": [
-                {
-                    "id": "v1",
-                    "version_number": 1,
-                    "content": "Draft intro for Fort Bend ISD families and district leaders.",
-                }
-            ],
-        },
-    )
-    session.add(deliverable)
-    await session.flush()
+    deliverable: CampaignDeliverable | None = None
+    if include_deliverable:
+        deliverable = CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="stub-draft-1",
+            campaign_id=str(candidate.id),
+            status=DeliverableState.draft_ready.value,
+            deliverable_metadata={
+                "externalTitle": "Outreach Email Draft",
+                "deliverableTypeSlug": "outreach_email",
+                "versions": [
+                    {
+                        "id": "v1",
+                        "version_number": 1,
+                        "content": "Draft intro for Fort Bend ISD families and district leaders.",
+                    }
+                ],
+            },
+        )
+        session.add(deliverable)
+        await session.flush()
 
     await session.execute(
         text(
@@ -158,9 +162,9 @@ async def _seed_gate_2_review_run(
             ),
             {"subject_id": f"{run.id}:gate_2_approval_drawer"},
         )
-    ).scalar_one()
+    ).scalar_one_or_none()
     await session.commit()
-    return candidate, deliverable, run.id, int(approval)
+    return candidate, deliverable, run.id, int(approval) if approval is not None else None
 
 
 async def _refresh_entities(
@@ -189,6 +193,8 @@ async def test_gate_2_suspension_creates_reviewable_content_draft_approval(
     db_session: AsyncSession,
 ) -> None:
     _, deliverable, run_id, approval_id = await _seed_gate_2_review_run(db_session)
+    assert deliverable is not None
+    assert approval_id is not None
 
     response = await client.get("/api/approvals/?status=pending&kind=content_draft")
     assert response.status_code == 200, response.text
@@ -203,12 +209,41 @@ async def test_gate_2_suspension_creates_reviewable_content_draft_approval(
     assert ctx["deliverables"][0]["draftPreview"].startswith("Draft intro for Fort Bend")
 
 
+async def test_gate_2_refuses_empty_content_review_context(
+    db_session: AsyncSession,
+) -> None:
+    candidate, deliverable, run_id, approval_id = await _seed_gate_2_review_run(
+        db_session,
+        include_deliverable=False,
+    )
+
+    assert deliverable is None
+    assert approval_id is None
+
+    run = await pipeline_repo.get_pipeline_run(db_session, run_id)
+    assert run.status == "failed"
+    assert "no deliverables exist for target candidate" in (run.error_message or "")
+
+    approval_row = (
+        await db_session.execute(
+            select(Approval).where(Approval.subject_id == f"{run_id}:gate_2_approval_drawer")
+        )
+    ).scalars()
+    assert approval_row.first() is None
+
+    refreshed = await db_session.get(CampaignCandidate, candidate.id)
+    assert refreshed is not None
+    assert refreshed.workspace_state == "content_in_review"
+
+
 async def test_decide_approved_skips_enqueue_when_outbound_send_flag_off(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
     assert settings.outbound_send_enabled is False
     candidate, deliverable, run_id, approval_id = await _seed_gate_2_review_run(db_session)
+    assert deliverable is not None
+    assert approval_id is not None
 
     with patch("artemis.pipelines.routes._dispatch_execution", return_value=None):
         response = await client.post(
@@ -266,6 +301,8 @@ async def test_decide_rejected_transitions_deliverable_and_workspace_state(
     db_session: AsyncSession,
 ) -> None:
     candidate, deliverable, run_id, approval_id = await _seed_gate_2_review_run(db_session)
+    assert deliverable is not None
+    assert approval_id is not None
 
     with patch("artemis.pipelines.routes._dispatch_execution", return_value=None):
         response = await client.post(
@@ -313,6 +350,8 @@ async def test_revision_requested_marks_revised_and_holds_via_rejected_gate_path
     db_session: AsyncSession,
 ) -> None:
     candidate, deliverable, run_id, approval_id = await _seed_gate_2_review_run(db_session)
+    assert deliverable is not None
+    assert approval_id is not None
 
     with patch("artemis.pipelines.routes._dispatch_execution", return_value=None):
         response = await client.post(
@@ -364,6 +403,7 @@ async def test_already_decided_returns_4xx(
     db_session: AsyncSession,
 ) -> None:
     _, _, _, approval_id = await _seed_gate_2_review_run(db_session)
+    assert approval_id is not None
 
     with patch("artemis.pipelines.routes._dispatch_execution", return_value=None):
         first = await client.post(
@@ -385,6 +425,7 @@ async def test_invalid_decision_returns_4xx(
     db_session: AsyncSession,
 ) -> None:
     _, _, _, approval_id = await _seed_gate_2_review_run(db_session)
+    assert approval_id is not None
 
     response = await client.post(
         f"/api/approvals/{approval_id}/decision",

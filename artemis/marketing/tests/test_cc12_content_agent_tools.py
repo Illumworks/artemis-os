@@ -23,6 +23,7 @@ from artemis.marketing.models import (
     ContentAsset,
 )
 from artemis.marketing.seeds.marketing_agents import seed_marketing_agents
+from artemis.pipelines import repository as pipeline_repo
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import get_factory, known_tool_names
 from artemis.writing_rules.models import WritingProfile
@@ -48,13 +49,18 @@ async def _clean_cc12_tables(db_session: AsyncSession) -> None:
     await db_session.commit()
 
 
-def _ctx(session: AsyncSession, agent_id: str = _ADAPTER) -> ToolContext:
+def _ctx(
+    session: AsyncSession,
+    agent_id: str = _ADAPTER,
+    *,
+    pipeline_run_id: str | None = None,
+) -> ToolContext:
     return ToolContext(
         session=session,
         agent_id=agent_id,
         agent_db_id=1,
         agent_run_id="run-cc12-test",
-        pipeline_run_id=None,
+        pipeline_run_id=pipeline_run_id,
     )
 
 
@@ -74,11 +80,16 @@ async def _fixture_brief(session: AsyncSession) -> CampaignBrief:
 
 
 async def _call_tool(
-    session: AsyncSession, name: str, args: dict[str, Any], agent: str = _ADAPTER
+    session: AsyncSession,
+    name: str,
+    args: dict[str, Any],
+    agent: str = _ADAPTER,
+    *,
+    pipeline_run_id: str | None = None,
 ) -> str:
     factory = get_factory(name)
     assert factory is not None
-    _, impl = factory(_ctx(session, agent))
+    _, impl = factory(_ctx(session, agent, pipeline_run_id=pipeline_run_id))
     return await impl(args)
 
 
@@ -101,6 +112,86 @@ async def test_writing_studio_enqueue_creates_deliverable(db_session: AsyncSessi
     assert row is not None
     assert row.status == "draft_ready"
     assert row.deliverable_metadata["draftTitle"] == "OBC follow-up"
+
+
+@pytest.mark.asyncio
+async def test_writing_studio_enqueue_binds_to_pipeline_target_candidate(
+    db_session: AsyncSession,
+) -> None:
+    brief = await _fixture_brief(db_session)
+    pipeline = await pipeline_repo.create_pipeline(
+        db_session, name="CC12 Pipeline", nodes=[], edges=[]
+    )
+    run = await pipeline_repo.create_pipeline_run(
+        db_session,
+        pipeline_id=pipeline.id,
+        status="queued",
+        trigger="manual",
+        triggered_by="test",
+        target_candidate_id=brief.candidate_id,
+    )
+
+    result = json.loads(
+        await _call_tool(
+            db_session,
+            "writing_studio.enqueue",
+            {
+                "campaign_brief_id": brief.id,
+                "draft_title": "Target-bound draft",
+                "draft_body": "Draft body",
+                "voice_profile_slug": "amira-marketing-voice",
+            },
+            pipeline_run_id=run.id,
+        )
+    )
+
+    row = await db_session.get(CampaignDeliverable, result["deliverable_id"])
+    assert row is not None
+    assert row.candidate_id == brief.candidate_id
+
+
+@pytest.mark.asyncio
+async def test_writing_studio_enqueue_rejects_brief_for_other_pipeline_candidate(
+    db_session: AsyncSession,
+) -> None:
+    target_brief = await _fixture_brief(db_session)
+    other_candidate = CampaignCandidate(campaign_family="obc")
+    db_session.add(other_candidate)
+    await db_session.flush()
+    other_brief = CampaignBrief(
+        candidate_id=other_candidate.id,
+        content={"audience": "other"},
+        generated_by=_ASSEMBLER,
+    )
+    db_session.add(other_brief)
+    await db_session.flush()
+    pipeline = await pipeline_repo.create_pipeline(
+        db_session, name="CC12 Pipeline", nodes=[], edges=[]
+    )
+    run = await pipeline_repo.create_pipeline_run(
+        db_session,
+        pipeline_id=pipeline.id,
+        status="queued",
+        trigger="manual",
+        triggered_by="test",
+        target_candidate_id=target_brief.candidate_id,
+    )
+
+    result = await _call_tool(
+        db_session,
+        "writing_studio.enqueue",
+        {
+            "campaign_brief_id": other_brief.id,
+            "draft_title": "Wrong brief",
+            "draft_body": "Draft body",
+            "voice_profile_slug": "amira-marketing-voice",
+        },
+        pipeline_run_id=run.id,
+    )
+
+    assert "VALIDATION_ERROR" in result
+    rows = (await db_session.execute(select(CampaignDeliverable))).scalars().all()
+    assert rows == []
 
 
 @pytest.mark.asyncio

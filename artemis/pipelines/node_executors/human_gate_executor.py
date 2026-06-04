@@ -612,6 +612,41 @@ async def _build_content_gate_context_from_db(
     return ctx
 
 
+def _content_gate_error(
+    *,
+    candidate_id: int | None,
+    deliverable_ids: list[Any] | None,
+    deliverables: list[dict[str, Any]] | None,
+) -> str | None:
+    if candidate_id is None:
+        return "content_draft gate requires a target candidate"
+
+    if not deliverable_ids:
+        return (
+            "content_draft gate cannot open review: "
+            f"no deliverables exist for target candidate {candidate_id}"
+        )
+
+    reviewable = False
+    for deliverable in deliverables or []:
+        preview = deliverable.get("draftPreview")
+        body = deliverable.get("draftBody")
+        if isinstance(preview, str) and preview.strip():
+            reviewable = True
+            break
+        if isinstance(body, str) and body.strip():
+            reviewable = True
+            break
+
+    if not reviewable:
+        return (
+            "content_draft gate cannot open review: "
+            f"deliverables for target candidate {candidate_id} have no draft content"
+        )
+
+    return None
+
+
 def _brief_field(qualification_json: Any, field: str) -> Any:
     """Safely read ``qualification_json['brief'][field]`` (None if absent)."""
     if not isinstance(qualification_json, dict):
@@ -825,6 +860,19 @@ async def execute_human_gate_node(
     # effects there via MCP tool calls and only return summary text into
     # node_states. Content/draft gates fall back to the node_states path.
     pipe4_ctx = await _build_pipe4_context(kind, node_states, session=session, run_id=run_id)
+    if kind == "content_draft":
+        gate_error = _content_gate_error(
+            candidate_id=pipe4_ctx.get("candidate_id"),
+            deliverable_ids=pipe4_ctx.get("deliverable_ids"),
+            deliverables=pipe4_ctx.get("deliverables"),
+        )
+        if gate_error is not None:
+            return {
+                "status": "failed",
+                "error": gate_error,
+                "output_summary": "",
+                "cost_usd": 0.0,
+            }
 
     if existing_approval is None:
         approval = Approval(
