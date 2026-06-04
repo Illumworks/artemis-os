@@ -53,6 +53,7 @@ const RAIL_NAV_VIEW_MAP = {
   'marketing-signals': MARKETING_SIGNALS_VIEW,
   'marketing-approvals': MARKETING_APPROVALS_VIEW,
   'signal-playbook': MARKETING_SIGNAL_PLAYBOOK_VIEW,
+  'marketing-prioritization': 'marketing-prioritization',
 };
 
 // Focus hints for Workspace sub-sections that still share a parent view.
