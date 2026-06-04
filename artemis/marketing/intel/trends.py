@@ -250,12 +250,16 @@ async def compute_velocity_ranking(
     as_of: datetime,
     window_days: int = 30,
     limit: int = 20,
+    state: str | None = None,
 ) -> list[DistrictVelocityRow]:
     """Rank districts by (new signals in window) × urgency weight.
 
     Urgency weights from URGENCY_WEIGHTS constant (standard=1, elevated=2,
     high=3, critical=5). Only qualified/approved signals in window counted.
     Returns ranked rows (rank 1 = highest weighted score).
+
+    Optional state kwarg (added for Decision-2 prioritization endpoint) filters
+    results to districts in that state. Uses d.state column in the existing join.
     """
     window_start = as_of - timedelta(days=window_days)
 
@@ -266,6 +270,8 @@ async def compute_velocity_ranking(
     w_elev = URGENCY_WEIGHTS["elevated"]
     w_high = URGENCY_WEIGHTS["high"]
     w_crit = URGENCY_WEIGHTS["critical"]
+
+    state_clause = "AND d.state = :state " if state is not None else ""
 
     sql = text(
         f"""
@@ -293,6 +299,7 @@ async def compute_velocity_ranking(
           AND sq.created_at < :as_of
           AND d.supported = TRUE
           AND d.on_skip_list = FALSE
+          {state_clause}
         GROUP BY d.id, d.name, d.state, d.tier
         ORDER BY weighted_score DESC, raw_count DESC, d.name ASC
         LIMIT :limit
@@ -305,6 +312,8 @@ async def compute_velocity_ranking(
         "as_of": as_of,
         "limit": limit,
     }
+    if state is not None:
+        params["state"] = state
 
     rows = (await session.execute(sql, params)).fetchall()
 
@@ -345,6 +354,7 @@ async def compute_time_sensitivity(
     as_of: datetime,
     horizon_days: int = 60,
     limit: int = 20,
+    state: str | None = None,
 ) -> list[TimeSensitiveSignalRow]:
     """Return signals whose urgency/recency suggest a near-term time window.
 
@@ -358,13 +368,24 @@ async def compute_time_sensitivity(
     'created_at_urgency_proxy'. horizon_days is applied as a minimum age filter
     (created_at >= as_of - horizon_days) so only recently-flagged signals appear.
 
+    Optional state kwarg (added for Decision-2 prioritization endpoint) filters
+    results to signals attached to districts in that state. Uses d.state via the
+    existing LEFT JOIN; signals with no resolved district are excluded when state
+    is specified.
+
     If a structured deadline column is added to signal_queue in a future migration,
     replace this proxy logic with a direct filter on that column.
     """
     window_start = as_of - timedelta(days=horizon_days)
 
+    # When filtering by state we need d.state, which requires the district to
+    # be resolved (LEFT JOIN row is non-null). Convert to INNER JOIN when state
+    # is provided so signals without a district are excluded cleanly.
+    join_clause = "JOIN" if state is not None else "LEFT JOIN"
+    state_clause = "AND d.state = :state " if state is not None else ""
+
     sql = text(
-        """
+        f"""
         SELECT
             sq.id,
             sq.headline,
@@ -377,10 +398,11 @@ async def compute_time_sensitivity(
             d.state AS d_state,
             d.tier  AS d_tier
         FROM signal_queue sq
-        LEFT JOIN districts d ON d.id = sq.resolved_district_id
+        {join_clause} districts d ON d.id = sq.resolved_district_id
         WHERE sq.signal_status = ANY(:statuses)
           AND sq.created_at >= :window_start
           AND sq.created_at < :as_of
+          {state_clause}
         ORDER BY
             CASE sq.urgency_tier
                 WHEN 'critical' THEN 0
@@ -399,6 +421,8 @@ async def compute_time_sensitivity(
         "as_of": as_of,
         "limit": limit,
     }
+    if state is not None:
+        params["state"] = state
 
     rows = (await session.execute(sql, params)).fetchall()
 

@@ -37,6 +37,7 @@ from artemis.marketing.routes import (
     campaign_ops,
     content_assets,
     initiation,
+    intel_prioritization,
     scouts,
     sends,
     signal_criteria,
@@ -185,6 +186,7 @@ app.include_router(content_assets.router)
 app.include_router(approvals.router)
 app.include_router(sends.router)
 app.include_router(writing_studio.router)
+app.include_router(intel_prioritization.router)
 
 # Phase F2a — Builders backend CRUD (agents, skills, workflows, chains, DAGs)
 app.include_router(agents.router)
