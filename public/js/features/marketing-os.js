@@ -30,6 +30,7 @@ import {
   listPipelinesApi,
   fetchMarketingQueuedSends,
   sendMarketingOutboxItem,
+  fetchMarketingPrioritizationApi,
 } from '../core/api.js';
 import {
   filterSignals,
@@ -827,6 +828,135 @@ function _renderLineagePanel(lineage) {
   `;
 }
 
+// Format a delta_ratio (current_window_count / prior_window_count) into a human
+// "up ~3×" / "down ~0.4×" / "flat" phrase. Returns null when ratio is null.
+function _formatMomentumDelta(deltaRatio) {
+  if (deltaRatio === null || deltaRatio === undefined || !Number.isFinite(deltaRatio)) return null;
+  if (deltaRatio === 0) return { label: 'no signals this window', direction: 'flat' };
+  if (deltaRatio >= 0.9 && deltaRatio <= 1.1) return { label: 'flat vs. prior window', direction: 'flat' };
+  if (deltaRatio > 1.1) {
+    const round = deltaRatio >= 2 ? Math.round(deltaRatio) : deltaRatio.toFixed(1);
+    return { label: `up ~${round}× vs. prior window`, direction: 'up' };
+  }
+  // deltaRatio < 0.9 — show a decimal ratio (e.g. "down ~0.4×")
+  return { label: `down ~${deltaRatio.toFixed(1)}× vs. prior window`, direction: 'down' };
+}
+
+// Tiny inline sparkline from MomentumResult.buckets — pure inline SVG, no deps.
+function _renderMomentumSparkline(buckets) {
+  if (!Array.isArray(buckets) || buckets.length === 0) return '';
+  const counts = buckets.map((b) => Number(b?.count ?? 0));
+  const max = Math.max(...counts, 1);
+  const w = 120;
+  const h = 24;
+  const stepX = buckets.length > 1 ? w / (buckets.length - 1) : w;
+  const points = counts.map((c, i) => {
+    const x = i * stepX;
+    const y = h - (c / max) * (h - 2) - 1;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg class="mkt-trend-sparkline" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+    <polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${points}"></polyline>
+  </svg>`;
+}
+
+// Render the trendContext enrichment from the initiation-proposal endpoint.
+// Read-only; returns '' when trendContext is missing.
+export function renderTrendContextSection(trendContext) {
+  if (!trendContext || typeof trendContext !== 'object') return '';
+  if (trendContext.resolved === false) {
+    return `
+      <section class="mkt-initiation-section mkt-trend-context">
+        <h4>Trend context</h4>
+        <p class="mkt-initiation-note">No trend data yet for this signal.</p>
+      </section>
+    `;
+  }
+  const momentum = trendContext.momentum || {};
+  const comparables = trendContext.comparables || {};
+  const decisionHistory = trendContext.decisionHistory || {};
+  const theme = trendContext.theme || '';
+  const region = trendContext.region || null;
+  const scopeLabel = region ? `${theme}/${region}` : (theme || 'this signal');
+
+  const deltaRatio = (typeof momentum.delta_ratio === 'number' || momentum.delta_ratio === null)
+    ? momentum.delta_ratio
+    : null;
+  const delta = _formatMomentumDelta(deltaRatio);
+  const momentumLabel = delta
+    ? delta.label
+    : 'new / no prior-period baseline';
+  const directionClass = delta
+    ? `mkt-trend-momentum--${delta.direction}`
+    : 'mkt-trend-momentum--new';
+  const sparkline = _renderMomentumSparkline(momentum.buckets || []);
+  const currentCount = Number(momentum.current_window_count ?? 0);
+  const priorCount = Number(momentum.prior_window_count ?? 0);
+  const windowDays = Number(momentum.window_days ?? 90);
+
+  const comparableCount = Number(comparables.comparable_count ?? 0);
+  const sampleDistricts = Array.isArray(comparables.sample_districts) ? comparables.sample_districts : [];
+  const sampleNames = sampleDistricts
+    .slice(0, 5)
+    .map((d) => d?.name)
+    .filter(Boolean);
+
+  const priorApproves = Number(decisionHistory.priorApproves ?? 0);
+  const priorRejects = Number(decisionHistory.priorRejects ?? 0);
+  const topMatches = Array.isArray(decisionHistory.topMatches) ? decisionHistory.topMatches : [];
+
+  const decisionLine = (priorApproves + priorRejects === 0)
+    ? 'No prior decisions on similar campaigns yet.'
+    : `You've approved ${priorApproves} / rejected ${priorRejects} similar campaign${priorApproves + priorRejects === 1 ? '' : 's'}.`;
+
+  const topMatchesBlock = topMatches.length > 0
+    ? `
+      <details class="mkt-initiation-signal-expand mkt-trend-top-matches">
+        <summary>Show ${topMatches.length} matching past decision${topMatches.length === 1 ? '' : 's'}</summary>
+        <ul class="mkt-trend-top-matches-list">
+          ${topMatches.map((m) => `
+            <li class="mkt-trend-top-match" data-trend-decision="${esc(m?.decision || '')}">
+              <span class="mkt-pill ${m?.decision === 'rejected' ? 'mkt-pill-danger' : 'mkt-pill-success'} mkt-pill-wrap">${esc(m?.decision || '—')}</span>
+              <span class="mkt-trend-top-match-summary">${esc(m?.summary || '')}</span>
+            </li>
+          `).join('')}
+        </ul>
+      </details>
+    `
+    : '';
+
+  return `
+    <section class="mkt-initiation-section mkt-trend-context" data-trend-context>
+      <h4>Trend context — ${esc(scopeLabel)}</h4>
+      <div class="mkt-trend-row ${directionClass}">
+        <div class="mkt-trend-row-label">Momentum</div>
+        <div class="mkt-trend-row-value">
+          <span class="mkt-trend-momentum-label">${esc(momentumLabel)}</span>
+          ${sparkline}
+        </div>
+        <div class="mkt-trend-row-detail">
+          ${currentCount} signal${currentCount === 1 ? '' : 's'} in last ${windowDays}d
+          ${priorCount > 0 ? ` · ${priorCount} prior` : ''}
+        </div>
+      </div>
+      <div class="mkt-trend-row">
+        <div class="mkt-trend-row-label">Comparables</div>
+        <div class="mkt-trend-row-value">
+          ${comparableCount} comparable district${comparableCount === 1 ? '' : 's'} with signals in 90d
+        </div>
+        ${sampleNames.length > 0
+          ? `<div class="mkt-trend-row-detail">e.g. ${esc(sampleNames.join(', '))}</div>`
+          : ''}
+      </div>
+      <div class="mkt-trend-row">
+        <div class="mkt-trend-row-label">Decision history</div>
+        <div class="mkt-trend-row-value">${esc(decisionLine)}</div>
+        ${topMatchesBlock}
+      </div>
+    </section>
+  `;
+}
+
 function _renderInitiationModal(campaign, bundle, accountInfo) {
   const proposal = bundle?.proposal || campaign.initiationProposalJson || {};
   const scopeModel = _scopeToFormModel(proposal.target_scope || proposal.targetScope, bundle?.defaultTargetScope);
@@ -877,6 +1007,8 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
             </p>
           </section>
         ` : ''}
+
+        ${renderTrendContextSection(bundle?.trendContext)}
 
         <label class="mkt-initiation-field">
           <span>Owner</span>
@@ -4094,6 +4226,169 @@ export async function loadMarketingScoutRuns(container) {
   }
 
   container.innerHTML = renderMarketingScoutRuns(runs, packages);
+}
+
+// ── Marketing Intelligence Phase 1 — "Where to focus" prioritization ──────
+
+// localStorage key for the state filter on the prioritization view.
+const MKT_PRIORITIZATION_STATE_KEY = 'artemis-mkt-prioritization-state';
+function _readPrioritizationStateFilter() {
+  try { return localStorage.getItem(MKT_PRIORITIZATION_STATE_KEY) || ''; } catch { return ''; }
+}
+function _writePrioritizationStateFilter(v) {
+  try {
+    if (v) localStorage.setItem(MKT_PRIORITIZATION_STATE_KEY, v);
+    else localStorage.removeItem(MKT_PRIORITIZATION_STATE_KEY);
+  } catch {}
+}
+
+function _formatPrioritizationDeadline(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function _buildPrioritizationWhy(row) {
+  const parts = [];
+  if (Number.isFinite(row.velocity_score)) {
+    parts.push(`velocity score ${row.velocity_score.toFixed(2)}`);
+  }
+  if (Number.isFinite(row.velocity_rank)) {
+    parts.push(`velocity rank #${row.velocity_rank}`);
+  }
+  if (row.has_time_sensitive_signal) {
+    parts.push('has time-sensitive signal');
+  }
+  return parts.join(' · ') || 'Surfaced by velocity ranking';
+}
+
+export function renderMarketingPrioritization(payload, { stateFilter = '' } = {}) {
+  const combined = payload && Array.isArray(payload.combined) ? payload.combined : [];
+  const windowDays = payload?.window_days ?? 30;
+  const horizonDays = payload?.horizon_days ?? 60;
+  const asOf = payload?.as_of ? new Date(payload.as_of) : null;
+  const asOfLabel = asOf && !Number.isNaN(asOf.getTime())
+    ? asOf.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : '—';
+
+  const stateOptions = ['', ...US_STATES].map((code) =>
+    `<option value="${esc(code)}" ${code === stateFilter ? 'selected' : ''}>${esc(code || 'All states')}</option>`
+  ).join('');
+
+  const rows = combined.map((row, idx) => {
+    const why = _buildPrioritizationWhy(row);
+    const deadline = row.has_time_sensitive_signal && row.earliest_deadline_iso
+      ? `<span class="mkt-prioritization-deadline-est" title="Estimate based on created_at + urgency tier — no hard deadline column in data">est. ~${esc(_formatPrioritizationDeadline(row.earliest_deadline_iso))}</span>`
+      : '';
+    const stateLabel = row.state ? esc(row.state) : '—';
+    const tierLabel = row.tier ? esc(row.tier) : '—';
+    return `
+      <tr>
+        <td class="mkt-prioritization-rank">${idx + 1}</td>
+        <td>
+          <div class="mkt-prioritization-name">${esc(row.name || `District ${row.district_id}`)}</div>
+          <div class="mkt-prioritization-why">${esc(why)}</div>
+        </td>
+        <td>${stateLabel}</td>
+        <td>${tierLabel}</td>
+        <td>${deadline}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const tableBlock = combined.length > 0
+    ? `<table class="mkt-prioritization-table" data-prioritization-table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>District</th>
+            <th>State</th>
+            <th>Tier</th>
+            <th>Time-sensitivity (est.)</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`
+    : `<div class="mkt-prioritization-empty">No districts ranked for this window${stateFilter ? ` in ${esc(stateFilter)}` : ''}.</div>`;
+
+  return `
+    <div class="mkt-hero">
+      <h2 class="mkt-hero-title">Where to focus</h2>
+      <p class="mkt-hero-sub">Velocity (${windowDays}d) + time-sensitivity (${horizonDays}d) — ranked by signal density &amp; recency. As of ${esc(asOfLabel)}.</p>
+    </div>
+    <section class="mkt-section" data-marketing-prioritization>
+      <div class="mkt-prioritization-controls">
+        <label>
+          State filter
+          <select data-prioritization-state>
+            ${stateOptions}
+          </select>
+        </label>
+        <button class="mkt-btn-secondary" type="button" data-prioritization-refresh>Refresh</button>
+      </div>
+      <p class="mkt-prioritization-disclaimer">
+        <strong>Estimate:</strong> Time-sensitivity is a proxy from <code>signal created_at</code> + urgency tier — not a hard deadline column.
+        Treat dates as directional, not actionable.
+      </p>
+      ${tableBlock}
+    </section>
+  `;
+}
+
+export async function loadMarketingPrioritization(container) {
+  if (!container) return;
+  const stateFilter = _readPrioritizationStateFilter();
+  container.innerHTML = `
+    <section class="mkt-section">
+      <div class="mkt-section-header">
+        <h3 class="mkt-section-title">Where to focus</h3>
+      </div>
+      <div class="mkt-placeholder-panel">
+        <p>Loading prioritization…</p>
+      </div>
+    </section>
+  `;
+
+  try {
+    const payload = await fetchMarketingPrioritizationApi({
+      windowDays: 30,
+      horizonDays: 60,
+      limit: 25,
+      state: stateFilter || undefined,
+    });
+    container.innerHTML = renderMarketingPrioritization(payload, { stateFilter });
+    _wirePrioritizationActions(container);
+  } catch (err) {
+    container.innerHTML = `
+      <section class="mkt-section">
+        <div class="mkt-section-header">
+          <h3 class="mkt-section-title">Where to focus</h3>
+        </div>
+        <div class="mkt-empty-state">
+          <h4>Prioritization unavailable</h4>
+          <p>${esc(err?.message || 'Live prioritization data could not be loaded.')}</p>
+        </div>
+      </section>
+    `;
+  }
+}
+
+function _wirePrioritizationActions(container) {
+  const select = container.querySelector('[data-prioritization-state]');
+  if (select) {
+    select.addEventListener('change', () => {
+      const value = String(select.value || '').toUpperCase().slice(0, 2);
+      _writePrioritizationStateFilter(value);
+      loadMarketingPrioritization(container);
+    });
+  }
+  const refresh = container.querySelector('[data-prioritization-refresh]');
+  if (refresh) {
+    refresh.addEventListener('click', () => {
+      loadMarketingPrioritization(container);
+    });
+  }
 }
 
 // ── Exports for re-use / testing ──────────────────────────────────────────

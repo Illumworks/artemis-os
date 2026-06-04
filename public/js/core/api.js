@@ -919,6 +919,28 @@ export async function getCampaignInitiationProposalApi(candidateId) {
   return _readJsonOrThrow(res, "Failed to fetch campaign initiation proposal");
 }
 
+// Marketing Intelligence Phase 1 — Decision 2 prioritization ranking.
+// Read-only; returns velocity_ranking, time_sensitive, and the merged `combined`
+// list. Optional state filter narrows both lists to one 2-letter state.
+export async function fetchMarketingPrioritizationApi({
+  windowDays,
+  horizonDays,
+  limit,
+  state,
+} = {}) {
+  const params = new URLSearchParams();
+  if (Number.isFinite(windowDays)) params.set("window_days", String(windowDays));
+  if (Number.isFinite(horizonDays)) params.set("horizon_days", String(horizonDays));
+  if (Number.isFinite(limit)) params.set("limit", String(limit));
+  if (state) params.set("state", String(state).toUpperCase().slice(0, 2));
+  const qs = params.toString();
+  const url = qs
+    ? `/api/marketing/intel/prioritization?${qs}`
+    : "/api/marketing/intel/prioritization";
+  const res = await fetch(url);
+  return _readJsonOrThrow(res, "Failed to fetch marketing prioritization");
+}
+
 export async function initiateCampaignApi(candidateId, payload = {}) {
   const res = await fetch(
     `/api/marketing/campaigns/${encodeURIComponent(candidateId)}/initiate`,
