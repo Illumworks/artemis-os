@@ -777,6 +777,30 @@ export async function createWritingDraftLinkApi(id, payload = {}) {
   return _readJsonOrThrow(res, "Failed to create writing draft link");
 }
 
+export async function listWritingTrainingCandidatesApi(status) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  const res = await fetch(`/api/writing-studio/training-candidates${qs}`);
+  return _readJsonOrThrow(res, "Failed to load writing training candidates");
+}
+
+export async function createWritingTrainingCandidateApi(payload = {}) {
+  const res = await fetch("/api/writing-studio/training-candidates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return _readJsonOrThrow(res, "Failed to create writing training candidate");
+}
+
+export async function decideWritingTrainingCandidateApi(id, status) {
+  const res = await fetch(`/api/writing-studio/training-candidates/${encodeURIComponent(id)}/decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  return _readJsonOrThrow(res, "Failed to record training candidate decision");
+}
+
 export async function createWritingFolderApi(payload = {}) {
   const res = await fetch("/api/writing-studio/folders", {
     method: "POST",

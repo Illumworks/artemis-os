@@ -7,9 +7,9 @@ Callers own commit / rollback.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.writing_rules.models import (
@@ -19,6 +19,7 @@ from artemis.writing_rules.models import (
     WritingProfile,
     WritingRule,
     WritingSource,
+    WritingTrainingCandidate,
 )
 
 # ── Profiles ──────────────────────────────────────────────────────────────────
@@ -465,3 +466,161 @@ async def list_thread_messages_for_draft(
         .order_by(WritingDraftThreadMessage.created_at, WritingDraftThreadMessage.id)
     )
     return list(result.scalars())
+
+
+# ── Training candidates ───────────────────────────────────────────────────────
+
+
+async def list_training_candidates(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    profile_id: int | None = None,
+) -> list[WritingTrainingCandidate]:
+    """Return training candidates, newest first.
+
+    Mirrors Node's GET /training-candidates query.
+    Optionally filtered by status and/or profile_id.
+    """
+    q = select(WritingTrainingCandidate).order_by(
+        WritingTrainingCandidate.created_at.desc(),
+        WritingTrainingCandidate.id.desc(),
+    )
+    if status is not None:
+        q = q.where(WritingTrainingCandidate.status == status)
+    if profile_id is not None:
+        q = q.where(WritingTrainingCandidate.profile_id == profile_id)
+    result = await session.execute(q)
+    return list(result.scalars())
+
+
+async def create_training_candidate(
+    session: AsyncSession,
+    *,
+    profile_id: int | None,
+    draft_id: int | None,
+    candidate_type: str = "rule",
+    proposed_text: str,
+    rationale: str | None = None,
+    status: str = "proposed",
+    scope: Any | None = None,
+    source_version_id: int | None = None,
+) -> WritingTrainingCandidate:
+    """Create and flush a new training candidate. Caller commits.
+
+    Mirrors Node's createWritingTrainingCandidate in db/sqlite.js.
+    """
+    candidate = WritingTrainingCandidate(
+        profile_id=profile_id,
+        draft_id=draft_id,
+        candidate_type=candidate_type,
+        proposed_text=proposed_text,
+        rationale=rationale,
+        status=status,
+        scope_json=scope,
+        source_version_id=source_version_id,
+    )
+    session.add(candidate)
+    await session.flush()
+    await session.refresh(candidate)
+    return candidate
+
+
+async def get_training_candidate(
+    session: AsyncSession,
+    candidate_id: int,
+) -> WritingTrainingCandidate | None:
+    """Fetch a single training candidate by PK."""
+    return await session.get(WritingTrainingCandidate, candidate_id)
+
+
+async def decide_training_candidate(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    status: Literal["approved", "rejected"],
+) -> WritingTrainingCandidate | None:
+    """Flip a candidate's status and set decided_at. Caller commits.
+
+    Returns None if the candidate is not found.
+    Mirrors Node's POST /training-candidates/:id/decision endpoint logic.
+    """
+    candidate = await get_training_candidate(session, candidate_id)
+    if candidate is None:
+        return None
+    candidate.status = status
+    candidate.decided_at = func.now()
+    await session.flush()
+    await session.refresh(candidate)
+    return candidate
+
+
+def _compact_title(text: str, max_len: int = 72) -> str:
+    """Return the first ``max_len`` chars with a trailing ellipsis if truncated.
+
+    Matches Node's compactText(72) behaviour — single ``…`` char appended when
+    the source text is longer than the limit.  No word-break: slice at exactly
+    max_len and append the ellipsis (total length = max_len + 1).
+    """
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "…"
+
+
+async def promote_training_candidate(
+    session: AsyncSession,
+    candidate: WritingTrainingCandidate,
+) -> WritingRule | WritingExample | None:
+    """Promote an approved candidate to a WritingRule or WritingExample.
+
+    Mirrors Node's ``promoteApprovedCandidate`` logic (writing-studio.js:124-144):
+      - candidate_type == 'example' → creates a WritingExample (example_type='learned')
+      - otherwise → creates a WritingRule (rule_type = candidate_type or 'voice',
+        status='active')
+    Title = first 72 chars of proposed_text (with trailing … if truncated).
+    source_candidate_id is always set to candidate.id.
+
+    Returns None if the candidate is not in 'approved' status.
+
+    Idempotency note: WritingRule has a partial unique index on
+    (profile_id, rule_type, title) where status != 'archived'.  WritingExample
+    has a full unique constraint on (profile_id, title, example_type).  A second
+    promotion with the same text will violate those constraints; the caller is
+    responsible for catching IntegrityError if re-promotion is attempted.  This
+    matches Node behaviour (it would create a duplicate row because the Node DB
+    uses no unique index on writing_rules).
+    """
+    if candidate.status != "approved":
+        return None
+
+    title = _compact_title(candidate.proposed_text)
+    profile_id = candidate.profile_id
+
+    if candidate.candidate_type == "example":
+        # Check if an identical example already exists to avoid unique constraint error.
+        existing = await get_example_by_profile_title_type(session, profile_id, title, "learned")
+        if existing is not None:
+            return existing
+        return await create_example(
+            session,
+            profile_id=profile_id,
+            title=title,
+            body=candidate.proposed_text,
+            example_type="learned",
+            source_candidate_id=candidate.id,
+        )
+    else:
+        rule_type = candidate.candidate_type if candidate.candidate_type != "rule" else "voice"
+        # Check for existing non-archived rule with same natural key.
+        existing_rule = await get_rule_by_profile_type_title(session, profile_id, rule_type, title)
+        if existing_rule is not None:
+            return existing_rule
+        return await create_rule(
+            session,
+            profile_id=profile_id,
+            rule_type=rule_type,
+            title=title,
+            body=candidate.proposed_text,
+            source_candidate_id=candidate.id,
+            status="active",
+        )

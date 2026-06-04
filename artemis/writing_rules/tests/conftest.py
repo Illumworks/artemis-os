@@ -14,6 +14,7 @@ import os
 from collections.abc import AsyncIterator
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
@@ -46,6 +47,7 @@ artemis.db.SessionLocal = __import__(
 # Truncation order: child tables first (FK constraints).
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "writing_training_candidates, "
     "writing_draft_thread_messages, "
     "writing_rules, "
     "writing_examples, "
@@ -88,3 +90,17 @@ async def db_session() -> AsyncIterator[AsyncSession]:
             yield session
     finally:
         await engine.dispose()
+
+
+@pytest.fixture()
+async def client() -> AsyncIterator[AsyncClient]:
+    """HTTP client bound to the FastAPI app via ASGI transport (no real server).
+
+    Mirrors the pattern from artemis/marketing/tests/conftest.py so that
+    endpoint tests in writing_rules can use both `client` and `db_session`.
+    """
+    from artemis.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac

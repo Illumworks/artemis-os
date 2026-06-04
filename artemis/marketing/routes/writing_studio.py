@@ -10,6 +10,11 @@ Endpoints (M7 — overview + draft CRUD):
 Phase 2 piece ③ — compose engine:
   POST /drafts/{draft_id}/compose      — converse with the AI about a draft
 
+Phase 3 Piece B — writing learning loop:
+  GET  /training-candidates            — list candidates (optional ?status=)
+  POST /training-candidates            — manually propose a candidate
+  POST /training-candidates/{id}/decision — approve or reject a candidate
+
 Existing C4 stub routes (kept intact):
   POST /drafts                          — create draft from candidate
   POST /drafts/{draft_id}/submit-review — Gate-2 review
@@ -18,6 +23,7 @@ Existing C4 stub routes (kept intact):
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,6 +44,8 @@ from artemis.marketing.writing_studio.compose_engine import (
 )
 from artemis.writing_rules import repository as wr_repo
 from artemis.writing_rules.seed_corpus import import_writing_seed_corpus
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/writing-studio",
@@ -137,6 +145,13 @@ async def get_overview(
     except Exception:  # noqa: BLE001
         profiles = []
 
+    # --- training candidates (all statuses — frontend filters by status itself) ---
+    try:
+        tc_rows = await wr_repo.list_training_candidates(session)
+        training_candidates = [_serialize_training_candidate(c) for c in tc_rows]
+    except Exception:  # noqa: BLE001
+        training_candidates = []
+
     return {
         "drafts": drafts,
         "folders": folders,
@@ -145,7 +160,7 @@ async def get_overview(
         "examples": examples,
         "sources": sources,
         "profiles": profiles,
-        "training_candidates": [],
+        "training_candidates": training_candidates,
         "sync_config": {},
     }
 
@@ -509,21 +524,43 @@ async def compose_draft(
             "userPrompt": prompt["userPrompt"],
         },
     )
-    await session.commit()
 
-    # ── 7. Extract proposed learnings ─────────────────────────────────────────
-    # NOTE: extracted candidates are RETURNED but NOT persisted.
-    # Phase 3 will add writing_training_candidates storage + review UI.
+    # ── 7. Extract + persist proposed learnings ────────────────────────────────
     proposed_texts = extract_proposed_learnings(response_text)
-    proposed_candidates = [
-        {
-            "proposedText": text,
-            "candidateType": "rule",
-            "status": "proposed",
-            "draftId": draft_id,
-        }
-        for text in proposed_texts
-    ]
+    proposed_candidates: list[dict[str, Any]] = []
+    try:
+        for text in proposed_texts:
+            row = await wr_repo.create_training_candidate(
+                session,
+                profile_id=profile.id if profile is not None else None,
+                draft_id=draft_id,
+                candidate_type="rule",
+                proposed_text=text,
+                rationale="Extracted from compose turn",
+                status="proposed",
+            )
+            proposed_candidates.append(_serialize_training_candidate(row))
+    except Exception:  # noqa: BLE001
+        _logger.warning(
+            "compose_draft: failed to persist training candidates for draft %d; "
+            "compose response will still succeed",
+            draft_id,
+            exc_info=True,
+        )
+        # Fall back to in-memory shape (no id/created_at) so UI still shows proposals.
+        proposed_candidates = [
+            {
+                "id": None,
+                "proposed_text": text,
+                "candidate_type": "rule",
+                "status": "proposed",
+                "draft_id": draft_id,
+                "created_at": None,
+            }
+            for text in proposed_texts
+        ]
+
+    await session.commit()
 
     # ── 8. Return response ────────────────────────────────────────────────────
     return {
@@ -539,6 +576,132 @@ async def compose_draft(
             "inputTokens": result.usage.input_tokens,
             "outputTokens": result.usage.output_tokens,
         },
+    }
+
+
+# ── Phase 3 Piece B: Training candidate endpoints ────────────────────────────
+
+
+@router.get("/training-candidates")
+async def list_training_candidates_route(
+    status: str | None = Query(default=None),
+    profile_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """List training candidates (newest first).
+
+    Query params:
+      status     — optional filter: 'proposed' | 'approved' | 'rejected'
+      profile_id — optional filter by profile
+    """
+    rows = await wr_repo.list_training_candidates(session, status=status, profile_id=profile_id)
+    return {"training_candidates": [_serialize_training_candidate(r) for r in rows]}
+
+
+@router.post("/training-candidates", status_code=201)
+async def create_training_candidate_route(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Manually propose a training candidate.
+
+    Body:
+      proposedText   — required, min 10 chars
+      candidateType  — optional, default 'rule'
+      rationale      — optional
+      profileId      — optional int
+      draftId        — optional int
+    """
+    proposed_text = body.get("proposedText")
+    if not isinstance(proposed_text, str) or len(proposed_text) < 10:
+        raise bad_request(
+            "proposedText is required and must be at least 10 characters",
+            "invalid_proposed_text",
+        )
+
+    candidate_type: str = (
+        str(body["candidateType"]) if isinstance(body.get("candidateType"), str) else "rule"
+    )
+    rationale: str | None = (
+        str(body["rationale"]) if isinstance(body.get("rationale"), str) else None
+    )
+    profile_id: int | None = (
+        int(body["profileId"]) if isinstance(body.get("profileId"), int) else None
+    )
+    draft_id: int | None = int(body["draftId"]) if isinstance(body.get("draftId"), int) else None
+
+    row = await wr_repo.create_training_candidate(
+        session,
+        profile_id=profile_id,
+        draft_id=draft_id,
+        candidate_type=candidate_type,
+        proposed_text=proposed_text,
+        rationale=rationale,
+        status="proposed",
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _serialize_training_candidate(row)
+
+
+@router.post("/training-candidates/{candidate_id}/decision", status_code=200)
+async def decide_training_candidate_route(
+    body: dict[str, Any],
+    candidate_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Approve or reject a training candidate.
+
+    Body:
+      status — required: 'approved' | 'rejected'
+
+    On approve, the candidate is promoted to a WritingRule or WritingExample
+    depending on candidate_type. The promoted item's kind + id is returned in
+    the 'promoted' field (null if rejected or promotion fails).
+
+    404 if candidate not found.
+    400 if status is not 'approved' or 'rejected'.
+    """
+    status_val = body.get("status")
+    if status_val not in ("approved", "rejected"):
+        raise bad_request(
+            "status must be 'approved' or 'rejected'",
+            "invalid_decision_status",
+        )
+
+    from typing import Literal, cast
+
+    candidate = await wr_repo.decide_training_candidate(
+        session,
+        candidate_id,
+        status=cast("Literal['approved', 'rejected']", status_val),
+    )
+    if candidate is None:
+        raise not_found(f"Training candidate {candidate_id} not found", "candidate_not_found")
+
+    promoted: dict[str, Any] | None = None
+    if status_val == "approved":
+        try:
+            promoted_item = await wr_repo.promote_training_candidate(session, candidate)
+            if promoted_item is not None:
+                from artemis.writing_rules.models import WritingExample
+
+                promoted = {
+                    "kind": "example" if isinstance(promoted_item, WritingExample) else "rule",
+                    "id": promoted_item.id,
+                }
+        except Exception:  # noqa: BLE001
+            _logger.warning(
+                "decide_training_candidate: promote failed for candidate %d",
+                candidate_id,
+                exc_info=True,
+            )
+
+    await session.commit()
+    await session.refresh(candidate)
+    return {
+        **_serialize_training_candidate(candidate),
+        "promoted": promoted,
     }
 
 
@@ -846,6 +1009,30 @@ def _serialize_profile(p: Any) -> dict[str, Any]:
         "status": p.status,
         "default_model_provider": p.default_model_provider,
         "default_model_id": p.default_model_id,
+    }
+
+
+def _serialize_training_candidate(c: Any) -> dict[str, Any]:
+    """Serialize a WritingTrainingCandidate for the frontend review modal.
+
+    The modal at writing-studio.js:1447-1457 reads:
+      candidate_type, draft_title, proposed_text, status
+    Additional fields: id, profile_id, draft_id, rationale, created_at, decided_at.
+    draft_title is fetched from deliverable_metadata when available.
+    """
+    return {
+        "id": c.id,
+        "profile_id": c.profile_id,
+        "draft_id": c.draft_id,
+        "draft_title": None,  # populated on demand in the overview path
+        "candidate_type": c.candidate_type,
+        "proposed_text": c.proposed_text,
+        "rationale": c.rationale,
+        "status": c.status,
+        "scope_json": c.scope_json,
+        "source_version_id": c.source_version_id,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "decided_at": c.decided_at.isoformat() if c.decided_at else None,
     }
 
 
