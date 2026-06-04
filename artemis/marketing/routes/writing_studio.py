@@ -30,6 +30,7 @@ from artemis.marketing.state_machine import LEGACY_STATUS_MAP, DeliverableState,
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio import invoke as ws_invoke
 from artemis.writing_rules import repository as wr_repo
+from artemis.writing_rules.seed_corpus import import_writing_seed_corpus
 
 router = APIRouter(
     prefix="/api/writing-studio",
@@ -417,6 +418,34 @@ async def post_draft_event(
         "draftId": draft_id,
         "eventId": event.event_id if event else None,
     }
+
+
+# ── Seed corpus import ───────────────────────────────────────────────────────
+
+
+@router.post("/seed/import", status_code=200)
+async def seed_import(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Import the built-in Amira writing-agent seed corpus.
+
+    Idempotent — re-running inserts zero duplicates.
+
+    Response fields (consumed by the frontend importWritingSeedApi):
+      profileId            — int: the active profile id
+      profileName          — str
+      profilesInserted     — int (0 or 1)
+      profilesSkipped      — int (0 or 1)
+      sourcesUpserted      — int: number of writing_sources rows written
+      rulesUpserted        — int: number of writing_rules rows written
+      examplesUpserted     — int: number of writing_examples rows written
+      profilePromptUpdated — bool: True when system_prompt was set
+      imported             — list of per-file details
+      skipped              — list of source-only files
+    """
+    result = await import_writing_seed_corpus(session)
+    await session.commit()
+    return result
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
