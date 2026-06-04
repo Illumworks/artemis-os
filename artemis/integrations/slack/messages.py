@@ -190,16 +190,9 @@ def _build_content_card(
         },
     ]
 
-    # Subject line (= draftTitle)
-    draft_title = ctx.get("draft_title") or ctx.get("draft_summary")
-    if draft_title:
-        blocks.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"*Subject:* {draft_title}"},
-            }
-        )
-
+    # No separate "Subject:" line: the header already identifies the draft
+    # (campaign · type · district) and the real email subject lives in the body
+    # below, so a draftTitle line here just duplicated the document title.
     blocks.append({"type": "divider"})
 
     # Full draft body — chunked across multiple section blocks

@@ -267,7 +267,13 @@ def test_content_card_edit_button_deep_links_to_deliverable_id() -> None:
     assert urls[edit_label] == "https://app.example.com/#writing-studio?draft=42"
 
 
-def test_content_card_shows_subject_line() -> None:
+def test_content_card_omits_duplicate_subject_line() -> None:
+    """The draft title is NOT repeated as a '*Subject:*' line.
+
+    The header already identifies the draft (campaign · type · district) and the
+    real email subject lives inside the body, so echoing draftTitle as a
+    "Subject:" line just duplicated the document title.
+    """
     blocks = build_approval_dm_blocks(
         pipeline_name="PIPE4",
         node_label="Gate 2",
@@ -277,7 +283,11 @@ def test_content_card_shows_subject_line() -> None:
         app_base_url="https://app.example.com",
     )
     text = _all_text(blocks)
-    assert "Re: Reading Intervention — Your Students Need This" in text
+    # No mislabeled/duplicated subject line echoing the document title.
+    assert "Subject:" not in text
+    assert "Re: Reading Intervention — Your Students Need This" not in text
+    # The full draft body is still shown.
+    assert "I wanted to follow up" in text
 
 
 def test_content_card_shows_full_draft_body() -> None:
