@@ -199,6 +199,51 @@ def test_trend_context_null_returns_empty_string() -> None:
     assert data == {"nullEmpty": True, "undefinedEmpty": True}
 
 
+def test_assembled_brief_places_trend_context_before_brief_grid() -> None:
+    """The campaign Brief tab should show trend context above the main brief fields."""
+    data = _run_node(
+        """
+        const trendContext = {
+          resolved: true,
+          theme: 'literacy',
+          region: 'FL',
+          momentum: { window_days: 90, current_window_count: 9, prior_window_count: 3, delta_ratio: 3.0, buckets: [] },
+          comparables: { comparable_count: 7, sample_districts: [{ name: 'Pinellas' }] },
+          decisionHistory: { priorApproves: 5, priorRejects: 1, topMatches: [] },
+        };
+        const briefRecord = {
+          assembledAt: 1780574400,
+          version: 2,
+          brief: {
+            campaignType: { primary: 'district awareness' },
+            signal: { verbatimEvidence: 'District trend moved up sharply.', urgency: { tier: 'hot' } },
+            deliverables: ['email'],
+            gates: ['Gate 2'],
+          },
+        };
+        const campaign = { owner: 'Jon', rulesetVersionAtQualification: 'ruleset-v1' };
+        const html = mod.renderAssembledBrief(
+          briefRecord,
+          campaign,
+          mod.renderTrendContextSection(trendContext),
+        );
+        console.log(JSON.stringify({
+          hasTrendContext: html.includes('mkt-trend-context'),
+          hasDecisionLine: html.includes('approved 5 / rejected 1'),
+          trendBeforeGrid:
+            html.indexOf('mkt-trend-context') > -1 &&
+            html.indexOf('mkt-brief-grid') > -1 &&
+            html.indexOf('mkt-trend-context') < html.indexOf('mkt-brief-grid'),
+        }));
+        """
+    )
+    assert data == {
+        "hasTrendContext": True,
+        "hasDecisionLine": True,
+        "trendBeforeGrid": True,
+    }
+
+
 # ── Piece 2: prioritization view ──────────────────────────────────────────
 
 
@@ -304,6 +349,11 @@ def test_marketing_module_exports_render_helpers() -> None:
     assert "renderTrendContextSection(bundle?.trendContext)" in js, (
         "trend block must be injected into the initiation modal"
     )
+    assert "const _briefTrendContextCache = new Map();" in js
+    assert "return _renderLegacyBriefFields(c, trendContextSection + assembleSection + rulesetRow);" in js
+    assert "${trendContextSection}" in js
+    assert "getCampaignInitiationProposalApi(campaign.id)" in js
+    assert "_shouldLoadBriefTabData(campaign.id)" in js
     assert ".mkt-trend-context" in css
     assert ".mkt-prioritization-table" in css
     assert ".mkt-prioritization-disclaimer" in css

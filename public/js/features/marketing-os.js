@@ -91,6 +91,11 @@ const _deliverablesCache = new Map();
 // null means "loaded, no brief". undefined means "not yet fetched".
 const _briefCache = new Map();
 
+// ── Brief trend-context cache ──────────────────────────────────────────────
+// Keyed by campaignId → initiation-proposal trendContext object (or null).
+// null means "loaded, no trend data". undefined means "not yet fetched".
+const _briefTrendContextCache = new Map();
+
 // ── Asset links cache ──────────────────────────────────────────────────────
 // Keyed by campaignId → array of linked asset rows.
 // undefined means "not yet fetched". [] means loaded with no links.
@@ -957,6 +962,30 @@ export function renderTrendContextSection(trendContext) {
   `;
 }
 
+function _primeBriefTrendContextCache(campaignId) {
+  if (_briefTrendContextCache.has(campaignId)) return true;
+  if (!_initiationProposalCache.has(campaignId)) return false;
+  const proposalBundle = _initiationProposalCache.get(campaignId);
+  _briefTrendContextCache.set(campaignId, proposalBundle?.trendContext ?? null);
+  return true;
+}
+
+function _readBriefTrendContext(campaignId) {
+  if (_briefTrendContextCache.has(campaignId)) {
+    return _briefTrendContextCache.get(campaignId);
+  }
+  _primeBriefTrendContextCache(campaignId);
+  return _briefTrendContextCache.get(campaignId);
+}
+
+function _renderBriefTrendContext(campaignId) {
+  return renderTrendContextSection(_readBriefTrendContext(campaignId));
+}
+
+function _shouldLoadBriefTabData(campaignId) {
+  return !_briefCache.has(campaignId) || !_briefTrendContextCache.has(campaignId);
+}
+
 function _renderInitiationModal(campaign, bundle, accountInfo) {
   const proposal = bundle?.proposal || campaign.initiationProposalJson || {};
   const scopeModel = _scopeToFormModel(proposal.target_scope || proposal.targetScope, bundle?.defaultTargetScope);
@@ -1311,9 +1340,10 @@ function renderTabBrief(c) {
   // For real API candidates: show assembled brief if present in cache,
   // or an "Assemble Brief" prompt for approved/in-planning candidates.
   if (c._fromApi) {
+    const trendContextSection = _renderBriefTrendContext(c.id);
     const cachedBrief = _briefCache.get(c.id); // undefined = not loaded, null = loaded+none
     if (cachedBrief) {
-      return renderAssembledBrief(cachedBrief, c);
+      return renderAssembledBrief(cachedBrief, c, trendContextSection);
     }
     // Brief not yet assembled (or cache miss before async load)
     const canAssemble = c.decisionState === 'approved' ||
@@ -1331,7 +1361,7 @@ function renderTabBrief(c) {
         <span class="mkt-brief-ruleset-label">Ruleset at qualification:</span>
         <span class="mkt-brief-ruleset-value">${esc(c.rulesetVersionAtQualification)}</span>
       </div>` : '';
-    return _renderLegacyBriefFields(c, assembleSection + rulesetRow);
+    return _renderLegacyBriefFields(c, trendContextSection + assembleSection + rulesetRow);
   }
   // Demo candidates — original rendering unchanged
   return _renderLegacyBriefFields(c, '');
@@ -1423,7 +1453,7 @@ function _renderLegacyBriefFields(c, prefixHtml) {
   `;
 }
 
-function renderAssembledBrief(briefRecord, c) {
+function renderAssembledBrief(briefRecord, c, trendContextSection = '') {
   const b = briefRecord.brief || {};
   const assembledDate = briefRecord.assembledAt
     ? new Date(briefRecord.assembledAt * 1000).toLocaleDateString()
@@ -1455,6 +1485,7 @@ function renderAssembledBrief(briefRecord, c) {
         <span class="mkt-brief-ruleset-label">Ruleset at qualification:</span>
         <span class="mkt-brief-ruleset-value">${esc(c.rulesetVersionAtQualification)}</span>
       </div>` : ''}
+      ${trendContextSection}
       <div class="mkt-brief-grid">
         ${campaignType ? `
         <div class="mkt-brief-field">
@@ -3240,11 +3271,33 @@ async function _loadAndRenderBriefTab(container, campaign) {
   const activeBtn = container.querySelector('[data-mkt-tab].active');
   if (!activeBtn || activeBtn.dataset.mktTab !== 'brief') return;
 
-  try {
-    const briefRecord = await getCampaignBriefApi(campaign.id);
-    _briefCache.set(campaign.id, briefRecord ?? null);
-  } catch {
-    if (!_briefCache.has(campaign.id)) _briefCache.set(campaign.id, null);
+  const loads = [];
+
+  if (!_briefCache.has(campaign.id)) {
+    loads.push((async () => {
+      try {
+        const briefRecord = await getCampaignBriefApi(campaign.id);
+        _briefCache.set(campaign.id, briefRecord ?? null);
+      } catch {
+        if (!_briefCache.has(campaign.id)) _briefCache.set(campaign.id, null);
+      }
+    })());
+  }
+
+  if (!_briefTrendContextCache.has(campaign.id) && !_primeBriefTrendContextCache(campaign.id)) {
+    loads.push((async () => {
+      try {
+        const proposalBundle = await getCampaignInitiationProposalApi(campaign.id);
+        _initiationProposalCache.set(campaign.id, proposalBundle ?? null);
+        _briefTrendContextCache.set(campaign.id, proposalBundle?.trendContext ?? null);
+      } catch {
+        if (!_briefTrendContextCache.has(campaign.id)) _briefTrendContextCache.set(campaign.id, null);
+      }
+    })());
+  }
+
+  if (loads.length > 0) {
+    await Promise.all(loads);
   }
 
   const stillActiveBtn = container.querySelector('[data-mkt-tab].active');
@@ -3468,7 +3521,7 @@ function _wireWorkspaceTabs(container, campaign) {
       }
       if (tab === 'brief' && campaign._fromApi) {
         _wireBriefTabActions(container, campaign);
-        if (!_briefCache.has(campaign.id)) {
+        if (_shouldLoadBriefTabData(campaign.id)) {
           _loadAndRenderBriefTab(container, campaign);
         }
       }
@@ -3485,7 +3538,7 @@ function _wireWorkspaceTabs(container, campaign) {
       _loadAndRenderAssetsTab(container, campaign);
     } else if (initialActive.dataset.mktTab === 'brief') {
       _wireBriefTabActions(container, campaign);
-      if (!_briefCache.has(campaign.id)) {
+      if (_shouldLoadBriefTabData(campaign.id)) {
         _loadAndRenderBriefTab(container, campaign);
       }
     } else if (initialActive.dataset.mktTab === 'outbox') {
