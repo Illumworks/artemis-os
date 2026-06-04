@@ -40,6 +40,11 @@ _CANDIDATE_CONTEXT_AGENT_IDS = frozenset(
         "marketing.content.writing_studio_adapter",
     }
 )
+_BRIEF_REQUIRED_AGENT_IDS = frozenset(
+    {
+        "marketing.content.writing_studio_adapter",
+    }
+)
 
 # Agent IDs that should receive full writing-ruleset grounding in shared_context.
 # Grows as more content agents need voice-rule awareness.
@@ -164,6 +169,16 @@ async def execute_agent_node(
             from artemis.marketing.repository import get_campaign_brief
 
             brief = await get_campaign_brief(session, candidate.id)
+            if brief is None and agent_id in _BRIEF_REQUIRED_AGENT_IDS:
+                return {
+                    "status": "failed",
+                    "error": (
+                        f"Target candidate {candidate.id} has no campaign brief; "
+                        f"cannot run agent '{agent_id}' for pipeline run {run_id}"
+                    ),
+                    "output_summary": "",
+                    "cost_usd": 0.0,
+                }
             if brief is not None:
                 shared_context["campaign_brief_id"] = brief.id
                 shared_context["campaign_brief"] = brief.content

@@ -14,6 +14,7 @@ from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
 from artemis.marketing.models import District, SignalQueue
 from artemis.marketing.repository import (
     cluster_or_create_candidate,
+    create_campaign_brief,
     create_signal,
     get_candidate,
     initiate_campaign,
@@ -24,6 +25,7 @@ from artemis.pipelines.models import PipelineRun
 from artemis.pipelines.node_executors.agent_executor import (
     _deliverable_enabled_for_run,
     _resolve_candidate_for_run,
+    execute_agent_node,
 )
 from artemis.pipelines.seeds.marketing_pipeline import (
     AGENT_IDS,
@@ -107,6 +109,7 @@ async def _seed_candidate(
     *,
     pipeline_run_ids: list[str | None],
     with_proposal: bool = True,
+    with_brief: bool = True,
 ) -> int:
     district = await _make_district(session)
     candidate_id: int | None = None
@@ -131,6 +134,13 @@ async def _seed_candidate(
                 "target_scope": {"mode": "states", "states": ["TX"]},
                 "rationale": "Two corroborating district signals support one campaign.",
             },
+        )
+    if with_brief:
+        await create_campaign_brief(
+            session,
+            candidate_id,
+            {"summary": "Seeded candidate brief"},
+            generated_by="test",
         )
     await session.commit()
     return candidate_id
@@ -220,6 +230,50 @@ async def test_deliverable_node_resolves_candidate_via_target_candidate_id(
     assert resolved is not None and resolved.id == candidate_id
     assert await _deliverable_enabled_for_run(db_session, run.id, "outreach_email") is True
     assert await _deliverable_enabled_for_run(db_session, run.id, "social") is False
+
+
+async def test_writing_studio_adapter_fails_fast_without_target_candidate_brief(
+    db_session: AsyncSession,
+) -> None:
+    candidate_id = await _seed_candidate(
+        db_session,
+        pipeline_run_ids=[None],
+        with_proposal=True,
+        with_brief=False,
+    )
+    await initiate_campaign(
+        db_session,
+        candidate_id,
+        name="Fort Bend Follow-Up",
+        objective="Build the next district campaign from the signal cluster.",
+        owner_user_id=7,
+        target_scope={"mode": "states", "states": ["TX"]},
+        deliverable_type_slugs=["outreach_email"],
+        initiated_by=7,
+    )
+    run = await pipeline_repo.create_pipeline_run(
+        db_session,
+        pipeline_id=CAMPAIGN_DELIVERABLES_PIPELINE_ID,
+        status="queued",
+        trigger="manual",
+        triggered_by="test",
+        target_candidate_id=candidate_id,
+    )
+    await db_session.commit()
+
+    result = await execute_agent_node(
+        node={
+            "id": "content_writing_studio_adapter",
+            "type": "agent_invocation",
+            "config": {"agent_id": "marketing.content.writing_studio_adapter", "mode": "manual"},
+        },
+        node_states={},
+        session=db_session,
+        run_id=run.id,
+    )
+
+    assert result["status"] == "failed"
+    assert "has no campaign brief" in (result.get("error") or "")
 
 
 async def test_second_confirm_is_clean_409_and_does_not_create_second_run(

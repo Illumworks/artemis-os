@@ -195,6 +195,12 @@ async def _seed_initiation_candidate(
             "rationale": "The cluster is strongest in the same district and family.",
         },
     )
+    await create_campaign_brief(
+        db_session,
+        successor.id,
+        {"summary": "Successor brief context"},
+        generated_by="test",
+    )
 
     return successor.id
 
@@ -332,6 +338,12 @@ async def test_post_initiate_requires_skip_list_acknowledgment(
             "rationale": "Operator review still wants the option available.",
         },
     )
+    await create_campaign_brief(
+        db_session,
+        candidate.id,
+        {"summary": "Skip-list brief context"},
+        generated_by="test",
+    )
     await db_session.commit()
 
     payload = {
@@ -399,6 +411,48 @@ async def test_post_initiate_rejects_already_initiated_candidate(
 
     second = await client.post(f"/api/marketing/campaigns/{candidate_id}/initiate", json=payload)
     assert second.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_post_initiate_rejects_missing_campaign_brief(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    run_id = await _make_gate_run(db_session)
+    district = await _make_district(db_session)
+    signal = await _make_signal(
+        db_session,
+        headline="Briefless candidate",
+        district_id=district.id,
+        pipeline_run_id=run_id,
+    )
+    candidate = await cluster_or_create_candidate(db_session, signal)
+    await save_initiation_proposal(
+        db_session,
+        candidate.id,
+        {
+            "name": "Briefless Follow-Up",
+            "objective": "Should be blocked before deliverables dispatch.",
+            "recommended_deliverable_types": ["outreach_email"],
+            "target_scope": {"mode": "states", "states": ["TX"]},
+            "rationale": "No brief exists yet.",
+        },
+    )
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/marketing/campaigns/{candidate.id}/initiate",
+        json={
+            "name": "Briefless Follow-Up",
+            "objective": "Should be blocked before deliverables dispatch.",
+            "owner_user_id": 7,
+            "deliverable_type_slugs": ["outreach_email"],
+            "target_scope": {"mode": "states", "states": ["TX"]},
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "campaign_brief_missing"
 
 
 @pytest.mark.asyncio

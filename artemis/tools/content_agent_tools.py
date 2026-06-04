@@ -14,6 +14,7 @@ from artemis.marketing.models import CampaignBrief, ContentAsset
 from artemis.marketing.repository import list_approved_content_assets
 from artemis.marketing.state_machine import DeliverableState, transition
 from artemis.marketing.writing_studio.invoke import create_draft_from_candidate
+from artemis.pipelines.repository import get_pipeline_run
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import register_tool
 from artemis.writing_rules.models import WritingProfile
@@ -104,6 +105,22 @@ def _enqueue_factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
         if brief is None:
             return f"NOT_FOUND: no campaign brief with id={brief_id}"
 
+        candidate_id = brief.candidate_id
+        if ctx.pipeline_run_id:
+            try:
+                run = await get_pipeline_run(ctx.session, ctx.pipeline_run_id)
+            except ValueError:
+                return f"NOT_FOUND: no pipeline run with id={ctx.pipeline_run_id}"
+            if run.target_candidate_id is not None:
+                candidate_id = run.target_candidate_id
+                if brief.candidate_id != run.target_candidate_id:
+                    return (
+                        "VALIDATION_ERROR: "
+                        f"campaign_brief_id={brief_id} belongs to candidate "
+                        f"{brief.candidate_id}, but pipeline run {ctx.pipeline_run_id} "
+                        f"targets candidate {run.target_candidate_id}"
+                    )
+
         asset_bundle: list[dict[str, Any]] = []
         raw_refs = arguments.get("asset_refs") or []
         if isinstance(raw_refs, list):
@@ -125,7 +142,7 @@ def _enqueue_factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
 
         draft = await create_draft_from_candidate(
             ctx.session,
-            brief.candidate_id,
+            candidate_id,
             brief_payload=brief.content if isinstance(brief.content, dict) else {},
             asset_context_bundle=asset_bundle,
         )

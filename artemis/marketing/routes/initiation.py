@@ -14,6 +14,7 @@ from artemis.db import get_session
 from artemis.marketing.initiation_schemas import CampaignInitiationProposal, TargetScope
 from artemis.marketing.models import CampaignCandidate, District, SignalQueue
 from artemis.marketing.repository import (
+    get_campaign_brief,
     get_candidate,
     get_candidate_lineage_context,
     get_candidate_primary_signal,
@@ -213,6 +214,12 @@ async def initiate(
             "Campaign deliverables pipeline is not seeded",
             "campaign_deliverables_pipeline_missing",
         ) from exc
+
+    if await get_campaign_brief(session, candidate_id) is None:
+        raise conflict(
+            "Campaign brief is required before dispatching a deliverables run",
+            "campaign_brief_missing",
+        )
 
     try:
         initiated = await initiate_campaign(
