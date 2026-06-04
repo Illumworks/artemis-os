@@ -376,10 +376,16 @@ async def write_signal_gate1_approval_observation(
     new_status: str,
     decided_by: str,
     decision_payload: dict[str, Any] | None,
+    rejection_reason: str | None = None,
+    agent_slug: str | None = None,
 ) -> None:
     """MC2: Write memory observation when Gate 1 approves/rejects a signal-brief.
 
     Multi-scope: workspace:marketing (primary) + workspace:platform (audit).
+    When agent_slug is provided, also adds agent:<slug> as an additional scope so
+    the qualifier agent can later fetch its own past rejections (C-3 read path).
+    When rejection_reason is provided and the decision is a rejection, appends
+    a "Reason: ..." clause to the observation content.
     Evidence: signal_queue source.
     Called after successful Gate-1 approve or reject transition.
     Failure is fully isolated.
@@ -403,7 +409,16 @@ async def write_signal_gate1_approval_observation(
         content_parts.append(f" Headline: {_smart_truncate(headline, 120)}.")
     if reason_codes:
         content_parts.append(f" Reason codes: {', '.join(reason_codes[:5])}.")
+    if rejection_reason and "approved" not in new_status:
+        content_parts.append(f" Reason: {_smart_truncate(rejection_reason, 500)}.")
     content = "".join(content_parts)
+
+    # Build scope lists: primary (workspace:marketing) + platform + optional agent
+    additional_scope_kinds = [_PLATFORM_SCOPE_KIND]
+    additional_scope_ids = [_PLATFORM_SCOPE_ID]
+    if agent_slug:
+        additional_scope_kinds.append("agent")
+        additional_scope_ids.append(agent_slug)
 
     try:
         from artemis.memory.schemas import SourceQualityHint
@@ -411,8 +426,8 @@ async def write_signal_gate1_approval_observation(
         obs_id = await _multi_scope_observation_write(
             primary_scope_kind="workspace",
             primary_scope_id="marketing",
-            additional_scope_kinds=[_PLATFORM_SCOPE_KIND],
-            additional_scope_ids=[_PLATFORM_SCOPE_ID],
+            additional_scope_kinds=additional_scope_kinds,
+            additional_scope_ids=additional_scope_ids,
             content=content,
             category="signal_gate1_decision",
             confidence_origin="mc_signal_gate1",
@@ -503,10 +518,16 @@ async def write_pipeline_gate_decision_observation(
     decision: str,
     decided_by: str,
     decision_payload: dict[str, Any] | None,
+    rejection_reason: str | None = None,
+    agent_slug: str | None = None,
 ) -> None:
     """MC4: Pipeline human-gate decision (approved/rejected).
 
     Multi-scope: pipeline:<pipeline_id> (primary) + workspace:platform (audit).
+    When agent_slug is provided, also adds agent:<slug> as an additional scope so
+    the agent can later fetch its own past gate decisions (C-3 read path).
+    When rejection_reason is provided and decision == "rejected", appends a
+    "Reason: ..." clause to the observation content.
     CC27: ScopeKind Literal now includes 'pipeline'; using it directly.
     Previously used workspace:pipeline-<id> as a workaround (pre-CC27 rows are
     preserved verbatim per lossless invariant).
@@ -521,10 +542,20 @@ async def write_pipeline_gate_decision_observation(
         pipeline_name = decision_payload.get("pipeline_name", "")
         if pipeline_name:
             payload_summary = _smart_truncate(str(pipeline_name), 100)
-    content = (
+    content_parts = [
         f"{decided_by} {decision} pipeline {pipeline_id} gate at node {node_id} on {iso_date}. "
         f"Context: {payload_summary}."
-    )
+    ]
+    if rejection_reason and decision == "rejected":
+        content_parts.append(f" Reason: {_smart_truncate(rejection_reason, 500)}.")
+    content = "".join(content_parts)
+
+    # Build scope lists: primary (pipeline:<id>) + platform + optional agent
+    additional_scope_kinds = [_PLATFORM_SCOPE_KIND]
+    additional_scope_ids = [_PLATFORM_SCOPE_ID]
+    if agent_slug:
+        additional_scope_kinds.append("agent")
+        additional_scope_ids.append(agent_slug)
 
     try:
         from artemis.memory.schemas import SourceQualityHint
@@ -532,8 +563,8 @@ async def write_pipeline_gate_decision_observation(
         obs_id = await _multi_scope_observation_write(
             primary_scope_kind="pipeline",  # CC27: was workspace:pipeline-<id>
             primary_scope_id=pipeline_id,
-            additional_scope_kinds=[_PLATFORM_SCOPE_KIND],
-            additional_scope_ids=[_PLATFORM_SCOPE_ID],
+            additional_scope_kinds=additional_scope_kinds,
+            additional_scope_ids=additional_scope_ids,
             content=content,
             category="pipeline_gate_decision",
             confidence_origin="mc_pipeline_gate",

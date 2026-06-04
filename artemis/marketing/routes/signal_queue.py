@@ -367,6 +367,7 @@ async def approve_signal(
             new_status=updated.signal_status,
             decided_by="operator",
             decision_payload={"headline": updated.headline},
+            agent_slug="marketing.qualifier.cross_reference",
         )
     )
 
@@ -404,6 +405,11 @@ async def reject_signal(
     await session.refresh(updated)
 
     # MC2: fire-and-forget memory carryover (failure must not break rejection)
+    # Fallback agent_slug: the primary qualifier for all marketing signals.
+    # If the signal was sourced from a specific qualifier agent, that slug would
+    # ideally be used here; for now we default to the cross_reference qualifier
+    # which is the primary qualifier per marketing_agents.py seed.
+    _qualifier_slug = "marketing.qualifier.cross_reference"
     import asyncio as _asyncio
 
     from artemis.builder.memory_carryover import write_signal_gate1_approval_observation
@@ -414,6 +420,8 @@ async def reject_signal(
             new_status=updated.signal_status,
             decided_by="operator",
             decision_payload={"headline": updated.headline},
+            rejection_reason=reason,
+            agent_slug=_qualifier_slug,
         )
     )
 
