@@ -7,6 +7,9 @@ Endpoints (M7 — overview + draft CRUD):
   PUT  /drafts/{draft_id}              — update title/status/content/folder_id
   DELETE /drafts/{draft_id}            — soft-archive (status = 'archived')
 
+Phase 2 piece ③ — compose engine:
+  POST /drafts/{draft_id}/compose      — converse with the AI about a draft
+
 Existing C4 stub routes (kept intact):
   POST /drafts                          — create draft from candidate
   POST /drafts/{draft_id}/submit-review — Gate-2 review
@@ -29,6 +32,10 @@ from artemis.marketing.routes._errors import bad_request, not_found
 from artemis.marketing.state_machine import LEGACY_STATUS_MAP, DeliverableState, transition
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio import invoke as ws_invoke
+from artemis.marketing.writing_studio.compose_engine import (
+    build_writing_memory_prompt,
+    extract_proposed_learnings,
+)
 from artemis.writing_rules import repository as wr_repo
 
 router = APIRouter(
@@ -200,7 +207,8 @@ async def get_draft(
     deliverable = await session.get(CampaignDeliverable, draft_id)
     if deliverable is None:
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
-    return _serialize_deliverable_detail(deliverable)
+    thread_messages = await wr_repo.list_thread_messages_for_draft(session, draft_id)
+    return _serialize_deliverable_detail(deliverable, thread_messages)
 
 
 # ── M7: Draft update (PUT) ────────────────────────────────────────────────────
@@ -340,6 +348,199 @@ async def delete_draft(
     return {"ok": True, "id": draft_id, "archived": True}
 
 
+# ── Phase 2 piece ③: Compose endpoint ────────────────────────────────────────
+
+
+@router.post("/drafts/{draft_id}/compose", status_code=200)
+async def compose_draft(
+    body: dict[str, Any],
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Converse with the AI about a draft.
+
+    Body fields (all optional):
+      request      — the user's message / writing action
+      selectedText — selected passage in the editor (if any)
+      attachments  — list of {name, type, text} source excerpts
+
+    Behaviour (port of Node compose route at writing-studio.js:524):
+      1. Load the draft (CampaignDeliverable) — 404 if not found.
+      2. Load the active writing profile (from deliverable_metadata.voiceProfileSlug
+         or first active profile), then all rules + examples.
+      3. Load prior thread messages for conversation context.
+      4. Build the system + user prompt via build_writing_memory_prompt
+         (rules injected, anti-fabrication guardrail included).
+      5. Invoke the model via the provider cascade (resolve_adapter).
+      6. Persist: user message + assistant response via create_thread_message.
+      7. Extract "Proposed learning:" lines from the response.
+      8. Return: responseText, proposedCandidates, persistedMessages, trace.
+
+    NOTE on proposedCandidates: they are RETURNED but NOT persisted to a
+    writing_training_candidates table — that table does not exist yet.  Phase 3
+    will wire the persist + approve/reject review loop.  The UI badge renders
+    from the response payload; the proposals are not durable across page reloads
+    until Phase 3 lands.
+    """
+    import logging
+    from datetime import UTC, datetime
+
+    from artemis.agent import run_turn
+    from artemis.agent import user_message as make_user_msg
+    from artemis.agent.types import Message, TextBlock
+    from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+
+    _logger = logging.getLogger(__name__)
+
+    # ── 1. Load draft ──────────────────────────────────────────────────────────
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+
+    meta: dict[str, Any] = deliverable.deliverable_metadata or {}
+
+    # ── 2. Resolve profile, rules, examples ──────────────────────────────────
+    # Try to honour voiceProfileSlug stored in deliverable_metadata.
+    voice_profile_slug: str | None = meta.get("voiceProfileSlug")
+    profile = None
+    if voice_profile_slug:
+        profiles = await wr_repo.list_profiles(session)
+        for p in profiles:
+            if (p.name or "").lower().replace(" ", "-") == voice_profile_slug.lower():
+                profile = p
+                break
+    if profile is None:
+        profile = await wr_repo.get_active_profile(session)
+
+    rules = await wr_repo.list_rules(session)
+    examples = await wr_repo.list_examples(session)
+
+    # ── 3. Load prior thread messages ─────────────────────────────────────────
+    prior_messages = await wr_repo.list_thread_messages_for_draft(session, draft_id)
+
+    # ── 4. Build prompt ────────────────────────────────────────────────────────
+    request_text: str | None = body.get("request") if isinstance(body.get("request"), str) else None
+    selected_text: str | None = (
+        body.get("selectedText") if isinstance(body.get("selectedText"), str) else None
+    )
+    raw_attachments = body.get("attachments")
+    attachments: list[dict[str, Any]] = raw_attachments if isinstance(raw_attachments, list) else []
+
+    prompt = build_writing_memory_prompt(
+        draft=deliverable,
+        profile=profile,
+        rules=rules,
+        examples=examples,
+        request=request_text,
+        selected_text=selected_text,
+        attachments=attachments,
+        prior_messages=prior_messages,
+    )
+
+    # ── 5. Model invocation via provider cascade ───────────────────────────────
+    # Resolve adapter the same way pipelines/routes.py does it.
+    try:
+        adapter = resolve_adapter(
+            getattr(profile, "default_model_provider", None) or None,
+        )
+    except NoProviderAvailableError as exc:
+        raise bad_request(
+            "No LLM provider is available. Add an API key in Integrations.",
+            "no_provider",
+        ) from exc
+
+    # Build message list: prior conversation turns + current user turn.
+    messages: list[Message] = []
+    for turn in prompt["priorMessages"]:
+        messages.append(
+            Message(
+                role=turn["role"],
+                content=[TextBlock(text=turn["content"])],
+            )
+        )
+    messages.append(make_user_msg(prompt["userPrompt"]))
+
+    model_id: str | None = getattr(profile, "default_model_id", None) or None
+
+    t0 = datetime.now(UTC)
+    result = await run_turn(
+        adapter=adapter,
+        messages=messages,
+        system=prompt["systemPrompt"],
+        model=model_id,
+        max_iterations=1,  # writing turns are single-shot
+    )
+    duration_ms = int((datetime.now(UTC) - t0).total_seconds() * 1000)
+
+    # Extract response text from the last assistant message.
+    response_text = ""
+    for msg in reversed(result.messages):
+        if msg.role == "assistant":
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    response_text += block.text
+            break
+
+    if not response_text.strip():
+        raise bad_request("Model returned no text", "compose_empty_response")
+
+    # ── 6. Persist thread messages ─────────────────────────────────────────────
+    user_label = request_text or (
+        "Adding source files for the next pass." if attachments else "Continue shaping this draft."
+    )
+    persisted_user = await wr_repo.create_thread_message(
+        session,
+        draft_id=draft_id,
+        role="user",
+        content=user_label,
+        label="You",
+        attachments=attachments or None,
+    )
+    persisted_assistant = await wr_repo.create_thread_message(
+        session,
+        draft_id=draft_id,
+        role="assistant",
+        content=response_text,
+        label="Artemis",
+        trace=prompt["trace"],
+        prompt={
+            "systemPrompt": prompt["systemPrompt"],
+            "userPrompt": prompt["userPrompt"],
+        },
+    )
+    await session.commit()
+
+    # ── 7. Extract proposed learnings ─────────────────────────────────────────
+    # NOTE: extracted candidates are RETURNED but NOT persisted.
+    # Phase 3 will add writing_training_candidates storage + review UI.
+    proposed_texts = extract_proposed_learnings(response_text)
+    proposed_candidates = [
+        {
+            "proposedText": text,
+            "candidateType": "rule",
+            "status": "proposed",
+            "draftId": draft_id,
+        }
+        for text in proposed_texts
+    ]
+
+    # ── 8. Return response ────────────────────────────────────────────────────
+    return {
+        "responseText": response_text,
+        "proposedCandidates": proposed_candidates,
+        "persistedMessages": {
+            "user": _serialize_thread_message(persisted_user),
+            "assistant": _serialize_thread_message(persisted_assistant),
+        },
+        "trace": prompt["trace"],
+        "metrics": {
+            "durationMs": duration_ms,
+            "inputTokens": result.usage.input_tokens,
+            "outputTokens": result.usage.output_tokens,
+        },
+    }
+
+
 # ── C4: Existing stub routes (kept intact) ────────────────────────────────────
 
 
@@ -456,6 +657,21 @@ def _get_meta(deliverable: CampaignDeliverable, key: str, default: Any = None) -
     return default
 
 
+def _serialize_thread_message(m: Any) -> dict[str, Any]:
+    """Serialize a WritingDraftThreadMessage for the frontend chat panel."""
+    return {
+        "id": m.id,
+        "draftId": m.draft_id,
+        "role": m.role,
+        "label": m.label,
+        "content": m.content,
+        "attachments": m.attachments,
+        "trace": m.trace,
+        "engine": m.engine,
+        "createdAt": m.created_at.isoformat() if m.created_at else None,
+    }
+
+
 def _serialize_deliverable_as_draft(d: CampaignDeliverable) -> dict[str, Any]:
     """Serialize a CampaignDeliverable for the draft list / overview.
 
@@ -477,11 +693,18 @@ def _serialize_deliverable_as_draft(d: CampaignDeliverable) -> dict[str, Any]:
     }
 
 
-def _serialize_deliverable_detail(d: CampaignDeliverable) -> dict[str, Any]:
+def _serialize_deliverable_detail(
+    d: CampaignDeliverable,
+    thread_messages: list[Any] | None = None,
+) -> dict[str, Any]:
     """Serialize a deliverable for the detail view.
 
     Adds: versions (top-level array), content (latest version body),
-    threadMessages ([] — not stored separately yet).
+    threadMessages (list of persisted thread messages, empty list if none).
+
+    ``thread_messages`` should be passed from the caller after querying
+    list_thread_messages_for_draft; defaults to [] so existing callers that
+    don't yet load messages continue to work.
     """
     base = _serialize_deliverable_as_draft(d)
     meta = d.deliverable_metadata if isinstance(d.deliverable_metadata, dict) else {}
@@ -489,7 +712,7 @@ def _serialize_deliverable_detail(d: CampaignDeliverable) -> dict[str, Any]:
     content: str = versions[0]["content"] if versions and isinstance(versions[0], dict) else ""
     base["versions"] = versions
     base["content"] = content
-    base["threadMessages"] = []
+    base["threadMessages"] = [_serialize_thread_message(m) for m in (thread_messages or [])]
     return base
 
 
