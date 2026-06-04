@@ -393,11 +393,12 @@ async def test_compose_returns_response_text_and_proposed_candidates(
 
     assert "proposedCandidates" in data
     assert len(data["proposedCandidates"]) == 1
-    assert "student's transformation" in data["proposedCandidates"][0]["proposedText"]
-    # Phase 3 guard: candidates must NOT have been persisted to a DB table —
-    # they only live in this response payload.
+    assert "student's transformation" in data["proposedCandidates"][0]["proposed_text"]
+    # Phase 3 (Piece B): proposed candidates are now PERSISTED to
+    # writing_training_candidates (returned with a real id) at status "proposed".
     assert data["proposedCandidates"][0]["status"] == "proposed"
-    assert data["proposedCandidates"][0]["draftId"] == draft_id
+    assert data["proposedCandidates"][0]["draft_id"] == draft_id
+    assert data["proposedCandidates"][0]["id"] is not None
 
 
 @pytest.mark.asyncio

@@ -392,11 +392,11 @@ async def compose_draft(
       7. Extract "Proposed learning:" lines from the response.
       8. Return: responseText, proposedCandidates, persistedMessages, trace.
 
-    NOTE on proposedCandidates: they are RETURNED but NOT persisted to a
-    writing_training_candidates table — that table does not exist yet.  Phase 3
-    will wire the persist + approve/reject review loop.  The UI badge renders
-    from the response payload; the proposals are not durable across page reloads
-    until Phase 3 lands.
+    NOTE on proposedCandidates (Phase 3 Piece B): they are now PERSISTED to the
+    writing_training_candidates table at status "proposed" and returned with real
+    ids; the review modal approve/reject loop promotes an approved candidate into
+    writing_rules/examples. If persistence fails the response still returns an
+    in-memory candidate shape so the UI badge renders.
     """
     import logging
     from datetime import UTC, datetime
