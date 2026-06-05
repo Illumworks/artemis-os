@@ -91,6 +91,15 @@ let writingState = {
 const esc = (value) => escapeHtml(value ?? "");
 const WRITING_ENGINE_OPTIONS = ["claude-code", "codex", "gemini", "openrouter"];
 
+function normalizeWritingOverview(overview) {
+  if (!overview || typeof overview !== "object") return overview;
+  return {
+    ...overview,
+    trainingCandidates: overview.trainingCandidates || overview.training_candidates || [],
+    activeProfile: overview.activeProfile || overview.active_profile || null,
+  };
+}
+
 export function renderWritingStudioLoading() {
   return `
     <section class="page-hero writing-studio-hero" aria-busy="true">
@@ -117,18 +126,19 @@ export async function loadWritingStudio({ selectedDraftId = null } = {}) {
       fetchWritingStudioOverview(),
       fetchGoogleOverviewApi().catch(() => null),
     ]);
+    const normalizedOverview = normalizeWritingOverview(overview);
     if (loadToken !== writingLoadToken || normalizeAppView(getState("view")) !== WRITING_STUDIO_VIEW) return;
 
     let selectedDraft = null;
-    const drafts = overview.drafts || [];
+    const drafts = normalizedOverview.drafts || [];
     const routeDraftId = parseWritingStudioDraftId();
     const handoff = selectedDraftId || routeDraftId ? null : readWritingStudioHandoff();
     const nextFilters = resolveWritingFilters({
       handoff,
       filters: writingState.filters,
       drafts,
-      folders: overview.folders || [],
-      campaigns: overview.campaigns || [],
+      folders: normalizedOverview.folders || [],
+      campaigns: normalizedOverview.campaigns || [],
     });
     const visibleDrafts = filterWritingDrafts(drafts, nextFilters);
     const targetId = selectedDraftId
@@ -151,7 +161,7 @@ export async function loadWritingStudio({ selectedDraftId = null } = {}) {
     const persistedSyncForm = normalizeWritingSyncForm(readWritingSyncPreferences());
 
     writingState = {
-      overview,
+      overview: normalizedOverview,
       selectedDraft,
       activePanel: writingState.activePanel === "memory-bank" ? "memory-bank" : writingState.activePanel === "version-history" ? "version-history" : "draft",
       activePopover: null,
@@ -1018,10 +1028,11 @@ function renderDraftRow(draft, selectedId) {
 
 function renderFolderBrowserRow(folder) {
   const isCollapsed = isFolderCollapsed(folder.id);
-  const subtitle = [
-    folder.campaign_id || null,
-    folder.childFolderCount ? `${folder.childFolderCount} subfolder${folder.childFolderCount === 1 ? "" : "s"}` : null,
-  ].filter(Boolean).join(" · ") || "No campaign";
+  const draftCount = Number(folder.draftCount || 0);
+  const childFolderCount = Number(folder.childFolderCount || 0);
+  const subtitle = childFolderCount
+    ? `${childFolderCount} subfolder${childFolderCount === 1 ? "" : "s"}`
+    : (folder.campaign_id ? "Campaign folder" : "Folder");
   return `
     <div class="writing-browser-row writing-browser-row-folder" draggable="true" data-writing-drag-type="folder" data-writing-drag-id="${folder.id}" data-writing-drop-target="folder" data-writing-drop-folder-id="${folder.id}">
       <button type="button" class="writing-browser-row-main writing-folder-row" data-writing-action="writing-toggle-folder-collapse" data-writing-folder-id="${folder.id}" aria-expanded="${isCollapsed ? "false" : "true"}" aria-label="${isCollapsed ? "Expand" : "Collapse"} ${escAttr(folder.name)}">
@@ -1039,7 +1050,7 @@ function renderFolderBrowserRow(folder) {
           <strong>${esc(folder.name)}</strong>
           <span>${esc(subtitle)}</span>
         </span>
-        <small class="writing-browser-row-count writing-folder-row-count">${Number(folder.draftCount || 0)}</small>
+        <small class="writing-browser-row-count writing-folder-row-count">${draftCount}</small>
       </button>
       <div class="writing-browser-row-actions">
         <span class="writing-drag-handle" aria-hidden="true">
@@ -1161,11 +1172,35 @@ function renderRootBrowserRow(drafts, folders) {
 }
 
 function renderWritingOrganizationRail(folders, campaigns, drafts, selectedDraftId) {
-  const foldersByParent = buildWritingFolderParentMap(folders);
+  const draftCountsByFolder = new Map();
+  drafts.forEach((draft) => {
+    const folderId = Number(draft.folder_id);
+    if (!folderId) return;
+    draftCountsByFolder.set(folderId, (draftCountsByFolder.get(folderId) || 0) + 1);
+  });
+
+  const childFolderCountsByParent = new Map();
+  folders.forEach((folder) => {
+    const parentId = Number(folder.parent_folder_id);
+    if (!parentId) return;
+    childFolderCountsByParent.set(
+      parentId,
+      (childFolderCountsByParent.get(parentId) || 0) + 1,
+    );
+  });
+
+  const foldersWithCounts = folders.map((folder) => ({
+    ...folder,
+    draftCount: draftCountsByFolder.get(Number(folder.id)) || 0,
+    childFolderCount: childFolderCountsByParent.get(Number(folder.id)) || 0,
+  }));
+  const foldersByParent = buildWritingFolderParentMap(foldersWithCounts);
   const unfiledDrafts = drafts.filter((draft) => !draft.folder_id);
-  const rootFolders = folders.filter((folder) => {
+  const rootFolders = foldersWithCounts.filter((folder) => {
     if (!folder.parent_folder_id) return true;
-    return !folders.some((candidate) => Number(candidate.id) === Number(folder.parent_folder_id));
+    return !foldersWithCounts.some(
+      (candidate) => Number(candidate.id) === Number(folder.parent_folder_id),
+    );
   });
   const showRootInlineComposer = writingState.folderComposerParentId === "root";
   return `
@@ -1178,7 +1213,7 @@ function renderWritingOrganizationRail(folders, campaigns, drafts, selectedDraft
           <button type="button" class="writing-library-new-folder-link" data-writing-action="writing-show-root-inline-folder" aria-label="New folder">+ Folder</button>
         </div>
         <div class="writing-browser-list">
-          ${renderRootBrowserRow(drafts, folders)}
+          ${renderRootBrowserRow(drafts, foldersWithCounts)}
           ${!writingState.rootCollapsed ? `
             <div class="writing-browser-children writing-browser-children-root" data-writing-drop-target="root">
               ${unfiledDrafts.map((draft) => renderDraftRow(draft, selectedDraftId)).join("")}
@@ -1987,7 +2022,7 @@ function renderWritingChatEntry(entry) {
     <article class="writing-chat-message ${isUser ? "writing-chat-message-user" : "writing-chat-message-assistant"} ${isPending ? "writing-chat-message-pending" : ""}">
       <div class="writing-chat-bubble ${isUser ? "writing-chat-bubble-user" : ""} ${isPending ? "writing-chat-bubble-pending" : ""}">
         <div class="writing-chat-meta">${esc(entry.label || (isUser ? "You" : "Writing partner"))}</div>
-        ${renderWritingRichText(entry.text || "")}
+        ${renderWritingRichText(entry.text || entry.content || "")}
         ${isPending ? `
           <div class="writing-chat-pending-row" aria-live="polite">
             <span class="writing-chat-pending-dot"></span>

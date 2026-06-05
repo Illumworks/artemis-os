@@ -169,6 +169,39 @@ class TestOverviewFolderGrouping:
         assert len(matching) == 1
         assert matching[0]["folder_id"] is not None
 
+    async def test_overview_backfills_legacy_pipeline_draft_folder_id(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Overview load repairs older pipeline-created drafts that missed folder metadata."""
+        clear_subscribers()
+        candidate = await _make_candidate(db_session, family="obc", name="OBC Growth")
+        legacy = CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="legacy-pipeline-draft",
+            campaign_id=None,
+            status="generating",
+            deliverable_metadata={"title": "Legacy pipeline draft"},
+        )
+        db_session.add(legacy)
+        await db_session.flush()
+        await db_session.refresh(legacy)
+        await db_session.commit()
+        legacy_id = legacy.id
+
+        resp = await client.get("/api/writing-studio/overview")
+        assert resp.status_code == 200
+        overview = resp.json()
+        matching = [d for d in overview["drafts"] if d["id"] == legacy_id]
+        assert len(matching) == 1
+        assert isinstance(matching[0]["folder_id"], int)
+        assert matching[0]["folder_name"] == "OBC Growth"
+
+        db_session.expire_all()
+        refreshed = await db_session.get(CampaignDeliverable, legacy_id)
+        assert refreshed is not None
+        assert refreshed.campaign_id == "obc"
+        assert isinstance((refreshed.deliverable_metadata or {}).get("folder_id"), int)
+
     async def test_overview_campaigns_uses_family_as_id(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:

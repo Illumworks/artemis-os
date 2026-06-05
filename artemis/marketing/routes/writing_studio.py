@@ -92,6 +92,8 @@ async def get_overview(
     N+1 risk: none — each domain is a single SELECT.
     Fallback contract: any failing sub-query returns empty list/object; never 500.
     """
+    await _repair_legacy_folder_assignments(session)
+
     # --- drafts (exclude soft-archived) ---
     try:
         deliverables = await _list_deliverables(session, include_archived=False)
@@ -145,6 +147,12 @@ async def get_overview(
     except Exception:  # noqa: BLE001
         profiles = []
 
+    try:
+        active_profile_row = await wr_repo.get_active_profile(session)
+        active_profile = _serialize_profile(active_profile_row) if active_profile_row else None
+    except Exception:  # noqa: BLE001
+        active_profile = None
+
     # --- training candidates (all statuses — frontend filters by status itself) ---
     try:
         tc_rows = await wr_repo.list_training_candidates(session)
@@ -160,6 +168,9 @@ async def get_overview(
         "examples": examples,
         "sources": sources,
         "profiles": profiles,
+        "activeProfile": active_profile,
+        "active_profile": active_profile,
+        "trainingCandidates": training_candidates,
         "training_candidates": training_candidates,
         "sync_config": {},
     }
@@ -834,6 +845,24 @@ async def _list_campaigns(session: AsyncSession) -> list[CampaignCandidate]:
     return list(result.scalars())
 
 
+async def _repair_legacy_folder_assignments(session: AsyncSession) -> None:
+    """Backfill legacy Writing Studio folder metadata without surfacing errors.
+
+    Older pipeline-created deliverables can be missing ``metadata.folder_id``.
+    Repairing them here keeps the live app self-healing for existing data while
+    the create path below stamps the correct folder metadata for new rows.
+    """
+    try:
+        result = await ws_invoke.backfill_campaign_folders(session)
+    except Exception:  # noqa: BLE001
+        _logger.exception("Writing Studio folder backfill failed during overview load")
+        await session.rollback()
+        return
+
+    if result.rows_updated or result.folders_created or result.family_folders_removed:
+        await session.commit()
+
+
 def _is_archived(deliverable: CampaignDeliverable) -> bool:
     """Return True if the deliverable has been soft-archived via metadata flag."""
     meta = deliverable.deliverable_metadata
@@ -856,6 +885,7 @@ def _serialize_thread_message(m: Any) -> dict[str, Any]:
         "draftId": m.draft_id,
         "role": m.role,
         "label": m.label,
+        "text": m.content,
         "content": m.content,
         "attachments": m.attachments,
         "trace": m.trace,
