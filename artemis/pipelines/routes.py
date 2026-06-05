@@ -675,6 +675,7 @@ async def resume_run(
         )
         await session.commit()
 
+        # Cancel the scheduled timeout job
         try:
             import contextlib
 
@@ -688,8 +689,13 @@ async def resume_run(
         except Exception:
             logger.warning("Could not cancel timeout job for run %s gate %s", run_id, body.node_id)
 
+        # Re-dispatch executor in background
         _dispatch_execution(run_id)
 
+        # MC4: fire-and-forget memory carryover (failure must not break resume)
+        # Resolve the upstream agent slug by inspecting the pipeline definition.
+        # Fall back to None (no agent scope) if the pipeline cannot be loaded or
+        # the gate has no identifiable upstream agent_invocation node.
         _agent_slug_mc4: str | None = None
         try:
             _pipeline = await repo.get_pipeline(session, run.pipeline_id)
@@ -697,7 +703,7 @@ async def resume_run(
                 body.node_id, _pipeline.nodes or [], _pipeline.edges or []
             )
         except Exception:
-            pass
+            pass  # non-fatal; falls back to None (no agent scope)
 
         from artemis.config import settings as _settings
 

@@ -30,7 +30,7 @@ import artemis.memory.models  # noqa: F401 — registers memory models
 import artemis.pipelines.models  # noqa: F401 — pipeline_runs FK dep
 from artemis.marketing.models import District, SignalQueue
 from artemis.marketing.repository import create_signal
-from artemis.memory.models import MemoryObservation
+from artemis.memory.models import MemoryObservation, MemoryObservationScope
 
 # ---------------------------------------------------------------------------
 # Constants / shared helpers
@@ -147,6 +147,8 @@ async def test_happy_path_five_districts(clean_session: AsyncSession, client: As
     assert len(data["velocity_ranking"]) == 5
     assert isinstance(data["combined"], list)
     assert len(data["combined"]) >= 1
+    assert "earliest_signal_created_at_iso" in data["combined"][0]
+    assert "earliest_deadline_iso" not in data["combined"][0]
 
 
 @pytest.mark.asyncio
@@ -352,7 +354,7 @@ async def test_persist_true_writes_observation(
 
     with patch("artemis.marketing.routes.intel_prioritization.datetime") as mock_dt:
         mock_dt.now.return_value = _NOW
-        resp = await client.get("/api/marketing/intel/prioritization?persist=true")
+        resp = await client.get("/api/marketing/intel/prioritization?persist=true&state=TX")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -368,6 +370,21 @@ async def test_persist_true_writes_observation(
     obs = obs_row.scalar_one()
     assert obs.category == "trend_snapshot"
     assert "prioritization" in obs.content.lower() or "Prioritization" in obs.content
+
+    scope_rows = (
+        (
+            await clean_session.execute(
+                select(MemoryObservationScope).where(
+                    MemoryObservationScope.observation_id == obs_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    scope_keys = {(row.scope_kind, row.scope_id) for row in scope_rows}
+    assert ("workspace", "marketing") in scope_keys
+    assert ("state", "TX") in scope_keys
 
 
 @pytest.mark.asyncio

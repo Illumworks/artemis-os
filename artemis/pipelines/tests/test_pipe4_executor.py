@@ -25,8 +25,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.models import Approval, SignalQueue
 from artemis.pipelines import repository as repo
-from artemis.pipelines.executor import PipelineExecutor, _topological_sort
+from artemis.pipelines.executor import (
+    PipelineExecutor,
+    _qualified_signal_count_for_run,
+    _topological_sort,
+)
 from artemis.pipelines.node_executors.conditional_executor import execute_conditional_node
 from artemis.pipelines.node_executors.trigger_executor import execute_trigger_node
 
@@ -200,6 +205,43 @@ async def test_sweep_orphaned_queued_runs_marks_old_rows_failed(
     assert old_final.status == "failed"
     assert old_final.error_message == "Orphaned queued run (executor never started)"
     assert fresh_final.status == "queued"
+
+
+async def test_qualified_signal_count_scopes_to_run_id(db_session: AsyncSession) -> None:
+    await _reset(db_session)
+    nodes = [_node("trigger", "trigger_manual")]
+    edges: list[dict[str, Any]] = []
+
+    async with db_session.begin():
+        pipeline = await repo.create_pipeline(db_session, **_make_pipeline(nodes, edges))
+        first_run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+        second_run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+        db_session.add_all(
+            [
+                SignalQueue(
+                    source_type="manual",
+                    pipeline_run_id=first_run.id,
+                    headline="Run 1 signal",
+                    summary="",
+                    campaign_family="marketing",
+                    urgency_tier="standard",
+                    discovered_by="test",
+                    signal_status="qualified",
+                ),
+                SignalQueue(
+                    source_type="manual",
+                    pipeline_run_id=second_run.id,
+                    headline="Run 2 signal",
+                    summary="",
+                    campaign_family="marketing",
+                    urgency_tier="standard",
+                    discovered_by="test",
+                    signal_status="qualified",
+                ),
+            ]
+        )
+
+    assert await _qualified_signal_count_for_run(db_session, first_run) == 1
 
 
 # ── 2. Unit: conditional node ─────────────────────────────────────────────────
@@ -765,6 +807,19 @@ async def test_timeout_auto_approve_audit_entry(db_session: AsyncSession) -> Non
             status="awaiting_approval",
             node_states=ns,
         )
+        db_session.add(
+            Approval(
+                kind="signal_brief",
+                subject_id=f"{run.id}:gate",
+                status="pending",
+                decision_payload={"run_id": run.id, "node_id": "gate"},
+                pipe4_context={
+                    "pipeline_run_id": run.id,
+                    "node_id": "gate",
+                    "context": {"approval_kind": "signal_brief"},
+                },
+            )
+        )
 
     from artemis.pipelines.node_executors.human_gate_executor import _fire_gate_timeout
 
@@ -788,6 +843,12 @@ async def test_timeout_auto_approve_audit_entry(db_session: AsyncSession) -> Non
 
     async with _db.SessionLocal() as fresh_session:
         final = await repo.get_pipeline_run(fresh_session, run.id)
+        approval = (
+            await fresh_session.execute(
+                text("SELECT status FROM approvals WHERE subject_id = :subject_id"),
+                {"subject_id": f"{run.id}:gate"},
+            )
+        ).scalar_one()
         ns = final.node_states
         # Audit trail should have an entry
         audit = ns.get("_audit", [])
@@ -796,6 +857,7 @@ async def test_timeout_auto_approve_audit_entry(db_session: AsyncSession) -> Non
         assert auto_entry is not None, "Expected gate_auto_decision audit entry"
         assert auto_entry["decision"] == "auto_approved"
         assert "timeout_after" in auto_entry["reason"]
+        assert approval == "approved"
 
 
 # ── 11. Integration: escalation flow ─────────────────────────────────────────

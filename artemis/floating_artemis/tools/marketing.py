@@ -19,6 +19,7 @@ from typing import Any
 
 from artemis.agent.types import Tool
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
+from artemis.floating_artemis.context import floating_session_id_var
 
 _SURFACE = "[surface:marketing-os]"
 
@@ -27,7 +28,7 @@ _SURFACE = "[surface:marketing-os]"
 
 
 async def _list_signals(inp: dict[str, Any]) -> str:
-    status = inp.get("status", "in_inbox")
+    status = inp.get("status", "pending_qualification")
     limit = int(inp.get("limit", 20))
     try:
         import artemis.db as _db
@@ -67,7 +68,11 @@ async def _get_signal(inp: dict[str, Any]) -> str:
 
 async def _qualify_signal(inp: dict[str, Any]) -> str:
     signal_id = inp.get("signal_id")
-    qualification = inp.get("qualification", {})
+    qualification = inp.get("qualification")
+    if qualification is None and "score" in inp:
+        qualification = {"fitScore": inp.get("score")}
+    if qualification is None:
+        qualification = {}
     if not signal_id:
         return "Error: signal_id is required"
     try:
@@ -99,7 +104,12 @@ async def _approve_signal(inp: dict[str, Any]) -> str:
 
         from artemis.builder.memory_carryover import write_fa_marketing_approval_observation
 
-        fa_session_id = str(inp.get("session_id") or inp.get("fa_session_id") or "unknown")
+        fa_session_id = str(
+            inp.get("session_id")
+            or inp.get("fa_session_id")
+            or floating_session_id_var.get()
+            or "unknown"
+        )
         user_directive = str(inp.get("directive") or inp.get("user_directive") or "")
         _asyncio.create_task(
             write_fa_marketing_approval_observation(
@@ -194,17 +204,16 @@ async def _assemble_brief(inp: dict[str, Any]) -> str:
 
 
 async def _submit_draft_for_review(inp: dict[str, Any]) -> str:
-    candidate_id = inp.get("candidate_id")
-    if not candidate_id:
-        return "Error: candidate_id is required"
+    deliverable_id = inp.get("deliverable_id")
+    if not deliverable_id:
+        return "Error: deliverable_id is required"
     try:
         import artemis.db as _db
-        from artemis.marketing import repository as repo
+        from artemis.marketing.writing_studio import invoke as ws_invoke
 
         async with _db.SessionLocal() as session:
-            await repo.update_signal(session, int(candidate_id), signal_status="in_review")
-            await session.commit()
-        return f"Candidate {candidate_id} submitted for review."
+            approval = await ws_invoke.submit_draft_for_review(session, int(deliverable_id))
+        return f"Deliverable {deliverable_id} submitted for review: approval_id={approval.id}"
     except Exception as exc:
         return f"submit_draft_for_review failed: {exc}"
 
@@ -246,7 +255,7 @@ async def _list_scout_runs(inp: dict[str, Any]) -> str:
 
 
 async def _fire_scout(inp: dict[str, Any]) -> str:
-    scout_type = inp.get("scout_type")
+    scout_type = inp.get("scout_type") or inp.get("scout_id")
     if not scout_type:
         return "Error: scout_type is required"
     try:
@@ -289,11 +298,67 @@ async def _propose_ruleset_change(inp: dict[str, Any]) -> str:
         "ruleset_id": ruleset_id,
         "changes": changes,
     }
-    return f"Ruleset change proposal (pending confirmation):\n{json.dumps(proposal, indent=2)}"
+    try:
+        from sqlalchemy import select
+
+        import artemis.db as _db
+        from artemis.marketing import repository as repo
+        from artemis.marketing.models import Ruleset
+
+        async with _db.SessionLocal() as session:
+            existing = await session.execute(
+                select(Ruleset.id).where(Ruleset.id == int(ruleset_id))
+            )
+            if existing.scalar_one_or_none() is None:
+                return f"Error: ruleset_id {ruleset_id} not found"
+            row = await repo.create_approval(
+                session,
+                kind="ruleset_change",
+                subject_id=str(ruleset_id),
+                decision_payload=proposal,
+            )
+            await session.commit()
+        return (
+            f"Ruleset change proposal saved: approval_id={row.id}\n{json.dumps(proposal, indent=2)}"
+        )
+    except Exception as exc:
+        return f"propose_ruleset_change failed: {exc}"
 
 
-async def _list_content_assets(inp: dict[str, Any]) -> str:  # noqa: ARG001
-    return "Content asset listing not yet implemented."
+async def _list_content_assets(inp: dict[str, Any]) -> str:
+    limit = int(inp.get("limit", 20))
+    status = inp.get("status")
+    asset_type = inp.get("asset_type") or inp.get("assetType")
+    campaign_family = inp.get("campaign_family")
+    try:
+        from sqlalchemy import select
+
+        import artemis.db as _db
+        from artemis.marketing.models import ContentAsset
+
+        async with _db.SessionLocal() as session:
+            stmt = select(ContentAsset)
+            if status:
+                stmt = stmt.where(ContentAsset.status == status)
+            if asset_type:
+                stmt = stmt.where(ContentAsset.asset_type == asset_type)
+            if campaign_family:
+                stmt = stmt.where(
+                    ContentAsset.asset_metadata["campaign_family"].as_string()
+                    == str(campaign_family)
+                )
+            stmt = stmt.order_by(ContentAsset.id.desc()).limit(limit)
+            result = await session.execute(stmt)
+            assets = list(result.scalars().all())
+        if not assets:
+            return "No content assets found."
+        lines = [
+            f"{asset.id}: [{asset.status}] {asset.asset_type} — {asset.summary or '(no summary)'}"
+            for asset in assets
+        ]
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"list_content_assets failed: {exc}"
 
 
 async def _link_content_asset(inp: dict[str, Any]) -> str:
@@ -310,6 +375,7 @@ async def _link_content_asset(inp: dict[str, Any]) -> str:
                 session,
                 candidate_id=int(candidate_id),
                 asset_id=int(asset_id),
+                link_role=str(inp.get("role")) if inp.get("role") is not None else None,
             )
             await session.commit()
         return f"Asset {asset_id} linked to candidate {candidate_id}."
@@ -327,7 +393,7 @@ LIST_SIGNALS = Tool(
     input_schema={
         "type": "object",
         "properties": {
-            "status": {"type": "string", "default": "pending"},
+            "status": {"type": "string", "default": "pending_qualification"},
             "limit": {"type": "integer", "default": 20},
         },
         "required": [],
@@ -351,7 +417,11 @@ QUALIFY_SIGNAL = Tool(
         "type": "object",
         "properties": {
             "signal_id": {"type": "integer"},
-            "score": {"type": "number"},
+            "qualification": {"type": "object", "default": {}},
+            "score": {
+                "type": "number",
+                "description": "Legacy shorthand; stored as qualification.fitScore when qualification is omitted.",
+            },
         },
         "required": ["signal_id"],
     },
@@ -362,7 +432,11 @@ APPROVE_SIGNAL = Tool(
     description=f"Approve a signal (side-effect: status change + downstream triggers). {_s} [layer:3]",
     input_schema={
         "type": "object",
-        "properties": {"signal_id": {"type": "integer"}},
+        "properties": {
+            "signal_id": {"type": "integer"},
+            "fa_session_id": {"type": "string"},
+            "directive": {"type": "string"},
+        },
         "required": ["signal_id"],
     },
 )
@@ -408,7 +482,10 @@ ASSEMBLE_BRIEF = Tool(
     description=f"Assemble a campaign brief for a candidate. {_s} [layer:3]",
     input_schema={
         "type": "object",
-        "properties": {"candidate_id": {"type": "integer"}},
+        "properties": {
+            "candidate_id": {"type": "integer"},
+            "content": {"type": "object", "default": {}},
+        },
         "required": ["candidate_id"],
     },
 )
@@ -431,6 +508,7 @@ DECIDE_APPROVAL = Tool(
         "properties": {
             "approval_id": {"type": "integer"},
             "decision": {"type": "string", "enum": ["approve", "reject"]},
+            "decided_by": {"type": "string", "default": "artemis"},
         },
         "required": ["approval_id", "decision"],
     },
@@ -451,8 +529,14 @@ FIRE_SCOUT = Tool(
     description=f"Trigger a scout run immediately. {_s} [layer:2]",
     input_schema={
         "type": "object",
-        "properties": {"scout_id": {"type": "string"}},
-        "required": ["scout_id"],
+        "properties": {
+            "scout_type": {"type": "string"},
+            "scout_id": {
+                "type": "string",
+                "description": "Legacy alias for scout_type.",
+            },
+        },
+        "required": [],
     },
 )
 
@@ -480,7 +564,12 @@ LIST_CONTENT_ASSETS = Tool(
     description=f"List content assets in the library. {_s} [layer:1]",
     input_schema={
         "type": "object",
-        "properties": {"limit": {"type": "integer", "default": 20}},
+        "properties": {
+            "limit": {"type": "integer", "default": 20},
+            "status": {"type": "string"},
+            "asset_type": {"type": "string"},
+            "campaign_family": {"type": "string"},
+        },
         "required": [],
     },
 )

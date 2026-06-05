@@ -258,8 +258,8 @@ def test_prioritization_renders_combined_with_why_and_disclaimer() -> None:
           velocity_ranking: [],
           time_sensitive: [],
           combined: [
-            { district_id: 101, name: 'Pinellas', state: 'FL', tier: 'tier-a', velocity_score: 12.5, velocity_rank: 1, has_time_sensitive_signal: true,  earliest_deadline_iso: '2026-07-01T00:00:00Z' },
-            { district_id: 102, name: 'Orange',   state: 'FL', tier: 'tier-b', velocity_score: 8.0,  velocity_rank: 2, has_time_sensitive_signal: false, earliest_deadline_iso: null },
+            { district_id: 101, name: 'Pinellas', state: 'FL', tier: 'tier-a', velocity_score: 12.5, velocity_rank: 1, has_time_sensitive_signal: true,  earliest_signal_created_at_iso: '2026-07-01T00:00:00Z' },
+            { district_id: 102, name: 'Orange',   state: 'FL', tier: 'tier-b', velocity_score: 8.0,  velocity_rank: 2, has_time_sensitive_signal: false, earliest_signal_created_at_iso: null },
           ],
         };
         const html = mod.renderMarketingPrioritization(payload, { stateFilter: 'FL' });

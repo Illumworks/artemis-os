@@ -451,6 +451,9 @@ async def _decide_pipe4_gate_approval(
                     reason="content_draft_decision",
                 )
 
+        # SEND2-B: enqueue send rows for each deliverable transitioned to 'approved'.
+        # Guarded behind the outbound-send feature flag so Gate-2 can remain an
+        # internal review-only workflow until Artemis is ready to expose sends.
         if settings.outbound_send_enabled and decision == "approved" and candidate is not None:
             from artemis.marketing.sends import enqueue_send_for_deliverable
 

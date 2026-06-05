@@ -225,6 +225,47 @@ async def test_momentum_no_prior_signals(clean_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_momentum_boundary_bucket_uses_created_at_for_delta(
+    clean_session: AsyncSession,
+) -> None:
+    """Signals just inside the current window must count current even if the bucket starts earlier."""
+    district = await _make_district(clean_session, name="Boundary ISD")
+
+    await _make_signal(
+        clean_session,
+        headline="Boundary current",
+        resolved_district_id=district.id,
+        created_at=_NOW - timedelta(days=89, hours=18),
+    )
+    await _make_signal(
+        clean_session,
+        headline="Clear current",
+        resolved_district_id=district.id,
+        created_at=_NOW - timedelta(days=10),
+    )
+    await _make_signal(
+        clean_session,
+        headline="Prior signal",
+        resolved_district_id=district.id,
+        created_at=_NOW - timedelta(days=100),
+    )
+    await clean_session.commit()
+
+    result = await compute_momentum(
+        clean_session,
+        theme="obc",
+        region="TX",
+        as_of=_NOW,
+        window_days=90,
+        bucket_days=7,
+    )
+
+    assert result.current_window_count == 2
+    assert result.prior_window_count == 1
+    assert result.delta_ratio == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
 async def test_momentum_excludes_non_active_statuses(clean_session: AsyncSession) -> None:
     """pending_qualification signals should NOT be counted in momentum."""
     district = await _make_district(clean_session, name="Pending ISD")
@@ -395,6 +436,30 @@ async def test_velocity_ranking_urgency_mix(clean_session: AsyncSession) -> None
     assert ranking[0].weighted_score == pytest.approx(expected_score)
 
 
+@pytest.mark.asyncio
+async def test_velocity_ranking_unknown_tier_counts_as_standard_mix(
+    clean_session: AsyncSession,
+) -> None:
+    """Unknown urgency tiers should fall back to the standard bucket consistently."""
+    d = await _make_district(clean_session, name="Unknown Tier ISD")
+    await _make_signal(
+        clean_session,
+        headline="Unknown tier signal",
+        resolved_district_id=d.id,
+        urgency_tier="custom_unknown",
+        created_at=_NOW - timedelta(days=5),
+    )
+    await clean_session.commit()
+
+    ranking = await compute_velocity_ranking(clean_session, as_of=_NOW, window_days=30)
+    assert len(ranking) == 1
+    assert ranking[0].weighted_score == pytest.approx(1.0)
+    assert ranking[0].urgency_mix.standard == 1
+    assert ranking[0].urgency_mix.elevated == 0
+    assert ranking[0].urgency_mix.high == 0
+    assert ranking[0].urgency_mix.critical == 0
+
+
 # ---------------------------------------------------------------------------
 # 4. Time sensitivity (schema-gap proxy path)
 # ---------------------------------------------------------------------------
@@ -499,7 +564,7 @@ async def test_persist_trend_snapshot_writes_observation(clean_session: AsyncSes
         snapshot=snapshot,
         primary_scope_kind="workspace",
         primary_scope_id="marketing",
-        additional_scopes=[("workspace", "platform")],
+        additional_scopes=[("state", "TX"), ("campaign_family", "obc")],
     )
 
     assert isinstance(obs_id, int)
@@ -529,7 +594,8 @@ async def test_persist_trend_snapshot_writes_observation(clean_session: AsyncSes
     )
     scope_keys = {(s.scope_kind, s.scope_id) for s in scopes_rows}
     assert ("workspace", "marketing") in scope_keys
-    assert ("workspace", "platform") in scope_keys
+    assert ("state", "TX") in scope_keys
+    assert ("campaign_family", "obc") in scope_keys
 
     # Verify is_primary flag on the primary scope row
     primary_rows = [s for s in scopes_rows if s.is_primary]

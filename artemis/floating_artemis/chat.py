@@ -26,7 +26,7 @@ from artemis.floating_artemis.authority import (
     PendingConfirmation,
     confirmation_store,
 )
-from artemis.floating_artemis.context import floating_session_id_var
+from artemis.floating_artemis.context import floating_session_id_var, floating_tool_use_id_var
 from artemis.floating_artemis.intent import IntentKind, classify_intent, handle_observability_intent
 from artemis.floating_artemis.memory import inject_memory_context, write_turn_drawer
 from artemis.floating_artemis.memory_read_cache import put as cache_put
@@ -373,6 +373,12 @@ class TurnResult:
     intent_shortcut: bool = False
 
 
+def _serialize_blocks(
+    blocks: list[TextBlock | ToolUseBlock | ToolResultBlock],
+) -> list[dict[str, Any]]:
+    return [block.to_api() for block in blocks]
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 
@@ -425,6 +431,8 @@ async def handle_turn(
                 session_id=session_id,
                 user_text=user_text,
                 assistant_text=response,
+                user_content=None,
+                assistant_content=None,
                 usage=Usage(),
                 db_session=db_session,
             )
@@ -572,33 +580,25 @@ async def handle_turn(
     hooks.on("before_tool", before_tool_hook)
     hooks.on("after_tool", after_tool_hook)
 
+    session_token = floating_session_id_var.set(session_id)
     try:
-        if is_claude_code_with_tools and len(tool_registry) > 0:
-            token = floating_session_id_var.set(session_id)
-            try:
-                result = await run_turn(
-                    adapter=adapter,
-                    messages=messages,
-                    tools=tool_registry,
-                    system=system_prompt,
-                    reasoning_effort=reasoning_effort,
-                    speed_tier=speed_tier,
-                    hooks=hooks,
-                )
-            finally:
-                floating_session_id_var.reset(token)
-        else:
-            result = await run_turn(
-                adapter=adapter,
-                messages=messages,
-                tools=tool_registry,
-                system=system_prompt,
-                reasoning_effort=reasoning_effort,
-                speed_tier=speed_tier,
-                hooks=hooks,
-            )
+        result = await run_turn(
+            adapter=adapter,
+            messages=messages,
+            tools=tool_registry,
+            system=system_prompt,
+            reasoning_effort=reasoning_effort,
+            speed_tier=speed_tier,
+            hooks=hooks,
+        )
     except _PendingConfirmationError as pending_exc:
         # A layer-3/4 tool was encountered — yield to operator.
+        pending = confirmation_store.get(pending_exc.tool_use_id)
+        if pending is not None:
+            pending.prior_tool_results = [
+                block.to_api() for block in getattr(pending_exc, "prior_tool_results", [])
+            ]
+
         await _broadcast(
             session_id,
             {
@@ -610,12 +610,14 @@ async def handle_turn(
                 "layer": pending_exc.layer,
             },
         )
-        # Persist messages up to this point (user message + partial assistant)
+        # Persist messages up to this point (user message + assistant tool_use turn)
         await _persist_messages(
             session_id=session_id,
             user_text=user_text,
             assistant_text=None,
-            usage=Usage(),
+            user_content=None,
+            assistant_content=_serialize_blocks(pending_exc.assistant_message.content),
+            usage=getattr(pending_exc, "usage", Usage()),
             db_session=db_session,
         )
         return TurnResult(
@@ -632,6 +634,8 @@ async def handle_turn(
             {"type": "floating_artemis.failed", "session_id": session_id, "error": str(exc)},
         )
         raise
+    finally:
+        floating_session_id_var.reset(session_token)
 
     # ── 8. Extract final text ─────────────────────────────────────────────────
     response_text: str | None = None
@@ -647,6 +651,8 @@ async def handle_turn(
         session_id=session_id,
         user_text=user_text,
         assistant_text=response_text,
+        user_content=None,
+        assistant_content=None,
         usage=result.usage,
         db_session=db_session,
     )
@@ -739,12 +745,24 @@ async def resume_after_confirm(
         content=tool_result_content,
         is_error=is_error,
     )
+    prior_blocks = [
+        ToolResultBlock(
+            tool_use_id=str(block.get("tool_use_id", "")),
+            content=str(block.get("content", "")),
+            is_error=bool(block.get("is_error", False)),
+        )
+        for block in pending.prior_tool_results
+    ]
+    tool_result_blocks: list[TextBlock | ToolUseBlock | ToolResultBlock] = [
+        *prior_blocks,
+        tool_result_block,
+    ]
 
     # Load current history and append the tool_result
     history = await _load_message_history(session_id=session_id, db_session=db_session)
 
     # Append a user message containing the tool_result (protocol: tool results are user-role)
-    tool_result_msg = Message(role="user", content=[tool_result_block])
+    tool_result_msg = Message(role="user", content=tool_result_blocks)
     messages = history + [tool_result_msg]
 
     if adapter is None:
@@ -762,6 +780,7 @@ async def resume_after_confirm(
         },
     )
 
+    session_token = floating_session_id_var.set(session_id)
     try:
         result = await run_turn(
             adapter=adapter,
@@ -774,6 +793,8 @@ async def resume_after_confirm(
             {"type": "floating_artemis.failed", "session_id": session_id, "error": str(exc)},
         )
         raise
+    finally:
+        floating_session_id_var.reset(session_token)
 
     response_text: str | None = None
     for msg in reversed(result.messages):
@@ -793,6 +814,8 @@ async def resume_after_confirm(
         session_id=session_id,
         user_text=None,
         assistant_text=response_text,
+        user_content=_serialize_blocks(tool_result_msg.content),
+        assistant_content=None,
         usage=result.usage,
         db_session=db_session,
     )
@@ -820,10 +843,14 @@ class _PendingConfirmationError(BaseException):  # noqa: N818 N818 — intention
         self, tool_use_id: str, tool_name: str, tool_input: dict[str, Any], layer: int
     ) -> None:
         super().__init__(f"tool_pending:{tool_use_id}")
+        self.is_tool_pending = True
         self.tool_use_id = tool_use_id
         self.tool_name = tool_name
         self.tool_input = tool_input
         self.layer = layer
+        self.prior_tool_results: list[ToolResultBlock] = []
+        self.assistant_message: Message = Message(role="assistant", content=[])
+        self.usage = Usage()
 
 
 def _build_intercepting_tool_registry(
@@ -866,9 +893,9 @@ def _build_intercepting_tool_registry(
             async def pending_impl(
                 inp: dict[str, Any], _tool_name: str = _name, _layer_n: int = _layer
             ) -> str:
-                import uuid
-
-                tool_use_id = str(uuid.uuid4())
+                tool_use_id = floating_tool_use_id_var.get()
+                if not tool_use_id:
+                    raise RuntimeError(f"Missing tool_use id for pending tool {_tool_name!r}")
                 pending = PendingConfirmation(
                     session_id=session_id,
                     tool_use_id=tool_use_id,
@@ -972,27 +999,6 @@ async def _load_message_history(
         return []
 
 
-async def _get_voice_samples(
-    *,
-    session_id: str,
-    db_session: Any | None,
-    count: int = 5,
-) -> list[str]:
-    """Sample voice lines for system prompt injection."""
-    try:
-        import artemis.db as _db
-        from artemis.floating_artemis.repository import sample_voice_lines
-
-        if db_session is not None:
-            lines = await sample_voice_lines(db_session, count=count)
-        else:
-            async with _db.SessionLocal() as session:
-                lines = await sample_voice_lines(session, count=count)
-        return [line.line for line in lines]
-    except Exception:
-        return []
-
-
 async def _get_page_context_text(
     *,
     session_id: str,
@@ -1024,6 +1030,8 @@ async def _persist_messages(
     session_id: str,
     user_text: str | None,
     assistant_text: str | None,
+    user_content: list[dict[str, Any]] | None,
+    assistant_content: list[dict[str, Any]] | None,
     usage: Usage,
     db_session: Any | None,
 ) -> int | None:
@@ -1038,20 +1046,26 @@ async def _persist_messages(
 
         async def _do_persist(session: Any) -> int | None:
             user_msg_id: int | None = None
-            if user_text is not None:
+            effective_user_content = user_content
+            if effective_user_content is None and user_text is not None:
+                effective_user_content = [{"type": "text", "text": user_text}]
+            if effective_user_content is not None:
                 user_msg = await add_message(
                     session,
                     session_id=session_id,
                     role="user",
-                    content=[{"type": "text", "text": user_text}],
+                    content=effective_user_content,
                 )
                 user_msg_id = user_msg.id
-            if assistant_text is not None:
+            effective_assistant_content = assistant_content
+            if effective_assistant_content is None and assistant_text is not None:
+                effective_assistant_content = [{"type": "text", "text": assistant_text}]
+            if effective_assistant_content is not None:
                 await add_message(
                     session,
                     session_id=session_id,
                     role="assistant",
-                    content=[{"type": "text", "text": assistant_text}],
+                    content=effective_assistant_content,
                     cost_input_tokens=usage.input_tokens,
                     cost_output_tokens=usage.output_tokens,
                     cache_creation_input_tokens=usage.cache_creation_input_tokens,

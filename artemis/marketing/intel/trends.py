@@ -106,6 +106,12 @@ async def compute_momentum(
     # Raw SQL for date_trunc-style bucketing (arbitrary bucket_days via
     # FLOOR + epoch arithmetic so we don't require a calendar table)
     #   bucket_start = prior_start + floor((created_at - prior_start) / interval) * interval
+    #
+    # Important: current/prior window counts must be classified by each
+    # signal's own created_at, not by the anchored bucket_start. When
+    # window_days % bucket_days != 0 (the default 90/7 path), a boundary bucket
+    # straddles the window split; using bucket_start would misclassify the whole
+    # bucket into the prior window.
     bucket_interval = f"{bucket_days} days"
 
     base_where = (
@@ -123,7 +129,9 @@ async def compute_momentum(
             + (FLOOR(EXTRACT(EPOCH FROM (created_at - CAST(:prior_start AS timestamptz)))
                / EXTRACT(EPOCH FROM INTERVAL '{bucket_interval}'))
                * INTERVAL '{bucket_interval}') AS bucket_start,
-            COUNT(*) AS cnt
+            COUNT(*) AS cnt,
+            COUNT(*) FILTER (WHERE created_at >= :window_start) AS current_cnt,
+            COUNT(*) FILTER (WHERE created_at < :window_start) AS prior_cnt
         FROM signal_queue
         WHERE {base_where}{region_clause}
         GROUP BY 1
@@ -135,6 +143,7 @@ async def compute_momentum(
         "statuses": list(_ACTIVE_STATUSES),
         "theme": theme,
         "prior_start": prior_start,
+        "window_start": window_start,
         "as_of": as_of,
     }
     if region is not None:
@@ -154,10 +163,8 @@ async def compute_momentum(
         b_end = b_start + timedelta(days=bucket_days)
         count = int(row[1])
         buckets.append(BucketCount(bucket_start=b_start, bucket_end=b_end, count=count))
-        if b_start >= window_start:
-            current_window_count += count
-        else:
-            prior_window_count += count
+        current_window_count += int(row[2])
+        prior_window_count += int(row[3])
 
     delta_ratio: float | None = None
     if prior_window_count > 0:
@@ -288,7 +295,13 @@ async def compute_velocity_ranking(
                     WHEN 'critical'  THEN {w_crit}
                     ELSE {w_std}
                 END) AS weighted_score,
-            SUM(CASE WHEN sq.urgency_tier = 'standard'  THEN 1 ELSE 0 END) AS cnt_standard,
+            SUM(CASE
+                    WHEN sq.urgency_tier IN ('standard', 'unknown')
+                         OR sq.urgency_tier IS NULL
+                         OR sq.urgency_tier NOT IN ('elevated', 'high', 'critical')
+                    THEN 1
+                    ELSE 0
+                END) AS cnt_standard,
             SUM(CASE WHEN sq.urgency_tier = 'elevated'  THEN 1 ELSE 0 END) AS cnt_elevated,
             SUM(CASE WHEN sq.urgency_tier = 'high'      THEN 1 ELSE 0 END) AS cnt_high,
             SUM(CASE WHEN sq.urgency_tier = 'critical'  THEN 1 ELSE 0 END) AS cnt_critical
