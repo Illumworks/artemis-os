@@ -28,6 +28,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.memory.maintenance import KNOWN_CATEGORIES
 from artemis.memory.models import (
     MemoryDrawer,
     MemoryEmbedding,
@@ -233,6 +234,17 @@ async def write_observation(
     the row is queued for backfill — it never blocks the write).
     """
     from artemis.memory.raw_inputs import insert_raw_input
+
+    # Validate category against known-good set from maintenance decay table.
+    # Unknown categories are accepted (write remains lossless) but logged so
+    # typos and non-standard values surface immediately.
+    if category not in KNOWN_CATEGORIES:
+        _logger.warning(
+            "Observation written with unknown category %r (known: %s). "
+            "This will decay at the default 0.95 factor. Did you mean one of the known categories?",
+            category,
+            sorted(KNOWN_CATEGORIES),
+        )
 
     # Validate: no duplicate of primary scope in additional_scopes
     if additional_scopes:

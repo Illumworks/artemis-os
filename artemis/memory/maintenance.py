@@ -36,6 +36,10 @@ _DECAY_FACTORS: dict[str, float] = {
 }
 _DEFAULT_DECAY = 0.95
 
+# Public set of recognised categories — imported by store.write_observation for
+# write-time validation. Keep in sync with _DECAY_FACTORS above (single source).
+KNOWN_CATEGORIES: frozenset[str] = frozenset(_DECAY_FACTORS.keys())
+
 
 def _decay_for(category: str) -> float:
     return _DECAY_FACTORS.get(category, _DEFAULT_DECAY)
