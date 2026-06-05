@@ -434,6 +434,8 @@ async def test_e2e_three_turns_three_drawers_memory_in_second_prompt() -> None:
         session_id: str,
         user_text: str | None,
         assistant_text: str | None,
+        user_content: list[dict[str, Any]] | None = None,
+        assistant_content: list[dict[str, Any]] | None = None,
         usage: Any,
         db_session: Any,
     ) -> int | None:

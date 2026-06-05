@@ -257,6 +257,31 @@ async def test_initiate_campaign_sets_fields_and_enforces_slug_and_idempotency(
             )
 
 
+@pytest.mark.asyncio
+async def test_initiate_campaign_rejects_rejected_candidates(db_session: AsyncSession) -> None:
+    async with db_session.begin():
+        district = await _make_district(db_session)
+        signal = await _make_signal(
+            db_session,
+            headline="Rejected candidate",
+            district_id=district.id,
+        )
+        candidate = await cluster_or_create_candidate(db_session, signal)
+        candidate.decision_state = "rejected"
+
+        with pytest.raises(ValueError, match="is rejected and cannot be initiated"):
+            await initiate_campaign(
+                db_session,
+                candidate.id,
+                name="Rejected candidate test",
+                objective="Should fail",
+                owner_user_id=99,
+                target_scope={"mode": "states", "states": ["TX"]},
+                deliverable_type_slugs=["outreach_email"],
+                initiated_by=501,
+            )
+
+
 def test_target_scope_accepts_each_valid_mode() -> None:
     assert TargetScope.model_validate({"mode": "all_districts"}).mode == "all_districts"
     assert TargetScope.model_validate({"mode": "states", "states": ["fl", "TX"]}).states == [

@@ -925,9 +925,10 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
         await db_session.execute(
             text(
                 "INSERT INTO signal_queue (headline, summary, campaign_family, "
-                "signal_status, discovered_by) VALUES "
-                "('Qualified marketing signal', '', 'marketing', 'qualified', 'test')"
-            )
+                "signal_status, discovered_by, pipeline_run_id) VALUES "
+                "('Qualified marketing signal', '', 'marketing', 'qualified', 'test', :run_id)"
+            ),
+            {"run_id": run.id},
         )
 
     run_id = run.id

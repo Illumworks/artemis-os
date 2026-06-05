@@ -236,7 +236,10 @@ async def jira_get_team_members(
         else:
             # No project configured — enumerate all accessible projects and
             # merge their assignables. Dedupe on accountId.
-            projects = await client.list_projects()
+            try:
+                projects = await client.list_projects()
+            except JiraAPIError:
+                projects = []
             seen: dict[str, dict[str, Any]] = {}
             for proj in projects[:10]:  # cap at 10 projects to bound latency
                 key = proj.get("key")
