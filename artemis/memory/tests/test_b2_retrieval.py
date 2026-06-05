@@ -10,6 +10,7 @@ Backfill tests use an in-memory engine per test to isolate state.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -34,7 +35,7 @@ _SCOPE2 = Scope(scope_kind="project", scope_id="project-alpha")
 
 
 @pytest.fixture(autouse=True)
-async def _drain_usage_tasks() -> None:
+async def _drain_usage_tasks() -> AsyncGenerator[None, None]:
     import artemis.memory.retrieval as retrieval_mod
 
     pending_before = list(retrieval_mod._BACKGROUND_USAGE_TASKS)

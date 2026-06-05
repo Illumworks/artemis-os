@@ -12,11 +12,10 @@ Notes
 - The full conversation is flattened to a single prompt string (system header +
   role-prefixed turns) and piped to the CLI via stdin.
 - ``complete()`` is the text-in / text-out path.  When ``request.tools`` is
-  non-empty (CC19 Builder path), it routes to ``_complete_with_tools()`` which
-  launches ``claude -p --mcp-config`` against a Builder-scoped Artemis MCP
-  server.  The Builder tools (builder_read_existing, builder_propose, etc.) are
-  executed inside the subprocess; the proposal row lands in the DB via the MCP
-  server; the caller receives the final text answer with ``stop_reason="end_turn"``.
+  non-empty, it routes to ``_complete_with_tools()`` which launches
+  ``claude -p --mcp-config`` against a scoped Artemis MCP server. Builder
+  turns use the Builder-scoped server; Floating Artemis turns use their own
+  session-scoped server for auto-invoke tools.
 - ``run_with_tools()`` (stream CC2) — unchanged; still used by pipeline agents.
 - Usage tokens reported by the CLI (if present) are forwarded; otherwise zeros
   are used so the Usage object is always valid.
@@ -26,13 +25,12 @@ Notes
 CC19 architecture note
 ----------------------
 claude-code's CLI does not expose a turn-by-turn tool_use API; it runs its own
-internal agent loop.  For the Builder surface, ``_complete_with_tools`` launches
-a Builder-scoped MCP server (``artemis.tools.mcp_server --builder-session-id``),
-passes ``builder_session_id`` as a CLI arg read from the
-``artemis.builder.context.builder_session_id_var`` contextvar, and filters the
-allowed tools to ONLY the five builder_* tools.  The subprocess handles all
-tool-use iterations internally; the caller gets a single ``CompletionResponse``
-with the final text.
+internal agent loop. ``_complete_with_tools`` therefore launches a scoped MCP
+server, passes session identity through a caller-owned contextvar, and lets the
+subprocess handle all tool-use iterations internally. Builder turns use
+``artemis.tools.mcp_server --builder-session-id``. Floating Artemis turns use
+``artemis.tools.mcp_server --floating-session-id`` and only expose auto-invoke
+tools on that path.
 
 Streaming note
 --------------
@@ -190,35 +188,45 @@ class ClaudeCodeAdapter:
     async def _complete_with_tools(self, request: CompletionRequest) -> CompletionResponse:
         """Route a completion through the Artemis MCP server when tools are present (CC19).
 
-        Reads ``builder_session_id`` from the ``builder_session_id_var`` contextvar
-        (set by ``handle_turn_stream`` in agent_builder.py before calling this method).
-        Launches ``claude -p --mcp-config`` against a Builder-scoped MCP server that
-        exposes exactly the five builder_* tools.
+        Reads the active tool-session scope from caller-owned contextvars:
+        Builder uses ``builder_session_id_var``; Floating Artemis uses
+        ``floating_session_id_var``. Launches ``claude -p --mcp-config`` against
+        the matching scoped MCP server.
 
         Design:
         - claude-code's internal agent loop handles all tool-use iterations.
-        - The proposal row lands in the DB via the MCP server during the subprocess run.
+        - Builder proposal rows land in the DB via the MCP server during the subprocess run.
         - We return the final text answer as a CompletionResponse with stop_reason="end_turn".
-        - The Builder's handle_turn_stream loop short-circuits (see Part C, agent_builder.py)
-          because there are no tool_use blocks in the returned response.
+        - Builder and Floating Artemis callers both short-circuit their local
+          tool loops because there are no tool_use blocks in the returned response.
 
         Known limitation: /messages/stream SSE stays text-only for CC19.
         Streaming + tools is a separate brief.
         """
         from artemis.builder.context import builder_session_id_var
+        from artemis.floating_artemis.context import floating_session_id_var
 
         builder_session_id = builder_session_id_var.get()
-        if builder_session_id is None:
+        floating_session_id = floating_session_id_var.get()
+        agent_tools = [tool.name for tool in request.tools or []]
+        if builder_session_id is None and floating_session_id is None:
             raise ProviderAPIError(
                 0,
-                "_complete_with_tools called but builder_session_id_var is not set. "
-                "Ensure handle_turn_stream sets the contextvar before calling adapter.complete().",
+                "_complete_with_tools called but no tool-session contextvar is set. "
+                "Ensure the Builder or Floating Artemis turn handler sets its "
+                "session context before calling adapter.complete().",
             )
 
         model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
 
-        config = _build_builder_mcp_config(builder_session_id=builder_session_id)
+        if builder_session_id is not None:
+            config = _build_builder_mcp_config(builder_session_id=builder_session_id)
+        else:
+            config = _build_floating_artemis_mcp_config(
+                session_id=str(floating_session_id),
+                tool_names=agent_tools,
+            )
         tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
             mode="w", suffix=".mcp.json", prefix="artemis-builder-mcp-", delete=False
         )
@@ -227,10 +235,13 @@ class ClaudeCodeAdapter:
             tmp.flush()
             tmp.close()
 
-            # Filter allowed tools to only the builder_* tools.
-            from artemis.tools.mcp_server import BUILDER_MCP_TOOL_NAMES
+            if builder_session_id is not None:
+                # Filter allowed tools to only the builder_* tools.
+                from artemis.tools.mcp_server import BUILDER_MCP_TOOL_NAMES
 
-            allowed = [f"mcp__artemis__{n}" for n in BUILDER_MCP_TOOL_NAMES]
+                allowed = [f"mcp__artemis__{n}" for n in BUILDER_MCP_TOOL_NAMES]
+            else:
+                allowed = allowed_tools_for(agent_tools)
 
             cmd = [
                 self._binary,
@@ -405,6 +416,30 @@ def _build_builder_mcp_config(*, builder_session_id: int) -> dict[str, Any]:
                     "--builder-session-id",
                     str(builder_session_id),
                 ],
+            }
+        }
+    }
+
+
+def _build_floating_artemis_mcp_config(*, session_id: str, tool_names: list[str]) -> dict[str, Any]:
+    """Build the Floating Artemis stdio MCP config.
+
+    Passes the session id plus the exact tool-name allowlist chosen by the
+    parent turn handler so the subprocess mirrors the in-process tool scope.
+    """
+    args = [
+        "-m",
+        "artemis.tools.mcp_server",
+        "--floating-session-id",
+        session_id,
+    ]
+    for tool_name in tool_names:
+        args += ["--tool-name", tool_name]
+    return {
+        "mcpServers": {
+            "artemis": {
+                "command": sys.executable,
+                "args": args,
             }
         }
     }
