@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import logging
 import time
+from contextvars import ContextVar, Token
 from dataclasses import replace
+from typing import Any, cast
 
 from artemis.agent.client import (
     CompletionRequest,
@@ -115,9 +117,17 @@ async def run_turn(
             break
 
         result_blocks: list[ToolResultBlock] = []
-        for use in tool_uses:
-            block = await _execute_tool(use, tools, hooks)
-            result_blocks.append(block)
+        try:
+            for use in tool_uses:
+                block = await _execute_tool(use, tools, hooks)
+                result_blocks.append(block)
+        except BaseException as exc:
+            if getattr(exc, "is_tool_pending", False):
+                pending_exc = cast(Any, exc)
+                pending_exc.prior_tool_results = list(result_blocks)
+                pending_exc.assistant_message = response.message
+                pending_exc.usage = total_usage
+            raise
 
         # Tool results all go in a single user message, as per the Anthropic
         # tool-use protocol.
@@ -167,26 +177,41 @@ async def _execute_tool(
         )
 
     payload = {"name": use.name, "input": use.input, "tool_use_id": use.id}
-    if hooks:
-        await hooks.fire("before_tool", payload)
 
-    started = time.monotonic()
-    is_error = False
+    floating_tool_use_id_var: ContextVar[str | None] | None
     try:
-        content = await entry.impl(use.input)
-    except Exception as exc:  # noqa: BLE001 — tools are user code; never crash the loop
-        logger.exception("tool %s raised", use.name)
-        content = f"{type(exc).__name__}: {exc}"
-        is_error = True
+        from artemis.floating_artemis.context import floating_tool_use_id_var
+    except Exception:  # pragma: no cover - optional integration
+        floating_tool_use_id_var = None
 
-    elapsed_ms = int((time.monotonic() - started) * 1000)
-    if hooks:
-        await hooks.fire(
-            "after_tool",
-            {**payload, "result": content, "is_error": is_error, "elapsed_ms": elapsed_ms},
-        )
+    tool_use_token: Token[str | None] | None = None
+    if floating_tool_use_id_var is not None:
+        tool_use_token = floating_tool_use_id_var.set(use.id)
 
-    return ToolResultBlock(tool_use_id=use.id, content=content, is_error=is_error)
+    try:
+        if hooks:
+            await hooks.fire("before_tool", payload)
+
+        started = time.monotonic()
+        is_error = False
+        try:
+            content = await entry.impl(use.input)
+        except Exception as exc:  # noqa: BLE001 — tools are user code; never crash the loop
+            logger.exception("tool %s raised", use.name)
+            content = f"{type(exc).__name__}: {exc}"
+            is_error = True
+
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if hooks:
+            await hooks.fire(
+                "after_tool",
+                {**payload, "result": content, "is_error": is_error, "elapsed_ms": elapsed_ms},
+            )
+
+        return ToolResultBlock(tool_use_id=use.id, content=content, is_error=is_error)
+    finally:
+        if floating_tool_use_id_var is not None and tool_use_token is not None:
+            floating_tool_use_id_var.reset(tool_use_token)
 
 
 def _normalize_stop_reason(raw: str) -> StopReason:

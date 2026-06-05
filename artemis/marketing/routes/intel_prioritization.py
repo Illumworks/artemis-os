@@ -18,7 +18,6 @@ written here. No LLM calls.
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -38,8 +37,6 @@ from artemis.marketing.intel.trends import (
     persist_trend_snapshot,
 )
 from artemis.marketing.routes._auth import require_token
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/marketing/intel",
@@ -72,7 +69,7 @@ class CombinedPriorityRow(BaseModel):
     velocity_score: float | None
     velocity_rank: int | None
     has_time_sensitive_signal: bool
-    earliest_deadline_iso: str | None
+    earliest_signal_created_at_iso: str | None
 
 
 class PrioritizationResponse(BaseModel):
@@ -98,13 +95,14 @@ def _build_combined(
     """Merge velocity + time-sensitive lists into a deterministic combined ranking.
 
     Logic (simple, no new weighting):
-      1. Build a map: district_id → earliest deadline_proxy from time_sensitive.
+      1. Build a map: district_id → earliest signal created_at proxy from
+         time_sensitive.
       2. Build a map: district_id → DistrictVelocityRow from velocity.
       3. Emit intersection rows (both lists) ordered by velocity_score DESC.
       4. Emit time-sensitive-only rows in their original order.
       5. Emit velocity-only rows in their original order.
     """
-    # district_id → earliest deadline proxy ISO string
+    # district_id → earliest signal-created-at proxy ISO string
     ts_deadline_map: dict[int, str] = {}
     ts_district_ids_ordered: list[int] = []  # preserves time-sensitive ordering
     ts_seen: set[int] = set()
@@ -146,7 +144,7 @@ def _build_combined(
                     velocity_score=vrow.weighted_score,
                     velocity_rank=vrow.rank,
                     has_time_sensitive_signal=True,
-                    earliest_deadline_iso=ts_deadline_map[did],
+                    earliest_signal_created_at_iso=ts_deadline_map[did],
                 )
             )
 
@@ -166,7 +164,7 @@ def _build_combined(
                             velocity_score=None,
                             velocity_rank=None,
                             has_time_sensitive_signal=True,
-                            earliest_deadline_iso=ts_deadline_map[did],
+                            earliest_signal_created_at_iso=ts_deadline_map[did],
                         )
                     )
                     break
@@ -185,7 +183,7 @@ def _build_combined(
                     velocity_score=vrow.weighted_score,
                     velocity_rank=vrow.rank,
                     has_time_sensitive_signal=False,
-                    earliest_deadline_iso=None,
+                    earliest_signal_created_at_iso=None,
                 )
             )
 
@@ -272,16 +270,13 @@ async def get_prioritization(
         additional_scopes: list[tuple[str, str]] = []
         if state is not None:
             additional_scopes = [("state", state)]
-        try:
-            obs_id = await persist_trend_snapshot(
-                session,
-                snapshot=snapshot,
-                primary_scope_kind="workspace",
-                primary_scope_id="marketing",
-                additional_scopes=additional_scopes,
-            )
-        except Exception:
-            logger.exception("persist_trend_snapshot failed — returning response without obs_id")
+        obs_id = await persist_trend_snapshot(
+            session,
+            snapshot=snapshot,
+            primary_scope_kind="workspace",
+            primary_scope_id="marketing",
+            additional_scopes=additional_scopes,
+        )
 
     return PrioritizationResponse(
         as_of=as_of,

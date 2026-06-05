@@ -49,6 +49,8 @@ router = APIRouter(
 )
 
 _VALID_DECISIONS = {"approved", "rejected", "revision_requested"}
+_PIPE4_GATE_KINDS = frozenset({"signal_brief", "content_draft"})
+_MC2_SIGNAL_KINDS = frozenset({"signal_brief", "signal_gate1", "gate1"})
 _CONTENT_DRAFT_STATUS_MAP = {
     "approved": DeliverableState.approved,
     "rejected": DeliverableState.rejected,
@@ -149,25 +151,13 @@ async def decide(
     decided_by = body.reviewer or body.decided_by_camel or body.decided_by or "operator"
     decision_payload = _merge_decision_payload(approval, body, decision, decided_by)
 
-    resume_result: dict[str, Any] | None = None
-    if approval.kind == "content_draft":
-        resume_result = await _decide_content_draft_approval(
-            session,
-            approval=approval,
-            decision=decision,
-            decided_by=decided_by,
-            decision_payload=decision_payload,
-        )
-    else:
-        updated = await decide_approval(
-            session,
-            approval_id=approval_id,
-            decision=decision,
-            decided_by=decided_by,
-            decision_payload=decision_payload,
-        )
-        await session.commit()
-        approval = updated
+    approval, resume_result = await apply_approval_decision(
+        session,
+        approval=approval,
+        decision=decision,
+        decided_by=decided_by,
+        decision_payload=decision_payload,
+    )
 
     # OP1 approval-resume side effect: if this approval is for an automation_run
     # and it was just approved, dispatch the run in-process.
@@ -177,8 +167,7 @@ async def decide(
     # MC2: memory carryover for signal-brief gate approvals via generic route.
     # signal_queue.py already fires carryover for /{signal_id}/approve; this
     # covers the same Gate-1 surface when reached via the generic approvals API.
-    _mc2_signal_kinds = frozenset({"signal_brief", "signal_gate1", "gate1"})
-    if approval.kind in _mc2_signal_kinds:
+    if approval.kind in _MC2_SIGNAL_KINDS and not _is_pipe4_gate_approval(approval):
         from artemis.builder.memory_carryover import write_signal_gate1_approval_observation
 
         # subject_id may be int or str depending on context
@@ -193,21 +182,77 @@ async def decide(
                 raw_reason = decision_payload.get("reason")
                 if isinstance(raw_reason, str) and raw_reason:
                     _mc2_reason = raw_reason
-            asyncio.create_task(
-                write_signal_gate1_approval_observation(
-                    signal_id=signal_id_for_mc2,
-                    new_status=decision,
-                    decided_by=decided_by,
-                    decision_payload=decision_payload,
-                    rejection_reason=_mc2_reason if decision == "rejected" else None,
-                    agent_slug="marketing.qualifier.cross_reference",
+            if settings.env != "test":
+                asyncio.create_task(
+                    write_signal_gate1_approval_observation(
+                        signal_id=signal_id_for_mc2,
+                        new_status=decision,
+                        decided_by=decided_by,
+                        decision_payload=decision_payload,
+                        rejection_reason=_mc2_reason if decision == "rejected" else None,
+                        agent_slug="marketing.qualifier.cross_reference",
+                    )
                 )
-            )
 
     payload = await _serialize_with_session(session, approval)
     if resume_result is not None:
         payload["resume"] = resume_result
     return payload
+
+
+async def apply_approval_decision(
+    session: AsyncSession,
+    *,
+    approval: Approval,
+    decision: str,
+    decided_by: str,
+    decision_payload: dict[str, Any],
+) -> tuple[Approval, dict[str, Any] | None]:
+    """Apply one approval decision, including PIPE4 gate side effects when relevant."""
+    if approval.status != "pending":
+        raise bad_request(
+            f"Approval is already {approval.status}",
+            "approval_not_pending",
+        )
+
+    if _is_pipe4_gate_approval(approval):
+        return await _decide_pipe4_gate_approval(
+            session,
+            approval=approval,
+            decision=decision,
+            decided_by=decided_by,
+            decision_payload=decision_payload,
+            dispatch_mode="background",
+        )
+
+    updated = await decide_approval(
+        session,
+        approval_id=approval.id,
+        decision=decision,
+        decided_by=decided_by,
+        decision_payload=decision_payload,
+    )
+    await session.commit()
+    return updated, None
+
+
+async def find_pending_pipe4_approval(
+    session: AsyncSession,
+    *,
+    subject_id: str,
+) -> Approval | None:
+    """Return the newest pending PIPE4 approval row for ``run_id:node_id`` if present."""
+    result = await session.execute(
+        select(Approval)
+        .where(
+            Approval.subject_id == subject_id,
+            Approval.status == "pending",
+            Approval.kind.in_(tuple(_PIPE4_GATE_KINDS)),
+        )
+        .order_by(Approval.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _resume_automation_run(run_id: str) -> None:
@@ -317,10 +362,31 @@ async def _decide_content_draft_approval(
     decided_by: str,
     decision_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    _, resume = await _decide_pipe4_gate_approval(
+        session,
+        approval=approval,
+        decision=decision,
+        decided_by=decided_by,
+        decision_payload=decision_payload,
+        dispatch_mode="background",
+    )
+    assert resume is not None
+    return resume
+
+
+async def _decide_pipe4_gate_approval(
+    session: AsyncSession,
+    *,
+    approval: Approval,
+    decision: str,
+    decided_by: str,
+    decision_payload: dict[str, Any],
+    dispatch_mode: str,
+) -> tuple[Approval, dict[str, Any]]:
     run_id, node_id = _parse_gate_subject_id(approval.subject_id)
     if run_id is None or node_id is None:
         raise bad_request(
-            "content_draft approval is missing a PIPE4 gate subject_id",
+            f"{approval.kind} approval is missing a PIPE4 gate subject_id",
             "approval_missing_gate_subject",
         )
 
@@ -329,30 +395,32 @@ async def _decide_content_draft_approval(
     except ValueError as exc:
         raise not_found(str(exc), "pipeline_run_not_found") from exc
 
-    if run.target_candidate_id is None:
-        raise bad_request(
-            "content_draft approval is not attached to a campaign candidate",
-            "approval_missing_target_candidate",
-        )
+    sends_info: list[dict[str, Any]] = []
+    if approval.kind == "content_draft":
+        if run.target_candidate_id is None:
+            raise bad_request(
+                "content_draft approval is not attached to a campaign candidate",
+                "approval_missing_target_candidate",
+            )
 
-    deliverables = await _load_candidate_deliverables(session, run.target_candidate_id)
-    target_deliverables = [d for d in deliverables if d.status == DeliverableState.draft_ready]
-    if not target_deliverables:
-        raise bad_request(
-            "No draft_ready deliverables are available for this Gate-2 decision",
-            "approval_no_reviewable_deliverables",
-        )
+        deliverables = await _load_candidate_deliverables(session, run.target_candidate_id)
+        target_deliverables = [d for d in deliverables if d.status == DeliverableState.draft_ready]
+        if not target_deliverables:
+            raise bad_request(
+                "No draft_ready deliverables are available for this Gate-2 decision",
+                "approval_no_reviewable_deliverables",
+            )
 
-    target_state = _CONTENT_DRAFT_STATUS_MAP[decision]
-    for deliverable in target_deliverables:
-        await transition(
-            session,
-            "deliverable",
-            deliverable.id,
-            target_state,
-            actor=decided_by,
-            reason=f"content_draft_{decision}",
-        )
+        target_state = _CONTENT_DRAFT_STATUS_MAP[decision]
+        for deliverable in target_deliverables:
+            await transition(
+                session,
+                "deliverable",
+                deliverable.id,
+                target_state,
+                actor=decided_by,
+                reason=f"content_draft_{decision}",
+            )
 
     approval = await decide_approval(
         session,
@@ -362,59 +430,54 @@ async def _decide_content_draft_approval(
         decision_payload=decision_payload,
     )
 
-    candidate = await session.get(CampaignCandidate, run.target_candidate_id)
-    if candidate is not None:
-        if decision == "revision_requested":
-            await transition(
-                session,
-                "workspace",
-                candidate.id,
-                WorkspaceState.revision_needed,
-                actor=decided_by,
-                reason="content_draft_revision_requested",
-            )
-        else:
-            await recompute_workspace_state_from_deliverables(
-                session,
-                candidate.id,
-                actor=decided_by,
-                reason="content_draft_decision",
-            )
+    candidate: CampaignCandidate | None = None
+    if approval.kind == "content_draft" and run.target_candidate_id is not None:
+        candidate = await session.get(CampaignCandidate, run.target_candidate_id)
+        if candidate is not None:
+            if decision == "revision_requested":
+                await transition(
+                    session,
+                    "workspace",
+                    candidate.id,
+                    WorkspaceState.revision_needed,
+                    actor=decided_by,
+                    reason="content_draft_revision_requested",
+                )
+            else:
+                await recompute_workspace_state_from_deliverables(
+                    session,
+                    candidate.id,
+                    actor=decided_by,
+                    reason="content_draft_decision",
+                )
 
-    # SEND2-B: enqueue send rows for each deliverable transitioned to 'approved'.
-    # Guarded behind the outbound-send feature flag so Gate-2 can remain an
-    # internal review-only workflow until Artemis is ready to expose sends.
-    sends_info: list[dict[str, Any]] = []
-    if settings.outbound_send_enabled and decision == "approved" and candidate is not None:
-        from artemis.marketing.sends import enqueue_send_for_deliverable
+        # SEND2-B: enqueue send rows for each deliverable transitioned to 'approved'.
+        # Guarded behind the outbound-send feature flag so Gate-2 can remain an
+        # internal review-only workflow until Artemis is ready to expose sends.
+        if settings.outbound_send_enabled and decision == "approved" and candidate is not None:
+            from artemis.marketing.sends import enqueue_send_for_deliverable
 
-        # Capture candidate_id before any expiry/reload so we don't trigger sync load.
-        _candidate_id = candidate.id
-        # Reload deliverables under their current state (post-transition flush).
-        # Re-fetch candidate to avoid stale state after expire.
-        fresh_candidate = await session.get(CampaignCandidate, _candidate_id)
-        fresh_deliverables = await _load_candidate_deliverables(session, _candidate_id)
-        if fresh_candidate is not None:
-            for d in fresh_deliverables:
-                # Only enqueue approved rows — queued_for_send rows are already queued.
-                # (idempotency guard — transition() would raise on re-enqueue).
-                if d.status == DeliverableState.approved.value:
-                    send = await enqueue_send_for_deliverable(
-                        session,
-                        candidate=fresh_candidate,
-                        deliverable=d,
-                        actor=decided_by,
-                    )
-                    sends_info.append(
-                        {
-                            "send_id": send.id,
-                            "status": send.status,
-                            "recipient_count": len(send.recipients)
-                            if isinstance(send.recipients, list)
-                            else 0,
-                            "skip_reason": send.skip_reason,
-                        }
-                    )
+            fresh_candidate = await session.get(CampaignCandidate, candidate.id)
+            fresh_deliverables = await _load_candidate_deliverables(session, candidate.id)
+            if fresh_candidate is not None:
+                for deliverable in fresh_deliverables:
+                    if deliverable.status == DeliverableState.approved.value:
+                        send = await enqueue_send_for_deliverable(
+                            session,
+                            candidate=fresh_candidate,
+                            deliverable=deliverable,
+                            actor=decided_by,
+                        )
+                        sends_info.append(
+                            {
+                                "send_id": send.id,
+                                "status": send.status,
+                                "recipient_count": len(send.recipients)
+                                if isinstance(send.recipients, list)
+                                else 0,
+                                "skip_reason": send.skip_reason,
+                            }
+                        )
 
     # Extract rejection reason from decision_payload defensively (payload is dict[str, Any])
     _content_rejection_reason: str | None = None
@@ -423,83 +486,132 @@ async def _decide_content_draft_approval(
         if isinstance(raw_reason, str) and raw_reason:
             _content_rejection_reason = raw_reason
 
-    pipeline_decision = "approved" if decision == "approved" else "rejected"
-    resumed = False
-    post_commit_status = run.status
-    if decision in {"approved", "rejected", "revision_requested"}:
-        from artemis.pipelines.routes import _dispatch_execution, _prepare_pipeline_resume
+    pipeline_decision = (
+        decision
+        if approval.kind != "content_draft"
+        else ("approved" if decision == "approved" else "rejected")
+    )
+    post_commit_status = await _resume_pipe4_gate_run(
+        session,
+        run=run,
+        approval_kind=approval.kind,
+        run_id=run_id,
+        node_id=node_id,
+        decision=pipeline_decision,
+        decided_by=decided_by,
+        rejection_reason=_content_rejection_reason,
+        dispatch_mode=dispatch_mode,
+    )
 
-        run, _ = await _prepare_pipeline_resume(
-            session,
-            run_id,
-            node_id=node_id,
-            decision=pipeline_decision,
-            actor=decided_by,
-            reason=_content_rejection_reason,
-        )
-        await session.commit()
-        _cancel_gate_timeout(run_id, node_id)
-        _dispatch_execution(run_id)
-        resumed = True
-        post_commit_status = run.status
-
-        # MC4: fire-and-forget for content_draft gate decisions.
-        # The generic resume_run HTTP route fires MC4 for pipeline-gate resumes,
-        # but content_draft approvals go through _decide_content_draft_approval
-        # directly — NOT through the resume_run route — so MC4 is not fired there.
-        # We fire it explicitly here.
-        # Fallback agent slug: writing_studio_adapter is the upstream agent for all
-        # content-draft gates in the standard marketing pipeline.
-        asyncio.create_task(
-            _fire_mc4_content_draft(
-                run_id=run_id,
-                pipeline_id=run.pipeline_id,
-                node_id=node_id,
-                decision=pipeline_decision,
-                decided_by=decided_by,
-                rejection_reason=_content_rejection_reason,
-            )
-        )
-    else:
-        await session.commit()
-
-    return {
+    return approval, {
         "runId": run_id,
         "nodeId": node_id,
         "pipelineDecision": pipeline_decision,
-        "resumed": resumed,
+        "resumed": True,
         "runStatus": post_commit_status,
         "sends": sends_info,
     }
 
 
-async def _fire_mc4_content_draft(
+async def _resume_pipe4_gate_run(
+    session: AsyncSession,
     *,
+    run: Any,
+    approval_kind: str,
     run_id: str,
-    pipeline_id: str,
     node_id: str,
     decision: str,
     decided_by: str,
     rejection_reason: str | None,
-) -> None:
-    """Fire-and-forget MC4 observation for content_draft gate decisions.
+    dispatch_mode: str,
+) -> str:
+    """Commit one PIPE4 gate decision, continue execution, and enqueue MC4."""
+    from artemis.pipelines.routes import _dispatch_execution, _prepare_pipeline_resume
 
-    Agent slug defaults to marketing.content.writing_studio_adapter which is
-    the upstream agent for all standard content-draft gates in the marketing
-    pipeline. If a future pipeline uses a different content agent, pass its
-    slug explicitly.
-    """
+    agent_slug = await _resolve_pipe4_agent_slug(
+        session,
+        pipeline_id=run.pipeline_id,
+        node_id=node_id,
+        approval_kind=approval_kind,
+    )
+    run, _ = await _prepare_pipeline_resume(
+        session,
+        run_id,
+        node_id=node_id,
+        decision=decision,
+        actor=decided_by,
+        reason=rejection_reason,
+    )
+    await session.commit()
+    _cancel_gate_timeout(run_id, node_id)
+
+    if dispatch_mode == "inline":
+        import artemis.db as _db
+        from artemis.pipelines.executor import PipelineExecutor
+
+        async with _db.SessionLocal() as resume_session:
+            executor = PipelineExecutor(run_id)
+            await executor.run(resume_session)
+            await resume_session.commit()
+            refreshed_run = await pipeline_repo.get_pipeline_run(resume_session, run_id)
+            post_commit_status = refreshed_run.status
+    else:
+        _dispatch_execution(run_id)
+        post_commit_status = run.status
+
+    if settings.env != "test":
+        asyncio.create_task(
+            _fire_mc4_pipe4_decision(
+                run=run,
+                node_id=node_id,
+                decision=decision,
+                decided_by=decided_by,
+                rejection_reason=rejection_reason,
+                agent_slug=agent_slug,
+            )
+        )
+    return post_commit_status
+
+
+async def _resolve_pipe4_agent_slug(
+    session: AsyncSession,
+    *,
+    pipeline_id: str,
+    node_id: str,
+    approval_kind: str,
+) -> str | None:
+    from artemis.pipelines.routes import _resolve_upstream_agent_slug
+
+    try:
+        pipeline = await pipeline_repo.get_pipeline(session, pipeline_id)
+        return _resolve_upstream_agent_slug(node_id, pipeline.nodes or [], pipeline.edges or [])
+    except Exception:
+        if approval_kind == "content_draft":
+            return "marketing.content.writing_studio_adapter"
+        return None
+
+
+async def _fire_mc4_pipe4_decision(
+    *,
+    run: Any,
+    node_id: str,
+    decision: str,
+    decided_by: str,
+    rejection_reason: str | None,
+    agent_slug: str | None,
+) -> None:
+    """Fire-and-forget MC4 observation for any PIPE4 gate decision."""
     from artemis.builder.memory_carryover import write_pipeline_gate_decision_observation
 
     await write_pipeline_gate_decision_observation(
-        pipeline_run_id=run_id,
-        pipeline_id=pipeline_id,
+        pipeline_run_id=run.id,
+        pipeline_id=run.pipeline_id,
         node_id=node_id,
         decision=decision,
         decided_by=decided_by,
-        decision_payload={"pipeline_name": pipeline_id},
+        decision_payload={"pipeline_name": run.pipeline_id},
         rejection_reason=rejection_reason,
-        agent_slug="marketing.content.writing_studio_adapter",
+        agent_slug=agent_slug,
     )
 
 
@@ -520,6 +632,11 @@ def _parse_gate_subject_id(subject_id: str) -> tuple[str | None, str | None]:
         return None, None
     run_id, node_id = subject_id.split(":", 1)
     return run_id or None, node_id or None
+
+
+def _is_pipe4_gate_approval(approval: Approval) -> bool:
+    run_id, node_id = _parse_gate_subject_id(approval.subject_id)
+    return approval.kind in _PIPE4_GATE_KINDS and run_id is not None and node_id is not None
 
 
 def _cancel_gate_timeout(run_id: str, node_id: str) -> None:

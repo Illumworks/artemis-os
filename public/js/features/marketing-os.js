@@ -4331,8 +4331,8 @@ export function renderMarketingPrioritization(payload, { stateFilter = '' } = {}
 
   const rows = combined.map((row, idx) => {
     const why = _buildPrioritizationWhy(row);
-    const deadline = row.has_time_sensitive_signal && row.earliest_deadline_iso
-      ? `<span class="mkt-prioritization-deadline-est" title="Estimate based on created_at + urgency tier — no hard deadline column in data">est. ~${esc(_formatPrioritizationDeadline(row.earliest_deadline_iso))}</span>`
+    const deadline = row.has_time_sensitive_signal && row.earliest_signal_created_at_iso
+      ? `<span class="mkt-prioritization-deadline-est" title="Estimate based on signal created_at + urgency tier — no hard deadline column in data">est. ~${esc(_formatPrioritizationDeadline(row.earliest_signal_created_at_iso))}</span>`
       : '';
     const stateLabel = row.state ? esc(row.state) : '—';
     const tierLabel = row.tier ? esc(row.tier) : '—';

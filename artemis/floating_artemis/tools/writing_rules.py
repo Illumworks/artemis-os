@@ -20,6 +20,7 @@ _SURFACE = "[surface:writing-rules]"
 
 async def _list_writing_rules(inp: dict[str, Any]) -> str:
     profile_id = inp.get("profile_id")
+    limit = int(inp.get("limit", 30))
     try:
         import artemis.db as _db
         from artemis.writing_rules import repository as repo
@@ -31,7 +32,7 @@ async def _list_writing_rules(inp: dict[str, Any]) -> str:
             )
         if not rules:
             return "No writing rules found."
-        lines = [f"[{r.id}] [{r.rule_type}] {r.title}" for r in rules]
+        lines = [f"[{r.id}] [{r.rule_type}] {r.title}" for r in rules[:limit]]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_writing_rules failed: {exc}"
@@ -51,7 +52,26 @@ async def _propose_writing_rule(inp: dict[str, Any]) -> str:
         "description": description,
         "profile_id": profile_id,
     }
-    return f"Writing rule proposal (pending confirmation):\n{json.dumps(proposal, indent=2)}"
+    try:
+        import artemis.db as _db
+        from artemis.writing_rules import repository as repo
+
+        async with _db.SessionLocal() as session:
+            row = await repo.create_training_candidate(
+                session,
+                profile_id=int(profile_id) if profile_id is not None else None,
+                draft_id=None,
+                candidate_type=rule_type,
+                proposed_text=description or title,
+                rationale=json.dumps({"title": title, "source": "floating_artemis"}),
+                scope={"title": title, "rule_type": rule_type},
+            )
+            await session.commit()
+        return (
+            f"Writing rule proposal saved: candidate_id={row.id}\n{json.dumps(proposal, indent=2)}"
+        )
+    except Exception as exc:
+        return f"propose_writing_rule failed: {exc}"
 
 
 LIST_WRITING_RULES = Tool(

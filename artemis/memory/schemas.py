@@ -11,6 +11,8 @@ ScopeKind = Literal[
     "project",
     "workspace",
     "brand",
+    "state",
+    "campaign_family",
     "agent",
     "skill",
     "global",

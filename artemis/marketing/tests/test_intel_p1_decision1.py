@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.marketing.models  # noqa: F401
@@ -36,6 +36,7 @@ from artemis.marketing.repository import (
     create_signal,
     save_initiation_proposal,
 )
+from artemis.memory.models import MemoryObservation, MemoryObservationScope
 from artemis.pipelines import repository as pipeline_repo
 from artemis.pipelines.seeds.marketing_pipeline import AGENT_IDS, seed_marketing_pipeline
 
@@ -252,6 +253,25 @@ async def _seed_decision_observations(
     return approve_id, reject_id
 
 
+async def _seed_manual_decision_observation(
+    *,
+    category: str,
+    content: str,
+) -> int:
+    from artemis.builder.memory_carryover import _multi_scope_observation_write
+
+    return await _multi_scope_observation_write(
+        primary_scope_kind="workspace",
+        primary_scope_id="marketing",
+        additional_scope_kinds=["campaign_family"],
+        additional_scope_ids=["obc"],
+        content=content,
+        category=category,
+        confidence_origin="test_seed",
+        source_quality=0.85,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -342,6 +362,34 @@ async def test_decision_history_reads_seeded_observations(
         assert match["decision"] in {"approved", "rejected"}
         assert "summary" in match
         assert "createdAt" in match
+
+
+@pytest.mark.asyncio
+async def test_decision_history_ignores_not_rejected_false_positive(
+    client: AsyncClient,
+    clean_session: AsyncSession,
+) -> None:
+    """Standalone 'not rejected' prose should not be counted as a rejection."""
+    run_id = await _make_gate_run(clean_session)
+    candidate_id = await _seed_candidate(clean_session, run_id=run_id)
+    await clean_session.commit()
+
+    await _seed_decision_observations(clean_session)
+    await _seed_manual_decision_observation(
+        category="signal_gate1_decision",
+        content=(
+            "Review note for obc campaign in TX. The district was not rejected in the "
+            "previous cycle and there were no rejection concerns."
+        ),
+    )
+
+    resp = await client.get(f"/api/marketing/campaigns/{candidate_id}/initiation-proposal")
+    assert resp.status_code == 200, resp.text
+
+    dh = resp.json()["trendContext"]["decisionHistory"]
+    assert dh["priorApproves"] == 1
+    assert dh["priorRejects"] == 1
+    assert all("not rejected" not in match["summary"].lower() for match in dh["topMatches"])
 
 
 @pytest.mark.asyncio
@@ -449,6 +497,49 @@ async def test_trend_context_determinism(
         f"(got {tc1['momentum']['delta_ratio']!r} vs {tc2['momentum']['delta_ratio']!r})"
     )
     assert tc1["comparables"]["comparable_count"] == tc2["comparables"]["comparable_count"]
+
+
+@pytest.mark.asyncio
+async def test_initiation_proposal_persists_trend_snapshot(
+    client: AsyncClient,
+    clean_session: AsyncSession,
+) -> None:
+    """The Decision-1 enrichment path should persist a trend snapshot with marketing scopes."""
+    run_id = await _make_gate_run(clean_session)
+    candidate_id = await _seed_candidate(clean_session, run_id=run_id)
+    await clean_session.commit()
+
+    resp = await client.get(f"/api/marketing/campaigns/{candidate_id}/initiation-proposal")
+    assert resp.status_code == 200, resp.text
+
+    obs = (
+        (
+            await clean_session.execute(
+                select(MemoryObservation)
+                .where(MemoryObservation.category == "trend_snapshot")
+                .order_by(MemoryObservation.id.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert obs is not None
+
+    scopes = (
+        (
+            await clean_session.execute(
+                select(MemoryObservationScope).where(
+                    MemoryObservationScope.observation_id == obs.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    scope_keys = {(scope.scope_kind, scope.scope_id) for scope in scopes}
+    assert ("workspace", "marketing") in scope_keys
+    assert ("state", "TX") in scope_keys
+    assert ("campaign_family", "obc") in scope_keys
 
 
 @pytest.mark.asyncio

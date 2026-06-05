@@ -95,7 +95,7 @@ class TimeSensitiveSignalRow(BaseModel):
 
     deadline_source documents which field was used as the deadline proxy.
     When no structured deadline field exists in the schema (see module
-    docstring in trends.py), this will be 'created_at_plus_urgency'.
+    docstring in trends.py), this will be 'created_at_urgency_proxy'.
     """
 
     model_config = ConfigDict(frozen=True)

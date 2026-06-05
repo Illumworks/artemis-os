@@ -639,62 +639,91 @@ async def resume_run(
     3. Cancels the scheduled timeout job for this gate.
     4. Re-dispatches the executor in background to continue from next node.
     """
-    run, _ = await _prepare_pipeline_resume(
-        session,
-        run_id,
-        node_id=body.node_id,
-        decision=body.decision,
-        actor=body.actor,
-        reason=body.reason,
+    from artemis.marketing.routes.approvals import (
+        apply_approval_decision,
+        find_pending_pipe4_approval,
     )
-    await session.commit()
 
-    # Cancel the scheduled timeout job
-    try:
-        import contextlib
-
-        from artemis.pipelines.scheduler import get_pipeline_scheduler
-
-        scheduler = get_pipeline_scheduler()
-        if scheduler.running:
-            job_id = f"gate_timeout_{run_id}_{body.node_id}"
-            with contextlib.suppress(Exception):
-                scheduler.remove_job(job_id)
-    except Exception:
-        logger.warning("Could not cancel timeout job for run %s gate %s", run_id, body.node_id)
-
-    # Re-dispatch executor in background
-    _dispatch_execution(run_id)
-
-    # MC4: fire-and-forget memory carryover (failure must not break resume)
-    # Resolve the upstream agent slug by inspecting the pipeline definition.
-    # Fall back to None (no agent scope) if the pipeline cannot be loaded or
-    # the gate has no identifiable upstream agent_invocation node.
-    _agent_slug_mc4: str | None = None
-    try:
-        _pipeline = await repo.get_pipeline(session, run.pipeline_id)
-        _agent_slug_mc4 = _resolve_upstream_agent_slug(
-            body.node_id, _pipeline.nodes or [], _pipeline.edges or []
-        )
-    except Exception:
-        pass  # non-fatal; falls back to None (no agent scope)
-
-    import asyncio as _asyncio
-
-    from artemis.builder.memory_carryover import write_pipeline_gate_decision_observation
-
-    _asyncio.create_task(
-        write_pipeline_gate_decision_observation(
-            pipeline_run_id=run_id,
-            pipeline_id=run.pipeline_id,
-            node_id=body.node_id,
+    subject_id = f"{run_id}:{body.node_id}"
+    approval = await find_pending_pipe4_approval(session, subject_id=subject_id)
+    if approval is not None:
+        await apply_approval_decision(
+            session,
+            approval=approval,
             decision=body.decision,
             decided_by=body.actor or "operator",
-            decision_payload={"pipeline_name": run.pipeline_id},
-            rejection_reason=body.reason,
-            agent_slug=_agent_slug_mc4,
+            decision_payload={
+                **(
+                    dict(approval.decision_payload)
+                    if isinstance(approval.decision_payload, dict)
+                    else {}
+                ),
+                "decision": body.decision,
+                "decided_by": body.actor or "operator",
+                "decided_at": datetime.now(UTC).isoformat(),
+                **({"reason": body.reason} if body.reason else {}),
+            },
         )
-    )
+    else:
+        run, _ = await _prepare_pipeline_resume(
+            session,
+            run_id,
+            node_id=body.node_id,
+            decision=body.decision,
+            actor=body.actor,
+            reason=body.reason,
+        )
+        await session.commit()
+
+        # Cancel the scheduled timeout job
+        try:
+            import contextlib
+
+            from artemis.pipelines.scheduler import get_pipeline_scheduler
+
+            scheduler = get_pipeline_scheduler()
+            if scheduler.running:
+                job_id = f"gate_timeout_{run_id}_{body.node_id}"
+                with contextlib.suppress(Exception):
+                    scheduler.remove_job(job_id)
+        except Exception:
+            logger.warning("Could not cancel timeout job for run %s gate %s", run_id, body.node_id)
+
+        # Re-dispatch executor in background
+        _dispatch_execution(run_id)
+
+        # MC4: fire-and-forget memory carryover (failure must not break resume)
+        # Resolve the upstream agent slug by inspecting the pipeline definition.
+        # Fall back to None (no agent scope) if the pipeline cannot be loaded or
+        # the gate has no identifiable upstream agent_invocation node.
+        _agent_slug_mc4: str | None = None
+        try:
+            _pipeline = await repo.get_pipeline(session, run.pipeline_id)
+            _agent_slug_mc4 = _resolve_upstream_agent_slug(
+                body.node_id, _pipeline.nodes or [], _pipeline.edges or []
+            )
+        except Exception:
+            pass  # non-fatal; falls back to None (no agent scope)
+
+        from artemis.config import settings as _settings
+
+        if _settings.env != "test":
+            import asyncio as _asyncio
+
+            from artemis.builder.memory_carryover import write_pipeline_gate_decision_observation
+
+            _asyncio.create_task(
+                write_pipeline_gate_decision_observation(
+                    pipeline_run_id=run_id,
+                    pipeline_id=run.pipeline_id,
+                    node_id=body.node_id,
+                    decision=body.decision,
+                    decided_by=body.actor or "operator",
+                    decision_payload={"pipeline_name": run.pipeline_id},
+                    rejection_reason=body.reason,
+                    agent_slug=_agent_slug_mc4,
+                )
+            )
 
     run = await repo.get_pipeline_run(session, run_id)
     return _run_to_dict(run)
@@ -767,21 +796,47 @@ async def slack_pipeline_approval_callback(
     # column dirty (the mutated gate dict is shared with the loaded value, so
     # SQLAlchemy detected no change), the decision never persisted, and the run
     # silently re-suspended on resume.
+    from artemis.marketing.routes.approvals import (
+        apply_approval_decision,
+        find_pending_pipe4_approval,
+    )
+
     try:
-        await _prepare_pipeline_resume(
-            session,
-            run_id,
-            node_id=node_id,
-            decision=decision,
-            actor=actor_email or "slack_user",
-        )
-        await session.commit()
+        approval = await find_pending_pipe4_approval(session, subject_id=f"{run_id}:{node_id}")
+        if approval is not None:
+            await apply_approval_decision(
+                session,
+                approval=approval,
+                decision=decision,
+                decided_by=actor_email or "slack_user",
+                decision_payload={
+                    **(
+                        dict(approval.decision_payload)
+                        if isinstance(approval.decision_payload, dict)
+                        else {}
+                    ),
+                    "decision": decision,
+                    "decided_by": actor_email or "slack_user",
+                    "decided_at": datetime.now(UTC).isoformat(),
+                    "source": "slack_callback",
+                },
+            )
+        else:
+            await _prepare_pipeline_resume(
+                session,
+                run_id,
+                node_id=node_id,
+                decision=decision,
+                actor=actor_email or "slack_user",
+            )
+            await session.commit()
     except HTTPException:
         # Unknown run, gate not suspended, or invalid decision: ack silently.
         # Slack interaction endpoints must always 200 or the button errors out.
         return {"ok": True}
 
-    _dispatch_execution(run_id)
+    if approval is None:
+        _dispatch_execution(run_id)
 
     return {"ok": True}
 

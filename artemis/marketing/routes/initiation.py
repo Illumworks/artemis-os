@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,6 +42,33 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
+
+_EXPLICIT_REJECT_RE = re.compile(r"\brejected\s+(?:signal|pipeline|gate)\b|\bdeclined\b")
+_EXPLICIT_APPROVE_RE = re.compile(r"\bapproved\s+(?:signal|pipeline|gate)\b")
+_REJECT_WORD_RE = re.compile(r"\breject(?:ed|ion)?\b")
+_APPROVE_WORD_RE = re.compile(r"\bapprove(?:d)?\b")
+_REJECT_FALSE_POSITIVE_RE = re.compile(r"\b(?:not rejected|no rejection)\b")
+
+
+def _classify_decision_history_content(content: str) -> str | None:
+    """Classify a decision-history observation as approved/rejected/unknown.
+
+    Prefer the fixed MC2/MC4 content templates first, then fall back to
+    word-boundary matching while excluding known false-positive phrases such as
+    "not rejected" and "no rejection".
+    """
+    content_lower = content.lower()
+    if _EXPLICIT_REJECT_RE.search(content_lower):
+        return "rejected"
+    if _EXPLICIT_APPROVE_RE.search(content_lower):
+        return "approved"
+    if _REJECT_FALSE_POSITIVE_RE.search(content_lower):
+        return None
+    if _REJECT_WORD_RE.search(content_lower):
+        return "rejected"
+    if _APPROVE_WORD_RE.search(content_lower):
+        return "approved"
+    return None
 
 
 class InitiateCampaignRequest(BaseModel):
@@ -243,6 +271,8 @@ async def initiate(
         message = str(exc)
         if "already initiated" in message:
             raise conflict(message, "campaign_already_initiated") from exc
+        if "is rejected and cannot be initiated" in message:
+            raise conflict(message, "campaign_rejected") from exc
         raise bad_request(message, "campaign_initiation_invalid") from exc
 
     new_run = await pipeline_repo.create_pipeline_run(
@@ -378,24 +408,21 @@ async def _fetch_decision_history(
     # Filter to the two target categories
     filtered = [r for r in results if r.category in _DECISION_HISTORY_CATEGORIES]
 
+    classified: list[tuple[Any, str]] = []
     prior_approves = 0
     prior_rejects = 0
     for obs in filtered:
-        content_lower = obs.content.lower()
-        if "reject" in content_lower or "rejected" in content_lower or "declined" in content_lower:
+        decision_label = _classify_decision_history_content(obs.content)
+        if decision_label is None:
+            continue
+        classified.append((obs, decision_label))
+        if decision_label == "rejected":
             prior_rejects += 1
         else:
-            # approved, gate1_approved, gate_approved, etc.
             prior_approves += 1
 
     top: list[dict[str, Any]] = []
-    for obs in filtered[:top_matches]:
-        # Derive a short decision label from content text
-        content_lower = obs.content.lower()
-        if "reject" in content_lower or "rejected" in content_lower or "declined" in content_lower:
-            decision_label = "rejected"
-        else:
-            decision_label = "approved"
+    for obs, decision_label in classified[:top_matches]:
         # Trim content to a short snippet (first 200 chars)
         summary = obs.content[:200].strip()
         if len(obs.content) > 200:
@@ -465,40 +492,35 @@ async def _build_trend_context(
         logger.warning("trend_context computation failed", exc_info=True)
         return {"resolved": False, "reason": "computation_error"}
 
-    # Optionally persist a trend snapshot — wrap in try/except so a write failure
-    # never breaks the enrichment response.
-    try:
-        from artemis.marketing.intel.schemas import TrendSnapshot
-        from artemis.marketing.intel.trends import persist_trend_snapshot
+    from artemis.marketing.intel.schemas import TrendSnapshot
+    from artemis.marketing.intel.trends import persist_trend_snapshot
 
-        snapshot = TrendSnapshot(
-            as_of=_as_of,
-            theme=theme,
-            region=region,
-            snapshot_kind="momentum",
-            content_summary=(
-                f"Momentum snapshot for {theme}/{region or 'all'} at {_as_of.isoformat()}: "
-                f"current={momentum.current_window_count}, prior={momentum.prior_window_count}, "
-                f"delta_ratio={momentum.delta_ratio}"
-            ),
-            payload={
-                "momentum": momentum.model_dump(mode="json"),
-                "comparables": comparables.model_dump(mode="json"),
-            },
-        )
-        await persist_trend_snapshot(
-            session,
-            snapshot=snapshot,
-            primary_scope_kind="workspace",
-            primary_scope_id="marketing",
-            additional_scopes=(
-                [("state", region), ("campaign_family", theme)]
-                if region is not None
-                else [("campaign_family", theme)]
-            ),
-        )
-    except Exception:
-        logger.warning("trend_snapshot persistence failed (non-fatal)", exc_info=True)
+    snapshot = TrendSnapshot(
+        as_of=_as_of,
+        theme=theme,
+        region=region,
+        snapshot_kind="momentum",
+        content_summary=(
+            f"Momentum snapshot for {theme}/{region or 'all'} at {_as_of.isoformat()}: "
+            f"current={momentum.current_window_count}, prior={momentum.prior_window_count}, "
+            f"delta_ratio={momentum.delta_ratio}"
+        ),
+        payload={
+            "momentum": momentum.model_dump(mode="json"),
+            "comparables": comparables.model_dump(mode="json"),
+        },
+    )
+    await persist_trend_snapshot(
+        session,
+        snapshot=snapshot,
+        primary_scope_kind="workspace",
+        primary_scope_id="marketing",
+        additional_scopes=(
+            [("state", region), ("campaign_family", theme)]
+            if region is not None
+            else [("campaign_family", theme)]
+        ),
+    )
 
     return {
         "resolved": True,

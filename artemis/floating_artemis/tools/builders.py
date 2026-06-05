@@ -163,7 +163,29 @@ async def _propose_agent(inp: dict[str, Any]) -> str:
         "model": inp.get("model", "claude-sonnet-4-6"),
         "provider": inp.get("provider", "anthropic"),
     }
-    return f"Agent proposal ready (pending confirmation):\n{json.dumps(proposal, indent=2)}"
+    try:
+        import artemis.db as _db
+        from artemis.builder import repository as proposal_repo
+        from artemis.builders import repository as builders_repo
+
+        async with _db.SessionLocal() as session:
+            target_id: int | None = None
+            try:
+                target_id = (await builders_repo.get_agent(session, agent_id)).id
+            except ValueError:
+                target_id = None
+            row = await proposal_repo.create_definition_proposal(
+                session,
+                kind="agent",
+                target_id=target_id,
+                proposed_by="user",
+                proposed_definition=proposal,
+                citations={"source": "floating_artemis", "tool": "propose_agent"},
+            )
+            await session.commit()
+        return f"Agent proposal saved: proposal_id={row.id}\n{json.dumps(proposal, indent=2)}"
+    except Exception as exc:
+        return f"propose_agent failed: {exc}"
 
 
 async def _propose_workflow(inp: dict[str, Any]) -> str:
@@ -178,7 +200,29 @@ async def _propose_workflow(inp: dict[str, Any]) -> str:
         "name": name,
         "steps": inp.get("steps", []),
     }
-    return f"Workflow proposal ready (pending confirmation):\n{json.dumps(proposal, indent=2)}"
+    try:
+        import artemis.db as _db
+        from artemis.builder import repository as proposal_repo
+        from artemis.builders import repository as builders_repo
+
+        async with _db.SessionLocal() as session:
+            target_id: int | None = None
+            try:
+                target_id = (await builders_repo.get_workflow(session, workflow_id)).id
+            except ValueError:
+                target_id = None
+            row = await proposal_repo.create_definition_proposal(
+                session,
+                kind="workflow",
+                target_id=target_id,
+                proposed_by="user",
+                proposed_definition=proposal,
+                citations={"source": "floating_artemis", "tool": "propose_workflow"},
+            )
+            await session.commit()
+        return f"Workflow proposal saved: proposal_id={row.id}\n{json.dumps(proposal, indent=2)}"
+    except Exception as exc:
+        return f"propose_workflow failed: {exc}"
 
 
 async def _propose_skill(inp: dict[str, Any]) -> str:
@@ -194,7 +238,29 @@ async def _propose_skill(inp: dict[str, Any]) -> str:
         "description": inp.get("description", ""),
         "prompt": inp.get("prompt", ""),
     }
-    return f"Skill proposal ready (pending confirmation):\n{json.dumps(proposal, indent=2)}"
+    try:
+        import artemis.db as _db
+        from artemis.builder import repository as proposal_repo
+        from artemis.builders import repository as builders_repo
+
+        async with _db.SessionLocal() as session:
+            target_id: int | None = None
+            try:
+                target_id = (await builders_repo.get_skill(session, skill_id)).id
+            except ValueError:
+                target_id = None
+            row = await proposal_repo.create_definition_proposal(
+                session,
+                kind="skill",
+                target_id=target_id,
+                proposed_by="user",
+                proposed_definition=proposal,
+                citations={"source": "floating_artemis", "tool": "propose_skill"},
+            )
+            await session.commit()
+        return f"Skill proposal saved: proposal_id={row.id}\n{json.dumps(proposal, indent=2)}"
+    except Exception as exc:
+        return f"propose_skill failed: {exc}"
 
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
