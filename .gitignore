@@ -20,7 +20,6 @@ build/
 .idea/
 .vscode/
 .DS_Store
-uv.lock
 
 # Agent + sync scratch dirs (Sonnet Worker worktrees, clone shadows, sync state).
 .claude/
