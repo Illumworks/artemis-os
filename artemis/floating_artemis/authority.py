@@ -112,6 +112,7 @@ class PendingConfirmation:
     tool_name: str
     tool_input: dict[str, Any]
     layer: AuthorityLayer
+    prior_tool_results: list[dict[str, Any]] = field(default_factory=list)
     # asyncio.Event set when operator POSTs /tool-confirm
     event: Any = field(default_factory=lambda: None)
     decision: str | None = None  # "run" or "cancel"

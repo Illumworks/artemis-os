@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
-from artemis.agent.types import Message, RunResult, TextBlock, Usage
+from artemis.agent.types import Message, RunResult, TextBlock, ToolUseBlock, Usage
 from artemis.floating_artemis.authority import confirmation_store
 from artemis.floating_artemis.chat import (
     TurnResult,
@@ -110,7 +110,9 @@ async def test_handle_turn_simple_reply() -> None:
     adapter = FakeAdapter([ScriptedReply(text="Systems nominal. All good.")])
 
     with (
-        patch("artemis.floating_artemis.chat._get_voice_samples", return_value=["Already on it."]),
+        patch(
+            "artemis.floating_artemis.chat.select_voice_samples", return_value=["Already on it."]
+        ),
         patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
         patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
         patch("artemis.floating_artemis.chat._persist_messages"),
@@ -145,7 +147,7 @@ async def test_handle_turn_system_prompt_includes_voice_samples() -> None:
 
     with (
         patch.object(adapter, "complete", side_effect=capturing_complete),
-        patch("artemis.floating_artemis.chat._get_voice_samples", return_value=samples),
+        patch("artemis.floating_artemis.chat.select_voice_samples", return_value=samples),
         patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
         patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
         patch("artemis.floating_artemis.chat._persist_messages"),
@@ -203,7 +205,7 @@ async def test_handle_turn_layer3_tool_yields() -> None:
     confirmation_store._pending.clear()
 
     with (
-        patch("artemis.floating_artemis.chat._get_voice_samples", return_value=[]),
+        patch("artemis.floating_artemis.chat.select_voice_samples", return_value=[]),
         patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
         patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
         patch("artemis.floating_artemis.chat._persist_messages"),
@@ -218,6 +220,101 @@ async def test_handle_turn_layer3_tool_yields() -> None:
 
     assert result.stop_reason == "tool_pending"
     assert result.pending_tool_use_id is not None
+
+
+async def test_handle_turn_persists_assistant_tool_use_and_resume_keeps_prior_results() -> None:
+    session_id = "fa-mixed-tools"
+    proposal_name = "FA Mixed Proposal Agent"
+    confirmation_store._pending.clear()
+
+    adapter_first = FakeAdapter(
+        [
+            ScriptedReply(
+                tool_calls=[
+                    (
+                        "fa-qm-1",
+                        "query_memory",
+                        {"query": "what do we know?", "scope": "global:global"},
+                    ),
+                    ("fa-pa-1", "propose_agent", {"name": proposal_name}),
+                ],
+                stop_reason="tool_use",
+            )
+        ]
+    )
+
+    with (
+        patch("artemis.floating_artemis.chat.select_voice_samples", return_value=[]),
+        patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
+        patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
+        patch(
+            "artemis.floating_artemis.chat._persist_messages", new_callable=AsyncMock
+        ) as mock_persist,
+        patch("artemis.floating_artemis.chat.get_status", return_value={"available_surfaces": []}),
+        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a: a[0]),
+        patch("artemis.floating_artemis.chat._get_recent_meeting_context", return_value=None),
+        patch("artemis.floating_artemis.chat._broadcast"),
+        patch("artemis.floating_artemis.chat.write_turn_drawer"),
+    ):
+        turn1 = await handle_turn(
+            session_id=session_id,
+            user_text="Search memory, then stage the agent.",
+            adapter=adapter_first,
+        )
+
+    assert turn1.stop_reason == "tool_pending"
+    assert turn1.pending_tool_use_id == "fa-pa-1"
+
+    pending = confirmation_store.get("fa-pa-1")
+    assert pending is not None
+    assert [block["tool_use_id"] for block in pending.prior_tool_results] == ["fa-qm-1"]
+    assert mock_persist.await_args is not None
+    persist_kwargs = mock_persist.await_args.kwargs
+    assert persist_kwargs["session_id"] == session_id
+    assert persist_kwargs["user_text"] == "Search memory, then stage the agent."
+    assert [block["id"] for block in persist_kwargs["assistant_content"]] == ["fa-qm-1", "fa-pa-1"]
+
+    adapter_resume = FakeAdapter([ScriptedReply(text="Proposal staged and ready.")])
+    history = [
+        Message(role="user", content=[TextBlock(text="Search memory, then stage the agent.")]),
+        Message(
+            role="assistant",
+            content=[
+                ToolUseBlock(
+                    id="fa-qm-1", name="query_memory", input={"query": "what do we know?"}
+                ),
+                ToolUseBlock(id="fa-pa-1", name="propose_agent", input={"name": proposal_name}),
+            ],
+        ),
+    ]
+
+    with (
+        patch(
+            "artemis.floating_artemis.tools.builders._propose_agent",
+            new=AsyncMock(return_value="Agent proposal saved: proposal_id=77"),
+        ),
+        patch("artemis.floating_artemis.chat._load_message_history", return_value=history),
+        patch(
+            "artemis.floating_artemis.chat._persist_messages", new_callable=AsyncMock
+        ) as mock_resume_persist,
+        patch("artemis.floating_artemis.chat._broadcast"),
+        patch("artemis.floating_artemis.chat.write_turn_drawer"),
+    ):
+        turn2 = await resume_after_confirm(
+            session_id=session_id,
+            tool_use_id="fa-pa-1",
+            decision="run",
+            adapter=adapter_resume,
+        )
+
+    assert turn2.response_text == "Proposal staged and ready."
+    assert mock_resume_persist.await_args is not None
+    resume_kwargs = mock_resume_persist.await_args.kwargs
+    assert [block["tool_use_id"] for block in resume_kwargs["user_content"]] == [
+        "fa-qm-1",
+        "fa-pa-1",
+    ]
+    assert resume_kwargs["assistant_text"] == "Proposal staged and ready."
 
 
 async def test_handle_turn_claude_code_tool_turn_sets_session_context() -> None:
@@ -285,7 +382,7 @@ async def test_handle_turn_resume_after_confirm_run() -> None:
     confirmation_store._pending.clear()
 
     with (
-        patch("artemis.floating_artemis.chat._get_voice_samples", return_value=[]),
+        patch("artemis.floating_artemis.chat.select_voice_samples", return_value=[]),
         patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
         patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
         patch("artemis.floating_artemis.chat._persist_messages"),
@@ -333,7 +430,7 @@ async def test_handle_turn_resume_after_confirm_cancel() -> None:
     confirmation_store._pending.clear()
 
     with (
-        patch("artemis.floating_artemis.chat._get_voice_samples", return_value=[]),
+        patch("artemis.floating_artemis.chat.select_voice_samples", return_value=[]),
         patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
         patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
         patch("artemis.floating_artemis.chat._persist_messages"),

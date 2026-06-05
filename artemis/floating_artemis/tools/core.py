@@ -42,6 +42,8 @@ async def _query_memory(inp: dict[str, Any]) -> str:
     query = inp.get("query", "")
     scope = inp.get("scope", "global:global")
     limit = int(inp.get("limit", 10))
+    if scope == "all":
+        scope = "global:global"
 
     try:
         import artemis.db as _db
@@ -207,8 +209,8 @@ QUERY_MEMORY = Tool(
             "query": {"type": "string", "description": "Natural language query"},
             "scope": {
                 "type": "string",
-                "description": "Memory scope filter (e.g., 'global:global', 'agent:floating-artemis', 'all')",
-                "default": "all",
+                "description": "Memory scope filter (e.g., 'global:global', 'agent:floating-artemis')",
+                "default": "global:global",
             },
             "limit": {"type": "integer", "description": "Max results", "default": 10},
         },
