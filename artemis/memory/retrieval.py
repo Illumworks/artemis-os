@@ -186,11 +186,16 @@ def _compute_final_score(
 
 def _scope_sql_parts(
     scope_set: list[Scope],
-    prefix: str = "",
+    obs_alias: str = "",
 ) -> tuple[str, dict[str, str]]:
-    """Return (IN clause fragment, params dict) for scope filtering.
+    """Return (EXISTS subquery fragment, params dict) for scope filtering via join table.
 
-    prefix is prepended to column names, e.g. 'o.' for aliased tables.
+    Filters observations by matching any row in memory_observation_scopes for the
+    requested (scope_kind, scope_id) pairs — regardless of is_primary. This supports
+    MW1 multi-scope: an observation can be found via its primary scope OR any additional
+    scopes it was written with.
+
+    obs_alias is prepended to 'id' when the observations table is aliased, e.g. 'o.'.
     """
     params: dict[str, str] = {}
     tuples: list[str] = []
@@ -198,7 +203,14 @@ def _scope_sql_parts(
         params[f"_sk_{i}"] = s.scope_kind
         params[f"_si_{i}"] = s.scope_id
         tuples.append(f"(:_sk_{i}, :_si_{i})")
-    clause = f"({prefix}scope_kind, {prefix}scope_id) IN ({', '.join(tuples)})"
+    obs_id_col = f"{obs_alias}id" if obs_alias else "id"
+    clause = (
+        f"EXISTS ("
+        f"SELECT 1 FROM memory_observation_scopes mos "
+        f"WHERE mos.observation_id = {obs_id_col} "
+        f"AND (mos.scope_kind, mos.scope_id) IN ({', '.join(tuples)})"
+        f")"
+    )
     return clause, params
 
 
@@ -336,7 +348,7 @@ async def search_observations(
             _logger.warning("FTS search failed", exc_info=True)
 
     # ── Semantic candidates ───────────────────────────────────────────────────
-    if "semantic" in modes:
+    if "semantic" in modes and query.strip():
         from artemis.memory.embeddings import get_default_provider
 
         _provider = provider or get_default_provider()
@@ -347,7 +359,7 @@ async def search_observations(
             # Pre-serializing to a "[0.1,0.2,…]" text blob trips the codec
             # ("could not convert string to float") and quietly drops every
             # semantic candidate — pass the list through unchanged instead.
-            scope_clause_o, _ = _scope_sql_parts(scope_set, prefix="o.")
+            scope_clause_o, _ = _scope_sql_parts(scope_set, obs_alias="o.")
             sem_sql = text(f"""
                 SELECT o.id,
                        1.0 - (me.embedding <=> CAST(:_qvec AS vector)) AS semantic_sim
