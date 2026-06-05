@@ -93,7 +93,8 @@ async def test_run_scout_job_spawns_subprocess_with_correct_argv(
     assert argv[2] == scout_cli.MODULE_NAME == "artemis.marketing.scout_cli"
     assert argv[3] == "marketing.scout.regional_news"
     # cwd must be the repo root so the child's import path is right.
-    assert spawn_calls[0]["kwargs"]["cwd"].endswith("artemis-os")
+    # Compare against the actual _REPO_ROOT so this holds in worktrees too.
+    assert spawn_calls[0]["kwargs"]["cwd"] == str(scout_scheduler._REPO_ROOT)
     run_agent_guard.assert_not_awaited()
 
 

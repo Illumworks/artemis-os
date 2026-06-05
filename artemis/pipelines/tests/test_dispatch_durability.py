@@ -145,6 +145,8 @@ async def test_dispatch_execution_argv_targets_run_cli_module() -> None:
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
+    from artemis.pipelines import routes as _pipelines_routes_mod
+
     assert len(captured) == 1
     argv = captured[0]["argv"]
     assert argv[0] == sys.executable
@@ -152,7 +154,8 @@ async def test_dispatch_execution_argv_targets_run_cli_module() -> None:
     assert argv[2] == run_cli.MODULE_NAME == "artemis.pipelines.run_cli"
     assert argv[3] == "argv-shape-run"
     # cwd must be the repo root so the child's imports resolve.
-    assert captured[0]["kwargs"]["cwd"].endswith("artemis-os")
+    # Compare against the actual _REPO_ROOT so this holds in worktrees too.
+    assert captured[0]["kwargs"]["cwd"] == str(_pipelines_routes_mod._REPO_ROOT)
     in_loop_guard.assert_not_awaited()
 
 

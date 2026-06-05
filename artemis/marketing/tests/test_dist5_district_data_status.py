@@ -348,12 +348,15 @@ async def test_district_data_refresh_endpoint_spawns_subprocess(
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
+    from artemis.marketing.routes import signal_criteria as _sc_mod
+
     assert len(captured) == 1, "exactly one subprocess spawned per request"
     argv = captured[0]["argv"]
     assert argv[0] == _sys.executable
     assert argv[1] == "-m"
     assert argv[2] == district_refresh_cli.MODULE_NAME == "artemis.marketing.district_refresh_cli"
-    assert captured[0]["kwargs"]["cwd"].endswith("artemis-os")
+    # Compare against the actual _REPO_ROOT so this holds in worktrees too.
+    assert captured[0]["kwargs"]["cwd"] == str(_sc_mod._REPO_ROOT)
 
     # While the subprocess is still pretending to run, a second click must
     # 409 instead of spawning a duplicate.
