@@ -83,7 +83,23 @@ async def _propose_fix(inp: dict[str, Any]) -> str:
         "proposed_action": proposed_action,
         "risk": inp.get("risk", "low"),
     }
-    return f"Fix proposal (pending confirmation):\n{json.dumps(proposal, indent=2)}"
+    try:
+        import artemis.db as _db
+        from artemis.builder import repository as proposal_repo
+
+        async with _db.SessionLocal() as session:
+            row = await proposal_repo.create_definition_proposal(
+                session,
+                kind="automation",
+                target_id=None,
+                proposed_by="user",
+                proposed_definition=proposal,
+                citations={"source": "floating_artemis", "tool": "propose_fix"},
+            )
+            await session.commit()
+        return f"Fix proposal saved: proposal_id={row.id}\n{json.dumps(proposal, indent=2)}"
+    except Exception as exc:
+        return f"propose_fix failed: {exc}"
 
 
 HEALTH_CHECK = Tool(

@@ -309,7 +309,7 @@ async def test_handle_turn_broadcasts_failed_on_provider_error() -> None:
         patch("artemis.floating_artemis.chat._broadcast", side_effect=fake_broadcast),
         patch("artemis.floating_artemis.chat.classify_intent") as mock_intent,
         patch("artemis.floating_artemis.chat.get_status", return_value={}),
-        patch("artemis.floating_artemis.chat._get_voice_samples", return_value=[]),
+        patch("artemis.floating_artemis.chat.select_voice_samples", return_value=[]),
         patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
         patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
     ):
