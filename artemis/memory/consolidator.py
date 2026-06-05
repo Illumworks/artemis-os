@@ -1,8 +1,9 @@
 """Phase B3: LLM-based consolidation engine.
 
-Takes a list of candidate observations from one scope+category, calls Anthropic Haiku
-with prompt caching, and returns a ConsolidationProposal list. Applies proposals via
-the store write API (lossless: new obs → supersede old → link evidence).
+Takes a list of candidate observations from one scope+category, calls the
+provider-abstraction LLM (claude-code by default), with claude-haiku-4-5 when the
+provider supports model selection, and returns a ConsolidationProposal list. Applies
+proposals via the store write API (lossless: new obs → supersede old → link evidence).
 
 LOSSLESS CONTRACT: consolidation never DELETEs rows. It creates new observations that
 supersede the old via superseded_by, then links evidence back to every source row.
@@ -38,14 +39,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import anthropic
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.agent.client import CompletionRequest, ModelAdapter
+from artemis.agent.types import Message, TextBlock
 from artemis.memory.conflict_detector import detect_conflicts
 from artemis.memory.models import MemoryConflict, MemoryObservation
 from artemis.memory.schemas import Observation, Scope
 from artemis.memory.store import link_evidence, supersede_observation, write_observation
+from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
 
 _logger = logging.getLogger(__name__)
 
@@ -64,6 +67,14 @@ _MARKDOWN_CHARS = set("#*`_~[]|")
 _MIN_LEN = 15
 _MAX_LEN = 500
 _MARKDOWN_DENSITY_THRESHOLD = 0.15
+
+# ── Observability counters ────────────────────────────────────────────────────
+
+CONSOLIDATION_FAILURE_COUNTERS: dict[str, int] = {
+    "llm_call": 0,
+    "parse": 0,
+    "no_provider": 0,
+}
 
 
 # ── Heuristic filter ─────────────────────────────────────────────────────────
@@ -152,21 +163,33 @@ def _parse_proposals(raw: str, category: str, input_ids: set[int]) -> list[Conso
 async def consolidate_observations(
     observations: list[Observation],
     *,
-    client: anthropic.AsyncAnthropic | None = None,
+    adapter: ModelAdapter | None = None,
 ) -> list[ConsolidationProposal]:
-    """Call Haiku to consolidate a list of observations.
+    """Call the provider-abstraction LLM to consolidate a list of observations.
 
     Filters via heuristic_filter first. Returns [] if fewer than 2 observations
     survive filtering. On LLM or JSON failure: one structured retry, then returns [].
 
-    Uses prompt caching on the system block (cache_control: ephemeral).
+    Uses prompt caching on the system block via cache_system=True (handled by the
+    adapter). The adapter resolves the claude-code → codex → lm-studio → anthropic
+    cascade so no ANTHROPIC_API_KEY is required when the claude-code CLI is available.
+
+    Failure modes are loud (ERROR log + counter increment) rather than silent.
     """
     candidates = heuristic_filter(observations)
     if len(candidates) < 2:
         return []
 
-    if client is None:
-        client = anthropic.AsyncAnthropic()
+    # Resolve adapter once per call — not per attempt.
+    if adapter is None:
+        try:
+            adapter = resolve_adapter(provider="claude-code")
+        except NoProviderAvailableError as exc:
+            _logger.error(
+                "Consolidation LLM call failed: no provider available: %s", exc, exc_info=True
+            )
+            CONSOLIDATION_FAILURE_COUNTERS["no_provider"] += 1
+            return []
 
     system_prompt = _load_system_prompt()
     input_ids = {obs.id for obs in candidates}
@@ -185,20 +208,21 @@ async def consolidate_observations(
         indent=2,
     )
 
+    request = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text=payload)])],
+        system=system_prompt,
+        model=_HAIKU_MODEL,
+        max_tokens=2048,
+        cache_system=True,
+    )
+
     async def _call() -> str:
-        response = await client.messages.create(
-            model=_HAIKU_MODEL,
-            max_tokens=2048,
-            system=[
-                {
-                    "type": "text",
-                    "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[{"role": "user", "content": payload}],
-        )
-        return response.content[0].text  # type: ignore[union-attr]
+        response = await adapter.complete(request)
+        text_parts: list[str] = []
+        for block in response.message.content:
+            if isinstance(block, TextBlock):
+                text_parts.append(block.text)
+        return "".join(text_parts)
 
     for attempt in range(2):
         try:
@@ -209,9 +233,11 @@ async def consolidate_observations(
                 _logger.warning("Consolidation parse error (will retry): %s", exc)
                 continue
             _logger.error("Consolidation failed after retry: %s", exc)
+            CONSOLIDATION_FAILURE_COUNTERS["parse"] += 1
             return []
         except Exception as exc:
-            _logger.error("Consolidation LLM call failed: %s", exc)
+            _logger.error("Consolidation LLM call failed: %s", exc, exc_info=True)
+            CONSOLIDATION_FAILURE_COUNTERS["llm_call"] += 1
             return []
 
     return []

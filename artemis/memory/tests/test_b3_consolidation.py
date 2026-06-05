@@ -1,6 +1,7 @@
 """Tests for Phase B3: consolidation, incremental trigger, maintenance, and score channel.
 
-Consolidation tests that need the LLM use a lightweight mock — no real Anthropic calls.
+Consolidation tests that need the LLM use a lightweight fake adapter — no real Anthropic
+calls and no ANTHROPIC_API_KEY required.
 DB tests use the shared db_session fixture from conftest.
 """
 
@@ -9,11 +10,12 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.agent.client import CompletionRequest, CompletionResponse
+from artemis.agent.types import Message, TextBlock, Usage
 from artemis.memory.consolidator import (
     ConsolidationProposal,
     apply_consolidation,
@@ -71,13 +73,30 @@ def _make_obs(
     )
 
 
-def _make_llm_response(proposals: list[dict[str, Any]], removed_ids: list[int]) -> MagicMock:
+def _make_completion_response(
+    proposals: list[dict[str, Any]], removed_ids: list[int]
+) -> CompletionResponse:
+    """Build a CompletionResponse with the consolidation JSON as a single TextBlock."""
     payload = json.dumps({"optimized": proposals, "removed_ids": removed_ids, "summary": "test"})
-    content_block = MagicMock()
-    content_block.text = payload
-    response = MagicMock()
-    response.content = [content_block]
-    return response
+    return CompletionResponse(
+        message=Message(role="assistant", content=[TextBlock(text=payload)]),
+        stop_reason="end_turn",
+        usage=Usage(),
+    )
+
+
+class _FakeAdapter:
+    """Minimal fake ModelAdapter — records calls and returns scripted responses."""
+
+    def __init__(self, response: CompletionResponse | Exception) -> None:
+        self._response = response
+        self.call_count = 0
+
+    async def complete(self, request: CompletionRequest) -> CompletionResponse:
+        self.call_count += 1
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
 
 
 # ── SourceQualityHint ─────────────────────────────────────────────────────────
@@ -172,7 +191,7 @@ async def test_consolidate_happy_path_returns_proposals() -> None:
     obs1 = _make_obs(1, "Federal grant opportunity for early literacy programs was announced.")
     obs2 = _make_obs(2, "New Title I supplemental funding available for rural reading programs.")
 
-    llm_response = _make_llm_response(
+    fake_response = _make_completion_response(
         proposals=[
             {
                 "category": "discovery",
@@ -182,10 +201,9 @@ async def test_consolidate_happy_path_returns_proposals() -> None:
         ],
         removed_ids=[],
     )
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=llm_response)
+    fake_adapter = _FakeAdapter(fake_response)
 
-    result = await consolidate_observations([obs1, obs2], client=mock_client)
+    result = await consolidate_observations([obs1, obs2], adapter=fake_adapter)
     assert len(result) == 1
     assert result[0].source_quality == 0.9
     assert 1 in result[0].evidence_from_ids
@@ -196,7 +214,7 @@ async def test_consolidate_retries_on_bad_json() -> None:
     obs1 = _make_obs(1, "Federal grant opportunity for early literacy programs was announced.")
     obs2 = _make_obs(2, "Title I supplemental funding available for rural reading districts.")
 
-    good_response = _make_llm_response(
+    good_response = _make_completion_response(
         proposals=[
             {"category": "discovery", "content": "Merged insight.", "evidence_from_ids": [1, 2]}
         ],
@@ -205,19 +223,21 @@ async def test_consolidate_retries_on_bad_json() -> None:
 
     call_count = 0
 
-    async def _side_effect(**kwargs: Any) -> MagicMock:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            bad = MagicMock()
-            bad.content = [MagicMock(text="not valid json {{{")]
-            return bad
-        return good_response
+    class _RetryFakeAdapter:
+        async def complete(self, request: CompletionRequest) -> CompletionResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return CompletionResponse(
+                    message=Message(
+                        role="assistant", content=[TextBlock(text="not valid json {{{")]
+                    ),
+                    stop_reason="end_turn",
+                    usage=Usage(),
+                )
+            return good_response
 
-    mock_client = AsyncMock()
-    mock_client.messages.create = _side_effect
-
-    result = await consolidate_observations([obs1, obs2], client=mock_client)
+    result = await consolidate_observations([obs1, obs2], adapter=_RetryFakeAdapter())
     assert call_count == 2
     assert len(result) == 1
 
@@ -226,12 +246,14 @@ async def test_consolidate_returns_empty_after_two_failures() -> None:
     obs1 = _make_obs(1, "Federal grant opportunity for early literacy programs was announced.")
     obs2 = _make_obs(2, "New Title I supplemental funding available for rural reading programs.")
 
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(
-        return_value=MagicMock(content=[MagicMock(text="bad json")])
+    bad_response = CompletionResponse(
+        message=Message(role="assistant", content=[TextBlock(text="bad json")]),
+        stop_reason="end_turn",
+        usage=Usage(),
     )
+    fake_adapter = _FakeAdapter(bad_response)
 
-    result = await consolidate_observations([obs1, obs2], client=mock_client)
+    result = await consolidate_observations([obs1, obs2], adapter=fake_adapter)
     assert result == []
 
 
