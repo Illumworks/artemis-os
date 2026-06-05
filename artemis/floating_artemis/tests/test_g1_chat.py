@@ -8,14 +8,17 @@ from unittest.mock import patch
 import pytest
 
 from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
+from artemis.agent.types import Message, RunResult, TextBlock, Usage
 from artemis.floating_artemis.authority import confirmation_store
 from artemis.floating_artemis.chat import (
     TurnResult,
+    _build_auto_invoke_tool_registry,
     _build_system_prompt,
     _build_tool_registry,
     handle_turn,
     resume_after_confirm,
 )
+from artemis.floating_artemis.context import floating_session_id_var
 from artemis.floating_artemis.intent import IntentKind
 
 pytestmark = pytest.mark.asyncio
@@ -89,6 +92,15 @@ def test_build_tool_registry_marketing_when_signal_queue_available() -> None:
 def test_build_tool_registry_marketing_when_marketing_os_available() -> None:
     reg = _build_tool_registry(available_surfaces={"marketing-os"})
     assert "list_signals" in reg
+
+
+def test_build_auto_invoke_tool_registry_excludes_confirmation_tools() -> None:
+    auth = _build_tool_registry(available_surfaces={"okr"})
+    reg = _build_auto_invoke_tool_registry(auth, "fa-auto-1")
+
+    assert "query_memory" in reg
+    assert "write_memory" in reg
+    assert "propose_agent" not in reg
 
 
 # ── handle_turn with FakeAdapter ──────────────────────────────────────────────
@@ -206,6 +218,56 @@ async def test_handle_turn_layer3_tool_yields() -> None:
 
     assert result.stop_reason == "tool_pending"
     assert result.pending_tool_use_id is not None
+
+
+async def test_handle_turn_claude_code_tool_turn_sets_session_context() -> None:
+    from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+    adapter = ClaudeCodeAdapter.__new__(ClaudeCodeAdapter)
+    adapter._binary = "/usr/bin/true"
+    adapter._default_model = "claude-sonnet-4-6"
+
+    seen: dict[str, Any] = {}
+
+    async def _fake_run_turn(**kwargs: Any) -> RunResult:
+        tools = kwargs["tools"]
+        seen["session_id"] = floating_session_id_var.get()
+        seen["tool_names"] = [tool.name for tool in tools.specs()]
+        return RunResult(
+            messages=[
+                Message(role="user", content=[TextBlock(text="Search memory.")]),
+                Message(role="assistant", content=[TextBlock(text="Used the memory tools.")]),
+            ],
+            stop_reason="end_turn",
+            usage=Usage(),
+            iterations=1,
+        )
+
+    with (
+        patch("artemis.floating_artemis.chat.run_turn", side_effect=_fake_run_turn),
+        patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
+        patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
+        patch("artemis.floating_artemis.chat._persist_messages", return_value=1),
+        patch(
+            "artemis.floating_artemis.chat.get_status",
+            return_value={"available_surfaces": ["okr"]},
+        ),
+        patch("artemis.floating_artemis.chat._broadcast"),
+        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a: a[0]),
+        patch("artemis.floating_artemis.chat._get_recent_meeting_context", return_value=None),
+        patch("artemis.floating_artemis.chat.write_turn_drawer"),
+    ):
+        result = await handle_turn(
+            session_id="fa-session-tools",
+            user_text="Search memory for Jon.",
+            adapter=adapter,
+        )
+
+    assert result.response_text == "Used the memory tools."
+    assert seen["session_id"] == "fa-session-tools"
+    assert "query_memory" in seen["tool_names"]
+    assert "write_memory" in seen["tool_names"]
+    assert "propose_agent" not in seen["tool_names"]
 
 
 async def test_handle_turn_resume_after_confirm_run() -> None:

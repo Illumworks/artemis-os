@@ -26,21 +26,19 @@ from artemis.floating_artemis.authority import (
     PendingConfirmation,
     confirmation_store,
 )
+from artemis.floating_artemis.context import floating_session_id_var
 from artemis.floating_artemis.intent import IntentKind, classify_intent, handle_observability_intent
 from artemis.floating_artemis.memory import inject_memory_context, write_turn_drawer
 from artemis.floating_artemis.memory_read_cache import put as cache_put
 from artemis.floating_artemis.personality import PERSONALITY_PROFILE, select_voice_samples
 from artemis.floating_artemis.schemas import MemoryObservationDigest, MemoryReadEvent
+from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
 from artemis.floating_artemis.tools.builders import register_builders_tools
 from artemis.floating_artemis.tools.core import register_core_tools
-from artemis.floating_artemis.tools.granola_tools import register_granola_tools
-from artemis.floating_artemis.tools.jira_tools import register_jira_tools
 from artemis.floating_artemis.tools.marketing import register_marketing_tools
 from artemis.floating_artemis.tools.okr import register_okr_tools
 from artemis.floating_artemis.tools.system import register_system_tools
 from artemis.floating_artemis.tools.writing_rules import register_writing_rules_tools
-from artemis.integrations.gcal.tools import register_gcal_tools
-from artemis.integrations.slack.tools import register_slack_tools
 from artemis.providers import get_adapter
 from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 from artemis.routes.status import get_status
@@ -226,23 +224,7 @@ async def _get_recent_meeting_context(db_session: Any | None) -> str | None:
 
 
 def _build_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry:
-    registry = AuthorizedToolRegistry()
-    register_core_tools(registry)
-    register_builders_tools(registry)
-    register_system_tools(registry)
-    if "okr" in available_surfaces:
-        register_okr_tools(registry)
-    if "writing-rules" in available_surfaces:
-        register_writing_rules_tools(registry)
-    if "marketing-os" in available_surfaces or "signal-queue" in available_surfaces:
-        register_marketing_tools(registry)
-    register_slack_tools(registry)
-    register_gcal_tools(registry)
-    if "jira-board" in available_surfaces:
-        register_jira_tools(registry)
-    if "meetings" in available_surfaces:
-        register_granola_tools(registry)
-    return registry
+    return build_authorized_tool_registry(available_surfaces)
 
 
 # ── WS event helpers ──────────────────────────────────────────────────────────
@@ -502,21 +484,6 @@ async def handle_turn(
         session_id,
     )
 
-    # ── 5. Build tool registry ────────────────────────────────────────────────
-    auth_registry = _build_tool_registry(available_surfaces)
-
-    # Build a plain ToolRegistry that wraps the authorized one for the loop.
-    # Layer 3/4 tools get wrapped so we can intercept before execution.
-    tool_registry = _build_intercepting_tool_registry(auth_registry, session_id)
-
-    # ── 6. Broadcast turn started ─────────────────────────────────────────────
-    await _broadcast(
-        session_id, {"type": "floating_artemis.turn_started", "session_id": session_id}
-    )
-
-    # ── 7. Append user message and run ────────────────────────────────────────
-    messages = history + [user_message(user_text)]
-
     if adapter is None:
         resolved = await _resolve_adapter(session_id=session_id, db_session=db_session)
         if isinstance(resolved, str):
@@ -536,6 +503,31 @@ async def handle_turn(
                 usage=Usage(),
             )
         adapter = resolved
+
+    # ── 5. Build tool registry ────────────────────────────────────────────────
+    auth_registry = _build_tool_registry(available_surfaces)
+
+    from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+    is_claude_code_with_tools = isinstance(adapter, ClaudeCodeAdapter)
+
+    # Claude Code's MCP path runs tools in a subprocess and cannot surface the
+    # in-process layer-3/4 confirmation yield, so we only expose auto-invoke
+    # tools there. Other providers keep the full intercepting registry.
+    if is_claude_code_with_tools:
+        tool_registry = _build_auto_invoke_tool_registry(auth_registry, session_id)
+    else:
+        # Build a plain ToolRegistry that wraps the authorized one for the loop.
+        # Layer 3/4 tools get wrapped so we can intercept before execution.
+        tool_registry = _build_intercepting_tool_registry(auth_registry, session_id)
+
+    # ── 6. Broadcast turn started ─────────────────────────────────────────────
+    await _broadcast(
+        session_id, {"type": "floating_artemis.turn_started", "session_id": session_id}
+    )
+
+    # ── 7. Append user message and run ────────────────────────────────────────
+    messages = history + [user_message(user_text)]
 
     # Set up hooks for broadcasting events
     hooks = HookRegistry()
@@ -581,15 +573,30 @@ async def handle_turn(
     hooks.on("after_tool", after_tool_hook)
 
     try:
-        result = await run_turn(
-            adapter=adapter,
-            messages=messages,
-            tools=tool_registry,
-            system=system_prompt,
-            reasoning_effort=reasoning_effort,
-            speed_tier=speed_tier,
-            hooks=hooks,
-        )
+        if is_claude_code_with_tools and len(tool_registry) > 0:
+            token = floating_session_id_var.set(session_id)
+            try:
+                result = await run_turn(
+                    adapter=adapter,
+                    messages=messages,
+                    tools=tool_registry,
+                    system=system_prompt,
+                    reasoning_effort=reasoning_effort,
+                    speed_tier=speed_tier,
+                    hooks=hooks,
+                )
+            finally:
+                floating_session_id_var.reset(token)
+        else:
+            result = await run_turn(
+                adapter=adapter,
+                messages=messages,
+                tools=tool_registry,
+                system=system_prompt,
+                reasoning_effort=reasoning_effort,
+                speed_tier=speed_tier,
+                hooks=hooks,
+            )
     except _PendingConfirmationError as pending_exc:
         # A layer-3/4 tool was encountered — yield to operator.
         await _broadcast(
@@ -878,6 +885,36 @@ def _build_intercepting_tool_registry(
                 )
 
             plain.register(entry.tool, pending_impl)
+    return plain
+
+
+def _build_auto_invoke_tool_registry(
+    auth_registry: AuthorizedToolRegistry,
+    session_id: str,
+) -> ToolRegistry:
+    """Wrap only layer-1/2 tools for provider paths that cannot yield mid-turn."""
+    plain = ToolRegistry()
+    for entry in auth_registry.all_entries():
+        if entry.layer > 2:
+            continue
+        if entry.tool.name == "query_memory":
+            _orig_impl = entry.impl
+
+            async def _query_memory_with_emit(
+                inp: dict[str, Any],
+                _impl: Any = _orig_impl,
+                _sid: str = session_id,
+            ) -> str:
+                result_str: str = await _impl(inp)
+                try:
+                    await _emit_memory_read_event(_sid, inp)
+                except Exception:
+                    logger.debug("MemoryReadEvent emit failed", exc_info=True)
+                return result_str
+
+            plain.register(entry.tool, _query_memory_with_emit)
+        else:
+            plain.register(entry.tool, entry.impl)
     return plain
 
 

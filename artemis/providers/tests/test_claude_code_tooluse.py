@@ -16,10 +16,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from artemis.agent.client import CompletionRequest
-from artemis.agent.types import Message, TextBlock
+from artemis.agent.types import Message, TextBlock, Tool
+from artemis.floating_artemis.context import floating_session_id_var
 from artemis.providers.claude_code.adapter import (
     _DISALLOWED_BUILTINS,
     ClaudeCodeAdapter,
+    _build_floating_artemis_mcp_config,
     _build_launch_command,
     _build_mcp_config,
     allowed_tools_for,
@@ -88,6 +90,25 @@ def test_mcp_config_omits_pipeline_run_id_when_none() -> None:
     args = cfg["mcpServers"]["artemis"]["args"]
     assert "--pipeline-run-id" not in args
     assert args[-2:] == ["--run-id", "RUN-2"]
+
+
+def test_floating_artemis_mcp_config_carries_session_and_tool_names() -> None:
+    cfg = _build_floating_artemis_mcp_config(
+        session_id="fa-session-1",
+        tool_names=["query_memory", "write_memory"],
+    )
+    server = cfg["mcpServers"]["artemis"]
+    assert server["command"] == sys.executable
+    assert server["args"] == [
+        "-m",
+        "artemis.tools.mcp_server",
+        "--floating-session-id",
+        "fa-session-1",
+        "--tool-name",
+        "query_memory",
+        "--tool-name",
+        "write_memory",
+    ]
 
 
 # ── 2. allowed-tools correctness ─────────────────────────────────────────────────
@@ -258,6 +279,51 @@ async def test_run_with_tools_timeout_raises_and_cleans_up(tmp_path: Path) -> No
 
     assert exc_info.value.status_code == 408
     assert unlinked and not Path(unlinked[-1]).exists()
+
+
+@pytest.mark.asyncio
+async def test_complete_with_tools_uses_floating_session_context(tmp_path: Path) -> None:
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+
+    captured: dict[str, object] = {}
+
+    async def _fake_run_subprocess(cmd: list[str], prompt: str):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        captured["prompt"] = prompt
+        from artemis.agent.client import CompletionResponse
+        from artemis.agent.types import Usage
+
+        return CompletionResponse(
+            message=Message(role="assistant", content=[TextBlock(text="Used floating tool path.")]),
+            stop_reason="end_turn",
+            usage=Usage(),
+        )
+
+    request = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text="Search memory for Jon.")])],
+        tools=[
+            Tool(name="query_memory", description="d", input_schema={}),
+            Tool(name="write_memory", description="d", input_schema={}),
+        ],
+    )
+
+    token = floating_session_id_var.set("fa-session-2")
+    try:
+        with patch.object(adapter, "_run_subprocess", side_effect=_fake_run_subprocess):
+            resp = await adapter.complete(request)
+    finally:
+        floating_session_id_var.reset(token)
+
+    first_block = resp.message.content[0]
+    assert isinstance(first_block, TextBlock)
+    assert first_block.text == "Used floating tool path."
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert "--allowed-tools" in cmd
+    start = cmd.index("--allowed-tools") + 1
+    end = cmd.index("--disallowed-tools")
+    assert cmd[start:end] == ["mcp__artemis__query_memory", "mcp__artemis__write_memory"]
 
 
 @pytest.mark.asyncio

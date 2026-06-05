@@ -28,6 +28,16 @@ launched; the MCP server reads it at tool-call time.  The agent-run tools
 (``--agent-id``) and builder tools (``--builder-session-id``) are mutually
 exclusive; pass exactly one scope.
 
+Floating Artemis adds a third mode — session-scoped auto-invoke tool execution:
+
+    python -m artemis.tools.mcp_server \\
+        --floating-session-id <session_id> [--tool-name <name> ...]
+
+In this mode the server reconstructs Floating Artemis's tool registry for the
+current app surfaces, filters it to the exact ``--tool-name`` allowlist from
+the parent turn handler, and serves only layer-1/2 tools that are safe to run
+without the in-process confirmation yield.
+
 - Transport: stdio.
 - MCP server name: ``artemis``.
 - Tool naming: artemis ``signal_queue.write`` → MCP ``signal_queue_write``
@@ -69,6 +79,8 @@ import artemis.tools  # noqa: F401 — import side-effect registers all tool fac
 from artemis.agent.types import Tool, ToolImpl
 from artemis.builders import repository as repo
 from artemis.db import SessionLocal
+from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
+from artemis.routes.status import get_status
 from artemis.tools.context import ToolContext
 from artemis.tools.models import ToolInvocation
 from artemis.tools.registry import get_factory, known_tool_names
@@ -301,6 +313,76 @@ def _build_server(
         # Note: _log_invocation already committed the session; this second
         # commit is a no-op for tools that did no additional writes, and a
         # flush for tools that wrote signal_queue rows etc. in the same call.
+        await session.commit()
+        return [mcp_types.TextContent(type="text", text=result)]
+
+    return server
+
+
+async def build_floating_artemis_tool_set(
+    tool_names: set[str] | None = None,
+) -> dict[str, tuple[Tool, ToolImpl]]:
+    """Build the Floating Artemis auto-invoke tool set for MCP serving.
+
+    The subprocess reconstructs the current Floating Artemis registry from app
+    surfaces, then filters to the exact allowlist chosen by the parent turn
+    handler. Only layer-1/2 tools are exposed on this path because claude-code's
+    subprocess loop cannot yield back into Floating Artemis's in-process
+    confirmation flow for layer-3/4 tools.
+    """
+    try:
+        status = await get_status()
+        surfaces_raw = status.get("available_surfaces", []) if isinstance(status, dict) else []
+        available_surfaces = set(surfaces_raw if isinstance(surfaces_raw, list) else [])
+    except Exception:
+        logger.debug("floating MCP could not load status surfaces; falling back to empty set")
+        available_surfaces = set()
+
+    registry = build_authorized_tool_registry(available_surfaces)
+    wanted = tool_names or set()
+
+    tool_set: dict[str, tuple[Tool, ToolImpl]] = {}
+    for entry in registry.all_entries():
+        if entry.layer > 2:
+            continue
+        if wanted and entry.tool.name not in wanted:
+            continue
+        tool_set[mcp_tool_name(entry.tool.name)] = (entry.tool, entry.impl)
+    return tool_set
+
+
+def _build_floating_artemis_server(
+    session: AsyncSession,
+    tool_set: dict[str, tuple[Tool, ToolImpl]],
+) -> Server:
+    """Wire a low-level MCP server for Floating Artemis auto-invoke tools."""
+    server: Server = Server(SERVER_NAME)
+
+    @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
+    async def _list_tools() -> list[mcp_types.Tool]:
+        return [
+            mcp_types.Tool(
+                name=mcp_name,
+                description=tool_def.description,
+                inputSchema=tool_def.input_schema,
+            )
+            for mcp_name, (tool_def, _impl) in sorted(tool_set.items())
+        ]
+
+    @server.call_tool()  # type: ignore[untyped-decorator]
+    async def _call_tool(name: str, arguments: dict[str, object]) -> list[mcp_types.TextContent]:
+        entry = tool_set.get(name)
+        if entry is None:
+            return [mcp_types.TextContent(type="text", text=f"UNKNOWN_TOOL: {name}")]
+
+        _tool_def, impl = entry
+        try:
+            result = await impl(dict(arguments))
+        except Exception as exc:
+            await session.rollback()
+            logger.exception("floating_artemis tool %r raised; rolled back", name)
+            return [mcp_types.TextContent(type="text", text=f"TOOL_ERROR: {exc}")]
+
         await session.commit()
         return [mcp_types.TextContent(type="text", text=result)]
 
@@ -894,6 +976,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         help="Builder session id (CC19 Builder MCP tools).",
     )
+    # Floating Artemis scope — parent turn handler may pass repeated tool-name
+    # allowlist entries so the subprocess mirrors the in-process registry.
+    parser.add_argument(
+        "--floating-session-id",
+        default=None,
+        help="Floating Artemis session id for auto-invoke tools.",
+    )
+    parser.add_argument(
+        "--tool-name",
+        action="append",
+        default=None,
+        help="Tool name to expose for Floating Artemis mode. Repeat per tool.",
+    )
     return parser.parse_args(argv)
 
 
@@ -947,6 +1042,28 @@ async def _serve_builder(builder_session_id: int) -> int:
     return 0
 
 
+async def _serve_floating_artemis(
+    floating_session_id: str,
+    tool_names: list[str] | None,
+) -> int:
+    """Open a session and serve Floating Artemis auto-invoke tools over stdio."""
+    async with SessionLocal() as session:
+        tool_set = await build_floating_artemis_tool_set(set(tool_names or []))
+        logger.info(
+            "artemis MCP server (floating_artemis) bound to session=%s tools=%s",
+            floating_session_id,
+            sorted(tool_set),
+        )
+        server = _build_floating_artemis_server(session, tool_set)
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     args = _parse_args(argv)
@@ -956,10 +1073,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.builder_session_id is not None:
         return anyio.run(_serve_builder, args.builder_session_id)
 
+    if args.floating_session_id is not None:
+        return anyio.run(_serve_floating_artemis, args.floating_session_id, args.tool_name)
+
     # Agent-run scope (CC1/CC2): both --agent-id and --run-id are required.
     if not args.agent_id or not args.run_id:
         print(
-            "FATAL: must pass either --builder-session-id (CC19) "
+            "FATAL: must pass --builder-session-id (CC19), "
+            "--floating-session-id (Floating Artemis), "
             "or both --agent-id and --run-id (CC1/CC2)",
             file=sys.stderr,
             flush=True,
