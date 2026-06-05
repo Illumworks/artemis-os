@@ -793,8 +793,11 @@ class TestCampaignDeliverables:
         assert r.status_code == 201
         body = r.json()
         assert body["candidateId"] == candidate.id
+        assert body["campaignId"] == candidate.campaign_family
         assert body["status"] == "generating"
         assert "metadata" in body
+        assert isinstance(body["metadata"].get("folder_id"), int)
+        assert body["metadata"]["folder_name"]
 
     async def test_submit_review_not_found(
         self, client: AsyncClient, db_session: AsyncSession

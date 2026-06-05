@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
 from artemis.marketing.repository import create_campaign_candidate_from_signal, create_signal
 from artemis.marketing.writing_studio.events import clear_subscribers
+from artemis.writing_rules import repository as wr_repo
+from artemis.writing_rules.models import WritingProfile, WritingTrainingCandidate
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -92,8 +94,12 @@ class TestOverview:
         assert "examples" in body
         assert "sources" in body
         assert "profiles" in body
+        assert "activeProfile" in body
+        assert "active_profile" in body
+        assert "trainingCandidates" in body
         assert "training_candidates" in body
         assert "sync_config" in body
+        assert body["trainingCandidates"] == []
         assert body["training_candidates"] == []
         assert body["sync_config"] == {}
 
@@ -110,6 +116,39 @@ class TestOverview:
         body = resp.json()
         titles = [d["title"] for d in body["drafts"]]
         assert "Overview Draft" in titles
+
+    async def test_overview_exposes_active_profile_and_training_candidates(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Overview returns the camelCase keys the frontend consumes."""
+        clear_subscribers()
+        profile = WritingProfile(
+            name="District Voice",
+            status="active",
+            default_model_provider="claude-code",
+            default_model_id="claude-opus",
+        )
+        db_session.add(profile)
+        await db_session.flush()
+        await db_session.refresh(profile)
+        candidate = WritingTrainingCandidate(
+            profile_id=profile.id,
+            draft_id=None,
+            candidate_type="rule",
+            proposed_text="Lead with district outcomes.",
+            rationale="Observed repeatedly in approved drafts.",
+            status="proposed",
+        )
+        db_session.add(candidate)
+        await db_session.commit()
+
+        resp = await client.get("/api/writing-studio/overview")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["activeProfile"]["name"] == "District Voice"
+        assert body["active_profile"]["name"] == "District Voice"
+        assert body["trainingCandidates"][0]["proposed_text"] == "Lead with district outcomes."
+        assert body["training_candidates"][0]["proposed_text"] == "Lead with district outcomes."
 
     async def test_overview_excludes_archived(
         self, client: AsyncClient, db_session: AsyncSession
@@ -221,6 +260,28 @@ class TestDraftDetail:
         assert "threadMessages" in body
         assert "content" in body
         assert isinstance(body["threadMessages"], list)
+
+    async def test_get_draft_thread_messages_include_text_alias(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Persisted thread messages expose both text and content for frontend compat."""
+        clear_subscribers()
+        candidate = await _make_candidate(db_session)
+        deliverable = await _make_deliverable(db_session, candidate.id, title="Thread Alias Draft")
+        await wr_repo.create_thread_message(
+            db_session,
+            deliverable.id,
+            "assistant",
+            "Rendered reply body",
+            label="Writing partner",
+        )
+        await db_session.commit()
+
+        resp = await client.get(f"/api/writing-studio/drafts/{deliverable.id}")
+        assert resp.status_code == 200
+        message = resp.json()["threadMessages"][0]
+        assert message["text"] == "Rendered reply body"
+        assert message["content"] == "Rendered reply body"
 
     async def test_get_draft_not_found(self, client: AsyncClient) -> None:
         resp = await client.get("/api/writing-studio/drafts/999999")

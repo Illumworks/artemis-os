@@ -20,6 +20,7 @@ from artemis.marketing.repository import get_candidate
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
 from artemis.marketing.state_machine import DeliverableState, transition
+from artemis.writing_rules import repository as wr_repo
 
 router = APIRouter(
     prefix="/api/campaign-deliverables",
@@ -80,16 +81,28 @@ async def create_deliverable(
         raise bad_request("candidateId must be an integer", "campaign_deliverables_invalid_id")  # noqa: B904
 
     try:
-        await get_candidate(session, candidate_id)
+        candidate = await get_candidate(session, candidate_id)
     except ValueError:
         raise not_found("Campaign candidate not found", "campaign_ops_candidate_not_found")  # noqa: B904
+
+    candidate_name = candidate.name or candidate.campaign_family or f"Campaign {candidate.id}"
+    folder = await wr_repo.get_or_create_folder_by_candidate(
+        session,
+        candidate_id,
+        candidate_name=candidate_name,
+    )
+    metadata = dict(body.get("metadata") or {})
+    metadata["folder_id"] = folder.id
+    metadata["folder_name"] = candidate_name
 
     deliverable = CampaignDeliverable(
         candidate_id=candidate_id,
         deliverable_id=body.get("deliverableId") or body.get("deliverable_id"),
-        campaign_id=body.get("campaignId") or body.get("campaign_id"),
+        campaign_id=body.get("campaignId")
+        or body.get("campaign_id")
+        or candidate.campaign_family,
         status=body.get("status", "generating"),
-        deliverable_metadata=body.get("metadata") or {},
+        deliverable_metadata=metadata,
     )
     session.add(deliverable)
     await session.flush()
