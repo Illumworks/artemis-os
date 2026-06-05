@@ -243,6 +243,8 @@ async def initiate(
         message = str(exc)
         if "already initiated" in message:
             raise conflict(message, "campaign_already_initiated") from exc
+        if "is rejected and cannot be initiated" in message:
+            raise conflict(message, "campaign_rejected") from exc
         raise bad_request(message, "campaign_initiation_invalid") from exc
 
     new_run = await pipeline_repo.create_pipeline_run(

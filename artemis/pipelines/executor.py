@@ -545,9 +545,9 @@ async def _qualified_signal_count_for_run(session: AsyncSession, run: Any) -> in
             SELECT COUNT(*)
             FROM signal_queue
             WHERE signal_status = 'qualified'
-              AND created_at >= :run_created_at
+              AND pipeline_run_id = :pipeline_run_id
             """
         ),
-        {"run_created_at": run.created_at},
+        {"pipeline_run_id": run.id},
     )
     return int(result.scalar_one() or 0)

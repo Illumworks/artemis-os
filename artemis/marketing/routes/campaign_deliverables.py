@@ -98,9 +98,7 @@ async def create_deliverable(
     deliverable = CampaignDeliverable(
         candidate_id=candidate_id,
         deliverable_id=body.get("deliverableId") or body.get("deliverable_id"),
-        campaign_id=body.get("campaignId")
-        or body.get("campaign_id")
-        or candidate.campaign_family,
+        campaign_id=body.get("campaignId") or body.get("campaign_id") or candidate.campaign_family,
         status=body.get("status", "generating"),
         deliverable_metadata=metadata,
     )

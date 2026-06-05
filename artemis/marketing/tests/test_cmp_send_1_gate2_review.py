@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -294,6 +295,47 @@ async def test_decide_approved_skips_enqueue_when_outbound_send_flag_off(
     )
     assert final_run.status == "succeeded"
     assert final_run.node_states["after_gate"]["status"] == "succeeded"
+
+
+async def test_slack_gate_2_approve_transitions_deliverable_and_closes_approval(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    candidate, deliverable, run_id, approval_id = await _seed_gate_2_review_run(db_session)
+    assert deliverable is not None
+    assert approval_id is not None
+
+    payload = {
+        "actions": [
+            {
+                "action_id": "pipeline_approval_approve",
+                "value": f"{run_id}:gate_2_approval_drawer:approved",
+            }
+        ],
+        "user": {"id": "USLACK123", "name": "approver"},
+    }
+
+    with patch("artemis.pipelines.routes._dispatch_execution") as dispatch:
+        response = await client.post(
+            "/api/slack/pipeline-approval-callback",
+            data={"payload": json.dumps(payload)},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    assert response.status_code == 200, response.text
+    dispatch.assert_called_once_with(run_id)
+    candidate, deliverable, approval, run = await _refresh_entities(
+        db_session,
+        candidate.id,
+        deliverable.id,
+        approval_id,
+        run_id,
+    )
+    assert approval.status == "approved"
+    assert approval.decided_by == "approver"
+    assert deliverable.status == DeliverableState.approved.value
+    assert candidate.workspace_state == "all_content_approved"
+    assert run.status == "running"
 
 
 async def test_decide_rejected_transitions_deliverable_and_workspace_state(

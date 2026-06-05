@@ -18,7 +18,10 @@ def _read_source() -> str:
 
 def test_writing_studio_normalizes_overview_compat_keys() -> None:
     src = _read_source()
-    assert "trainingCandidates: overview.trainingCandidates || overview.training_candidates || []" in src
+    assert (
+        "trainingCandidates: overview.trainingCandidates || overview.training_candidates || []"
+        in src
+    )
     assert "activeProfile: overview.activeProfile || overview.active_profile || null" in src
 
 
@@ -39,7 +42,9 @@ def test_writing_studio_folder_row_no_longer_uses_campaign_id_as_subtitle() -> N
 
 def test_writing_studio_folder_counts_are_derived_from_visible_drafts() -> None:
     src = _read_source()
-    block = src.split("function renderWritingOrganizationRail(folders, campaigns, drafts, selectedDraftId) {", 1)[1].split(
+    block = src.split(
+        "function renderWritingOrganizationRail(folders, campaigns, drafts, selectedDraftId) {", 1
+    )[1].split(
         "function renderWritingSyncCard",
         1,
     )[0]

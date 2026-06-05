@@ -435,6 +435,10 @@ async def initiate_campaign(
     initiated_by: int | None,
 ) -> CampaignCandidate:
     candidate = await get_candidate(session, candidate_id)
+    if candidate.decision_state == "rejected":
+        raise ValueError(
+            f"campaign_candidates id={candidate_id} is rejected and cannot be initiated"
+        )
     if candidate.initiated_at is not None:
         raise ValueError(f"campaign_candidates id={candidate_id} is already initiated")
 

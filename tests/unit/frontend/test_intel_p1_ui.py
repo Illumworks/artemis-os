@@ -350,7 +350,10 @@ def test_marketing_module_exports_render_helpers() -> None:
         "trend block must be injected into the initiation modal"
     )
     assert "const _briefTrendContextCache = new Map();" in js
-    assert "return _renderLegacyBriefFields(c, trendContextSection + assembleSection + rulesetRow);" in js
+    assert (
+        "return _renderLegacyBriefFields(c, trendContextSection + assembleSection + rulesetRow);"
+        in js
+    )
     assert "${trendContextSection}" in js
     assert "getCampaignInitiationProposalApi(campaign.id)" in js
     assert "_shouldLoadBriefTabData(campaign.id)" in js

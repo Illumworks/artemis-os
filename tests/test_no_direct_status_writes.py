@@ -44,9 +44,11 @@ EXCLUDED_FILES = {
 # DB write — that's intentional, not a violation.
 EXCLUDED_FILES.add("artemis/marketing/state_machine.py")
 
-# Pattern for direct .status = or .signal_status = writes (production code).
+# Pattern for direct ``.status =`` writes (production code).
 # We specifically look for assignment (=) not equality checks (==).
-_ASSIGN_PATTERN = re.compile(r"\.\w*status\s*=(?!=)")
+# Columns like ``signal_status`` are not part of the campaign state machine
+# this guard is enforcing and would otherwise false-positive on SQL strings.
+_ASSIGN_PATTERN = re.compile(r"\.status\s*=(?!=)")
 
 
 def _repo_root() -> Path:

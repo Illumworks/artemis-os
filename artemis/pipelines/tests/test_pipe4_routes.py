@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.models import Approval
 from artemis.pipelines import repository as repo
 
 pytestmark = pytest.mark.asyncio
@@ -88,6 +89,19 @@ async def _setup_suspended_gate(
             "gate1": {"status": "suspended", "cost_usd": 0.0, "output_summary": "pending"},
         }
         await repo.update_pipeline_run(db_session, run.id, node_states=ns)
+        db_session.add(
+            Approval(
+                kind="signal_brief",
+                subject_id=f"{run.id}:gate1",
+                status="pending",
+                decision_payload={"run_id": run.id, "node_id": "gate1"},
+                pipe4_context={
+                    "pipeline_run_id": run.id,
+                    "node_id": "gate1",
+                    "context": {"approval_kind": "signal_brief"},
+                },
+            )
+        )
 
     run_id_out.append(run.id)
     return run.id
@@ -102,7 +116,7 @@ async def test_resume_approved_triggers_background_execution(
     run_id_holder: list[str] = []
     run_id = await _setup_suspended_gate(db_session, run_id_holder)
 
-    with patch("artemis.pipelines.routes._execute_pipeline_run", new=AsyncMock()):
+    with patch("artemis.pipelines.routes._dispatch_execution") as dispatch:
         resp = await client.post(
             f"/api/pipeline-runs/{run_id}/resume",
             json={"node_id": "gate1", "decision": "approved", "actor": "approver@example.com"},
@@ -111,19 +125,21 @@ async def test_resume_approved_triggers_background_execution(
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["status"] in ("running", "queued")
+    dispatch.assert_called_once_with(run_id)
 
 
 async def test_resume_rejected_allowed(client: AsyncClient, db_session: AsyncSession) -> None:
     run_id_holder: list[str] = []
     run_id = await _setup_suspended_gate(db_session, run_id_holder)
 
-    with patch("artemis.pipelines.routes._execute_pipeline_run", new=AsyncMock()):
+    with patch("artemis.pipelines.routes._dispatch_execution") as dispatch:
         resp = await client.post(
             f"/api/pipeline-runs/{run_id}/resume",
             json={"node_id": "gate1", "decision": "rejected", "actor": "approver@example.com"},
         )
 
     assert resp.status_code == 200, resp.text
+    dispatch.assert_called_once_with(run_id)
 
 
 async def test_resume_non_awaiting_run_rejected(
@@ -162,6 +178,42 @@ async def test_resume_invalid_decision_rejected(
     assert resp.status_code == 400
 
 
+async def test_in_app_signal_gate_decision_closes_approval_and_resumes_run(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    run_id_holder: list[str] = []
+    run_id = await _setup_suspended_gate(db_session, run_id_holder)
+    approval_id = (
+        await db_session.execute(
+            text("SELECT id FROM approvals WHERE subject_id = :subject_id"),
+            {"subject_id": f"{run_id}:gate1"},
+        )
+    ).scalar_one()
+
+    with patch("artemis.pipelines.routes._dispatch_execution") as dispatch:
+        resp = await client.post(
+            f"/api/approvals/{approval_id}/decision",
+            json={"decision": "approved", "reviewer": "approver@example.com"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    dispatch.assert_called_once_with(run_id)
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT a.status, a.decided_by, p.node_states->'gate1'->>'decision' "
+                "FROM approvals a, pipeline_runs p "
+                "WHERE a.id = :approval_id AND p.id = :run_id"
+            ),
+            {"approval_id": approval_id, "run_id": run_id},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == "approved"
+    assert row[1] == "approver@example.com"
+    assert row[2] == "approved"
+
+
 # ── Slack callback tests ──────────────────────────────────────────────────────
 
 
@@ -197,17 +249,20 @@ async def test_slack_callback_valid_approve(client: AsyncClient, db_session: Asy
     row = (
         await db_session.execute(
             text(
-                "SELECT status, node_states->'gate1'->>'decision', "
-                "node_states->'gate1'->>'decided_by' "
-                "FROM pipeline_runs WHERE id = :i"
+                "SELECT p.status, p.node_states->'gate1'->>'decision', "
+                "p.node_states->'gate1'->>'decided_by', a.status "
+                "FROM pipeline_runs p "
+                "JOIN approvals a ON a.subject_id = :subject_id "
+                "WHERE p.id = :i"
             ),
-            {"i": run_id},
+            {"i": run_id, "subject_id": f"{run_id}:gate1"},
         )
     ).first()
     assert row is not None
     assert row[0] == "running"
     assert row[1] == "approved"
     assert row[2] == "approver"
+    assert row[3] == "approved"
 
 
 async def test_slack_callback_reject_persists_decision(
@@ -237,12 +292,18 @@ async def test_slack_callback_reject_persists_decision(
     dispatch.assert_called_once_with(run_id)
     row = (
         await db_session.execute(
-            text("SELECT node_states->'gate1'->>'decision' FROM pipeline_runs WHERE id = :i"),
-            {"i": run_id},
+            text(
+                "SELECT p.node_states->'gate1'->>'decision', a.status "
+                "FROM pipeline_runs p "
+                "JOIN approvals a ON a.subject_id = :subject_id "
+                "WHERE p.id = :i"
+            ),
+            {"i": run_id, "subject_id": f"{run_id}:gate1"},
         )
     ).first()
     assert row is not None
     assert row[0] == "rejected"
+    assert row[1] == "rejected"
 
 
 async def test_slack_callback_unknown_run_acks_silently(client: AsyncClient) -> None:

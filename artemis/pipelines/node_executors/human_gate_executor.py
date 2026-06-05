@@ -396,7 +396,7 @@ async def _build_signal_gate_context_from_db(
             evidence_snippets.append(str(quote))
 
     ctx["reason_codes"] = sorted(codes)
-    ctx["districts"] = raw_districts
+    ctx["districts"] = sorted(raw_districts)
     if evidence_snippets:
         ctx["evidence_quote"] = evidence_snippets[0]
     ctx["evidence_snippets"] = evidence_snippets
@@ -411,8 +411,8 @@ async def _build_signal_gate_context_from_db(
             body = _brief_field(row.qualification_json, "body")
             if preview or body:
                 break
-    if preview:
-        ctx["brief_preview"] = str(preview)[:_PREVIEW_MAX]
+    if preview or body:
+        ctx["brief_preview"] = str(preview or body)[:_PREVIEW_MAX]
     if body:
         ctx["brief_body"] = str(body)[:_PREVIEW_MAX]
 
@@ -592,9 +592,10 @@ async def _build_content_gate_context_from_db(
             district_label = signal.state
         if district_label and district_label not in districts:
             districts.append(district_label)
+    sorted_districts = sorted(districts)
     ctx["reason_codes"] = sorted(reason_codes)
-    ctx["districts"] = districts
-    ctx["district_label"] = districts[0] if districts else None
+    ctx["districts"] = sorted_districts
+    ctx["district_label"] = sorted_districts[0] if sorted_districts else None
 
     latest_brief = (
         await session.execute(
@@ -1122,6 +1123,17 @@ async def _fire_gate_timeout(
                             )
                 else:
                     # No escalation_to configured; treat as escalation_timeout
+                    if await _apply_timeout_pipe4_decision(
+                        session,
+                        run_id=run_id,
+                        node_id=node_id,
+                        decision="rejected",
+                        decided_by="system:timeout",
+                        reason=f"escalation_timeout_after_{timeout_hours}h",
+                        timeout_action="escalation_timeout",
+                    ):
+                        return
+
                     node_state["decision"] = "escalation_timeout"
                     node_states[node_id] = node_state
                     run.node_states = node_states
@@ -1134,16 +1146,6 @@ async def _fire_gate_timeout(
 
             elif on_timeout == "escalation_timeout":
                 # Second-level timeout; mark as needs-manual-resolution
-                node_state["decision"] = "escalation_timeout"
-                node_states[node_id] = node_state
-                run.node_states = node_states
-                run.status = "failed"
-                run.error_message = (
-                    f"Gate {node_id}: escalation also timed out — needs manual resolution"
-                )
-                run.completed_at = datetime.now(UTC)
-                await session.flush()
-
                 await audit_log(
                     session,
                     {
@@ -1156,6 +1158,27 @@ async def _fire_gate_timeout(
                         "elapsed_seconds": elapsed,
                     },
                 )
+
+                if await _apply_timeout_pipe4_decision(
+                    session,
+                    run_id=run_id,
+                    node_id=node_id,
+                    decision="rejected",
+                    decided_by="system:timeout",
+                    reason=f"escalation_timeout_after_{timeout_hours}h",
+                    timeout_action="escalation_timeout",
+                ):
+                    return
+
+                node_state["decision"] = "escalation_timeout"
+                node_states[node_id] = node_state
+                run.node_states = node_states
+                run.status = "failed"
+                run.error_message = (
+                    f"Gate {node_id}: escalation also timed out — needs manual resolution"
+                )
+                run.completed_at = datetime.now(UTC)
+                await session.flush()
 
             else:
                 # auto_approve or auto_reject
@@ -1173,6 +1196,17 @@ async def _fire_gate_timeout(
                         "elapsed_seconds": elapsed,
                     },
                 )
+
+                if await _apply_timeout_pipe4_decision(
+                    session,
+                    run_id=run_id,
+                    node_id=node_id,
+                    decision="approved" if on_timeout == "auto_approve" else "rejected",
+                    decided_by="system:timeout",
+                    reason=f"timeout_after_{timeout_hours}h",
+                    timeout_action=auto_decision,
+                ):
+                    return
 
                 # Re-read node_states after audit_log (which modifies run.node_states in place)
                 node_states = dict(run.node_states or {})
@@ -1198,3 +1232,47 @@ async def _fire_gate_timeout(
         except Exception:
             logger.exception("Gate timeout handler failed for run %s node %s", run_id, node_id)
             await session.rollback()
+
+
+async def _apply_timeout_pipe4_decision(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    node_id: str,
+    decision: str,
+    decided_by: str,
+    reason: str,
+    timeout_action: str,
+) -> bool:
+    """Close one PIPE4 approval through the shared decision processor on timeout."""
+    from artemis.marketing.routes.approvals import (
+        _decide_pipe4_gate_approval,
+        find_pending_pipe4_approval,
+    )
+
+    approval = await find_pending_pipe4_approval(session, subject_id=f"{run_id}:{node_id}")
+    if approval is None:
+        return False
+
+    decision_payload = (
+        dict(approval.decision_payload) if isinstance(approval.decision_payload, dict) else {}
+    )
+    decision_payload.update(
+        {
+            "decision": decision,
+            "decided_by": decided_by,
+            "decided_at": datetime.now(UTC).isoformat(),
+            "reason": reason,
+            "source": "timeout",
+            "timeout_action": timeout_action,
+        }
+    )
+    await _decide_pipe4_gate_approval(
+        session,
+        approval=approval,
+        decision=decision,
+        decided_by=decided_by,
+        decision_payload=decision_payload,
+        dispatch_mode="inline",
+    )
+    return True
