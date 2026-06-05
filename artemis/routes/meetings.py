@@ -732,6 +732,24 @@ async def list_todos(
     }
 
 
+@todos_router.post("/{todo_id}/done")
+async def mark_todo_done(
+    todo_id: int,
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Mark a personal todo as done."""
+    result = await session.execute(
+        text("UPDATE personal_todos SET done = true WHERE id = :id RETURNING id").bindparams(
+            id=todo_id
+        )
+    )
+    row = result.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error": "Todo not found"})
+    await session.commit()
+    return {"ok": True, "id": todo_id}
+
+
 # ── Legacy /api/granola/* compat ──────────────────────────────────────────────
 # The frontend (`public/js/core/api.js`) still calls Node-era paths. Rather than
 # touch a wide swath of frontend code, expose thin aliases that re-shape J6a

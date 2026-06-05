@@ -352,7 +352,7 @@ export async function createCalendarEventApi(payload) {
 }
 
 export async function searchContactsApi(q) {
-  const res = await fetch(`/api/google/contacts/search?q=${encodeURIComponent(q)}`);
+  const res = await fetch(`/api/people/search?q=${encodeURIComponent(q)}`);
   return _readJsonOrThrow(res, "Failed to search contacts");
 }
 
@@ -368,6 +368,21 @@ export async function respondToCalendarEventApi(id, response) {
 export async function fetchMeetingsOverviewApi() {
   const res = await fetch("/api/meetings/overview");
   return _readJsonOrThrow(res, "Failed to load Meetings");
+}
+
+export async function fetchPersonalTodosApi(includeDone = false) {
+  const url = includeDone ? "/api/todos?include_done=true" : "/api/todos";
+  const res = await fetch(url);
+  return _readJsonOrThrow(res, "Failed to load personal todos");
+}
+
+export async function markPersonalTodoDoneApi(id) {
+  const res = await fetch(`/api/todos/${encodeURIComponent(id)}/done`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  return _readJsonOrThrow(res, "Failed to mark todo done");
 }
 
 export async function fetchJiraOverviewApi() {
@@ -567,7 +582,7 @@ export async function saveCalendarConfigApi(data) {
 }
 
 export async function logOkrActivityApi(text) {
-  const res = await fetch("/api/okr/log-activity", {
+  const res = await fetch("/api/okr/activity", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
@@ -576,8 +591,8 @@ export async function logOkrActivityApi(text) {
 }
 
 export async function updateOkrKrApi(id, data) {
-  const res = await fetch(`/api/okr/kr/${encodeURIComponent(id)}/update`, {
-    method: "POST",
+  const res = await fetch(`/api/okr/key-results/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
@@ -594,7 +609,7 @@ export async function dismissOkrNextUpApi(id) {
 }
 
 export async function suggestOkrKrProgressApi(id) {
-  const res = await fetch(`/api/okr/kr/${encodeURIComponent(id)}/suggest-progress`, {
+  const res = await fetch(`/api/okr/key-results/${encodeURIComponent(id)}/suggest-progress`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -621,8 +636,8 @@ export async function bulkLogOkrActivitiesApi(entries) {
 }
 
 export async function updateOkrActivityApi(id, data = {}) {
-  const res = await fetch(`/api/okr/activity/${encodeURIComponent(id)}/update`, {
-    method: "POST",
+  const res = await fetch(`/api/okr/activity/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
@@ -657,7 +672,7 @@ export async function commitOkrUpdateApi(previewId, overrides = []) {
 }
 
 export async function getOkrArchivedApi() {
-  const res = await fetch("/api/okr/archived");
+  const res = await fetch("/api/okr/objectives?include_archived=true");
   return _readJsonOrThrow(res, "Failed to fetch archived OKRs");
 }
 
