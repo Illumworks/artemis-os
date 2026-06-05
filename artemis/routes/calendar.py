@@ -1,8 +1,13 @@
 """Calendar router — /api/calendar.
 
 Endpoints:
-  GET  /api/calendar/overview  — today's event summary (GCal-backed)
-  GET  /api/calendar/events    — events in a date range (rangeStart, rangeEnd ISO8601)
+  GET    /api/calendar/overview          — today's event summary (GCal-backed)
+  GET    /api/calendar/events            — events in a date range (rangeStart, rangeEnd ISO8601)
+  GET    /api/calendar/event/{id}        — single event by ID
+  POST   /api/calendar/event             — create event
+  PATCH  /api/calendar/event/{id}        — update event
+  DELETE /api/calendar/event/{id}        — delete event
+  POST   /api/calendar/event/{id}/respond — RSVP (accept/decline/maybe)
 """
 
 from __future__ import annotations
@@ -17,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import artemis.db as db
 from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
-from artemis.integrations.gcal.client import GCalClient
+from artemis.integrations.gcal.client import GCalAPIError, GCalClient
+from artemis.integrations.gcal.types import EventDateTime
 from artemis.marketing.routes._auth import require_token
 
 logger = logging.getLogger(__name__)
@@ -27,6 +33,21 @@ router = APIRouter(
     tags=["calendar"],
     dependencies=[Depends(require_token)],
 )
+
+
+async def _get_gcal_client(session: AsyncSession) -> GCalClient:
+    """Return a configured GCalClient or raise 503 if not connected."""
+    rows = await repo.list_active(session, provider="gcal")
+    if not rows:
+        raise HTTPException(status_code=503, detail="Google Calendar not connected.")
+    integration = rows[0]
+    creds = decrypt_credentials(bytes(integration.encrypted_credentials))
+    return GCalClient(
+        access_token=str(creds.get("access_token", "")),
+        refresh_token=str(creds.get("refresh_token", "")),
+        client_id=str(creds.get("client_id", "")),
+        client_secret=str(creds.get("client_secret", "")),
+    )
 
 
 def _format_start_label(dt_str: str) -> str:
@@ -186,3 +207,197 @@ async def get_calendar_events(
             }
         )
     return out
+
+
+# ── Mutation routes ────────────────────────────────────────────────────────────
+
+
+def _event_to_dict(event: Any) -> dict[str, Any]:
+    """Map a GCal Event object to the frontend wire shape."""
+    return {
+        "uid": event.id,
+        "title": event.summary or "Untitled event",
+        "start": event.start.date_time or event.start.date,
+        "end": event.end.date_time or event.end.date,
+        "description": event.description,
+        "location": getattr(event, "location", None),
+        "status": "scheduled",
+        "attendees": [
+            {"email": a.email, "responseStatus": a.response_status} for a in (event.attendees or [])
+        ],
+    }
+
+
+@router.post("/event", status_code=201)
+async def create_calendar_event(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Create a new GCal event.
+
+    Body fields: title (str), start (ISO 8601), end (ISO 8601),
+    description (str, optional), attendees (list[str] of emails, optional),
+    allDay (bool, optional — uses date instead of dateTime).
+    """
+    title = str(body.get("title", "")).strip() or "New Event"
+    start_raw = str(body.get("start", ""))
+    end_raw = str(body.get("end", ""))
+    description = body.get("description")
+    attendees: list[str] = body.get("attendees") or []
+    all_day = bool(body.get("allDay", False))
+
+    if not start_raw or not end_raw:
+        raise HTTPException(status_code=422, detail={"error": "start and end are required"})
+
+    if all_day:
+        # GCal all-day events use date, not dateTime.
+        start_dt = EventDateTime(date=start_raw[:10])
+        end_dt = EventDateTime(date=end_raw[:10])
+    else:
+        start_dt = EventDateTime(date_time=start_raw)
+        end_dt = EventDateTime(date_time=end_raw)
+
+    try:
+        client = await _get_gcal_client(session)
+        event = await client.create_event(
+            calendar_id="primary",
+            summary=title,
+            start=start_dt,
+            end=end_dt,
+            attendees=attendees or None,
+            description=str(description) if description else None,
+        )
+    except HTTPException:
+        raise
+    except GCalAPIError as exc:
+        logger.warning("GCal create_event failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Calendar create failed: {exc}") from exc
+    except Exception as exc:
+        logger.warning("GCal create_event failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Calendar create failed: {exc}") from exc
+
+    return _event_to_dict(event)
+
+
+@router.patch("/event/{event_id}")
+async def update_calendar_event(
+    event_id: str,
+    body: dict[str, Any],
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Update a GCal event. Sends a PUT (full-replace) to the GCal API.
+
+    Accepted body fields: title, start, end, description, attendees, allDay.
+    Omitted fields are preserved from the existing event.
+    """
+    all_day = bool(body.get("allDay", False))
+
+    start_dt: EventDateTime | None = None
+    end_dt: EventDateTime | None = None
+    if "start" in body:
+        s = str(body["start"])
+        start_dt = EventDateTime(date=s[:10]) if all_day else EventDateTime(date_time=s)
+    if "end" in body:
+        e = str(body["end"])
+        end_dt = EventDateTime(date=e[:10]) if all_day else EventDateTime(date_time=e)
+
+    try:
+        client = await _get_gcal_client(session)
+        event = await client.update_event(
+            calendar_id="primary",
+            event_id=event_id,
+            summary=str(body["title"]) if "title" in body else None,
+            start=start_dt,
+            end=end_dt,
+            attendees=body.get("attendees"),
+            description=str(body["description"]) if "description" in body else None,
+        )
+    except HTTPException:
+        raise
+    except GCalAPIError as exc:
+        logger.warning("GCal update_event failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Calendar update failed: {exc}") from exc
+    except Exception as exc:
+        logger.warning("GCal update_event failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Calendar update failed: {exc}") from exc
+
+    return _event_to_dict(event)
+
+
+@router.delete("/event/{event_id}", status_code=204)
+async def delete_calendar_event(
+    event_id: str,
+    sendUpdates: str = Query(default="all"),  # noqa: N803
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> None:
+    """Delete (cancel) a GCal event.
+
+    sendUpdates: "all" | "externalOnly" | "none" (GCal API param).
+    """
+    try:
+        client = await _get_gcal_client(session)
+        await client.delete_event(calendar_id="primary", event_id=event_id)
+    except HTTPException:
+        raise
+    except GCalAPIError as exc:
+        logger.warning("GCal delete_event failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Calendar delete failed: {exc}") from exc
+    except Exception as exc:
+        logger.warning("GCal delete_event failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Calendar delete failed: {exc}") from exc
+
+
+@router.post("/event/{event_id}/respond")
+async def respond_to_calendar_event(
+    event_id: str,
+    body: dict[str, Any],
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """RSVP to a calendar event (accept / decline / tentative).
+
+    Body: { response: "accepted" | "declined" | "tentative" }
+    Implements RSVP by patching the self attendee's responseStatus via update_event.
+    """
+    response_str = str(body.get("response", "")).strip().lower()
+    valid_responses = {"accepted", "declined", "tentative", "needsAction"}
+    if response_str not in valid_responses:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": f"response must be one of: {', '.join(sorted(valid_responses))}"},
+        )
+
+    try:
+        client = await _get_gcal_client(session)
+        # Fetch current event to get attendee list.
+        current = await client.get_event(calendar_id="primary", event_id=event_id)
+
+        # Find the self/organizer attendee and update their responseStatus.
+        # GCal RSVP is done by patching the attendees array via the events.patch API.
+        # Since our client uses PUT (full replace), we update the attendees list ourselves.
+        attendees_raw = current.model_dump(by_alias=True, exclude_none=True).get("attendees", [])
+        updated = False
+        for att in attendees_raw:
+            if att.get("self"):
+                att["responseStatus"] = response_str
+                updated = True
+                break
+
+        if not updated and attendees_raw:
+            # Fallback: mark first attendee (shouldn't happen for normal calendar owner).
+            attendees_raw[0]["responseStatus"] = response_str
+
+        # Rebuild Event body and PUT it.
+        body_put: dict[str, Any] = current.model_dump(by_alias=True, exclude_none=True)
+        body_put["attendees"] = attendees_raw
+
+        data = await client._put(f"/calendars/primary/events/{event_id}", body_put)
+        return {"ok": True, "eventId": event_id, "response": response_str, "event": data.get("id")}
+
+    except HTTPException:
+        raise
+    except GCalAPIError as exc:
+        logger.warning("GCal respond failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Calendar RSVP failed: {exc}") from exc
+    except Exception as exc:
+        logger.warning("GCal respond failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Calendar RSVP failed: {exc}") from exc

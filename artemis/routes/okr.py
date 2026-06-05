@@ -26,6 +26,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -50,6 +51,8 @@ from artemis.okr.schemas import (
     OkrObjectiveRead,
     OkrObjectiveUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/okr",
@@ -396,3 +399,227 @@ async def delete_next_up(
     if not deleted:
         raise _not_found("Next-up item")
     await session.commit()
+
+
+# ── Activity update (PATCH /api/okr/activity/{id}) ────────────────────────────
+
+
+@router.patch("/activity/{activity_id}", response_model=OkrActivityRead)
+async def update_activity(
+    activity_id: int,
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> OkrActivityRead:
+    """Patch an existing activity log entry (text, kr_id, kr_label)."""
+    act = await session.get(OkrActivity, activity_id)
+    if act is None:
+        raise _not_found("Activity")
+    allowed = {"text", "kr_id", "kr_label"}
+    for key in allowed:
+        if key in body:
+            setattr(act, key, body[key])
+    await session.commit()
+    await session.refresh(act)
+    return OkrActivityRead.model_validate(act)
+
+
+# ── Bulk log activity (POST /api/okr/bulk-log-activity) ───────────────────────
+
+
+@router.post("/bulk-log-activity")
+async def bulk_log_activity(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Create multiple OKR activity entries in one call."""
+    entries = body.get("entries") or []
+    if not isinstance(entries, list):
+        raise HTTPException(status_code=422, detail={"error": "entries must be a list"})
+    created_ids: list[int] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("text"):
+            continue
+        act = await repo.create_activity(
+            session,
+            text=str(entry["text"]),
+            kr_id=entry.get("kr_id"),
+            kr_label=entry.get("kr_label"),
+            raw_text=entry.get("raw_text"),
+        )
+        created_ids.append(act.id)
+    await session.commit()
+    return {"ok": True, "created": len(created_ids), "ids": created_ids}
+
+
+# ── AI: suggest KR progress (POST /api/okr/key-results/{id}/suggest-progress) ─
+
+
+@router.post("/key-results/{kr_id}/suggest-progress")
+async def suggest_kr_progress(
+    kr_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Use the LLM to suggest a progress percentage for a key result."""
+    kr = await repo.get_key_result(session, kr_id)
+    if kr is None:
+        raise _not_found("Key result")
+
+    # Fetch recent activity for this KR.
+    activity_rows = await repo.list_activity(session, kr_id=kr_id, limit=10)
+    activity_lines = "\n".join(f"- {a.text}" for a in activity_rows)
+
+    from artemis.agent.client import CompletionRequest
+    from artemis.agent.types import Message, TextBlock
+    from artemis.providers import get_adapter
+    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+
+    prompt = (
+        f"Key result: {kr.title}\n"
+        f"Current progress: {kr.prog}%\n"
+        f"Status: {kr.status}\n"
+        f"Recent activity:\n{activity_lines or '(none)'}\n\n"
+        "Based on the activity log, suggest a progress percentage (0-100) and one-sentence rationale. "
+        'Respond as JSON: {"progress": <int>, "rationale": "<str>"}'
+    )
+
+    adapter = None
+    for candidate in ("claude-code", "codex", "lm-studio", "anthropic"):
+        try:
+            adapter = get_adapter(candidate)
+            break
+        except (MissingApiKeyError, UnknownProviderError):
+            continue
+        except Exception:
+            continue
+
+    if adapter is None:
+        return {
+            "progress": kr.prog,
+            "rationale": "No LLM provider available — keeping current value.",
+        }
+
+    try:
+        import json as _json
+
+        request = CompletionRequest(
+            messages=[Message(role="user", content=[TextBlock(text=prompt)])],
+            max_tokens=256,
+        )
+        response = await adapter.complete(request)
+        raw = "".join(b.text for b in response.message.content if isinstance(b, TextBlock))
+        data = _json.loads(raw.strip())
+        return {
+            "progress": int(data.get("progress", kr.prog)),
+            "rationale": str(data.get("rationale", "")),
+        }
+    except Exception:
+        logger.warning("suggest_kr_progress LLM call failed", exc_info=True)
+        return {"progress": kr.prog, "rationale": "Suggestion unavailable."}
+
+
+# ── AI: extract activity from text (POST /api/okr/extract-activity) ───────────
+
+
+@router.post("/extract-activity")
+async def extract_activity(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Use the LLM to extract structured activity entries from free-form text."""
+    text = str(body.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=422, detail={"error": "text required"})
+
+    from artemis.agent.client import CompletionRequest
+    from artemis.agent.types import Message, TextBlock
+    from artemis.providers import get_adapter
+    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+
+    # Fetch KR titles for context.
+    objectives = await repo.list_objectives(session, include_archived=False)
+    kr_list = "\n".join(
+        f"- [{kr.id}] {kr.title}"
+        for obj in objectives
+        for kr in obj.key_results
+        if kr.archived_at is None
+    )
+
+    prompt = (
+        f"Extract activity log entries from the following text and map each to the most relevant key result.\n\n"
+        f"Key results:\n{kr_list or '(none)'}\n\n"
+        f"Text:\n{text}\n\n"
+        'Return JSON array of objects: [{"text": "<action>", "kr_id": <id or null>, "kr_label": "<title or null>"}]'
+    )
+
+    adapter = None
+    for candidate in ("claude-code", "codex", "lm-studio", "anthropic"):
+        try:
+            adapter = get_adapter(candidate)
+            break
+        except (MissingApiKeyError, UnknownProviderError):
+            continue
+        except Exception:
+            continue
+
+    if adapter is None:
+        return {"entries": [{"text": text, "kr_id": None, "kr_label": None}]}
+
+    try:
+        import json as _json
+
+        request = CompletionRequest(
+            messages=[Message(role="user", content=[TextBlock(text=prompt)])],
+            max_tokens=1024,
+        )
+        response = await adapter.complete(request)
+        raw = "".join(b.text for b in response.message.content if isinstance(b, TextBlock))
+        entries = _json.loads(raw.strip())
+        if not isinstance(entries, list):
+            entries = [{"text": text, "kr_id": None, "kr_label": None}]
+        return {"entries": entries}
+    except Exception:
+        logger.warning("extract_activity LLM call failed", exc_info=True)
+        return {"entries": [{"text": text, "kr_id": None, "kr_label": None}]}
+
+
+# ── Stubs for advanced AI features (not yet implemented) ──────────────────────
+
+
+@router.post("/eoy-review/generate")
+async def generate_eoy_review(body: dict[str, Any]) -> dict[str, Any]:
+    """EOY review generation — not yet implemented."""
+    raise HTTPException(
+        status_code=501, detail={"error": "EOY review generation not yet implemented"}
+    )
+
+
+@router.post("/update/preview")
+async def preview_okr_update(body: dict[str, Any]) -> dict[str, Any]:
+    """OKR update preview (natural-language diff) — not yet implemented."""
+    raise HTTPException(status_code=501, detail={"error": "OKR update preview not yet implemented"})
+
+
+@router.post("/update/commit")
+async def commit_okr_update(body: dict[str, Any]) -> dict[str, Any]:
+    """Commit a previewed OKR update — not yet implemented."""
+    raise HTTPException(status_code=501, detail={"error": "OKR update commit not yet implemented"})
+
+
+@router.post("/next-up/generate")
+async def generate_next_up(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """AI-generate next-up items — not yet implemented."""
+    raise HTTPException(status_code=501, detail={"error": "Next-up generation not yet implemented"})
+
+
+@router.post("/deck/generate")
+async def generate_deck(body: dict[str, Any] = {}) -> dict[str, Any]:  # noqa: B006
+    """OKR deck generation — not yet implemented."""
+    raise HTTPException(status_code=501, detail={"error": "Deck generation not yet implemented"})
+
+
+@router.get("/deck/status/{job_id}")
+async def get_deck_status(job_id: str) -> dict[str, Any]:
+    """Poll OKR deck generation status — not yet implemented."""
+    raise HTTPException(status_code=501, detail={"error": "Deck status not yet implemented"})

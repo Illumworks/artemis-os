@@ -36,6 +36,8 @@ import {
   fetchAnalytics,
   fetchCalendarOverviewApi,
   fetchMeetingsOverviewApi,
+  fetchPersonalTodosApi,
+  markPersonalTodoDoneApi,
   fetchJiraOverviewApi,
   fetchOkrOverviewApi,
   logOkrActivityApi,
@@ -58,7 +60,6 @@ import {
   createMemoryApi,
   fetchGranolaMeetingsApi,
   searchGranolaMeetingsApi,
-  fetchGranolaTranscriptApi,
   fetchJiraIssueApi,
   transitionJiraIssueApi,
   changeJiraAssigneeApi,
@@ -107,8 +108,6 @@ const appShellPage = document.getElementById('app-shell-page');
 const appShellMount = document.getElementById('app-shell-page-mount');
 const appShellContent = document.getElementById('app-shell-content');
 const dashboardPage = document.getElementById('dashboard-page');
-const primaryNav = document.getElementById('primary-nav');
-const secondaryNav = document.getElementById('secondary-nav');
 let commandCenterLoadToken = 0;
 let modulesLoadToken = 0;
 let calendarLoadToken = 0;
@@ -157,8 +156,6 @@ const WIDE_PAGE_VIEWS = new Set([
 function isWidePageView(view) {
   return WIDE_PAGE_VIEWS.has(view);
 }
-
-renderNav();
 
 onState('view', (view) => {
   const normalizedView = normalizeAppView(view);
@@ -232,8 +229,6 @@ onState('sessionId', (id) => {
   if (id) setState('view', 'chat');
 });
 
-primaryNav?.addEventListener('click', handleNavClick);
-secondaryNav?.addEventListener('click', handleNavClick);
 appShellContent?.addEventListener('click', handleShellActionClick);
 appShellContent?.addEventListener('change', handleTimeRealityChange);
 appShellContent?.addEventListener('change', handleTaskCommandEditChange);
@@ -300,132 +295,30 @@ function _getOrCreateCalendarNewEventModal() {
 const savedProject = localStorage.getItem('artemis-cwd');
 if (!IS_VITEST && !globalThis[HOME_SHELL_BOOTSTRAPPED_KEY]) {
   globalThis[HOME_SHELL_BOOTSTRAPPED_KEY] = true;
-  if (getState('sessionId') || savedProject) {
+
+  // Determine an explicit route from hash or persisted view.
+  let persistedView = null;
+  try { persistedView = localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY); } catch {}
+  const normalizedPersisted = persistedView ? normalizeAppView(persistedView) : null;
+  const restoredPersisted = normalizedPersisted && isShellView(normalizedPersisted)
+    ? normalizedPersisted
+    : null;
+  // Hash-driven view is already in state (store.js initialises from parseHashView).
+  const hashView = normalizeAppView(getState('view'));
+  const explicitRoute = restoredPersisted || (hashView !== normalizeAppView(DEFAULT_APP_VIEW) ? hashView : null);
+
+  if (getState('sessionId')) {
+    // Active session — land on chat so the in-progress conversation is visible.
+    setState('view', 'chat');
+  } else if (explicitRoute) {
+    // URL hash or persisted view wins over the saved-project default.
+    setState('view', explicitRoute);
+  } else if (savedProject) {
+    // No explicit route; Dev Project context → open chat.
     setState('view', 'chat');
   } else {
-    let persistedView = null;
-    try { persistedView = localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY); } catch {}
-    const normalizedPersisted = persistedView ? normalizeAppView(persistedView) : null;
-    const restored = normalizedPersisted && isShellView(normalizedPersisted)
-      ? normalizedPersisted
-      : null;
-    const currentView = normalizeAppView(getState('view'));
-    setState('view', restored || currentView || DEFAULT_APP_VIEW);
+    setState('view', hashView || DEFAULT_APP_VIEW);
   }
-}
-
-function renderNav() {
-  if (primaryNav) {
-    const primaryItems = PRIMARY_NAV_DESTINATIONS.filter((item) => item.id === DASHBOARD_VIEW);
-    primaryNav.innerHTML = primaryItems.map((item) => `
-      <button
-        type="button"
-        class="shell-nav-btn shell-nav-btn-primary${normalizeAppView(item.id) === normalizeAppView(getState('view')) ? ' active' : ''}"
-        data-app-view="${item.id}"
-        title="${item.description}"
-      >
-        <span class="shell-nav-btn-label">${item.label}</span>
-      </button>
-    `).join('');
-  }
-
-  if (secondaryNav) {
-    const workspaceItems = SECONDARY_NAV_DESTINATIONS.filter((item) => item.section === 'Personal Workspace');
-    const operationsItems = SECONDARY_NAV_DESTINATIONS.filter((item) => item.section === 'Operations');
-    const devProjectItems = SECONDARY_NAV_DESTINATIONS.filter((item) => item.section === 'Dev Projects');
-    const sectionState = getShellNavSectionState();
-
-    const renderSection = (title, items) => `
-      <section class="shell-nav-section shell-nav-section-collapse ${sectionState[title] === false ? 'closed' : 'open'}" data-shell-nav-section="${title}">
-        <button
-          type="button"
-          class="shell-nav-section-toggle"
-          data-shell-section-toggle="${title}"
-          aria-expanded="${sectionState[title] === false ? 'false' : 'true'}"
-          aria-controls="shell-nav-section-body-${slugify(title)}"
-        >
-          <span>${title}</span>
-          <svg class="shell-nav-section-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M6 9l6 6 6-6"/>
-          </svg>
-        </button>
-        <div class="shell-nav-section-body" id="shell-nav-section-body-${slugify(title)}" aria-hidden="${sectionState[title] === false ? 'true' : 'false'}">
-          <div class="shell-nav-section-body-inner">
-          ${items.map((item) => `
-            <button
-              type="button"
-              class="shell-nav-btn shell-nav-btn-secondary${normalizeAppView(item.view || item.id) === normalizeAppView(getState('view')) ? ' active' : ''}"
-              data-app-view="${item.view || item.id}"
-              ${item.focus ? `data-shell-focus="${item.focus}"` : ''}
-              ${item.action ? `data-shell-action="${item.action}"` : ''}
-              title="${item.description}"
-            >
-              <span class="shell-nav-btn-label">${item.label}</span>
-            </button>
-          `).join('')}
-          </div>
-        </div>
-      </section>
-    `;
-
-    secondaryNav.innerHTML = [
-      workspaceItems.length ? renderSection('Personal Workspace', workspaceItems) : '',
-      operationsItems.length ? renderSection('Operations', operationsItems) : '',
-      devProjectItems.length ? renderSection('Dev Projects', devProjectItems) : '',
-    ].join('');
-  }
-}
-
-function handleNavClick(event) {
-  const button = event.target.closest('[data-app-view], [data-shell-action], [data-shell-section-toggle]');
-  if (!button) return;
-  if (button.dataset.shellSectionToggle) {
-    const section = button.dataset.shellSectionToggle;
-    const shouldOpen = toggleShellNavSection(section);
-    button.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
-    const body = document.getElementById(`shell-nav-section-body-${slugify(section)}`);
-    body?.setAttribute('aria-hidden', shouldOpen ? 'false' : 'true');
-    return;
-  }
-  const action = button.dataset.shellAction || '';
-  if (action === 'open-project-files') {
-    localStorage.setItem(DEV_PROJECT_FILES_FOCUS_STORAGE_KEY, '1');
-    setState('view', 'chat');
-    emit('dev-project-files:focus');
-    return;
-  }
-
-  const targetView = normalizeAppView(button.dataset.appView);
-  if (button.dataset.shellFocus) {
-    const focusTarget = button.dataset.shellFocus;
-    if (targetView === WORKSPACE_VIEW) {
-      localStorage.setItem(MODULE_FOCUS_STORAGE_KEY, focusTarget);
-      setShellNavSectionState('Personal Workspace', true);
-    } else if (targetView === OPERATIONS_VIEW) {
-      localStorage.setItem(OPERATIONS_FOCUS_STORAGE_KEY, focusTarget);
-      setShellNavSectionState('Operations', true);
-    }
-  } else if (targetView === WORKSPACE_VIEW) {
-    localStorage.removeItem(MODULE_FOCUS_STORAGE_KEY);
-    setShellNavSectionState('Personal Workspace', true);
-  } else if (targetView === MEMORY_VIEW) {
-    localStorage.removeItem(MODULE_FOCUS_STORAGE_KEY);
-    localStorage.removeItem(OPERATIONS_FOCUS_STORAGE_KEY);
-  }
-
-  if (targetView === DEV_PROJECTS_VIEW || targetView === 'chat') {
-    setShellNavSectionState('Dev Projects', true);
-    setState('view', 'chat');
-    return;
-  }
-
-  if (targetView === OPERATIONS_VIEW && !button.dataset.shellFocus) {
-    localStorage.removeItem(OPERATIONS_FOCUS_STORAGE_KEY);
-    setShellNavSectionState('Operations', true);
-  }
-
-  setState('sessionId', null);
-  setState('view', targetView);
 }
 
 function setActiveNav(view) {
@@ -1279,9 +1172,10 @@ async function loadMeetingsShell() {
   const loadToken = ++meetingsLoadToken;
 
   try {
-    const [meetingsOverview, granolaOverview] = await Promise.all([
+    const [meetingsOverview, granolaOverview, todosData] = await Promise.all([
       fetchMeetingsOverviewApi().catch(() => null),
       fetchGranolaMeetingsApi().catch(() => null),
+      fetchPersonalTodosApi().catch(() => ({ todos: [] })),
     ]);
 
     if (loadToken !== meetingsLoadToken || normalizeAppView(getState('view')) !== MEETINGS_VIEW) {
@@ -1296,6 +1190,9 @@ async function loadMeetingsShell() {
     if (granolaConnected) {
       _renderMeetingsPastList(granolaOverview.meetings || [], appShellContent);
     }
+
+    // Render personal todos (M1: surface meeting-created todos in the meetings view).
+    _renderPersonalTodos(todosData?.todos || [], appShellContent);
 
     // Auto-select the most recent meeting so the right detail panel has
     // content on page load. Prefer today's first meeting if any, else the
@@ -1316,6 +1213,42 @@ async function loadMeetingsShell() {
     appShellContent.innerHTML = renderMeetingsShellError();
     console.error('Failed to load meetings shell:', error);
   }
+}
+
+function _renderPersonalTodos(todos, container) {
+  if (!container) return;
+  // Find the todos placeholder if the meetings shell renders one;
+  // otherwise append a compact sidebar section after the main canvas.
+  const placeholder = container.querySelector('[data-meetings-todos-panel]');
+  const targetEl = placeholder || null;
+  if (!targetEl) return; // No placeholder in this shell variant — safe no-op.
+
+  if (!todos.length) {
+    targetEl.innerHTML = `<div class="page-section-footnote">No personal todos yet.</div>`;
+    return;
+  }
+
+  targetEl.innerHTML = todos.map((t) => `
+    <div class="meetings-todo-row${t.done ? ' meetings-todo-done' : ''}" data-todo-id="${t.id}">
+      <button type="button" class="meetings-todo-check" data-action="meetings-todo-done" data-todo-id="${t.id}" title="Mark done">${t.done ? '&#10003;' : '&#9675;'}</button>
+      <span class="meetings-todo-text">${escapeHtml(t.text)}</span>
+      ${t.source ? `<span class="meetings-todo-source">${escapeHtml(t.source)}</span>` : ''}
+    </div>
+  `).join('');
+
+  targetEl.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action="meetings-todo-done"]');
+    if (!btn) return;
+    const todoId = Number(btn.dataset.todoId);
+    if (!todoId) return;
+    try {
+      await markPersonalTodoDoneApi(todoId);
+      const row = targetEl.querySelector(`[data-todo-id="${todoId}"]`);
+      if (row) row.classList.add('meetings-todo-done');
+    } catch (err) {
+      console.warn('Failed to mark todo done:', err);
+    }
+  }, { once: false });
 }
 
 async function loadJiraShell() {
@@ -2924,106 +2857,6 @@ function handleMeetingsTabSwitch(tab) {
   tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
 }
 
-// Best-effort action-item extraction from Granola's summary/transcript text.
-// Granola's notes often contain markdown bullets, "Action items:" headers,
-// or "TODO:"-style prefixes. We grab any line that looks like an action.
-function extractActionItemsFromText(text) {
-  if (!text || typeof text !== 'string') return [];
-  const items = [];
-  const lines = text.split(/\r?\n/);
-  let inActionBlock = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) { inActionBlock = false; continue; }
-    if (/^#{1,6}\s*(action items?|next steps?|todos?|follow[- ]?ups?)\b/i.test(line)) {
-      inActionBlock = true;
-      continue;
-    }
-    // bullet line
-    const bullet = line.match(/^[-*•]\s+(.+)$/);
-    if (bullet && (inActionBlock || /\b(todo|action|follow up|will|should|owner)\b/i.test(bullet[1]))) {
-      items.push(bullet[1].replace(/\s+/g, ' ').trim());
-      continue;
-    }
-    // explicit prefix
-    const prefixed = line.match(/^(?:todo|action(?: item)?|follow[- ]?up)\s*[:–-]\s*(.+)$/i);
-    if (prefixed) items.push(prefixed[1].trim());
-  }
-  // Dedupe + cap
-  return Array.from(new Set(items)).slice(0, 20);
-}
-
-async function handleMeetingsRowClick(meetingId, meetingTitle) {
-  if (!meetingId || !appShellContent) return;
-
-  const panel = appShellContent.querySelector('[data-meetings-transcript-panel]');
-  if (!panel) return;
-
-  panel.innerHTML = `<div class="meetings-transcript-loading">Loading transcript…</div>`;
-
-  try {
-    const result = await fetchGranolaTranscriptApi(meetingId);
-    if (!result.connected) {
-      panel.innerHTML = `<div class="page-section-footnote">Could not load this meeting.</div>`;
-      return;
-    }
-    if (result.found === false) {
-      panel.innerHTML = `<div class="page-section-footnote">No transcript available for this meeting.</div>`;
-      return;
-    }
-
-    // Granola payload shape varies; surface what we have. Action items are
-    // sometimes a structured array, sometimes embedded in summary text.
-    const summary = result.summary || result.notes || '';
-    const transcript = result.transcript || '';
-    const actionItems = Array.isArray(result.action_items)
-      ? result.action_items
-      : extractActionItemsFromText(summary || transcript);
-    const attendees = Array.isArray(result.attendees) ? result.attendees.join(', ') : '';
-
-    const sectionsHtml = [];
-    if (summary) {
-      sectionsHtml.push(`
-        <section class="meetings-detail-section">
-          <h4 class="meetings-detail-heading">Summary</h4>
-          <div class="meetings-detail-body">${escapeHtml(summary)}</div>
-        </section>
-      `);
-    }
-    if (actionItems.length) {
-      sectionsHtml.push(`
-        <section class="meetings-detail-section">
-          <h4 class="meetings-detail-heading">Action items</h4>
-          <ul class="meetings-detail-list">
-            ${actionItems.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
-          </ul>
-        </section>
-      `);
-    }
-    if (transcript) {
-      sectionsHtml.push(`
-        <section class="meetings-detail-section">
-          <h4 class="meetings-detail-heading">Transcript</h4>
-          <pre class="meetings-transcript-body">${escapeHtml(transcript)}</pre>
-        </section>
-      `);
-    }
-    if (!sectionsHtml.length) {
-      sectionsHtml.push(`<div class="page-section-footnote">No transcript or notes captured for this meeting yet.</div>`);
-    }
-
-    panel.innerHTML = `
-      <div class="meetings-transcript-header">
-        <strong>${escapeHtml(meetingTitle || 'Meeting')}</strong>
-        ${attendees ? `<div class="page-section-meta">${escapeHtml(attendees)}</div>` : ''}
-      </div>
-      ${sectionsHtml.join('')}
-    `;
-  } catch {
-    panel.innerHTML = `<div class="page-section-footnote">Failed to load transcript.</div>`;
-  }
-}
-
 async function handleMeetingsSearchSubmit() {
   if (!appShellContent) return;
   const input = appShellContent.querySelector('[data-meetings-search-input]');
@@ -3236,6 +3069,15 @@ function renderMeetingsLiveCanvas(viewModel) {
           <span class="page-section-meta">${meetings.length} total</span>
         </div>
         <div class="page-list">${meetingsList}</div>
+        <div class="page-section-header" style="margin-top:16px">
+          <div>
+            <div class="page-section-eyebrow">Personal todos</div>
+            <h3 class="page-section-title">Action todos</h3>
+          </div>
+        </div>
+        <div class="meetings-todos-list" data-meetings-todos-panel>
+          <div class="page-section-footnote">Loading todos…</div>
+        </div>
       </article>
       <article class="page-section col-span-8" data-page-section="meetings-transcript">
         <div class="page-section-header">

@@ -3,8 +3,17 @@ let _status = null;
 
 export async function loadStatus() {
   if (_status) return _status;
-  const res = await fetch("/api/_status");
-  _status = await res.json();
+  try {
+    const res = await fetch("/api/_status");
+    if (!res.ok) {
+      console.warn(`loadStatus: /api/_status returned ${res.status}`);
+      return null;
+    }
+    _status = await res.json();
+  } catch (err) {
+    console.warn("loadStatus: failed to load surface availability flags", err);
+    return null;
+  }
   return _status;
 }
 
