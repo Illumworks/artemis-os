@@ -68,12 +68,12 @@ def _detect_incompatible_values(
     attribute resolution.
 
     The check used here: if two observations share the same scope and the first
-    8 words of their content match (the "attribute key prefix") but the full
+    4 words of their content match (the "attribute key prefix") but the full
     content differs — they are incompatible values for the same attribute.
     """
     conflicts: list[ConflictCandidate] = []
     new_tokens = new_obs.content.split()
-    prefix_len = min(8, len(new_tokens))
+    prefix_len = min(4, len(new_tokens))
     new_prefix = " ".join(new_tokens[:prefix_len])
 
     for existing in existing_observations:
@@ -85,7 +85,7 @@ def _detect_incompatible_values(
             continue
 
         ex_tokens = existing.content.split()
-        ex_prefix_len = min(8, len(ex_tokens))
+        ex_prefix_len = min(4, len(ex_tokens))
         ex_prefix = " ".join(ex_tokens[:ex_prefix_len])
 
         if (

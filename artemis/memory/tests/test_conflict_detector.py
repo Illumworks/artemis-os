@@ -60,7 +60,7 @@ def _obs(
 
 
 def test_incompatible_values_positive() -> None:
-    """Same 8-word prefix, different suffix, overlapping windows → conflict."""
+    """Same 4-word prefix, different suffix, overlapping windows → conflict."""
     new = _obs(2, "Jon Fila is the Chief Marketing Officer at Amira Learning")
     existing = _obs(1, "Jon Fila is the Chief Marketing Officer at Amira EdTech")
     results = _detect_incompatible_values(new, [existing])
@@ -88,6 +88,49 @@ def test_incompatible_values_edge_non_overlapping_windows() -> None:
     )
     results = _detect_incompatible_values(new, [existing])
     assert results == []
+
+
+def test_incompatible_values_c2_budget_amounts() -> None:
+    """C2 positive — budget sentence differs at token 7 ($50k vs $75k).
+
+    With prefix=8 these would NOT be detected (the shared prefix ends before
+    the differing dollar amount, so the 8-token prefixes themselves differ).
+    With prefix=4 the shared prefix is "Marketing budget for Q2" and the
+    diverging value falls in the suffix → conflict is correctly flagged.
+    """
+    new = _obs(2, "Marketing budget for Q2 campaign is $75k")
+    existing = _obs(1, "Marketing budget for Q2 campaign is $50k")
+    results = _detect_incompatible_values(new, [existing])
+    assert len(results) == 1
+    assert results[0].existing_id == 1
+    assert results[0].conflict_type == "incompatible_values"
+
+
+def test_incompatible_values_c2_additive_facts_not_a_conflict() -> None:
+    """C2 regression guard — different token at position 4 means no shared prefix.
+
+    "Jon manages the marketing team in NYC" vs "Jon manages the sales team in NYC":
+    tokens 1-3 match ("Jon manages the") but token 4 diverges ("marketing" vs
+    "sales"), so the 4-token prefixes differ and no conflict is raised.
+    """
+    new = _obs(2, "Jon manages the marketing team in NYC")
+    existing = _obs(1, "Jon manages the sales team in NYC")
+    results = _detect_incompatible_values(new, [existing])
+    assert results == []
+
+
+def test_incompatible_values_c2_cmo_still_flags() -> None:
+    """C2 regression — the original CMO test still passes with prefix=4.
+
+    "Jon Fila is the ..." shares the 4-token prefix "Jon Fila is the" while
+    the institutions in the suffix differ → still a conflict.
+    """
+    new = _obs(2, "Jon Fila is the Chief Marketing Officer at Amira Learning")
+    existing = _obs(1, "Jon Fila is the Chief Marketing Officer at Amira EdTech")
+    results = _detect_incompatible_values(new, [existing])
+    assert len(results) == 1
+    assert results[0].existing_id == 1
+    assert results[0].conflict_type == "incompatible_values"
 
 
 # ── _detect_incompatible_temporal ────────────────────────────────────────────
