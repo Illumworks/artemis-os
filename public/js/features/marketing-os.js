@@ -104,6 +104,10 @@ const _assetLinksCache = new Map();
 // ── Initiation proposal cache ──────────────────────────────────────────────
 // Keyed by campaignId → full initiation proposal payload.
 const _initiationProposalCache = new Map();
+// Campaigns whose initiation modal the user explicitly closed. _maybeOpenInitiationProposal
+// must NOT auto-reopen these on re-render (otherwise Close is a no-op — the modal traps the user
+// until they approve/reject). Cleared when the user clicks "Review initiation proposal" again.
+const _dismissedInitiation = new Set();
 const _pendingDraftApprovalsByCandidate = new Map();
 
 // ── Module-level campaign map ──────────────────────────────────────────────
@@ -1031,7 +1035,7 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
             <p class="mkt-initiation-signal-summary">
               Qualified at score ${esc(String(bundle.metricsJson.adjustedScore ?? '—'))}
               ${Array.isArray(bundle.metricsJson.recommendedFamilies) && bundle.metricsJson.recommendedFamilies.length
-                ? ` · recommended ${esc(bundle.metricsJson.recommendedFamilies.join(', '))}`
+                ? ` · recommended ${esc(bundle.metricsJson.recommendedFamilies.map((f) => (typeof f === 'string' ? f : (f && (f.campaignFamily || f.family)) || '')).filter(Boolean).join(', '))}`
                 : ''}
             </p>
           </section>
@@ -1099,6 +1103,8 @@ function renderWorkspaceTab(campaign, tab) {
 async function _maybeOpenInitiationProposal(container, campaign) {
   if (!campaign || !campaign._fromApi || campaign.initiatedAt) return;
   if (container.querySelector('[data-initiation-modal]')) return;
+  // Respect an explicit close — don't auto-reopen until the user clicks "Review" again.
+  if (_dismissedInitiation.has(String(campaign.id))) return;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'mkt-modal-backdrop mkt-initiation-backdrop';
@@ -1157,6 +1163,8 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
 
   const closeModal = () => {
     _initiationProposalCache.set(campaign.id, bundle || _initiationProposalCache.get(campaign.id) || null);
+    // Mark dismissed so the next re-render doesn't auto-reopen this modal (the Close trap).
+    _dismissedInitiation.add(String(campaign.id));
     modal.remove();
   };
 
@@ -3210,6 +3218,7 @@ function _wireCampaignActions(container) {
   container.querySelectorAll('[data-mkt-initiation-open]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.mktInitiationOpen;
+      _dismissedInitiation.delete(String(id));  // explicit re-open clears any prior dismissal
       const campaign = _campaignMap.get(_campaignMapKey(id));
       if (campaign) _maybeOpenInitiationProposal(container, campaign);
     });
