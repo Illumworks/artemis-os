@@ -24,6 +24,7 @@ from artemis.providers.claude_code.adapter import (
     _build_floating_artemis_mcp_config,
     _build_launch_command,
     _build_mcp_config,
+    _mcp_eager_env,
     allowed_tools_for,
 )
 from artemis.providers.errors import ClaudeCodeTimeoutError, ProviderAPIError
@@ -173,6 +174,83 @@ def test_launch_command_strict_and_permission_mode_no_max_turns() -> None:
     assert cmd[cmd.index("--mcp-config") + 1] == "/tmp/x.json"
 
 
+def test_launch_command_has_no_session_persistence() -> None:
+    """--no-session-persistence must be present so per-run sessions are ephemeral.
+
+    Prevents unnecessary session disk writes and removes one startup task that
+    competes with MCP handshake timing (contributing to tool deferral).
+    """
+    cmd = _build_launch_command(
+        binary="claude",
+        model="m",
+        mcp_config_path="/tmp/x.json",
+        agent_tools=_REGIONAL_NEWS_TOOLS,
+    )
+    assert "--no-session-persistence" in cmd
+
+
+# ── 4a. MCP eager env (anti-deferral) ────────────────────────────────────────────
+
+
+def test_mcp_eager_env_sets_nonblocking_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_mcp_eager_env() must inject MCP_CONNECTION_NONBLOCKING=false.
+
+    This forces claude-code's isMcpLadderNonblockingEnabled() to return false,
+    so the MCP server handshake completes synchronously before the first LLM
+    turn — preventing the deferred-tool-catalog state that causes scouts to
+    narrate 'tools not yet connected' and emit 0 signals.
+    """
+    env = _mcp_eager_env()
+    assert env["MCP_CONNECTION_NONBLOCKING"] == "false"
+    # Must inherit the parent env so DB creds, PATH, etc. are preserved.
+    import os
+
+    assert "PATH" in env or not os.environ.get("PATH")
+
+
+def test_mcp_eager_env_inherits_parent_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_mcp_eager_env() copies the full parent environment."""
+    monkeypatch.setenv("ARTEMIS_TEST_SENTINEL", "present")
+    env = _mcp_eager_env()
+    assert env.get("ARTEMIS_TEST_SENTINEL") == "present"
+    assert env["MCP_CONNECTION_NONBLOCKING"] == "false"
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools_passes_mcp_eager_env(tmp_path: Path) -> None:
+    """run_with_tools() must pass MCP_CONNECTION_NONBLOCKING=false to the subprocess.
+
+    This is the primary fix for the intermittent 0-signal scout bug where
+    claude-code presents MCP tools as deferred rather than eager.
+    """
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    proc = _mock_proc(payload)
+
+    captured_env: dict[str, str] = {}
+
+    async def _capture_exec(*args: object, **kwargs: object) -> object:
+        env_arg = kwargs.get("env") or {}
+        if isinstance(env_arg, dict):
+            captured_env.update(env_arg)
+        return proc
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=_capture_exec)):
+        await adapter.run_with_tools(
+            _request(),
+            agent_id="marketing.scout.regional_news",
+            run_id="RUN-EAGER",
+            pipeline_run_id=None,
+            agent_tools=_REGIONAL_NEWS_TOOLS,
+        )
+
+    assert captured_env.get("MCP_CONNECTION_NONBLOCKING") == "false", (
+        "MCP_CONNECTION_NONBLOCKING=false must be passed to the subprocess env "
+        "so MCP tools are loaded synchronously (not deferred)"
+    )
+
+
 # ── 5. subprocess success path + temp-file cleanup ───────────────────────────────
 
 
@@ -288,7 +366,9 @@ async def test_complete_with_tools_uses_floating_session_context(tmp_path: Path)
 
     captured: dict[str, object] = {}
 
-    async def _fake_run_subprocess(cmd: list[str], prompt: str):  # type: ignore[no-untyped-def]
+    async def _fake_run_subprocess(
+        cmd: list[str], prompt: str, *, tool_run: bool = False
+    ) -> object:
         captured["cmd"] = cmd
         captured["prompt"] = prompt
         from artemis.agent.client import CompletionResponse

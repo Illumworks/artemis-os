@@ -226,6 +226,11 @@ def default_agent_instruction(agent_id: str, override: str | None = None) -> str
     the scout scheduler — must pass a directive message, or a small model just
     replies passively and calls no tools. Shared so both call sites stay in sync.
     A caller-supplied override always wins.
+
+    Scout instruction includes an explicit note that MCP tools are pre-connected
+    and never deferred. This is a prompt-level fallback for the primary fix
+    (``MCP_CONNECTION_NONBLOCKING=false`` in the subprocess env) so scouts do not
+    give up if they observe a deferred-tools hint in their session context.
     """
     if override:
         return override
@@ -238,7 +243,12 @@ def default_agent_instruction(agent_id: str, override: str | None = None) -> str
             "(one call per signal). Use reason_codes.get_allowlist if unsure which "
             "codes you may emit. When done, briefly report how many signals you "
             "emitted. If nothing qualifies this run, say so explicitly — do not ask "
-            "for clarification; you are running autonomously."
+            "for clarification; you are running autonomously.\n\n"
+            "IMPORTANT — your Artemis MCP tools (prefixed mcp__artemis__) are "
+            "pre-connected and fully available. If any tool appears as 'deferred' "
+            "or 'not yet connected', call it anyway — the connection is synchronous "
+            "and the tool will execute. Do NOT skip tool calls or report 0 signals "
+            "solely because tools appear deferred."
         )
     if agent_id.startswith("marketing.qualifier."):
         return (

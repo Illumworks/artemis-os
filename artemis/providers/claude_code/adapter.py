@@ -32,6 +32,28 @@ subprocess handle all tool-use iterations internally. Builder turns use
 ``artemis.tools.mcp_server --floating-session-id`` and only expose auto-invoke
 tools on that path.
 
+MCP tool deferral fix (scout-mcp-deferral)
+-------------------------------------------
+claude-code ≥2.1 can enter a "deferred tool catalog" state where MCP tools are
+presented lazily instead of eagerly — the scout LLM then narrates that tools are
+"deferred and not yet fully connected" and emits 0 signals. Two mitigations are
+applied:
+
+1. ``MCP_CONNECTION_NONBLOCKING=false`` in the subprocess env: claude-code's
+   ``isMcpLadderNonblockingEnabled()`` returns ``false`` when this variable is
+   set to a falsy value, forcing the MCP server connection to be established
+   synchronously before the first LLM turn. Tools are then eager/fully-connected
+   from turn 1. This is the primary fix.
+
+2. ``--no-session-persistence``: prevents per-run session writes to disk.
+   Each scout run spawns a fresh subprocess; persisting sessions produces
+   unnecessary I/O and can cause session-state collisions. Included here because
+   it also removes one of the background startup tasks that competes with the
+   MCP handshake timing.
+
+Both mitigations are confined to the tool-run subprocess env and CLI flags; they
+have no effect on the Anthropic API or the in-process adapter paths.
+
 Streaming note
 --------------
 ``/messages/stream`` SSE stays text-only for CC19.  Streaming + tools is a
@@ -98,6 +120,24 @@ def _timeout_seconds() -> float:
         return float(raw)
     except ValueError:
         return 900.0
+
+
+def _mcp_eager_env() -> dict[str, str]:
+    """Build the subprocess environment that forces MCP tools to load eagerly.
+
+    Sets ``MCP_CONNECTION_NONBLOCKING=false`` so claude-code's
+    ``isMcpLadderNonblockingEnabled()`` returns ``false``, causing the MCP
+    server handshake to complete synchronously before the first LLM turn.
+    Without this, claude-code may enter a deferred-catalog state where tools
+    are listed as "not yet fully connected" and the scout LLM narrates that
+    it cannot invoke them.
+
+    Inherits the full parent ``os.environ`` so PATH, DB credentials, and all
+    other config the subprocess needs are preserved.
+    """
+    env = os.environ.copy()
+    env["MCP_CONNECTION_NONBLOCKING"] = "false"
+    return env
 
 
 class ClaudeCodeAdapter:
@@ -260,7 +300,7 @@ class ClaudeCodeAdapter:
                 "--permission-mode",
                 _PERMISSION_MODE,
             ]
-            return await self._run_subprocess(cmd, prompt)
+            return await self._run_subprocess(cmd, prompt, tool_run=True)
         finally:
             Path(tmp.name).unlink(missing_ok=True)
 
@@ -304,23 +344,32 @@ class ClaudeCodeAdapter:
                 mcp_config_path=tmp.name,
                 agent_tools=agent_tools,
             )
-            return await self._run_subprocess(cmd, prompt)
+            return await self._run_subprocess(cmd, prompt, tool_run=True)
         finally:
             Path(tmp.name).unlink(missing_ok=True)
 
-    async def _run_subprocess(self, cmd: list[str], prompt: str) -> CompletionResponse:
+    async def _run_subprocess(
+        self, cmd: list[str], prompt: str, *, tool_run: bool = False
+    ) -> CompletionResponse:
         """Launch the claude CLI, enforce the wall-clock timeout, parse the result.
 
         Factored out so the tool path's subprocess handling is unit-testable and
         the parse logic mirrors :meth:`complete`.
+
+        ``tool_run=True`` injects :func:`_mcp_eager_env` so that MCP tools are
+        loaded synchronously (blocking) rather than deferred. On the text-only
+        path (``tool_run=False``) no MCP server is involved, so the env override
+        is omitted.
         """
         timeout = _timeout_seconds()
+        env = _mcp_eager_env() if tool_run else None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
         except OSError as exc:
             raise ProviderAPIError(0, f"failed to launch claude CLI: {exc}") from exc
@@ -466,6 +515,11 @@ def _build_launch_command(
     Canonical hyphenated flags; the per-agent MCP server is the only server
     (``--strict-mcp-config``); the scoped allowlist pre-approves exactly the
     agent's tools and ``--permission-mode default`` runs them without prompts.
+
+    ``--no-session-persistence`` prevents per-run session disk writes. Each
+    scout run is a fresh ephemeral subprocess — sessions are never resumed, so
+    persisting them wastes I/O and can interfere with the MCP startup timing
+    that triggers tool deferral.
     """
     return [
         binary,
@@ -477,6 +531,7 @@ def _build_launch_command(
         "--mcp-config",
         mcp_config_path,
         "--strict-mcp-config",
+        "--no-session-persistence",
         "--allowed-tools",
         *allowed_tools_for(agent_tools),
         "--disallowed-tools",
