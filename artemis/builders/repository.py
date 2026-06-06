@@ -663,6 +663,14 @@ async def list_recent_runs_with_trajectory(
                 "status": run.status,
                 "duration_s": duration_s,
                 "started_at": run.started_at.isoformat() if run.started_at else None,
+                "input_tokens": run.cost_input_tokens or 0,
+                "output_tokens": run.cost_output_tokens or 0,
+                # Blended Sonnet rate ($3/M in, $15/M out) — matches /api/stats/agent-metrics.
+                "cost_usd": round(
+                    (run.cost_input_tokens or 0) * 0.000003
+                    + (run.cost_output_tokens or 0) * 0.000015,
+                    6,
+                ),
                 "trajectory_summary": summary,
             }
         )

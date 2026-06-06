@@ -938,6 +938,19 @@ function formatRecentRunMeta(run) {
   return formatMetricValue(run?.run_type, "single");
 }
 
+// Absolute timestamp for the run-detail panel. started_at may be an ISO string (detail endpoint)
+// or epoch seconds; `new Date(isoString * 1000)` was producing "Invalid Date".
+function formatRunStarted(raw) {
+  if (raw == null || raw === "") return "—";
+  let d;
+  if (typeof raw === "number") d = new Date(raw * 1000);
+  else {
+    const ms = Date.parse(raw);
+    d = Number.isNaN(ms) ? new Date(Number(raw) * 1000) : new Date(ms);
+  }
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+}
+
 function formatRunCost(cost) {
   if (cost == null || Number.isNaN(Number(cost))) return "—";
   const value = Number(cost);
@@ -978,8 +991,9 @@ function renderAgentRunDetail(run) {
   const rows = [
     ["Status", run.status || "unknown"],
     ["Run type", run.run_type || "single"],
-    ["Started", run.started_at ? new Date(run.started_at * 1000).toLocaleString() : "—"],
-    ["Duration", formatDuration(run.duration_ms)],
+    ["Started", formatRunStarted(run.started_at)],
+    // Payload provides duration_s (seconds); older/metrics paths may use duration_ms.
+    ["Duration", formatDuration(run.duration_ms != null ? run.duration_ms : (run.duration_s != null ? run.duration_s * 1000 : 0))],
     ["Turns", run.turns != null ? String(run.turns) : "—"],
     ["Cost", formatRunCost(run.cost_usd)],
     ["Tokens", `${formatMetricValue(run.input_tokens ? Number(run.input_tokens).toLocaleString() : null, "0")} in / ${formatMetricValue(run.output_tokens ? Number(run.output_tokens).toLocaleString() : null, "0")} out`],
