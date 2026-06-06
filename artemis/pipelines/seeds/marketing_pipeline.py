@@ -42,6 +42,18 @@ def _agent_node(agent_id: str, node_id: str, x: int, y: int) -> dict[str, Any]:
     }
 
 
+def _scout_node(agent_id: str, node_id: str, x: int, y: int) -> dict[str, Any]:
+    """Scout variant of _agent_node with continue_on_failure=true.
+
+    Scout nodes are independent parallel feeders — a single timeout/403/network
+    error must NOT nuke the whole run.  The gate reads signals by pipeline_run_id
+    and is unaffected by which individual scout node produced them.
+    """
+    node = _agent_node(agent_id, node_id, x, y)
+    node["config"]["continue_on_failure"] = True
+    return node
+
+
 def _deliverable_node(node_id: str, label: str, deliverable_slug: str, x: int) -> dict[str, Any]:
     return {
         "id": node_id,
@@ -102,7 +114,7 @@ def build_marketing_pipeline(
         }
     ]
     nodes += [
-        _agent_node(f"marketing.scout.{slug}", f"scout_{slug}", 120 + i * 170, 220)
+        _scout_node(f"marketing.scout.{slug}", f"scout_{slug}", 120 + i * 170, 220)
         for i, slug in enumerate(SCOUT_SLUGS)
     ]
     nodes += [_agent_node(agent_id, node_id, 800, y) for agent_id, node_id, y in DOWNSTREAM[:2]]

@@ -372,6 +372,19 @@ class PipelineExecutor:
                     or "connector required" in str(error_msg).lower()
                 ):
                     error_msg = f"Connector not linked: {error_msg}"
+
+                # Optional nodes (continue_on_failure: true) — log and continue
+                node_config = node.get("config") or {}
+                if node_config.get("continue_on_failure"):
+                    logger.warning(
+                        "Optional node '%s' failed (continue_on_failure=true) — "
+                        "continuing run. error=%s",
+                        node_id,
+                        error_msg,
+                    )
+                    # node_state already written with status=failed above; keep run alive
+                    continue
+
                 run.status = "failed"
                 run.error_message = error_msg
                 run.completed_at = datetime.now(UTC)
