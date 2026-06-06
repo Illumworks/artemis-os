@@ -18,7 +18,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.costs.models import CostEvent
-from artemis.costs.pricing import get_rates
+from artemis.costs.pricing import canonicalize_model, get_rates
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,10 @@ async def record_cost_event(
         this function in try/except and log a WARNING. The LLM call result is
         what the user sees; a recording failure must be invisible to them.
     """
+    # Canonicalize model name so by_model rollups don't split aliases
+    # (e.g. "claude-haiku-4-5" and "claude-haiku-4-5-20251001" → same model).
+    model = canonicalize_model(model)
+
     try:
         rates = get_rates(provider, model)
     except KeyError:

@@ -132,6 +132,27 @@ _ANTHROPIC_PREFIX_FALLBACKS: list[tuple[str, dict[str, float]]] = [
     ("claude-sonnet", PRICING["anthropic"]["claude-sonnet-4-6"]),
 ]
 
+# Model-name aliases — collapse equivalent strings to one canonical form so
+# the cost dashboard + routing-opportunities don't treat them as different
+# models. Sources of aliases: agents.model is often stored as the short form
+# while the API returns the date-suffixed form. Both refer to the same model
+# with identical rates.
+#
+# Keys: any non-canonical string we've seen in the wild. Values: the
+# canonical (date-suffixed) form.
+MODEL_ALIASES: dict[str, str] = {
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+}
+
+
+def canonicalize_model(model: str) -> str:
+    """Return the canonical form of a model name (or the input unchanged).
+
+    Applied at cost_event write time so by_model rollups + routing-opportunity
+    comparisons treat short/long forms of the same model identically.
+    """
+    return MODEL_ALIASES.get(model, model)
+
 
 @lru_cache(maxsize=256)
 def get_rates(provider: str, model: str) -> dict[str, float]:

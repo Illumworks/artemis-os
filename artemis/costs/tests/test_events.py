@@ -150,3 +150,23 @@ async def test_recording_failure_does_not_raise(db_session: AsyncSession) -> Non
 
     # If we reached here without an unhandled exception, the guard pattern works.
     assert True
+
+
+@pytest.mark.asyncio
+async def test_record_cost_event_canonicalizes_model_name(db_session: AsyncSession) -> None:
+    """A row written with an alias model name is stored under the canonical form.
+
+    Without this, the by_model rollup + routing-opportunities engine treat
+    'claude-haiku-4-5' and 'claude-haiku-4-5-20251001' as separate models.
+    """
+    event = await record_cost_event(
+        db_session,
+        provider="anthropic",
+        model="claude-haiku-4-5",  # alias — should be canonicalized on write
+        provider_path="api",
+        feature_tag="agent_run",
+        input_tokens=1000,
+        output_tokens=500,
+    )
+    await db_session.commit()
+    assert event.model == "claude-haiku-4-5-20251001"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from artemis.costs.pricing import get_rates
+from artemis.costs.pricing import canonicalize_model, get_rates
 
 
 def test_anthropic_opus_rates() -> None:
@@ -76,3 +76,16 @@ def test_get_rates_is_cached() -> None:
     r1 = get_rates("anthropic", "claude-sonnet-4-6")
     r2 = get_rates("anthropic", "claude-sonnet-4-6")
     assert r1 is r2
+
+
+def test_canonicalize_haiku_short_to_dated() -> None:
+    """canonicalize_model collapses 'claude-haiku-4-5' to the date-suffixed form."""
+    assert canonicalize_model("claude-haiku-4-5") == "claude-haiku-4-5-20251001"
+
+
+def test_canonicalize_unknown_passes_through() -> None:
+    """Unknown / already-canonical models are returned unchanged."""
+    assert canonicalize_model("claude-haiku-4-5-20251001") == "claude-haiku-4-5-20251001"
+    assert canonicalize_model("claude-sonnet-4-6") == "claude-sonnet-4-6"
+    assert canonicalize_model("gpt-5-mini") == "gpt-5-mini"
+    assert canonicalize_model("some-future-model") == "some-future-model"
