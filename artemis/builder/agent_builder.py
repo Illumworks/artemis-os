@@ -70,17 +70,72 @@ When a user describes a problem or task they want automated:
    - Data sources and required integrations
    - Voice/tone (if the agent writes text for humans)
    - Edge cases or constraints you've spotted
-3. Generate a draft definition with:
-   - name: a slug-safe identifier (kebab-case)
-   - goal: one clear sentence
-   - system_prompt: 100-200 words tuned to the user's context
-   - tools: a list of tool names the agent needs (be specific)
-   - model: the right model for the task (default claude-sonnet-4-6)
-   - trigger: when/how this should run (describe for the Automation surface)
-4. Call propose() with the draft. Show the user the definition clearly.
+3. Generate a draft definition with the FULL blueprint (all fields below). Show it clearly.
+4. Call propose() with the draft.
 5. Identify any tools the draft needs that don't exist as Skills.
    For each missing capability, call propose() with kind="skill" for a co-proposal.
 6. Ask: "Want me to test-run this against real data before saving?"
+
+## Full blueprint — populate ALL fields by default
+
+When authoring or editing an agent, fill every blueprint field you can determine from context.
+A schema-only proposal with empty blueprint fields is useless — the Operations profile will show
+"Not specified" for everything and the agent will be unactionable.
+
+### Core fields (always populate)
+- name: slug-safe identifier (kebab-case)
+- goal: one clear sentence — what the agent achieves, not how
+- system_prompt: 100-200 words tuned to the user's context
+- tools: list of tool names the agent needs (be specific)
+- model: right model for the task (default claude-sonnet-4-6)
+- max_iterations: how many agentic loop turns to allow (default 10; raise for complex multi-step)
+
+### Blueprint fields (populate whenever you have enough context)
+
+**persona** — object: {name, purpose, voice_notes, ghostwrite, profile_image_path}
+  name: human-readable agent name (e.g. "Signal Scout")
+  purpose: one-paragraph description of what this agent does for the team
+  voice_notes: tone guidance if the agent writes for humans (e.g. "Concise, data-first, no fluff")
+  ghostwrite: true if this agent drafts content on behalf of a human
+  Example: {"name": "Signal Scout", "purpose": "Monitors district procurement signals...",
+             "voice_notes": "Concise, data-first", "ghostwrite": false}
+
+**output_contract** — object: what the agent is expected to produce
+  Document the output shape/format so callers know what to expect.
+  Example: {"format": "markdown", "fields": ["summary", "signal_ids", "recommended_action"]}
+
+**reason_codes_emitted** — array[str]: reason-code slugs this agent may emit
+  Example: ["DISTRICT_RFPA_NEW", "DISTRICT_BUDGET_CYCLE_OPEN"]
+
+**cadence_seconds** — int: run interval in seconds
+  Examples: 3600 (hourly), 86400 (daily), 604800 (weekly). Null = on-demand only.
+
+**lifecycle_status** — str: current operational state
+  Use: "active", "paused", "draft", or "deprecated"
+
+**urgency_tiers** — OBJECT keyed by tier name (NOT an array). Each value is a string
+  describing when/how that tier runs. This MUST be an object, never an array.
+  Example: {
+    "hot": "Signal score >80 — run within 5 min",
+    "standard": "Score 40-80 — run within 1 hr",
+    "low": "Score <40 — run in next daily batch"
+  }
+
+**failure_modes** — array of {name: str, description: str}
+  Document known ways this agent can fail or produce bad output.
+  Example: [{"name": "stale_data", "description": "Scout sources not refreshed in >24 hrs"},
+            {"name": "no_signals", "description": "Empty signal queue causes no-op run"}]
+
+**inputs_required** — array of {key: str, kind: str, description: str}
+  What must be provided at invocation time.
+  Example: [{"key": "district_id", "kind": "string", "description": "NCES district ID"},
+            {"key": "campaign_id", "kind": "integer", "description": "Target campaign PK"}]
+
+**db_tables_touched** — array[str]: Postgres tables this agent reads/writes
+  Example: ["signal_queue", "campaign_candidates", "agents"]
+
+**implementation_notes** — str: free-form implementation guidance, caveats, known issues
+  Example: "Depends on district_data_meta freshness. Run DIST5 panel check if hit rate drops."
 
 If the user is opening an existing agent (edit session):
 - Start by calling read_recent_runs() to load trajectory summaries.
@@ -189,7 +244,99 @@ AGENT_BUILDER_TOOL_SPECS: list[dict[str, Any]] = [
                 },
                 "definition": {
                     "type": "object",
-                    "description": "The draft definition object.",
+                    "description": (
+                        "The draft definition object. For kind='agent', the full blueprint "
+                        "is supported. Only 'name' is required; all blueprint fields are "
+                        "optional (a partial proposal will never wipe existing data). "
+                        "Agent blueprint fields: "
+                        "name (str, required), "
+                        "agent_id (str, optional slug), "
+                        "description (str), "
+                        "goal (str — one clear sentence), "
+                        "system_prompt (str — 100-200 words tuned to context), "
+                        "tools (array of tool names), "
+                        "model (str, default claude-sonnet-4-6), "
+                        "provider (str, default anthropic), "
+                        "max_iterations (int, default 10), "
+                        "persona (object: {name, purpose, voice_notes, ghostwrite, profile_image_path}), "
+                        "output_contract (object describing expected output shape/format), "
+                        "reason_codes_emitted (array of strings — reason-code slugs this agent may emit), "
+                        "cadence_seconds (int — run interval in seconds, e.g. 3600 = hourly), "
+                        "lifecycle_status (str — e.g. 'active', 'paused', 'draft'), "
+                        "urgency_tiers (OBJECT keyed by tier name — e.g. "
+                        "{\"hot\": \"Signal score >80 — run within 5 min\", "
+                        "\"standard\": \"Score 40-80 — run within 1 hr\", "
+                        "\"low\": \"Score <40 — run in next daily batch\"}), "
+                        "failure_modes (array of {name: str, description: str}), "
+                        "inputs_required (array of {key: str, kind: str, description: str}), "
+                        "db_tables_touched (array of table-name strings), "
+                        "implementation_notes (str — implementation guidance, caveats, known issues)."
+                    ),
+                    "properties": {
+                        "name": {"type": "string"},
+                        "agent_id": {"type": "string"},
+                        "description": {"type": "string"},
+                        "goal": {"type": "string"},
+                        "system_prompt": {"type": "string"},
+                        "tools": {"type": "array", "items": {}},
+                        "model": {"type": "string"},
+                        "provider": {"type": "string"},
+                        "max_iterations": {"type": "integer"},
+                        "persona": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "purpose": {"type": "string"},
+                                "voice_notes": {"type": "string"},
+                                "ghostwrite": {"type": "boolean"},
+                                "profile_image_path": {"type": "string"},
+                            },
+                        },
+                        "output_contract": {"type": "object"},
+                        "reason_codes_emitted": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "cadence_seconds": {"type": "integer"},
+                        "lifecycle_status": {"type": "string"},
+                        "urgency_tiers": {
+                            "type": "object",
+                            "description": (
+                                "Keyed by tier name (e.g. 'hot', 'standard', 'low'). "
+                                "Each value is a string describing when/how that tier runs. "
+                                "MUST be an object, NOT an array."
+                            ),
+                            "additionalProperties": {"type": "string"},
+                        },
+                        "failure_modes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                },
+                                "required": ["name", "description"],
+                            },
+                        },
+                        "inputs_required": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": {"type": "string"},
+                                    "kind": {"type": "string"},
+                                    "description": {"type": "string"},
+                                },
+                                "required": ["key", "kind", "description"],
+                            },
+                        },
+                        "db_tables_touched": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "implementation_notes": {"type": "string"},
+                    },
                 },
                 "target_id": {
                     "type": "integer",

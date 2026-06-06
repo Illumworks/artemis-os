@@ -404,28 +404,43 @@ async def _commit_agent(
 
     from artemis.builders.models import Agent
 
+    # All fields the builder can author — core + full blueprint.
+    # Keep this as a single canonical list so UPDATE and CREATE stay in sync.
+    _agent_blueprint_keys = (
+        "name",
+        "description",
+        "goal",
+        "system_prompt",
+        "tools",
+        "model",
+        "provider",
+        "max_iterations",
+        # Blueprint fields (agents_blueprint migration 0039)
+        "persona",
+        "output_contract",
+        "reason_codes_emitted",
+        "cadence_seconds",
+        "lifecycle_status",
+        "urgency_tiers",
+        "failure_modes",
+        "inputs_required",
+        "db_tables_touched",
+        "implementation_notes",
+    )
+
     if target_id is not None:
-        # Update existing
+        # Update existing — only touch keys PRESENT in the proposal (lossless partial edit).
         result = await db_session.execute(sa_select(Agent).where(Agent.id == target_id).limit(1))
         agent = result.scalar_one_or_none()
         if agent is None:
             raise ValueError(f"Agent with id={target_id} not found")
-        for key in (
-            "name",
-            "description",
-            "goal",
-            "system_prompt",
-            "tools",
-            "model",
-            "provider",
-            "max_iterations",
-        ):
+        for key in _agent_blueprint_keys:
             if key in defn:
                 setattr(agent, key, defn[key])
         await db_session.flush()
         return {"status": "updated", "kind": "agent", "id": agent.id, "proposal_id": proposal_id}
 
-    # Create new
+    # Create new — write every blueprint field present in the proposal.
     agent_id = defn.get("agent_id") or f"agent-{uuid.uuid4().hex[:8]}"
     agent = Agent(
         agent_id=agent_id,
@@ -437,6 +452,17 @@ async def _commit_agent(
         model=defn.get("model", "claude-sonnet-4-6"),
         provider=defn.get("provider", "anthropic"),
         max_iterations=defn.get("max_iterations", 10),
+        # Blueprint fields
+        persona=defn.get("persona"),
+        output_contract=defn.get("output_contract"),
+        reason_codes_emitted=defn.get("reason_codes_emitted", []),
+        cadence_seconds=defn.get("cadence_seconds"),
+        lifecycle_status=defn.get("lifecycle_status"),
+        urgency_tiers=defn.get("urgency_tiers"),
+        failure_modes=defn.get("failure_modes"),
+        inputs_required=defn.get("inputs_required"),
+        db_tables_touched=defn.get("db_tables_touched"),
+        implementation_notes=defn.get("implementation_notes"),
     )
     db_session.add(agent)
     await db_session.flush()
