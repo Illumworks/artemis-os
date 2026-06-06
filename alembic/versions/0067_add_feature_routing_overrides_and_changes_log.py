@@ -7,8 +7,8 @@ Tables created:
   routing_changes_log        — lossless audit log (never deleted)
   app_settings               — key/value store for runtime config (default_cascade)
 
-Revision ID: 0066
-Revises: 0065
+Revision ID: 0067
+Revises: 0066
 Create Date: 2026-06-06
 """
 
@@ -19,8 +19,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
 
-revision: str = "0066"
-down_revision: str = "0065"
+revision: str = "0067"
+down_revision: str = "0066"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
