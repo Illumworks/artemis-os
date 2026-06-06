@@ -166,7 +166,8 @@ async def stats_agent_metrics(
     - avg_cost / total_cost are estimated via Sonnet-4.6 blended rates
       ($3/M input, $15/M output).  The agent_runs table does not store the model
       name, so we use the project default.  Rates defined in artemis/builders/_cost.py.
-    - avg_duration is EPOCH seconds (float) matching formatDuration() in the JS consumer.
+    - avg_duration is MILLISECONDS (float) — formatDuration() in the JS consumer expects ms
+      (value<1000 → "Nms", else /1000 → seconds/minutes/hours).
     - recent[] returns the 50 most recent non-ephemeral runs, oldest-first within
       that window so the frontend .filter().slice(0,3) gets the 3 newest per agent.
     - last_run_at is included per-agent row for the JS consumer at
@@ -184,7 +185,7 @@ async def stats_agent_metrics(
             COUNT(*) FILTER (WHERE ar.status = 'completed')
                                                       AS successes,
             AVG(
-                EXTRACT(EPOCH FROM (ar.completed_at - ar.started_at))
+                EXTRACT(EPOCH FROM (ar.completed_at - ar.started_at)) * 1000
             ) FILTER (WHERE ar.completed_at IS NOT NULL)
                                                       AS avg_duration,
             AVG(
