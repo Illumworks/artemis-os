@@ -909,7 +909,16 @@ function buildAgentProfile(agent) {
 }
 
 function formatLastRun(run) {
-  const startedAt = Number(run?.started_at || 0);
+  // started_at may be epoch seconds (metrics path) OR an ISO string (detail-endpoint recentRuns).
+  // Number("2026-06-06T…") is NaN → was rendering "—" for every detail-endpoint run row.
+  const raw = run?.started_at;
+  let startedAt = 0;
+  if (typeof raw === "number") {
+    startedAt = raw;
+  } else if (typeof raw === "string" && raw) {
+    const parsedMs = Date.parse(raw);
+    startedAt = Number.isNaN(parsedMs) ? (Number(raw) || 0) : parsedMs / 1000;
+  }
   if (!startedAt) return "—";
   const diff = Math.max(Math.floor((Date.now() / 1000) - startedAt), 0);
   if (diff < 60) return "just now";
@@ -919,6 +928,14 @@ function formatLastRun(run) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+// Recent-run row meta column. The detail endpoint provides duration_s (seconds); the metrics path
+// uses duration_seconds. Show a human duration when available, else fall back to run_type/"single".
+function formatRecentRunMeta(run) {
+  const sec = Number(run?.duration_s ?? run?.duration_seconds ?? 0);
+  if (sec > 0) return formatDuration(sec * 1000);
+  return formatMetricValue(run?.run_type, "single");
 }
 
 function formatRunCost(cost) {
@@ -1981,7 +1998,7 @@ function renderAgentDetail(agent) {
             >
               <span>${escapeHtml(formatLastRun(run))}</span>
               <span class="ops-run-status-pill ops-run-status-pill-${escapeAttr(getRunStatusTone(run.status))}">${escapeHtml(run.status || "running")}</span>
-              <span>${escapeHtml(formatMetricValue(run.run_type, "single"))}</span>
+              <span>${escapeHtml(formatRecentRunMeta(run))}</span>
               <span class="ops-run-open-label">${run.run_id && run.run_id === selectedAgentRunId ? "Hide details" : "Open run"}</span>
             </button>
           `).join("") : `
