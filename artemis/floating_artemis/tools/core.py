@@ -360,10 +360,14 @@ async def _spawn_subagent(inp: dict[str, Any]) -> str:
     error_msg: str | None = None
 
     try:
-        from artemis.agent.client import AnthropicAdapter
         from artemis.agent.loop import run_turn, user_message
+        from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
 
-        adapter = AnthropicAdapter()
+        try:
+            adapter = resolve_adapter(provider="claude-code")
+        except NoProviderAvailableError as exc:
+            raise RuntimeError(f"spawn_subagent: no provider available: {exc}") from exc
+
         result = await run_turn(
             adapter=adapter,
             messages=[user_message(task)],

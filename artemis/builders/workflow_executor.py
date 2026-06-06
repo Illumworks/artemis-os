@@ -17,7 +17,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.agent import AnthropicAdapter, run_turn
+from artemis.agent import run_turn
 from artemis.agent.client import ModelAdapter
 from artemis.builders._cost import estimate_cost_usd
 from artemis.builders.models import WorkflowRun
@@ -27,6 +27,7 @@ from artemis.builders.repository import (
     set_workflow_context,
     update_workflow_run_status,
 )
+from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
 from artemis.ws.events import (
     workflow_completed_event,
     workflow_failed_event,
@@ -60,7 +61,13 @@ async def run_workflow(
     Returns:
         The WorkflowRun row (status='completed' or 'failed').
     """
-    adapter = model_adapter if model_adapter is not None else AnthropicAdapter()
+    if model_adapter is not None:
+        adapter = model_adapter
+    else:
+        try:
+            adapter = resolve_adapter(provider="claude-code")
+        except NoProviderAvailableError as exc:
+            raise RuntimeError(f"Workflow executor: no provider available: {exc}") from exc
 
     workflow = await get_workflow(session, workflow_id)
 
