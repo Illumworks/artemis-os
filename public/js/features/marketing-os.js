@@ -2235,6 +2235,60 @@ function _showMarketingApprovalToast(container, message, isError = false) {
   setTimeout(() => toast.remove(), 5000);
 }
 
+// Internal: renders a single cluster signal row inside a cluster card.
+function _renderClusterSignalRow(signal) {
+  const roleBadge = signal.role === 'primary'
+    ? `<span class="mkt-cluster-role mkt-cluster-role--primary">Primary</span>`
+    : `<span class="mkt-cluster-role mkt-cluster-role--corrob">Corrob</span>`;
+  const urgencyClass = signal.urgency ? ` mkt-cluster-signal--${esc(signal.urgency)}` : '';
+  return `
+    <div class="mkt-cluster-signal-row${urgencyClass}">
+      ${roleBadge}
+      <span class="mkt-cluster-signal-headline">${esc(signal.headline || 'Signal')}</span>
+      ${signal.evidence_quote ? `<span class="mkt-cluster-signal-evidence">${esc(signal.evidence_quote)}</span>` : ''}
+      <span class="mkt-cluster-signal-meta">${esc(signal.source || '')}${signal.fit_score != null ? ` · fit ${(signal.fit_score * 100).toFixed(0)}%` : ''}</span>
+    </div>`;
+}
+
+// Internal: renders a single cluster card (suggested or regular).
+function _renderClusterCard(cluster, approvalId) {
+  const isSuggested = cluster.suggested === true;
+  const suggestedClass = isSuggested ? ' mkt-cluster-card--suggested' : '';
+  const suggestedChip = isSuggested
+    ? `<span class="mkt-cluster-suggested-chip">&#x26A1; Strongest signal</span>`
+    : '';
+  const scoreText = cluster.score != null
+    ? `Score ${(cluster.score * 100).toFixed(0)}%`
+    : '';
+  const scoreReason = cluster.score_reason ? ` · ${esc(cluster.score_reason)}` : '';
+  const signals = Array.isArray(cluster.signals) ? cluster.signals : [];
+  const signalRows = signals.map(_renderClusterSignalRow).join('');
+  return `
+    <div class="mkt-cluster-card${suggestedClass}" data-cluster-key="${esc(cluster.cluster_key || '')}">
+      <div class="mkt-cluster-head">
+        <div class="mkt-cluster-title-row">
+          <span class="mkt-cluster-name">${esc(cluster.district_label || '')} · ${esc(cluster.campaign_family || '')}</span>
+          ${suggestedChip}
+        </div>
+        <div class="mkt-cluster-sub">${esc(scoreText)}${scoreReason}</div>
+      </div>
+      <div class="mkt-cluster-signals">${signalRows}</div>
+      <div class="mkt-signal-actions">
+        <button class="mkt-btn-primary" type="button"
+          data-approve-id="${esc(String(approvalId))}"
+          data-cluster-key="${esc(cluster.cluster_key || '')}">&#x2713; Approve this cluster</button>
+      </div>
+    </div>`;
+}
+
+// Internal: renders the cluster section for a Gate-1 approval.
+// Returns '' when clusters is absent/empty — falls through to legacy flat rendering.
+function _renderClustersSection(ctx, approvalId) {
+  const clusters = Array.isArray(ctx.clusters) && ctx.clusters.length ? ctx.clusters : null;
+  if (!clusters) return '';
+  return `<div class="mkt-clusters-list">${clusters.map((c) => _renderClusterCard(c, approvalId)).join('')}</div>`;
+}
+
 // Internal: renders a PIPE4 approval card with pipeline/node/signal context.
 function _renderPipe4ApprovalCard(a) {
   const p4 = a.pipe4Context || {};
@@ -2311,24 +2365,31 @@ function _renderPipe4ApprovalCard(a) {
     `;
   }
 
-  // Signals section
+  // Cluster section: use grouped cluster view when Worker A has added clusters;
+  // fall back to legacy flat signal summary when absent.
+  const clustersHtml = _renderClustersSection(ctx, a.id);
+  const hasClusters = clustersHtml !== '';
+
+  // Legacy flat signal summary (shown only when no clusters data).
   let signalSection = '';
-  if (ctx.signal_count > 0) {
-    const districts = (ctx.districts || []).map(esc).join(', ') || '—';
-    const codes = (ctx.reason_codes || []).map(esc).join(', ') || '—';
-    signalSection = `
-      <div class="mkt-pipe4-signals">
-        <span class="mkt-pipe4-label">Signals</span>
-        <span class="mkt-pipe4-value">${ctx.signal_count} qualified</span>
-        <span class="mkt-pipe4-sep">·</span>
-        <span class="mkt-pipe4-label">Districts</span>
-        <span class="mkt-pipe4-value">${districts}</span>
-        <span class="mkt-pipe4-sep">·</span>
-        <span class="mkt-pipe4-label">Codes</span>
-        <span class="mkt-pipe4-value">${codes}</span>
-      </div>`;
-  } else {
-    signalSection = `<div class="mkt-pipe4-empty">No signals qualified this run</div>`;
+  if (!hasClusters) {
+    if (ctx.signal_count > 0) {
+      const districts = (ctx.districts || []).map(esc).join(', ') || '—';
+      const codes = (ctx.reason_codes || []).map(esc).join(', ') || '—';
+      signalSection = `
+        <div class="mkt-pipe4-signals">
+          <span class="mkt-pipe4-label">Signals</span>
+          <span class="mkt-pipe4-value">${ctx.signal_count} qualified</span>
+          <span class="mkt-pipe4-sep">·</span>
+          <span class="mkt-pipe4-label">Districts</span>
+          <span class="mkt-pipe4-value">${districts}</span>
+          <span class="mkt-pipe4-sep">·</span>
+          <span class="mkt-pipe4-label">Codes</span>
+          <span class="mkt-pipe4-value">${codes}</span>
+        </div>`;
+    } else {
+      signalSection = `<div class="mkt-pipe4-empty">No signals qualified this run</div>`;
+    }
   }
 
   const evidenceSection = ctx.evidence_quote
@@ -2337,6 +2398,12 @@ function _renderPipe4ApprovalCard(a) {
   const briefSection = ctx.brief_preview
     ? `<div class="mkt-pipe4-brief"><span class="mkt-pipe4-label">Brief</span> ${esc(ctx.brief_preview)}</div>`
     : '';
+
+  // When clusters are shown, each cluster card has its own per-cluster Approve button.
+  // The top-level Approve button is hidden in that case; Reject stays whole-approval.
+  const approveBtn = hasClusters
+    ? ''
+    : `<button class="mkt-btn-primary" type="button" data-approve-id="${esc(String(a.id))}">Approve</button>`;
 
   return `
     <article class="mkt-approval-card mkt-pipe4-card" data-unified-approval-id="${esc(String(a.id))}">
@@ -2348,6 +2415,7 @@ function _renderPipe4ApprovalCard(a) {
         <span class="mkt-pill mkt-pill-pending">Pending</span>
       </div>
       ${signalSection}
+      ${clustersHtml}
       ${evidenceSection}
       ${briefSection}
       <div class="mkt-approval-meta">
@@ -2355,7 +2423,7 @@ function _renderPipe4ApprovalCard(a) {
         ${p4.node_id ? `<span>Node: ${esc(p4.node_id)}</span>` : ''}
       </div>
       <div class="mkt-signal-actions">
-        <button class="mkt-btn-primary" type="button" data-approve-id="${esc(String(a.id))}">Approve</button>
+        ${approveBtn}
         <button class="mkt-btn-ghost" type="button" data-reject-id="${esc(String(a.id))}">Reject</button>
         ${runHref ? `<a class="mkt-btn-link" href="${runHref}">View pipeline run →</a>` : ''}
       </div>
@@ -2873,15 +2941,19 @@ export async function loadMarketingApprovals(container) {
     container.querySelectorAll('[data-approve-id]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.approveId;
+        const clusterKey = btn.dataset.clusterKey || null;
+        const originalLabel = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Approving…';
         try {
-          await decideApprovalApi(id, { decision: 'approve' });
+          const opts = { decision: 'approve' };
+          if (clusterKey) opts.selected_cluster_keys = [clusterKey];
+          await decideApprovalApi(id, opts);
           _showMarketingApprovalToast(container, 'Approval recorded. Pipeline resumed.');
           await loadMarketingApprovals(container);
         } catch (err) {
           btn.disabled = false;
-          btn.textContent = 'Approve';
+          btn.textContent = originalLabel;
           _showMarketingApprovalToast(container, err?.message || 'Approval failed.', true);
         }
       });
