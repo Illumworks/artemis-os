@@ -999,9 +999,11 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
     ? `<option value="${esc(accountUser.id)}" selected>${esc(accountUser.label)} (current user)</option>`
     : '<option value="" selected>Unassigned</option>';
 
+  // NOTE: returns just the modal card — the backdrop wrapper is the element
+  // created in _maybeOpenInitiationProposal (portaled to <body>). Emitting a
+  // second backdrop here used to double the dim and trap clicks.
   return `
-    <div class="mkt-modal-backdrop mkt-initiation-backdrop" data-initiation-modal>
-      <div class="mkt-modal mkt-sp-modal mkt-initiation-modal">
+    <div class="mkt-modal mkt-sp-modal mkt-initiation-modal">
         <div class="mkt-initiation-header">
           <div>
             <div class="mkt-modal-eyebrow">Campaign initiation</div>
@@ -1083,7 +1085,6 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
           <button class="mkt-btn-primary" type="button" data-initiation-confirm>Confirm and initiate</button>
         </div>
       </div>
-    </div>
   `;
 }
 
@@ -1134,7 +1135,7 @@ function renderTabSignalsContent(cluster) {
 
 async function _maybeOpenInitiationProposal(container, campaign) {
   if (!campaign || !campaign._fromApi || campaign.initiatedAt) return;
-  if (container.querySelector('[data-initiation-modal]')) return;
+  if (document.querySelector('[data-initiation-modal]')) return;
   // Respect an explicit close — don't auto-reopen until the user clicks "Review" again.
   if (_dismissedInitiation.has(String(campaign.id))) return;
 
@@ -1146,7 +1147,12 @@ async function _maybeOpenInitiationProposal(container, campaign) {
       <p class="mkt-section-subtext">Loading initiation proposal…</p>
     </div>
   `;
-  container.appendChild(backdrop);
+  // Portal to <body>: the marketing content lives inside .canvas-scroll, which
+  // has a CSS mask (the gradient the operator wants kept). A mask establishes a
+  // containing block for position:fixed children, so a backdrop inside it can
+  // only cover the content pane. Mounting on <body> lets it dim the whole app
+  // (sidebar included), matching the Jira detail modal.
+  document.body.appendChild(backdrop);
 
   let bundle = null;
   try {
@@ -1188,7 +1194,8 @@ async function _maybeOpenInitiationProposal(container, campaign) {
 }
 
 function _wireInitiationModal(container, campaign, bundle, accountInfo) {
-  const modal = container.querySelector('[data-initiation-modal]');
+  // Backdrop is portaled to <body>, so look it up document-wide, not under container.
+  const modal = document.querySelector('[data-initiation-modal]');
   if (!modal) return;
   modal.setAttribute('tabindex', '-1');
   modal.focus({ preventScroll: true });
