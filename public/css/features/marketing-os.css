@@ -3862,6 +3862,92 @@
   padding: 0 0 8px;
 }
 
+/* ── Cost tab — per-campaign spend ─────────────────────────────────────────── */
+.mkt-tab-cost {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 520px;
+}
+
+.mkt-tab-cost-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.mkt-cost-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mkt-cost-headline-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--ink-3);
+}
+
+.mkt-cost-headline-value {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mkt-cost-perdistrict {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.mkt-cost-perdistrict-basis {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.mkt-cost-breakdown {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md, 10px);
+  overflow: hidden;
+}
+
+.mkt-cost-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 14px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.mkt-cost-row:not(:last-child) {
+  border-bottom: 1px solid var(--rule);
+}
+
+.mkt-cost-row > span:last-child {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.mkt-cost-row-na {
+  color: var(--ink-4, var(--ink-3));
+  font-weight: 400;
+}
+
+.mkt-cost-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
 /* ── Composable audience builder ────────────────────────────────────────── */
 
 .mkt-initiation-audience-builder h4 {

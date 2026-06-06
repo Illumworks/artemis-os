@@ -506,6 +506,7 @@ function renderCampaignWorkspace(campaign) {
     { id: 'performance', label: 'Performance' },
     { id: 'approval-log', label: 'Approval Log' },
     { id: 'signals', label: 'Signals' },
+    { id: 'cost', label: 'Cost' },
     ...(_isOutboundSendEnabled() ? [{ id: 'outbox', label: 'Outbox' }] : []),
   ];
   const activeTab = storedTab === 'outbox' && !_isOutboundSendEnabled() ? 'brief' : storedTab;
@@ -1168,6 +1169,7 @@ function renderWorkspaceTab(campaign, tab) {
     case 'performance':return renderTabPerformance(campaign);
     case 'approval-log': return renderTabApprovalLog(campaign);
     case 'signals':      return renderTabSignalsPlaceholder(campaign);
+    case 'cost':         return renderTabCostPlaceholder(campaign);
     case 'outbox':       return renderTabOutbox();
     default:           return renderTabBrief(campaign);
   }
@@ -1199,6 +1201,60 @@ function renderTabSignalsContent(cluster) {
       <div class="mkt-initiation-signals">
         ${_renderSignalClusterRows(cluster)}
       </div>
+    </div>
+  `;
+}
+
+// ── Cost tab — what this campaign cost to run + cost per district ──────────────
+function _fmtCostUsd(v) {
+  const n = Number(v);
+  return `$${n.toFixed(n !== 0 && Math.abs(n) < 1 ? 4 : 2)}`;
+}
+
+function renderTabCostPlaceholder(campaign) {
+  if (!campaign._fromApi) {
+    return `<div class="mkt-tab-cost"><p class="mkt-tab-cost-empty">Cost data requires a live campaign.</p></div>`;
+  }
+  return `<div class="mkt-tab-cost" data-cost-loading="${esc(String(campaign.id))}">
+    <p class="mkt-tab-cost-empty">Loading cost…</p>
+  </div>`;
+}
+
+function renderTabCostContent(data) {
+  if (!data || typeof data !== 'object') {
+    return `<div class="mkt-tab-cost"><p class="mkt-tab-cost-empty">Cost data unavailable.</p></div>`;
+  }
+  const total = Number(data.totalUsd || 0);
+  const stages = data.byStage || {};
+  // Nothing accrued yet → honest empty state rather than a wall of zeros.
+  if (!(total > 0) && stages.scouting == null) {
+    return `<div class="mkt-tab-cost">
+      <p class="mkt-tab-cost-empty">No cost recorded yet — assemble a brief or draft content to begin tracking this campaign's spend.</p>
+    </div>`;
+  }
+  const noun = data.districtsBasis === 'recipients' ? 'contacted' : 'targeted';
+  const districts = Number(data.districtsContacted || 0);
+  const perDistrict = data.costPerDistrict == null ? '—' : _fmtCostUsd(data.costPerDistrict);
+  // Per-stage: null = not yet available (scouting); 0 = no spend in that stage (—); else $.
+  const stageCell = (v) => v == null ? '<span class="mkt-cost-row-na">Not yet available</span>'
+    : (Number(v) === 0 ? '<span class="mkt-cost-row-na">—</span>' : _fmtCostUsd(v));
+  return `
+    <div class="mkt-tab-cost">
+      <div class="mkt-cost-headline">
+        <span class="mkt-cost-headline-label">Cost to run</span>
+        <span class="mkt-cost-headline-value">${esc(_fmtCostUsd(total))}</span>
+      </div>
+      <p class="mkt-cost-perdistrict">
+        Cost per district: <strong>${esc(perDistrict)}</strong>
+        <span class="mkt-cost-perdistrict-basis">across ${esc(String(districts))} district${districts === 1 ? '' : 's'} ${esc(noun)}</span>
+      </p>
+      <div class="mkt-cost-breakdown">
+        <div class="mkt-cost-row"><span>Brief assembly</span><span>${stageCell(stages.brief)}</span></div>
+        <div class="mkt-cost-row"><span>Content drafting</span><span>${stageCell(stages.content)}</span></div>
+        <div class="mkt-cost-row"><span>Discovery (scouting)</span><span>${stageCell(stages.scouting)}</span></div>
+        <div class="mkt-cost-row"><span>Sends</span><span>${stageCell(stages.sends)}</span></div>
+      </div>
+      <p class="mkt-cost-note">Projected on-demand API cost for the AI work attributed to this campaign. The subscription is flat — this is the equivalent metered cost. Discovery is this campaign's per-signal share of scouting.</p>
     </div>
   `;
 }
@@ -3695,6 +3751,31 @@ async function _loadAndRenderSignalsTab(container, campaign) {
   }
 }
 
+async function _loadAndRenderCostTab(container, campaign) {
+  if (!campaign._fromApi || !campaign.id) return;
+  const content = container.querySelector('[data-mkt-tab-content]');
+  if (!content) return;
+  const activeBtn = container.querySelector('[data-mkt-tab].active');
+  if (!activeBtn || activeBtn.dataset.mktTab !== 'cost') return;
+  const loadingEl = content.querySelector('[data-cost-loading]');
+  if (!loadingEl) return; // already rendered
+
+  let data = null;
+  try {
+    const resp = await fetch(`/api/marketing/campaigns/${encodeURIComponent(campaign.id)}/cost`);
+    if (resp.ok) data = await resp.json();
+  } catch {
+    data = null;
+  }
+
+  const stillActiveBtn = container.querySelector('[data-mkt-tab].active');
+  if (stillActiveBtn && stillActiveBtn.dataset.mktTab === 'cost') {
+    content.innerHTML = data
+      ? renderTabCostContent(data)
+      : `<div class="mkt-tab-cost"><p class="mkt-tab-cost-empty">Cost data unavailable.</p></div>`;
+  }
+}
+
 function _wireBriefTabActions(container, campaign) {
   container.querySelectorAll('[data-brief-action]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -3918,6 +3999,9 @@ function _wireWorkspaceTabs(container, campaign) {
       if (tab === 'signals' && campaign._fromApi) {
         _loadAndRenderSignalsTab(container, campaign);
       }
+      if (tab === 'cost' && campaign._fromApi) {
+        _loadAndRenderCostTab(container, campaign);
+      }
     });
   });
 
@@ -3935,6 +4019,8 @@ function _wireWorkspaceTabs(container, campaign) {
       loadOutboxTab(container);
     } else if (initialActive.dataset.mktTab === 'signals') {
       _loadAndRenderSignalsTab(container, campaign);
+    } else if (initialActive.dataset.mktTab === 'cost') {
+      _loadAndRenderCostTab(container, campaign);
     }
   }
 }
