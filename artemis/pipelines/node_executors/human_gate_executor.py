@@ -761,7 +761,14 @@ def _check_fan_in(
     all_nodes: list[dict[str, Any]],
     all_edges: list[dict[str, Any]],
 ) -> bool:
-    """Return True if all upstream nodes for this gate have succeeded."""
+    """Return True if all upstream nodes for this gate have reached a terminal state.
+
+    A node is considered "done" if its status is "succeeded" OR if it is "failed"
+    with ``continue_on_failure=true`` in its config (i.e. it is an optional node
+    that was tolerated by the executor).  This ensures that a gate downstream of
+    optional parallel feeders (e.g. scout nodes) fires as soon as all feeders have
+    finished — regardless of whether individual optional feeders timed out.
+    """
     node_id: str = node.get("id", "")
     config: dict[str, Any] = node.get("config") or {}
     wait_for_all: bool = config.get("wait_for_all_upstream", True)
@@ -771,12 +778,20 @@ def _check_fan_in(
     if not upstream_ids:
         return True  # No upstream — fire immediately
 
-    upstream_statuses = [node_states.get(uid, {}).get("status", "pending") for uid in upstream_ids]
+    # Build a lookup from node_id → node config for optional-node detection.
+    optional_node_ids: set[str] = {
+        n["id"] for n in all_nodes if (n.get("config") or {}).get("continue_on_failure")
+    }
+
+    def _is_done(uid: str) -> bool:
+        status = node_states.get(uid, {}).get("status", "pending")
+        # A tolerated (optional) failure counts as done for fan-in purposes.
+        return status == "succeeded" or (status == "failed" and uid in optional_node_ids)
 
     if wait_for_all:
-        return all(s == "succeeded" for s in upstream_statuses)
+        return all(_is_done(uid) for uid in upstream_ids)
     else:
-        return any(s == "succeeded" for s in upstream_statuses)
+        return any(node_states.get(uid, {}).get("status") == "succeeded" for uid in upstream_ids)
 
 
 async def execute_human_gate_node(

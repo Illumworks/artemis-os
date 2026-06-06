@@ -13,6 +13,10 @@ Tests:
 10. Integration: timeout auto_approve fires audit entry + continues
 11. Integration: escalation flow (timeout → escalation_to DM)
 12. Smoke: marketing pipeline end-to-end (CI2 graph, mocked agents + Slack)
+13. Integration: continue_on_failure — optional node failure keeps run alive
+14. Integration: continue_on_failure — non-optional failure still fails run
+15. Integration: continue_on_failure — downstream nodes execute after optional failure
+16. Integration: marketing pipeline scouts have continue_on_failure flag
 """
 
 from __future__ import annotations
@@ -1078,6 +1082,254 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
         assert ns["trigger_scheduled"]["status"] == "succeeded"
         assert ns["gate_1_signals_inbox"]["status"] == "succeeded"
         assert ns["content_brief_assembler"]["status"] == "succeeded"
+
+
+# ── 13. Integration: continue_on_failure — optional node keeps run alive ──────
+
+
+async def test_optional_node_failure_does_not_fail_run(db_session: AsyncSession) -> None:
+    """A node with continue_on_failure=true that raises keeps the run alive.
+
+    Graph: trigger → optional_scout → downstream_agent
+    optional_scout raises RuntimeError (simulates ClaudeCodeTimeoutError).
+    Expected: run reaches succeeded, optional_scout=failed, downstream=succeeded.
+    """
+    await _reset(db_session)
+
+    async with db_session.begin():
+        await db_session.execute(
+            text(
+                "INSERT INTO agents (agent_id, name, tools, model, provider) "
+                "VALUES ('optional.scout', 'Scout', '[]'::jsonb, 'claude-haiku-4-5', 'claude-code'), "
+                "       ('downstream.agent', 'Downstream', '[]'::jsonb, 'claude-haiku-4-5', 'claude-code') "
+                "ON CONFLICT (agent_id) DO NOTHING"
+            )
+        )
+
+    nodes = [
+        _node("trigger", "trigger_manual"),
+        _node(
+            "scout_optional",
+            "agent_invocation",
+            {"agent_id": "optional.scout", "continue_on_failure": True},
+        ),
+        _node("downstream", "agent_invocation", {"agent_id": "downstream.agent"}),
+    ]
+    edges = [_edge("trigger", "scout_optional"), _edge("trigger", "downstream")]
+
+    async with db_session.begin():
+        pipeline = await repo.create_pipeline(db_session, **_make_pipeline(nodes, edges))
+        run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+
+    async def _selective_mock(
+        node: Any,
+        node_states: Any,
+        session: Any,
+        run_id: Any,
+        accumulated_cost_usd: float = 0.0,
+        model_adapter: Any = None,
+    ) -> dict[str, Any]:
+        agent_id = (node.get("config") or {}).get("agent_id", "")
+        if agent_id == "optional.scout":
+            raise RuntimeError("ClaudeCodeTimeoutError: 900s timeout")
+        return _mock_agent_node_result(agent_id)
+
+    with patch(
+        "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
+        new=_selective_mock,
+    ):
+        async with db_session.begin():
+            executor = PipelineExecutor(run.id)
+            await executor.run(db_session)
+
+    async with db_session.begin():
+        final = await repo.get_pipeline_run(db_session, run.id)
+        ns = final.node_states
+
+    assert final.status == "succeeded", (
+        f"Expected succeeded but got {final.status!r}; error={final.error_message!r}"
+    )
+    assert ns["scout_optional"]["status"] == "failed", "Optional scout should be recorded as failed"
+    assert "ClaudeCodeTimeoutError" in (ns["scout_optional"].get("error") or ""), (
+        "Error should be captured in node state"
+    )
+    assert ns["downstream"]["status"] == "succeeded", (
+        "Downstream node should have run despite optional scout failure"
+    )
+
+
+# ── 14. Integration: non-optional failure still fails run ────────────────────
+
+
+async def test_non_optional_node_failure_fails_run(db_session: AsyncSession) -> None:
+    """A node WITHOUT continue_on_failure that fails still marks the run failed."""
+    await _reset(db_session)
+
+    async with db_session.begin():
+        await db_session.execute(
+            text(
+                "INSERT INTO agents (agent_id, name, tools, model, provider) "
+                "VALUES ('critical.agent', 'Critical', '[]'::jsonb, 'claude-haiku-4-5', 'claude-code') "
+                "ON CONFLICT (agent_id) DO NOTHING"
+            )
+        )
+
+    nodes = [
+        _node("trigger", "trigger_manual"),
+        _node("critical", "agent_invocation", {"agent_id": "critical.agent"}),
+    ]
+    edges = [_edge("trigger", "critical")]
+
+    async with db_session.begin():
+        pipeline = await repo.create_pipeline(db_session, **_make_pipeline(nodes, edges))
+        run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+
+    with patch(
+        "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
+        new=AsyncMock(side_effect=RuntimeError("critical failure")),
+    ):
+        async with db_session.begin():
+            executor = PipelineExecutor(run.id)
+            await executor.run(db_session)
+
+    async with db_session.begin():
+        final = await repo.get_pipeline_run(db_session, run.id)
+
+    assert final.status == "failed", (
+        f"Non-optional failure should fail the run; got {final.status!r}"
+    )
+    assert "critical failure" in (final.error_message or ""), (
+        "Error message should propagate to run"
+    )
+
+
+# ── 15. Integration: fan-in gate proceeds after optional scout failure ─────────
+
+
+async def test_gate_proceeds_after_optional_scout_failure(db_session: AsyncSession) -> None:
+    """Fan-in pattern: trigger → [scout_a (optional), scout_b (optional)] → gate.
+
+    scout_a times out; scout_b succeeds.
+    Gate should still fire (suspend) because it doesn't require all upstreams to succeed.
+    """
+    await _reset(db_session)
+
+    async with db_session.begin():
+        await db_session.execute(
+            text(
+                "INSERT INTO agents (agent_id, name, tools, model, provider) "
+                "VALUES ('scout.a', 'Scout A', '[]'::jsonb, 'claude-haiku-4-5', 'claude-code'), "
+                "       ('scout.b', 'Scout B', '[]'::jsonb, 'claude-haiku-4-5', 'claude-code') "
+                "ON CONFLICT (agent_id) DO NOTHING"
+            )
+        )
+
+    nodes = [
+        _node("trigger", "trigger_manual"),
+        _node(
+            "scout_a",
+            "agent_invocation",
+            {"agent_id": "scout.a", "continue_on_failure": True},
+        ),
+        _node(
+            "scout_b",
+            "agent_invocation",
+            {"agent_id": "scout.b", "continue_on_failure": True},
+        ),
+        _node(
+            "gate",
+            "human_gate",
+            {"approval_kind": "signal_brief", "approvers": ["t@example.com"], "timeout_hours": 72},
+        ),
+    ]
+    edges = [
+        _edge("trigger", "scout_a"),
+        _edge("trigger", "scout_b"),
+        _edge("scout_a", "gate"),
+        _edge("scout_b", "gate"),
+    ]
+
+    async with db_session.begin():
+        pipeline = await repo.create_pipeline(db_session, **_make_pipeline(nodes, edges))
+        run = await repo.create_pipeline_run(db_session, **_make_run(pipeline.id))
+
+    async def _mixed_scout_mock(
+        node: Any,
+        node_states: Any,
+        session: Any,
+        run_id: Any,
+        accumulated_cost_usd: float = 0.0,
+        model_adapter: Any = None,
+    ) -> dict[str, Any]:
+        agent_id = (node.get("config") or {}).get("agent_id", "")
+        if agent_id == "scout.a":
+            raise RuntimeError("timeout 900s")
+        return _mock_agent_node_result(agent_id)
+
+    with (
+        patch(
+            "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
+            new=_mixed_scout_mock,
+        ),
+        patch(
+            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "artemis.pipelines.node_executors.human_gate_executor._schedule_timeout",
+            return_value=None,
+        ),
+    ):
+        async with db_session.begin():
+            executor = PipelineExecutor(run.id)
+            await executor.run(db_session)
+
+    async with db_session.begin():
+        final = await repo.get_pipeline_run(db_session, run.id)
+        ns = final.node_states
+
+    assert final.status == "awaiting_approval", (
+        f"Gate should have suspended the run; got {final.status!r}"
+    )
+    assert ns["scout_a"]["status"] == "failed", "Failed scout should be recorded as failed"
+    assert ns["scout_b"]["status"] == "succeeded", "Healthy scout should have succeeded"
+    assert ns["gate"]["status"] == "suspended", "Gate should be suspended"
+
+
+# ── 16. Integration: marketing pipeline scouts have continue_on_failure ────────
+
+
+def test_marketing_pipeline_scout_nodes_have_continue_on_failure() -> None:
+    """All scout_* nodes in the marketing.main pipeline definition carry continue_on_failure=true."""
+    from artemis.pipelines.seeds.marketing_pipeline import SCOUT_SLUGS, build_marketing_pipeline
+
+    pipeline = build_marketing_pipeline()
+    scout_node_ids = {f"scout_{slug}" for slug in SCOUT_SLUGS}
+    nodes_by_id = {n["id"]: n for n in pipeline["nodes"]}
+
+    for node_id in scout_node_ids:
+        node = nodes_by_id[node_id]
+        config = node.get("config") or {}
+        assert config.get("continue_on_failure") is True, (
+            f"Scout node '{node_id}' missing continue_on_failure=true in config; "
+            f"got config={config!r}"
+        )
+
+    # Verify non-scout nodes do NOT carry the flag (gates and qualifiers are critical)
+    non_optional_ids = [
+        "qualifier_cross_reference",
+        "qualifier_brief_composer",
+        "gate_1_signals_inbox",
+        "content_brief_assembler",
+    ]
+    for node_id in non_optional_ids:
+        node = nodes_by_id.get(node_id)
+        if node is None:
+            continue
+        config = node.get("config") or {}
+        assert not config.get("continue_on_failure"), (
+            f"Critical node '{node_id}' should NOT have continue_on_failure=true"
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
