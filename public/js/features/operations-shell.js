@@ -826,7 +826,14 @@ function getAgentMetricRow(agent) {
 
 function buildAgentProfile(agent) {
   // Merge enriched real data when available for this agent.
-  const enriched = (_enrichedAgent?.agentId || _enrichedAgent?.id) === agent?.id ? _enrichedAgent : null;
+  // Match enriched payload by string agentId first (the detail route resolves agentId, not the
+  // numeric id), with id/agent_id fallbacks. Comparing the string agentId to the numeric id used
+  // to fail silently → enriched discarded → blueprint/system-prompt collapsed to "Not specified".
+  const _enrichedKey = _enrichedAgent?.agentId ?? _enrichedAgent?.agent_id ?? _enrichedAgent?.id;
+  const _agentKey = agent?.agentId ?? agent?.agent_id ?? agent?.id;
+  const enriched = _enrichedAgent && _enrichedKey != null && _enrichedKey === _agentKey
+    ? _enrichedAgent
+    : null;
   const draft = agentDraft?.id === agent?.id ? agentDraft : null;
   const config = draft || enriched || agent;
   const profile = lookupAgentProfile(agent);
@@ -848,6 +855,13 @@ function buildAgentProfile(agent) {
   const supportingFiles = enriched?.supportingFiles ?? [];
   const recentRunsFromDb = Array.isArray(enriched?.recentRuns) ? enriched.recentRuns : [];
 
+  // Operating Blueprint is DISPLAY-ONLY (read-only in this view) — it must be sourced from the real
+  // runtime record (enriched ?? agent), NOT from `config`. `config` is `draft || enriched || agent`,
+  // and getAgentDraft() (called every render) builds a draft that OMITS all blueprint fields — so
+  // reading blueprint from config always resolved to undefined → "Not specified". Same pattern as
+  // persona above. Editable policy fields below still correctly read from `config` (the draft holds edits).
+  const runtime = enriched ?? agent;
+
   return {
     ...agent,
     // Policy fields from real agent config (enriched or raw agent record).
@@ -859,13 +873,13 @@ function buildAgentProfile(agent) {
     permissionMode: config.permissionMode || null,
     outputContract: config.outputContract || null,
     reasonCodesEmitted: config.reasonCodesEmitted || [],
-    cadenceSeconds: config.cadenceSeconds ?? null,
-    lifecycleStatus: config.lifecycleStatus ?? null,
-    urgencyTiers: config.urgencyTiers ?? null,
-    failureModes: Array.isArray(config.failureModes) ? config.failureModes : null,
-    dbTablesTouched: Array.isArray(config.dbTablesTouched) ? config.dbTablesTouched : null,
-    implementationNotes: config.implementationNotes || null,
-    inputsRequired: Array.isArray(config.inputsRequired) ? config.inputsRequired : null,
+    cadenceSeconds: runtime.cadenceSeconds ?? null,
+    lifecycleStatus: runtime.lifecycleStatus ?? null,
+    urgencyTiers: runtime.urgencyTiers ?? null,
+    failureModes: Array.isArray(runtime.failureModes) ? runtime.failureModes : null,
+    dbTablesTouched: Array.isArray(runtime.dbTablesTouched) ? runtime.dbTablesTouched : null,
+    implementationNotes: runtime.implementationNotes || null,
+    inputsRequired: Array.isArray(runtime.inputsRequired) ? runtime.inputsRequired : null,
     instructionFileExists: enriched?.instructionFileExists ?? false,
     supportingFileCount: enriched?.supportingFileCount ?? 0,
     persona,
@@ -1844,9 +1858,15 @@ function renderAgentsPage() {
   }
 
   const selectedAgent = ensureAgentSelection(agents);
-  // If the enriched data isn't loaded yet for this agent, kick off the fetch and re-render when ready.
-  if (selectedAgent && _enrichedAgentLoadedForId !== selectedAgent.id) {
-    loadEnrichedAgent(selectedAgent.id).then(() => renderOperationsView("agents")).catch(() => {});
+  // Fetch enriched detail by the string agentId (the /api/agents/{id} detail route resolves agentId,
+  // NOT the numeric id). Keying the fetch + cache-guard on the numeric id meant the detail call never
+  // resolved → enriched stayed empty → the whole Operating Blueprint + system prompt fell back to
+  // "Not specified". Prefer agentId, fall back to agent_id/id.
+  const selectedEnrichKey = selectedAgent
+    ? (selectedAgent.agentId ?? selectedAgent.agent_id ?? selectedAgent.id)
+    : null;
+  if (selectedAgent && selectedEnrichKey != null && _enrichedAgentLoadedForId !== selectedEnrichKey) {
+    loadEnrichedAgent(selectedEnrichKey).then(() => renderOperationsView("agents")).catch(() => {});
   }
   // Ensure agentDraft is initialized for the selected agent (covers post-attach/detach re-renders).
   if (selectedAgent) getAgentDraft(selectedAgent);
@@ -3401,6 +3421,17 @@ export function buildOperationsViewMarkup(view = getState("view")) {
 }
 
 export function renderOperationsView(view = getState("view")) {
+  // Kick the roster fetch on first mount of the agents view. renderAgentsPage() only renders the
+  // loading skeleton — it does NOT fetch — so on a direct boot/navigation into this view (no
+  // nav-click handler firing refreshAgentsFromApi) the page hung on "Loading the worker roster…"
+  // until the rail was clicked. Guarded so it fires once; onState(agentsLoaded/agentsLoading)
+  // re-renders when the fetch settles. (refreshAgentsFromApi is a hoisted declaration.)
+  if (normalizeAppView(view) === "agents" && !getState("agentsLoaded") && !getState("agentsLoading")) {
+    setState("agentsLoading", true);
+    refreshAgentsFromApi()
+      .catch((err) => setState("agentsError", err?.message || "Failed to load agents"))
+      .finally(() => setState("agentsLoading", false));
+  }
   const markup = buildOperationsViewMarkup(view);
   const shell = getShellContent();
   if (shell) {
