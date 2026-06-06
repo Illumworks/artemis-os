@@ -362,6 +362,87 @@ async def cluster_or_create_candidate(
     return candidate
 
 
+@dataclass(slots=True)
+class SignalPromotionResult:
+    """Outcome of promoting one qualified signal to a campaign candidate."""
+
+    signal: SignalQueue
+    candidate: CampaignCandidate
+    created: bool  # True if a new candidate was created; False if clustered onto existing
+
+
+async def promote_signal_to_candidate(
+    session: AsyncSession,
+    signal: SignalQueue,
+) -> SignalPromotionResult:
+    """Shared promotion: cluster/create candidate for *one* qualified signal + mark it approved.
+
+    This is the single source of truth for Gate-1 signal promotion.  Both the
+    manual per-signal path (POST /api/signal-queue/{id}/approve) and the pipeline
+    gate path (Gate-1 signal_brief approval) call this function so they cannot drift.
+
+    Callers are responsible for flushing/committing the session.  The signal must
+    be in ``qualified`` status; if it is already ``approved`` the call is a no-op
+    (returns the existing candidate without re-transitioning).
+    """
+    from artemis.marketing.state_machine import SignalState, transition
+
+    # Idempotency: if already approved, just return the existing candidate.
+    if signal.signal_status == SignalState.APPROVED:
+        candidate = await cluster_or_create_candidate(session, signal)
+        return SignalPromotionResult(signal=signal, candidate=candidate, created=False)
+
+    existing_link = await session.execute(
+        select(CampaignCandidateSignal).where(
+            CampaignCandidateSignal.signal_id == signal.id,
+        )
+    )
+    had_candidate = existing_link.scalar_one_or_none() is not None
+
+    candidate = await cluster_or_create_candidate(session, signal)
+    created = not had_candidate
+
+    await transition(session, "signal", signal.id, SignalState.APPROVED)
+    await session.flush()
+
+    return SignalPromotionResult(signal=signal, candidate=candidate, created=created)
+
+
+async def promote_qualified_signals_for_run(
+    session: AsyncSession,
+    pipeline_run_id: str,
+) -> list[SignalPromotionResult]:
+    """Promote all qualified signals for a pipeline run to campaign candidate(s).
+
+    Called by the pipeline Gate-1 approval path so that ``content_brief_assembler``
+    (which calls ``list_run_candidates``) finds exactly one uninitiated candidate.
+
+    The clustering logic in ``cluster_or_create_candidate`` deterministically
+    groups signals by (resolved_district_id, campaign_family); in the common case
+    all signals from one scout run share the same district+family and end up in a
+    single candidate.  If they span multiple district+family combinations the
+    assembler will see N candidates; the brief states that is expected to produce
+    exactly-one for the current marketing pipeline — the scout run is scoped to
+    one district/family.
+
+    Signals already in ``approved`` status are skipped (idempotent).
+    """
+    rows = (
+        await session.execute(
+            select(SignalQueue).where(
+                SignalQueue.pipeline_run_id == pipeline_run_id,
+                SignalQueue.signal_status == "qualified",
+            )
+        )
+    ).scalars().all()
+
+    results: list[SignalPromotionResult] = []
+    for signal in rows:
+        result = await promote_signal_to_candidate(session, signal)
+        results.append(result)
+    return results
+
+
 async def get_candidate_signals(
     session: AsyncSession, candidate_id: int
 ) -> list[CampaignCandidateSignal]:

@@ -430,6 +430,17 @@ async def _decide_pipe4_gate_approval(
         decision_payload=decision_payload,
     )
 
+    # Gate-1 (signal_brief) approval: promote this run's qualified signals to a
+    # campaign candidate so that content_brief_assembler finds exactly one
+    # uninitiated candidate for this pipeline_run_id.  This is the same side
+    # effect the manual POST /api/signal-queue/{id}/approve path runs; by going
+    # through promote_qualified_signals_for_run both paths share one code path
+    # and cannot drift (the PIPE-1 class of bug).
+    if approval.kind == "signal_brief" and decision == "approved":
+        from artemis.marketing.repository import promote_qualified_signals_for_run
+
+        await promote_qualified_signals_for_run(session, run_id)
+
     candidate: CampaignCandidate | None = None
     if approval.kind == "content_draft" and run.target_candidate_id is not None:
         candidate = await session.get(CampaignCandidate, run.target_candidate_id)

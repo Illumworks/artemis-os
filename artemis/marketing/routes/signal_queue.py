@@ -29,12 +29,12 @@ from artemis.marketing.models import (
 )
 from artemis.marketing.qualification import run_and_store_qualification
 from artemis.marketing.repository import (
-    cluster_or_create_candidate,
     create_signal,
     find_signal_by_dedupe_key,
     get_active_ruleset_version,
     get_signal,
     list_signals,
+    promote_signal_to_candidate,
     update_signal,
 )
 from artemis.marketing.routes._auth import require_token
@@ -333,14 +333,19 @@ async def approve_signal(
             "rulesetVersionsUsed": qual.get("rulesetVersionsUsed", {}),
         }
 
-    candidate = await cluster_or_create_candidate(session, signal)
+    # Shared promotion: cluster/create candidate + mark signal approved.
+    # Both the manual path and the pipeline Gate-1 path go through
+    # promote_signal_to_candidate so side effects cannot drift.
+    promo = await promote_signal_to_candidate(session, signal)
+    candidate = promo.candidate
+    updated = await get_signal(session, signal_id)
+
+    # Enrich the candidate with ruleset + metrics (manual-path-only metadata).
     if candidate.source_signal_id == signal_id:
         candidate.ruleset_version_at_qualification = ruleset_version_tag or ""
         candidate.metrics_json = qualification_summary
         await session.flush()
 
-    # Update signal to approved via state machine
-    updated = await transition(session, "signal", signal_id, SignalState.APPROVED)
     await session.commit()
     await session.refresh(updated)
     await session.refresh(candidate)
