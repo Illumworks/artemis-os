@@ -10,9 +10,12 @@ this test seeds so other tables are unaffected.
 
 from __future__ import annotations
 
+# ── re-use the db_url guard from the outer conftest (already loaded) ─────────
+# The outer conftest already raised if ARTEMIS_TEST_DB_URL is not set, so
+# reading it here is safe.
+import os
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -23,11 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 import artemis.db
 from artemis.builders import repository as repo
 from artemis.db import attach_pgvector_codec
-
-# ── re-use the db_url guard from the outer conftest (already loaded) ─────────
-# The outer conftest already raised if ARTEMIS_TEST_DB_URL is not set, so
-# reading it here is safe.
-import os
 
 _db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
 
@@ -103,7 +101,6 @@ async def _seed_run(
     completed: bool = True,
 ) -> str:
     run_id = str(uuid.uuid4())
-    now = datetime.now(tz=timezone.utc)
     kwargs: dict = {
         "run_id": run_id,
         "agent_id": agent_id,
@@ -116,7 +113,7 @@ async def _seed_run(
         # Provide completed_at so avg_duration is computable
         from sqlalchemy import text as sa_text
 
-        kwargs_run = await repo.create_agent_run(session, **kwargs)
+        await repo.create_agent_run(session, **kwargs)
         await session.execute(
             sa_text(
                 "UPDATE agent_runs SET completed_at = started_at + INTERVAL '5 seconds' "
