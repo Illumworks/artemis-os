@@ -2025,6 +2025,135 @@
   color: var(--text-secondary);
 }
 
+/* ── Gate-1 cluster cards ────────────────────────────── */
+
+.mkt-clusters-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mkt-cluster-card {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-card) 96%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+
+/* Suggested cluster: amber accent border + soft glow */
+.mkt-cluster-card--suggested {
+  border: 2px solid #d97706;
+  box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.15);
+}
+
+.mkt-cluster-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mkt-cluster-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mkt-cluster-name {
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ⚡ Strongest signal chip */
+.mkt-cluster-suggested-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #d97706;
+  color: #fff;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.mkt-cluster-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.mkt-cluster-signals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mkt-cluster-signal-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: start;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel-soft) 60%, transparent);
+}
+
+.mkt-cluster-role {
+  grid-row: 1 / 3;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  align-self: center;
+}
+
+.mkt-cluster-role--primary {
+  background: rgba(74, 144, 226, 0.14);
+  color: color-mix(in srgb, #4a90e2 80%, var(--text));
+  border: 1px solid rgba(74, 144, 226, 0.24);
+}
+
+.mkt-cluster-role--corrob {
+  background: color-mix(in srgb, var(--surface-panel-soft) 90%, transparent);
+  color: var(--text-dim);
+  border: 1px solid color-mix(in srgb, var(--surface-outline) 70%, transparent);
+}
+
+.mkt-cluster-signal-headline {
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--font-display);
+}
+
+.mkt-cluster-signal-evidence {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+  grid-column: 2;
+}
+
+.mkt-cluster-signal-meta {
+  display: none;
+}
+
+/* ── End cluster cards ──────────────────────────────── */
+
 .mkt-btn-link {
   font-size: 12px;
   color: var(--accent, #4a90e2);

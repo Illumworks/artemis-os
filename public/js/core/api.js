@@ -2060,11 +2060,13 @@ export async function listApprovalsApi({ status, targetType, limit = 50 } = {}) 
   return res.json();
 }
 
-export async function decideApprovalApi(id, { decision, note, reviewer } = {}) {
+export async function decideApprovalApi(id, { decision, note, reviewer, selected_cluster_keys } = {}) {
+  const payload = { decision, reason: note, reviewer };
+  if (selected_cluster_keys != null) payload.selected_cluster_keys = selected_cluster_keys;
   const res = await fetch(`/api/approvals/${encodeURIComponent(id)}/decision`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision, reason: note, reviewer }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
