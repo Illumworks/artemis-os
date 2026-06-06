@@ -1,0 +1,480 @@
+/* Routing control surface styles */
+
+.routing-shell {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 32px;
+  color: var(--color-text, #1a1a1a);
+}
+
+.routing-header {
+  margin-bottom: 32px;
+}
+
+.routing-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.routing-subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary, #666);
+  margin: 0;
+}
+
+/* ── Sections ────────────────────────────────────────────────────────── */
+
+.routing-section {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.routing-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 14px;
+}
+
+.routing-section-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary, #666);
+  margin: 0 0 12px;
+}
+
+/* ── Provider health ──────────────────────────────────────────────────── */
+
+.routing-health-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.routing-health-row td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  vertical-align: middle;
+}
+
+.routing-health-row--fail {
+  color: var(--color-text-secondary, #666);
+}
+
+.routing-health-status {
+  width: 24px;
+  text-align: center;
+}
+
+.routing-status-icon {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.routing-status-icon--ok {
+  color: var(--color-success, #16a34a);
+}
+
+.routing-status-icon--fail {
+  color: var(--color-danger, #dc2626);
+}
+
+.routing-health-provider {
+  width: 120px;
+  font-weight: 500;
+  font-family: var(--font-mono, monospace);
+}
+
+.routing-health-detail {
+  color: var(--color-text-secondary, #666);
+}
+
+/* ── Cascade list ─────────────────────────────────────────────────────── */
+
+.routing-cascade-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+}
+
+.routing-cascade-item {
+  font-size: 13px;
+  padding: 4px 0;
+  font-family: var(--font-mono, monospace);
+}
+
+/* ── Features table ───────────────────────────────────────────────────── */
+
+.routing-features-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.routing-features-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary, #666);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.routing-feature-row td {
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  vertical-align: top;
+}
+
+.routing-feature-label {
+  display: block;
+  font-weight: 500;
+}
+
+.routing-feature-tag {
+  display: block;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--color-text-secondary, #666);
+  margin-top: 2px;
+}
+
+.routing-feature-cascade {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  max-width: 260px;
+  word-break: break-word;
+}
+
+.routing-feature-actions {
+  white-space: nowrap;
+}
+
+.routing-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.routing-badge--custom {
+  background: var(--color-accent-bg, #eff6ff);
+  color: var(--color-accent, #2563eb);
+}
+
+.routing-badge--default {
+  background: var(--color-surface-2, #f9fafb);
+  color: var(--color-text-secondary, #666);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+
+.routing-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s, color 0.12s;
+  outline: none;
+  line-height: 1.4;
+}
+
+.routing-btn--primary {
+  background: var(--color-accent, #2563eb);
+  color: #fff;
+  border-color: transparent;
+}
+
+.routing-btn--primary:hover {
+  background: var(--color-accent-hover, #1d4ed8);
+}
+
+.routing-btn--secondary {
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1a1a1a);
+  border-color: var(--color-border, #e5e7eb);
+}
+
+.routing-btn--secondary:hover {
+  background: var(--color-surface-2, #f9fafb);
+}
+
+.routing-btn--small {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.routing-btn--danger {
+  background: transparent;
+  color: var(--color-danger, #dc2626);
+  border-color: var(--color-danger, #dc2626);
+}
+
+.routing-btn--danger:hover {
+  background: var(--color-danger-bg, #fef2f2);
+}
+
+/* ── Links ────────────────────────────────────────────────────────────── */
+
+.routing-link {
+  color: var(--color-accent, #2563eb);
+  text-decoration: none;
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.routing-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Modals ───────────────────────────────────────────────────────────── */
+
+.routing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+
+.routing-modal {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 12px;
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+
+.routing-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.routing-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.routing-modal-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #666);
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.routing-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  font-size: 13px;
+}
+
+.routing-modal-desc {
+  color: var(--color-text-secondary, #666);
+  margin: 0 0 14px;
+}
+
+.routing-modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 14px 20px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+/* ── Form elements ────────────────────────────────────────────────────── */
+
+.routing-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.routing-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #666);
+}
+
+.routing-input {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1a1a1a);
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.routing-input:focus {
+  border-color: var(--color-accent, #2563eb);
+}
+
+.routing-input--sm {
+  width: 160px;
+}
+
+.routing-select {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1a1a1a);
+}
+
+.routing-select--sm {
+  width: 140px;
+}
+
+/* ── Cascade edit list ────────────────────────────────────────────────── */
+
+.routing-cascade-edit-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.routing-cascade-edit-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--color-surface-2, #f9fafb);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+}
+
+.routing-cascade-handle {
+  color: var(--color-text-secondary, #666);
+  cursor: grab;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.routing-cascade-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+/* ── Log table ────────────────────────────────────────────────────────── */
+
+.routing-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.routing-log-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary, #666);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.routing-log-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  vertical-align: top;
+}
+
+.routing-log-change code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+/* ── Misc ─────────────────────────────────────────────────────────────── */
+
+.routing-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  background: var(--color-surface-2, #f9fafb);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.routing-code-block {
+  background: var(--color-surface-2, #f9fafb);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 10px 0;
+}
+
+.routing-loading,
+.routing-error {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--color-text-secondary, #666);
+  font-size: 14px;
+}
+
+.routing-error {
+  color: var(--color-danger, #dc2626);
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+
+.routing-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 9999;
+  max-width: 400px;
+  text-align: center;
+}
+
+.routing-toast--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.routing-toast--success { border-left: 3px solid var(--color-success, #16a34a); }
+.routing-toast--error { border-left: 3px solid var(--color-danger, #dc2626); }
+.routing-toast--warn { border-left: 3px solid #d97706; }

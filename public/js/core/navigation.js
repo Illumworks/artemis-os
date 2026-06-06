@@ -24,6 +24,7 @@ export const MARKETING_SIGNAL_PLAYBOOK_VIEW = "signal-playbook";
 export const MARKETING_SCOUT_RUNS_VIEW = "marketing-scout-runs";
 export const MARKETING_PRIORITIZATION_VIEW = "marketing-prioritization";
 export const INTEGRATIONS_VIEW = "integrations";
+export const ROUTING_VIEW = "routing";
 
 function normalizeHashPath(pathname) {
   const raw = String(pathname || "").trim();
@@ -282,6 +283,7 @@ const KNOWN_VIEWS = new Set([
   WRITING_STUDIO_VIEW,
   LEGACY_DASHBOARD_VIEW,
   INTEGRATIONS_VIEW,
+  ROUTING_VIEW,
   "agents/builder",
   ...PRIMARY_NAV_DESTINATIONS.map((item) => item.id),
   ...SECONDARY_NAV_DESTINATIONS.map((item) => item.id),
@@ -312,6 +314,7 @@ export function normalizeAppView(view) {
   if (view === "pipelines") return "pipelines";
   if (view === "dev-projects") return "chat";
   if (view === "integrations") return INTEGRATIONS_VIEW;
+  if (view === "routing") return ROUTING_VIEW;
   if (view === "command-center") return DEFAULT_APP_VIEW;
   if (view === "modules") return WORKSPACE_VIEW;
   if (view === "chat") return "chat";
@@ -348,5 +351,6 @@ export function isShellView(view) {
     || normalizedView === MARKETING_SIGNAL_PLAYBOOK_VIEW
     || normalizedView === MARKETING_PRIORITIZATION_VIEW
     || normalizedView === LEGACY_DASHBOARD_VIEW
-    || normalizedView === INTEGRATIONS_VIEW;
+    || normalizedView === INTEGRATIONS_VIEW
+    || normalizedView === ROUTING_VIEW;
 }

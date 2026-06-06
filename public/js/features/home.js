@@ -27,6 +27,7 @@ import {
   MARKETING_SCOUT_RUNS_VIEW,
   MARKETING_PRIORITIZATION_VIEW,
   PIPELINE_RUN_HISTORY_VIEW,
+  ROUTING_VIEW,
   isShellView,
   normalizeAppView,
 } from '../core/navigation.js';
@@ -80,6 +81,7 @@ import {
 } from './meetings.js';
 import { loadAgents } from './agents.js';
 import { renderOperationsView, loadSkillsShell, loadPipelinesShell, loadPipelineRunHistoryShell } from './operations-shell.js';
+import { loadRoutingShell } from './routing-shell.js';
 import {
   loadMarketingDashboard,
   loadMarketingCampaigns,
@@ -221,6 +223,8 @@ onState('view', (view) => {
     } else if (normalizedView === 'integrations') {
       // Integrations is now a modal — open it and stay on the current view
       openIntegrationsModal();
+    } else if (normalizedView === ROUTING_VIEW) {
+      loadRoutingShell(appShellContent);
     }
   }
 });

@@ -78,6 +78,7 @@ from artemis.routes.floating_artemis import ws_router as fa_ws_router
 from artemis.routes.integrations import router as integrations_router
 from artemis.routes.integrations_slack_events import router as slack_events_router
 from artemis.routes.memory import router as memory_router
+from artemis.routes.routing import router as routing_router
 from artemis.routes.slack import router as slack_router
 from artemis.ws.routes import router as ws_router
 
@@ -140,8 +141,20 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-    """Convert Pydantic validation errors to the Node-compatible shape."""
-    details: dict[str, Any] = {"errors": exc.errors()}
+    """Convert Pydantic validation errors to the Node-compatible shape.
+
+    Pydantic V2 errors include a ValueError in ctx.error which is not JSON
+    serializable. Strip ctx from errors before serializing.
+    """
+
+    def _clean_error(e: dict[str, Any]) -> dict[str, Any]:
+        cleaned = {k: v for k, v in e.items() if k != "ctx"}
+        if "ctx" in e:
+            ctx = e["ctx"]
+            cleaned["ctx"] = {k: str(v) if isinstance(v, Exception) else v for k, v in ctx.items()}
+        return cleaned
+
+    details: dict[str, Any] = {"errors": [_clean_error(e) for e in exc.errors()]}
     return JSONResponse(
         status_code=422,
         content={
@@ -253,6 +266,9 @@ app.include_router(connectors_agents_router)
 
 # PIPE1 — Pipelines data model + CRUD
 app.include_router(pipelines_router)
+
+# Phase R — Routing control surface (provider health, feature overrides, audit log)
+app.include_router(routing_router)
 
 # J3c stubs — Jira overview, sessions, notifications, stats
 app.include_router(jira_routes.router)
