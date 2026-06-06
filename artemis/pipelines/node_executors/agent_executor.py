@@ -393,21 +393,38 @@ async def _execute_campaign_initiation_proposal(
     from artemis.marketing.brief_assembler import propose_campaign_initiation
     from artemis.marketing.repository import list_run_candidates
 
-    candidates = await list_run_candidates(session, run_id, initiated_only=False)
-    if len(candidates) != 1:
+    # An operator-selection at Gate-1 may produce multiple candidates per run;
+    # the assembler processes the most recent uninitiated one per pass.
+    # Subsequent runs (or operator-triggered re-runs) pick up the remaining
+    # uninitiated candidates.
+    uninitiated = await list_run_candidates(session, run_id, initiated_only=False)
+    if not uninitiated:
         return {
             "status": "failed",
             "error": (
-                "campaign initiation proposal requires exactly one uninitiated candidate "
-                f"for pipeline run {run_id}; found {len(candidates)}"
+                "campaign initiation proposal requires at least one uninitiated candidate "
+                f"for pipeline run {run_id}; found 0"
             ),
             "output_summary": "",
             "cost_usd": 0.0,
         }
 
+    # Pick the most recently created uninitiated candidate.
+    target = max(uninitiated, key=lambda c: c.created_at)
+    skipped = [c for c in uninitiated if c.id != target.id]
+    if skipped:
+        logger.info(
+            "[initiation] run=%s: assembling for candidate %s (most recent); "
+            "skipping %d uninitiated candidate(s): %s",
+            run_id,
+            target.id,
+            len(skipped),
+            [c.id for c in skipped],
+        )
+
     result = await propose_campaign_initiation(
         session,
-        candidates[0].id,
+        target.id,
         model_adapter=model_adapter,
     )
     if result.proposal is None:
@@ -416,17 +433,17 @@ async def _execute_campaign_initiation_proposal(
             "error": "CampaignInitiationProposal validation failed after retry",
             "output_summary": "",
             "cost_usd": 0.0,
-            "candidate_id": candidates[0].id,
+            "candidate_id": target.id,
             "proposal_validation_failed": True,
         }
 
     return {
         "status": "succeeded",
         "output_summary": (
-            f"Proposed campaign initiation for candidate {candidates[0].id}: {result.proposal.name}"
+            f"Proposed campaign initiation for candidate {target.id}: {result.proposal.name}"
         ),
         "cost_usd": 0.0,
-        "candidate_id": candidates[0].id,
+        "candidate_id": target.id,
         "proposal": result.proposal.model_dump(mode="json"),
         "retries_used": result.retries_used,
         "agent_id": agent_id,
