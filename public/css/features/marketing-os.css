@@ -3338,6 +3338,28 @@
   color: var(--ink);
 }
 
+/* `.mkt-sp-modal label { display: grid }` (specificity 0,1,1) otherwise wins over
+   the rules above and stretches each radio/checkbox to full row width, floating
+   the dot to center. Two-class selectors (0,2,0) below reclaim the inline layout
+   and stop the control from stretching. Covers radio / tier / deliverable rows. */
+.mkt-initiation-modal .mkt-initiation-radio,
+.mkt-initiation-modal .mkt-initiation-tier-option,
+.mkt-initiation-modal .mkt-initiation-deliverable {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.mkt-initiation-modal .mkt-initiation-radio input,
+.mkt-initiation-modal .mkt-initiation-tier-option input,
+.mkt-initiation-modal .mkt-initiation-deliverable input {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
 .mkt-initiation-subpanel {
   padding-left: 24px;
 }
