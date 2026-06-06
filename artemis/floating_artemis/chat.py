@@ -21,6 +21,7 @@ from artemis.agent.hooks import HookRegistry
 from artemis.agent.loop import run_turn, user_message
 from artemis.agent.tools import ToolRegistry
 from artemis.agent.types import Message, TextBlock, ToolResultBlock, ToolUseBlock, Usage
+from artemis.costs.events import record_cost_event
 from artemis.floating_artemis.authority import (
     AuthorizedToolRegistry,
     PendingConfirmation,
@@ -657,7 +658,37 @@ async def handle_turn(
         db_session=db_session,
     )
 
-    # ── 9b. M3: auto-write conversation drawer ────────────────────────────────
+    # ── 9b. Cost event recording ──────────────────────────────────────────────
+    # Derive provider/model from adapter type — never propagate failures.
+    try:
+        from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+        _fa_provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
+        _fa_model = getattr(adapter, "_default_model", "claude-sonnet-4-6") or "claude-sonnet-4-6"
+        _fa_path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+        import artemis.db as _cost_db
+
+        async with _cost_db.SessionLocal() as _cost_session:
+            await record_cost_event(
+                _cost_session,
+                provider=_fa_provider,
+                model=_fa_model,
+                provider_path=_fa_path,
+                feature_tag="floating_artemis",
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+                cache_creation_input_tokens=result.usage.cache_creation_input_tokens,
+                cache_read_input_tokens=result.usage.cache_read_input_tokens,
+                source_kind="fa_message",
+                session_id=session_id,
+            )
+            await _cost_session.commit()
+    except Exception:
+        logger.warning(
+            "cost_event recording failed for FA session_id=%s", session_id, exc_info=True
+        )
+
+    # ── 9c. M3: auto-write conversation drawer ────────────────────────────────
     # Failure-isolated: drawer write NEVER breaks chat.
     if user_msg_id is not None and response_text is not None:
         try:

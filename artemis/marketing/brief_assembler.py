@@ -25,6 +25,7 @@ from pydantic import ValidationError
 
 from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
+from artemis.costs.events import record_cost_event
 from artemis.marketing.initiation_schemas import CampaignInitiationProposal
 
 logger = logging.getLogger(__name__)
@@ -496,6 +497,33 @@ async def propose_campaign_initiation(
             continue
 
         await save_initiation_proposal(session, candidate_id, proposal)
+        # Record cost — never propagate failures.
+        try:
+            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+            _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
+            _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+            await record_cost_event(
+                session,
+                provider=_provider,
+                model=_PROPOSAL_MODEL,
+                provider_path=_path,
+                feature_tag="marketing_brief",
+                input_tokens=getattr(response.usage, "input_tokens", 0),
+                output_tokens=getattr(response.usage, "output_tokens", 0),
+                cache_creation_input_tokens=getattr(
+                    response.usage, "cache_creation_input_tokens", 0
+                ),
+                cache_read_input_tokens=getattr(response.usage, "cache_read_input_tokens", 0),
+                source_kind="agent_run",
+                source_id=str(candidate_id),
+            )
+        except Exception:
+            logger.warning(
+                "cost_event recording failed in brief_assembler candidate_id=%s",
+                candidate_id,
+                exc_info=True,
+            )
         return InitiationProposalResult(
             candidate_id=candidate_id,
             proposal=proposal,

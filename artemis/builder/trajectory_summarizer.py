@@ -32,6 +32,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from artemis.builder.trajectory_schemas import TrajectorySummary
+from artemis.costs.events import record_cost_event
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,36 @@ async def _summarize_with_retry(
                 attempt,
             )
             return TrajectorySummary()
+
+        # Record cost — failure must never propagate.
+        try:
+            from artemis.db import SessionLocal
+            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+            _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
+            _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+            _model = getattr(adapter, "_default_model", "claude-sonnet-4-6") or "claude-sonnet-4-6"
+            async with SessionLocal() as _cost_session:
+                await record_cost_event(
+                    _cost_session,
+                    provider=_provider,
+                    model=_model,
+                    provider_path=_path,
+                    feature_tag="trajectory_summary",
+                    input_tokens=getattr(result_obj.usage, "input_tokens", 0)
+                    if result_obj.usage
+                    else 0,
+                    output_tokens=getattr(result_obj.usage, "output_tokens", 0)
+                    if result_obj.usage
+                    else 0,
+                )
+                await _cost_session.commit()
+        except Exception:
+            logger.warning(
+                "cost_event recording failed in trajectory_summarizer run_id=%s",
+                snapshot.run_id,
+                exc_info=True,
+            )
 
         text = _extract_text(result_obj)
         clean = _strip_markdown(text)

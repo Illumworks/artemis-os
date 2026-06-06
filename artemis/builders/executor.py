@@ -28,6 +28,7 @@ from artemis.builders.repository import (
     set_agent_context,
     set_agent_run_completed,
 )
+from artemis.costs.events import record_cost_event
 from artemis.marketing.josh_spec import JoshSpec, parse_spec, reason_codes_for_scout
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import get_factory, known_tool_names
@@ -434,6 +435,23 @@ async def run_agent(
             cost_output_tokens=result.usage.output_tokens,
         )
 
+        # Record cost event — never propagate failures
+        try:
+            await record_cost_event(
+                session,
+                provider=getattr(agent, "provider", "anthropic") or "anthropic",
+                model=agent.model or "claude-sonnet-4-6",
+                provider_path="cli" if getattr(agent, "provider", "") == "claude-code" else "api",
+                feature_tag="agent_run",
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+                source_kind="agent_run",
+                source_id=str(run.id),
+                agent_id=agent.id,
+            )
+        except Exception:
+            logger.warning("cost_event recording failed for run_id=%s", run_id, exc_info=True)
+
     except Exception as exc:  # noqa: BLE001
         logger.exception("Agent run '%s' failed", run_id)
         error_msg = f"{type(exc).__name__}: {exc}"
@@ -444,6 +462,22 @@ async def run_agent(
             status="failed",
             error=error_msg,
         )
+        # Record error cost event — lossless even on failure
+        try:
+            await record_cost_event(
+                session,
+                provider=getattr(agent, "provider", "anthropic") or "anthropic",
+                model=agent.model or "claude-sonnet-4-6",
+                provider_path="cli" if getattr(agent, "provider", "") == "claude-code" else "api",
+                feature_tag="agent_run",
+                source_kind="agent_run",
+                source_id=str(run.id),
+                agent_id=agent.id,
+                is_error=True,
+                error_kind=type(exc).__name__,
+            )
+        except Exception:
+            logger.warning("cost_event error recording failed for run_id=%s", run_id, exc_info=True)
 
     await session.flush()
 
