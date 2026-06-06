@@ -64,6 +64,11 @@ async def resolve_district_ids_for_candidate(
                 return [resolved_id]
         return []
 
+    # ── Composite shape (discriminated by "base" key) ──────────────────────────
+    if scope.get("base") is not None:
+        return await _resolve_composite_scope(session, scope)
+
+    # ── Legacy mode-based shape ────────────────────────────────────────────────
     mode = scope.get("mode", "")
 
     if mode == "all_districts":
@@ -110,6 +115,60 @@ async def resolve_district_ids_for_candidate(
         candidate.id,
     )
     return []
+
+
+async def _resolve_composite_scope(
+    session: AsyncSession,
+    scope: dict[str, Any],
+) -> list[int]:
+    """Resolve the composite (base-key) target_scope shape.
+
+    Resolution semantics:
+    1. population = base=="all" → all supported districts
+                    base=="states" → supported AND state in states
+    2. if tiers non-empty → intersect (population ∩ tier in tiers)
+    3. result = population ∪ include_district_ids
+               (explicit adds included even if outside base/tier or unsupported)
+    4. dedupe + sort
+    """
+    base: str = scope.get("base") or "all"
+    states: list[str] = scope.get("states") or []
+    tiers: list[str] = scope.get("tiers") or []
+    include_ids: list[int] = scope.get("include_district_ids") or []
+
+    # Build population query conditions
+    conditions = [District.supported.is_(True)]
+    if base == "states":
+        if not states:
+            population_ids: set[int] = set()
+        else:
+            conditions.append(District.state.in_(states))
+            result = await session.execute(
+                select(District.id).where(*conditions).order_by(District.id)
+            )
+            population_ids = {x for x in result.scalars().all() if x is not None}
+    else:
+        # base == "all"
+        result = await session.execute(select(District.id).where(*conditions).order_by(District.id))
+        population_ids = {x for x in result.scalars().all() if x is not None}
+
+    # Narrow by tiers if specified
+    if tiers and population_ids:
+        result = await session.execute(
+            select(District.id).where(
+                District.id.in_(population_ids),
+                District.tier.in_(tiers),
+            )
+        )
+        population_ids = {x for x in result.scalars().all() if x is not None}
+
+    # Union with explicit include_district_ids (no supported filter — mirrors named_districts)
+    if include_ids:
+        result = await session.execute(select(District.id).where(District.id.in_(include_ids)))
+        explicit_ids = {x for x in result.scalars().all() if x is not None}
+        population_ids = population_ids | explicit_ids
+
+    return sorted(population_ids)
 
 
 async def resolve_recipients_for_candidate(

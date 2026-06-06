@@ -154,11 +154,18 @@ async def get_initiation_proposal(
     lineage = await get_candidate_lineage_context(session, candidate_id)
     proposal_scope = proposal.target_scope.model_dump(mode="json")
     # Targeting geography is deterministic from the signal, not an LLM choice. If the generated
-    # proposal left target_scope at all_districts but the signal's geography implies a narrower
-    # default (e.g. a FL signal → FL districts), pre-select that narrower default instead of all
-    # 1903 nationwide. The user can still widen it; on confirm, the submitted scope wins.
-    _default_scope = district_context.get("defaultTargetScope") or {"mode": "all_districts"}
-    if proposal_scope.get("mode") == "all_districts" and _default_scope.get("mode") != "all_districts":
+    # proposal left target_scope at all_districts/base==all but the signal's geography implies
+    # a narrower default (e.g. a FL signal → FL districts), pre-select that narrower default
+    # instead of all 1903 nationwide. The user can still widen it; on confirm, submitted wins.
+    _default_scope = district_context.get("defaultTargetScope") or {"base": "all"}
+    _proposal_is_all = proposal_scope.get("mode") == "all_districts" or (
+        proposal_scope.get("base") == "all" and not proposal_scope.get("mode")
+    )
+    _default_is_narrower = _default_scope.get("mode") not in (
+        None,
+        "all_districts",
+    ) or _default_scope.get("base") not in (None, "all")
+    if _proposal_is_all and _default_is_narrower:
         proposal.target_scope = TargetScope.model_validate(_default_scope)
         proposal_scope = proposal.target_scope.model_dump(mode="json")
     pipeline_run_id = _resolve_pipeline_run_id(signal_cluster)
@@ -349,7 +356,7 @@ async def _build_district_context(
                 "enrollment": None,
                 "supported": None,
                 "onSkipList": None,
-                "defaultTargetScope": {"mode": "states", "states": [signal_state]},
+                "defaultTargetScope": {"base": "states", "states": [signal_state]},
             }
         return {
             "resolved": False,
@@ -362,7 +369,7 @@ async def _build_district_context(
             "enrollment": None,
             "supported": None,
             "onSkipList": None,
-            "defaultTargetScope": {"mode": "all_districts"},
+            "defaultTargetScope": {"base": "all"},
         }
 
     district = await get_district(session, primary_signal.resolved_district_id)
@@ -379,12 +386,12 @@ async def _build_district_context(
             "enrollment": None,
             "supported": None,
             "onSkipList": None,
-            "defaultTargetScope": {"mode": "all_districts"},
+            "defaultTargetScope": {"base": "all"},
         }
 
-    default_scope: dict[str, Any] = {"mode": "all_districts"}
+    default_scope: dict[str, Any] = {"base": "all"}
     if district.state:
-        default_scope = {"mode": "states", "states": [district.state]}
+        default_scope = {"base": "states", "states": [district.state]}
     return {
         "resolved": True,
         "label": f"{district.name} ({district.tier or 'unclassified'})",
@@ -723,6 +730,11 @@ async def _count_districts_for_scope(
     else:
         scope = {}
 
+    # ── Composite shape (discriminated by "base" key) ──────────────────────────
+    if scope.get("base") is not None:
+        return await _count_composite_scope(session, scope)
+
+    # ── Legacy mode-based shape ────────────────────────────────────────────────
     mode = str(scope.get("mode") or "all_districts")
     if mode == "all_districts":
         value = await session.scalar(
@@ -762,6 +774,86 @@ async def _count_districts_for_scope(
         )
         return int(value or 0)
     return 0
+
+
+async def _count_composite_scope(
+    session: AsyncSession,
+    scope: dict[str, Any],
+) -> int:
+    """Count districts matching the composite (base-key) target_scope shape.
+
+    Mirrors _resolve_composite_scope semantics exactly:
+    1. population = base=="all" → supported; base=="states" → supported ∩ state in states
+    2. if tiers non-empty → intersect
+    3. union with include_district_ids (no supported filter)
+    4. count deduplicated ids
+    """
+    base: str = scope.get("base") or "all"
+    states = [str(s).upper() for s in (scope.get("states") or []) if s]
+    tiers = [str(t).upper() for t in (scope.get("tiers") or []) if t]
+    include_ids: list[int] = [int(i) for i in (scope.get("include_district_ids") or []) if i]
+
+    # Build population
+    conditions = [District.supported.is_(True)]
+    if base == "states":
+        if not states:
+            population_ids: set[int] = set()
+        else:
+            conditions.append(District.state.in_(states))
+            result = await session.execute(select(District.id).where(*conditions))
+            population_ids = {x for x in result.scalars().all() if x is not None}
+    else:
+        result = await session.execute(select(District.id).where(*conditions))
+        population_ids = {x for x in result.scalars().all() if x is not None}
+
+    # Narrow by tiers
+    if tiers and population_ids:
+        result = await session.execute(
+            select(District.id).where(
+                District.id.in_(population_ids),
+                District.tier.in_(tiers),
+            )
+        )
+        population_ids = {x for x in result.scalars().all() if x is not None}
+
+    # Union with explicit include_district_ids
+    if include_ids:
+        result = await session.execute(select(District.id).where(District.id.in_(include_ids)))
+        explicit_ids = {x for x in result.scalars().all() if x is not None}
+        population_ids = population_ids | explicit_ids
+
+    return len(population_ids)
+
+
+class _TargetScopePreviewRequest(BaseModel):
+    target_scope: dict[str, Any]
+
+
+# Separate router for the /api/marketing/initiation/* preview endpoint
+initiation_extras_router = APIRouter(
+    prefix="/api/marketing/initiation",
+    tags=["marketing-campaigns"],
+    dependencies=[Depends(require_token)],
+)
+
+
+@initiation_extras_router.post("/target-scope/preview")
+async def preview_target_scope(
+    body: _TargetScopePreviewRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Live district count for a given target_scope shape (composite or legacy).
+
+    Validates via TargetScope (returns 422 on invalid input).
+    Returns {count: N} so the UI can drive the live count line.
+    """
+    try:
+        TargetScope.model_validate(body.target_scope)
+    except Exception as exc:
+        raise validation_failed({"errors": str(exc)}) from exc
+
+    count = await _count_districts_for_scope(session, body.target_scope)
+    return {"count": count}
 
 
 def _summarize_latest_brief(latest_brief: dict[str, Any] | None) -> str | None:

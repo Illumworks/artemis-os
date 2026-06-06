@@ -64,9 +64,23 @@ _VALID_STATES = frozenset(
     }
 )
 
+_VALID_COMPOSITE_BASES = ("all", "states")
+
 
 class TargetScope(BaseModel):
     """Tagged-union campaign targeting payload.
+
+    Supports two shapes:
+
+    LEGACY (mode-based):
+      { "mode": "all_districts"|"states"|"district_tier"|"named_districts",
+        "states"?: [...], "tiers"?: [...], "district_ids"?: [...] }
+
+    COMPOSITE (base-based — discriminated by presence of "base" key):
+      { "base": "all"|"states",
+        "states"?: [...],          # required iff base=="states"
+        "tiers"?: [...],           # optional narrowing; absent/empty = all tiers
+        "include_district_ids"?: [...] }  # optional explicit additions (always included)
 
     named_districts is accepted for forward-compatibility even though the
     surrounding product flow still treats it as experimental.
@@ -74,10 +88,17 @@ class TargetScope(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    mode: str
+    # Legacy fields
+    mode: str | None = None
+    district_ids: list[int] | None = None
+
+    # Shared between legacy and composite
     states: list[str] | None = None
     tiers: list[str] | None = None
-    district_ids: list[int] | None = None
+
+    # Composite-only fields
+    base: str | None = None
+    include_district_ids: list[int] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -93,6 +114,33 @@ class TargetScope(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mode_payload(self) -> TargetScope:
+        # ── Composite shape (base present) ────────────────────────────────────
+        if self.base is not None:
+            if self.base not in _VALID_COMPOSITE_BASES:
+                raise ValueError(f"base must be one of: {', '.join(_VALID_COMPOSITE_BASES)}")
+            if self.base == "states":
+                if not self.states:
+                    raise ValueError("composite base=='states' requires a non-empty states list")
+                invalid = sorted(s for s in self.states if s not in _VALID_STATES)
+                if invalid:
+                    raise ValueError(
+                        f"Unknown state code(s): {', '.join(invalid)}. "
+                        f"Valid: {', '.join(sorted(_VALID_STATES))}"
+                    )
+            if self.tiers:
+                invalid_tiers = sorted(t for t in self.tiers if t not in _VALID_TIERS)
+                if invalid_tiers:
+                    raise ValueError(
+                        f"Invalid tier(s): {', '.join(invalid_tiers)}. "
+                        f"Valid: {', '.join(_VALID_TIERS)}"
+                    )
+            return self
+
+        # ── Legacy shape (mode-based) ──────────────────────────────────────────
+        # mode is required for legacy shape
+        if self.mode is None:
+            raise ValueError("target_scope must have either 'mode' (legacy) or 'base' (composite)")
+
         if self.mode not in _VALID_MODES:
             raise ValueError(f"mode must be one of: {', '.join(_VALID_MODES)}")
 

@@ -646,12 +646,27 @@ function _resolveAccountUser(accountInfo) {
 }
 
 function _scopeToFormModel(targetScope, defaultTargetScope) {
-  const scope = targetScope && typeof targetScope === 'object' ? targetScope : defaultTargetScope || { mode: 'all_districts' };
+  const scope = targetScope && typeof targetScope === 'object' ? targetScope : defaultTargetScope || { base: 'all' };
+  // Support both composite (base key) and legacy (mode key)
+  if (scope.base != null) {
+    return {
+      base: scope.base || 'all',
+      states: Array.isArray(scope.states) ? scope.states.map((s) => String(s).toUpperCase()) : [],
+      tiers: Array.isArray(scope.tiers) ? scope.tiers.map((t) => String(t).toUpperCase()) : [],
+      include_district_ids: Array.isArray(scope.include_district_ids) ? scope.include_district_ids : [],
+    };
+  }
+  // Legacy: convert mode → base for the builder
   const mode = scope.mode || 'all_districts';
+  const base = mode === 'states' ? 'states' : 'all';
+  const selectedTiers = (mode === 'district_tier' && Array.isArray(scope.tiers)) ? scope.tiers.map((t) => String(t).toUpperCase()) : [];
+  const includeIds = (mode === 'named_districts' && Array.isArray(scope.district_ids)) ? scope.district_ids : [];
   return {
-    mode,
-    states: Array.isArray(scope.states) ? scope.states.map((state) => String(state).toUpperCase()) : [],
-    tiers: Array.isArray(scope.tiers) ? scope.tiers.map((tier) => String(tier).toUpperCase()) : [],
+    base,
+    states: Array.isArray(scope.states) ? scope.states.map((s) => String(s).toUpperCase()) : [],
+    tiers: selectedTiers,
+    include_district_ids: includeIds,
+    mode, // keep for legacy compat
   };
 }
 
@@ -682,54 +697,102 @@ function _renderDistrictHeaderMeta(districtContext) {
   return meta.length ? `<div class="mkt-initiation-header-meta">${meta.map((item) => `<span class="mkt-initiation-chip">${esc(item)}</span>`).join('')}</div>` : '';
 }
 
-function _renderTargetScopeSection(scopeModel, districtContext, targetScopeCounts) {
+function _renderTargetScopeSection(scopeModel, districtContext) {
+  // Determine initial selection from the scope model (composite or legacy)
+  const isComposite = (scopeModel.base != null);
+  let baseValue = 'all';
+  let selectedStates = [];
+  let selectedTiers = [];
+  let includeDistrictIds = [];
+
+  if (isComposite) {
+    baseValue = scopeModel.base || 'all';
+    selectedStates = Array.isArray(scopeModel.states) ? scopeModel.states : [];
+    selectedTiers = Array.isArray(scopeModel.tiers) ? scopeModel.tiers : [];
+    includeDistrictIds = Array.isArray(scopeModel.include_district_ids) ? scopeModel.include_district_ids : [];
+  } else {
+    // Map legacy mode → composite base
+    if (scopeModel.mode === 'states') {
+      baseValue = 'states';
+      selectedStates = Array.isArray(scopeModel.states) ? scopeModel.states : [];
+    } else {
+      baseValue = 'all';
+    }
+    // Legacy district_tier / named_districts: map to base=all with tier filter if possible
+    if (scopeModel.mode === 'district_tier' && Array.isArray(scopeModel.tiers)) {
+      selectedTiers = scopeModel.tiers;
+    }
+    if (scopeModel.mode === 'named_districts' && Array.isArray(scopeModel.district_ids)) {
+      includeDistrictIds = scopeModel.district_ids;
+    }
+  }
+
+  const statesChecked = baseValue === 'states';
+
   const stateOptions = US_STATES.map((state) => {
-    const checked = scopeModel.mode === 'states' && scopeModel.states.includes(state);
+    const checked = statesChecked && selectedStates.includes(state);
     return `<label class="mkt-initiation-state-chip${checked ? ' is-selected' : ''}">
       <input type="checkbox" data-initiation-state="${esc(state)}"${checked ? ' checked' : ''}>
       <span>${esc(state)}</span>
     </label>`;
   }).join('');
+
   const tierOptions = ['D1', 'D2', 'D3', 'D4'].map((tier) => `
     <label class="mkt-initiation-tier-option ${tier === 'D4' ? 'mkt-initiation-tier-option--disabled' : ''}">
-      <input type="checkbox" data-initiation-tier="${esc(tier)}" ${scopeModel.mode === 'district_tier' && scopeModel.tiers.includes(tier) ? 'checked' : ''} ${tier === 'D4' ? 'disabled' : ''}>
+      <input type="checkbox" data-initiation-tier="${esc(tier)}" ${selectedTiers.includes(tier) ? 'checked' : ''} ${tier === 'D4' ? 'disabled' : ''}>
       <span>${esc(tier)}${tier === 'D4' ? ' (unsupported)' : ''}</span>
     </label>
   `).join('');
 
-  const allChecked = scopeModel.mode === 'all_districts';
-  const statesChecked = scopeModel.mode === 'states';
-  const tierChecked = scopeModel.mode === 'district_tier';
   const note = districtContext?.note ? `<p class="mkt-initiation-note">${esc(districtContext.note)}</p>` : '';
-  const currentScopeCount = _computeScopeCount(scopeModel, targetScopeCounts);
 
   return `
-    <section class="mkt-initiation-section">
-      <h4>Target scope</h4>
+    <section class="mkt-initiation-section mkt-initiation-audience-builder">
+      <h4>Who are we reaching?</h4>
       ${note}
-      <p class="mkt-initiation-note" data-initiation-scope-count>
-        ${currentScopeCount == null ? 'District count unavailable.' : `→ ${esc(String(currentScopeCount))} districts`}
-      </p>
-      <label class="mkt-initiation-radio">
-        <input type="radio" name="initiation-target-mode" value="all_districts" ${allChecked ? 'checked' : ''}>
-        <span>All districts</span>
-      </label>
-      <label class="mkt-initiation-radio">
-        <input type="radio" name="initiation-target-mode" value="states" ${statesChecked ? 'checked' : ''}>
-        <span>Specific states</span>
-      </label>
-      <div class="mkt-initiation-subpanel" data-initiation-states ${statesChecked ? '' : 'hidden'}>
-        <p class="mkt-initiation-note">Click a state to include or remove it — highlighted states are targeted.</p>
-        <div class="mkt-initiation-state-grid">${stateOptions}</div>
+
+      <div class="mkt-initiation-audience-step">
+        <p class="mkt-initiation-step-label">1. Start with</p>
+        <label class="mkt-initiation-radio">
+          <input type="radio" name="initiation-base" value="all" ${!statesChecked ? 'checked' : ''}>
+          <span>All districts</span>
+        </label>
+        <label class="mkt-initiation-radio">
+          <input type="radio" name="initiation-base" value="states" ${statesChecked ? 'checked' : ''}>
+          <span>These states</span>
+        </label>
+        <div class="mkt-initiation-subpanel" data-initiation-states ${statesChecked ? '' : 'hidden'}>
+          <p class="mkt-initiation-note">Click a state to include or remove it — highlighted states are targeted.</p>
+          <div class="mkt-initiation-state-grid">${stateOptions}</div>
+        </div>
       </div>
-      <label class="mkt-initiation-radio">
-        <input type="radio" name="initiation-target-mode" value="district_tier" ${tierChecked ? 'checked' : ''}>
-        <span>By tier</span>
-      </label>
-      <div class="mkt-initiation-subpanel" data-initiation-tiers ${tierChecked ? '' : 'hidden'}>
-        <p class="mkt-initiation-note">D4 is shown for context but remains unsupported.</p>
+
+      <div class="mkt-initiation-audience-step mkt-initiation-audience-step--optional">
+        <p class="mkt-initiation-step-label">2. Only include <span class="mkt-initiation-optional-badge">optional</span></p>
+        <p class="mkt-initiation-note">Only include these tiers — leave off to include all tiers.</p>
         <div class="mkt-initiation-tier-grid">${tierOptions}</div>
       </div>
+
+      <div class="mkt-initiation-audience-step mkt-initiation-audience-step--optional">
+        <p class="mkt-initiation-step-label">3. Plus specific districts <span class="mkt-initiation-optional-badge">optional</span></p>
+        <p class="mkt-initiation-note">These districts are always included regardless of state or tier.</p>
+        <div class="mkt-initiation-district-search">
+          <input
+            type="text"
+            class="mkt-initiation-district-input"
+            data-initiation-district-search
+            placeholder="Search by district name…"
+            autocomplete="off"
+          >
+          <div class="mkt-initiation-district-dropdown" data-initiation-district-dropdown hidden></div>
+        </div>
+        <div class="mkt-initiation-district-chips" data-initiation-district-chips>
+          ${includeDistrictIds.map((id) => `<span class="mkt-initiation-district-chip" data-district-chip-id="${esc(String(id))}"><span class="mkt-initiation-district-chip-name" data-district-name-for="${esc(String(id))}">District ${esc(String(id))}</span><button type="button" class="mkt-initiation-district-chip-remove" data-district-chip-remove="${esc(String(id))}">✕</button></span>`).join('')}
+        </div>
+      </div>
+
+      <p class="mkt-initiation-scope-count" data-initiation-scope-count>→ Loading…</p>
+      <p class="mkt-initiation-zero-hint" data-initiation-zero-hint hidden>This audience matches 0 districts — widen states/tiers or add specific districts.</p>
     </section>
   `;
 }
@@ -1075,7 +1138,7 @@ function _renderInitiationModal(campaign, bundle, accountInfo) {
           </div>
         </section>
 
-        ${_renderTargetScopeSection(scopeModel, bundle?.districtContext, bundle?.targetScopeCounts)}
+        ${_renderTargetScopeSection(scopeModel, bundle?.districtContext)}
         ${bundle?.districtContext?.onSkipList ? `
           <section class="mkt-initiation-section mkt-initiation-warning">
             <h4>Skip-list acknowledgment required</h4>
@@ -1215,16 +1278,45 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
   };
 
   const toggleScopePanels = () => {
-    const mode = modal.querySelector('input[name="initiation-target-mode"]:checked')?.value || 'all_districts';
+    const base = modal.querySelector('input[name="initiation-base"]:checked')?.value || 'all';
     const statesPanel = modal.querySelector('[data-initiation-states]');
-    const tiersPanel = modal.querySelector('[data-initiation-tiers]');
-    if (statesPanel) statesPanel.hidden = mode !== 'states';
-    if (tiersPanel) tiersPanel.hidden = mode !== 'district_tier';
+    if (statesPanel) statesPanel.hidden = base !== 'states';
   };
 
-  const syncSkipAckRequirement = () => {
+  // District include chips state: Map<id, name>
+  const _includedDistricts = new Map();
+  // Pre-populate from any existing include_district_ids in the scope model
+  const _initScope = _scopeToFormModel(bundle?.proposal?.target_scope || bundle?.defaultTargetScope, bundle?.defaultTargetScope);
+  (_initScope.include_district_ids || []).forEach((id) => {
+    _includedDistricts.set(String(id), `District ${id}`);
+  });
+
+  const renderDistrictChips = () => {
+    const container = modal.querySelector('[data-initiation-district-chips]');
+    if (!container) return;
+    if (_includedDistricts.size === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    container.innerHTML = [..._includedDistricts.entries()].map(([id, name]) => `
+      <span class="mkt-initiation-district-chip" data-district-chip-id="${esc(String(id))}">
+        <span>${esc(name)}</span>
+        <button type="button" class="mkt-initiation-district-chip-remove" data-district-chip-remove="${esc(String(id))}">✕</button>
+      </span>
+    `).join('');
+    container.querySelectorAll('[data-district-chip-remove]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        _includedDistricts.delete(btn.dataset.districtChipRemove);
+        renderDistrictChips();
+        schedulePreviewRefresh();
+      });
+    });
+  };
+
+  const syncSkipAckRequirement = (forceDisable) => {
     const confirmBtn = modal.querySelector('[data-initiation-confirm]');
     if (!confirmBtn) return;
+    if (forceDisable) { confirmBtn.disabled = true; return; }
     const ack = modal.querySelector('[data-initiation-skip-ack]');
     if (!ack) {
       confirmBtn.disabled = false;
@@ -1234,25 +1326,102 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
   };
 
   const selectedScope = () => {
-    const mode = modal.querySelector('input[name="initiation-target-mode"]:checked')?.value || 'all_districts';
-    if (mode === 'states') {
+    const base = modal.querySelector('input[name="initiation-base"]:checked')?.value || 'all';
+    const scope = { base };
+    if (base === 'states') {
       const states = [...modal.querySelectorAll('[data-initiation-state]:checked')]
         .map((el) => el.getAttribute('data-initiation-state'))
         .filter(Boolean);
-      return { mode, states };
+      if (states.length) scope.states = states;
     }
-    if (mode === 'district_tier') {
-      const tiers = [...modal.querySelectorAll('[data-initiation-tier]:checked')].map((el) => el.getAttribute('data-initiation-tier')).filter(Boolean);
-      return { mode, tiers };
-    }
-    return { mode: 'all_districts' };
+    const tiers = [...modal.querySelectorAll('[data-initiation-tier]:checked')]
+      .map((el) => el.getAttribute('data-initiation-tier'))
+      .filter(Boolean);
+    if (tiers.length) scope.tiers = tiers;
+    const ids = [..._includedDistricts.keys()].map(Number).filter(Number.isFinite);
+    if (ids.length) scope.include_district_ids = ids;
+    return scope;
   };
 
-  const refreshScopeCount = () => {
-    const node = modal.querySelector('[data-initiation-scope-count]');
-    if (!node) return;
-    const count = _computeScopeCount(_scopeToFormModel(selectedScope(), bundle?.defaultTargetScope), bundle?.targetScopeCounts);
-    node.textContent = count == null ? 'District count unavailable.' : `→ ${count} districts`;
+  let _previewRefreshTimer = null;
+  const refreshScopeCount = async () => {
+    const countEl = modal.querySelector('[data-initiation-scope-count]');
+    const zeroHint = modal.querySelector('[data-initiation-zero-hint]');
+    const confirmBtn = modal.querySelector('[data-initiation-confirm]');
+    if (!countEl) return;
+    const scope = selectedScope();
+    try {
+      const resp = await fetch('/api/marketing/initiation/target-scope/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_scope: scope }),
+      });
+      if (!resp.ok) {
+        countEl.textContent = 'District count unavailable.';
+        return;
+      }
+      const data = await resp.json();
+      const count = data.count ?? 0;
+      countEl.textContent = `→ ${count} districts will be contacted`;
+      if (zeroHint) zeroHint.hidden = count > 0;
+      if (confirmBtn) {
+        const skipAck = modal.querySelector('[data-initiation-skip-ack]');
+        if (count === 0) {
+          confirmBtn.disabled = true;
+        } else if (skipAck) {
+          confirmBtn.disabled = !skipAck.checked;
+        } else {
+          confirmBtn.disabled = false;
+        }
+      }
+    } catch {
+      countEl.textContent = 'District count unavailable.';
+    }
+  };
+  const schedulePreviewRefresh = () => {
+    if (_previewRefreshTimer) clearTimeout(_previewRefreshTimer);
+    _previewRefreshTimer = setTimeout(refreshScopeCount, 250);
+  };
+
+  // District typeahead
+  let _districtSearchTimer = null;
+  const handleDistrictSearch = async (query) => {
+    const dropdown = modal.querySelector('[data-initiation-district-dropdown]');
+    if (!dropdown) return;
+    if (!query || query.length < 1) {
+      dropdown.hidden = true;
+      dropdown.innerHTML = '';
+      return;
+    }
+    try {
+      const url = `/api/marketing/districts/search?q=${encodeURIComponent(query)}&limit=20`;
+      const resp = await fetch(url);
+      if (!resp.ok) { dropdown.hidden = true; return; }
+      const results = await resp.json();
+      if (!Array.isArray(results) || results.length === 0) {
+        dropdown.hidden = true;
+        dropdown.innerHTML = '';
+        return;
+      }
+      dropdown.innerHTML = results
+        .filter((r) => !_includedDistricts.has(String(r.id)))
+        .map((r) => `<button type="button" class="mkt-initiation-district-option" data-district-id="${esc(String(r.id))}" data-district-name="${esc(r.name)}">${esc(r.name)} <span class="mkt-initiation-district-option-meta">${esc(r.state || '')}${r.tier ? ` · ${esc(r.tier)}` : ''}</span></button>`)
+        .join('');
+      dropdown.hidden = dropdown.innerHTML === '';
+      dropdown.querySelectorAll('[data-district-id]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          _includedDistricts.set(btn.dataset.districtId, btn.dataset.districtName);
+          dropdown.hidden = true;
+          dropdown.innerHTML = '';
+          const searchInput = modal.querySelector('[data-initiation-district-search]');
+          if (searchInput) searchInput.value = '';
+          renderDistrictChips();
+          schedulePreviewRefresh();
+        });
+      });
+    } catch {
+      dropdown.hidden = true;
+    }
   };
 
   const collectPayload = () => {
@@ -1284,24 +1453,46 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
     if (event.key === 'Escape') closeModal();
   });
 
-  modal.querySelectorAll('input[name="initiation-target-mode"]').forEach((input) => {
+  // Base radio (all / states)
+  modal.querySelectorAll('input[name="initiation-base"]').forEach((input) => {
     input.addEventListener('change', () => {
       toggleScopePanels();
-      refreshScopeCount();
+      schedulePreviewRefresh();
     });
   });
   toggleScopePanels();
-  refreshScopeCount();
 
   modal.querySelectorAll('[data-initiation-state]').forEach((input) => {
     input.addEventListener('change', () => {
       input.closest('.mkt-initiation-state-chip')?.classList.toggle('is-selected', input.checked);
-      refreshScopeCount();
+      schedulePreviewRefresh();
     });
   });
   modal.querySelectorAll('[data-initiation-tier]').forEach((input) => {
-    input.addEventListener('change', refreshScopeCount);
+    input.addEventListener('change', schedulePreviewRefresh);
   });
+
+  // District search typeahead
+  const searchInput = modal.querySelector('[data-initiation-district-search]');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.trim();
+      if (_districtSearchTimer) clearTimeout(_districtSearchTimer);
+      _districtSearchTimer = setTimeout(() => handleDistrictSearch(q), 250);
+    });
+    searchInput.addEventListener('blur', () => {
+      // Slight delay so dropdown button click fires first
+      setTimeout(() => {
+        const dropdown = modal.querySelector('[data-initiation-district-dropdown]');
+        if (dropdown) { dropdown.hidden = true; dropdown.innerHTML = ''; }
+      }, 200);
+    });
+  }
+
+  // Initial chip render + count
+  renderDistrictChips();
+  refreshScopeCount();
+
   modal.querySelector('[data-initiation-skip-ack]')?.addEventListener('change', syncSkipAckRequirement);
   syncSkipAckRequirement();
 

@@ -629,7 +629,10 @@ async def initiate_campaign(
     candidate.name = name
     candidate.objective = objective
     candidate.owner_user_id = owner_user_id
-    candidate.target_scope_json = parsed_target_scope.model_dump(mode="json")
+    # Exclude None fields so legacy shapes serialize identically to their original
+    # form (backward-compatible storage: {mode, states, tiers, district_ids} only,
+    # no null base/include_district_ids keys written for legacy rows).
+    candidate.target_scope_json = parsed_target_scope.model_dump(mode="json", exclude_none=True)
     candidate.deliverable_types_json = list(deliverable_type_slugs)
     candidate.initiated_at = datetime.now(tz=UTC)
     candidate.initiated_by = initiated_by
