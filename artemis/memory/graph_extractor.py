@@ -40,6 +40,7 @@ from artemis.memory.graph import (
     upsert_relation,
 )
 from artemis.memory.models import MemoryObservation
+from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
 
 _logger = logging.getLogger(__name__)
 
@@ -138,23 +139,29 @@ def _get_session_factory() -> Any:
 
 
 async def _default_call_model(content: str, model: str) -> str:
-    """Call Anthropic Haiku with the static system prompt (prompt-cached)."""
-    import anthropic
+    """Call the provider abstraction (claude-code cascade) with the static system prompt.
 
-    client = anthropic.AsyncAnthropic()
-    response = await client.messages.create(
+    Routes through resolve_adapter("claude-code") — no raw Anthropic SDK / no
+    ANTHROPIC_API_KEY required when the claude-code CLI is available. Mirrors the
+    pattern used by artemis/memory/consolidator.py (C3 pattern).
+    """
+    from artemis.agent.client import CompletionRequest
+    from artemis.agent.types import Message, TextBlock
+
+    try:
+        adapter = resolve_adapter(provider="claude-code")
+    except NoProviderAvailableError as exc:
+        raise RuntimeError(f"Graph extraction: no provider available: {exc}") from exc
+
+    request = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text=f'Observation: "{content}"')])],
+        system=_SYSTEM_PROMPT,
         model=model,
         max_tokens=512,
-        system=[
-            {
-                "type": "text",
-                "text": _SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": f'Observation: "{content}"'}],
+        cache_system=True,
     )
-    parts = [b.text for b in response.content if hasattr(b, "text")]
+    response = await adapter.complete(request)
+    parts = [b.text for b in response.message.content if isinstance(b, TextBlock)]
     return "".join(parts)
 
 
