@@ -277,29 +277,40 @@ async def run_scout(
                 signals_rejected += 1
                 _last_validation_error = str(exc2)
                 continue  # TODO: write to unresolved_signals when table exists
-        session.add(
-            SignalQueue(
-                source_type=normalized.source_type,
-                source_url=normalized.source_url,
-                pipeline_run_id=payload.get("pipelineRunId") or payload.get("pipeline_run_id"),
-                headline=normalized.headline,
-                summary=normalized.verbatim_snippet or normalized.headline,
-                campaign_family=normalized.campaign_family,
-                urgency_tier=normalized.urgency_tier,
-                discovered_by=normalized.discovered_by,
-                district_id=normalized.district,
-                state=normalized.state_code,
-                reason_codes=normalized.reason_codes,
-                signal_status="pending_qualification",
-                provenance={
-                    "run_id": run_id,
-                    "agent_id": agent_id,
-                    "why_flagged": normalized.why_flagged,
-                },
-            )
+        signal_row = SignalQueue(
+            source_type=normalized.source_type,
+            source_url=normalized.source_url,
+            pipeline_run_id=payload.get("pipelineRunId") or payload.get("pipeline_run_id"),
+            headline=normalized.headline,
+            summary=normalized.verbatim_snippet or normalized.headline,
+            campaign_family=normalized.campaign_family,
+            urgency_tier=normalized.urgency_tier,
+            discovered_by=normalized.discovered_by,
+            district_id=normalized.district,
+            state=normalized.state_code,
+            reason_codes=normalized.reason_codes,
+            signal_status="pending_qualification",
+            provenance={
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "why_flagged": normalized.why_flagged,
+            },
         )
+        session.add(signal_row)
         await session.flush()
         signals_emitted += 1
+
+        # Best-effort, non-fatal auto-qualification (mirrors intake route semantics).
+        # Signal write always wins; qualification failure is logged and swallowed.
+        try:
+            from artemis.marketing.qualification import run_and_store_qualification
+
+            await run_and_store_qualification(session, signal_row)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "scout_runner: qualification failed for signal id=%s (non-fatal)",
+                signal_row.id,
+            )
     ended_at = datetime.now(UTC)
     session.add(
         ScoutRun(

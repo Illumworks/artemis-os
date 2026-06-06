@@ -24,27 +24,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.db import get_session
 from artemis.marketing.models import (
     Approval,
-    Ruleset,
     SignalQueue,
     SignalReasonCode,
-    TerritoryConfig,
 )
-from artemis.marketing.qualifier import (
-    RulesetInput,
-    SignalInput,
-    TerritoryEntry,
-    annotate_district_tier,
-    qualify_signal,
-)
+from artemis.marketing.qualification import run_and_store_qualification
 from artemis.marketing.repository import (
     cluster_or_create_candidate,
     create_signal,
     find_signal_by_dedupe_key,
     get_active_ruleset_version,
-    get_district,
     get_signal,
     list_signals,
-    save_signal_qualification,
     update_signal,
 )
 from artemis.marketing.routes._auth import require_token
@@ -285,9 +275,8 @@ async def qualify_signal_route(
             "No active rulesets found — cannot qualify signal",
             "no_active_rulesets",
         )
-    # Advance signal from pending_qualification → qualified if not already there
-    if signal.signal_status == SignalState.pending_qualification:
-        await transition(session, "signal", signal.id, SignalState.qualified)
+    # Status transition (pending_qualification → qualified) is now handled
+    # inside run_and_store_qualification. Nothing extra needed here.
     await session.commit()
     await session.refresh(signal)
     return result
@@ -503,76 +492,12 @@ async def _run_and_store_qualification(
     session: AsyncSession,
     signal: SignalQueue,
 ) -> dict[str, Any] | None:
-    """Load active rulesets + territory configs, run qualify_signal(), store result.
+    """Thin wrapper around the shared ``run_and_store_qualification`` helper.
 
-    Returns the serialized qualification dict, or None if no active rulesets exist.
-    Callers own commit/rollback. Raises on unexpected DB errors.
+    Delegates all logic to ``artemis.marketing.qualification`` so that the
+    scout paths can call the same function without depending on this router.
     """
-    # Load all active rulesets
-    result = await session.execute(select(Ruleset).where(Ruleset.state == "active"))
-    active_rulesets_rows = list(result.scalars().all())
-
-    if not active_rulesets_rows:
-        return None
-
-    # Build RulesetInput list
-    ruleset_inputs = [
-        RulesetInput(
-            campaign_family=row.family,
-            version_number=row.version_tag,
-            min_fit_score=0.5,  # default; rulesets don't have a min_fit_score column yet
-            hard_filters=row.hard_filters or [],
-            weighted_signals=row.weighted_signals or [],
-        )
-        for row in active_rulesets_rows
-    ]
-
-    # Load territory configs for the families we're scoring
-    families = [r.family for r in active_rulesets_rows]
-    tc_result = await session.execute(
-        select(TerritoryConfig).where(TerritoryConfig.family.in_(families))
-    )
-    territory_rows = list(tc_result.scalars().all())
-
-    # Build territories_by_family using JSONB hot_states / standard_states arrays
-    territories_by_family: dict[str, list[TerritoryEntry]] = {}
-    for tc in territory_rows:
-        entries: list[TerritoryEntry] = []
-        for state in tc.hot_states or []:
-            entries.append(TerritoryEntry(state_code=str(state).upper(), priority_tier="hot"))
-        for state in tc.standard_states or []:
-            entries.append(TerritoryEntry(state_code=str(state).upper(), priority_tier="standard"))
-        territories_by_family[tc.family] = entries
-
-    # Build SignalInput from ORM row
-    signal_input = SignalInput(
-        state_code=signal.state,
-        reason_codes=signal.reason_codes or [],
-        campaign_family=signal.campaign_family,
-        urgency_tier=signal.urgency_tier,
-    )
-
-    qual = qualify_signal(signal_input, ruleset_inputs, territories_by_family)
-    qual_dict = qual.to_dict()
-
-    # DIST4: annotate district tier soft-flag (no migration — stored in qualification_json)
-    district = None
-    if signal.resolved_district_id is not None:
-        district = await get_district(session, signal.resolved_district_id)
-    qual_dict = annotate_district_tier(
-        qual_dict,
-        district_id=district.id if district else None,
-        district_name=district.name if district else None,
-        district_state=district.state if district else None,
-        district_tier=district.tier if district else None,
-        district_enrollment=district.enrollment if district else None,
-        district_supported=district.supported if district else None,
-        district_on_skip_list=district.on_skip_list if district else None,
-    )
-
-    # Store on signal
-    await save_signal_qualification(session, signal.id, qual_dict)
-    return qual_dict
+    return await run_and_store_qualification(session, signal)
 
 
 async def _load_signal_contexts(

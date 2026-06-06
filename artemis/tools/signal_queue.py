@@ -16,6 +16,7 @@ from sqlalchemy import select, text
 from artemis.agent.types import Tool, ToolImpl
 from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
 from artemis.marketing.models import SignalQueue
+from artemis.marketing.qualification import run_and_store_qualification
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.tools.context import ToolContext
 from artemis.tools.district_resolve import resolve_district
@@ -220,6 +221,17 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             ctx.agent_id,
             row.id,
         )
+
+        # Best-effort, non-fatal auto-qualification (mirrors intake route semantics).
+        # Signal write always wins; qualification failure is logged and swallowed.
+        try:
+            await run_and_store_qualification(ctx.session, row)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "signal_queue.write: qualification failed for signal id=%s (non-fatal)",
+                row.id,
+            )
+
         return json.dumps({"signal_id": row.id, "status": "written"})
 
     return (_DEF, _impl)
