@@ -20,6 +20,7 @@ from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
 from artemis.builders.models import Agent
 from artemis.connectors.resolver import ConnectorNotConfigured, get_credentials_for_tool
+from artemis.costs.events import record_cost_event
 from artemis.marketing.models import ScoutRun, SignalQueue, TerritoryConfig
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.marketing.scout_sources import SCOUT_SOURCE_ADAPTERS
@@ -118,6 +119,34 @@ async def _call_llm(
             if resp.usage
             else 0.0
         )
+        # Record cost — never propagate failures.
+        try:
+            from artemis.db import SessionLocal
+            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+            _provider = "claude-code" if isinstance(llm_adapter, ClaudeCodeAdapter) else "anthropic"
+            _path = "cli" if isinstance(llm_adapter, ClaudeCodeAdapter) else "api"
+            async with SessionLocal() as _cost_session:
+                await record_cost_event(
+                    _cost_session,
+                    provider=_provider,
+                    model=model,
+                    provider_path=_path,
+                    feature_tag="marketing_scout",
+                    input_tokens=getattr(resp.usage, "input_tokens", 0) if resp.usage else 0,
+                    output_tokens=getattr(resp.usage, "output_tokens", 0) if resp.usage else 0,
+                    cache_creation_input_tokens=getattr(
+                        resp.usage, "cache_creation_input_tokens", 0
+                    )
+                    if resp.usage
+                    else 0,
+                    cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0)
+                    if resp.usage
+                    else 0,
+                )
+                await _cost_session.commit()
+        except Exception:
+            logger.warning("cost_event recording failed in _call_llm (scout)", exc_info=True)
         return payload, delta, None
     except json.JSONDecodeError as exc:
         return None, 0.0, f"json: {exc}"

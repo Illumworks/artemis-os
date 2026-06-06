@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as _db
+from artemis.costs.events import record_cost_event
 from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.gcal.client import GCalClient
@@ -338,6 +339,37 @@ async def _llm_summarize(
             summary = MeetingSummarySchema.model_validate_json(raw_text.strip())
             bullets_text = "\n".join(f"- {b}" for b in summary.bullets)
             action_items = [item.model_dump() for item in summary.action_items]
+            # Record cost — failure must never propagate.
+            try:
+                from artemis.agent.client import AnthropicAdapter
+                from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+                _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
+                _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+                _model = (
+                    getattr(adapter, "_default_model", None)
+                    or getattr(adapter, "model", None)
+                    or "claude-sonnet-4-6"
+                )
+                async with _db.SessionLocal() as _cost_session:
+                    await record_cost_event(
+                        _cost_session,
+                        provider=_provider,
+                        model=_model,
+                        provider_path=_path,
+                        feature_tag="meeting_summary",
+                        input_tokens=getattr(response.usage, "input_tokens", 0),
+                        output_tokens=getattr(response.usage, "output_tokens", 0),
+                        cache_creation_input_tokens=getattr(
+                            response.usage, "cache_creation_input_tokens", 0
+                        ),
+                        cache_read_input_tokens=getattr(
+                            response.usage, "cache_read_input_tokens", 0
+                        ),
+                    )
+                    await _cost_session.commit()
+            except Exception:
+                logger.warning("cost_event recording failed in meeting summarizer", exc_info=True)
             return bullets_text, action_items
         except ValidationError as exc:
             last_error = str(exc)

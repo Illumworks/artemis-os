@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.agent.client import CompletionRequest, ModelAdapter
 from artemis.agent.types import Message, TextBlock
+from artemis.costs.events import record_cost_event
 from artemis.memory.conflict_detector import detect_conflicts
 from artemis.memory.models import MemoryConflict, MemoryObservation
 from artemis.memory.schemas import Observation, Scope
@@ -216,17 +217,41 @@ async def consolidate_observations(
         cache_system=True,
     )
 
-    async def _call() -> str:
+    async def _call() -> tuple[str, object]:
         response = await adapter.complete(request)
         text_parts: list[str] = []
         for block in response.message.content:
             if isinstance(block, TextBlock):
                 text_parts.append(block.text)
-        return "".join(text_parts)
+        return "".join(text_parts), response.usage
 
     for attempt in range(2):
         try:
-            raw = await _call()
+            raw, _usage = await _call()
+            # Record cost event in a separate session — failure must never propagate.
+            try:
+                import artemis.db as _db
+                from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+                _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
+                _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+                async with _db.SessionLocal() as _cost_session:
+                    await record_cost_event(
+                        _cost_session,
+                        provider=_provider,
+                        model=_HAIKU_MODEL,
+                        provider_path=_path,
+                        feature_tag="memory_consolidation",
+                        input_tokens=getattr(_usage, "input_tokens", 0),
+                        output_tokens=getattr(_usage, "output_tokens", 0),
+                        cache_creation_input_tokens=getattr(
+                            _usage, "cache_creation_input_tokens", 0
+                        ),
+                        cache_read_input_tokens=getattr(_usage, "cache_read_input_tokens", 0),
+                    )
+                    await _cost_session.commit()
+            except Exception:
+                _logger.warning("cost_event recording failed in consolidator", exc_info=True)
             return _parse_proposals(raw, category, input_ids)
         except (json.JSONDecodeError, ValueError, KeyError) as exc:
             if attempt == 0:

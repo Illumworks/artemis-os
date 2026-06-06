@@ -31,6 +31,7 @@ import yaml
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.costs.events import record_cost_event
 from artemis.memory.graph import (
     VALID_ENTITY_KINDS,
     VALID_PREDICATES,
@@ -161,6 +162,30 @@ async def _default_call_model(content: str, model: str) -> str:
         cache_system=True,
     )
     response = await adapter.complete(request)
+    # Record cost — failure must never propagate to the caller.
+    try:
+        from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+
+        _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
+        _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+        factory = _get_session_factory()
+        async with factory() as _cost_session:
+            await record_cost_event(
+                _cost_session,
+                provider=_provider,
+                model=model,
+                provider_path=_path,
+                feature_tag="memory_graph_extraction",
+                input_tokens=getattr(response.usage, "input_tokens", 0),
+                output_tokens=getattr(response.usage, "output_tokens", 0),
+                cache_creation_input_tokens=getattr(
+                    response.usage, "cache_creation_input_tokens", 0
+                ),
+                cache_read_input_tokens=getattr(response.usage, "cache_read_input_tokens", 0),
+            )
+            await _cost_session.commit()
+    except Exception:
+        _logger.warning("cost_event recording failed in graph_extractor", exc_info=True)
     parts = [b.text for b in response.message.content if isinstance(b, TextBlock)]
     return "".join(parts)
 
