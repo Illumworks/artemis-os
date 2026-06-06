@@ -1350,6 +1350,25 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
     const confirmBtn = modal.querySelector('[data-initiation-confirm]');
     if (!countEl) return;
     const scope = selectedScope();
+
+    // Block Confirm unless we have a positive, verified count. skipAck (if present)
+    // is the only thing that can hold back an otherwise-valid (>0) audience.
+    const setConfirmEnabled = (enabled) => {
+      if (!confirmBtn) return;
+      if (!enabled) { confirmBtn.disabled = true; return; }
+      const skipAck = modal.querySelector('[data-initiation-skip-ack]');
+      confirmBtn.disabled = skipAck ? !skipAck.checked : false;
+    };
+
+    // Client-side guard: "These states" needs ≥1 state. Don't query an invalid
+    // scope (it would 422) — guide the user and keep Confirm disabled.
+    if (scope.base === 'states' && !(scope.states && scope.states.length)) {
+      countEl.textContent = 'Select at least one state to target.';
+      if (zeroHint) zeroHint.hidden = false;
+      setConfirmEnabled(false);
+      return;
+    }
+
     try {
       const resp = await fetch('/api/marketing/initiation/target-scope/preview', {
         method: 'POST',
@@ -1357,25 +1376,23 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
         body: JSON.stringify({ target_scope: scope }),
       });
       if (!resp.ok) {
-        countEl.textContent = 'District count unavailable.';
+        // Invalid audience (e.g. 422) — never allow Confirm on something the
+        // backend rejects; guide instead of a dead-end "unavailable".
+        countEl.textContent = 'This audience isn’t valid yet — adjust your selection.';
+        if (zeroHint) zeroHint.hidden = false;
+        setConfirmEnabled(false);
         return;
       }
       const data = await resp.json();
       const count = data.count ?? 0;
       countEl.textContent = `→ ${count} districts will be contacted`;
       if (zeroHint) zeroHint.hidden = count > 0;
-      if (confirmBtn) {
-        const skipAck = modal.querySelector('[data-initiation-skip-ack]');
-        if (count === 0) {
-          confirmBtn.disabled = true;
-        } else if (skipAck) {
-          confirmBtn.disabled = !skipAck.checked;
-        } else {
-          confirmBtn.disabled = false;
-        }
-      }
+      setConfirmEnabled(count > 0);
     } catch {
-      countEl.textContent = 'District count unavailable.';
+      // Couldn't verify the audience — don't let a campaign initiate blind.
+      countEl.textContent = 'District count unavailable — check your connection.';
+      if (zeroHint) zeroHint.hidden = true;
+      setConfirmEnabled(false);
     }
   };
   const schedulePreviewRefresh = () => {
