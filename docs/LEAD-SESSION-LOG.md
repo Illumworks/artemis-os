@@ -33,6 +33,40 @@ Starbridge key; AI Marketing Strategist + CRM (roadmap: docs/marketing-qualifica
 
 ---
 
+## 2026-06-06 (cont.17) — Composable targeting builder merged + SHARED-TREE COLLISION (read this)
+
+**⚠️ Multi-agent hazard hit + recovered — new lesson.** Terminal opus checked out its
+`worker/cost-phase-2-visibility-dashboard` branch IN THE MAIN REPO WORKING TREE between two of my
+commits. So my brief commit (f26436f) AND my targeting merge landed on TERMINAL'S branch, not main —
+`git` was on cost-phase-2 even though `pwd` was the main repo (pwd ≠ branch). **Recovered:** restored
+cost-phase-2 to terminal's tip `384f7dd` (stash the 4 unrelated WIP files → `reset --hard 384f7dd` →
+stash pop; targeting files cleared from its tree), then merged targeting into main via a SEPARATE
+worktree so I never touched the shared tree's branch. **LESSON: before any commit/merge in the shared
+main repo, check `git branch --show-current`, not just `pwd` — another agent may have switched it.**
+Going forward, do Lead merges/commits via a dedicated worktree, never the contested main repo dir.
+
+**State now:** `main` = `dbe6f59` (targeting builder + guard fix). `worker/cost-phase-2-visibility-
+dashboard` = `384f7dd` (terminal's, clean, restored). Terminal's brief f26436f rode into cost-phase-2
+lineage (harmless doc; reaches main when terminal merges Phase 2). **main moved past cb445be — terminal's
+eventual cost-phase-2→main merge must account for it** (likely clean: Phase 2 = cost-dashboard files +
+main.py router add; targeting touched marketing-os.js + different main.py lines).
+
+**Composable targeting builder — built (Worker, Sonnet), merged to main, live-verified (campaign #15):**
+- Composite `target_scope` `{base, states?, tiers?, include_district_ids?}` alongside the legacy
+  mode-based shape. BACKWARD COMPATIBLE — legacy rows resolve byte-for-byte identically (worker unit-
+  tested both shapes → same ids); `exclude_none` keeps legacy storage parity. No migration (JSONB).
+- New endpoints: `POST /api/marketing/initiation/target-scope/preview` (live count, source of truth) +
+  `GET /api/marketing/districts/search` (typeahead). `_count_composite_scope` mirrors
+  `_resolve_composite_scope` exactly (count == who gets contacted).
+- UI: "Who are we reaching?" builder — 1. Start with (All / These states + chips), 2. Only include tiers
+  (optional narrowing), 3. Plus specific districts (search-add chips), live "→ N districts" count.
+- 40 new tests + 841 marketing tests pass; no deps.
+- **Bug I found + fixed during MY verification (test→fix→retest):** confirm-guard only disabled on
+  count===0; an invalid scope (base=states, no state) 422'd the preview → dead-end "unavailable" + LEFT
+  CONFIRM ENABLED. Fixed (dbe6f59): empty-states caught client-side ("Select at least one state to
+  target."); any !ok/unverified disables Confirm; only a positive verified count enables. Verified:
+  MI→52 enabled; clear all→disabled+hint; reselect→enabled.
+
 ## 2026-06-06 (cont.16) — Campaign-UI modal polish + cost/routing go-no-go
 
 **Campaign initiation modal — Lead-built, merged to main (c781fe7, 31bc01e), live-verified on #15:**
