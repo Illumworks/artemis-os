@@ -132,21 +132,23 @@ _URGENCY_WEIGHT: dict[str, float] = {
 def _derive_weight(default_urgency: str) -> float:
     """Map Josh's default_urgency string to a numeric weight.
 
-    Rules (applied in priority order — first match wins):
-      - contains "hot"        → 0.90
-      - contains "standard"   → 0.60
-      - contains "enrichment" → 0.30
-      - fallback              → 0.30  (treat unknown as enrichment)
+    Uses the FIRST/headline tier mentioned in the string (the DEFAULT tier), NOT the
+    peak tier. Josh writes conditional urgencies like "standard; hot if board votes
+    non-renewal" — the headline ("standard") is the base tier; the "hot if X" is a
+    CONDITIONAL boost that belongs in the Phase-3 relational logic, not the base weight.
+    Taking the peak tier wrongly inflated VENDOR_DISSATISFACTION / PROCUREMENT_ELA_ADOPTION /
+    DISTRICT_PROFICIENCY_GAP to 0.90; first-mentioned keeps them at their true 0.60 default.
 
-    This is a faithful translation of Josh's three-tier system.
+      - first tier mentioned "hot"        → 0.90
+      - first tier mentioned "standard"   → 0.60
+      - first tier mentioned "enrichment" → 0.30
+      - fallback                          → 0.30  (treat unknown as enrichment)
     """
     u = default_urgency.lower()
-    if "hot" in u:
-        return _URGENCY_WEIGHT["hot"]
-    if "standard" in u:
-        return _URGENCY_WEIGHT["standard"]
-    if "enrichment" in u:
-        return _URGENCY_WEIGHT["enrichment"]
+    positions = {tier: u.find(tier) for tier in ("hot", "standard", "enrichment") if tier in u}
+    if positions:
+        first_tier = min(positions, key=lambda t: positions[t])
+        return _URGENCY_WEIGHT[first_tier]
     # Unknown — default to enrichment weight
     log.warning(
         "Unknown urgency tier in spec: %r — defaulting to enrichment weight", default_urgency

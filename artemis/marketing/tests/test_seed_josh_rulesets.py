@@ -139,8 +139,10 @@ def test_build_territory_data_priority_states() -> None:
         ("hot if deadline ≤ 30 days; standard if 30–90; enrichment otherwise", 0.90),
         ("hot for 90 days post-hire", 0.90),
         ("standard", 0.60),
-        ("standard; hot if board votes non-renewal or RFP follows", 0.90),  # contains "hot"
-        ("standard; hot when RFP posts", 0.90),  # contains "hot"
+        # First/headline tier wins: "standard; hot if X" is standard by default (the "hot if"
+        # is a Phase-3 conditional boost, not the base weight).
+        ("standard; hot if board votes non-renewal or RFP follows", 0.60),
+        ("standard; hot when RFP posts", 0.60),
         ("enrichment (context only — not a discrete event)", 0.30),
         ("enrichment", 0.30),
     ],
