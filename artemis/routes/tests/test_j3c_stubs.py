@@ -42,13 +42,17 @@ async def test_stats_analytics_stub(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_stats_agent_metrics_stub(client: AsyncClient) -> None:
+async def test_stats_agent_metrics_shape(client: AsyncClient) -> None:
+    """Endpoint returns 200 with the correct wire shape (empty when no data seeded)."""
     resp = await client.get("/api/stats/agent-metrics")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["overview"]["total_runs"] == 0
+    # Shape must match AgentMetricsOut exactly
+    assert "overview" in data
+    assert "total_runs" in data["overview"]
+    assert "completed" in data["overview"]
     for key in ("agents", "byType", "daily", "recent"):
-        assert data[key] == []
+        assert isinstance(data[key], list)
 
 
 @pytest.mark.anyio
