@@ -659,13 +659,16 @@ async def _load_or_generate_proposal(
         return proposal_json
 
     from artemis.marketing.brief_assembler import propose_campaign_initiation
-    from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+    from artemis.providers.resolver import NoProviderAvailableError
 
     try:
+        # Don't pre-resolve the adapter — let propose_campaign_initiation resolve it
+        # via resolve_adapter_async(feature_tag="marketing_brief") so routing overrides
+        # actually fire on this endpoint (Phase-3 Apply-takes-effect). Passing a
+        # pre-resolved adapter here silently bypassed the override path.
         result = await propose_campaign_initiation(
             session,
             candidate.id,
-            model_adapter=resolve_adapter("claude-code", "anthropic"),
         )
     except NoProviderAvailableError as exc:
         raise bad_request(
