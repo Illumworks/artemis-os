@@ -501,6 +501,7 @@ function renderCampaignWorkspace(campaign) {
     { id: 'compliance', label: 'Compliance' },
     { id: 'performance', label: 'Performance' },
     { id: 'approval-log', label: 'Approval Log' },
+    { id: 'signals', label: 'Signals' },
     ...(_isOutboundSendEnabled() ? [{ id: 'outbox', label: 'Outbox' }] : []),
   ];
   const activeTab = storedTab === 'outbox' && !_isOutboundSendEnabled() ? 'brief' : storedTab;
@@ -1095,9 +1096,40 @@ function renderWorkspaceTab(campaign, tab) {
     case 'compliance': return renderTabCompliance(campaign);
     case 'performance':return renderTabPerformance(campaign);
     case 'approval-log': return renderTabApprovalLog(campaign);
+    case 'signals':      return renderTabSignalsPlaceholder(campaign);
     case 'outbox':       return renderTabOutbox();
     default:           return renderTabBrief(campaign);
   }
+}
+
+/** Signals tab — renders a placeholder immediately then async-loads the cluster. */
+function renderTabSignalsPlaceholder(campaign) {
+  if (!campaign._fromApi) {
+    return `<div class="mkt-tab-signals"><p class="mkt-tab-signals-empty">Signal data requires a live campaign.</p></div>`;
+  }
+  // If the initiation proposal is already cached it contains signalCluster — use it directly.
+  const cached = _initiationProposalCache.get(campaign.id);
+  if (cached && Array.isArray(cached.signalCluster)) {
+    return renderTabSignalsContent(cached.signalCluster);
+  }
+  // Not yet cached — return a loading shell; the tab-click handler will async-populate it.
+  return `<div class="mkt-tab-signals" data-signals-loading="${esc(String(campaign.id))}">
+    <p class="mkt-tab-signals-empty">Loading signals…</p>
+  </div>`;
+}
+
+function renderTabSignalsContent(cluster) {
+  if (!Array.isArray(cluster) || cluster.length === 0) {
+    return `<div class="mkt-tab-signals"><p class="mkt-tab-signals-empty">No signals attached to this campaign yet.</p></div>`;
+  }
+  return `
+    <div class="mkt-tab-signals">
+      <p class="mkt-tab-signals-note">Primary signal is flagged; corroborating signals provide supporting context.</p>
+      <div class="mkt-initiation-signals">
+        ${_renderSignalClusterRows(cluster)}
+      </div>
+    </div>
+  `;
 }
 
 async function _maybeOpenInitiationProposal(container, campaign) {
@@ -3389,6 +3421,40 @@ async function _loadAndRenderBriefTab(container, campaign) {
   }
 }
 
+/** Async-loads the signal cluster for the Signals tab.
+ *  Reuses the initiation-proposal cache — no extra endpoint needed.
+ */
+async function _loadAndRenderSignalsTab(container, campaign) {
+  if (!campaign._fromApi || !campaign.id) return;
+  const content = container.querySelector('[data-mkt-tab-content]');
+  if (!content) return;
+  const activeBtn = container.querySelector('[data-mkt-tab].active');
+  if (!activeBtn || activeBtn.dataset.mktTab !== 'signals') return;
+
+  // Check if a loading shell is present — only fetch if not already populated
+  const loadingEl = content.querySelector('[data-signals-loading]');
+  if (!loadingEl) return; // already rendered from cache
+
+  let cluster = null;
+  const cached = _initiationProposalCache.get(campaign.id);
+  if (cached && Array.isArray(cached.signalCluster)) {
+    cluster = cached.signalCluster;
+  } else {
+    try {
+      const bundle = await getCampaignInitiationProposalApi(campaign.id);
+      _initiationProposalCache.set(campaign.id, bundle ?? null);
+      cluster = bundle?.signalCluster ?? null;
+    } catch {
+      cluster = null;
+    }
+  }
+
+  const stillActiveBtn = container.querySelector('[data-mkt-tab].active');
+  if (stillActiveBtn && stillActiveBtn.dataset.mktTab === 'signals') {
+    content.innerHTML = renderTabSignalsContent(cluster ?? []);
+  }
+}
+
 function _wireBriefTabActions(container, campaign) {
   container.querySelectorAll('[data-brief-action]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -3609,10 +3675,13 @@ function _wireWorkspaceTabs(container, campaign) {
       if (tab === 'outbox') {
         loadOutboxTab(container);
       }
+      if (tab === 'signals' && campaign._fromApi) {
+        _loadAndRenderSignalsTab(container, campaign);
+      }
     });
   });
 
-  // If the initial active tab is assets, brief, or outbox, trigger the async fetch immediately
+  // If the initial active tab is assets, brief, outbox, or signals — trigger the async fetch immediately
   const initialActive = container.querySelector('[data-mkt-tab].active');
   if (initialActive && campaign._fromApi) {
     if (initialActive.dataset.mktTab === 'assets') {
@@ -3624,6 +3693,8 @@ function _wireWorkspaceTabs(container, campaign) {
       }
     } else if (initialActive.dataset.mktTab === 'outbox') {
       loadOutboxTab(container);
+    } else if (initialActive.dataset.mktTab === 'signals') {
+      _loadAndRenderSignalsTab(container, campaign);
     }
   }
 }
