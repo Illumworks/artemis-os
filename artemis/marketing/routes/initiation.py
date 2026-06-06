@@ -153,6 +153,14 @@ async def get_initiation_proposal(
     trend_context = await _build_trend_context(session, primary_signal)
     lineage = await get_candidate_lineage_context(session, candidate_id)
     proposal_scope = proposal.target_scope.model_dump(mode="json")
+    # Targeting geography is deterministic from the signal, not an LLM choice. If the generated
+    # proposal left target_scope at all_districts but the signal's geography implies a narrower
+    # default (e.g. a FL signal → FL districts), pre-select that narrower default instead of all
+    # 1903 nationwide. The user can still widen it; on confirm, the submitted scope wins.
+    _default_scope = district_context.get("defaultTargetScope") or {"mode": "all_districts"}
+    if proposal_scope.get("mode") == "all_districts" and _default_scope.get("mode") != "all_districts":
+        proposal.target_scope = TargetScope.model_validate(_default_scope)
+        proposal_scope = proposal.target_scope.model_dump(mode="json")
     pipeline_run_id = _resolve_pipeline_run_id(signal_cluster)
 
     return {
@@ -320,10 +328,33 @@ async def _build_district_context(
     primary_signal: SignalQueue | None,
 ) -> dict[str, Any]:
     if primary_signal is None or primary_signal.resolved_district_id is None:
+        # District unresolved — but the signal still carries its state. Default targeting to
+        # that state's districts (a FL signal → FL districts), not all 1903 nationwide. Only
+        # fall back to All districts when there's no geography at all.
+        signal_state = (
+            (primary_signal.state or "").upper() or None if primary_signal is not None else None
+        )
+        if signal_state:
+            return {
+                "resolved": False,
+                "label": f"All {signal_state} districts",
+                "note": (
+                    f"District unresolved — targeting defaults to all {signal_state} districts "
+                    "(from the signal's state)."
+                ),
+                "districtId": None,
+                "name": None,
+                "state": signal_state,
+                "tier": None,
+                "enrollment": None,
+                "supported": None,
+                "onSkipList": None,
+                "defaultTargetScope": {"mode": "states", "states": [signal_state]},
+            }
         return {
             "resolved": False,
             "label": "All districts",
-            "note": "District unresolved — targeting defaults to All districts.",
+            "note": "District unresolved and no signal state — targeting defaults to All districts.",
             "districtId": None,
             "name": None,
             "state": None,

@@ -372,10 +372,18 @@ async def build_campaign_initiation_context(
     active_deliverables = await list_deliverable_types(session, active_only=True)
     active_slugs = [row.slug for row in active_deliverables]
 
+    # Default targeting from the signal's geography, narrowest-first:
+    #   resolved district's state → that state; else the signal's OWN state → that state;
+    #   else (no geography at all) → all districts.
+    # A Florida policy signal must default to FL districts, not all 1903 nationwide — even when
+    # the district is unresolved, the signal still carries its state, so use it.
     default_target_scope: dict[str, Any] = {"mode": "all_districts"}
-    if primary_signal is not None and primary_signal.resolved_district_id is not None:
-        district = await get_district(session, primary_signal.resolved_district_id)
-        district_state = district.state if district is not None else primary_signal.state
+    if primary_signal is not None:
+        district_state: str | None = None
+        if primary_signal.resolved_district_id is not None:
+            district = await get_district(session, primary_signal.resolved_district_id)
+            district_state = district.state if district is not None else None
+        district_state = district_state or primary_signal.state
         if district_state:
             default_target_scope = {"mode": "states", "states": [str(district_state).upper()]}
 
