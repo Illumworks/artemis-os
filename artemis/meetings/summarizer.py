@@ -341,7 +341,6 @@ async def _llm_summarize(
             action_items = [item.model_dump() for item in summary.action_items]
             # Record cost — failure must never propagate.
             try:
-                from artemis.agent.client import AnthropicAdapter
                 from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 
                 _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
