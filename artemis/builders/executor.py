@@ -276,6 +276,7 @@ async def run_agent(
     shared_context: dict[str, object] | None = None,
     owner_user_id: int | None = None,
     model_adapter: ModelAdapter | None = None,
+    campaign_candidate_id: int | None = None,
 ) -> AgentRun:
     """Execute an agent definition and return the completed AgentRun.
 
@@ -288,6 +289,10 @@ async def run_agent(
         owner_user_id:  User who triggered this run (for auditing).
         model_adapter:  Override the default AnthropicAdapter — pass a
                         FakeAdapter in tests so no real API calls are made.
+        campaign_candidate_id: When this run is content drafting / brief work
+                        for a specific campaign, the candidate id. Tagged onto
+                        the cost_events row so the per-campaign rollup picks
+                        it up. Optional; None for non-campaign runs.
 
     Returns:
         The AgentRun row after completion (status='completed') or failure
@@ -435,19 +440,30 @@ async def run_agent(
             cost_output_tokens=result.usage.output_tokens,
         )
 
-        # Record cost event — never propagate failures
+        # Record cost event — never propagate failures.
+        # Uses adapter_identity for the resolved adapter's real provider/model/path
+        # (the legacy code derived these from the agent row, which goes stale when
+        # the resolver falls through the cascade). Tags campaign_candidate_id when
+        # this run is content drafting for a specific campaign.
         try:
+            from artemis.costs.events import adapter_identity
+
+            _provider, _adapter_model, _path = adapter_identity(adapter)
+            # Prefer the agent's configured model (it's what the LLM actually
+            # billed against). Fall back to the adapter's default if missing.
+            _cost_model = agent.model or _adapter_model
             await record_cost_event(
                 session,
-                provider=getattr(agent, "provider", "anthropic") or "anthropic",
-                model=agent.model or "claude-sonnet-4-6",
-                provider_path="cli" if getattr(agent, "provider", "") == "claude-code" else "api",
+                provider=_provider,
+                model=_cost_model,
+                provider_path=_path,
                 feature_tag="agent_run",
                 input_tokens=result.usage.input_tokens,
                 output_tokens=result.usage.output_tokens,
                 source_kind="agent_run",
                 source_id=str(run.id),
                 agent_id=agent.id,
+                campaign_candidate_id=campaign_candidate_id,
             )
         except Exception:
             logger.warning("cost_event recording failed for run_id=%s", run_id, exc_info=True)
@@ -464,15 +480,20 @@ async def run_agent(
         )
         # Record error cost event — lossless even on failure
         try:
+            from artemis.costs.events import adapter_identity
+
+            _provider, _adapter_model, _path = adapter_identity(adapter)
+            _cost_model = agent.model or _adapter_model
             await record_cost_event(
                 session,
-                provider=getattr(agent, "provider", "anthropic") or "anthropic",
-                model=agent.model or "claude-sonnet-4-6",
-                provider_path="cli" if getattr(agent, "provider", "") == "claude-code" else "api",
+                provider=_provider,
+                model=_cost_model,
+                provider_path=_path,
                 feature_tag="agent_run",
                 source_kind="agent_run",
                 source_id=str(run.id),
                 agent_id=agent.id,
+                campaign_candidate_id=campaign_candidate_id,
                 is_error=True,
                 error_kind=type(exc).__name__,
             )

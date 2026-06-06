@@ -33,6 +33,7 @@ from artemis.integrations.token_refresh.scheduler import (
 )
 from artemis.marketing.routes import (
     approvals,
+    campaign_cost,
     campaign_deliverables,
     campaign_ops,
     content_assets,
@@ -200,6 +201,7 @@ app.include_router(scouts.router)
 app.include_router(signal_queue.router)
 app.include_router(signal_criteria.router)
 app.include_router(campaign_ops.router)
+app.include_router(campaign_cost.router)
 app.include_router(initiation.router)
 app.include_router(initiation.initiation_extras_router)
 app.include_router(districts.router)

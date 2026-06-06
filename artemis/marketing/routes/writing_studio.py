@@ -499,6 +499,40 @@ async def compose_draft(
     )
     duration_ms = int((datetime.now(UTC) - t0).total_seconds() * 1000)
 
+    # Record cost — campaign-tied (writing_studio_compose). Phase 1 missed this
+    # site; content drafting bypasses run_agent and calls run_turn directly, so
+    # the executor instrumentation never fires for it. Tag with the deliverable's
+    # candidate_id so it rolls up into the campaign cost. Never propagate.
+    try:
+        from artemis.costs.events import adapter_identity, record_cost_event
+
+        _provider, _adapter_model, _path = adapter_identity(adapter)
+        # Prefer the explicit model the caller chose, fall back to adapter default
+        _cost_model = model_id or _adapter_model
+        await record_cost_event(
+            session,
+            provider=_provider,
+            model=_cost_model,
+            provider_path=_path,
+            feature_tag="writing_studio_compose",
+            input_tokens=getattr(result.usage, "input_tokens", 0) if result.usage else 0,
+            output_tokens=getattr(result.usage, "output_tokens", 0) if result.usage else 0,
+            cache_creation_input_tokens=getattr(result.usage, "cache_creation_input_tokens", 0)
+            if result.usage
+            else 0,
+            cache_read_input_tokens=getattr(result.usage, "cache_read_input_tokens", 0)
+            if result.usage
+            else 0,
+            campaign_candidate_id=deliverable.candidate_id,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        _logger.warning(
+            "cost_event recording failed in writing_studio compose draft_id=%s",
+            draft_id,
+            exc_info=True,
+        )
+
     # Extract response text from the last assistant message.
     response_text = ""
     for msg in reversed(result.messages):

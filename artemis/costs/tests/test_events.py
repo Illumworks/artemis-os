@@ -170,3 +170,67 @@ async def test_record_cost_event_canonicalizes_model_name(db_session: AsyncSessi
     )
     await db_session.commit()
     assert event.model == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.asyncio
+async def test_record_cost_event_persists_campaign_candidate_id(
+    db_session: AsyncSession,
+) -> None:
+    """campaign_candidate_id is stored on the row when provided."""
+    event = await record_cost_event(
+        db_session,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        provider_path="api",
+        feature_tag="marketing_brief",
+        input_tokens=100,
+        output_tokens=50,
+        campaign_candidate_id=42,
+    )
+    await db_session.commit()
+    assert event.campaign_candidate_id == 42
+
+
+def test_adapter_identity_known_classes() -> None:
+    """adapter_identity returns the correct (provider, model, path) tuple."""
+    from artemis.costs.events import adapter_identity
+
+    class FakeClaudeCodeAdapter:
+        _default_model = "claude-haiku-4-5-20251001"
+
+    FakeClaudeCodeAdapter.__name__ = "ClaudeCodeAdapter"
+    assert adapter_identity(FakeClaudeCodeAdapter()) == (
+        "claude-code",
+        "claude-haiku-4-5-20251001",
+        "cli",
+    )
+
+    class FakeLMStudioAdapter:
+        _default_model = "qwen/qwen3-14b"
+
+    FakeLMStudioAdapter.__name__ = "LMStudioAdapter"
+    assert adapter_identity(FakeLMStudioAdapter()) == (
+        "lm-studio",
+        "qwen/qwen3-14b",
+        "api",
+    )
+
+    class FakeGeminiAdapter:
+        _default_model = "gemini-2.5-flash"
+
+    FakeGeminiAdapter.__name__ = "GeminiAdapter"
+    assert adapter_identity(FakeGeminiAdapter()) == (
+        "gemini",
+        "gemini-2.5-flash",
+        "api",
+    )
+
+
+def test_adapter_identity_unknown_falls_back_to_anthropic() -> None:
+    """Unknown adapter class falls back to ('anthropic', model, 'api') with a warning."""
+    from artemis.costs.events import adapter_identity
+
+    class WeirdAdapter:
+        _default_model = "weird-model-v1"
+
+    assert adapter_identity(WeirdAdapter()) == ("anthropic", "weird-model-v1", "api")
