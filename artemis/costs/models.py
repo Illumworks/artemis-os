@@ -61,6 +61,10 @@ class CostEvent(Base):
     agent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     session_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     workflow_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    # Campaign attribution — tagged at campaign-tied call sites (brief assembly,
+    # content drafting, sends). Historical rows are NULL ("unattributed"). The
+    # per-campaign rollup endpoint filters WHERE campaign_candidate_id = :id.
+    campaign_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
 
     # Token counts
     input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")

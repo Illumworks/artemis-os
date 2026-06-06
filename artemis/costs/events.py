@@ -2,18 +2,29 @@
 
 Usage at every LLM call site:
     try:
-        await record_cost_event(session, provider=..., model=..., ...)
+        provider, model, path = adapter_identity(adapter)
+        await record_cost_event(
+            session, provider=provider, model=model, provider_path=path, ...
+        )
     except Exception:
         logger.warning("cost_event recording failed", exc_info=True)
 
 The try/except must live at the CALL SITE so that a DB or pricing failure never
 propagates to the user. This module does NOT wrap internally — the caller owns
 the guard so it's explicit and visible.
+
+`adapter_identity(adapter)` is the canonical way to derive (provider, model,
+provider_path) from a resolved adapter — replaces the legacy
+isinstance(adapter, ClaudeCodeAdapter)-only check that misreported every
+non-CC routing as "anthropic". Campaign-tied call sites use it now; the rest
+of the call sites (FA chat, meetings, etc.) will migrate to it in a separate
+cost-infra cleanup pass.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +32,45 @@ from artemis.costs.models import CostEvent
 from artemis.costs.pricing import canonicalize_model, get_rates
 
 logger = logging.getLogger(__name__)
+
+
+def adapter_identity(adapter: Any) -> tuple[str, str, str]:
+    """Return (provider, model, provider_path) from a resolved adapter.
+
+    The provider string matches what the pricing registry expects:
+      claude-code | anthropic | openai | gemini | openrouter | lm-studio | codex
+
+    provider_path is 'cli' only for CLI-class adapters (claude-code, codex);
+    everything else is 'api'.
+
+    The model is read from the adapter's own `_default_model` (most adapters)
+    or `model` attribute, falling back to a literal "?" if neither is set.
+    Unknown adapter types are reported as ('anthropic', '?', 'api') with a
+    WARNING — same behavior as the legacy code, but at least it's audible.
+    """
+    cls_name = type(adapter).__name__
+    model = getattr(adapter, "_default_model", None) or getattr(adapter, "model", None) or "?"
+
+    if cls_name == "ClaudeCodeAdapter":
+        return "claude-code", model, "cli"
+    if cls_name == "CodexAdapter":
+        return "codex", model, "cli"
+    if cls_name == "LMStudioAdapter":
+        return "lm-studio", model, "api"
+    if cls_name == "GeminiAdapter":
+        return "gemini", model, "api"
+    if cls_name == "OpenAIAdapter":
+        return "openai", model, "api"
+    if cls_name == "OpenRouterAdapter":
+        return "openrouter", model, "api"
+    if cls_name == "AnthropicAdapter":
+        return "anthropic", model, "api"
+
+    logger.warning(
+        "adapter_identity: unknown adapter class %r; defaulting to (anthropic/?/api)",
+        cls_name,
+    )
+    return "anthropic", model, "api"
 
 
 async def record_cost_event(
@@ -39,6 +89,7 @@ async def record_cost_event(
     agent_id: int | None = None,
     session_id: str | None = None,
     workflow_run_id: int | None = None,
+    campaign_candidate_id: int | None = None,
     duration_ms: int | None = None,
     is_error: bool = False,
     error_kind: str | None = None,
@@ -102,6 +153,7 @@ async def record_cost_event(
         agent_id=agent_id,
         session_id=session_id,
         workflow_run_id=workflow_run_id,
+        campaign_candidate_id=campaign_candidate_id,
         duration_ms=duration_ms,
         is_error=is_error,
         error_kind=error_kind,

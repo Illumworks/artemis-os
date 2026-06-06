@@ -508,11 +508,13 @@ async def propose_campaign_initiation(
 
         await save_initiation_proposal(session, candidate_id, proposal)
         # Record cost — never propagate failures.
+        # Uses adapter_identity to report the resolved adapter's real provider/path
+        # (was previously hardcoded anthropic/api regardless of routing). Tags the
+        # row with campaign_candidate_id for the per-campaign rollup.
         try:
-            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+            from artemis.costs.events import adapter_identity
 
-            _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
-            _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+            _provider, _, _path = adapter_identity(adapter)
             await record_cost_event(
                 session,
                 provider=_provider,
@@ -527,6 +529,7 @@ async def propose_campaign_initiation(
                 cache_read_input_tokens=getattr(response.usage, "cache_read_input_tokens", 0),
                 source_kind="agent_run",
                 source_id=str(candidate_id),
+                campaign_candidate_id=candidate_id,
             )
         except Exception:
             logger.warning(
