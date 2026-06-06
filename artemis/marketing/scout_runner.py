@@ -28,7 +28,11 @@ from artemis.providers import get_adapter
 from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 
 logger = logging.getLogger(__name__)
-DEFAULT_CADENCE_SECONDS = 14400
+# Daily. These sources (legislation, board minutes, RFPs, funding notices) update on the order of
+# days–weeks, and runs were observed deduping to ~0 new signals at the old 4h cadence — 6×/day was
+# pure throughput waste. Daily also matches the agents' own declared cadence_seconds (86400).
+# TODO: respect each agent's blueprint cadence_seconds instead of one global default.
+DEFAULT_CADENCE_SECONDS = 86400
 DEFAULT_COST_CAP_USD = 1.00
 
 
