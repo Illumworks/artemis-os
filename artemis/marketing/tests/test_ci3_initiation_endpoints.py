@@ -258,7 +258,7 @@ async def test_get_initiation_proposal_returns_proposal_cluster_registry_distric
     assert data["districtContext"]["state"] == "TX"
     assert data["districtContext"]["enrollment"] == 20000
     assert data["districtContext"]["onSkipList"] is False
-    assert data["districtContext"]["defaultTargetScope"] == {"mode": "states", "states": ["TX"]}
+    assert data["districtContext"]["defaultTargetScope"] == {"base": "states", "states": ["TX"]}
     assert data["metricsJson"] == {}
     assert data["targetScopeCounts"]["byState"]["TX"] >= 1
     assert data["selectedTargetScopeCount"] >= 1
@@ -474,5 +474,6 @@ async def test_unresolved_district_candidate_defaults_to_all_districts(
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["districtContext"]["resolved"] is False
-    assert data["districtContext"]["label"] == "All districts"
-    assert data["districtContext"]["defaultTargetScope"] == {"mode": "all_districts"}
+    # Signal has state=TX → unresolved district defaults to all TX districts (not all 1903)
+    assert data["districtContext"]["label"] == "All TX districts"
+    assert data["districtContext"]["defaultTargetScope"] == {"base": "states", "states": ["TX"]}

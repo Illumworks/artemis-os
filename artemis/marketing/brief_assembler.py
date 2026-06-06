@@ -378,7 +378,9 @@ async def build_campaign_initiation_context(
     #   else (no geography at all) → all districts.
     # A Florida policy signal must default to FL districts, not all 1903 nationwide — even when
     # the district is unresolved, the signal still carries its state, so use it.
-    default_target_scope: dict[str, Any] = {"mode": "all_districts"}
+    # Emits the COMPOSITE shape (base key) for new proposals so the new audience builder
+    # pre-selects correctly; legacy shape is still read from old rows.
+    default_target_scope: dict[str, Any] = {"base": "all"}
     if primary_signal is not None:
         district_state: str | None = None
         if primary_signal.resolved_district_id is not None:
@@ -386,7 +388,7 @@ async def build_campaign_initiation_context(
             district_state = district.state if district is not None else None
         district_state = district_state or primary_signal.state
         if district_state:
-            default_target_scope = {"mode": "states", "states": [str(district_state).upper()]}
+            default_target_scope = {"base": "states", "states": [str(district_state).upper()]}
 
     return {
         "candidate": {

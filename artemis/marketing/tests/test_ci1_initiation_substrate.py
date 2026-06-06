@@ -214,11 +214,10 @@ async def test_initiate_campaign_sets_fields_and_enforces_slug_and_idempotency(
         assert initiated.name == "Texas OBC Summer Push"
         assert initiated.objective == "Reach every D1-D3 district in Texas"
         assert initiated.owner_user_id == 99
+        # exclude_none=True storage: only non-null fields are persisted
         assert initiated.target_scope_json == {
             "mode": "district_tier",
-            "states": None,
             "tiers": ["D1", "D2", "D3"],
-            "district_ids": None,
         }
         assert initiated.deliverable_types_json == ["outreach_email"]
         assert initiated.initiated_by == 501
