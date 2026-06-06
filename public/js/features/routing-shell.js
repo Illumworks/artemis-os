@@ -428,7 +428,7 @@ function showFeatureEditModal(feature, container, allFeatures) {
 
   const overlay = createModal(
     `Routing for ${feature.label}`,
-    `<p class="routing-modal-desc">Set the ordered cascade of providers for this feature. Changes take effect on the next call.</p>
+    `<p class="routing-modal-desc">Set the ordered cascade of providers for this feature. The override saves immediately, but live routing won't change until the Phase 3 resolver wiring lands — see the banner at the top of this page.</p>
      <ul class="routing-cascade-edit-list" id="${stepsId}">${renderSteps()}</ul>
      <button class="routing-btn routing-btn--secondary" id="routing-add-step-btn">Add provider step</button>
      <div class="routing-form-field" style="margin-top:12px">
