@@ -3948,6 +3948,61 @@
   line-height: 1.5;
 }
 
+/* Cost popover — header-anchored dropdown trigger + panel (provider-health style) */
+.mkt-cost-popover-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.mkt-cost-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2, var(--ink));
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.mkt-cost-trigger:hover { border-color: var(--accent); color: var(--ink); }
+.mkt-cost-trigger[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+
+.mkt-cost-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface-card);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg, 12px);
+  box-shadow: 0 12px 40px -8px rgba(30, 26, 21, .28), 0 4px 12px -4px rgba(30, 26, 21, .16);
+  overflow: hidden;
+  animation: mktCostPopIn .16s ease-out;
+}
+@keyframes mktCostPopIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.mkt-cost-popover-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mkt-cost-popover-body { padding: 16px; }
+.mkt-cost-popover-body .mkt-tab-cost { max-width: none; gap: 14px; }
+.mkt-cost-popover-body .mkt-cost-headline-value { font-size: 26px; }
+
 /* ── Composable audience builder ────────────────────────────────────────── */
 
 .mkt-initiation-audience-builder h4 {

@@ -506,7 +506,6 @@ function renderCampaignWorkspace(campaign) {
     { id: 'performance', label: 'Performance' },
     { id: 'approval-log', label: 'Approval Log' },
     { id: 'signals', label: 'Signals' },
-    { id: 'cost', label: 'Cost' },
     ...(_isOutboundSendEnabled() ? [{ id: 'outbox', label: 'Outbox' }] : []),
   ];
   const activeTab = storedTab === 'outbox' && !_isOutboundSendEnabled() ? 'brief' : storedTab;
@@ -541,6 +540,19 @@ function renderCampaignWorkspace(campaign) {
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
             ${_campaignClusterCount(campaign)} signal${_campaignClusterCount(campaign) === 1 ? '' : 's'}
           </span>
+          ${campaign._fromApi ? `
+          <div class="mkt-cost-popover-wrap">
+            <button class="mkt-cost-trigger" type="button" data-cost-trigger="${esc(campaign.id)}" aria-expanded="false" aria-haspopup="dialog" title="Cost to run this campaign">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              <span>Cost</span>
+            </button>
+            <div class="mkt-cost-popover" data-cost-popover hidden role="dialog" aria-label="Campaign cost">
+              <div class="mkt-cost-popover-head">Campaign cost</div>
+              <div class="mkt-cost-popover-body" data-cost-popover-body>
+                <p class="mkt-tab-cost-empty">Loading cost…</p>
+              </div>
+            </div>
+          </div>` : ''}
         </div>
       </div>
       ${initiationActionHtml}
@@ -1169,7 +1181,6 @@ function renderWorkspaceTab(campaign, tab) {
     case 'performance':return renderTabPerformance(campaign);
     case 'approval-log': return renderTabApprovalLog(campaign);
     case 'signals':      return renderTabSignalsPlaceholder(campaign);
-    case 'cost':         return renderTabCostPlaceholder(campaign);
     case 'outbox':       return renderTabOutbox();
     default:           return renderTabBrief(campaign);
   }
@@ -1209,15 +1220,6 @@ function renderTabSignalsContent(cluster) {
 function _fmtCostUsd(v) {
   const n = Number(v);
   return `$${n.toFixed(n !== 0 && Math.abs(n) < 1 ? 4 : 2)}`;
-}
-
-function renderTabCostPlaceholder(campaign) {
-  if (!campaign._fromApi) {
-    return `<div class="mkt-tab-cost"><p class="mkt-tab-cost-empty">Cost data requires a live campaign.</p></div>`;
-  }
-  return `<div class="mkt-tab-cost" data-cost-loading="${esc(String(campaign.id))}">
-    <p class="mkt-tab-cost-empty">Loading cost…</p>
-  </div>`;
 }
 
 function renderTabCostContent(data) {
@@ -3751,29 +3753,53 @@ async function _loadAndRenderSignalsTab(container, campaign) {
   }
 }
 
-async function _loadAndRenderCostTab(container, campaign) {
-  if (!campaign._fromApi || !campaign.id) return;
-  const content = container.querySelector('[data-mkt-tab-content]');
-  if (!content) return;
-  const activeBtn = container.querySelector('[data-mkt-tab].active');
-  if (!activeBtn || activeBtn.dataset.mktTab !== 'cost') return;
-  const loadingEl = content.querySelector('[data-cost-loading]');
-  if (!loadingEl) return; // already rendered
+// Cost popover — a header-anchored dropdown (like the provider-health panel),
+// not a tab. Lazy-fetches the rollup on first open.
+function _wireCostPopover(container, campaign) {
+  if (!campaign || !campaign._fromApi) return;
+  const trigger = container.querySelector('[data-cost-trigger]');
+  const popover = container.querySelector('[data-cost-popover]');
+  if (!trigger || !popover) return;
+  // Idempotent: avoid binding the toggle twice if the workspace re-wires
+  // (a double handler would open then immediately close the popover).
+  if (trigger.dataset.costWired === '1') return;
+  trigger.dataset.costWired = '1';
+  const body = popover.querySelector('[data-cost-popover-body]');
+  let loaded = false;
 
-  let data = null;
-  try {
-    const resp = await fetch(`/api/marketing/campaigns/${encodeURIComponent(campaign.id)}/cost`);
-    if (resp.ok) data = await resp.json();
-  } catch {
-    data = null;
+  const onDocClick = (e) => {
+    if (!popover.contains(e.target) && !trigger.contains(e.target)) close();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  function close() {
+    popover.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('keydown', onKey, true);
   }
-
-  const stillActiveBtn = container.querySelector('[data-mkt-tab].active');
-  if (stillActiveBtn && stillActiveBtn.dataset.mktTab === 'cost') {
-    content.innerHTML = data
-      ? renderTabCostContent(data)
-      : `<div class="mkt-tab-cost"><p class="mkt-tab-cost-empty">Cost data unavailable.</p></div>`;
+  async function open() {
+    popover.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('click', onDocClick, true);
+    document.addEventListener('keydown', onKey, true);
+    if (loaded) return;
+    try {
+      const resp = await fetch(`/api/marketing/campaigns/${encodeURIComponent(campaign.id)}/cost`);
+      const data = resp.ok ? await resp.json() : null;
+      if (body) {
+        body.innerHTML = data
+          ? renderTabCostContent(data)
+          : `<div class="mkt-tab-cost"><p class="mkt-tab-cost-empty">Cost data unavailable.</p></div>`;
+      }
+      loaded = true;
+    } catch {
+      if (body) body.innerHTML = `<div class="mkt-tab-cost"><p class="mkt-tab-cost-empty">Cost data unavailable.</p></div>`;
+    }
   }
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    popover.hidden ? open() : close();
+  });
 }
 
 function _wireBriefTabActions(container, campaign) {
@@ -3999,9 +4025,6 @@ function _wireWorkspaceTabs(container, campaign) {
       if (tab === 'signals' && campaign._fromApi) {
         _loadAndRenderSignalsTab(container, campaign);
       }
-      if (tab === 'cost' && campaign._fromApi) {
-        _loadAndRenderCostTab(container, campaign);
-      }
     });
   });
 
@@ -4019,10 +4042,9 @@ function _wireWorkspaceTabs(container, campaign) {
       loadOutboxTab(container);
     } else if (initialActive.dataset.mktTab === 'signals') {
       _loadAndRenderSignalsTab(container, campaign);
-    } else if (initialActive.dataset.mktTab === 'cost') {
-      _loadAndRenderCostTab(container, campaign);
     }
   }
+  _wireCostPopover(container, campaign);
 }
 
 function _wireWorkspaceActions(container, campaign) {
