@@ -49,6 +49,16 @@ v1 scope = the work a campaign triggers: **scouts, brief assembly, content draft
    precise, much simpler, still honest, still per-signal (not flat).
    **If even that is hard for v1, ship Part A.2 (brief+content+sends) first and add the discovery line as a
    fast follow** — log clearly that scouting isn't yet included rather than silently omitting it.
+4. **Record the ACTUAL provider/model at these call sites (folds in the cost-track carryover #2).** Today
+   several cost call sites hardcode `provider="anthropic"` + a fixed model regardless of which adapter the
+   resolver actually returned (e.g. consolidator; same pattern in FA chat / meetings — they derive provider
+   only from `isinstance(adapter, ClaudeCodeAdapter)`). **This is a prerequisite for accurate per-campaign
+   cost:** once a feature is routed to a local/other model, a campaign's cost must reflect the real provider
+   (often $0 for local), not Anthropic rates. While we're in the campaign-tied call sites tagging
+   `campaign_candidate_id`, also pass the resolved adapter's real `provider`/`model`/`provider_path` into
+   `record_cost_event`. Scope here = the campaign-tied sites (brief assembly, content drafting, sends); the
+   non-campaign sites (FA chat, meetings, etc.) are the same bug and are terminal's cost-infra cleanup —
+   coordinate so we fix the shared helper once, not twice. **Sync with terminal before editing these sites.**
 
 ### Part B — Rollup endpoint (cost infra)
 `GET /api/marketing/campaigns/{candidate_id}/cost` →
