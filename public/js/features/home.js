@@ -28,6 +28,7 @@ import {
   MARKETING_PRIORITIZATION_VIEW,
   PIPELINE_RUN_HISTORY_VIEW,
   ROUTING_VIEW,
+  COST_VIEW,
   isShellView,
   normalizeAppView,
 } from '../core/navigation.js';
@@ -82,6 +83,7 @@ import {
 import { loadAgents } from './agents.js';
 import { renderOperationsView, loadSkillsShell, loadPipelinesShell, loadPipelineRunHistoryShell } from './operations-shell.js';
 import { loadRoutingShell } from './routing-shell.js';
+import { loadCostShell } from './cost-shell.js';
 import {
   loadMarketingDashboard,
   loadMarketingCampaigns,
@@ -225,6 +227,8 @@ onState('view', (view) => {
       openIntegrationsModal();
     } else if (normalizedView === ROUTING_VIEW) {
       loadRoutingShell(appShellContent);
+    } else if (normalizedView === COST_VIEW) {
+      loadCostShell(appShellContent);
     }
   }
 });

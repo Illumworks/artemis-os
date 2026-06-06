@@ -48,6 +48,8 @@
 @import url("css/ui/input-history.css");
 @import url("css/ui/worktree.css");
 @import url("css/panels/memory.css");
+@import url("css/panels/routing.css");
+@import url("css/panels/cost.css");
 @import url("css/panels/dev-docs.css");
 @import url("css/panels/skills-manager.css");
 @import url("css/features/telegram.css");

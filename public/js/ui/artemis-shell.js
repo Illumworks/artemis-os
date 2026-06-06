@@ -28,6 +28,7 @@ import {
   MARKETING_APPROVALS_VIEW,
   MARKETING_SIGNAL_PLAYBOOK_VIEW,
   ROUTING_VIEW,
+  COST_VIEW,
   isShellView,
 } from '../core/navigation.js';
 import { openIntegrationsModal } from '../components/integrations-modal.js';
@@ -564,6 +565,13 @@ function initProfilePopover() {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="7" height="8" rx="1.5"/><rect x="14" y="8" width="7" height="8" rx="1.5"/><path d="M10 12h4"/><path d="M6.5 8V5.5M6.5 18.5V16"/><path d="M17.5 8V5.5M17.5 18.5V16"/></svg>
         <span>Connectors</span>
       </div>
+      <div class="settings-pop-item" data-action="cost">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="1" x2="12" y2="23"/>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        </svg>
+        <span>Cost</span>
+      </div>
       <div class="settings-pop-item" data-action="routing">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 12h4"/><path d="M16 7l-4 3.5"/><path d="M16 17l-4-3.5"/></svg>
         <span>Routing</span>
@@ -631,6 +639,10 @@ function initProfilePopover() {
       case 'connectors': {
         // Open the Integrations modal (rail page removed — modal is the only surface)
         openIntegrationsModal();
+        break;
+      }
+      case 'cost': {
+        setState('view', COST_VIEW);
         break;
       }
       case 'routing': {

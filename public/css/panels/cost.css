@@ -1,0 +1,422 @@
+/* Cost page styles — Phase 2 visibility dashboard.
+   Layout only; reuses existing color/typography tokens.
+   New design language is intentionally avoided. */
+
+/* ── Shell wrapper ────────────────────────────────────────────────────── */
+
+.cost-shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 32px;
+  color: var(--color-text, #1a1a1a);
+}
+
+.cost-header {
+  margin-bottom: 8px;
+}
+
+.cost-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+/* ── Hero block ───────────────────────────────────────────────────────── */
+
+.cost-hero {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 18px 20px 14px;
+  margin-bottom: 18px;
+}
+
+.cost-hero-headline {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--color-text, #1a1a1a);
+}
+
+.cost-hero-meta {
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+  margin: 0 0 10px;
+}
+
+.cost-hero-subhead {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+  margin: 0 0 10px;
+  line-height: 1.5;
+  max-width: 640px;
+}
+
+/* Horizontal sparkline — simple bar list */
+.cost-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 28px;
+}
+
+.cost-sparkline-bar {
+  background: var(--color-accent, #4f46e5);
+  opacity: 0.55;
+  border-radius: 2px 2px 0 0;
+  min-width: 4px;
+  flex: 1;
+}
+
+/* ── Tabs row ─────────────────────────────────────────────────────────── */
+
+.cost-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  padding-bottom: 0;
+}
+
+.cost-tab {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #666);
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  border-radius: 4px 4px 0 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.cost-tab:hover {
+  color: var(--color-text, #1a1a1a);
+}
+
+.cost-tab.active {
+  color: var(--color-accent, #4f46e5);
+  border-bottom-color: var(--color-accent, #4f46e5);
+  font-weight: 600;
+}
+
+/* ── Toolbar (Spend tab) ──────────────────────────────────────────────── */
+
+.cost-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.cost-toolbar select,
+.cost-toolbar input[type="date"] {
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #1a1a1a);
+}
+
+.cost-toolbar-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+/* ── Card grid ────────────────────────────────────────────────────────── */
+
+.cost-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 768px) {
+  .cost-card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.cost-card {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.cost-card-label {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+  margin: 0 0 4px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cost-card-value {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 2px;
+  color: var(--color-text, #1a1a1a);
+}
+
+.cost-card-delta {
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+  margin: 0 0 4px;
+}
+
+.cost-card-delta.down {
+  color: var(--color-success, #16a34a);
+}
+
+.cost-card-delta.up {
+  color: var(--color-danger, #dc2626);
+}
+
+.cost-card-subtext {
+  font-size: 11px;
+  color: var(--color-text-secondary, #999);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ── Two-column breakdown ─────────────────────────────────────────────── */
+
+.cost-breakdowns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 640px) {
+  .cost-breakdowns { grid-template-columns: 1fr; }
+}
+
+.cost-breakdown {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.cost-breakdown-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #666);
+  margin: 0 0 10px;
+}
+
+.cost-breakdown-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.cost-breakdown-row:last-child {
+  margin-bottom: 0;
+}
+
+.cost-breakdown-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: var(--color-border, #f0f0f0);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.cost-breakdown-bar {
+  height: 100%;
+  background: var(--color-accent, #4f46e5);
+  opacity: 0.65;
+  border-radius: 3px;
+}
+
+.cost-breakdown-label {
+  font-size: 12px;
+  color: var(--color-text, #333);
+  min-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cost-breakdown-amount {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text, #1a1a1a);
+  white-space: nowrap;
+}
+
+.cost-breakdown-share {
+  font-size: 11px;
+  color: var(--color-text-secondary, #999);
+  white-space: nowrap;
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Daily chart ──────────────────────────────────────────────────────── */
+
+.cost-daily-section {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.cost-daily-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #666);
+  margin: 0 0 12px;
+}
+
+.cost-daily-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cost-daily-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cost-daily-label {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+  width: 56px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.cost-daily-bar-wrap {
+  flex: 1;
+  height: 10px;
+  background: var(--color-border, #f0f0f0);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cost-daily-bar {
+  height: 100%;
+  background: var(--color-accent, #4f46e5);
+  opacity: 0.6;
+  border-radius: 4px;
+}
+
+.cost-daily-amount {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+  width: 52px;
+}
+
+/* ── Top calls table ──────────────────────────────────────────────────── */
+
+.cost-top-calls {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+
+.cost-top-calls-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #666);
+  margin: 0 0 12px;
+}
+
+.cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cost-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #888);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.cost-table th:hover {
+  color: var(--color-text, #1a1a1a);
+}
+
+.cost-table td {
+  padding: 7px 8px;
+  color: var(--color-text, #333);
+  border-bottom: 1px solid var(--color-border, #f3f4f6);
+  white-space: nowrap;
+}
+
+.cost-table tr:last-child td {
+  border-bottom: none;
+}
+
+.cost-table tr:hover td {
+  background: var(--color-hover-bg, #f9fafb);
+}
+
+/* ── Placeholder tabs ─────────────────────────────────────────────────── */
+
+.cost-placeholder {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 36px 32px;
+  color: var(--color-text-secondary, #666);
+  max-width: 520px;
+}
+
+.cost-placeholder-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text, #1a1a1a);
+  margin: 0 0 8px;
+}
+
+.cost-placeholder-desc {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ── Loading / error states ───────────────────────────────────────────── */
+
+.cost-loading {
+  padding: 48px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-secondary, #888);
+}
+
+.cost-error {
+  background: var(--color-danger-bg, #fef2f2);
+  border: 1px solid var(--color-danger-border, #fecaca);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--color-danger, #dc2626);
+  margin-bottom: 16px;
+}

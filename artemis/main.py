@@ -56,6 +56,7 @@ from artemis.pipelines.scheduler import (
     stop_pipeline_scheduler,
 )
 from artemis.routes import calendar as calendar_routes
+from artemis.routes import costs as costs_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
 from artemis.routes import health, okr, parallel, status, writing_rules
@@ -272,6 +273,9 @@ app.include_router(pipelines_router)
 
 # Phase R — Routing control surface (provider health, feature overrides, audit log)
 app.include_router(routing_router)
+
+# Cost Phase 2 — visibility dashboard rollup endpoint
+app.include_router(costs_routes.router)
 
 # J3c stubs — Jira overview, sessions, notifications, stats
 app.include_router(jira_routes.router)
