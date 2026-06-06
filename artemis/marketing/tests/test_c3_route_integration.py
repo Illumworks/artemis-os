@@ -39,12 +39,18 @@ from artemis.marketing.seeds.reason_codes import seed_reason_codes
 async def _make_active_ruleset(
     db: AsyncSession, family: str = "obc", version: str = "v1"
 ) -> Ruleset:
+    # Include both DISTRICT_VOTED_YES (used by _make_signal) and
+    # DISTRICT_STRATEGIC_LITERACY (used by the smoke-path test's inline payload)
+    # so all callers produce a fit-passing signal (score ≥ 0.5 min_fit).
     ruleset = Ruleset(
         family=family,
         version_tag=version,
         state="active",
         hard_filters=[],
-        weighted_signals=[{"rule_id": "r1", "reason_code": "DISTRICT_VOTED_YES", "weight": 0.7}],
+        weighted_signals=[
+            {"rule_id": "r1", "reason_code": "DISTRICT_VOTED_YES", "weight": 0.7},
+            {"rule_id": "r2", "reason_code": "DISTRICT_STRATEGIC_LITERACY", "weight": 0.7},
+        ],
         qualitative_rubrics=[],
     )
     db.add(ruleset)

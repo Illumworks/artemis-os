@@ -125,13 +125,43 @@ async def run_and_store_qualification(
     # Store on signal
     await save_signal_qualification(session, signal.id, qual_dict)
 
-    # Advance signal from pending_qualification → qualified if not already transitioned
-    if signal.signal_status == SignalState.pending_qualification:
-        await transition(session, "signal", signal.id, SignalState.qualified)
+    # Determine whether the signal passes the fit bar in at least one family.
+    # A signal "passes" if any FamilyScore has passes_min_fit_score=True.
+    passes_fit = any(s.passes_min_fit_score for s in qual.scores)
 
-    log.info(
-        "run_and_store_qualification: signal id=%s → qualified (families=%s)",
-        signal.id,
-        [r.family for r in active_rulesets_rows],
-    )
+    current_status = signal.signal_status
+
+    if passes_fit:
+        # Advance pending → qualified, or leave qualified alone (already there).
+        if current_status == SignalState.pending_qualification:
+            await transition(session, "signal", signal.id, SignalState.qualified)
+            log.info(
+                "run_and_store_qualification: signal id=%s → qualified (families=%s)",
+                signal.id,
+                [r.family for r in active_rulesets_rows],
+            )
+        # else: already qualified or in a Gate-1 state — no status change needed.
+    else:
+        # Fails the fit bar.  Demote qualified → pending_qualification so the signal
+        # is withheld from Gate-1, inbox, and campaign promotion.  If it's already
+        # pending_qualification (or in a terminal state), leave it alone.
+        if current_status == SignalState.qualified:
+            await transition(session, "signal", signal.id, SignalState.pending_qualification)
+            log.info(
+                "run_and_store_qualification: signal id=%s demoted qualified → "
+                "pending_qualification (failed fit bar, families=%s)",
+                signal.id,
+                [r.family for r in active_rulesets_rows],
+            )
+        elif current_status == SignalState.pending_qualification:
+            log.info(
+                "run_and_store_qualification: signal id=%s stays pending_qualification "
+                "(failed fit bar, families=%s)",
+                signal.id,
+                [r.family for r in active_rulesets_rows],
+            )
+        # Signals in terminal Gate-1 states (APPROVED, REJECTED_AT_GATE_1, SNOOZED,
+        # ARCHIVED) are left untouched — their qualification_json is updated in place
+        # for reference, but their workflow state is not disturbed.
+
     return qual_dict

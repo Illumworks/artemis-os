@@ -194,9 +194,12 @@ async def test_audit_from_state_correct(db_session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_illegal_edge_raises_no_audit(db_session: AsyncSession) -> None:
+    # qualified → rejected_hard_filter is illegal (hard-filter rejection is only
+    # valid from pending_qualification; qualified → pending_qualification is now
+    # a legal re-evaluation demotion, so use a genuinely illegal target).
     sig = await _sig(db_session, status="qualified")
     with pytest.raises(IllegalTransition):
-        await transition(db_session, "signal", sig.id, SignalState.pending_qualification)
+        await transition(db_session, "signal", sig.id, SignalState.rejected_hard_filter)
     await db_session.refresh(sig)
     assert sig.signal_status == "qualified"
     assert await _audit(db_session, "signal", sig.id) == 0
@@ -288,12 +291,15 @@ async def test_concurrent_transition_second_loses(db_session: AsyncSession) -> N
     finally:
         await eng_a.dispose()
 
+    # After eng_a committed qualified, try to transition to rejected_hard_filter
+    # (illegal from qualified — hard-filter rejection only comes from pending_qualification).
+    # This remains illegal even after the qualified→pending_qualification demotion was added.
     eng_b = create_async_engine(artemis.db.engine.url, poolclass=NullPool, echo=False)
     attach_pgvector_codec(eng_b)
     try:
         async with AsyncSessionCls(eng_b, expire_on_commit=False) as s, s.begin():
             with pytest.raises(IllegalTransition):
-                await transition(s, "signal", sig_id, SignalState.pending_qualification)
+                await transition(s, "signal", sig_id, SignalState.rejected_hard_filter)
     finally:
         await eng_b.dispose()
 

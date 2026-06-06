@@ -117,6 +117,10 @@ SIGNAL_TRANSITIONS: dict[SignalState, set[SignalState]] = {
         SignalState.REJECTED_AT_GATE_1,
         SignalState.SNOOZED,
         SignalState.ARCHIVED,
+        # Re-evaluation demotion: a re-score that fails the fit bar returns the
+        # signal to pending_qualification so it can re-qualify when rulesets improve.
+        # This is lossless — qualification_json is preserved; only status changes.
+        SignalState.pending_qualification,
     },
     SignalState.SNOOZED: {SignalState.qualified},
     SignalState.rejected_hard_filter: set(),
