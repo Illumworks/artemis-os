@@ -27,6 +27,9 @@ let _state = {
   tab: 'spend',              // 'spend' | 'routing' | 'cloud' | 'budgets'
   sortCol: 'cost_usd',       // top-calls sort column
   sortDir: 'desc',           // 'asc' | 'desc'
+  routingData: null,         // last fetched /api/costs/routing-opportunities response
+  routingLoading: false,
+  routingError: null,
 };
 
 // ── Escape helper ─────────────────────────────────────────────────────────────
@@ -229,10 +232,7 @@ function _buildTabs() {
 
 function _buildTabBody(data, tab) {
   if (tab === 'spend') return _buildSpendTab(data);
-  if (tab === 'routing') return _buildPlaceholder(
-    'Routing opportunities',
-    'Coming in a follow-up phase. This tab will show where you could save by routing some features to Gemini or OpenAI.'
-  );
+  if (tab === 'routing') return _buildRoutingTab();
   if (tab === 'cloud') return _buildPlaceholder(
     'Cloud infra',
     'Coming in a follow-up phase. This tab will project what running Artemis on Fly.io would cost monthly, combining compute, Postgres, and storage estimates with your synthetic API spend.'
@@ -250,6 +250,196 @@ function _buildPlaceholder(title, desc) {
       <p class="cost-placeholder-title">${_esc(title)}</p>
       <p class="cost-placeholder-desc">${_esc(desc)}</p>
     </div>`;
+}
+
+// ── Routing opportunities tab ──────────────────────────────────────────────────
+
+async function _fetchRoutingOpportunities() {
+  _state.routingLoading = true;
+  _state.routingError = null;
+  _renderCostShell();
+
+  const params = new URLSearchParams();
+  const wp = _windowParams(_state);
+  if (wp.from) params.set('from', wp.from);
+  if (wp.to) params.set('to', wp.to);
+
+  try {
+    const resp = await fetch(`/api/costs/routing-opportunities?${params}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    _state.routingData = await resp.json();
+  } catch (err) {
+    _state.routingError = err.message || 'Failed to load routing opportunities.';
+  } finally {
+    _state.routingLoading = false;
+    _renderCostShell();
+  }
+}
+
+function _buildRoutingTab() {
+  if (_state.routingLoading) {
+    return `<div class="cost-loading">Loading routing opportunities…</div>`;
+  }
+  if (_state.routingError) {
+    return `<div class="cost-error">Error: ${_esc(_state.routingError)}</div>`;
+  }
+  if (!_state.routingData) {
+    // Trigger fetch then show loader
+    _fetchRoutingOpportunities();
+    return `<div class="cost-loading">Loading routing opportunities…</div>`;
+  }
+
+  const { monthly_pace, opportunities } = _state.routingData;
+  const availSavings = _fmtUsd(monthly_pace.projected_savings_usd_if_all_available_applied);
+  const setupSavings = monthly_pace.current_total_usd - monthly_pace.projected_total_usd
+    - monthly_pace.projected_savings_usd_if_all_available_applied;
+
+  let summaryHtml = `
+    <div class="cost-routing-summary">
+      <p>If you applied the available recommendations below, you'd save approximately
+      <strong>${_esc(availSavings)} / month</strong> at the current pace.</p>
+      ${setupSavings > 1 ? `<p class="cost-routing-setup-note">${_esc(_fmtUsd(setupSavings))} / month more is available after provider setup.</p>` : ''}
+    </div>`;
+
+  if (!opportunities || opportunities.length === 0) {
+    return summaryHtml + `<div class="cost-placeholder"><p class="cost-placeholder-desc">No routing opportunities found for this window. Try a wider date range or use the system more to generate data.</p></div>`;
+  }
+
+  const cards = opportunities.map((opp) => _buildOpportunityCard(opp)).join('');
+
+  return `
+    ${summaryHtml}
+    <div class="cost-opportunity-list">${cards}</div>
+    <p class="cost-routing-footer">
+      Recommendations use your captured token volumes. Apply buttons change routing immediately — next call uses the new cascade.
+      For full per-feature control, open the <a class="cost-routing-link" href="#" data-action="open-routing">Routing page</a>.
+    </p>`;
+}
+
+function _buildOpportunityCard(opp) {
+  const overrideBadge = opp.current_routing_is_override
+    ? `<span class="cost-opp-badge">Using custom override &mdash; <a href="#" class="cost-routing-link" data-action="open-routing">manage in Routing &rarr;</a></span>`
+    : '';
+
+  const alts = opp.alternatives.map((alt) => {
+    const isAvailable = alt.availability === 'available';
+    const savingsStr = _fmtUsd(alt.savings_usd);
+    const altCostStr = _fmtUsd(alt.monthly_pace_usd);
+    const cascadeStr = (alt.apply_cascade || []).map((s) => s.model ? `${s.provider}/${s.model}` : s.provider).join(' → ');
+
+    if (isAvailable) {
+      return `
+        <div class="cost-opp-alt">
+          <div class="cost-opp-alt-header">
+            <span class="cost-opp-alt-label">&rarr; ${_esc(alt.provider)} ${_esc(alt.model)}</span>
+            <span class="cost-opp-alt-cost">${_esc(altCostStr)}/mo</span>
+            <span class="cost-opp-alt-savings">Save ${_esc(savingsStr)}/mo</span>
+          </div>
+          <p class="cost-opp-tradeoff">&#9888; ${_esc(alt.tradeoff_note)}</p>
+          <p class="cost-opp-cascade">Cascade: ${_esc(cascadeStr)}</p>
+          <button class="cost-opp-apply-btn routing-btn routing-btn--primary routing-btn--small"
+            data-apply-tag="${_esc(opp.feature_tag)}"
+            data-apply-alt='${JSON.stringify(alt)}'>Apply this routing</button>
+        </div>`;
+    } else {
+      return `
+        <div class="cost-opp-alt cost-opp-alt--setup-required">
+          <div class="cost-opp-alt-header">
+            <span class="cost-opp-alt-label">&rarr; ${_esc(alt.provider)} ${_esc(alt.model)}</span>
+            <span class="cost-opp-alt-cost">${_esc(altCostStr)}/mo</span>
+            <span class="cost-opp-alt-savings cost-opp-savings--dim">Save ${_esc(savingsStr)}/mo (setup required)</span>
+          </div>
+          <p class="cost-opp-tradeoff">&#9888; ${_esc(alt.tradeoff_note)}</p>
+          ${alt.setup_hint ? `<p class="cost-opp-setup-hint">${_esc(alt.setup_hint)} <a href="#" class="cost-routing-link" data-action="open-connectors">Open Connectors &rarr;</a></p>` : ''}
+        </div>`;
+    }
+  }).join('');
+
+  return `
+    <div class="cost-opp-card">
+      <div class="cost-opp-card-header">
+        <strong class="cost-opp-feature">${_esc(opp.feature_tag.replace(/_/g, ' '))}</strong>
+        <span class="cost-opp-current">Currently: ${_esc(opp.current.provider)} &middot; ${_esc(opp.current.model)} &middot; ${_esc(_fmtUsd(opp.current.monthly_pace_usd))}/mo</span>
+        ${overrideBadge}
+      </div>
+      <div class="cost-opp-alts">${alts}</div>
+    </div>`;
+}
+
+function _showApplyModal(featureTag, alt) {
+  const featureLabel = featureTag.replace(/_/g, ' ');
+  const cascadeStr = (alt.apply_cascade || []).map((s) => s.model ? `${s.provider}/${s.model}` : s.provider).join(' → ');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'routing-modal-overlay';
+  overlay.innerHTML = `
+    <div class="routing-modal" role="dialog" aria-modal="true">
+      <div class="routing-modal-header">
+        <h3 class="routing-modal-title">Apply routing for ${_esc(featureLabel)}</h3>
+        <button class="routing-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="routing-modal-body">
+        <p>Switch <strong>${_esc(featureLabel)}</strong> to <strong>${_esc(alt.provider)}/${_esc(alt.model)}</strong>?</p>
+        <p class="routing-modal-desc">Cascade: ${_esc(cascadeStr)}</p>
+        <div class="routing-form-field" style="margin-top:14px">
+          <label class="routing-label">Reason (required)</label>
+          <input class="routing-input" id="cost-apply-reason" type="text"
+            placeholder="Why are you changing this routing?" />
+        </div>
+      </div>
+      <div class="routing-modal-footer">
+        <button class="routing-btn routing-btn--secondary" data-modal-action="cancel">Cancel</button>
+        <button class="routing-btn routing-btn--primary" data-modal-action="confirm">Apply</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('.routing-modal-close').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function onEsc(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); }
+  });
+  overlay.querySelector('[data-modal-action="cancel"]').addEventListener('click', close);
+  overlay.querySelector('[data-modal-action="confirm"]').addEventListener('click', async () => {
+    const reason = document.getElementById('cost-apply-reason')?.value?.trim();
+    if (!reason) {
+      _showToast('Reason is required.', 'error');
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/routing/features/${encodeURIComponent(featureTag)}/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cascade: alt.apply_cascade, reason }),
+      });
+      if (resp.ok) {
+        close();
+        _showToast('Routing updated. Next call uses the new cascade.', 'success');
+        // Invalidate routing data so it refetches on next render
+        _state.routingData = null;
+        _renderCostShell();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        _showToast(`Failed: ${err.error || resp.status}`, 'error');
+      }
+    } catch (err) {
+      _showToast(`Error: ${err.message}`, 'error');
+    }
+  });
+}
+
+function _showToast(msg, kind = 'info') {
+  const t = document.createElement('div');
+  t.className = `routing-toast routing-toast--${kind}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('routing-toast--visible'));
+  setTimeout(() => {
+    t.classList.remove('routing-toast--visible');
+    setTimeout(() => t.remove(), 300);
+  }, 3500);
 }
 
 // ── Spend tab ─────────────────────────────────────────────────────────────────
@@ -471,8 +661,42 @@ function _wireEvents(el) {
   // Tab switching
   el.querySelectorAll('[data-cost-tab]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      _state.tab = btn.dataset.costTab;
-      _renderCostShell();
+      const newTab = btn.dataset.costTab;
+      _state.tab = newTab;
+      // Trigger routing fetch when switching to routing tab for the first time
+      if (newTab === 'routing' && !_state.routingData && !_state.routingLoading) {
+        _fetchRoutingOpportunities();
+      } else {
+        _renderCostShell();
+      }
+    });
+  });
+
+  // Apply buttons in routing tab
+  el.querySelectorAll('[data-apply-tag]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tag = btn.dataset.applyTag;
+      let alt;
+      try { alt = JSON.parse(btn.dataset.applyAlt); } catch { return; }
+      _showApplyModal(tag, alt);
+    });
+  });
+
+  // Routing / Connectors deep-links
+  el.querySelectorAll('[data-action="open-routing"]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (typeof window.__artemisSetState === 'function') {
+        window.__artemisSetState('view', 'routing');
+      }
+    });
+  });
+  el.querySelectorAll('[data-action="open-connectors"]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (typeof window.__artemisSetState === 'function') {
+        window.__artemisSetState('view', 'integrations');
+      }
     });
   });
 

@@ -49,7 +49,7 @@ from artemis.memory.conflict_detector import detect_conflicts
 from artemis.memory.models import MemoryConflict, MemoryObservation
 from artemis.memory.schemas import Observation, Scope
 from artemis.memory.store import link_evidence, supersede_observation, write_observation
-from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter_async
 
 _logger = logging.getLogger(__name__)
 
@@ -184,7 +184,14 @@ async def consolidate_observations(
     # Resolve adapter once per call — not per attempt.
     if adapter is None:
         try:
-            adapter = resolve_adapter(provider="claude-code")
+            from artemis.db import SessionLocal
+
+            async with SessionLocal() as _override_session:
+                adapter = await resolve_adapter_async(
+                    provider="claude-code",
+                    feature_tag="memory_consolidation",
+                    session=_override_session,
+                )
         except NoProviderAvailableError as exc:
             _logger.error(
                 "Consolidation LLM call failed: no provider available: %s", exc, exc_info=True

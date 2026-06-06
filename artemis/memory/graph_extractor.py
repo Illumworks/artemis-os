@@ -41,7 +41,7 @@ from artemis.memory.graph import (
     upsert_relation,
 )
 from artemis.memory.models import MemoryObservation
-from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter_async
 
 _logger = logging.getLogger(__name__)
 
@@ -150,7 +150,13 @@ async def _default_call_model(content: str, model: str) -> str:
     from artemis.agent.types import Message, TextBlock
 
     try:
-        adapter = resolve_adapter(provider="claude-code")
+        factory = _get_session_factory()
+        async with factory() as _override_session:
+            adapter = await resolve_adapter_async(
+                provider="claude-code",
+                feature_tag="memory_graph_extraction",
+                session=_override_session,
+            )
     except NoProviderAvailableError as exc:
         raise RuntimeError(f"Graph extraction: no provider available: {exc}") from exc
 

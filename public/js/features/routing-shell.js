@@ -181,10 +181,6 @@ async function loadRoutingShell(container) {
         <h1 class="routing-title">Routing</h1>
         <p class="routing-subtitle">Control which AI provider handles each feature.</p>
       </header>
-      <div class="routing-banner routing-banner--warn" role="status">
-        <strong>Overrides save, but don't go live yet.</strong>
-        <span class="routing-banner-body">Apply and Reset buttons here write to the routing-overrides table, but the resolver isn't wired into the LLM call sites yet — that ships with the upcoming <em>Routing opportunities</em> work in the Cost page. Until then, an override persists but the next call still uses the default cascade.</span>
-      </div>
       <div class="routing-loading">Loading...</div>
     </div>`;
 
@@ -428,7 +424,7 @@ function showFeatureEditModal(feature, container, allFeatures) {
 
   const overlay = createModal(
     `Routing for ${feature.label}`,
-    `<p class="routing-modal-desc">Set the ordered cascade of providers for this feature. The override saves immediately, but live routing won't change until the Phase 3 resolver wiring lands — see the banner at the top of this page.</p>
+    `<p class="routing-modal-desc">Set the ordered cascade of providers for this feature. The override takes effect on the next call.</p>
      <ul class="routing-cascade-edit-list" id="${stepsId}">${renderSteps()}</ul>
      <button class="routing-btn routing-btn--secondary" id="routing-add-step-btn">Add provider step</button>
      <div class="routing-form-field" style="margin-top:12px">

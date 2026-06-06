@@ -187,6 +187,48 @@ def test_resolve_without_feature_tag_uses_old_behavior() -> None:
     assert captured == expected_order
 
 
+# ── Addition 3: test that override actually changes adapter resolution ────────
+
+
+async def test_override_changes_resolved_adapter(db_session: AsyncSession) -> None:
+    """An active override for memory_consolidation makes the resolver prefer lm-studio.
+
+    This is the Phase 3 behavioral proof: Apply button → override row → resolver
+    returns lm-studio adapter instead of claude-code.
+    """
+    # Seed an override for memory_consolidation: lm-studio first
+    async with db_session.begin():
+        await upsert_routing_override(
+            db_session,
+            feature_tag="memory_consolidation",
+            cascade=[{"provider": "lm-studio", "model": "qwen/qwen3-14b"}],
+        )
+
+    # Track which providers the resolver attempts
+    captured_provider: list[str] = []
+
+    def _fake_get_adapter(provider_id: str, **_):  # type: ignore[return]
+        captured_provider.append(provider_id)
+        raise MissingApiKeyError("no key")
+
+    with (
+        patch("artemis.providers.resolver.get_adapter", side_effect=_fake_get_adapter),
+        __import__("contextlib").suppress(Exception),
+    ):
+        await resolve_adapter_async(
+            provider="claude-code",  # default
+            feature_tag="memory_consolidation",
+            session=db_session,
+        )
+
+    # Adapter should attempt lm-studio FIRST, not claude-code
+    assert len(captured_provider) > 0, "No providers were attempted"
+    assert captured_provider[0] == "lm-studio", (
+        f"Expected lm-studio first (override cascade), got {captured_provider[0]!r}. "
+        f"Full order: {captured_provider}"
+    )
+
+
 async def test_resolve_async_without_feature_tag_same_as_sync() -> None:
     """resolve_adapter_async without feature_tag behaves like resolve_adapter."""
     captured: list[str] = []

@@ -25,8 +25,7 @@ from artemis.marketing.models import ScoutRun, SignalQueue, TerritoryConfig
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.marketing.scout_sources import SCOUT_SOURCE_ADAPTERS
 from artemis.marketing.scout_sources.base import ScoutSourceAdapter
-from artemis.providers import get_adapter
-from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+from artemis.providers.resolver import resolve_adapter_async
 
 logger = logging.getLogger(__name__)
 # Daily. These sources (legislation, board minutes, RFPs, funding notices) update on the order of
@@ -209,13 +208,15 @@ async def run_scout(
         )
     ).scalar_one_or_none()
     raw_items = source_adapter.fetch(territory_config, last_row.started_at if last_row else None)
-    llm_adapter = None
-    for candidate in filter(None, [agent.provider, agent.fallback_provider, "anthropic"]):
-        try:
-            llm_adapter = get_adapter(candidate)
-            break
-        except (MissingApiKeyError, UnknownProviderError, Exception):
-            continue
+    try:
+        llm_adapter = await resolve_adapter_async(
+            provider=agent.provider or "claude-code",
+            fallback_provider=agent.fallback_provider,
+            feature_tag="marketing_scout",
+            session=session,
+        )
+    except Exception:
+        llm_adapter = None
     # H2: extract allowlist once per run (list[str] | None).
     # None means no restriction (e.g. empty JSONB list treated as unrestricted).
     _rc_emitted = agent.reason_codes_emitted or []

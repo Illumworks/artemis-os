@@ -451,11 +451,19 @@ async def propose_campaign_initiation(
     max_retries: int = 1,
 ) -> InitiationProposalResult:
     from artemis.marketing.repository import save_initiation_proposal
-    from artemis.providers.resolver import resolve_adapter
+    from artemis.providers.resolver import resolve_adapter_async
 
     context = await build_campaign_initiation_context(session, candidate_id)
     prompt = _build_campaign_initiation_prompt(context)
-    adapter = model_adapter or resolve_adapter("claude-code", "anthropic")
+    if model_adapter is not None:
+        adapter = model_adapter
+    else:
+        adapter = await resolve_adapter_async(
+            provider="claude-code",
+            fallback_provider="anthropic",
+            feature_tag="marketing_brief",
+            session=session,
+        )
     last_error: str | None = None
     raw_output: str | None = None
 

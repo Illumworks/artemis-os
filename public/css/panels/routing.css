@@ -23,36 +23,6 @@
   margin: 0;
 }
 
-/* ── Phase-3 staging banner ──────────────────────────────────────────── */
-/* The Routing page lets operators save overrides, but until Phase 3 wires
-   resolve_adapter_async() into call sites the override does not affect live
-   routing. This banner must stay until that work lands. */
-
-.routing-banner {
-  border-radius: 10px;
-  padding: 14px 18px;
-  margin: 0 0 20px;
-  font-size: 13px;
-  line-height: 1.5;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.routing-banner--warn {
-  background: var(--color-warn-bg, #fff7e6);
-  border: 1px solid var(--color-warn-border, #f0c674);
-  color: var(--color-text, #1a1a1a);
-}
-
-.routing-banner strong {
-  font-weight: 600;
-}
-
-.routing-banner-body {
-  color: var(--color-text-secondary, #4a4a4a);
-}
-
 /* ── Sections ────────────────────────────────────────────────────────── */
 
 .routing-section {

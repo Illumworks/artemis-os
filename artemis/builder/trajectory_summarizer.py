@@ -411,20 +411,21 @@ async def summarize(
     from artemis.agent.loop import user_message
     from artemis.builder.repository import create_trajectory_summary, get_trajectory_summary
 
-    # Resolve adapter via provider cascade (claude-code → codex → lm-studio → anthropic)
+    # Resolve adapter via override-aware async resolver
     if adapter is None:
-        from artemis.providers import get_adapter
-        from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+        from artemis.providers.resolver import resolve_adapter_async
 
-        for _candidate in ("claude-code", "codex", "lm-studio", "anthropic"):
-            try:
-                adapter = get_adapter(_candidate)
-                break
-            except (MissingApiKeyError, UnknownProviderError):
-                continue
-            except Exception:
-                continue
-        if adapter is None:
+        try:
+            async with _db.SessionLocal() as _override_session:
+                adapter = await resolve_adapter_async(
+                    provider="claude-code",
+                    feature_tag="trajectory_summary",
+                    session=_override_session,
+                )
+        except Exception:
+            logger.warning(
+                "trajectory_summarizer: adapter resolution failed, falling back to AnthropicAdapter"
+            )
             adapter = AnthropicAdapter()
 
     async def _do_summarize(session: Any) -> None:
