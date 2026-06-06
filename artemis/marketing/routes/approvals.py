@@ -69,6 +69,12 @@ class ApprovalDecisionRequest(BaseModel):
     decided_by: str | None = None
     decision_payload_camel: dict[str, Any] | None = Field(default=None, alias="decisionPayload")
     decision_payload: dict[str, Any] | None = None
+    # Operator-selected promotion fields (Gate-1 signal_brief approvals only).
+    # Supply either selected_signal_ids (direct signal IDs) or selected_cluster_keys
+    # (cluster_key strings expanded server-side to signal IDs). When neither is
+    # provided the legacy all-qualified path is used with a logged warning.
+    selected_signal_ids: list[int] | None = Field(default=None, alias="selectedSignalIds")
+    selected_cluster_keys: list[str] | None = Field(default=None, alias="selectedClusterKeys")
 
 
 @router.get("")
@@ -157,6 +163,8 @@ async def decide(
         decision=decision,
         decided_by=decided_by,
         decision_payload=decision_payload,
+        selected_signal_ids=body.selected_signal_ids,
+        selected_cluster_keys=body.selected_cluster_keys,
     )
 
     # OP1 approval-resume side effect: if this approval is for an automation_run
@@ -207,6 +215,8 @@ async def apply_approval_decision(
     decision: str,
     decided_by: str,
     decision_payload: dict[str, Any],
+    selected_signal_ids: list[int] | None = None,
+    selected_cluster_keys: list[str] | None = None,
 ) -> tuple[Approval, dict[str, Any] | None]:
     """Apply one approval decision, including PIPE4 gate side effects when relevant."""
     if approval.status != "pending":
@@ -223,6 +233,8 @@ async def apply_approval_decision(
             decided_by=decided_by,
             decision_payload=decision_payload,
             dispatch_mode="background",
+            selected_signal_ids=selected_signal_ids,
+            selected_cluster_keys=selected_cluster_keys,
         )
 
     updated = await decide_approval(
@@ -382,6 +394,8 @@ async def _decide_pipe4_gate_approval(
     decided_by: str,
     decision_payload: dict[str, Any],
     dispatch_mode: str,
+    selected_signal_ids: list[int] | None = None,
+    selected_cluster_keys: list[str] | None = None,
 ) -> tuple[Approval, dict[str, Any]]:
     run_id, node_id = _parse_gate_subject_id(approval.subject_id)
     if run_id is None or node_id is None:
@@ -434,12 +448,37 @@ async def _decide_pipe4_gate_approval(
     # campaign candidate so that content_brief_assembler finds exactly one
     # uninitiated candidate for this pipeline_run_id.  This is the same side
     # effect the manual POST /api/signal-queue/{id}/approve path runs; by going
-    # through promote_qualified_signals_for_run both paths share one code path
-    # and cannot drift (the PIPE-1 class of bug).
+    # through promote_*_signals_for_run both paths share one code path and
+    # cannot drift (the PIPE-1 class of bug).
+    #
+    # Operator-selected path: if selected_signal_ids or selected_cluster_keys
+    # are provided, promote only those signals (others stay qualified/lossless).
+    # Legacy path: no selection → promote all qualified signals (backward compat),
+    # with a warning so we can identify callers that haven't migrated.
     if approval.kind == "signal_brief" and decision == "approved":
-        from artemis.marketing.repository import promote_qualified_signals_for_run
+        from artemis.marketing.repository import (
+            get_signal_ids_for_cluster_keys,
+            promote_qualified_signals_for_run,
+            promote_selected_signals_for_run,
+        )
 
-        await promote_qualified_signals_for_run(session, run_id)
+        # Resolve cluster_keys → signal_ids if provided
+        resolved_ids: list[int] | None = selected_signal_ids
+        if resolved_ids is None and selected_cluster_keys:
+            resolved_ids = await get_signal_ids_for_cluster_keys(
+                session, run_id, list(selected_cluster_keys)
+            )
+
+        if resolved_ids is not None:
+            await promote_selected_signals_for_run(session, run_id, resolved_ids)
+        else:
+            logger.warning(
+                "Gate-1 approval for run %s used legacy all-qualified promotion path "
+                "(no selected_signal_ids or selected_cluster_keys supplied). "
+                "Update caller to pass selection fields.",
+                run_id,
+            )
+            await promote_qualified_signals_for_run(session, run_id)
 
     candidate: CampaignCandidate | None = None
     if approval.kind == "content_draft" and run.target_candidate_id is not None:

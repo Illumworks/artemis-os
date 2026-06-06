@@ -29,6 +29,7 @@ Returns:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -301,6 +302,183 @@ async def _build_pipe4_context(
     return _build_pipe4_context_from_node_states(approval_kind, node_states)
 
 
+def _cluster_score(
+    signals: list[Any],
+    *,
+    now_utc: datetime,
+    recency_days: int = 7,
+) -> tuple[float, str]:
+    """Compute a deterministic cluster score and reason string.
+
+    Score formula (documented here, mirrors brief spec):
+      base      = mean of signal fit_score (default 0.5 if missing)
+      stacking  = +0.05 * (signal_count - 1), capped at +0.20
+      recency   = +0.10 if any signal captured within `recency_days` days
+      final     = clamp(base + stacking + recency, 0.0, 1.0)
+
+    Reason string:
+      "{n} stacked signals" or "1 signal"
+      + " + recent activity"  if recency bonus fired
+      + " + high fit"         if mean fit_score >= 0.75
+    """
+    n = len(signals)
+    fit_scores: list[float] = []
+    has_recent = False
+    cutoff = now_utc - timedelta(days=recency_days)
+
+    for sig in signals:
+        # fit_score from qualification_json.adjustedScore / rawScore, default 0.5
+        qual = sig.qualification_json or {}
+        if isinstance(qual, dict):
+            raw = qual.get("fit_score") or qual.get("adjustedScore") or qual.get("rawScore")
+            try:
+                fit_scores.append(float(raw))
+            except (TypeError, ValueError):
+                fit_scores.append(0.5)
+        else:
+            fit_scores.append(0.5)
+
+        # Recency: use captured_at if available, fall back to created_at
+        captured_raw = (
+            (sig.qualification_json or {}).get("captured_at")
+            if isinstance(sig.qualification_json, dict)
+            else None
+        )
+        captured_dt: datetime | None = None
+        if captured_raw:
+            try:
+                captured_dt = datetime.fromisoformat(str(captured_raw))
+                if captured_dt.tzinfo is None:
+                    captured_dt = captured_dt.replace(tzinfo=UTC)
+            except Exception:
+                captured_dt = None
+        if captured_dt is None and sig.created_at is not None:
+            captured_dt = sig.created_at
+            if captured_dt.tzinfo is None:
+                captured_dt = captured_dt.replace(tzinfo=UTC)
+        if captured_dt is not None and captured_dt >= cutoff:
+            has_recent = True
+
+    mean_fit = sum(fit_scores) / len(fit_scores) if fit_scores else 0.5
+    stacking_bonus = min(0.05 * (n - 1), 0.20)
+    recency_bonus = 0.10 if has_recent else 0.0
+    score = max(0.0, min(1.0, mean_fit + stacking_bonus + recency_bonus))
+
+    # Compose reason string
+    reason_parts: list[str] = []
+    reason_parts.append(f"{n} stacked signals" if n > 1 else "1 signal")
+    if has_recent:
+        reason_parts.append("recent activity")
+    if mean_fit >= 0.75:
+        reason_parts.append("high fit")
+    reason = " + ".join(reason_parts)
+
+    return score, reason
+
+
+def _build_clusters(
+    rows: list[Any],
+    district_cache: dict[int, Any],
+) -> list[dict[str, Any]]:
+    """Group qualified signals into cluster objects by (resolved_district_id, campaign_family).
+
+    Returns a list of cluster dicts, with exactly one having ``suggested=True``
+    (the highest-scoring cluster, ties broken by signal count then cluster_key alpha).
+    """
+    from collections import defaultdict
+
+    now_utc = datetime.now(UTC)
+
+    # Group rows into clusters
+    cluster_map: dict[str, list[Any]] = defaultdict(list)
+    for row in rows:
+        dist_id = row.resolved_district_id
+        family = row.campaign_family or ""
+        key = f"{dist_id}|{family}"
+        cluster_map[key].append(row)
+
+    clusters: list[dict[str, Any]] = []
+    for cluster_key, signals in cluster_map.items():
+        # Sort signals: highest fit_score first (primary), then by id
+        def _sig_fit(s: Any) -> float:
+            qual = s.qualification_json or {}
+            if isinstance(qual, dict):
+                raw = qual.get("fit_score") or qual.get("adjustedScore") or qual.get("rawScore")
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    pass
+            return 0.0
+
+        sorted_signals = sorted(signals, key=lambda s: (-_sig_fit(s), s.id))
+
+        # District label
+        dist_id_part, family_part = cluster_key.split("|", 1)
+        district_label: str = dist_id_part  # fallback = raw id string
+        try:
+            dist_id_int = int(dist_id_part)
+            district_obj = district_cache.get(dist_id_int)
+            if district_obj is not None:
+                district_label = (
+                    f"{district_obj.name} ({district_obj.state})"
+                    if district_obj.state
+                    else district_obj.name
+                )
+        except (ValueError, TypeError):
+            pass
+
+        score, score_reason = _cluster_score(signals, now_utc=now_utc)
+
+        # Build signal list
+        signal_items: list[dict[str, Any]] = []
+        for idx, sig in enumerate(sorted_signals):
+            qual = sig.qualification_json or {}
+            fit_val: float | None = None
+            evidence_quote_val: str | None = None
+            source_val: str | None = None
+            captured_at_val: str | None = None
+            if isinstance(qual, dict):
+                raw_fit = qual.get("fit_score") or qual.get("adjustedScore") or qual.get("rawScore")
+                with contextlib.suppress(TypeError, ValueError):
+                    fit_val = float(raw_fit)  # type: ignore[arg-type]
+                brief = qual.get("brief") or {}
+                if isinstance(brief, dict):
+                    evidence_quote_val = brief.get("evidence_quote") or None
+                source_val = qual.get("source_url") or None
+                captured_at_val = qual.get("captured_at") or None
+            signal_items.append(
+                {
+                    "id": sig.id,
+                    "role": "primary" if idx == 0 else "corroborating",
+                    "headline": sig.headline or None,
+                    "evidence_quote": evidence_quote_val,
+                    "source": sig.source_url or source_val,
+                    "fit_score": fit_val,
+                    "urgency": sig.urgency_tier or None,
+                    "captured_at": captured_at_val,
+                }
+            )
+
+        clusters.append(
+            {
+                "cluster_key": cluster_key,
+                "district_label": district_label,
+                "campaign_family": family_part,
+                "score": score,
+                "score_reason": score_reason,
+                "suggested": False,  # filled below
+                "signals": signal_items,
+            }
+        )
+
+    # Determine suggested cluster: highest score, tie-break by (most signals, lowest key alpha)
+    if clusters:
+        clusters.sort(key=lambda c: (-c["score"], -len(c["signals"]), c["cluster_key"]))
+        clusters[0]["suggested"] = True
+
+    return clusters
+
+
 async def _build_signal_gate_context_from_db(
     approval_kind: str,
     session: AsyncSession,
@@ -310,8 +488,13 @@ async def _build_signal_gate_context_from_db(
 
     Reads ``signal_queue`` rows for this run whose ``signal_status`` is
     ``'qualified'`` and aggregates the five UI-contract fields (signal_count,
-    reason_codes, districts, evidence_quote, brief_preview) from them. A run
+    reason_codes, districts, evidence_quote, brief_preview) from them.  A run
     with zero qualified signals yields the clean empty context (no error).
+
+    Also adds a ``clusters`` key — a list of cluster objects grouping signals
+    by (resolved_district_id, campaign_family) with deterministic scoring and a
+    single ``suggested=True`` entry. Existing flat fields are preserved for
+    backward compatibility.
     """
     from sqlalchemy import select
 
@@ -331,6 +514,7 @@ async def _build_signal_gate_context_from_db(
         "brief_preview": None,
         "brief_body": None,
         "draft_summary": None,
+        "clusters": [],
     }
 
     rows = (
@@ -356,6 +540,16 @@ async def _build_signal_gate_context_from_db(
     raw_districts: list[str] = []
     evidence_snippets: list[str] = []
 
+    # Pre-load district objects for all distinct resolved_district_ids
+    district_ids = {
+        row.resolved_district_id for row in rows if row.resolved_district_id is not None
+    }
+    district_cache: dict[int, Any] = {}
+    for dist_id in district_ids:
+        district_obj = await session.get(District, dist_id)
+        if district_obj is not None:
+            district_cache[dist_id] = district_obj
+
     # Resolve district labels for the primary signal (first row).
     top_row = rows[0]
     ctx["headline"] = top_row.headline or None
@@ -363,7 +557,7 @@ async def _build_signal_gate_context_from_db(
 
     # Look up District row for the primary signal to get a human label.
     if top_row.resolved_district_id is not None:
-        district_obj = await session.get(District, top_row.resolved_district_id)
+        district_obj = district_cache.get(top_row.resolved_district_id)
         if district_obj is not None:
             label = (
                 f"{district_obj.name} ({district_obj.state})"
@@ -415,6 +609,9 @@ async def _build_signal_gate_context_from_db(
         ctx["brief_preview"] = str(preview or body)[:_PREVIEW_MAX]
     if body:
         ctx["brief_body"] = str(body)[:_PREVIEW_MAX]
+
+    # Build cluster objects (new — backward-compatible addition)
+    ctx["clusters"] = _build_clusters(rows, district_cache)
 
     return ctx
 

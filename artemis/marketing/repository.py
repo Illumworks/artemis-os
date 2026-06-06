@@ -428,19 +428,102 @@ async def promote_qualified_signals_for_run(
     Signals already in ``approved`` status are skipped (idempotent).
     """
     rows = (
-        await session.execute(
-            select(SignalQueue).where(
-                SignalQueue.pipeline_run_id == pipeline_run_id,
-                SignalQueue.signal_status == "qualified",
+        (
+            await session.execute(
+                select(SignalQueue).where(
+                    SignalQueue.pipeline_run_id == pipeline_run_id,
+                    SignalQueue.signal_status == "qualified",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     results: list[SignalPromotionResult] = []
     for signal in rows:
         result = await promote_signal_to_candidate(session, signal)
         results.append(result)
     return results
+
+
+async def promote_selected_signals_for_run(
+    session: AsyncSession,
+    pipeline_run_id: str,
+    selected_signal_ids: list[int],
+) -> list[SignalPromotionResult]:
+    """Promote only the operator-selected qualified signals for a pipeline run.
+
+    Loads the qualified signals from this run whose IDs are in
+    ``selected_signal_ids``, calls ``promote_signal_to_candidate`` on each
+    (so related selected signals auto-cluster via ``cluster_or_create_candidate``),
+    and returns the promotion results.
+
+    Unselected qualified signals are left in ``qualified`` status — they are NOT
+    deleted or rejected (lossless rule).
+
+    Callers are responsible for committing the session.
+    """
+    if not selected_signal_ids:
+        return []
+
+    rows = (
+        (
+            await session.execute(
+                select(SignalQueue).where(
+                    SignalQueue.pipeline_run_id == pipeline_run_id,
+                    SignalQueue.signal_status == "qualified",
+                    SignalQueue.id.in_(selected_signal_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    results: list[SignalPromotionResult] = []
+    for signal in rows:
+        result = await promote_signal_to_candidate(session, signal)
+        results.append(result)
+    return results
+
+
+async def get_signal_ids_for_cluster_keys(
+    session: AsyncSession,
+    pipeline_run_id: str,
+    cluster_keys: list[str],
+) -> list[int]:
+    """Expand a list of cluster_keys into qualified signal IDs for a pipeline run.
+
+    A cluster_key has the form ``"{resolved_district_id}|{campaign_family}"``.
+    Returns the IDs of all qualified signals in this run that match any of those
+    clusters.  Used by the approvals route to convert cluster_keys → signal_ids
+    before calling ``promote_selected_signals_for_run``.
+    """
+    if not cluster_keys:
+        return []
+
+    rows = (
+        (
+            await session.execute(
+                select(SignalQueue).where(
+                    SignalQueue.pipeline_run_id == pipeline_run_id,
+                    SignalQueue.signal_status == "qualified",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    signal_ids: list[int] = []
+    for row in rows:
+        dist_id = row.resolved_district_id
+        family = row.campaign_family or ""
+        key = f"{dist_id}|{family}"
+        if key in cluster_keys:
+            signal_ids.append(row.id)
+    return signal_ids
 
 
 async def get_candidate_signals(
