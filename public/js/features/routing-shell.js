@@ -179,8 +179,12 @@ async function loadRoutingShell(container) {
     <div class="routing-shell">
       <header class="routing-header">
         <h1 class="routing-title">Routing</h1>
-        <p class="routing-subtitle">Control which AI provider handles each feature. Changes take effect on the next call.</p>
+        <p class="routing-subtitle">Control which AI provider handles each feature.</p>
       </header>
+      <div class="routing-banner routing-banner--warn" role="status">
+        <strong>Overrides save, but don't go live yet.</strong>
+        <span class="routing-banner-body">Apply and Reset buttons here write to the routing-overrides table, but the resolver isn't wired into the LLM call sites yet — that ships with the upcoming <em>Routing opportunities</em> work in the Cost page. Until then, an override persists but the next call still uses the default cascade.</span>
+      </div>
       <div class="routing-loading">Loading...</div>
     </div>`;
 
