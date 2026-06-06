@@ -17,6 +17,11 @@ import argparse
 import asyncio
 import logging
 import sys
+from pathlib import Path
+
+# Make the project root importable when run as `python scripts/backfill_qualify_pending.py`
+# (sys.path[0] is the scripts/ dir, not the repo root, so `import artemis` would fail).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -38,7 +43,7 @@ log = logging.getLogger("backfill_qualify")
 
 async def _run(dry_run: bool, limit: int | None) -> int:
     """Return number of rows processed."""
-    db_url = str(settings.database_url)
+    db_url = str(settings.db_url)
     engine = create_async_engine(db_url, echo=False, poolclass=NullPool)
     attach_pgvector_codec(engine)
 
