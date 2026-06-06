@@ -108,6 +108,10 @@ const _initiationProposalCache = new Map();
 // must NOT auto-reopen these on re-render (otherwise Close is a no-op — the modal traps the user
 // until they approve/reject). Cleared when the user clicks "Review initiation proposal" again.
 const _dismissedInitiation = new Set();
+// One-time flag: bind a hashchange listener that removes an orphaned initiation
+// modal (portaled to <body>) if the user leaves the campaigns route, so a campaign
+// modal can never linger on top of another page.
+let _initiationNavCleanupBound = false;
 const _pendingDraftApprovalsByCandidate = new Map();
 
 // ── Module-level campaign map ──────────────────────────────────────────────
@@ -679,9 +683,13 @@ function _renderDistrictHeaderMeta(districtContext) {
 }
 
 function _renderTargetScopeSection(scopeModel, districtContext, targetScopeCounts) {
-  const stateOptions = US_STATES.map((state) => `
-    <option value="${esc(state)}"${scopeModel.mode === 'states' && scopeModel.states.includes(state) ? ' selected' : ''}>${esc(state)}</option>
-  `).join('');
+  const stateOptions = US_STATES.map((state) => {
+    const checked = scopeModel.mode === 'states' && scopeModel.states.includes(state);
+    return `<label class="mkt-initiation-state-chip${checked ? ' is-selected' : ''}">
+      <input type="checkbox" data-initiation-state="${esc(state)}"${checked ? ' checked' : ''}>
+      <span>${esc(state)}</span>
+    </label>`;
+  }).join('');
   const tierOptions = ['D1', 'D2', 'D3', 'D4'].map((tier) => `
     <label class="mkt-initiation-tier-option ${tier === 'D4' ? 'mkt-initiation-tier-option--disabled' : ''}">
       <input type="checkbox" data-initiation-tier="${esc(tier)}" ${scopeModel.mode === 'district_tier' && scopeModel.tiers.includes(tier) ? 'checked' : ''} ${tier === 'D4' ? 'disabled' : ''}>
@@ -711,9 +719,8 @@ function _renderTargetScopeSection(scopeModel, districtContext, targetScopeCount
         <span>Specific states</span>
       </label>
       <div class="mkt-initiation-subpanel" data-initiation-states ${statesChecked ? '' : 'hidden'}>
-        <select multiple size="8" data-initiation-states-select>
-          ${stateOptions}
-        </select>
+        <p class="mkt-initiation-note">Click a state to include or remove it — highlighted states are targeted.</p>
+        <div class="mkt-initiation-state-grid">${stateOptions}</div>
       </div>
       <label class="mkt-initiation-radio">
         <input type="radio" name="initiation-target-mode" value="district_tier" ${tierChecked ? 'checked' : ''}>
@@ -1229,8 +1236,9 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
   const selectedScope = () => {
     const mode = modal.querySelector('input[name="initiation-target-mode"]:checked')?.value || 'all_districts';
     if (mode === 'states') {
-      const select = modal.querySelector('[data-initiation-states-select]');
-      const states = [...(select?.selectedOptions || [])].map((option) => option.value).filter(Boolean);
+      const states = [...modal.querySelectorAll('[data-initiation-state]:checked')]
+        .map((el) => el.getAttribute('data-initiation-state'))
+        .filter(Boolean);
       return { mode, states };
     }
     if (mode === 'district_tier') {
@@ -1285,7 +1293,12 @@ function _wireInitiationModal(container, campaign, bundle, accountInfo) {
   toggleScopePanels();
   refreshScopeCount();
 
-  modal.querySelector('[data-initiation-states-select]')?.addEventListener('change', refreshScopeCount);
+  modal.querySelectorAll('[data-initiation-state]').forEach((input) => {
+    input.addEventListener('change', () => {
+      input.closest('.mkt-initiation-state-chip')?.classList.toggle('is-selected', input.checked);
+      refreshScopeCount();
+    });
+  });
   modal.querySelectorAll('[data-initiation-tier]').forEach((input) => {
     input.addEventListener('change', refreshScopeCount);
   });
@@ -3301,13 +3314,22 @@ function _updateActiveCampaignCard(container, campaign) {
 }
 
 function _wireCampaignActions(container) {
+  if (!_initiationNavCleanupBound) {
+    _initiationNavCleanupBound = true;
+    window.addEventListener('hashchange', () => {
+      if (!/marketing-campaigns/.test(window.location.hash)) {
+        document.querySelector('[data-initiation-modal]')?.remove();
+      }
+    });
+  }
   container.querySelectorAll('[data-mkt-open-campaign]').forEach((el) => {
     el.addEventListener('click', () => {
       const id = el.dataset.mktOpenCampaign;
       try { localStorage.setItem(MKT_CAMPAIGN_KEY, id); } catch {}
       const campaign = _campaignMap.get(_campaignMapKey(id));
       if (!campaign) return;
-      container.querySelector('[data-initiation-modal]')?.remove();
+      // Modal is portaled to <body>, so clear it document-wide (not under container).
+      document.querySelector('[data-initiation-modal]')?.remove();
       const pane = container.querySelector('.mkt-workspace-pane');
       if (pane) {
         pane.innerHTML = renderCampaignWorkspace(campaign);
@@ -3330,6 +3352,9 @@ function _wireCampaignActions(container) {
     btn.addEventListener('click', () => {
       const id = btn.dataset.mktInitiationOpen;
       _dismissedInitiation.delete(String(id));  // explicit re-open clears any prior dismissal
+      // Explicit re-open: clear any lingering modal (portaled to <body>) so the
+      // duplicate guard in _maybeOpenInitiationProposal can't block the reopen.
+      document.querySelector('[data-initiation-modal]')?.remove();
       const campaign = _campaignMap.get(_campaignMapKey(id));
       if (campaign) _maybeOpenInitiationProposal(container, campaign);
     });
