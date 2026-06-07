@@ -43,10 +43,11 @@ Content exists (sources 6 + 7). Build:
 Hooks into the compliance gate. District-buyer-safe + self-curating = a real moat.
 
 ### ★ Custom-GPT export (company-wide, transferable)
-Export the profile to a ChatGPT custom GPT: **Instructions** ← Master Prompt + rules + Message Compass +
-Audience Router + Glossary; **Knowledge files** ← Product Cards + Claims Register + Proof Pack + Templates;
-**starters/examples** ← Writing Examples. Re-export to keep in sync when memory changes. Gives the whole
-company the same voice/claims/proof outside the marketing pipeline.
+**Lives on the Writing Studio MEMORY page (Jon 2026-06-06)** — it acts on the profile/sources/rules, not a
+draft, so it belongs there, NOT in the composer. Export the profile to a ChatGPT custom GPT: **Instructions**
+← Master Prompt + rules + Message Compass + Audience Router + Glossary; **Knowledge files** ← Product Cards +
+Claims Register + Proof Pack + Templates; **starters/examples** ← Writing Examples. Re-export to keep in sync
+when memory changes. Gives the whole company the same voice/claims/proof outside the marketing pipeline.
 
 ### Templates (CREATE/manage + start-from) — content exists (source 8)
 UI to author/manage templates (per asset-type + audience + format) and "start a draft from template."
