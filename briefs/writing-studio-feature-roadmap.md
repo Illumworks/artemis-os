@@ -76,6 +76,16 @@ SB 1672 for IL, etc.). One draft → N personalized sends, using the targeting d
 - **Performance feedback** — once sends have open/reply data (CRM/Starbridge), feed which drafts performed
   back to the agent → learns what works per audience. Closes wrote-it → worked → write-more-like-that.
 
+### Collaboration (build the necessary; defer the big one)
+- **NECESSARY (v1, build):** multi-user **presence + soft-lock + version-guard** so the team can use Artemis
+  at once without stepping on toes (see `writing-studio-identity-and-gdoc.md` Q3). Depends on identity
+  (Google SSO). Presence avatars, "Angela is editing" soft-lock, stale-save rejection (no silent clobber).
+- **DEFERRED — documented so it's NOT lost (Jon 2026-06-06):** **full real-time co-editing** — live
+  multiple cursors + character-by-character merge, true Google-Docs style (CRDT/OT + websockets, e.g. Yjs).
+  Not needed out of the gate (presence + soft-lock + version-guard meets the need for a small team); revisit
+  only if the team finds they genuinely need simultaneous co-writing of the same draft. Big lift; on the
+  roadmap, not scheduled.
+
 ## Sequencing
 Engine first (content-node P0) → composer UX (3-mode editor) → tagging+rules engine → then this set, roughly
 in ★ order (learn-from-edits, claims guardrail, custom-GPT export) then templates/repurposing/personalization
