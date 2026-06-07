@@ -857,6 +857,84 @@ async def seed_import(
     return result
 
 
+# ── Folder CRUD ───────────────────────────────────────────────────────────────
+
+
+@router.post("/folders", status_code=200)
+async def create_folder(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Create a Writing Studio folder.
+
+    Body:
+      name — required, non-empty string
+
+    Returns the new folder serialized identically to the /overview folders list.
+    """
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise bad_request("name is required and must be a non-empty string", "invalid_name")
+
+    folder = await wr_repo.create_folder(session, name=name.strip())
+    await session.commit()
+    await session.refresh(folder)
+    return _serialize_folder(folder)
+
+
+@router.put("/folders/{folder_id}", status_code=200)
+async def update_folder(
+    body: dict[str, Any],
+    folder_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Rename a Writing Studio folder.
+
+    Body:
+      name — required, non-empty string
+
+    Returns the updated folder. 404 if not found.
+    """
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise bad_request("name is required and must be a non-empty string", "invalid_name")
+
+    folder = await wr_repo.update_folder(session, folder_id, name=name.strip())
+    if folder is None:
+        raise not_found(f"Folder {folder_id} not found", "folder_not_found")
+
+    await session.commit()
+    await session.refresh(folder)
+    return _serialize_folder(folder)
+
+
+@router.delete("/folders/{folder_id}", status_code=200)
+async def delete_folder(
+    folder_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Delete a Writing Studio folder.
+
+    LOSSLESS: drafts are never deleted. Every draft assigned to this folder
+    has its metadata.folder_id cleared so it moves to "All drafts" — matching
+    the UI confirm copy "Drafts will remain available in All drafts."
+
+    Campaign-derived folders (campaign_id IS NOT NULL) are soft-deleted
+    (deleted_at stamped) so that backfill_campaign_folders does not recreate
+    them on the next overview load.
+
+    User-created folders (campaign_id IS NULL) are hard-deleted.
+
+    Returns 404 if the folder is not found.
+    """
+    deleted = await wr_repo.delete_folder(session, folder_id)
+    if not deleted:
+        raise not_found(f"Folder {folder_id} not found", "folder_not_found")
+
+    await session.commit()
+    return {"ok": True, "id": folder_id}
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 

@@ -100,6 +100,14 @@ class WritingFolder(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
+    # Soft-delete tombstone for campaign-derived folders.
+    # Stamped when the user explicitly deletes a campaign folder so that
+    # backfill_campaign_folders does not recreate it on the next overview load.
+    # User-created folders (campaign_id IS NULL) are hard-deleted; for them
+    # this column will never be set.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     profile: Mapped[WritingProfile | None] = relationship(
         "WritingProfile", back_populates="folders"
