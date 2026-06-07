@@ -384,3 +384,145 @@ async def test_backfill_is_idempotent(db_session: AsyncSession) -> None:
     assert len(folders) == 1, "Idempotent run must not create duplicate folders"
     # Second run should update 0 rows (already correct).
     assert result2.rows_updated == 0
+
+
+# ===========================================================================
+# (e) Tombstone-aware folder resolution — respawn prevention
+# ===========================================================================
+
+
+async def test_tombstone_aware_returns_none_for_soft_deleted(db_session: AsyncSession) -> None:
+    """get_or_create_folder_by_candidate_respecting_tombstone returns None for tombstoned folder."""
+    from datetime import UTC, datetime
+
+    from artemis.writing_rules import repository as wr_repo
+    from artemis.writing_rules.models import WritingFolder
+
+    cand = await _make_candidate(db_session, name="Tombstone Test", family="obc")
+
+    # Create a folder and then soft-delete it (simulate delete_folder).
+    folder = WritingFolder(name="Tombstone Test", campaign_id=str(cand))
+    db_session.add(folder)
+    await db_session.flush()
+    await db_session.refresh(folder)
+    folder.deleted_at = datetime.now(UTC)
+    await db_session.flush()
+    await db_session.commit()
+
+    # Now the tombstone-aware function must return None (not create a new folder).
+    async with AsyncSession(
+        create_async_engine(_db_url, echo=False, poolclass=NullPool), expire_on_commit=False
+    ) as s2:
+        result = await wr_repo.get_or_create_folder_by_candidate_respecting_tombstone(
+            s2, cand, candidate_name="Tombstone Test"
+        )
+        assert result is None, "Must return None for a tombstoned folder — no respawn"
+
+        # Verify no new folder row was created.
+        from sqlalchemy import select
+
+        new_folders_result = await s2.execute(
+            select(WritingFolder).where(
+                WritingFolder.campaign_id == str(cand),
+                WritingFolder.deleted_at.is_(None),
+            )
+        )
+        new_folders = list(new_folders_result.scalars())
+        assert len(new_folders) == 0, "No active folder must be created when tombstone exists"
+
+
+async def test_tombstone_aware_creates_folder_when_none_exists(db_session: AsyncSession) -> None:
+    """get_or_create_folder_by_candidate_respecting_tombstone creates folder when none exists."""
+    from artemis.writing_rules import repository as wr_repo
+
+    cand = await _make_candidate(db_session, name="Fresh Camp", family="obc")
+    await db_session.commit()
+
+    async with AsyncSession(
+        create_async_engine(_db_url, echo=False, poolclass=NullPool), expire_on_commit=False
+    ) as s2:
+        folder = await wr_repo.get_or_create_folder_by_candidate_respecting_tombstone(
+            s2, cand, candidate_name="Fresh Camp"
+        )
+        await s2.commit()
+        assert folder is not None, "Must create a new folder when no folder row exists"
+        assert folder.campaign_id == str(cand)
+        assert folder.deleted_at is None
+
+
+async def test_tombstone_aware_returns_active_folder(db_session: AsyncSession) -> None:
+    """get_or_create_folder_by_candidate_respecting_tombstone returns existing active folder."""
+    from artemis.writing_rules import repository as wr_repo
+    from artemis.writing_rules.models import WritingFolder
+
+    cand = await _make_candidate(db_session, name="Active Camp", family="obc")
+    # Pre-create an active folder.
+    folder = WritingFolder(name="Active Camp", campaign_id=str(cand))
+    db_session.add(folder)
+    await db_session.flush()
+    await db_session.refresh(folder)
+    first_id = folder.id
+    await db_session.commit()
+
+    async with AsyncSession(
+        create_async_engine(_db_url, echo=False, poolclass=NullPool), expire_on_commit=False
+    ) as s2:
+        result = await wr_repo.get_or_create_folder_by_candidate_respecting_tombstone(
+            s2, cand, candidate_name="Active Camp"
+        )
+        assert result is not None
+        assert result.id == first_id, "Must return the existing active folder, not create a new one"
+
+
+async def test_backfill_does_not_respawn_tombstoned_folder(db_session: AsyncSession) -> None:
+    """backfill_campaign_folders must NOT create a new folder when one is tombstoned."""
+    from datetime import UTC, datetime
+
+    from artemis.marketing.writing_studio.invoke import backfill_campaign_folders
+    from artemis.writing_rules.models import WritingFolder
+
+    cand = await _make_candidate(db_session, name="Respawn Test", family="obc")
+
+    # Create a tombstoned folder for this candidate.
+    folder = WritingFolder(name="Respawn Test", campaign_id=str(cand))
+    db_session.add(folder)
+    await db_session.flush()
+    await db_session.refresh(folder)
+    folder.deleted_at = datetime.now(UTC)
+    await db_session.flush()
+
+    # Create a deliverable with the old folder_id (simulate pre-delete state).
+    del_id = await _make_deliverable(
+        db_session, candidate_id=cand, family="obc", folder_id=folder.id, folder_name="Respawn Test"
+    )
+    await db_session.commit()
+
+    engine2 = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+    async with AsyncSession(engine2, expire_on_commit=False) as s2:
+        await backfill_campaign_folders(s2)
+        await s2.commit()
+
+    from sqlalchemy import select
+
+    async with AsyncSession(engine2, expire_on_commit=False) as s3:
+        # No new active folder must have been created.
+        active_result = await s3.execute(
+            select(WritingFolder).where(
+                WritingFolder.campaign_id == str(cand),
+                WritingFolder.deleted_at.is_(None),
+            )
+        )
+        active_folders = list(active_result.scalars())
+        assert len(active_folders) == 0, (
+            f"backfill must NOT create a new folder when tombstone exists; "
+            f"found {len(active_folders)} active folder(s)"
+        )
+
+        # The deliverable's folder_id must have been cleared.
+        from artemis.marketing.models import CampaignDeliverable
+
+        d = await s3.get(CampaignDeliverable, del_id)
+        assert d is not None
+        assert "folder_id" not in (d.deliverable_metadata or {}), (
+            "Deliverable folder_id must be cleared when folder is tombstoned"
+        )

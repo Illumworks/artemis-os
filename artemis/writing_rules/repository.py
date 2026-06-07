@@ -127,6 +127,25 @@ async def get_folder_by_candidate(session: AsyncSession, candidate_id: int) -> W
     return await get_folder_by_campaign(session, str(candidate_id))
 
 
+async def _get_folder_by_candidate_any(
+    session: AsyncSession, candidate_id: int
+) -> WritingFolder | None:
+    """Return the folder row for a candidate including tombstoned rows.
+
+    Unlike ``get_folder_by_candidate`` this function does NOT filter on
+    ``deleted_at``, so it will return a soft-deleted (tombstoned) row.
+    Used internally by ``get_or_create_folder_by_candidate`` to detect
+    whether a tombstone exists before deciding to create a new folder.
+    """
+    result = await session.execute(
+        select(WritingFolder)
+        .where(WritingFolder.campaign_id == str(candidate_id))
+        .order_by(WritingFolder.id)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_or_create_folder_by_candidate(
     session: AsyncSession,
     candidate_id: int,
@@ -145,6 +164,12 @@ async def get_or_create_folder_by_candidate(
     When omitted the folder is named ``"Campaign {candidate_id}"``.
 
     The caller is responsible for flushing / committing.
+
+    Note: this function DOES NOT respect tombstones — it will recreate a folder
+    for a candidate even if one was previously soft-deleted.  Use
+    ``get_or_create_folder_by_candidate_respecting_tombstone`` at call sites
+    where the operator's explicit delete must be honoured (e.g. auto-assign
+    paths that should not resurrect deleted folders).
     """
     folder = await get_folder_by_candidate(session, candidate_id)
     if folder is not None:
@@ -158,6 +183,51 @@ async def get_or_create_folder_by_candidate(
     await session.flush()
     await session.refresh(folder)
     return folder
+
+
+async def get_or_create_folder_by_candidate_respecting_tombstone(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    candidate_name: str | None = None,
+) -> WritingFolder | None:
+    """Tombstone-aware folder resolution for auto-assign paths.
+
+    Behaviour:
+    - ACTIVE (non-tombstoned) folder exists for the candidate → return it.
+    - TOMBSTONED folder exists for the candidate → return ``None``; do NOT
+      create a new folder (respects the operator's explicit delete).
+    - No folder row at all → create a fresh one (first-time behaviour).
+
+    Use this function at every call site that might run automatically on page
+    load or pipeline execution so that a deleted campaign folder is never
+    silently resurrected.  The caller must handle ``None`` by skipping the
+    ``folder_id`` stamp on the draft (draft stays in "All drafts").
+
+    Callers that deliberately want to create-regardless (e.g. the
+    ``/folders`` management route) should continue using
+    ``get_or_create_folder_by_candidate``.
+
+    The caller is responsible for flushing / committing.
+    """
+    # First check for ANY row (including tombstones).
+    any_row = await _get_folder_by_candidate_any(session, candidate_id)
+    if any_row is None:
+        # No folder row at all — first-time create.
+        snapshot_name = candidate_name or f"Campaign {candidate_id}"
+        new_folder = WritingFolder(
+            name=snapshot_name,
+            campaign_id=str(candidate_id),
+        )
+        session.add(new_folder)
+        await session.flush()
+        await session.refresh(new_folder)
+        return new_folder
+    if any_row.deleted_at is not None:
+        # Tombstoned — respect the delete, do not resurrect.
+        return None
+    # Active folder — return it.
+    return any_row
 
 
 async def get_or_create_folder_by_campaign(
