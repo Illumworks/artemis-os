@@ -11,11 +11,19 @@ content-engine gate (below) and the Signals/Approvals unification are the bridge
 
 ---
 
-## 🔴 THE GATE — everything waits on this
-**Content-node P0** — `briefs/content-draft-node-hang.md`. The auto-draft pipeline hangs/produces empty
-shells, so campaigns don't yet write real drafts. `content_asset_selector` fixed (13s); `content_writing_
-studio_adapter` still times out at 120s → empty draft. **With terminal** (sent back after Lead live-verify).
-Until this lands, the studio has nothing real to compose/edit. **Nothing else builds before this.**
+## ✅ THE GATE — CLEARED (2026-06-06)
+**Content-node P0 — RESOLVED + merged + Lead-verified on main** (`briefs/content-draft-node-hang.md`).
+Root cause was a **Postgres FK deadlock** (executor held a RowExclusiveLock on `campaign_candidates`; the
+MCP subprocess's `campaign_deliverables` INSERT blocked on the FK ShareLock — the hang mimicked prompt-size
+starvation). Fix (merge `3407a03`): commit the executor session before MCP dispatch to release locks
+(context-aware AUTOBEGIN guard so tests still pass) + a 120s fail-fast safety net. Band-aids dropped.
+**Verified on main, fresh candidate #14 (Indiana grant, ≠ #15):** content node completed (~64s, no hang),
+real `draftBody` produced, suspended at Gate-2. **Campaigns now auto-write real drafts end-to-end.**
+The build queue below is now UNBLOCKED.
+
+> **NEXT ROUND = optimize for Codex (Jon 2026-06-06):** we've been token-heavy on terminal + Opus Lead.
+> Write the upcoming WS build briefs Codex-friendly (tightly scoped, explicit files/acceptance, minimal
+> exploration) and prefer Codex for the well-defined builds; reserve Opus/terminal for design + verification.
 
 ## ✅ DONE + verified (merged to main)
 | Area | Brief | Note |
