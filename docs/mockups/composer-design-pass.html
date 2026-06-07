@@ -1,126 +1,106 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Composer v3</title>
+<title>Composer v4</title>
 <style>
   :root{--bg:#f4efe7;--card:#fffdf9;--ink:#1e1a15;--ink2:#544c40;--ink3:#8a7f6e;--rule:#e7ded0;
-    --accent:#c8892f;--accent-soft:#f1e2c8;--green:#2f8f5b;--warn:#cf7a2e;--blue:#33558c;
+    --accent:#c8892f;--accent-soft:#f1e2c8;--green:#2f8f5b;--warn:#d97a25;--blue:#33558c;
     --mono:ui-monospace,Menlo,monospace;--sans:-apple-system,Inter,Segoe UI,sans-serif;}
   *{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:var(--sans);color:var(--ink);font-size:14px}
-  .app{height:100vh;display:flex;flex-direction:column}
+  .app{display:flex;flex-direction:column;min-height:100vh}
   .hdr{background:var(--card);border-bottom:1px solid var(--rule);padding:10px 16px;display:flex;align-items:center;gap:12px}
-  .drafts-dd{display:flex;align-items:center;gap:7px;border:1px solid var(--rule);border-radius:9px;padding:6px 11px;font-size:12.5px;color:var(--ink);background:#fff;cursor:pointer}
-  .drafts-dd b{font-weight:650} .drafts-dd .car{color:var(--ink3)}
-  .hdr h1{font-size:14.5px;margin:0;font-weight:600;color:var(--ink2)}
+  .drafts-btn{display:flex;align-items:center;gap:7px;border:1px solid var(--rule);border-radius:9px;padding:6px 11px;font-size:12.5px;background:#fff;cursor:pointer}
+  .drafts-btn b{font-weight:650}
   .spacer{flex:1}
-  .ind{font-size:12px;color:var(--ink3);cursor:pointer} .ind:hover{color:var(--ink)}
+  .ind{font-size:12px;color:var(--ink3)}
   .status-pill{background:#eef4ef;border:1px solid #cfe3d5;color:var(--green);border-radius:999px;padding:2px 9px;font-size:10px;font-family:var(--mono);text-transform:uppercase}
-  .btn-primary{background:var(--accent);border:1px solid var(--accent);color:#fff;font-weight:600;border-radius:8px;padding:6px 13px;font-size:12.5px;cursor:pointer}
-  .menu{position:absolute;top:34px;right:0;background:var(--card);border:1px solid var(--rule);border-radius:11px;padding:6px;box-shadow:0 12px 32px rgba(30,26,21,.2);width:200px;z-index:9}
-  .menu div{padding:8px 11px;border-radius:7px;font-size:12.5px;color:var(--ink2)} .menu .ic{color:var(--accent);margin-right:8px}
-  /* dropdown preview */
-  .ddmenu{position:absolute;top:46px;left:16px;background:var(--card);border:1px solid var(--rule);border-radius:11px;padding:6px;box-shadow:0 12px 32px rgba(30,26,21,.2);width:250px;z-index:9}
-  .ddmenu .grp{font-family:var(--mono);font-size:9.5px;color:var(--ink3);text-transform:uppercase;padding:6px 9px 3px}
-  .ddmenu .it{padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--ink2);display:flex;gap:7px;align-items:center}
-  .ddmenu .it.on{background:#eadfca;color:var(--ink)} .ddmenu .it:hover{background:#f4efe7}
+  .btn-primary{background:var(--accent);border:1px solid var(--accent);color:#fff;font-weight:600;border-radius:8px;padding:6px 13px;font-size:12.5px}
 
-  .panes{flex:1;display:grid;grid-template-columns:330px 1fr 300px;min-height:0}
-  /* LEFT: AI chat */
-  .chat{background:var(--card);border-right:1px solid var(--rule);display:flex;flex-direction:column;min-height:0}
+  .panes{display:grid;grid-template-columns:320px 1fr;min-height:560px}
+  /* LEFT chat */
+  .chat{background:var(--card);border-right:1px solid var(--rule);display:flex;flex-direction:column}
   .chat .ch{padding:10px 15px;border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
-  .thread{flex:1;overflow:auto;padding:15px}
+  .thread{flex:1;padding:15px}
   .b{margin-bottom:15px;font-size:12.5px;line-height:1.55}
   .b .role{font-family:var(--mono);font-size:9px;color:var(--ink3);text-transform:uppercase;margin-bottom:3px}
   .b.assistant .bub{color:var(--ink2)}
   .b.user .bub{background:var(--accent-soft);border:1px solid #e3cfa6;border-radius:11px;padding:8px 11px;color:#5c4422}
-  .composer{border-top:1px solid var(--rule);padding:11px 13px}
-  .chips{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
-  .chip{border:1px solid var(--rule);border-radius:999px;padding:3px 9px;font-size:11px;color:var(--ink2);background:#fff}
-  .cbox{border:1px solid var(--rule);border-radius:11px;padding:10px 11px;background:#fff;display:flex;align-items:center;color:var(--ink3);font-size:12.5px}
+  .composer{border-top:1px solid var(--rule);padding:12px 13px}
+  .cbox{border:1px solid var(--rule);border-radius:11px;padding:11px 12px;background:#fff;display:flex;align-items:center;color:var(--ink3);font-size:12.5px}
   .cbox .send{margin-left:auto;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
 
-  /* CENTER: document, paginated */
-  .center{overflow:auto;background:var(--bg);padding:14px 0}
-  .tagbar{display:flex;gap:7px;align-items:center;padding:0 26px 10px;flex-wrap:wrap}
+  /* RIGHT document area (wide; comments float in margin) */
+  .docarea{background:var(--bg);padding:14px 0;position:relative;overflow:visible}
+  .tagbar{display:flex;gap:7px;align-items:center;padding:0 30px 9px;flex-wrap:wrap}
   .tag{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);border:1px solid #e3cfa6;color:#6e4f1c;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:500}
   .tag .k{color:#a07c3e;font-size:9.5px;font-family:var(--mono);text-transform:uppercase}
   .tag-add{border:1px dashed var(--rule);color:var(--ink3);border-radius:999px;padding:3px 9px;font-size:11px;background:none}
-  .docmeta{padding:0 26px 8px;font-size:11px;color:var(--ink3);font-family:var(--mono)}
-  .paper{background:var(--card);border:1px solid var(--rule);border-radius:10px;margin:0 26px 14px;padding:28px 34px;line-height:1.75;font-size:14px;box-shadow:0 1px 3px rgba(30,26,21,.05);position:relative}
-  .paper p{margin:0 0 14px}
-  .token{background:#eaf0fb;border:1px solid #c7d6f0;border-radius:5px;padding:0 5px;color:var(--blue);font-size:12.5px}
-  .claim{border-bottom:2px wavy var(--warn);cursor:pointer;position:relative}
-  .sel{background:#fbe6c8;border-radius:3px;position:relative}
-  .ai-tb{position:absolute;top:-38px;left:0;background:var(--ink);color:#fff;border-radius:9px;padding:5px 6px;display:flex;gap:2px;font-size:11.5px;box-shadow:0 8px 22px rgba(30,26,21,.3);white-space:nowrap}
-  .ai-tb span{padding:3px 7px;border-radius:5px} .ai-tb .star{color:var(--accent);font-weight:700}
-  .claim-pop{position:absolute;top:24px;left:0;width:250px;background:var(--card);border:1px solid var(--rule);border-radius:11px;padding:11px;box-shadow:0 12px 32px rgba(30,26,21,.22);z-index:5;line-height:1.5}
-  .claim-pop .w{display:flex;gap:6px;color:var(--warn);font-size:11.5px;font-weight:600;margin-bottom:6px}
-  .claim-pop p{margin:0 0 9px;font-size:11px;color:var(--ink3)}
-  .mini{border-radius:6px;padding:4px 8px;font-size:11px;border:1px solid var(--rule);background:var(--card);color:var(--ink2);margin-right:5px}
-  .mini-go{background:var(--green);border-color:var(--green);color:#fff;font-weight:600}
-  /* long-form page-break sample */
-  .pagebreak{margin:0 26px 14px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--ink3);position:relative}
+  .docmeta{padding:0 30px 8px;font-size:10.5px;color:var(--ink3);font-family:var(--mono)}
+  .docwrap{display:grid;grid-template-columns:1fr 230px;gap:0;align-items:start}
+  .paper{background:var(--card);border:1px solid var(--rule);border-radius:10px;margin:0 0 14px 30px;padding:30px 38px;line-height:1.8;font-size:14.5px;box-shadow:0 1px 3px rgba(30,26,21,.05)}
+  .paper p{margin:0 0 15px}
+  .token{background:#eaf0fb;border:1px solid #c7d6f0;border-radius:5px;padding:0 5px;color:var(--blue);font-size:13px}
+  /* claim = clean ORANGE DOUBLE underline */
+  .claim{text-decoration:underline double var(--warn);text-underline-offset:3px;text-decoration-thickness:1.5px;cursor:pointer}
+  .hl{background:#fcebd3;border-radius:2px} /* commented span tint (Docs-style) */
+
+  /* floating Google-Docs comment in the margin */
+  .cmargin{position:relative;padding-top:60px}
+  .fcomment{background:#fff;border:1px solid var(--rule);border-radius:10px;padding:10px 11px;margin:0 22px 12px 14px;box-shadow:0 3px 10px rgba(30,26,21,.10);position:relative}
+  .fcomment:before{content:"";position:absolute;left:-15px;top:16px;width:14px;border-top:1.5px solid #e3cfa6} /* connector to the text */
+  .fcomment .top{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+  .av{width:19px;height:19px;border-radius:50%;background:var(--accent);color:#fff;font-size:9.5px;display:flex;align-items:center;justify-content:center;font-weight:600}
+  .fcomment .nm{font-weight:600;font-size:11.5px} .fcomment .tm{font-size:10px;color:var(--ink3);margin-left:auto}
+  .fcomment .txt{font-size:11.5px;color:var(--ink2);line-height:1.5}
+  .men{color:var(--blue);background:#eaf0fb;border-radius:4px;padding:0 4px;font-weight:600}
+  .fcomment .foot{margin-top:7px;display:flex;gap:9px;font-size:10.5px;color:var(--ink3)}
+  .ping{font-size:9.5px;color:var(--green);margin-top:5px}
+  /* collapsed comment chip (Docs-style) */
+  .ccollapsed{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--rule);border-radius:18px;padding:4px 8px 4px 4px;margin:0 22px 0 14px;box-shadow:0 2px 6px rgba(30,26,21,.08);font-size:10.5px;color:var(--ink3)}
+
+  .pagebreak{margin:2px 30px 12px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--ink3);position:relative}
   .pagebreak:before{content:"";position:absolute;top:50%;left:0;right:0;border-top:1px dashed var(--rule)}
   .pagebreak span{background:var(--bg);padding:0 10px;position:relative}
 
-  /* RIGHT: comments with @mention + ping */
-  .comments{background:var(--card);border-left:1px solid var(--rule);display:flex;flex-direction:column;min-height:0}
-  .comments .ch{padding:10px 15px;border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
-  .clist{flex:1;overflow:auto;padding:13px}
-  .ccard{border:1px solid var(--rule);border-radius:10px;padding:10px 11px;margin-bottom:11px}
-  .ccard .top{display:flex;align-items:center;gap:7px;margin-bottom:5px}
-  .av{width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:600}
-  .ccard .nm{font-weight:600;font-size:12px} .ccard .on{font-size:10.5px;color:var(--ink3)}
-  .ccard .txt{font-size:12px;color:var(--ink2);line-height:1.5}
-  .men{color:var(--blue);background:#eaf0fb;border-radius:4px;padding:0 4px;font-weight:600}
-  .ccard .foot{margin-top:7px;display:flex;gap:10px;font-size:11px;color:var(--ink3)}
-  .ping{font-size:10px;color:var(--green);margin-top:6px;display:flex;gap:4px;align-items:center}
-  .caddbox{border-top:1px solid var(--rule);padding:11px}
-  .caddbox .cin{border:1px solid var(--rule);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--ink3);background:#fff}
-  .caddbox .hint{font-size:10px;color:var(--ink3);margin-top:5px}
+  /* finder picker inset */
+  .finderwrap{margin:6px 30px 26px;}
+  .finderlbl{font-family:var(--mono);font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}
+  .finder{background:var(--card);border:1px solid var(--rule);border-radius:12px;width:330px;padding:8px;box-shadow:0 12px 30px rgba(30,26,21,.14)}
+  .ftools{display:flex;gap:6px;padding:4px 6px 8px;border-bottom:1px solid var(--rule);margin-bottom:6px}
+  .ftool{font-size:11px;color:var(--accent);cursor:pointer}
+  .frow{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:7px;font-size:12.5px;color:var(--ink2)}
+  .frow.folder{font-weight:600;color:var(--ink)} .frow.file{padding-left:26px}
+  .frow.on{background:#eadfca;color:var(--ink)}
+  .frow .dot{margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--green)}
 </style></head>
 <body><div class="app">
-  <!-- HEADER with drafts dropdown -->
   <div class="hdr">
-    <div style="position:relative">
-      <div class="drafts-dd">📄 <b>Supt Outreach — Grosse Pointe</b> <span class="car">▾</span></div>
-      <div class="ddmenu">
-        <div class="grp">All drafts</div>
-        <div class="it on">📄 Supt Outreach — Grosse Pointe</div>
-        <div class="it">📄 Board follow-up — GP</div>
-        <div class="grp">Dyslexia — FL</div>
-        <div class="it">📄 Field guide — SB 1672</div>
-        <div class="it">＋ New draft</div>
-      </div>
-    </div>
+    <div class="drafts-btn">📁 <b>Supt Outreach — Grosse Pointe</b> ▾</div>
     <span class="spacer"></span>
     <span class="status-pill">Draft ready</span>
     <span class="ind">◳ 2 variants</span>
     <span class="ind">✓ 3 rules</span>
     <span class="ind">⟲ History</span>
-    <div style="position:relative"><span class="ind">⋯ Actions</span>
-      <div class="menu"><div><span class="ic">▤</span>Save as template</div><div><span class="ic">⇄</span>Repurpose for audience</div><div><span class="ic">◎</span>Brand + readability check</div></div>
-    </div>
+    <span class="ind">⋯ Actions</span>
     <button class="btn-primary">Save version</button>
   </div>
 
   <div class="panes">
-    <!-- LEFT: AI chat -->
+    <!-- LEFT chat (no pills) -->
     <div class="chat">
       <div class="ch">Amira · writing chat</div>
       <div class="thread">
         <div class="b user"><div class="role">You</div><div class="bub">Draft a warm outreach email to the new superintendent.</div></div>
-        <div class="b assistant"><div class="role">Amira</div><div class="bub">Done — applied the board-transition rule + superintendent voice, flagged one claim to register. Lead with the student-outcome stat per Angela's note?</div></div>
+        <div class="b assistant"><div class="role">Amira</div><div class="bub">Done — applied the board-transition rule + superintendent voice, and flagged one claim to register. Lead with the student-outcome stat per Angela's note?</div></div>
         <div class="b user"><div class="role">You</div><div class="bub">Yes, keep it to four sentences.</div></div>
-        <div class="b assistant"><div class="role">Amira</div><div class="bub">Updated and tightened to four sentences. Claim still needs registering before send.</div></div>
+        <div class="b assistant"><div class="role">Amira</div><div class="bub">Updated and tightened to four sentences. The claim still needs registering before send.</div></div>
       </div>
       <div class="composer">
-        <div class="chips"><span class="chip">Shorten</span><span class="chip">Add a CTA</span><span class="chip">More formal</span><span class="chip">Localize · IL</span></div>
         <div class="cbox">Ask Amira to draft, rewrite, or refine…<span class="send">↑</span></div>
       </div>
     </div>
 
-    <!-- CENTER: document (email = single page; long-form paginates) -->
-    <div class="center">
+    <!-- RIGHT document, comments float in margin -->
+    <div class="docarea">
       <div class="tagbar">
         <span class="tag"><span class="k">audience</span> Superintendent</span>
         <span class="tag"><span class="k">type</span> Outreach email</span>
@@ -128,41 +108,41 @@
         <span class="tag"><span class="k">format</span> Short</span>
         <button class="tag-add">+ tag</button>
       </div>
-      <div class="docmeta">EMAIL · single continuous page (long-form types paginate ↓)</div>
-      <div class="paper">
-        <p>Dear Superintendent <span class="token">{{last_name}}</span>,</p>
-        <p>Congratulations on your appointment leading Grosse Pointe Public Schools — a historic moment for the district and its students.</p>
-        <p>As you set early priorities, literacy is likely near the top. Amira is
-          <span class="claim">rated the most accurate reading assessment by state agencies and leading research centers
-            <span class="claim-pop"><span class="w">⚠ Claim not in Register</span><p>Not registered yet. As an approver, register it now or attach a source.</p><span class="mini mini-go">✓ Approve</span><span class="mini">＋ Source</span><span class="mini">Edit</span></span>
-          </span>, screening a full class in 20 minutes.</p>
-        <p><span class="sel">We'd value 20 minutes to walk your team through what accurate early screening could look like this fall.
-          <span class="ai-tb"><span class="star">✦</span><span>Rewrite</span><span>Shorten</span><span>Tone ▾</span><span>Make on-brand</span><span>Ask AI…</span></span>
-        </span></p>
-        <p>Warm regards,<br>The Amira Learning team</p>
+      <div class="docmeta">EMAIL · single continuous page</div>
+      <div class="docwrap">
+        <div class="paper">
+          <p>Dear Superintendent <span class="token">{{last_name}}</span>,</p>
+          <p>Congratulations on your appointment leading Grosse Pointe Public Schools — a <span class="hl">historic moment</span> for the district and its students.</p>
+          <p>As you set early priorities, literacy is likely near the top. Amira is <span class="claim">rated the most accurate reading assessment by state agencies and leading research centers</span>, screening a full class in 20 minutes.</p>
+          <p>We'd value 20 minutes to walk your team through what accurate early screening could look like this fall.</p>
+          <p>Warm regards,<br>The Amira Learning team</p>
+        </div>
+        <!-- floating comments (Google-Docs style) -->
+        <div class="cmargin">
+          <div class="fcomment">
+            <div class="top"><span class="av">A</span><span class="nm">Angela</span><span class="tm">2m</span></div>
+            <div class="txt">Lead with the student-outcome stat, not the milestone. <span class="men">@Josh</span> agree?</div>
+            <div class="ping">🔔 Josh notified</div>
+            <div class="foot"><span>↩ Reply</span><span>✓ Resolve</span><span>⌄ collapse</span></div>
+          </div>
+          <div class="ccollapsed">💬 1 more · on the claim ⌃ expand</div>
+        </div>
       </div>
-      <div class="pagebreak"><span>— how a long-form Field Guide would break: Page 1 · Page 2 · Page 3 —</span></div>
-    </div>
+      <div class="pagebreak"><span>(long-form types break into Page 1 · 2 · 3 — email stays one page)</span></div>
 
-    <!-- RIGHT: comments (own space) with @mention + ping -->
-    <div class="comments">
-      <div class="ch">Comments · 2</div>
-      <div class="clist">
-        <div class="ccard">
-          <div class="top"><span class="av">A</span><span class="nm">Angela</span><span class="on">· on "historic moment"</span></div>
-          <div class="txt">Lead with the student-outcome stat, not the milestone. <span class="men">@Josh</span> thoughts?</div>
-          <div class="ping">🔔 Josh notified</div>
-          <div class="foot"><span>↩ Reply</span><span>✓ Resolve</span></div>
+      <!-- Finder picker inset -->
+      <div class="finderwrap">
+        <div class="finderlbl">Drafts picker — opens from the header (Finder-style, with folders)</div>
+        <div class="finder">
+          <div class="ftools"><span class="ftool">＋ New draft</span><span class="ftool">＋ New from template</span><span class="ftool">＋ New folder</span></div>
+          <div class="frow folder">▾ 📁 All drafts</div>
+          <div class="frow file on">📄 Supt Outreach — Grosse Pointe<span class="dot"></span></div>
+          <div class="frow file">📄 Board follow-up — GP</div>
+          <div class="frow folder">▾ 📁 Dyslexia — FL</div>
+          <div class="frow file">📄 Field guide — SB 1672</div>
+          <div class="frow folder">▸ 📁 General growth</div>
+          <div class="frow folder">▸ 📁 Archived</div>
         </div>
-        <div class="ccard">
-          <div class="top"><span class="av" style="background:#5b7">J</span><span class="nm">Josh</span><span class="on">· on the claim</span></div>
-          <div class="txt">Good to register — it's the Deal Center rating. <span class="men">@Angela</span></div>
-          <div class="foot"><span>↩ Reply</span><span>✓ Resolve</span></div>
-        </div>
-      </div>
-      <div class="caddbox">
-        <div class="cin">Comment…  <span class="men">@</span> to mention</div>
-        <div class="hint">@mention pings the person (in-app + notification)</div>
       </div>
     </div>
   </div>
