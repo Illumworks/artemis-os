@@ -83,21 +83,26 @@ indicator), (3) is designed Jon+Lead together (Creative-Director territory) — 
 + screenshot for Jon to react. Design the IA once; features then slot into defined places instead of
 accreting buttons. This pass is the guardrail against the visual mess.
 
-## v3 layout — Jon-approved final (2026-06-06) — see `docs/mockups/composer-design-pass.html`
-Three panes under a slim header (revised from v2 to fix comment/chat layering + free space):
+## v4 layout — Jon-approved final (2026-06-06) — see `docs/mockups/composer-design-pass.html`
+Two main columns under a slim header; comments FLOAT in the document margin (no comments pane):
 - **Left = natural AI chat (Claude-style)** — real conversation thread + composer ("Ask Amira to draft,
-  rewrite, or refine…") + quick-action chips. First-class conversational mode. (Moved here from the right.)
-- **Center = the document** (inline-editable artifact) — tag chip bar on top; inline claim flags, merge
-  tokens, selection AI toolbar live here. **Format-aware pagination:** long-form types (guides/papers) break
-  into Page 1·2·3; **email/short = one continuous page** (no pagination).
-- **Right = Comments — their OWN pane** (v2 layered them on the chat = useless). Must support **@mention +
-  ping/notify** (in-app + notification) — comments are tied to a span, flow to Gate-2, support reply/resolve.
-- **Drafts navigation = a header DROPDOWN** (not a permanent pane) — "All drafts / folders / + New draft".
-  Frees horizontal space so the document + comments each get real room.
-- **Slim header:** drafts-dropdown · title · status · N variants · N rules · History · **⋯ Actions** (Save as
+  rewrite, or refine…"). **No quick-action chips** above the composer (removed — visual noise, Jon).
+- **Right (wide) = the document** (inline-editable artifact) — tag chip bar on top; merge tokens, selection
+  AI toolbar. **Format-aware pagination:** long-form types (guides/papers) break into Page 1·2·3;
+  **email/short = one continuous page**.
+  - **Claim-not-in-Register flag = a clean ORANGE DOUBLE-UNDERLINE** (not wavy) — distinct from a hyperlink.
+    Click → the approve/source/edit popover.
+  - **Comments FLOAT in the right margin, Google-Docs-style** (NOT a rail): anchored to a highlighted span
+    via a connector, **expand/collapse** (collapsed = a small chip), reply/resolve, and **@mention + ping/
+    notify** (in-app + notification). This was v3's mistake (a fixed pane that layered on the chat).
+- **Drafts = a Finder-style picker** opened from the header (NOT a flat dropdown): folder tree + files, with
+  **+ New folder**, **+ New draft**, and **+ New from template**.
+- **Templates need BOTH create + apply:** "Save as template" (⋯ Actions) AND "New from template" (the
+  picker). If we can't ship the apply path, **drop the template feature** (Jon) — don't ship create-only.
+- **Slim header:** drafts-picker · title · status · N variants · N rules · History · **⋯ Actions** (Save as
   template · Repurpose · Brand+readability check) · Save version.
 - **Export-to-GPT is NOT in the composer** — Writing Studio **Memory page** (acts on the profile). No legend.
-- Settled: chat is LEFT (not right rail / not bottom-docked); the Finder pane became the drafts dropdown.
+- Settled: chat LEFT; document wide with floating margin comments; Finder-style drafts picker in the header.
 
 ## Constraints (carry into worker briefs)
 Lossless (draft history/versions preserved — there's already a save-chat-version concept; never lose
