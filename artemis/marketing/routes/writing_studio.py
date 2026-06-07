@@ -23,7 +23,9 @@ Existing C4 stub routes (kept intact):
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -39,6 +41,7 @@ from artemis.marketing.state_machine import LEGACY_STATUS_MAP, DeliverableState,
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio import invoke as ws_invoke
 from artemis.marketing.writing_studio.compose_engine import (
+    _latest_draft_content,
     build_writing_memory_prompt,
     extract_proposed_learnings,
 )
@@ -68,6 +71,106 @@ _EVENT_KIND_MAP: dict[str, str] = {
 # Soft-delete is stored as metadata.archived = true.  The status column is
 # left at its current value so the existing state machine is not disturbed.
 _META_ARCHIVED_KEY = "archived"
+_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL | re.IGNORECASE)
+
+
+def _build_tag_registry_options(
+    dimensions: list[Any],
+    values: list[Any],
+) -> dict[str, list[str]]:
+    """Return active dimension -> allowed values, preserving registry order."""
+    registry: dict[str, list[str]] = {dimension.key: [] for dimension in dimensions}
+    seen: dict[str, set[str]] = {dimension.key: set() for dimension in dimensions}
+    for row in values:
+        allowed = registry.get(row.dimension_key)
+        if allowed is None:
+            continue
+        if row.value in seen[row.dimension_key]:
+            continue
+        seen[row.dimension_key].add(row.value)
+        allowed.append(row.value)
+    return {dimension: allowed for dimension, allowed in registry.items() if allowed}
+
+
+def _strip_json_fences(text: str) -> str:
+    stripped = text.strip()
+    match = _JSON_FENCE_RE.match(stripped)
+    if match:
+        return match.group(1).strip()
+    return stripped
+
+
+def _parse_suggested_tags_json(text: str) -> dict[str, Any]:
+    candidate = _strip_json_fences(text)
+    if not candidate:
+        return {}
+
+    payloads = [candidate]
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start != -1 and end != -1 and start < end:
+        payloads.append(candidate[start : end + 1])
+
+    for payload in payloads:
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _validate_suggested_tags(
+    suggestions: dict[str, Any],
+    allowed_by_dimension: dict[str, set[str]],
+) -> dict[str, str]:
+    validated: dict[str, str] = {}
+    for raw_dimension, raw_value in suggestions.items():
+        if not isinstance(raw_dimension, str):
+            continue
+        dimension = raw_dimension.strip()
+        if not dimension:
+            continue
+        if dimension not in allowed_by_dimension:
+            _logger.debug("Dropping suggested tag with unknown dimension '%s'", raw_dimension)
+            continue
+        if not isinstance(raw_value, str):
+            _logger.debug("Dropping suggested tag '%s' with non-string value", dimension)
+            continue
+        value = raw_value.strip()
+        if not value:
+            continue
+        if value not in allowed_by_dimension[dimension]:
+            _logger.debug(
+                "Dropping suggested tag '%s' with unknown value '%s'",
+                dimension,
+                raw_value,
+            )
+            continue
+        validated[dimension] = value
+    return validated
+
+
+def _build_tag_suggestion_prompt(
+    *,
+    registry_options: dict[str, list[str]],
+    draft_text: str,
+) -> tuple[str, str]:
+    system_prompt = (
+        "You suggest Writing Studio structured tags from a locked registry. "
+        "For each dimension, choose the single best-fit value from its allowed list, "
+        "or omit the dimension if the text does not clearly indicate one. "
+        'Reply with JSON only in the shape {"dimension_key": "value"}. '
+        "Use ONLY the listed dimensions and ONLY the listed values."
+    )
+    user_prompt = (
+        "Allowed registry values by dimension:\n"
+        f"{json.dumps(registry_options, indent=2, sort_keys=True)}\n\n"
+        "Draft text:\n"
+        f"{draft_text}"
+    )
+    return system_prompt, user_prompt
 
 
 # ── M7: Overview aggregator ───────────────────────────────────────────────────
@@ -249,6 +352,72 @@ async def get_draft_tags(
     if deliverable is None:
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
     return wr_repo.get_structured_tags_from_metadata(deliverable.deliverable_metadata)
+
+
+@router.post("/drafts/{draft_id}/tags/suggest")
+async def suggest_draft_tags(
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, dict[str, str]]:
+    """Suggest registry-backed structured tags for a draft without persisting."""
+    from artemis.agent import run_turn
+    from artemis.agent import user_message as make_user_msg
+    from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+
+    draft_text = _latest_draft_content(deliverable).strip()
+    if not draft_text:
+        return {"suggestions": {}}
+
+    dimensions = await tag_repo.list_tag_dimensions(session)
+    values = await tag_repo.list_tag_values(session)
+    registry_options = _build_tag_registry_options(dimensions, values)
+    if not registry_options:
+        return {"suggestions": {}}
+
+    profile = await wr_repo.get_active_profile(session)
+    system_prompt, user_prompt = _build_tag_suggestion_prompt(
+        registry_options=registry_options,
+        draft_text=draft_text,
+    )
+
+    try:
+        adapter = resolve_adapter(
+            getattr(profile, "default_model_provider", None) or None,
+        )
+    except NoProviderAvailableError as exc:
+        raise bad_request(
+            "No LLM provider is available. Add an API key in Integrations.",
+            "no_provider",
+        ) from exc
+
+    result = await run_turn(
+        adapter=adapter,
+        messages=[make_user_msg(user_prompt)],
+        system=system_prompt,
+        model=getattr(profile, "default_model_id", None) or None,
+        max_iterations=1,
+    )
+
+    response_text = ""
+    for msg in reversed(result.messages):
+        if msg.role != "assistant":
+            continue
+        for block in msg.content:
+            block_text = getattr(block, "text", None)
+            if isinstance(block_text, str):
+                response_text += block_text
+        if response_text:
+            break
+
+    parsed = _parse_suggested_tags_json(response_text)
+    allowed_by_dimension = {
+        dimension: set(allowed_values) for dimension, allowed_values in registry_options.items()
+    }
+    return {"suggestions": _validate_suggested_tags(parsed, allowed_by_dimension)}
 
 
 @router.put("/drafts/{draft_id}/tags")
