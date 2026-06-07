@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # As B1 / B2 / B3 / B4 land their models, add imports here.
 import artemis.marketing.models  # noqa: F401 — registers marketing OS models
 import artemis.memory.models  # noqa: F401 — registers memory keystone models
+import artemis.writing_rules.models  # noqa: F401 — registers Writing Studio models
 from alembic import context
 from artemis.config import settings
 from artemis.db import Base
