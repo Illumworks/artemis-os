@@ -47,7 +47,11 @@ _BRIEF_REQUIRED_AGENT_IDS = frozenset(
 )
 
 # Agent IDs that should receive full writing-ruleset grounding in shared_context.
-# Grows as more content agents need voice-rule awareness.
+# Grounding is only injected when the node has a deliverable_type_slug in its config
+# (i.e., the node is actually drafting a deliverable). Preflight nodes (no
+# deliverable_type_slug) do not get the ruleset — it causes the LLM to attempt a
+# full draft inline, which takes 900+ seconds without calling any tools.
+# See: briefs/content-draft-node-hang.md
 _WRITING_GROUND_AGENT_IDS: frozenset[str] = frozenset(
     {
         "marketing.content.writing_studio_adapter",
@@ -196,10 +200,16 @@ async def execute_agent_node(
                 shared_context["default_voice_profile_slug"] = _slug(profile.name)
 
             # For writing-grounded agents: inject approved ruleset + anti-fabrication
-            # guardrail so the first auto-draft sees the same voice rules as compose
-            # conversations do.  Only added when the active profile + rules/examples
-            # are non-empty to avoid noise in shared_context.
-            if agent_id in _WRITING_GROUND_AGENT_IDS:
+            # guardrail so the auto-draft sees the same voice rules as compose
+            # conversations do.  Only added when:
+            #   1. The agent is in _WRITING_GROUND_AGENT_IDS, AND
+            #   2. The node has a deliverable_type_slug (i.e., it is actually drafting).
+            # Preflight nodes (no deliverable_type_slug) do NOT get the ruleset — the
+            # extra 7K+ of writing rules causes the LLM to attempt a full inline draft
+            # instead of a quick readiness check, which hangs the subprocess for 900s
+            # without ever calling any tools.
+            # See: briefs/content-draft-node-hang.md root-cause analysis.
+            if agent_id in _WRITING_GROUND_AGENT_IDS and deliverable_type_slug:
                 from artemis.marketing.writing_studio.compose_engine import (
                     build_ruleset_grounding_block,
                 )
