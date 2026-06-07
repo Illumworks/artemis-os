@@ -25,3 +25,13 @@ build/
 .claude/
 .clone/
 .sync/
+
+# local runtime/agent junk
+.app.log
+.app.err.log
+.smoke.app.log
+.legislative_scout.log
+.backups/
+.codex-screenshots/
+.claire/
+Icon?
