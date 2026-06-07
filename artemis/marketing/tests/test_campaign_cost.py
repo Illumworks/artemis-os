@@ -133,7 +133,7 @@ async def test_404_for_unknown_candidate(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_byStage_sums_direct_rows(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_by_stage_sums_direct_rows(client: AsyncClient, db_session: AsyncSession) -> None:
     candidate = await _seed_candidate(db_session, target_scope={"mode": "all_districts"})
     await _add_cost(
         db_session,
