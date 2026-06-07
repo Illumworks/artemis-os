@@ -27,20 +27,33 @@ the right place automatically.**
 - **audience:** superintendent · district leader · curriculum director · principal · board member ·
   special-ed director · teacher · **parent (social only — see applicability)**. *We do NOT do outreach
   (email) to parents.*
-- **asset_type:** outreach email · email sequence ⚠️ · social post · blog · long form ⚠️ · product paper ·
-  one pager · landing page · webpage · impact story. *(NOT "case study" — Jon: use "impact story".)*
-  ⚠️ = too generic, needs subtypes (§3).
+- **asset_type (purpose):** outreach email · email sequence (subtypes §3) · social post · blog · long form
+  (subtypes §3) · product paper · landing page · webpage · impact story.
+  *(NOT "case study" — Jon: use "impact story". "one pager" REMOVED — it's a length, now `format` below.)*
 - **platform:** email · social (LinkedIn / X / Facebook / Instagram) · web/landing · print.
-- **intent:** awareness · consideration · decision · expansion (starter).
+- **intent:** awareness · consideration · decision · expansion · credibility/proof (a proof-led product
+  overview is intent=credibility, NOT a separate type).
+- **format (length) — Jon 2026-06-06:** SEPARATE from purpose, and FLEXIBLE — extensible values, NOT a
+  fixed 1-or-2-option binary (e.g. one-page · two-page · short · long · …, add as needed). Decouples "what
+  it is" from "how long," so a Product Explainer can be one-page or multi-page, "one pager" stops being a
+  pseudo-type, and rules can target length independently.
 - **topic / geography:** inherited from the campaign (family) + targeting (state / tier).
 - More values WILL be added — the registry (§1) makes that a data edit, not a code change.
 
-## 3. Generic types need subtypes (Jon flagged "email sequence" + "long form" as too generic)
-Add an optional `subtype` to `asset_type` (hierarchical value). Examples to seed WITH Jon:
-- email sequence → welcome · nurture · re-engagement · event follow-up · …
-- long form → buyer's guide · whitepaper · research report · explainer · …
-Rules can target the subtype (more specific) or the parent type (broader). Subtypes are registry values too
-(extensible).
+## 3. Subtypes (LOCKED with Jon 2026-06-06)
+Optional `subtype` on `asset_type` (hierarchical, registry values, extensible). Locked seed:
+- **email sequence →** welcome/onboarding · nurture · re-engagement/win-back · event (invite→reminder→recap)
+  · demo/meeting follow-up · renewal/expansion · back-to-school/seasonal.
+- **long form →** Decision Guide · Funding Guide · Field Guide · Product Explainer/Overview.
+  - **Field Guide = a STATE/POLICY compliance & navigation guide** (e.g. "Illinois SB 1672 dyslexia
+    screening compliance" — what a law/standard requires, how to evaluate a tool against it, how to fund a
+    compliant tool, procurement timeline, a readiness checklist). Typically state-specific; sent to
+    districts/states. NOT a generic how-to.
+  - **Product Explainer/Overview** = what the product is/does; a proof/credibility-led overview is the same
+    type tagged `intent=credibility` (not a separate type). (Both earlier example one-sheets = this type.)
+  - Excluded (Jon): whitepapers / research reports (different dept) and ebooks (not produced).
+Rules can target a subtype (specific) or the parent type (broad). Length is the SEPARATE `format` dimension
+(§2), never a subtype.
 
 ## 4. Platform-scoped applicability (the "parents" nuance)
 Some values only make sense on some platforms (parent = social only, not email). Store soft applicability in
