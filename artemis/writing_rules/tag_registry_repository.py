@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.writing_rules.models import TagDimension, TagValue
+from artemis.writing_rules.repository import StructuredTags, normalize_structured_tags
 
 
 class TagRegistryConflictError(ValueError):
@@ -18,6 +19,59 @@ class TagRegistryConflictError(ValueError):
 
 class TagRegistryValidationError(ValueError):
     """Raised when a requested parent/dimension relationship is invalid."""
+
+
+async def validate_structured_tags(session: AsyncSession, tags: Any) -> StructuredTags:
+    if not isinstance(tags, dict):
+        raise TagRegistryValidationError("tags must be an object")
+
+    dimensions = await list_tag_dimensions(session)
+    allowed_values = await list_tag_values(session)
+    allowed_by_dimension: dict[str, set[str]] = {dimension.key: set() for dimension in dimensions}
+    for row in allowed_values:
+        allowed_by_dimension.setdefault(row.dimension_key, set()).add(row.value)
+
+    normalized = normalize_structured_tags(tags)
+    validated: StructuredTags = {}
+    for raw_dimension, raw_value in tags.items():
+        if not isinstance(raw_dimension, str) or not raw_dimension.strip():
+            raise TagRegistryValidationError("tag dimension keys must be non-empty strings")
+        dimension = raw_dimension.strip()
+        if dimension not in allowed_by_dimension:
+            raise TagRegistryValidationError(f"Unknown tag dimension '{dimension}'")
+
+        if isinstance(raw_value, str):
+            value = raw_value.strip()
+            if not value:
+                raise TagRegistryValidationError(
+                    f"Tag dimension '{dimension}' must be a non-empty string or non-empty string list"
+                )
+            if value not in allowed_by_dimension[dimension]:
+                raise TagRegistryValidationError(
+                    f"Unknown tag value '{value}' for dimension '{dimension}'"
+                )
+            validated[dimension] = normalized[dimension]
+            continue
+
+        if isinstance(raw_value, list):
+            values = normalized.get(dimension)
+            if not isinstance(values, list) or not values:
+                raise TagRegistryValidationError(
+                    f"Tag dimension '{dimension}' must be a non-empty string or non-empty string list"
+                )
+            invalid = [value for value in values if value not in allowed_by_dimension[dimension]]
+            if invalid:
+                raise TagRegistryValidationError(
+                    f"Unknown tag value '{invalid[0]}' for dimension '{dimension}'"
+                )
+            validated[dimension] = values
+            continue
+
+        raise TagRegistryValidationError(
+            f"Tag dimension '{dimension}' must be a string or list of strings"
+        )
+
+    return validated
 
 
 async def list_tag_dimensions(
