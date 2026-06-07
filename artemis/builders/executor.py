@@ -395,6 +395,7 @@ async def run_agent(
             from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 
             cc_adapter = cast(ClaudeCodeAdapter, adapter)
+            _cc_timeout, _cc_max_turns = _content_node_timeout_and_turns(agent_id)
             completion = await cc_adapter.run_with_tools(
                 CompletionRequest(
                     messages=[_user_msg(effective_message)],
@@ -405,6 +406,8 @@ async def run_agent(
                 run_id=run_id,
                 pipeline_run_id=tool_context.pipeline_run_id,
                 agent_tools=[t.name for t in tool_registry.specs()],
+                timeout_seconds=_cc_timeout,
+                max_turns=_cc_max_turns,
             )
             # Normalise the single CompletionResponse into the RunResult shape the
             # downstream text/usage/finalize code expects (one assistant message).
@@ -700,6 +703,39 @@ def _is_claude_code_tool_run(adapter: ModelAdapter, tool_registry: ToolRegistry)
     from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 
     return isinstance(adapter, ClaudeCodeAdapter) and len(tool_registry) > 0
+
+
+def _content_node_timeout_and_turns(agent_id: str) -> tuple[float | None, int | None]:
+    """Return (timeout_seconds, max_turns) overrides for content-class agents.
+
+    Content agents (marketing.content.*) make exactly ONE tool call per run:
+    - marketing.content.asset_selector: list_approved_assets → done (≤30s)
+    - marketing.content.writing_studio_adapter: enqueue → done (≤60s)
+
+    A 120s wall-clock timeout (6× the observed maximum of ~53s) is tight enough to
+    fail-fast on a hung subprocess while leaving ample headroom for a slow model
+    response.  ``max_turns=5`` bounds the internal claude-code agent loop so a
+    stuck tool-use loop cannot run indefinitely.
+
+    Scout agents (marketing.scout.*) remain unbounded — they call multiple tools in
+    sequence and the default 900s timeout is appropriate for their workload.
+
+    Returns (None, None) for all other agent classes (no override).
+    """
+    import os
+
+    if agent_id.startswith("marketing.content."):
+        raw = os.environ.get("ARTEMIS_CONTENT_NODE_TIMEOUT_SECONDS")
+        timeout: float | None = None
+        if raw:
+            import contextlib
+
+            with contextlib.suppress(ValueError):
+                timeout = float(raw)
+        if timeout is None:
+            timeout = 120.0
+        return timeout, 5
+    return None, None
 
 
 def _user_msg(text: str):  # type: ignore[no-untyped-def]

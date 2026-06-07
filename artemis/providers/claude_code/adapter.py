@@ -312,6 +312,8 @@ class ClaudeCodeAdapter:
         run_id: str,
         pipeline_run_id: str | None,
         agent_tools: list[str],
+        timeout_seconds: float | None = None,
+        max_turns: int | None = None,
     ) -> CompletionResponse:
         """Run a tool-using agent via claude-code's own agent loop (CC2).
 
@@ -321,6 +323,14 @@ class ClaudeCodeAdapter:
         config file is always cleaned up. Any failure (non-zero exit, timeout,
         launch error) raises a provider error so the caller can mark the node
         failed and let the rest of the pipeline continue.
+
+        Args:
+            timeout_seconds: Per-call wall-clock subprocess timeout. Overrides the
+                global ``ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS`` env var when set.
+                Useful for content nodes that should complete in seconds, not minutes.
+            max_turns: When set, passes ``--max-turns <n>`` to claude-code so its
+                internal agent loop is bounded. Guards against tool-use loops where
+                the LLM keeps calling tools without producing a final response.
         """
         model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
@@ -343,13 +353,21 @@ class ClaudeCodeAdapter:
                 model=model,
                 mcp_config_path=tmp.name,
                 agent_tools=agent_tools,
+                max_turns=max_turns,
             )
-            return await self._run_subprocess(cmd, prompt, tool_run=True)
+            return await self._run_subprocess(
+                cmd, prompt, tool_run=True, timeout_seconds=timeout_seconds
+            )
         finally:
             Path(tmp.name).unlink(missing_ok=True)
 
     async def _run_subprocess(
-        self, cmd: list[str], prompt: str, *, tool_run: bool = False
+        self,
+        cmd: list[str],
+        prompt: str,
+        *,
+        tool_run: bool = False,
+        timeout_seconds: float | None = None,
     ) -> CompletionResponse:
         """Launch the claude CLI, enforce the wall-clock timeout, parse the result.
 
@@ -360,8 +378,12 @@ class ClaudeCodeAdapter:
         loaded synchronously (blocking) rather than deferred. On the text-only
         path (``tool_run=False``) no MCP server is involved, so the env override
         is omitted.
+
+        ``timeout_seconds``: when provided, overrides the global
+        ``ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS`` env var for this call. Callers
+        can pass a tighter bound for fast-path agents (e.g., content nodes).
         """
-        timeout = _timeout_seconds()
+        timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
         env = _mcp_eager_env() if tool_run else None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -509,19 +531,24 @@ def _build_launch_command(
     model: str,
     mcp_config_path: str,
     agent_tools: list[str],
+    max_turns: int | None = None,
 ) -> list[str]:
-    """Build the verified ``claude -p`` tool-run command (no ``--max-turns``).
+    """Build the verified ``claude -p`` tool-run command.
 
     Canonical hyphenated flags; the per-agent MCP server is the only server
     (``--strict-mcp-config``); the scoped allowlist pre-approves exactly the
     agent's tools and ``--permission-mode default`` runs them without prompts.
 
     ``--no-session-persistence`` prevents per-run session disk writes. Each
-    scout run is a fresh ephemeral subprocess — sessions are never resumed, so
+    agent run is a fresh ephemeral subprocess — sessions are never resumed, so
     persisting them wastes I/O and can interfere with the MCP startup timing
     that triggers tool deferral.
+
+    ``max_turns``: when provided, adds ``--max-turns <n>`` to bound the claude-code
+    internal agent loop. Use for content nodes that should call one tool and return,
+    preventing runaway loops where the LLM keeps calling tools without a final answer.
     """
-    return [
+    cmd = [
         binary,
         "-p",
         "--output-format",
@@ -539,6 +566,9 @@ def _build_launch_command(
         "--permission-mode",
         _PERMISSION_MODE,
     ]
+    if max_turns is not None:
+        cmd += ["--max-turns", str(max_turns)]
+    return cmd
 
 
 def _flatten_to_prompt(request: CompletionRequest) -> str:
