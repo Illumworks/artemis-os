@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Composer design pass — Writing Studio</title>
+<style>
+  :root{
+    --bg:#f4efe7; --card:#fffdf9; --ink:#1e1a15; --ink2:#4a4views; --ink2:#544c40; --ink3:#8a7f6e;
+    --rule:#e7ded0; --accent:#c8892f; --accent-soft:#f1e2c8; --green:#2f8f5b; --warn:#cf7a2e;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --sans:-apple-system,Inter,Segoe UI,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:var(--sans);color:var(--ink);font-size:14px}
+  .wrap{max-width:1380px;margin:0 auto;padding:20px}
+  .anno{font-family:var(--mono);font-size:10.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.06em}
+  .pill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--rule);border-radius:999px;padding:3px 10px;font-size:12px;background:var(--card);color:var(--ink2)}
+
+  /* header */
+  .hdr{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 2px rgba(30,26,21,.04)}
+  .hdr h1{font-size:16px;margin:0;font-weight:650}
+  .hdr .spacer{flex:1}
+  .hdr .ind{font-size:12px;color:var(--ink3);display:inline-flex;gap:5px;align-items:center;cursor:pointer}
+  .hdr .ind:hover{color:var(--ink)}
+  .btn{border:1px solid var(--rule);background:var(--card);border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;color:var(--ink2)}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .status-pill{background:#eef4ef;border:1px solid #cfe3d5;color:var(--green);border-radius:999px;padding:3px 10px;font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em}
+
+  /* tag bar */
+  .tagbar{display:flex;align-items:center;gap:8px;margin:14px 2px 10px}
+  .tag{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);border:1px solid #e3cfa6;color:#6e4f1c;border-radius:999px;padding:4px 11px;font-size:12px;font-weight:500}
+  .tag .k{color:#a07c3e;font-size:10.5px;font-family:var(--mono);text-transform:uppercase}
+  .tag-add{border:1px dashed var(--rule);color:var(--ink3);border-radius:999px;padding:4px 10px;font-size:12px;background:none;cursor:pointer}
+
+  /* 3-col */
+  .grid{display:grid;grid-template-columns:210px 1fr 330px;gap:14px;margin-top:6px}
+  .col{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:14px}
+  .col h3{font-family:var(--mono);font-size:10.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px}
+  .rail-item{font-size:12.5px;color:var(--ink2);padding:7px 0;border-bottom:1px solid var(--rule)}
+  .rail-item b{color:var(--ink);font-weight:600}
+  .rail-sub{font-size:11px;color:var(--ink3)}
+
+  /* canvas / document */
+  .canvas{position:relative;padding:0}
+  .doc{padding:26px 30px;line-height:1.7;font-size:14.5px;color:var(--ink)}
+  .doc p{margin:0 0 14px}
+  .token{background:#eaf0fb;border:1px solid #c7d6f0;border-radius:5px;padding:0 5px;color:#33558c;font-size:13px}
+  .claim{border-bottom:2px wavy var(--warn);cursor:pointer;position:relative}
+  .sel{background:#fbe6c8;border-radius:3px;padding:1px 0;position:relative}
+
+  /* selection AI toolbar */
+  .ai-tb{position:absolute;top:-42px;left:0;background:var(--ink);color:#fff;border-radius:10px;padding:6px 8px;display:flex;gap:4px;align-items:center;font-size:12px;box-shadow:0 8px 24px rgba(30,26,21,.3);white-space:nowrap}
+  .ai-tb span{padding:4px 8px;border-radius:6px;cursor:pointer}
+  .ai-tb span:hover{background:rgba(255,255,255,.15)}
+  .ai-tb .star{color:var(--accent);font-weight:700;padding-left:4px}
+  .ai-tb:after{content:"";position:absolute;bottom:-6px;left:24px;border:6px solid transparent;border-top-color:var(--ink);border-bottom:0}
+
+  /* claim popover */
+  .claim-pop{position:absolute;top:24px;left:0;width:280px;background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:12px 14px;box-shadow:0 12px 36px rgba(30,26,21,.22);z-index:5}
+  .claim-pop .warnrow{display:flex;gap:7px;align-items:center;color:var(--warn);font-size:12.5px;font-weight:600;margin-bottom:8px}
+  .claim-pop p{margin:0 0 11px;font-size:12px;color:var(--ink3);line-height:1.5}
+  .claim-pop .acts{display:flex;gap:7px}
+  .mini{border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer;border:1px solid var(--rule);background:var(--card);color:var(--ink2)}
+  .mini-go{background:var(--green);border-color:var(--green);color:#fff;font-weight:600}
+
+  /* margin comment */
+  .comment{background:#fff;border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:8px;padding:9px 11px;font-size:12px;color:var(--ink2);box-shadow:0 2px 8px rgba(30,26,21,.06)}
+  .comment .who{font-weight:600;color:var(--ink);font-size:11.5px}
+
+  /* chat */
+  .msg{font-size:12.5px;margin-bottom:10px}
+  .msg .role{font-family:var(--mono);font-size:10px;color:var(--ink3);text-transform:uppercase}
+  .msg.you .bub{background:var(--accent-soft);border:1px solid #e3cfa6}
+  .msg .bub{background:#f7f2ea;border:1px solid var(--rule);border-radius:10px;padding:9px 11px;margin-top:3px;color:var(--ink2);line-height:1.5}
+  .chat-input{margin-top:12px;border:1px solid var(--rule);border-radius:12px;padding:11px;color:var(--ink3);font-size:12.5px;background:#fff}
+
+  /* actions menu */
+  .menu{position:absolute;top:46px;right:0;background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:6px;box-shadow:0 12px 36px rgba(30,26,21,.22);width:210px;z-index:6}
+  .menu div{padding:8px 11px;border-radius:8px;font-size:12.5px;color:var(--ink2);cursor:pointer}
+  .menu div:hover{background:#f4efe7}
+  .menu .ic{color:var(--accent);margin-right:8px}
+
+  .callout{font-family:var(--mono);font-size:10px;color:var(--accent);background:var(--accent-soft);border:1px solid #e3cfa6;border-radius:6px;padding:2px 7px;display:inline-block}
+  .legend{margin-top:18px;background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:16px 18px}
+  .legend h3{font-family:var(--mono);font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin:0 0 12px}
+  .legend ul{margin:0;padding-left:0;list-style:none;columns:2;column-gap:32px}
+  .legend li{font-size:12.5px;color:var(--ink2);margin-bottom:9px;break-inside:avoid;line-height:1.45}
+  .legend b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="anno" style="margin-bottom:8px">Writing Studio · Composer design pass — every capability gets a contextual home (nothing persistent unless earned)</div>
+
+  <!-- HEADER -->
+  <div class="hdr">
+    <h1>Grosse Pointe — Superintendent Outreach</h1>
+    <span class="status-pill">Draft ready</span>
+    <span class="spacer"></span>
+    <span class="ind">◳ 2 variants</span>
+    <span class="ind">✓ 3 rules</span>
+    <span class="ind">⟲ History</span>
+    <div style="position:relative">
+      <span class="ind">⋯ Actions</span>
+      <div class="menu">
+        <div><span class="ic">▤</span>Save as template</div>
+        <div><span class="ic">⇄</span>Repurpose for another audience</div>
+        <div><span class="ic">◎</span>Run brand + readability linter</div>
+        <div><span class="ic">↗</span>Export to company GPT</div>
+      </div>
+    </div>
+    <button class="btn-primary btn">Save version</button>
+  </div>
+
+  <!-- TAG BAR -->
+  <div class="tagbar">
+    <span class="tag"><span class="k">audience</span> Superintendent</span>
+    <span class="tag"><span class="k">type</span> Outreach email</span>
+    <span class="tag"><span class="k">platform</span> Email</span>
+    <span class="tag"><span class="k">format</span> Short</span>
+    <button class="tag-add">+ tag</button>
+    <span class="callout" style="margin-left:6px">AI-prefilled · drives which rules apply</span>
+  </div>
+
+  <!-- 3 COLUMNS -->
+  <div class="grid">
+    <!-- left rail -->
+    <div class="col">
+      <h3>Context</h3>
+      <div class="rail-item"><b>Active draft</b><div class="rail-sub">Grosse Pointe · Supt outreach</div></div>
+      <div class="rail-item"><b>Voice</b><div class="rail-sub">Amira Marketing Voice</div></div>
+      <div class="rail-item"><b>Brief</b><div class="rail-sub">Leadership transition · hot signal</div></div>
+      <div class="rail-item" style="border:0"><b>Library</b><div class="rail-sub">All drafts · 9 folders</div></div>
+    </div>
+
+    <!-- center canvas -->
+    <div class="col canvas">
+      <div class="doc">
+        <p>Dear Superintendent <span class="token">{{last_name}}</span>,</p>
+        <p>Congratulations on your appointment leading Grosse Pointe Public Schools — a historic moment for the district and its students.</p>
+        <p>As you set early priorities, literacy is likely near the top. Amira is
+          <span class="claim">rated the most accurate reading assessment by state agencies and leading research centers
+            <span class="claim-pop">
+              <span class="warnrow">⚠ Claim not in Register</span>
+              <p>This claim isn't in the Claims Register yet. As an approver you can register it now, or attach a source.</p>
+              <span class="acts">
+                <span class="mini mini-go">✓ Approve claim</span>
+                <span class="mini">＋ Attach source</span>
+                <span class="mini">Edit</span>
+              </span>
+            </span>
+          </span>, screening a full class in 20 minutes.</p>
+        <p><span class="sel">We'd value 20 minutes to walk your team through what early, accurate screening could look like this fall.
+          <span class="ai-tb"><span class="star">✦</span><span>Rewrite</span><span>Shorten</span><span>Tone ▾</span><span>Make on-brand</span><span>Ask AI…</span></span>
+        </span></p>
+        <p>Warm regards,<br>The Amira Learning team</p>
+      </div>
+    </div>
+
+    <!-- right chat + comment -->
+    <div class="col" style="display:flex;flex-direction:column">
+      <h3>Writing room · AI</h3>
+      <div class="comment" style="margin-bottom:14px">
+        <div class="who">Angela <span style="color:#8a7f6e;font-weight:400">· on “historic moment”</span></div>
+        Lead supers with the student-outcome stat, not the milestone.
+        <div class="callout" style="margin-top:6px">team comment → Gate-2</div>
+      </div>
+      <div class="msg"><div class="role">You</div><div class="bub">Draft a warm outreach email to the new superintendent.</div></div>
+      <div class="msg you"><div class="role">Amira AI</div><div class="bub">Drafted — applied the board-transition rule + superintendent voice. Flagged one claim to register.</div></div>
+      <div class="chat-input">Ask for a rewrite, paste notes, or drop a source…</div>
+    </div>
+  </div>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <h3>How each feature gets a home (no persistent clutter)</h3>
+    <ul>
+      <li><b>Highlight → AI edit</b> — floating toolbar appears only on selection; edits show as accept/reject.</li>
+      <li><b>Claims guardrail</b> — inline wavy underline + click-to-resolve popover; one-click approve (you're the curator).</li>
+      <li><b>Tags</b> — compact AI-prefilled chip bar; collapsible; drives the rules.</li>
+      <li><b>Comments</b> — margin notes tied to a span, flow to Gate-2 review.</li>
+      <li><b>Personalization</b> — merge tokens like {{last_name}} render inline; preview per recipient.</li>
+      <li><b>Variants / Versions</b> — the existing “N variants” + History/Save in the slim header.</li>
+      <li><b>Templates · Repurpose · Linter · Export-to-GPT</b> — all live in one “⋯ Actions” menu, not standing buttons.</li>
+      <li><b>Rules indicator</b> — “✓ 3 rules” shows what’s applied; click to see/scope them.</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>
