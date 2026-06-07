@@ -6,6 +6,7 @@ Callers own commit / rollback.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -21,6 +22,56 @@ from artemis.writing_rules.models import (
     WritingSource,
     WritingTrainingCandidate,
 )
+
+RuleScope = dict[str, list[str]]
+ResolvedTags = Mapping[str, str | list[str]]
+
+
+def _normalize_rule_scope(scope: Any) -> RuleScope:
+    if not isinstance(scope, dict):
+        return {}
+
+    normalized: RuleScope = {}
+    for dimension, allowed_values in scope.items():
+        if not isinstance(dimension, str):
+            continue
+        if isinstance(allowed_values, str):
+            values = [allowed_values]
+        elif isinstance(allowed_values, list):
+            values = [value for value in allowed_values if isinstance(value, str)]
+        else:
+            continue
+        normalized[dimension] = values
+    return normalized
+
+
+def _normalize_resolved_tags(tags: ResolvedTags) -> dict[str, set[str]]:
+    normalized: dict[str, set[str]] = {}
+    for dimension, raw_value in tags.items():
+        if isinstance(raw_value, str):
+            normalized[dimension] = {raw_value}
+            continue
+        if isinstance(raw_value, list):
+            values = {value for value in raw_value if isinstance(value, str)}
+            if values:
+                normalized[dimension] = values
+    return normalized
+
+
+def rule_matches_tags(tag_scope: Any, tags: ResolvedTags) -> bool:
+    scope = _normalize_rule_scope(tag_scope)
+    if not scope:
+        return True
+
+    normalized_tags = _normalize_resolved_tags(tags)
+    for dimension, allowed_values in scope.items():
+        tag_values = normalized_tags.get(dimension)
+        if tag_values is None:
+            return False
+        if tag_values.isdisjoint(allowed_values):
+            return False
+    return True
+
 
 # ── Profiles ──────────────────────────────────────────────────────────────────
 
@@ -386,6 +437,7 @@ async def get_rule_by_profile_type_title(
 
 
 async def create_rule(session: AsyncSession, **kwargs: Any) -> WritingRule:
+    kwargs["tag_scope"] = _normalize_rule_scope(kwargs.get("tag_scope"))
     rule = WritingRule(**kwargs)
     session.add(rule)
     await session.flush()
@@ -397,6 +449,8 @@ async def update_rule(session: AsyncSession, rule_id: int, **kwargs: Any) -> Wri
     rule = await get_rule(session, rule_id)
     if rule is None:
         return None
+    if "tag_scope" in kwargs:
+        kwargs["tag_scope"] = _normalize_rule_scope(kwargs["tag_scope"])
     for key, value in kwargs.items():
         setattr(rule, key, value)
     rule.updated_at = datetime.now(UTC)
@@ -411,6 +465,23 @@ async def delete_rule(session: AsyncSession, rule_id: int) -> bool:
     await session.delete(rule)
     await session.flush()
     return True
+
+
+async def resolve_rules_for_tags(
+    session: AsyncSession,
+    profile_id: int,
+    tags: ResolvedTags,
+) -> list[WritingRule]:
+    result = await session.execute(
+        select(WritingRule)
+        .where(
+            WritingRule.profile_id == profile_id,
+            WritingRule.status == "active",
+        )
+        .order_by(WritingRule.created_at, WritingRule.id)
+    )
+    rules = list(result.scalars())
+    return [rule for rule in rules if rule_matches_tags(rule.tag_scope, tags)]
 
 
 # ── Examples ──────────────────────────────────────────────────────────────────

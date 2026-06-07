@@ -14,6 +14,7 @@ Endpoints:
 
   GET    /api/writing-rules/rules                  — list rules (optional ?profileId=&ruleType=)
   POST   /api/writing-rules/rules                  — create rule
+  POST   /api/writing-rules/rules/resolve          — resolve matching rules for tags
   GET    /api/writing-rules/rules/{id}             — get rule
   PATCH  /api/writing-rules/rules/{id}             — update rule
   DELETE /api/writing-rules/rules/{id}             — delete rule
@@ -51,6 +52,7 @@ from artemis.writing_rules.schemas import (
     WritingProfileUpdate,
     WritingRuleCreate,
     WritingRuleRead,
+    WritingRuleResolveRequest,
     WritingRuleUpdate,
     WritingSourceCreate,
     WritingSourceRead,
@@ -206,6 +208,19 @@ async def create_rule(
     await session.commit()
     await session.refresh(rule)
     return WritingRuleRead.model_validate(rule)
+
+
+@router.post("/rules/resolve", response_model=list[WritingRuleRead])
+async def resolve_rules(
+    body: WritingRuleResolveRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> list[WritingRuleRead]:
+    rows = await repo.resolve_rules_for_tags(
+        session,
+        profile_id=body.profile_id,
+        tags=body.tags,
+    )
+    return [WritingRuleRead.model_validate(row) for row in rows]
 
 
 @router.get("/rules/{rule_id}", response_model=WritingRuleRead)

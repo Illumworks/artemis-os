@@ -143,6 +143,12 @@ class WritingRule(Base):
     rule_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="voice")
     title: Mapped[str] = mapped_column(Text, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    tag_scope: Mapped[dict[str, list[str]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
     source_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     created_at: Mapped[datetime] = mapped_column(
