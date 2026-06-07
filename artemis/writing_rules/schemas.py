@@ -7,6 +7,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+TagScope = dict[str, list[str]]
+ResolvedTags = dict[str, str | list[str]]
+
 
 class _Base(BaseModel):
     model_config = ConfigDict(
@@ -92,6 +95,7 @@ class WritingRuleCreate(_Base):
     rule_type: str = Field(default="voice", alias="ruleType")
     title: str
     body: str
+    tag_scope: TagScope = Field(default_factory=dict, alias="tagScope")
     status: str = "active"
 
 
@@ -101,6 +105,7 @@ class WritingRuleRead(_Base):
     rule_type: str = Field(alias="ruleType")
     title: str
     body: str
+    tag_scope: TagScope = Field(default_factory=dict, alias="tagScope")
     source_candidate_id: int | None = Field(default=None, alias="sourceCandidateId")
     status: str
     created_at: datetime = Field(alias="createdAt")
@@ -111,7 +116,13 @@ class WritingRuleUpdate(_Base):
     rule_type: str | None = Field(default=None, alias="ruleType")
     title: str | None = None
     body: str | None = None
+    tag_scope: TagScope | None = Field(default=None, alias="tagScope")
     status: str | None = None
+
+
+class WritingRuleResolveRequest(_Base):
+    profile_id: int = Field(alias="profileId")
+    tags: ResolvedTags = Field(default_factory=dict)
 
 
 # ── Writing Example ───────────────────────────────────────────────────────────
@@ -227,6 +238,7 @@ class WritingRuleRow(_Base):
     rule_type: str = "voice"
     title: str
     body: str
+    tag_scope: TagScope = Field(default_factory=dict)
     source_candidate_id: int | None = None
     status: str = "active"
     created_at: int | None = None
