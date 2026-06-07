@@ -95,14 +95,20 @@ Two main columns under a slim header; comments FLOAT in the document margin (no 
   - **Comments FLOAT in the right margin, Google-Docs-style** (NOT a rail): anchored to a highlighted span
     via a connector, **expand/collapse** (collapsed = a small chip), reply/resolve, and **@mention + ping/
     notify** (in-app + notification). This was v3's mistake (a fixed pane that layered on the chat).
-- **Drafts = a Finder-style picker** opened from the header (NOT a flat dropdown): folder tree + files, with
-  **+ New folder**, **+ New draft**, and **+ New from template**.
-- **Templates need BOTH create + apply:** "Save as template" (⋯ Actions) AND "New from template" (the
-  picker). If we can't ship the apply path, **drop the template feature** (Jon) — don't ship create-only.
-- **Slim header:** drafts-picker · title · status · N variants · N rules · History · **⋯ Actions** (Save as
-  template · Repurpose · Brand+readability check) · Save version.
-- **Export-to-GPT is NOT in the composer** — Writing Studio **Memory page** (acts on the profile). No legend.
-- Settled: chat LEFT; document wide with floating margin comments; Finder-style drafts picker in the header.
+- **Drafts = a Finder-style picker that POPS FROM THE HEADER button** (a popover, NOT parked anywhere on the
+  page, no descriptive label): folder tree + files. Create actions are consolidated into a **single "+" in
+  the picker** that opens a small menu — **New draft / New from template / New folder** (don't lay all three
+  out inline — too busy, Jon). A popup-from-the-picker is fine.
+- **Templates need BOTH create + apply:** "Save as template" (⋯ Actions) AND "New from template" (the "+"
+  menu). If we can't ship the apply path, **drop the template feature** (Jon) — don't ship create-only.
+- **Google Doc (KEEP — Jon):** link/import an existing Google Doc + export — a compact header affordance
+  ("⊞ Google Doc · link · export"). This was planned earlier; keep it.
+- **Slim header:** drafts-picker · title · status · N variants · N rules · History · **Google Doc** ·
+  **⋯ Actions** (Save as template · Repurpose · Brand+readability check) · Save version.
+- **Export-to-GPT is NOT in the composer** — Writing Studio **Memory page** (acts on the profile).
+- **No annotation/caption text** in the UI (no "drafts picker" label, no "long-form breaks" caption —
+  pagination just happens for long-form types).
+- Settled: chat LEFT; document wide; comments FLOAT (Google-Docs); drafts picker pops from the header "+".
 
 ## Constraints (carry into worker briefs)
 Lossless (draft history/versions preserved — there's already a save-chat-version concept; never lose
