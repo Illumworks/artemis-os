@@ -68,6 +68,14 @@ human confirms/adjusts** (same "AI proposes, human confirms" principle used else
 asset/deliverable + surfaced on the Campaign Brief. They flow to the draft agent and into the WS draft's
 metadata (filter/organize drafts by audience/type/platform).
 
+### 5b. Also on the manual "New draft" composer — OPTIONAL (Jon 2026-06-06)
+The same tag fields appear on the from-scratch New-draft composer in Writing Studio, but **never required —
+do NOT gate/​slow creation on tagging.** Instead, **AI auto-tags from the natural conversation + the draft
+content** (you start writing/chatting; the agent infers audience/type/platform/intent and proposes tags in
+the background) and the user can confirm/adjust or ignore. Same "AI proposes, human confirms" mechanism as
+the conversational rule capture (§7) — so tagging is a frictionless byproduct of writing, not a gate. A
+draft can stay untagged; tags only sharpen which rules apply.
+
 ## 6. Tag-scoped rules
 - A rule has a **scope** = tag matchers (e.g., `audience ∈ {superintendent, board} AND platform = email`).
 - At draft time the agent gathers ALL rules whose scope matches the asset's tags + the global brand voice,
