@@ -43,6 +43,7 @@ from artemis.marketing.writing_studio.compose_engine import (
     extract_proposed_learnings,
 )
 from artemis.writing_rules import repository as wr_repo
+from artemis.writing_rules import tag_registry_repository as tag_repo
 from artemis.writing_rules.seed_corpus import import_writing_seed_corpus
 
 _logger = logging.getLogger(__name__)
@@ -236,6 +237,45 @@ async def get_draft(
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
     thread_messages = await wr_repo.list_thread_messages_for_draft(session, draft_id)
     return _serialize_deliverable_detail(deliverable, thread_messages)
+
+
+@router.get("/drafts/{draft_id}/tags")
+async def get_draft_tags(
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, str | list[str]]:
+    """Return the draft's structured tags map (or {} when untagged)."""
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+    return wr_repo.get_structured_tags_from_metadata(deliverable.deliverable_metadata)
+
+
+@router.put("/drafts/{draft_id}/tags")
+async def put_draft_tags(
+    body: dict[str, Any],
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, str | list[str]]:
+    """Validate and persist structured tags in deliverable_metadata.structured_tags."""
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+    if "tags" not in body:
+        raise bad_request("tags is required", "draft_missing_tags")  # noqa: B904
+
+    try:
+        structured_tags = await tag_repo.validate_structured_tags(session, body.get("tags"))
+    except tag_repo.TagRegistryValidationError as exc:
+        raise bad_request(str(exc), "draft_invalid_tags") from exc  # noqa: B904
+
+    meta = dict(deliverable.deliverable_metadata or {})
+    meta["structured_tags"] = structured_tags
+    deliverable.deliverable_metadata = meta
+    deliverable.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(deliverable)
+    return wr_repo.get_structured_tags_from_metadata(deliverable.deliverable_metadata)
 
 
 # ── M7: Draft update (PUT) ────────────────────────────────────────────────────
@@ -439,7 +479,14 @@ async def compose_draft(
     if profile is None:
         profile = await wr_repo.get_active_profile(session)
 
-    rules = await wr_repo.list_rules(session)
+    all_rules = await wr_repo.list_rules(session)
+    structured_tags = wr_repo.get_structured_tags_from_metadata(meta)
+    rules = await wr_repo.resolve_grounding_rules(
+        session,
+        profile_id=getattr(profile, "id", None),
+        fallback_rules=all_rules,
+        structured_tags=structured_tags,
+    )
     examples = await wr_repo.list_examples(session)
 
     # ── 3. Load prior thread messages ─────────────────────────────────────────

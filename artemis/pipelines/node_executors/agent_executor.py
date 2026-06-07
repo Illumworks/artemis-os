@@ -213,11 +213,26 @@ async def execute_agent_node(
                 from artemis.marketing.writing_studio.compose_engine import (
                     build_ruleset_grounding_block,
                 )
-                from artemis.writing_rules.repository import list_examples, list_rules
+                from artemis.writing_rules.repository import (
+                    list_examples,
+                    list_rules,
+                    resolve_grounding_rules,
+                )
 
                 all_rules = await list_rules(session)
+                draft_structured_tags = await _get_candidate_draft_structured_tags(
+                    session,
+                    candidate_id=candidate.id,
+                    deliverable_type_slug=deliverable_type_slug,
+                )
+                rules = await resolve_grounding_rules(
+                    session,
+                    profile_id=getattr(profile, "id", None),
+                    fallback_rules=all_rules,
+                    structured_tags=draft_structured_tags,
+                )
                 all_examples = await list_examples(session)
-                grounding = build_ruleset_grounding_block(profile, all_rules, all_examples)
+                grounding = build_ruleset_grounding_block(profile, rules, all_examples)
                 if grounding:
                     shared_context["writing_ruleset_block"] = grounding[
                         "system_prompt_grounding_block"
@@ -500,3 +515,36 @@ async def _resolve_candidate_for_run(
     if not candidates:
         return None
     return candidates[0]
+
+
+async def _get_candidate_draft_structured_tags(
+    session: AsyncSession,
+    *,
+    candidate_id: int,
+    deliverable_type_slug: str,
+) -> dict[str, str | list[str]]:
+    from artemis.marketing.models import CampaignDeliverable
+    from artemis.writing_rules.repository import get_structured_tags_from_metadata
+
+    result = await session.execute(
+        select(CampaignDeliverable)
+        .where(CampaignDeliverable.candidate_id == candidate_id)
+        .order_by(CampaignDeliverable.id.desc())
+    )
+    deliverables = list(result.scalars())
+    if not deliverables:
+        return {}
+
+    for deliverable in deliverables:
+        metadata = (
+            deliverable.deliverable_metadata
+            if isinstance(deliverable.deliverable_metadata, dict)
+            else {}
+        )
+        type_slug = metadata.get("deliverableTypeSlug") or metadata.get("deliverable_type_slug")
+        if type_slug == deliverable_type_slug:
+            return get_structured_tags_from_metadata(metadata)
+
+    if len(deliverables) == 1:
+        return get_structured_tags_from_metadata(deliverables[0].deliverable_metadata)
+    return {}

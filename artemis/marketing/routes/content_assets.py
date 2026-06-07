@@ -25,6 +25,8 @@ from artemis.marketing.repository import (
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
+from artemis.writing_rules import tag_registry_repository as tag_repo
+from artemis.writing_rules.repository import get_structured_tags_from_metadata
 
 router = APIRouter(
     prefix="/api/content-assets",
@@ -181,6 +183,45 @@ async def get_asset(
     if asset is None:
         raise not_found("Asset not found", "content_assets_not_found")  # noqa: B904
     return _serialize_asset(asset)
+
+
+@router.get("/{asset_id}/tags")
+async def get_asset_tags(
+    asset_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, str | list[str]]:
+    """Return the asset's structured tags map (or {} when untagged)."""
+    asset = await session.get(ContentAsset, asset_id)
+    if asset is None:
+        raise not_found("Asset not found", "content_assets_not_found")  # noqa: B904
+    return get_structured_tags_from_metadata(asset.asset_metadata)
+
+
+@router.put("/{asset_id}/tags")
+async def put_asset_tags(
+    asset_id: int,
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, str | list[str]]:
+    """Validate and persist structured tags in asset_metadata.structured_tags."""
+    asset = await session.get(ContentAsset, asset_id)
+    if asset is None:
+        raise not_found("Asset not found", "content_assets_not_found")  # noqa: B904
+    if "tags" not in body:
+        raise bad_request("tags is required", "content_assets_missing_tags")  # noqa: B904
+
+    try:
+        structured_tags = await tag_repo.validate_structured_tags(session, body.get("tags"))
+    except tag_repo.TagRegistryValidationError as exc:
+        raise bad_request(str(exc), "content_assets_invalid_tags") from exc  # noqa: B904
+
+    metadata = dict(asset.asset_metadata or {})
+    metadata["structured_tags"] = structured_tags
+    asset.asset_metadata = metadata
+    await session.flush()
+    await session.commit()
+    await session.refresh(asset)
+    return get_structured_tags_from_metadata(asset.asset_metadata)
 
 
 @router.patch("/{asset_id}")

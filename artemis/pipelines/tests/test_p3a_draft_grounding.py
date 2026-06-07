@@ -22,8 +22,9 @@ Tests:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -438,3 +439,308 @@ async def test_writing_studio_adapter_constant_exists() -> None:
     from artemis.pipelines.node_executors.agent_executor import _WRITING_GROUND_AGENT_IDS
 
     assert "marketing.content.writing_studio_adapter" in _WRITING_GROUND_AGENT_IDS
+
+
+async def test_agent_executor_uses_matching_rules_for_tagged_candidate_draft(
+    db_session: AsyncSession,
+) -> None:
+    """Tagged candidate drafts should inject only global + matching rules."""
+    from sqlalchemy import text as sql_text
+
+    from artemis.marketing.models import CampaignBrief, CampaignDeliverable
+    from artemis.marketing.repository import create_campaign_candidate_from_signal, create_signal
+    from artemis.pipelines.node_executors.agent_executor import execute_agent_node
+    from artemis.writing_rules import repository as wr_repo
+
+    await db_session.execute(
+        sql_text(
+            "TRUNCATE writing_examples, writing_rules, writing_profiles, "
+            "campaign_deliverables, campaign_candidate_signals, campaign_candidates, "
+            "signal_queue RESTART IDENTITY CASCADE"
+        )
+    )
+    await db_session.execute(
+        sql_text(
+            "INSERT INTO pipelines (id, name, description, nodes, edges, status) "
+            "VALUES ('pipe-grounding', 'Grounding', '', '[]'::jsonb, '[]'::jsonb, 'active') "
+            "ON CONFLICT DO NOTHING"
+        )
+    )
+    await db_session.commit()
+
+    signal = await create_signal(
+        db_session,
+        headline="Pipeline signal",
+        campaign_family="obc",
+        source_type="manual",
+        summary="Need a draft",
+        discovered_by="test",
+    )
+    candidate = await create_campaign_candidate_from_signal(
+        db_session,
+        signal_id=signal.id,
+        ruleset_version_tag="v1",
+    )
+    candidate.initiated_at = datetime.now(UTC)
+    candidate.deliverable_types_json = ["outreach_email"]
+    db_session.add(CampaignBrief(candidate_id=candidate.id, content={"objective": "Need a draft"}))
+    db_session.add(
+        CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="draft-1",
+            campaign_id="obc",
+            status="draft_ready",
+            deliverable_metadata={
+                "title": "Tagged pipeline draft",
+                "deliverableTypeSlug": "outreach_email",
+                "structured_tags": {"audience": "superintendent"},
+            },
+        )
+    )
+    await db_session.execute(
+        sql_text(
+            "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger, triggered_by, target_candidate_id) "
+            "VALUES ('run-grounding-tagged', 'pipe-grounding', 'running', 'manual', 'test', :candidate_id)"
+        ),
+        {"candidate_id": candidate.id},
+    )
+
+    profile = await wr_repo.create_profile(db_session, name="Amira Voice", status="active")
+    await wr_repo.create_rule(
+        db_session,
+        title="Global rule",
+        body="Always lead with the campaign goal.",
+        profile_id=profile.id,
+        status="active",
+        tag_scope={},
+    )
+    await wr_repo.create_rule(
+        db_session,
+        title="Superintendent rule",
+        body="Speak to district planning and system implementation.",
+        profile_id=profile.id,
+        status="active",
+        tag_scope={"audience": ["superintendent"]},
+    )
+    await wr_repo.create_rule(
+        db_session,
+        title="Teacher rule",
+        body="Speak to lesson prep and classroom routines.",
+        profile_id=profile.id,
+        status="active",
+        tag_scope={"audience": ["teacher"]},
+    )
+    await db_session.commit()
+
+    node = {
+        "id": "content_writing_studio_adapter",
+        "type": "agent_invocation",
+        "label": "draft",
+        "config": {
+            "agent_id": "marketing.content.writing_studio_adapter",
+            "deliverable_type_slug": "outreach_email",
+        },
+    }
+
+    captured_shared_context: dict[str, Any] | None = None
+
+    async def _fake_run_agent(**kwargs: Any) -> Any:
+        nonlocal captured_shared_context
+        captured_shared_context = dict(kwargs.get("shared_context") or {})
+        result = AsyncMock()
+        result.status = "completed"
+        result.error = None
+        result.cost_input_tokens = 10
+        result.cost_output_tokens = 5
+        result.run_id = "fake-run-grounding-tagged"
+        return result
+
+    fake_agent = MagicMock()
+    fake_agent.id = "marketing.content.writing_studio_adapter"
+    fake_agent.tools = []
+    fake_agent.reason_codes_emitted = []
+    fake_agent.provider = None
+    fake_agent.fallback_provider = None
+
+    with (
+        patch("artemis.builders.executor.run_agent", new=_fake_run_agent),
+        patch("artemis.builders.repository.get_agent", new=AsyncMock(return_value=fake_agent)),
+        patch(
+            "artemis.connectors.resolver.get_credentials_for_tool",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "artemis.builders.repository.get_agent_context",
+            new=AsyncMock(side_effect=ValueError("no context")),
+        ),
+        patch(
+            "artemis.marketing.workspace.advance_workspace_for_node",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await execute_agent_node(
+            node=node,
+            node_states={},
+            session=db_session,
+            run_id="run-grounding-tagged",
+            model_adapter=MagicMock(),
+        )
+
+    assert result["status"] == "succeeded", result
+    assert captured_shared_context is not None
+    grounding_block = captured_shared_context["writing_ruleset_block"]
+    assert "Global rule" in grounding_block
+    assert "Superintendent rule" in grounding_block
+    assert "Teacher rule" not in grounding_block
+
+
+async def test_agent_executor_falls_back_to_all_rules_for_untagged_candidate_draft(
+    db_session: AsyncSession,
+) -> None:
+    """Untagged candidate drafts should preserve the all-rules fallback."""
+    from sqlalchemy import text as sql_text
+
+    from artemis.marketing.models import CampaignBrief, CampaignDeliverable
+    from artemis.marketing.repository import create_campaign_candidate_from_signal, create_signal
+    from artemis.pipelines.node_executors.agent_executor import execute_agent_node
+    from artemis.writing_rules import repository as wr_repo
+
+    await db_session.execute(
+        sql_text(
+            "TRUNCATE writing_examples, writing_rules, writing_profiles, "
+            "campaign_deliverables, campaign_candidate_signals, campaign_candidates, "
+            "signal_queue RESTART IDENTITY CASCADE"
+        )
+    )
+    await db_session.execute(
+        sql_text(
+            "INSERT INTO pipelines (id, name, description, nodes, edges, status) "
+            "VALUES ('pipe-grounding-fallback', 'Grounding', '', '[]'::jsonb, '[]'::jsonb, 'active') "
+            "ON CONFLICT DO NOTHING"
+        )
+    )
+    await db_session.commit()
+
+    signal = await create_signal(
+        db_session,
+        headline="Pipeline signal",
+        campaign_family="obc",
+        source_type="manual",
+        summary="Need a draft",
+        discovered_by="test",
+    )
+    candidate = await create_campaign_candidate_from_signal(
+        db_session,
+        signal_id=signal.id,
+        ruleset_version_tag="v1",
+    )
+    candidate.initiated_at = datetime.now(UTC)
+    candidate.deliverable_types_json = ["outreach_email"]
+    db_session.add(CampaignBrief(candidate_id=candidate.id, content={"objective": "Need a draft"}))
+    db_session.add(
+        CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="draft-1",
+            campaign_id="obc",
+            status="draft_ready",
+            deliverable_metadata={
+                "title": "Untagged pipeline draft",
+                "deliverableTypeSlug": "outreach_email",
+            },
+        )
+    )
+    await db_session.execute(
+        sql_text(
+            "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger, triggered_by, target_candidate_id) "
+            "VALUES ('run-grounding-fallback', 'pipe-grounding-fallback', 'running', 'manual', 'test', :candidate_id)"
+        ),
+        {"candidate_id": candidate.id},
+    )
+
+    profile = await wr_repo.create_profile(db_session, name="Amira Voice", status="active")
+    await wr_repo.create_rule(
+        db_session,
+        title="Global rule",
+        body="Always lead with the campaign goal.",
+        profile_id=profile.id,
+        status="active",
+        tag_scope={},
+    )
+    await wr_repo.create_rule(
+        db_session,
+        title="Superintendent rule",
+        body="Speak to district planning and system implementation.",
+        profile_id=profile.id,
+        status="active",
+        tag_scope={"audience": ["superintendent"]},
+    )
+    await wr_repo.create_rule(
+        db_session,
+        title="Teacher rule",
+        body="Speak to lesson prep and classroom routines.",
+        profile_id=profile.id,
+        status="active",
+        tag_scope={"audience": ["teacher"]},
+    )
+    await db_session.commit()
+
+    node = {
+        "id": "content_writing_studio_adapter",
+        "type": "agent_invocation",
+        "label": "draft",
+        "config": {
+            "agent_id": "marketing.content.writing_studio_adapter",
+            "deliverable_type_slug": "outreach_email",
+        },
+    }
+
+    captured_shared_context: dict[str, Any] | None = None
+
+    async def _fake_run_agent(**kwargs: Any) -> Any:
+        nonlocal captured_shared_context
+        captured_shared_context = dict(kwargs.get("shared_context") or {})
+        result = AsyncMock()
+        result.status = "completed"
+        result.error = None
+        result.cost_input_tokens = 10
+        result.cost_output_tokens = 5
+        result.run_id = "fake-run-grounding-fallback"
+        return result
+
+    fake_agent = MagicMock()
+    fake_agent.id = "marketing.content.writing_studio_adapter"
+    fake_agent.tools = []
+    fake_agent.reason_codes_emitted = []
+    fake_agent.provider = None
+    fake_agent.fallback_provider = None
+
+    with (
+        patch("artemis.builders.executor.run_agent", new=_fake_run_agent),
+        patch("artemis.builders.repository.get_agent", new=AsyncMock(return_value=fake_agent)),
+        patch(
+            "artemis.connectors.resolver.get_credentials_for_tool",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "artemis.builders.repository.get_agent_context",
+            new=AsyncMock(side_effect=ValueError("no context")),
+        ),
+        patch(
+            "artemis.marketing.workspace.advance_workspace_for_node",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await execute_agent_node(
+            node=node,
+            node_states={},
+            session=db_session,
+            run_id="run-grounding-fallback",
+            model_adapter=MagicMock(),
+        )
+
+    assert result["status"] == "succeeded", result
+    assert captured_shared_context is not None
+    grounding_block = captured_shared_context["writing_ruleset_block"]
+    assert "Global rule" in grounding_block
+    assert "Superintendent rule" in grounding_block
+    assert "Teacher rule" in grounding_block

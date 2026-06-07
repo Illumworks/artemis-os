@@ -48,6 +48,8 @@ db_module.SessionLocal = __import__(
 _TRUNCATE = text(
     """
     TRUNCATE
+        tag_values,
+        tag_dimensions,
         writing_draft_thread_messages,
         writing_rules,
         writing_examples,
@@ -124,6 +126,21 @@ async def _make_rule(
     )
     await session.commit()  # commit so the compose route can see it via its own session
     return rule
+
+
+async def _seed_registry_with_audience_values(session: AsyncSession) -> None:
+    from artemis.writing_rules.tag_registry_seed import seed_tag_registry_async
+
+    await seed_tag_registry_async(session)
+    await session.commit()
+
+
+async def _make_active_profile(session: AsyncSession, name: str = "Amira Voice") -> object:
+    from artemis.writing_rules import repository as wr_repo
+
+    profile = await wr_repo.create_profile(session, name=name, status="active")
+    await session.commit()
+    return profile
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +460,159 @@ async def test_compose_passes_injected_rules_to_adapter(
     system_prompt: str = req.system or ""
     assert "Outcome-first rule" in system_prompt
     assert "Start every email with the student's measurable outcome." in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_compose_uses_resolved_rules_when_draft_has_structured_tags(
+    db_session: AsyncSession,
+) -> None:
+    """Tagged drafts should ground on matching + global rules only."""
+    from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
+    from artemis.marketing.models import CampaignDeliverable
+
+    adapter = FakeAdapter([ScriptedReply(text="Refined.", stop_reason="end_turn")])
+    await _seed_registry_with_audience_values(db_session)
+    profile = await _make_active_profile(db_session)
+    await _make_rule(
+        db_session,
+        title="Global rule",
+        body="Always anchor the opening in the campaign goal.",
+        profile_id=profile.id,
+    )
+    await _make_rule(
+        db_session,
+        title="Superintendent rule",
+        body="Address system-level planning and district leadership tradeoffs.",
+        profile_id=profile.id,
+    )
+    await _make_rule(
+        db_session,
+        title="Teacher rule",
+        body="Focus on classroom routines and teacher prep burden.",
+        profile_id=profile.id,
+    )
+
+    draft_id = await _make_deliverable(db_session, title="Tagged Rules Draft")
+    deliverable = await db_session.get(CampaignDeliverable, draft_id)
+    assert deliverable is not None
+    deliverable.deliverable_metadata = {
+        **(deliverable.deliverable_metadata or {}),
+        "structured_tags": {"audience": "superintendent"},
+    }
+    await db_session.commit()
+
+    from artemis.writing_rules import repository as wr_repo
+
+    global_rule = await wr_repo.get_rule_by_profile_type_title(
+        db_session,
+        profile_id=profile.id,
+        rule_type="voice",
+        title="Global rule",
+    )
+    assert global_rule is not None
+    global_rule.tag_scope = {}
+
+    superintendent_rule = await wr_repo.get_rule_by_profile_type_title(
+        db_session,
+        profile_id=profile.id,
+        rule_type="voice",
+        title="Superintendent rule",
+    )
+    assert superintendent_rule is not None
+    superintendent_rule.tag_scope = {"audience": ["superintendent"]}
+
+    teacher_rule = await wr_repo.get_rule_by_profile_type_title(
+        db_session,
+        profile_id=profile.id,
+        rule_type="voice",
+        title="Teacher rule",
+    )
+    assert teacher_rule is not None
+    teacher_rule.tag_scope = {"audience": ["teacher"]}
+    await db_session.commit()
+
+    with patch(
+        "artemis.providers.resolver.resolve_adapter",
+        return_value=adapter,
+    ):
+        from httpx import ASGITransport, AsyncClient
+
+        from artemis.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/writing-studio/drafts/{draft_id}/compose",
+                json={"request": "Revise this draft"},
+                headers={"X-Artemis-Token": "test-token"},
+            )
+
+    assert resp.status_code == 200, resp.text
+    system_prompt: str = adapter.requests[0].system or ""
+    assert "Global rule" in system_prompt
+    assert "Superintendent rule" in system_prompt
+    assert "Teacher rule" not in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_compose_falls_back_to_all_rules_when_draft_is_untagged(
+    db_session: AsyncSession,
+) -> None:
+    """Untagged drafts should preserve the prior all-rules grounding behavior."""
+    from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
+    from artemis.writing_rules import repository as wr_repo
+
+    adapter = FakeAdapter([ScriptedReply(text="Refined.", stop_reason="end_turn")])
+    await _seed_registry_with_audience_values(db_session)
+    profile = await _make_active_profile(db_session)
+    rule_specs = [
+        ("Global rule", "Always anchor the opening in the campaign goal.", {}),
+        (
+            "Superintendent rule",
+            "Address system-level planning and district leadership tradeoffs.",
+            {"audience": ["superintendent"]},
+        ),
+        (
+            "Teacher rule",
+            "Focus on classroom routines and teacher prep burden.",
+            {"audience": ["teacher"]},
+        ),
+    ]
+    for title, body, tag_scope in rule_specs:
+        await _make_rule(db_session, title=title, body=body, profile_id=profile.id)
+        rule = await wr_repo.get_rule_by_profile_type_title(
+            db_session,
+            profile_id=profile.id,
+            rule_type="voice",
+            title=title,
+        )
+        assert rule is not None
+        rule.tag_scope = tag_scope
+        await db_session.commit()
+
+    draft_id = await _make_deliverable(db_session, title="Untagged Rules Draft")
+
+    with patch(
+        "artemis.providers.resolver.resolve_adapter",
+        return_value=adapter,
+    ):
+        from httpx import ASGITransport, AsyncClient
+
+        from artemis.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/writing-studio/drafts/{draft_id}/compose",
+                json={"request": "Revise this draft"},
+                headers={"X-Artemis-Token": "test-token"},
+            )
+
+    assert resp.status_code == 200, resp.text
+    system_prompt: str = adapter.requests[0].system or ""
+    assert "Global rule" in system_prompt
+    assert "Superintendent rule" in system_prompt
+    assert "Teacher rule" in system_prompt
 
 
 @pytest.mark.asyncio

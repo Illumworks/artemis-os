@@ -25,6 +25,7 @@ from artemis.writing_rules.models import (
 
 RuleScope = dict[str, list[str]]
 ResolvedTags = Mapping[str, str | list[str]]
+StructuredTags = dict[str, str | list[str]]
 
 
 def _normalize_rule_scope(scope: Any) -> RuleScope:
@@ -56,6 +57,44 @@ def _normalize_resolved_tags(tags: ResolvedTags) -> dict[str, set[str]]:
             if values:
                 normalized[dimension] = values
     return normalized
+
+
+def normalize_structured_tags(tags: Any) -> StructuredTags:
+    if not isinstance(tags, Mapping):
+        return {}
+
+    normalized: StructuredTags = {}
+    for raw_dimension, raw_value in tags.items():
+        if not isinstance(raw_dimension, str):
+            continue
+        dimension = raw_dimension.strip()
+        if not dimension:
+            continue
+        if isinstance(raw_value, str):
+            value = raw_value.strip()
+            if value:
+                normalized[dimension] = value
+            continue
+        if isinstance(raw_value, list):
+            values: list[str] = []
+            seen: set[str] = set()
+            for item in raw_value:
+                if not isinstance(item, str):
+                    continue
+                value = item.strip()
+                if not value or value in seen:
+                    continue
+                seen.add(value)
+                values.append(value)
+            if values:
+                normalized[dimension] = values
+    return normalized
+
+
+def get_structured_tags_from_metadata(metadata: Any) -> StructuredTags:
+    if not isinstance(metadata, Mapping):
+        return {}
+    return normalize_structured_tags(metadata.get("structured_tags"))
 
 
 def rule_matches_tags(tag_scope: Any, tags: ResolvedTags) -> bool:
@@ -482,6 +521,19 @@ async def resolve_rules_for_tags(
     )
     rules = list(result.scalars())
     return [rule for rule in rules if rule_matches_tags(rule.tag_scope, tags)]
+
+
+async def resolve_grounding_rules(
+    session: AsyncSession,
+    *,
+    profile_id: int | None,
+    fallback_rules: list[WritingRule],
+    structured_tags: Any,
+) -> list[WritingRule]:
+    normalized_tags = normalize_structured_tags(structured_tags)
+    if profile_id is None or not normalized_tags:
+        return fallback_rules
+    return await resolve_rules_for_tags(session, profile_id, normalized_tags)
 
 
 # ── Examples ──────────────────────────────────────────────────────────────────
