@@ -23,10 +23,24 @@ tag-scoped rule → human confirms → it joins `writing_rules`. The studio impr
 existing rejection-memory-carryover + the conversational rule capture to EDITS. Uniquely fits the
 memory+rules architecture.
 
-### ★ Claims guardrail + approved-language (WIRE UP existing Claims Register / Proof Pack)
-Content exists (sources 6 + 7). Build: (a) the agent inserts approved claims/proof **verbatim** from the
-Claims Register / Proof Pack; (b) a **check that flags any claim lacking a registered source** before
-send. Hooks into the compliance gate. District-buyer-safe = a real moat.
+### ★ Claims guardrail + LIVING approved-claims registry (WIRE UP + curate the Claims Register / Proof Pack)
+Content exists (sources 6 + 7). Build:
+- (a) the agent inserts approved claims/proof **verbatim** from the Claims Register / Proof Pack;
+- (b) a **check that flags any claim lacking a registered source** before send;
+- (c) **the flag is curatable in-flow** — when a claim is flagged as not-registered, the user can **add it
+  as an approved claim with one click** ("Add to Claims Register") **or conversationally** ("this is an
+  approved claim"), and it immediately becomes registered/usable. (Jon 2026-06-06: *"we're building the
+  bible with this tool — it needs flexibility."*)
+- **Authority model (the key distinction):** Writing Studio users ARE the authorized approvers, so in-tool
+  one-click approve is correct and safe here. The exported company **custom GPT consumes the registry
+  READ-ONLY — it can NEVER approve a new claim** (only the WS curators can). So flexibility lives where the
+  authority is; downstream is locked.
+- **Governance (keep the bible trustworthy + auditable, without slowing the add):** each approval is
+  lossless/append — capture **who approved + when**, and *optionally* prompt for a source/evidence link
+  (skippable — don't block the add). Gives an audit trail for district-facing claims while staying
+  one-click. The Claims Register grows through use; this is also where the learn-from-edits loop feeds new
+  approved language.
+Hooks into the compliance gate. District-buyer-safe + self-curating = a real moat.
 
 ### ★ Custom-GPT export (company-wide, transferable)
 Export the profile to a ChatGPT custom GPT: **Instructions** ← Master Prompt + rules + Message Compass +
