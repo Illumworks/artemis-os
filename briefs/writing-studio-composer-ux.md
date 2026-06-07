@@ -83,20 +83,21 @@ indicator), (3) is designed Jon+Lead together (Creative-Director territory) — 
 + screenshot for Jon to react. Design the IA once; features then slot into defined places instead of
 accreting buttons. This pass is the guardrail against the visual mess.
 
-## v2 layout — Jon-approved (2026-06-06) — see `docs/mockups/composer-design-pass.html`
-Three panes under a slim header:
-- **Left = Finder-style folder/file selector** (drafts in folders, macOS-style tree). REPLACES the old
-  context rail (Active draft / Voice / Brief was redundant — shown elsewhere). Just navigation + "+ New draft".
+## v3 layout — Jon-approved final (2026-06-06) — see `docs/mockups/composer-design-pass.html`
+Three panes under a slim header (revised from v2 to fix comment/chat layering + free space):
+- **Left = natural AI chat (Claude-style)** — real conversation thread + composer ("Ask Amira to draft,
+  rewrite, or refine…") + quick-action chips. First-class conversational mode. (Moved here from the right.)
 - **Center = the document** (inline-editable artifact) — tag chip bar on top; inline claim flags, merge
-  tokens, selection AI toolbar, margin comments live here.
-- **Right = natural AI chat (Claude-style)** — a real conversation thread + a proper composer ("Ask Amira to
-  draft, rewrite, or refine…") + quick-action chips (Shorten / Add a CTA / More formal / Localize…). This is
-  the conversational mode, first-class (not a cramped box).
-- **Slim header:** title · status · N variants · N rules · History · **⋯ Actions** (Save as template ·
-  Repurpose · Brand+readability check) · Save version.
-- **Export-to-GPT is NOT in the composer** — it lives on the Writing Studio **Memory page** (acts on the
-  profile). **No annotation/legend bar** in the real UI.
-- Open question for Jon: chat on the right vs docked along the bottom (wider doc); tags top vs in a header row.
+  tokens, selection AI toolbar live here. **Format-aware pagination:** long-form types (guides/papers) break
+  into Page 1·2·3; **email/short = one continuous page** (no pagination).
+- **Right = Comments — their OWN pane** (v2 layered them on the chat = useless). Must support **@mention +
+  ping/notify** (in-app + notification) — comments are tied to a span, flow to Gate-2, support reply/resolve.
+- **Drafts navigation = a header DROPDOWN** (not a permanent pane) — "All drafts / folders / + New draft".
+  Frees horizontal space so the document + comments each get real room.
+- **Slim header:** drafts-dropdown · title · status · N variants · N rules · History · **⋯ Actions** (Save as
+  template · Repurpose · Brand+readability check) · Save version.
+- **Export-to-GPT is NOT in the composer** — Writing Studio **Memory page** (acts on the profile). No legend.
+- Settled: chat is LEFT (not right rail / not bottom-docked); the Finder pane became the drafts dropdown.
 
 ## Constraints (carry into worker briefs)
 Lossless (draft history/versions preserved — there's already a save-chat-version concept; never lose

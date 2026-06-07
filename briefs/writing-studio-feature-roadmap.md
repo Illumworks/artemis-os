@@ -68,7 +68,8 @@ SB 1672 for IL, etc.). One draft → N personalized sends, using the targeting d
   uses the rules engine).
 
 ### Workflow / team
-- **Comments / review threads** on a draft, tied to the Gate-2 approval (Angela/Josh mark up before sign-off).
+- **Comments / review threads** on a draft (tied to a text span + Gate-2 approval). **Must support @mention +
+  ping/notify** (in-app + notification) so Angela/Josh can loop each other in (Jon 2026-06-06). Reply/resolve.
 - **Suggested next assets** — after one asset, propose the campaign's follow-ons, pre-tagged.
 
 ### Longer-term loop
