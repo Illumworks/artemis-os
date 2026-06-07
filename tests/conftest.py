@@ -8,7 +8,7 @@ test suite is allowed to run against the live `artemis_os` database, every
 anything else the conftest fixtures clear.
 
 To prevent that:
-  1. We force-override `ARTEMIS_DB_URL` to point at `artemis_test` here,
+  1. We force-override `ARTEMIS_DB_URL` to point at a safe test DB here,
      BEFORE any artemis module reads its config.
   2. We REFUSE to start the test session if the resolved URL points at the
      live database (name contains 'artemis_os' and not 'artemis_test').
@@ -27,7 +27,10 @@ import os
 import sys
 
 # Force the test database BEFORE anything imports artemis.config or artemis.db.
-_TEST_DB_URL = "postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_test"
+_TEST_DB_URL = os.environ.get(
+    "ARTEMIS_TEST_DB_URL",
+    "postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_test",
+)
 os.environ["ARTEMIS_DB_URL"] = _TEST_DB_URL
 
 # Refuse to run if the resolved URL points at the live database. The

@@ -26,7 +26,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -105,9 +115,7 @@ class WritingFolder(Base):
     # backfill_campaign_folders does not recreate it on the next overview load.
     # User-created folders (campaign_id IS NULL) are hard-deleted; for them
     # this column will never be set.
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     profile: Mapped[WritingProfile | None] = relationship(
         "WritingProfile", back_populates="folders"
@@ -221,6 +229,75 @@ class WritingSource(Base):
 
     profile: Mapped[WritingProfile | None] = relationship(
         "WritingProfile", back_populates="sources"
+    )
+
+
+class TagDimension(Base):
+    """Registry dimension used to tag Writing Studio assets and rules."""
+
+    __tablename__ = "tag_dimensions"
+    __table_args__ = (Index("idx_tag_dimensions_active_sort", "active", "sort_order", "id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("TRUE"),
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    values: Mapped[list[TagValue]] = relationship(
+        "TagValue",
+        back_populates="dimension",
+        primaryjoin="TagDimension.key == foreign(TagValue.dimension_key)",
+    )
+
+
+class TagValue(Base):
+    """Registry value within a dimension, optionally scoped under a parent value."""
+
+    __tablename__ = "tag_values"
+    __table_args__ = (
+        Index(
+            "idx_tag_values_dimension_active_sort", "dimension_key", "active", "sort_order", "id"
+        ),
+        Index("idx_tag_values_parent_lookup", "dimension_key", "parent_value", "sort_order", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    dimension_key: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("tag_dimensions.key", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("TRUE"),
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    value_metadata: Mapped[Any] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    dimension: Mapped[TagDimension] = relationship(
+        "TagDimension",
+        back_populates="values",
+        primaryjoin="foreign(TagValue.dimension_key) == TagDimension.key",
     )
 
 

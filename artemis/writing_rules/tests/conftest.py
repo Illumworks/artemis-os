@@ -47,6 +47,8 @@ artemis.db.SessionLocal = __import__(
 # Truncation order: child tables first (FK constraints).
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "tag_values, "
+    "tag_dimensions, "
     "writing_training_candidates, "
     "writing_draft_thread_messages, "
     "writing_rules, "

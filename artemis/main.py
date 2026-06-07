@@ -61,7 +61,7 @@ from artemis.routes import costs as costs_routes
 from artemis.routes import costs_routing as costs_routing_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
-from artemis.routes import health, okr, parallel, status, writing_rules
+from artemis.routes import health, okr, parallel, status, writing_rules, writing_studio_tags
 from artemis.routes import jira as jira_routes
 from artemis.routes import meetings as meetings_routes
 from artemis.routes import notifications as notifications_routes
@@ -236,6 +236,7 @@ app.include_router(memory_router)
 # Phase H — OKR Studio + Writing Studio rules (dry-run + validator shipped; cutover pending)
 app.include_router(okr.router)
 app.include_router(writing_rules.router)
+app.include_router(writing_studio_tags.router)
 
 # Phase G1 — Floating Artemis backend (sessions, tools, authority, chat)
 app.include_router(fa_router)
