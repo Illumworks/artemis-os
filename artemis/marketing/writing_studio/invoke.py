@@ -4,6 +4,7 @@ Port of writing-studio-invoke.js (relevant campaign-integration functions).
 
 Functions:
   create_draft_from_candidate — builds metadata bundle + creates deliverable row
+  create_handoff_draft        — manual operator handoff: seeded title/brief/voice/tags
   submit_draft_for_review     — Gate-2 approval row + status transition
   list_campaign_asset_links   — assets with non-empty summary for metadata bundle
 
@@ -30,6 +31,7 @@ from artemis.marketing.models import Approval, CampaignDeliverable, ContentAsset
 from artemis.marketing.repository import (
     get_campaign_brief,
     get_candidate,
+    get_candidate_primary_signal,
 )
 from artemis.marketing.state_machine import DeliverableState, transition
 from artemis.marketing.writing_studio.events import publish as publish_event
@@ -278,6 +280,170 @@ async def create_draft_from_candidate(
         brief_text=brief_text,
         asset_context_bundle=resolved_bundle,
         metadata=metadata,
+        created_at=deliverable.created_at,
+    )
+
+
+async def create_handoff_draft(
+    session: AsyncSession,
+    candidate_id: int,
+    *,
+    asset_label: str | None = None,
+    ws: Any = None,  # ExternalWritingStudio; injected in tests
+) -> Draft:
+    """Create a hand-crafted Writing Studio draft seeded from campaign context.
+
+    This is the MANUAL / ad-hoc draft path (operator-initiated from the campaign
+    detail UI).  It differs from ``create_draft_from_candidate`` in three ways:
+
+    1. Title — uses the campaign name (or ``"{campaign_name} — {asset_label}"``
+       if the caller supplies an asset/payload type label).
+    2. Brief metadata — seeded from:
+       a. campaign objective (always — the single most useful context for
+          a blank studio session),
+       b. assembled Campaign Brief formatted text (if one exists),
+       c. primary signal context (headline + summary).
+    3. Voice — ``voiceProfileSlug`` is set to the active writing profile name
+       so the compose engine picks it up without requiring the operator to
+       choose manually.
+    4. Tags — campaign family and geography/state tags are seeded into
+       ``metadata.tags`` for the asset-tagging rules engine.  The shape is
+       deliberately extensible: once audience/type/platform tags land, they
+       slot into the same list.
+
+    The draft starts with status ``"draft"`` (not ``"generating"``) since this
+    path does NOT trigger automatic composition.
+
+    Does NOT auto-compose.  Returns the created draft (with ``id``); the
+    frontend navigates the operator directly into the studio.
+    """
+    candidate = await get_candidate(session, candidate_id)
+    external = ws if ws is not None else get_writing_studio()
+
+    family = candidate.campaign_family or "Campaign"
+    campaign_name = candidate.name or family
+
+    # ── 1. Title ──────────────────────────────────────────────────────────────
+    title = f"{campaign_name} — {asset_label}" if asset_label else campaign_name
+
+    # ── 2. Brief field: objective + assembled brief + primary signal ──────────
+    brief_parts: list[str] = []
+
+    if candidate.objective:
+        brief_parts.append(f"Objective: {candidate.objective.strip()}")
+
+    try:
+        db_brief = await get_campaign_brief(session, candidate_id)
+        if db_brief is not None:
+            formatted = format_brief_for_writing_studio(CampaignBrief(content=db_brief.content))
+            if formatted and formatted.strip():
+                brief_parts.append(formatted.strip())
+    except Exception:  # noqa: BLE001
+        pass  # brief absence never blocks draft creation
+
+    try:
+        primary_signal = await get_candidate_primary_signal(session, candidate_id)
+        if primary_signal is not None:
+            sig_parts: list[str] = []
+            if primary_signal.headline:
+                sig_parts.append(primary_signal.headline)
+            if primary_signal.summary:
+                sig_parts.append(primary_signal.summary)
+            if sig_parts:
+                brief_parts.append("Signal context: " + " — ".join(sig_parts))
+    except Exception:  # noqa: BLE001
+        pass
+
+    brief_text: str | None = "\n\n".join(brief_parts) if brief_parts else None
+
+    # ── 3. Voice — resolve active profile slug ────────────────────────────────
+    voice_profile_slug: str | None = None
+    try:
+        profile = await wr_repo.get_active_profile(session)
+        if profile is not None and profile.name:
+            voice_profile_slug = profile.name.lower().replace(" ", "-")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ── 4. Tags — family + geography (extensible list) ────────────────────────
+    tags: list[str] = []
+    if family:
+        tags.append(family)
+    try:
+        target_scope = candidate.target_scope_json
+        if isinstance(target_scope, dict):
+            states: list[str] = target_scope.get("states") or []
+            tags.extend(s for s in states if isinstance(s, str))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ── Compose metadata bundle ───────────────────────────────────────────────
+    metadata: dict[str, Any] = {}
+    if brief_text:
+        metadata["brief"] = brief_text
+    if voice_profile_slug:
+        metadata["voiceProfileSlug"] = voice_profile_slug
+    if tags:
+        metadata["tags"] = tags
+    metadata["handoff"] = True  # flag distinguishes manual from pipeline drafts
+
+    # ── Get-or-create per-candidate folder ────────────────────────────────────
+    folder = await wr_repo.get_or_create_folder_by_candidate(
+        session,
+        candidate_id,
+        candidate_name=campaign_name,
+    )
+
+    # ── External WS call (stub or real) ───────────────────────────────────────
+    external_draft: ExternalDraft = await external.create_draft(title=title, metadata=metadata)
+
+    # ── Create campaign_deliverables row ──────────────────────────────────────
+    # campaign_id = family string (matches Writing Studio filter dropdown).
+    # status = "draft_ready" — operator will compose manually; no auto-compose.
+    # ("draft" is not in the DB CHECK constraint; "generating" implies pipeline
+    # work is in-flight, which is misleading for the manual path.)
+    deliverable = CampaignDeliverable(
+        candidate_id=candidate_id,
+        deliverable_id=external_draft.external_id,
+        campaign_id=family,
+        status="draft_ready",
+        deliverable_metadata={
+            **metadata,
+            "title": title,
+            "externalDraftId": external_draft.external_id,
+            "externalTitle": external_draft.title,
+            "folder_id": folder.id,
+            "folder_name": campaign_name,
+        },
+    )
+    session.add(deliverable)
+    await session.flush()
+    await session.refresh(deliverable)
+    await session.commit()
+
+    # ── Emit event (non-fatal) ────────────────────────────────────────────────
+    with contextlib.suppress(Exception):
+        await publish_event(
+            "draft.generated",
+            draft_id=external_draft.external_id,
+            campaign_id=family,
+            deliverable_id=str(deliverable.id),
+            status="draft_ready",
+        )
+
+    # Return the full deliverable_metadata (includes folder_id, title, etc.)
+    # so callers and the response shape are complete.
+    full_metadata: dict[str, Any] = dict(deliverable.deliverable_metadata or {})
+
+    return Draft(
+        id=deliverable.id,
+        external_id=external_draft.external_id,
+        candidate_id=candidate_id,
+        title=title,
+        status="draft_ready",
+        brief_text=brief_text,
+        asset_context_bundle=[],
+        metadata=full_metadata,
         created_at=deliverable.created_at,
     )
 

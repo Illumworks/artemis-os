@@ -36,6 +36,7 @@ from artemis.marketing.repository import (
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, not_found
 from artemis.marketing.state_machine import BriefState, transition
+from artemis.marketing.writing_studio import invoke as ws_invoke
 
 router = APIRouter(
     prefix="/api/campaign-ops",
@@ -194,6 +195,49 @@ async def assemble_brief_route(
             "generatedBy": brief_row.generated_by,
             "content": brief_row.content,
         }
+    }
+
+
+@router.post("/candidates/{candidate_id}/writing-handoff", status_code=201)
+async def writing_handoff(
+    candidate_id: int,
+    body: dict[str, Any] | None = None,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Create a hand-crafted Writing Studio draft seeded from campaign context.
+
+    This is the MANUAL / ad-hoc draft path — the operator clicks "Create draft
+    in Writing Studio" from the campaign detail view.  It does NOT trigger
+    automatic composition; the draft is created and returned so the frontend can
+    navigate the operator directly into the studio.
+
+    Body (all optional):
+      assetLabel  — str: appended to title as "{campaign} — {assetLabel}"
+
+    Response: the created draft object (id, title, status, brief, voice, folder).
+    """
+    body = body or {}
+    asset_label: str | None = _opt_str(body.get("assetLabel"))
+
+    try:
+        draft = await ws_invoke.create_handoff_draft(
+            session,
+            candidate_id=candidate_id,
+            asset_label=asset_label,
+        )
+    except ValueError:
+        raise not_found("Campaign candidate not found", "campaign_ops_candidate_not_found")  # noqa: B904
+
+    return {
+        "id": draft.id,
+        "externalId": draft.external_id,
+        "candidateId": draft.candidate_id,
+        "title": draft.title,
+        "status": draft.status,
+        "briefText": draft.brief_text,
+        "assetContextBundle": draft.asset_context_bundle,
+        "metadata": draft.metadata,
+        "createdAt": draft.created_at.isoformat() if draft.created_at else None,
     }
 
 
