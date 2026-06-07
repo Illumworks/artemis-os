@@ -251,6 +251,26 @@ class PipelineExecutor:
             )
             run.node_states = node_states
             await session.flush()
+            # Commit the "running" state before dispatching.
+            #
+            # The pipeline executor's long-lived session holds row-level locks
+            # on campaign_candidates (and related tables) acquired during the
+            # earlier candidate-resolution reads.  When an MCP subprocess is
+            # launched for a deliverable node, the MCP server opens its own
+            # DB connection and tries to INSERT into campaign_deliverables
+            # (via writing_studio.enqueue).  That INSERT has a FK reference to
+            # campaign_candidates, so Postgres issues a ShareLock on the parent
+            # row — which is blocked by the executor's RowExclusiveLock that
+            # remains open until the long transaction commits.  The subprocess
+            # can never complete (it needs the INSERT to succeed), the executor
+            # can never commit (it awaits the subprocess) → deadlock.
+            #
+            # Committing here releases all locks before the subprocess is
+            # launched.  expire_on_commit=False keeps the in-memory `run`
+            # object valid; re-adding it after commit ensures subsequent
+            # flush() calls track it in the new transaction correctly.
+            await session.commit()
+            session.add(run)
 
             if node_id == "qualifier_brief_composer":
                 qualified_count = await _qualified_signal_count_for_run(session, run)
