@@ -46,6 +46,29 @@ gives: real per-user identity (comments/@mention/attribution) AND Doc link/impor
 the team's Google login. Jon flips the Cloudflare policy; Lead builds the JWT verification, the user
 directory, and the Docs import/export.
 
+## Q3 — Multiple people at once + collaboration (don't step on toes) — Jon 2026-06-06
+Yes, once Google SSO is on, the team can use Artemis simultaneously (separate sessions; Postgres handles
+concurrent requests). **Different drafts = no conflict.** The only risk is two people on the SAME draft.
+Recommended handling, simplest → fullest:
+
+- **v1 — Presence + soft-lock + version-guard (recommended, achievable):**
+  - **Presence:** show who's viewing/editing a draft — Google-Docs-style avatars ("Angela is editing"),
+    via a lightweight heartbeat (poll/SSE). Depends on the identity work (Q1).
+  - **Soft-lock:** when one person is actively editing, others see "Angela is editing" and open in
+    read-only/warn mode with a "request edit / take over" option — so two people don't type at once.
+  - **Version-guard (optimistic concurrency):** each save carries the draft's version/updated_at; a stale
+    save is rejected with "this draft changed — reload/merge" instead of silently clobbering. This is the
+    real anti-toe-stepping safety net.
+  - **Async collaboration already covered:** the comments + @mention/ping layer (composer design) lets the
+    team collaborate without co-editing the same text — most "collaboration" happens there.
+- **v2 (defer unless truly needed) — full real-time co-editing** (live multi-cursor, character-merge, à la
+  Google Docs): requires CRDT/OT + websockets (e.g. Yjs). Big lift; usually overkill for a small marketing
+  team that rarely co-writes the exact same draft live. Presence + soft-lock + version-guard meets the
+  stated need ("see who's working, don't step on toes") without it.
+
+**Recommendation:** ship v1 (presence + soft-lock + version-guard) with the identity work; revisit full
+live co-editing only if the team finds they genuinely need simultaneous co-writing.
+
 ## Constraints
 Auth-sensitive — Jon owns the Cloudflare credential/policy change; Lead never touches Cloudflare creds.
 App must VERIFY the Access JWT (no trusting raw headers). Lossless (users append; no destructive auth
