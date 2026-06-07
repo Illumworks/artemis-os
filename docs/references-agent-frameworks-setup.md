@@ -63,6 +63,12 @@ still says MIT when you clone).
    stay inside the propose→review gate — no unreviewed self-modification).
 6. **Surface/gateway routing** — how they fan one agent across 20+ messaging platforms. More than we need,
    but the abstraction informs our channel-routing design.
+7. **Hermes Desktop UX** (`hermes-agent/apps/desktop` — comes with the clone; MIT, v0.15.2, released
+   2026-06-02). A native GUI over the same agent: streaming tool output, a right-hand preview pane, file
+   browser, voice, credential/model settings. **Strong front-end reference** for Artemis's own interface —
+   read the source for layout/UX ideas. NOTE: do NOT install the downloadable desktop *binary* from their
+   site — it runs the full autonomous agent, same never-run rule as the CLI. The source in `apps/desktop` is
+   safe to read.
 
 ## What I deliver when we get there
 A findings doc per the reading list: for each area — *what they do · what's good · what's risky · what
