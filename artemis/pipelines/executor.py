@@ -43,6 +43,7 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.session import SessionTransactionOrigin
 
 from artemis.pipelines import repository as repo
 
@@ -269,8 +270,22 @@ class PipelineExecutor:
             # launched.  expire_on_commit=False keeps the in-memory `run`
             # object valid; re-adding it after commit ensures subsequent
             # flush() calls track it in the new transaction correctly.
-            await session.commit()
-            session.add(run)
+            #
+            # Only commit on AUTOBEGIN sessions (production pattern:
+            # `async with SessionLocal() as session: await executor.run(session)`).
+            # Tests that wrap execution in an explicit `async with session.begin():`
+            # block cannot tolerate a mid-block commit (SQLAlchemy refuses further
+            # ops on a closed transaction context); skip the commit there. That's
+            # safe in tests because MCP subprocesses are mocked, so the deadlock
+            # condition cannot occur. Production callers MUST NOT wrap
+            # `executor.run()` in an explicit `session.begin()` block.
+            sync_tx = session.sync_session.get_transaction()
+            in_explicit_begin = (
+                sync_tx is not None and sync_tx.origin == SessionTransactionOrigin.BEGIN
+            )
+            if not in_explicit_begin:
+                await session.commit()
+                session.add(run)
 
             if node_id == "qualifier_brief_composer":
                 qualified_count = await _qualified_signal_count_for_run(session, run)
