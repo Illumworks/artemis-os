@@ -75,7 +75,12 @@ async def update_profile(
 
 
 async def list_folders(session: AsyncSession, profile_id: int | None = None) -> list[WritingFolder]:
-    q = select(WritingFolder).order_by(WritingFolder.created_at, WritingFolder.id)
+    # Exclude soft-deleted rows (campaign-derived folders that were explicitly deleted).
+    q = (
+        select(WritingFolder)
+        .where(WritingFolder.deleted_at.is_(None))
+        .order_by(WritingFolder.created_at, WritingFolder.id)
+    )
     if profile_id is not None:
         q = q.where(WritingFolder.profile_id == profile_id)
     result = await session.execute(q)
@@ -94,15 +99,18 @@ async def get_folder_by_sync_id(session: AsyncSession, sync_id: str) -> WritingF
 
 
 async def get_folder_by_campaign(session: AsyncSession, campaign_id: str) -> WritingFolder | None:
-    """Return the first folder whose campaign_id column matches the given value.
+    """Return the first non-deleted folder whose campaign_id column matches the given value.
 
     ``campaign_id`` here is the TEXT key stored in ``writing_folders.campaign_id``.
     For per-candidate folders this will be ``str(candidate_id)``; for legacy
     family-level folders it will be the family string (e.g. ``"obc"``).
+
+    Soft-deleted rows (deleted_at IS NOT NULL) are excluded so that a deleted
+    campaign-derived folder is not resurfaced by the backfill or other callers.
     """
     result = await session.execute(
         select(WritingFolder)
-        .where(WritingFolder.campaign_id == campaign_id)
+        .where(WritingFolder.campaign_id == campaign_id, WritingFolder.deleted_at.is_(None))
         .order_by(WritingFolder.id)
         .limit(1)
     )
@@ -198,11 +206,62 @@ async def update_folder(
     return folder
 
 
-async def delete_folder(session: AsyncSession, folder_id: int) -> bool:
+async def delete_folder(
+    session: AsyncSession,
+    folder_id: int,
+    *,
+    clear_draft_folder_ids: bool = True,
+) -> bool:
+    """Delete a folder and (optionally) clear its drafts' metadata.folder_id.
+
+    Strategy:
+      - Campaign-derived folders (campaign_id IS NOT NULL): soft-deleted by
+        stamping ``deleted_at``.  This prevents ``backfill_campaign_folders``
+        from recreating the folder on the next overview load while preserving the
+        row as a tombstone.
+      - User-created folders (campaign_id IS NULL): hard-deleted (row removed).
+
+    In both cases ``campaign_deliverables.deliverable_metadata.folder_id`` is
+    cleared for every draft currently pointing at this folder so those drafts
+    move to "All drafts" (lossless — the draft rows are never touched).
+
+    ``clear_draft_folder_ids`` defaults to True; set False only in tests that
+    do not need the draft-clearing side-effect.
+
+    Returns True if the folder existed, False if not found.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from artemis.marketing.models import CampaignDeliverable
+
     folder = await session.get(WritingFolder, folder_id)
     if folder is None:
         return False
-    await session.delete(folder)
+
+    if clear_draft_folder_ids:
+        # Clear metadata.folder_id on every draft that referenced this folder.
+        # Drafts are preserved (lossless); only their folder assignment is removed.
+        result = await session.execute(select(CampaignDeliverable))
+        for draft in result.scalars():
+            meta = draft.deliverable_metadata
+            if isinstance(meta, dict) and meta.get("folder_id") == folder_id:
+                new_meta = dict(meta)
+                new_meta.pop("folder_id", None)
+                new_meta.pop("folder_name", None)
+                draft.deliverable_metadata = new_meta
+                draft.updated_at = datetime.now(UTC)
+        await session.flush()
+
+    if folder.campaign_id is not None:
+        # Campaign-derived folder: soft-delete (tombstone) so backfill skips it.
+        folder.deleted_at = datetime.now(UTC)
+        folder.updated_at = datetime.now(UTC)
+    else:
+        # User-created folder: hard-delete (no tombstone needed).
+        await session.delete(folder)
+
     await session.flush()
     return True
 
