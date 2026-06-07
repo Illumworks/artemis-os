@@ -224,11 +224,13 @@ async def create_draft_from_candidate(
     campaign_name = candidate.name or family
     title = f"{family} — Draft"
 
-    # --- Get-or-create per-candidate folder ---
+    # --- Get-or-create per-candidate folder (tombstone-aware) ---
     # Keyed on candidate_id (stored as str in writing_folders.campaign_id).
     # The folder's display name is derived at read time from the live
     # candidate — folder.name here is just a creation-time snapshot.
-    folder = await wr_repo.get_or_create_folder_by_candidate(
+    # Returns None when the folder was previously deleted (soft-deleted tombstone);
+    # in that case the draft is created without a folder_id (lands in All drafts).
+    folder = await wr_repo.get_or_create_folder_by_candidate_respecting_tombstone(
         session,
         candidate_id,
         candidate_name=campaign_name,
@@ -243,18 +245,20 @@ async def create_draft_from_candidate(
     # e.g. "obc"), NOT str(candidate_id).  The Writing Studio filter dropdown
     # is populated from CampaignCandidate.campaign_family, so only the family
     # string produces matching filter results.
+    draft_meta: dict[str, Any] = {
+        **metadata,
+        "externalDraftId": external_draft.external_id,
+        "externalTitle": external_draft.title,
+    }
+    if folder is not None:
+        draft_meta["folder_id"] = folder.id
+        draft_meta["folder_name"] = campaign_name  # live name snapshot for clients reading metadata
     deliverable = CampaignDeliverable(
         candidate_id=candidate_id,
         deliverable_id=external_draft.external_id,
         campaign_id=family,
         status="generating",
-        deliverable_metadata={
-            **metadata,
-            "externalDraftId": external_draft.external_id,
-            "externalTitle": external_draft.title,
-            "folder_id": folder.id,
-            "folder_name": campaign_name,  # live name snapshot for clients reading metadata
-        },
+        deliverable_metadata=draft_meta,
     )
     session.add(deliverable)
     await session.flush()
@@ -387,8 +391,10 @@ async def create_handoff_draft(
         metadata["tags"] = tags
     metadata["handoff"] = True  # flag distinguishes manual from pipeline drafts
 
-    # ── Get-or-create per-candidate folder ────────────────────────────────────
-    folder = await wr_repo.get_or_create_folder_by_candidate(
+    # ── Get-or-create per-candidate folder (tombstone-aware) ─────────────────
+    # Returns None when the folder was previously deleted (soft-deleted tombstone);
+    # in that case the draft is created without a folder_id (lands in All drafts).
+    folder = await wr_repo.get_or_create_folder_by_candidate_respecting_tombstone(
         session,
         candidate_id,
         candidate_name=campaign_name,
@@ -402,19 +408,21 @@ async def create_handoff_draft(
     # status = "draft_ready" — operator will compose manually; no auto-compose.
     # ("draft" is not in the DB CHECK constraint; "generating" implies pipeline
     # work is in-flight, which is misleading for the manual path.)
+    handoff_meta: dict[str, Any] = {
+        **metadata,
+        "title": title,
+        "externalDraftId": external_draft.external_id,
+        "externalTitle": external_draft.title,
+    }
+    if folder is not None:
+        handoff_meta["folder_id"] = folder.id
+        handoff_meta["folder_name"] = campaign_name
     deliverable = CampaignDeliverable(
         candidate_id=candidate_id,
         deliverable_id=external_draft.external_id,
         campaign_id=family,
         status="draft_ready",
-        deliverable_metadata={
-            **metadata,
-            "title": title,
-            "externalDraftId": external_draft.external_id,
-            "externalTitle": external_draft.title,
-            "folder_id": folder.id,
-            "folder_name": campaign_name,
-        },
+        deliverable_metadata=handoff_meta,
     )
     session.add(deliverable)
     await session.flush()
@@ -590,8 +598,12 @@ async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
     folders_created_ids: set[int] = set()
     skipped = 0
 
-    # Track per-candidate folder ids so we can check idempotency cheaply.
-    candidate_folder_cache: dict[int, Any] = {}  # candidate_id -> WritingFolder
+    # Track per-candidate folder resolution so we can check idempotency cheaply.
+    # Values are WritingFolder instances OR the sentinel ``_tombstoned`` when the
+    # folder was explicitly deleted; tombstoned candidates are skipped so that
+    # backfill never resurects a deleted campaign folder.
+    _tombstoned = object()
+    candidate_folder_cache: dict[int, Any] = {}  # candidate_id -> WritingFolder | _tombstoned
 
     for d in deliverables:
         rows_examined += 1
@@ -607,17 +619,34 @@ async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
         campaign_name = candidate.name or family
         meta: dict[str, Any] = dict(d.deliverable_metadata or {})
 
-        # Get-or-create the per-candidate folder (cached within this run).
+        # Get-or-create the per-candidate folder (tombstone-aware, cached within this run).
         if d.candidate_id not in candidate_folder_cache:
-            folder = await wr_repo.get_or_create_folder_by_candidate(
+            folder = await wr_repo.get_or_create_folder_by_candidate_respecting_tombstone(
                 session,
                 d.candidate_id,
                 candidate_name=campaign_name,
             )
-            candidate_folder_cache[d.candidate_id] = folder
-            folders_created_ids.add(folder.id)
+            candidate_folder_cache[d.candidate_id] = folder if folder is not None else _tombstoned
+            if folder is not None:
+                folders_created_ids.add(folder.id)
         else:
-            folder = candidate_folder_cache[d.candidate_id]
+            cached = candidate_folder_cache[d.candidate_id]
+            folder = None if cached is _tombstoned else cached
+
+        # Tombstoned: clear folder assignment so the draft lands in All drafts.
+        if folder is None:
+            changed = False
+            if "folder_id" in meta or "folder_name" in meta:
+                meta.pop("folder_id", None)
+                meta.pop("folder_name", None)
+                d.deliverable_metadata = meta
+                changed = True
+            if d.campaign_id != family:
+                d.campaign_id = family
+                changed = True
+            if changed:
+                rows_updated += 1
+            continue
 
         # Check if this deliverable is already pointing at the correct folder.
         if meta.get("folder_id") == folder.id and d.campaign_id == family:
