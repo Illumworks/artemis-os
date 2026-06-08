@@ -17,9 +17,14 @@ _GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 _GOOGLE_DOCS_BASE_URL = "https://docs.googleapis.com/v1"
 _GOOGLE_DRIVE_BASE_URL = "https://www.googleapis.com/drive/v3"
 
-GOOGLE_DOCS_SCOPES: tuple[str, str] = (
+GOOGLE_DOCS_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/documents",
+    # email/openid so the post-exchange userinfo fetch (for the connected-account
+    # display) is authorized — without these the token can't read userinfo and the
+    # connect 502s.
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
 )
 
 _DOCUMENT_URL_RE = re.compile(r"/document/d/([a-zA-Z0-9_-]+)")
@@ -117,12 +122,18 @@ async def exchange_code_for_tokens(
         if not access_token:
             raise GoogleDocsError("google token response missing access_token")
 
-        info_resp = await http.get(
-            _GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        info_resp.raise_for_status()
-        userinfo = info_resp.json()
+        # connected_email is display-only — a userinfo failure must NOT fail the
+        # connect (otherwise a missing email scope 502s the whole OAuth callback).
+        userinfo: dict = {}
+        try:
+            info_resp = await http.get(
+                _GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if info_resp.status_code == 200:
+                userinfo = info_resp.json()
+        except httpx.HTTPError:
+            userinfo = {}
 
     expiry = datetime.now(UTC) + timedelta(seconds=int(token_payload.get("expires_in", 3600)))
     refresh_token = token_payload.get("refresh_token")
