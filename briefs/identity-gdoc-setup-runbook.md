@@ -71,6 +71,19 @@ read/write your Google Docs. For that, the app needs its own Google authorizatio
 - **Track B second** — a contained integration for Stage 7, once Track A's identity exists.
 - Build the 3 standalone composer stages (3, 5, 8) in parallel / first; they don't wait on any of this.
 
+## LIVE STATUS (2026-06-08) — Track A is ON for the demo
+- The tunnel (`app.artemisos.me`) routes to **localhost:8000**, which is the demo instance.
+- CF Access verification is enabled by running that instance with **process-env** vars (NOT `.env`, so the
+  preview/dev instances stay open): `ARTEMIS_CF_ACCESS_ENABLED=true`,
+  `ARTEMIS_CF_ACCESS_TEAM_DOMAIN=jfila.cloudflareaccess.com`, `ARTEMIS_CF_ACCESS_AUD=196c…b7d6`.
+- **FOOTGUN:** if :8000 is restarted WITHOUT those env vars, app-level verification silently falls back to
+  the dev shim — user **attribution** is lost (comments would say "dev"), though the Cloudflare gate (6-email
+  policy) still blocks the public. So: always relaunch :8000 with those vars.
+- Validated 2026-06-08: Jon logged in via Google (amiralearning) → got in. Direct localhost (no token) → 401.
+- **Durability:** :8000 + cloudflared run as plain background processes — a reboot kills the demo. Before
+  Friday, make both **launchd services** (env baked in) so the demo survives a restart. (Offered; pending.)
+- Migrate to the org's Cloudflare later = swap `TEAM_DOMAIN` + `AUD`, no code change.
+
 ## Security notes
 - No passwords or financial info ever enter our app — Cloudflare + Google own auth. I verify tokens, I don't
   store credentials.
