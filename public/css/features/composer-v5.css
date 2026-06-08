@@ -468,6 +468,194 @@
 }
 .cv5-empty p { max-width: 380px; line-height: 1.55; margin: 0; }
 
+/* ── Stage 2: floating selection toolbar ──────────────────────────────────── */
+/*
+ * Matches the approved mockup: docs/mockups/composer-v5-prototype.html
+ * Mirrors #sel-toolbar / .sel-btn / .sel-btn-brand / .sel-divider / .sel-btn-edit
+ * but scoped under cv5- namespace so there is no conflict.
+ */
+.cv5-sel-toolbar {
+  display: none;      /* hidden by default; shown via .is-visible */
+  position: fixed;
+  z-index: 200;       /* above the editor header (z-index 5) */
+  background: #fff;
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 12px;
+  box-shadow: var(--cv5-shadow-pop, 0 16px 40px rgba(30,26,21,.18), 0 2px 8px rgba(30,26,21,.08));
+  padding: 4px 5px;
+  gap: 2px;
+  align-items: center;
+  white-space: nowrap;
+  pointer-events: auto;
+  font-family: inherit;
+}
+.cv5-sel-toolbar.is-visible { display: flex; }
+
+.cv5-sel-btn {
+  border: none;
+  background: transparent;
+  color: var(--cv5-ink2, #544c40);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1.3;
+  transition: background 120ms, color 120ms;
+}
+.cv5-sel-btn:hover {
+  background: var(--cv5-accent-soft, rgba(200,137,47,.18));
+  color: var(--cv5-ink, #1e1a15);
+}
+.cv5-sel-btn-brand {
+  color: var(--cv5-accent, #c8892f);
+  font-weight: 600;
+}
+.cv5-sel-btn-brand:hover {
+  background: var(--cv5-accent-soft, rgba(200,137,47,.18));
+  color: var(--cv5-accent, #c8892f);
+}
+.cv5-sel-btn-edit {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.cv5-sel-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--cv5-rule, #e7ded0);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+/* Custom-ask input that replaces buttons inside the toolbar */
+.cv5-sel-custom-input {
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--cv5-ink, #1e1a15);
+  outline: none;
+  min-width: 180px;
+  background: #fff;
+}
+.cv5-sel-custom-input:focus {
+  border-color: var(--cv5-accent, #c8892f);
+  box-shadow: 0 0 0 2px rgba(200,137,47,.12);
+}
+.cv5-sel-btn-go {
+  background: var(--cv5-accent, #c8892f);
+  color: #fff;
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.cv5-sel-btn-go:hover { filter: brightness(1.06); }
+.cv5-sel-btn-cancel { color: var(--cv5-ink3, #8a7f6e); }
+
+/* ── Stage 2: accept/reject rewrite popover ────────────────────────────────── */
+.cv5-rewrite-popover {
+  position: fixed;
+  z-index: 200;
+  background: var(--cv5-card, #fffdf9);
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 14px;
+  box-shadow: var(--cv5-shadow-pop, 0 16px 40px rgba(30,26,21,.18), 0 2px 8px rgba(30,26,21,.08));
+  padding: 14px 16px 12px;
+  max-width: 560px;
+  min-width: 280px;
+  pointer-events: auto;
+  font-family: inherit;
+}
+.cv5-rwp-label {
+  font-family: var(--cv5-mono, ui-monospace);
+  font-size: 9.5px;
+  color: var(--cv5-ink3, #8a7f6e);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 10px;
+}
+.cv5-rwp-diff {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.cv5-rwp-original,
+.cv5-rwp-proposed {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.cv5-rwp-badge {
+  font-size: 9px;
+  font-family: var(--cv5-mono, ui-monospace);
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.cv5-rwp-badge-orig { color: var(--cv5-ink3, #8a7f6e); }
+.cv5-rwp-badge-new  { color: var(--cv5-accent, #c8892f); }
+.cv5-rwp-text {
+  font-size: 12.5px;
+  color: var(--cv5-ink2, #544c40);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0,0,0,.03);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.cv5-rwp-proposed .cv5-rwp-text {
+  background: color-mix(in srgb, var(--cv5-accent, #c8892f) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cv5-accent, #c8892f) 22%, transparent);
+}
+.cv5-rwp-arrow {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--cv5-ink3, #8a7f6e);
+  font-size: 14px;
+  margin-top: 18px;
+}
+.cv5-rwp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.cv5-rwp-reject {
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  background: #fff;
+  color: var(--cv5-ink2, #544c40);
+  border-radius: 7px;
+  padding: 5px 13px;
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms;
+}
+.cv5-rwp-reject:hover { background: color-mix(in srgb, #f44 8%, #fff); color: #c00; }
+.cv5-rwp-accept {
+  background: linear-gradient(135deg, #f0c46c, #d4913a);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 7px;
+  padding: 5px 15px;
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 1px 2px rgba(180,100,20,.18);
+  transition: filter 120ms;
+}
+.cv5-rwp-accept:hover { filter: brightness(1.05); }
+
 /* ── responsive — stack on narrow ──────────────────────────────────────────── */
 @media (max-width: 980px) {
   .cv5-panes { grid-template-columns: 1fr; grid-template-rows: minmax(0, 38%) minmax(0, 62%); }

@@ -725,6 +725,26 @@ export async function composeWritingDraftApi(id, payload = {}) {
   return _readJsonOrThrow(res, "Failed to generate Writing Studio draft");
 }
 
+/**
+ * Rewrite a selected text span using the tag-scoped rules for the draft.
+ * Composer Stage 2 — powers the floating selection toolbar.
+ *
+ * @param {number|string} id  — draft id
+ * @param {{ selectedText: string, instruction: string, fullText?: string }} payload
+ * @returns {{ rewrittenText: string, trace: object }}
+ */
+export async function rewriteSpanApi(id, payload = {}) {
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(id)}/rewrite-span`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  return _readJsonOrThrow(res, "Failed to rewrite selected span");
+}
+
 export async function createWritingDraftApi(payload = {}) {
   const res = await fetch("/api/writing-studio/drafts", {
     method: "POST",
