@@ -879,6 +879,15 @@ export async function applyWritingTemplateApi(templateId, payload = {}) {
   return _readJsonOrThrow(res, "Failed to apply writing template");
 }
 
+export async function createWritingTemplateApi(payload = {}) {
+  const res = await fetch("/api/writing-studio/templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return _readJsonOrThrow(res, "Failed to create writing template");
+}
+
 export async function exportWritingStudioSyncApi(payload = {}) {
   const res = await fetch("/api/writing-studio/sync/export", {
     method: "POST",

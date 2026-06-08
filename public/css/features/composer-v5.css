@@ -737,6 +737,80 @@
 }
 .cv5-rwp-accept:hover { filter: brightness(1.05); }
 
+/* ── Stage 5: format-aware pagination ────────────────────────────────────── */
+/*
+ * Long-form asset types (guide, paper, whitepaper, etc.) show visual
+ * page breaks as a purely decorative overlay — pointer-events:none, no
+ * DOM changes to the editor, no effect on autosave or stored content.
+ *
+ * .cv5-paper--paginated positions the paper relative so the overlay can
+ * use absolute positioning. .cv5-page-breaks contains N divs at multiples
+ * of PAGE_HEIGHT_PX (set by JS).
+ */
+.cv5-paper--paginated {
+  position: relative; /* already has position:relative but be explicit */
+  overflow: visible;  /* let the overflow be handled by the scroll container */
+}
+
+/* The overlay container — full paper width, full paper height, non-interactive */
+.cv5-page-breaks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+}
+
+/* Individual page-break line: a horizontal rule at a fixed top offset.
+   The double-line effect (thin + shadow below) creates a "page edge" feel. */
+.cv5-page-break-line {
+  position: absolute;
+  left: -34px;  /* bleed to paper edges (matches .cv5-paper padding: 26px 34px) */
+  right: -34px;
+  height: 0;
+  /* Main rule line */
+  border-top: 2px solid color-mix(in srgb, var(--cv5-rule, #e7ded0) 80%, transparent);
+  /* Simulate a page shadow below the break — evokes paper stack */
+  box-shadow:
+    0 3px 6px -2px rgba(30, 26, 21, 0.10),
+    0 1px 0   0px  color-mix(in srgb, var(--cv5-bg, #f4efe7) 60%, transparent);
+}
+
+/* Faint "page number margin" indicator — a small notch on the right edge.
+   Pure CSS, no text, respects the "no caption/label" spec. */
+.cv5-page-break-line::after {
+  content: "";
+  position: absolute;
+  right: 34px;  /* back to the inner paper edge */
+  top: -4px;
+  width: 1px;
+  height: 8px;
+  background: color-mix(in srgb, var(--cv5-rule, #e7ded0) 70%, transparent);
+}
+
+/* ── Stage 8: ⋯ Actions menu wrapper ────────────────────────────────────── */
+/*
+ * The Actions menu reuses the .cv5-picker-menu / .cv5-picker-menu-row
+ * family for consistent styling with the "+" create menu in the picker.
+ * We only need to position the wrapper and set the drop direction.
+ */
+.cv5-actions-wrap {
+  position: relative;
+}
+
+/* Override the picker-menu positioning for the header context.
+   The picker-menu anchors from top-right of the parent; for the header
+   button the drop should be below-right. */
+.cv5-actions-menu {
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  min-width: 220px;
+}
+
 /* ── responsive — stack on narrow ──────────────────────────────────────────── */
 @media (max-width: 980px) {
   .cv5-panes { grid-template-columns: 1fr; grid-template-rows: minmax(0, 38%) minmax(0, 62%); }
