@@ -61,20 +61,21 @@ Conclusion: this is "build the document half of the composer," not "polish the e
    register from the selection toolbar — both grow the register (lossless). Register = 88 approved claims
    (8 seed + 80 harvested verbatim from published content). Backend (Claims Register table + CRUD, migration
    0072) merged earlier. Tunables: SUPPRESS_THRESHOLD, pattern classes.
-5. **FORMAT-AWARE PAGINATION.** Long-form types (guides/papers) break into Page 1·2·3; email/short = one
-   continuous page.
-6. **FLOATING COMMENTS (Google-Docs margin).** Anchored to a span via connector, expand/collapse, reply/
-   resolve, **@mention + ping**. **DEPENDS ON identity/SSO** (attribution) — sequence after the identity
-   track (`briefs/writing-studio-identity-and-gdoc.md`).
-7. **GOOGLE DOC link/import/export.** Compact header affordance. Backend stubs exist but are UNIMPLEMENTED;
-   **rides Google OAuth** (same as SSO).
-8. **ACTIONS MENU (⋯).** Save-as-template (+ apply via the "+" menu — ship both or drop templates), Repurpose,
-   Brand+readability check. **Templates BACKEND DONE (2026-06-07):** structured `templates` table + `/api/
-   writing-studio/templates` CRUD (retire=lossless) + seed of 6 corpus templates + `POST /templates/{id}/
-   apply` (instantiates a real draft from the template body) — merged + verified (migration 0073). Known
-   compromise: applied drafts share a placeholder campaign candidate (candidate_id still required) — revisit
-   when wiring into the composer. Remaining for this stage: the composer ⋯ menu UI (Save-as / New-from /
-   Repurpose / Brand-check).
+5. ✅ **FORMAT-AWARE PAGINATION — DONE + MERGED (2026-06-08).** Page-break overlay: long-form asset types →
+   pages; email/short → one continuous page. Presentation-only (PM doc/autosave bit-for-bit unchanged —
+   lossless). Browser-verified (long-form 4 pages vs email continuous).
+6. **FLOATING COMMENTS (Google-Docs margin).** Anchored to a span, expand/collapse, reply/resolve, @mention.
+   ✅ **BACKEND DONE + MERGED (2026-06-08):** comments table (migration 0075) + `/api/writing-studio/.../
+   comments` CRUD (create/reply/resolve/reopen, author=verified user, lossless) — live-verified. **Remaining:
+   the FE** (floating margin UI, @mention, anchored decorations) — terminal next, on composer-v5.js. Identity
+   (Track A) is live, so attribution works.
+7. **GOOGLE DOC import/export.** Compact header affordance. **BACKEND in flight (Codex, `worker/gdoc-backend`,
+   per-user OAuth via Track B).** Then the small composer header FE (terminal). ⚠️ gdoc migration will collide
+   at 0075 (branched off pre-comments head) — renumber to 0076 at merge.
+8. ✅ **ACTIONS MENU (⋯) — DONE + MERGED (2026-06-08).** ⋯ menu in the header + **Save-as-template** (wires to
+   templates `POST`, body+asset_type carried, picker re-fetches) — browser-verified round-trip. Repurpose +
+   Brand-check render as stubs (functional later). Templates backend (table + CRUD + apply, migration 0073)
+   merged earlier. New-from-template lives in the Stage-3 picker "+" menu.
 
 **Order:** 1 → 2 (highest value, showcases tagging) → 3, 4, 5, 8 (largely independent) → 6 (after identity)
 → 7 (after OAuth). Stage 1 must land + be Jon-approved on look before 2+.
