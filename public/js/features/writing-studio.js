@@ -967,6 +967,7 @@ function renderWritingStudio() {
     writingState.composerV5Handle = mountComposerV5(v5Host, {
       draft: selectedDraft,
       allDrafts: drafts,
+      allFolders: folders,
       callbacks: {
         onSelectDraft: (id) => { void loadWritingStudio({ selectedDraftId: id }); },
         onOpenVersionHistory: () => {

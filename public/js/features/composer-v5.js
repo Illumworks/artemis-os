@@ -20,10 +20,15 @@ import { exampleSetup } from "prosemirror-example-setup";
 
 import { escapeHtml } from "../core/utils.js";
 import {
+  applyWritingTemplateApi,
   approveClaimApi,
   composeWritingDraftApi,
   createClaimApi,
+  createWritingDraftApi,
+  createWritingFolderApi,
   fetchWritingDraft,
+  fetchWritingStudioOverview,
+  listWritingTemplatesApi,
   rewriteSpanApi,
   scanDraftClaimsApi,
   updateWritingDraftApi,
@@ -50,6 +55,7 @@ const esc = (v) => escapeHtml(v ?? "");
  * @param {object}      params
  * @param {object}      params.draft         — current selected draft (with .id, .title, .content, .threadMessages, .versions, .status)
  * @param {Array}       params.allDrafts     — sibling drafts for the picker
+ * @param {Array}       params.allFolders    — folders (Stage 3 picker tree)
  * @param {object}      params.callbacks
  *   onDraftReloaded(draft)  — called after live save / version save so host can refresh
  *   onSelectDraft(draftId)  — host should load that draft
@@ -57,14 +63,25 @@ const esc = (v) => escapeHtml(v ?? "");
  *   onError(msg)            — host displays a status error
  *   onStatus(msg)           — host displays a status string
  */
-export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} } = {}) {
+export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = [], callbacks = {} } = {}) {
   if (!rootEl) return null;
   if (!draft) {
     rootEl.innerHTML = renderEmptyState();
     return null;
   }
 
-  rootEl.innerHTML = renderShell({ draft, allDrafts });
+  // Stage-3 picker state — kept in mount closure so expand/collapse persists
+  // across re-renders inside this mount. Keys are stringified folder ids; the
+  // sentinel `"ungrouped"` controls the "Ungrouped" group, and `"all"` is
+  // computed from the others (it's the full list and is always shown expanded).
+  const pickerExpandedFolders = new Set();
+  // Default: expand the folder that contains the current draft, if any.
+  if (draft.folder_id != null) pickerExpandedFolders.add(String(draft.folder_id));
+
+  let currentDrafts = Array.isArray(allDrafts) ? allDrafts.slice() : [];
+  let currentFolders = Array.isArray(allFolders) ? allFolders.slice() : [];
+
+  rootEl.innerHTML = renderShell({ draft, allDrafts: currentDrafts, allFolders: currentFolders, expandedFolders: pickerExpandedFolders });
 
   const editorHost = rootEl.querySelector('[data-cv5="editor"]');
   const savingEl = rootEl.querySelector('[data-cv5="saving"]');
@@ -1009,24 +1026,217 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
     });
   }
 
-  // ── Drafts picker (Stage 1: minimal popover; Stage 3 builds the full UX) ──
+  // ── Stage-3 drafts picker (Finder-style tree + single "+" create menu) ────
+  //
+  // Header button toggles the popover. The popover is a folder TREE: each
+  // top-level folder row is a button that expands/collapses to reveal the
+  // drafts filed under it. An "All drafts" group shows every non-archived
+  // draft; an "Ungrouped" group shows drafts with no folder_id. The "+" in
+  // the popover header opens a small create menu (New draft / New from
+  // template / New folder).
+  //
+  // Outside-click and Escape close the popover. Selecting a draft routes
+  // through onSelectDraft (host re-loads).
+
+  function rerenderPickerOnly() {
+    const newBody = renderPickerBody({
+      allDrafts: currentDrafts,
+      allFolders: currentFolders,
+      activeId: draft.id,
+      expandedFolders: pickerExpandedFolders,
+    });
+    if (pickerEl) {
+      // Preserve the header (with "+") + replace only the body.
+      const headEl = pickerEl.querySelector('[data-cv5="picker-head"]');
+      const bodyEl = pickerEl.querySelector('[data-cv5="picker-body"]');
+      if (bodyEl) bodyEl.outerHTML = newBody;
+      if (headEl) headEl.querySelector('[data-cv5="picker-plus"]')?.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function openPicker() {
+    if (!draftsWrapEl) return;
+    draftsWrapEl.classList.add("is-open");
+    draftsBtnEl?.setAttribute("aria-expanded", "true");
+  }
+  function closePicker() {
+    if (!draftsWrapEl) return;
+    draftsWrapEl.classList.remove("is-open");
+    draftsBtnEl?.setAttribute("aria-expanded", "false");
+    // Also close the +-menu when the picker closes.
+    pickerEl?.querySelector('[data-cv5="picker-create-menu"]')?.classList.remove("is-open");
+    pickerEl?.querySelector('[data-cv5="picker-templates-menu"]')?.classList.remove("is-open");
+  }
+
   if (draftsBtnEl && draftsWrapEl) {
     draftsBtnEl.addEventListener("click", (e) => {
       e.stopPropagation();
-      draftsWrapEl.classList.toggle("is-open");
+      const wasOpen = draftsWrapEl.classList.contains("is-open");
+      if (wasOpen) closePicker();
+      else openPicker();
     });
-    document.addEventListener("click", (e) => {
-      if (!draftsWrapEl.contains(e.target)) draftsWrapEl.classList.remove("is-open");
-    });
-    if (pickerEl) {
-      pickerEl.addEventListener("click", (e) => {
-        const row = e.target.closest("[data-cv5-draft-id]");
-        if (!row) return;
-        const id = Number(row.dataset.cv5DraftId);
+  }
+
+  // Outside-click handler closes the picker (and the "+" menu inside it).
+  function handlePickerOutsideClick(e) {
+    if (!draftsWrapEl) return;
+    if (!draftsWrapEl.contains(e.target)) closePicker();
+  }
+  document.addEventListener("click", handlePickerOutsideClick);
+
+  // Escape key closes the picker.
+  function handlePickerEscape(e) {
+    if (e.key !== "Escape") return;
+    if (draftsWrapEl?.classList.contains("is-open")) {
+      closePicker();
+    }
+  }
+  document.addEventListener("keydown", handlePickerEscape);
+
+  if (pickerEl) {
+    pickerEl.addEventListener("click", async (e) => {
+      // ── "+" toggle (root of the create menu) ────────────────────────────
+      const plusBtn = e.target.closest('[data-cv5="picker-plus"]');
+      if (plusBtn) {
+        e.stopPropagation();
+        const menu = pickerEl.querySelector('[data-cv5="picker-create-menu"]');
+        const tplMenu = pickerEl.querySelector('[data-cv5="picker-templates-menu"]');
+        tplMenu?.classList.remove("is-open");
+        menu?.classList.toggle("is-open");
+        return;
+      }
+
+      // ── Create-menu items ───────────────────────────────────────────────
+      const action = e.target.closest("[data-cv5-create]");
+      if (action) {
+        e.stopPropagation();
+        const kind = action.dataset.cv5Create;
+        const menu = pickerEl.querySelector('[data-cv5="picker-create-menu"]');
+        const tplMenu = pickerEl.querySelector('[data-cv5="picker-templates-menu"]');
+        if (kind === "draft") {
+          menu?.classList.remove("is-open");
+          await handleCreateBlankDraft();
+        } else if (kind === "template") {
+          // Open the templates submenu (load if not yet loaded).
+          menu?.classList.remove("is-open");
+          await openTemplatesSubmenu(tplMenu);
+        } else if (kind === "folder") {
+          menu?.classList.remove("is-open");
+          await handleCreateFolder();
+        }
+        return;
+      }
+
+      // ── Pick a template from the submenu ────────────────────────────────
+      const tplRow = e.target.closest("[data-cv5-template-id]");
+      if (tplRow) {
+        e.stopPropagation();
+        const templateId = Number(tplRow.dataset.cv5TemplateId);
+        if (templateId) await handleApplyTemplate(templateId);
+        return;
+      }
+
+      // ── Folder expand/collapse ─────────────────────────────────────────
+      const folderRow = e.target.closest("[data-cv5-folder-key]");
+      if (folderRow) {
+        e.stopPropagation();
+        const key = folderRow.dataset.cv5FolderKey;
+        if (pickerExpandedFolders.has(key)) pickerExpandedFolders.delete(key);
+        else pickerExpandedFolders.add(key);
+        rerenderPickerOnly();
+        return;
+      }
+
+      // ── Select a draft (file row) ──────────────────────────────────────
+      const draftRow = e.target.closest("[data-cv5-draft-id]");
+      if (draftRow) {
+        e.stopPropagation();
+        const id = Number(draftRow.dataset.cv5DraftId);
         if (!id) return;
-        draftsWrapEl.classList.remove("is-open");
+        closePicker();
         callbacks.onSelectDraft?.(id);
-      });
+      }
+    });
+  }
+
+  // ── Picker action handlers ────────────────────────────────────────────────
+
+  async function handleCreateBlankDraft() {
+    // Reuse the existing POST /drafts path. That endpoint requires a
+    // candidate_id; we use the current draft's candidate_id so the new draft
+    // hangs off the same campaign context (status "generating" — same as the
+    // existing manual-create flow).
+    try {
+      const candidateId = draft.candidate_id;
+      if (!candidateId) {
+        callbacks.onError?.("No campaign context — open a draft first.");
+        return;
+      }
+      const created = await createWritingDraftApi({ candidate_id: candidateId });
+      callbacks.onStatus?.("New draft created.");
+      closePicker();
+      callbacks.onSelectDraft?.(created.id);
+    } catch (err) {
+      console.error("[composer-v5] create blank draft failed:", err);
+      callbacks.onError?.(err.message || "Failed to create draft.");
+    }
+  }
+
+  let templatesCache = null;
+  async function openTemplatesSubmenu(tplMenu) {
+    if (!tplMenu) return;
+    if (!templatesCache) {
+      try {
+        templatesCache = await listWritingTemplatesApi("active");
+      } catch (err) {
+        console.error("[composer-v5] list templates failed:", err);
+        callbacks.onError?.(err.message || "Failed to load templates.");
+        templatesCache = [];
+      }
+    }
+    tplMenu.innerHTML = renderTemplatesSubmenu(templatesCache);
+    tplMenu.classList.add("is-open");
+  }
+
+  async function handleApplyTemplate(templateId) {
+    try {
+      // Apply on the current folder (if any) so the new draft is filed
+      // alongside its siblings; otherwise the backend places it under the
+      // template-workspace candidate (lands in All drafts).
+      const folderId = draft.folder_id ?? null;
+      const payload = folderId != null ? { folderId } : {};
+      const applied = await applyWritingTemplateApi(templateId, payload);
+      callbacks.onStatus?.("Draft created from template.");
+      closePicker();
+      callbacks.onSelectDraft?.(applied.id);
+    } catch (err) {
+      console.error("[composer-v5] apply template failed:", err);
+      callbacks.onError?.(err.message || "Failed to apply template.");
+    }
+  }
+
+  async function handleCreateFolder() {
+    const name = window.prompt("Folder name:");
+    if (!name || !name.trim()) return;
+    try {
+      const folder = await createWritingFolderApi({ name: name.trim() });
+      // Refresh the local tree state with the new folder so it appears
+      // immediately without a host re-mount.
+      try {
+        const overview = await fetchWritingStudioOverview();
+        if (Array.isArray(overview?.folders)) currentFolders = overview.folders;
+        if (Array.isArray(overview?.drafts)) currentDrafts = overview.drafts;
+      } catch (_) {
+        // Best-effort refresh — fall back to optimistic insert.
+        currentFolders = [...currentFolders, folder];
+      }
+      // Auto-expand the new folder so the user sees it.
+      pickerExpandedFolders.add(String(folder.id));
+      rerenderPickerOnly();
+      callbacks.onStatus?.(`Folder "${folder.name}" created.`);
+    } catch (err) {
+      console.error("[composer-v5] create folder failed:", err);
+      callbacks.onError?.(err.message || "Failed to create folder.");
     }
   }
 
@@ -1168,6 +1378,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       // Stage-4 cleanup: scan timer + claim popover.
       if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
       try { document.body.removeChild(claimPopover); } catch (_) { /* noop */ }
+      // Stage-3 cleanup: drafts-picker listeners.
+      document.removeEventListener("click", handlePickerOutsideClick);
+      document.removeEventListener("keydown", handlePickerEscape);
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,
@@ -1187,7 +1400,7 @@ function renderEmptyState() {
   `;
 }
 
-function renderShell({ draft, allDrafts }) {
+function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
   const titleText = draft.title || `Draft ${draft.id}`;
   const status = (draft.status || "draft").replace(/_/g, " ");
   const versionsCount = Array.isArray(draft.versions) ? draft.versions.length : 0;
@@ -1196,13 +1409,31 @@ function renderShell({ draft, allDrafts }) {
     <div class="cv5-root">
       <header class="cv5-hdr">
         <div class="cv5-hdr-drafts-wrap" data-cv5="drafts-wrap">
-          <button type="button" class="cv5-hdr-drafts-btn" data-cv5="drafts-btn" aria-haspopup="listbox" aria-expanded="false" title="Open drafts">
+          <button type="button" class="cv5-hdr-drafts-btn" data-cv5="drafts-btn" aria-haspopup="menu" aria-expanded="false" title="Open drafts">
             <span aria-hidden="true">📁</span>
             <span style="color: var(--cv5-ink3);">▾</span>
           </button>
-          <div class="cv5-picker" data-cv5="drafts-picker" role="listbox" aria-label="Drafts">
-            <div class="cv5-picker-head">Drafts</div>
-            ${renderPickerRows(allDrafts, draft.id)}
+          <div class="cv5-picker" data-cv5="drafts-picker" role="menu" aria-label="Drafts">
+            <div class="cv5-picker-head" data-cv5="picker-head">
+              <span class="cv5-picker-head-lbl">Drafts</span>
+              <button type="button" class="cv5-picker-plus" data-cv5="picker-plus" title="New" aria-label="New draft, folder, or from template" aria-haspopup="menu" aria-expanded="false">+</button>
+              <div class="cv5-picker-menu" data-cv5="picker-create-menu" role="menu" aria-label="Create">
+                <button type="button" class="cv5-picker-menu-row" data-cv5-create="draft" role="menuitem">
+                  <span aria-hidden="true">📄</span>
+                  <span>New draft</span>
+                </button>
+                <button type="button" class="cv5-picker-menu-row" data-cv5-create="template" role="menuitem">
+                  <span aria-hidden="true">📋</span>
+                  <span>New from template…</span>
+                </button>
+                <button type="button" class="cv5-picker-menu-row" data-cv5-create="folder" role="menuitem">
+                  <span aria-hidden="true">📁</span>
+                  <span>New folder</span>
+                </button>
+              </div>
+              <div class="cv5-picker-menu cv5-picker-menu--templates" data-cv5="picker-templates-menu" role="menu" aria-label="Templates"></div>
+            </div>
+            ${renderPickerBody({ allDrafts, allFolders, activeId: draft.id, expandedFolders })}
           </div>
         </div>
         <span class="cv5-hdr-title" title="${esc(titleText)}">${esc(titleText)}</span>
@@ -1251,21 +1482,143 @@ function renderShell({ draft, allDrafts }) {
   `;
 }
 
-function renderPickerRows(drafts, activeId) {
-  if (!Array.isArray(drafts) || drafts.length === 0) {
-    return `<div class="cv5-picker-empty">No drafts yet.</div>`;
+function renderPickerBody({ allDrafts, allFolders, activeId, expandedFolders }) {
+  const drafts = Array.isArray(allDrafts) ? allDrafts : [];
+  const folders = Array.isArray(allFolders) ? allFolders : [];
+
+  if (drafts.length === 0 && folders.length === 0) {
+    return `<div class="cv5-picker-body" data-cv5="picker-body"><div class="cv5-picker-empty">No drafts yet.</div></div>`;
   }
-  return drafts
-    .slice(0, 50)
-    .map((d) => {
-      const cls = d.id === activeId ? "cv5-picker-row is-active" : "cv5-picker-row";
-      const title = d.title || `Draft ${d.id}`;
-      const meta = [d.asset_type, d.status].filter(Boolean).join(" · ");
+
+  // Build folder index + draft groupings.
+  const folderById = new Map(folders.map((f) => [f.id, f]));
+  const draftsByFolderId = new Map();
+  const ungrouped = [];
+  for (const d of drafts) {
+    if (d.folder_id != null && folderById.has(d.folder_id)) {
+      if (!draftsByFolderId.has(d.folder_id)) draftsByFolderId.set(d.folder_id, []);
+      draftsByFolderId.get(d.folder_id).push(d);
+    } else {
+      ungrouped.push(d);
+    }
+  }
+
+  // "All drafts" — always-expanded flat list at the top. Mirrors the mock's
+  // ▾ All drafts row; we use the same .cv5-picker-folder visual treatment but
+  // disable the collapse toggle so it remains a stable "everything" view.
+  const allRows = drafts
+    .slice()
+    .sort(_byUpdatedAtDesc)
+    .map((d) => renderTreeFileRow(d, activeId, /*indent=*/1))
+    .join("");
+
+  // Per-folder sections — sorted by name.
+  const sortedFolders = folders
+    .slice()
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const folderSections = sortedFolders
+    .map((f) => {
+      const key = String(f.id);
+      const expanded = expandedFolders.has(key);
+      const inside = (draftsByFolderId.get(f.id) || []).slice().sort(_byUpdatedAtDesc);
+      const insideRows = expanded
+        ? inside.map((d) => renderTreeFileRow(d, activeId, /*indent=*/1)).join("")
+        : "";
+      const count = inside.length;
+      const caret = expanded ? "▾" : "▸";
       return `
-        <button type="button" class="${cls}" data-cv5-draft-id="${d.id}">
-          <span aria-hidden="true">📄</span>
-          <span>${esc(title)}</span>
-          <span class="cv5-picker-row-meta">${esc(meta)}</span>
+        <button type="button" class="cv5-picker-row cv5-picker-folder" data-cv5-folder-key="${esc(key)}" aria-expanded="${expanded}">
+          <span class="cv5-picker-caret" aria-hidden="true">${caret}</span>
+          <span aria-hidden="true">📁</span>
+          <span class="cv5-picker-folder-name">${esc(f.name || "Untitled folder")}</span>
+          <span class="cv5-picker-row-meta">${count > 0 ? count : ""}</span>
+        </button>
+        ${insideRows}
+      `;
+    })
+    .join("");
+
+  // "Ungrouped" — drafts without a folder.  Hidden when empty.
+  const ungroupedKey = "ungrouped";
+  let ungroupedSection = "";
+  if (ungrouped.length > 0) {
+    const expanded = expandedFolders.has(ungroupedKey);
+    const caret = expanded ? "▾" : "▸";
+    const insideRows = expanded
+      ? ungrouped.slice().sort(_byUpdatedAtDesc).map((d) => renderTreeFileRow(d, activeId, /*indent=*/1)).join("")
+      : "";
+    ungroupedSection = `
+      <button type="button" class="cv5-picker-row cv5-picker-folder" data-cv5-folder-key="${ungroupedKey}" aria-expanded="${expanded}">
+        <span class="cv5-picker-caret" aria-hidden="true">${caret}</span>
+        <span aria-hidden="true">📁</span>
+        <span class="cv5-picker-folder-name">Ungrouped</span>
+        <span class="cv5-picker-row-meta">${ungrouped.length}</span>
+      </button>
+      ${insideRows}
+    `;
+  }
+
+  // "All drafts" — collapsible like other folders. Default expanded only if
+  // the user previously expanded it (we don't auto-pre-expand to keep the
+  // popover compact when there are many drafts).
+  const allKey = "all";
+  const allExpanded = expandedFolders.has(allKey);
+  const allCaret = allExpanded ? "▾" : "▸";
+  const allSection = `
+    <button type="button" class="cv5-picker-row cv5-picker-folder cv5-picker-folder--all" data-cv5-folder-key="${allKey}" aria-expanded="${allExpanded}">
+      <span class="cv5-picker-caret" aria-hidden="true">${allCaret}</span>
+      <span aria-hidden="true">📁</span>
+      <span class="cv5-picker-folder-name">All drafts</span>
+      <span class="cv5-picker-row-meta">${drafts.length}</span>
+    </button>
+    ${allExpanded ? allRows : ""}
+  `;
+
+  return `
+    <div class="cv5-picker-body" data-cv5="picker-body">
+      ${allSection}
+      ${folderSections}
+      ${ungroupedSection}
+    </div>
+  `;
+}
+
+function renderTreeFileRow(d, activeId, indent) {
+  const isActive = d.id === activeId;
+  const cls = isActive ? "cv5-picker-row cv5-picker-file is-active" : "cv5-picker-row cv5-picker-file";
+  const title = d.title || `Draft ${d.id}`;
+  const meta = [d.asset_type, d.status].filter(Boolean).join(" · ");
+  return `
+    <button type="button" class="${cls}" data-cv5-draft-id="${d.id}" data-cv5-indent="${indent}">
+      <span class="cv5-picker-row-icon" aria-hidden="true">📄</span>
+      <span class="cv5-picker-row-title">${esc(title)}</span>
+      ${meta ? `<span class="cv5-picker-row-meta">${esc(meta)}</span>` : ""}
+    </button>
+  `;
+}
+
+function _byUpdatedAtDesc(a, b) {
+  const at = a.updated_at || "";
+  const bt = b.updated_at || "";
+  if (at && bt) return bt.localeCompare(at);
+  if (at) return -1;
+  if (bt) return 1;
+  return (b.id || 0) - (a.id || 0);
+}
+
+function renderTemplatesSubmenu(templates) {
+  if (!Array.isArray(templates) || templates.length === 0) {
+    return `<div class="cv5-picker-menu-empty">No active templates.</div>`;
+  }
+  return templates
+    .map((t) => {
+      const meta = t.asset_type || t.assetType || "";
+      return `
+        <button type="button" class="cv5-picker-menu-row" data-cv5-template-id="${t.id}" role="menuitem">
+          <span aria-hidden="true">📋</span>
+          <span class="cv5-picker-row-title">${esc(t.name || `Template ${t.id}`)}</span>
+          ${meta ? `<span class="cv5-picker-row-meta">${esc(meta)}</span>` : ""}
         </button>
       `;
     })
