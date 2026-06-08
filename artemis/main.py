@@ -65,6 +65,7 @@ from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
 from artemis.routes import health, okr, parallel, status, writing_rules, writing_studio_tags
 from artemis.routes import jira as jira_routes
+from artemis.routes import me as me_routes
 from artemis.routes import meetings as meetings_routes
 from artemis.routes import notifications as notifications_routes
 from artemis.routes import people as people_routes
@@ -197,6 +198,7 @@ async def _no_cache_for_app_assets(request: Request, call_next):  # type: ignore
 # API routes — must be mounted BEFORE StaticFiles so /api/* takes precedence.
 app.include_router(health.router)
 app.include_router(status.router)  # Phase E1b — surface availability bootstrap
+app.include_router(me_routes.router)
 
 # Phase C2 — Marketing OS HTTP routes
 app.include_router(scouts.router)

@@ -6,13 +6,21 @@ allowed through. If set, the Authorization header must carry a matching token.
 
 from __future__ import annotations
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from artemis.config import settings
+from artemis.identity.dependencies import resolve_request_identity
 
 
-async def require_token(authorization: str | None = Header(default=None)) -> None:
-    """FastAPI dependency: validate bearer token if ARTEMIS_TOKEN is configured."""
+async def require_token(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    cf_access_jwt_assertion: str | None = Header(default=None, alias="Cf-Access-Jwt-Assertion"),
+) -> None:
+    """FastAPI dependency: auth gate for shared-token or Cloudflare Access mode."""
+    if settings.cf_access_enabled:
+        await resolve_request_identity(request, cf_access_jwt_assertion)
+        return
     if settings.token is None:
         # Dev mode — no auth required
         return

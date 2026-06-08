@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     )
 
     token: str | None = Field(default=None, description="Shared-account auth token; None disables.")
+    cf_access_enabled: bool = Field(
+        default=False,
+        description="When true, trust and verify Cloudflare Access JWT headers for identity.",
+    )
+    cf_access_team_domain: str = Field(
+        default="",
+        description="Cloudflare Access team domain, e.g. example.cloudflareaccess.com.",
+    )
+    cf_access_aud: str = Field(
+        default="",
+        description="Cloudflare Access application audience tag (AUD).",
+    )
 
     embedding_provider: str = Field(
         default="minilm",
