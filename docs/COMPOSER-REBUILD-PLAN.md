@@ -34,11 +34,16 @@ Conclusion: this is "build the document half of the composer," not "polish the e
   build <7 days old; commit any lock/manifest).
 
 ## Staged build sequence (each stage shippable + Lead-verified before the next)
-1. **FOUNDATION — the editable document + v5 shell.** Restructure to **chat LEFT / document RIGHT**; mount a
-   ProseMirror editable document that loads the draft content and **autosaves** (PUT `/drafts/{id}` content,
-   lossless — versions preserved). Replace the read-only chat bubble with the live editable artifact. This is
-   the make-or-break stage everything attaches to. *Design-heavy → Lead prototypes the look, Jon reacts,
-   terminal builds.*
+1. ✅ **FOUNDATION — DONE + MERGED + VERIFIED (2026-06-07).** chat LEFT / document RIGHT (38/62) with a real
+   ProseMirror editable document (vendored locally — `public/vendor/prosemirror/`, ESM + import map, works
+   offline; new `composer-v5.js`/`.css`). Debounced autosave persists a transient `live_content` (PUT
+   `/drafts/{id}` `liveContent`) **without minting a version** — Save-version mints + clears it; serializer +
+   `compose_engine._latest_draft_content` prefer `live_content`. **Lossless + backward-compatible** (pipeline
+   drafts have no live_content → unchanged). Content format = **plain-text + light markdown (NOT HTML)** so
+   all consumers (LLM prompt, chat fallback, Google Doc export) keep working. Teardown+flush on draft-switch/
+   page-leave = no data loss. Comments-rail toggle in. Verified on main: assets serve, autosave round-trip
+   lossless (versions untouched), PM loads offline (terminal's no-CDN proof). *Legacy layout kept for memory-
+   bank + version-history panels.*
 2. **HIGHLIGHT → AI EDIT (the killer feature).** Select text → floating toolbar (Rewrite · Shorten ·
    Lengthen · Change tone · Fix grammar · **Make on-brand** + custom ask) → scoped compose call (reuse the
    compose engine + **tag-scoped rules from Phases 1–4** so the rewrite is on-brand for the draft's audience)
