@@ -240,6 +240,54 @@ class ClaimUpdate(_Base):
     superseded_by: int | None = Field(default=None, alias="supersededBy")
 
 
+# ── Templates ────────────────────────────────────────────────────────────────
+
+
+class TemplateCreate(_Base):
+    profile_id: int | None = Field(default=None, alias="profileId")
+    template_key: str = Field(alias="templateKey")
+    name: str
+    asset_type: str | None = Field(default=None, alias="assetType")
+    body: str
+    superseded_by: int | None = Field(default=None, alias="supersededBy")
+
+
+class TemplateRead(_Base):
+    id: int
+    profile_id: int = Field(alias="profileId")
+    template_key: str = Field(alias="templateKey")
+    name: str
+    asset_type: str | None = Field(default=None, alias="assetType")
+    body: str
+    status: str
+    superseded_by: int | None = Field(default=None, alias="supersededBy")
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+
+class TemplateUpdate(_Base):
+    template_key: str | None = Field(default=None, alias="templateKey")
+    name: str | None = None
+    asset_type: str | None = Field(default=None, alias="assetType")
+    body: str | None = None
+    superseded_by: int | None = Field(default=None, alias="supersededBy")
+
+
+class TemplateApplyRequest(_Base):
+    title: str | None = None
+    folder_id: int | None = Field(default=None, alias="folderId")
+
+
+class AppliedDraftRead(_Base):
+    id: int
+    candidate_id: int = Field(alias="candidateId")
+    title: str
+    status: str
+    folder_id: int | None = Field(default=None, alias="folderId")
+    content: str
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+
+
 # ── Migration / dry-run DTOs ──────────────────────────────────────────────────
 
 

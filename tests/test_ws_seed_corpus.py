@@ -41,6 +41,7 @@ db_module.SessionLocal = async_sessionmaker(
 _TRUNCATE = text(
     """
     TRUNCATE
+        templates,
         claims,
         writing_sources,
         writing_examples,
@@ -65,6 +66,7 @@ EXPECTED_SOURCES = 9  # one writing_sources row per file
 EXPECTED_EXAMPLES = 7  # 01..07 minus 08 (source_only) and 00 (profile_prompt)
 EXPECTED_RULES = 0  # no rule-target entries in the current corpus
 EXPECTED_CLAIMS = 8  # 05_CLAIMS_REGISTER parses into 8 approved claim rows
+EXPECTED_TEMPLATES = 6  # 07_TEMPLATES parses into 6 structured template rows
 
 
 @pytest.fixture
@@ -132,6 +134,9 @@ async def test_seed_inserts_correct_counts(db_session: AsyncSession) -> None:
     assert result["claimsUpserted"] == EXPECTED_CLAIMS, (
         f"Expected {EXPECTED_CLAIMS} claims, got {result['claimsUpserted']}"
     )
+    assert result["templatesUpserted"] == EXPECTED_TEMPLATES, (
+        f"Expected {EXPECTED_TEMPLATES} templates, got {result['templatesUpserted']}"
+    )
     assert result["profilePromptUpdated"] is True, "Master prompt should update profile"
     assert result["profileId"] is not None
     assert result["profileName"] == "Amira Marketing"
@@ -176,6 +181,11 @@ async def test_seed_is_idempotent(db_session: AsyncSession) -> None:
         f"Expected {EXPECTED_CLAIMS} claims after 2nd run, got {len(claims)}"
     )
 
+    templates = await repo.list_templates(db_session, profiles[0].id)
+    assert len(templates) == EXPECTED_TEMPLATES, (
+        f"Expected {EXPECTED_TEMPLATES} templates after 2nd run, got {len(templates)}"
+    )
+
 
 @pytest.mark.asyncio
 async def test_seed_profile_has_system_prompt(db_session: AsyncSession) -> None:
@@ -212,10 +222,12 @@ async def test_seed_import_endpoint_returns_counts(http_client: AsyncClient) -> 
     assert "rulesUpserted" in data
     assert "claimsUpserted" in data
     assert "examplesUpserted" in data
+    assert "templatesUpserted" in data
     assert data["sourcesUpserted"] == EXPECTED_SOURCES
     assert data["examplesUpserted"] == EXPECTED_EXAMPLES
     assert data["rulesUpserted"] == EXPECTED_RULES
     assert data["claimsUpserted"] == EXPECTED_CLAIMS
+    assert data["templatesUpserted"] == EXPECTED_TEMPLATES
     assert data["profilePromptUpdated"] is True
 
 
@@ -233,3 +245,4 @@ async def test_seed_import_endpoint_idempotent(http_client: AsyncClient) -> None
     assert d1["examplesUpserted"] == d2["examplesUpserted"]
     assert d1["rulesUpserted"] == d2["rulesUpserted"]
     assert d1["claimsUpserted"] == d2["claimsUpserted"]
+    assert d1["templatesUpserted"] == d2["templatesUpserted"]

@@ -45,6 +45,7 @@ from artemis.marketing.routes import (
     sends,
     signal_criteria,
     signal_queue,
+    templates,
     writing_studio,
 )
 from artemis.marketing.scout_scheduler import start_scout_scheduler, stop_scout_scheduler
@@ -211,6 +212,7 @@ app.include_router(content_assets.router)
 app.include_router(approvals.router)
 app.include_router(sends.router)
 app.include_router(claims.router)
+app.include_router(templates.router)
 app.include_router(writing_studio.router)
 app.include_router(intel_prioritization.router)
 

@@ -72,6 +72,7 @@ class WritingProfile(Base):
     )
     sources: Mapped[list[WritingSource]] = relationship("WritingSource", back_populates="profile")
     claims: Mapped[list[Claim]] = relationship("Claim", back_populates="profile")
+    templates: Mapped[list[Template]] = relationship("Template", back_populates="profile")
     training_candidates: Mapped[list[WritingTrainingCandidate]] = relationship(
         "WritingTrainingCandidate", back_populates="profile"
     )
@@ -280,6 +281,46 @@ class Claim(Base):
 
     profile: Mapped[WritingProfile] = relationship("WritingProfile", back_populates="claims")
     superseded_claim: Mapped[Claim | None] = relationship("Claim", remote_side="Claim.id")
+
+
+class Template(Base):
+    """Structured copy-ready template tied to a writing profile."""
+
+    __tablename__ = "templates"
+    __table_args__ = (
+        Index("idx_templates_profile_status", "profile_id", "status"),
+        UniqueConstraint("profile_id", "template_key", name="uq_templates_profile_key"),
+        CheckConstraint(
+            "status IN ('active', 'retired')",
+            name="ck_templates_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("writing_profiles.id"), nullable=False
+    )
+    template_key: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    superseded_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    profile: Mapped[WritingProfile] = relationship("WritingProfile", back_populates="templates")
+    superseded_template: Mapped[Template | None] = relationship(
+        "Template", remote_side="Template.id"
+    )
 
 
 class TagDimension(Base):

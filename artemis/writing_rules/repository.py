@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.writing_rules.models import (
     Claim,
+    Template,
     WritingDraftThreadMessage,
     WritingExample,
     WritingFolder,
@@ -767,6 +768,93 @@ async def retire_claim(session: AsyncSession, claim_id: int) -> Claim | None:
     claim.updated_at = datetime.now(UTC)
     await session.flush()
     return claim
+
+
+# ── Templates ────────────────────────────────────────────────────────────────
+
+
+async def list_templates(
+    session: AsyncSession,
+    profile_id: int,
+    status: Literal["active", "retired"] | None = None,
+) -> list[Template]:
+    q = (
+        select(Template)
+        .where(Template.profile_id == profile_id)
+        .order_by(Template.template_key, Template.created_at, Template.id)
+    )
+    if status is not None:
+        q = q.where(Template.status == status)
+    result = await session.execute(q)
+    return list(result.scalars())
+
+
+async def get_template(session: AsyncSession, template_id: int) -> Template | None:
+    return await session.get(Template, template_id)
+
+
+async def get_template_by_profile_key(
+    session: AsyncSession,
+    profile_id: int,
+    template_key: str,
+) -> Template | None:
+    result = await session.execute(
+        select(Template)
+        .where(Template.profile_id == profile_id, Template.template_key == template_key)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_template(
+    session: AsyncSession,
+    *,
+    profile_id: int,
+    template_key: str,
+    name: str,
+    body: str,
+    asset_type: str | None = None,
+    superseded_by: int | None = None,
+    status: str = "active",
+) -> Template:
+    template = Template(
+        profile_id=profile_id,
+        template_key=template_key,
+        name=name,
+        asset_type=asset_type,
+        body=body,
+        superseded_by=superseded_by,
+        status=status,
+    )
+    session.add(template)
+    await session.flush()
+    await session.refresh(template)
+    return template
+
+
+async def update_template(
+    session: AsyncSession,
+    template_id: int,
+    **kwargs: Any,
+) -> Template | None:
+    template = await get_template(session, template_id)
+    if template is None:
+        return None
+    for key, value in kwargs.items():
+        setattr(template, key, value)
+    template.updated_at = datetime.now(UTC)
+    await session.flush()
+    return template
+
+
+async def retire_template(session: AsyncSession, template_id: int) -> Template | None:
+    template = await get_template(session, template_id)
+    if template is None:
+        return None
+    template.status = "retired"
+    template.updated_at = datetime.now(UTC)
+    await session.flush()
+    return template
 
 
 # ── Thread messages ───────────────────────────────────────────────────────────

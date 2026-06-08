@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.marketing.brief_assembler import (
@@ -27,7 +28,12 @@ from artemis.marketing.brief_assembler import (
     CampaignBrief,
     format_brief_for_writing_studio,
 )
-from artemis.marketing.models import Approval, CampaignDeliverable, ContentAssetLink
+from artemis.marketing.models import (
+    Approval,
+    CampaignCandidate,
+    CampaignDeliverable,
+    ContentAssetLink,
+)
 from artemis.marketing.repository import (
     get_campaign_brief,
     get_candidate,
@@ -71,6 +77,8 @@ class ApprovalRecord:
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
 _ASSET_CONTEXT_WORD_CAP = 800
+_TEMPLATE_DRAFT_FAMILY = "writing_studio_template"
+_TEMPLATE_DRAFT_NAME = "Writing Studio Templates"
 
 
 def _compact_text(value: Any, limit: int = 1200) -> str:
@@ -101,6 +109,93 @@ def _build_asset_context_text(assets: list[dict[str, Any]]) -> str:
         truncated = " ".join(candidate.split()[:_ASSET_CONTEXT_WORD_CAP])
         return truncated + "\n[asset list truncated]"
     return candidate
+
+
+async def _get_or_create_template_workspace_candidate(session: AsyncSession) -> CampaignCandidate:
+    """Return the shared placeholder candidate for standalone template drafts.
+
+    campaign_deliverables still requires candidate_id, so template-instantiated
+    drafts without a campaign context hang off a single internal candidate
+    instead of inventing a parallel draft store.
+    """
+    result = await session.execute(
+        select(CampaignCandidate)
+        .where(CampaignCandidate.campaign_family == _TEMPLATE_DRAFT_FAMILY)
+        .order_by(CampaignCandidate.id)
+        .limit(1)
+    )
+    candidate = result.scalar_one_or_none()
+    if candidate is not None:
+        return candidate
+
+    candidate = CampaignCandidate(
+        campaign_family=_TEMPLATE_DRAFT_FAMILY,
+        name=_TEMPLATE_DRAFT_NAME,
+        objective="Internal placeholder candidate for template-instantiated drafts.",
+    )
+    session.add(candidate)
+    await session.flush()
+    await session.refresh(candidate)
+    return candidate
+
+
+async def _create_manual_draft_record(
+    session: AsyncSession,
+    *,
+    candidate_id: int,
+    campaign_id: str | None,
+    title: str,
+    metadata: dict[str, Any],
+    status: str = "draft_ready",
+    folder_id: int | None = None,
+    folder_name: str | None = None,
+    ws: Any = None,
+) -> Draft:
+    """Create a draft_ready deliverable row using the shared manual-draft path."""
+    external = ws if ws is not None else get_writing_studio()
+    external_draft: ExternalDraft = await external.create_draft(title=title, metadata=metadata)
+
+    draft_meta: dict[str, Any] = {
+        **metadata,
+        "title": title,
+        "externalDraftId": external_draft.external_id,
+        "externalTitle": external_draft.title,
+    }
+    if folder_id is not None:
+        draft_meta["folder_id"] = folder_id
+    if folder_name:
+        draft_meta["folder_name"] = folder_name
+
+    deliverable = CampaignDeliverable(
+        candidate_id=candidate_id,
+        deliverable_id=external_draft.external_id,
+        campaign_id=campaign_id,
+        status=status,
+        deliverable_metadata=draft_meta,
+    )
+    session.add(deliverable)
+    await session.flush()
+    await session.refresh(deliverable)
+    await session.commit()
+
+    with contextlib.suppress(Exception):
+        await publish_event(
+            "draft.generated",
+            draft_id=external_draft.external_id,
+            campaign_id=campaign_id,
+            deliverable_id=str(deliverable.id),
+            status=status,
+        )
+
+    return Draft(
+        id=deliverable.id,
+        external_id=external_draft.external_id,
+        candidate_id=candidate_id,
+        title=title,
+        status=status,
+        metadata=dict(deliverable.deliverable_metadata or {}),
+        created_at=deliverable.created_at,
+    )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -400,59 +495,78 @@ async def create_handoff_draft(
         candidate_name=campaign_name,
     )
 
-    # ── External WS call (stub or real) ───────────────────────────────────────
-    external_draft: ExternalDraft = await external.create_draft(title=title, metadata=metadata)
-
-    # ── Create campaign_deliverables row ──────────────────────────────────────
-    # campaign_id = family string (matches Writing Studio filter dropdown).
-    # status = "draft_ready" — operator will compose manually; no auto-compose.
-    # ("draft" is not in the DB CHECK constraint; "generating" implies pipeline
-    # work is in-flight, which is misleading for the manual path.)
-    handoff_meta: dict[str, Any] = {
-        **metadata,
-        "title": title,
-        "externalDraftId": external_draft.external_id,
-        "externalTitle": external_draft.title,
-    }
-    if folder is not None:
-        handoff_meta["folder_id"] = folder.id
-        handoff_meta["folder_name"] = campaign_name
-    deliverable = CampaignDeliverable(
+    draft = await _create_manual_draft_record(
+        session,
         candidate_id=candidate_id,
-        deliverable_id=external_draft.external_id,
         campaign_id=family,
-        status="draft_ready",
-        deliverable_metadata=handoff_meta,
-    )
-    session.add(deliverable)
-    await session.flush()
-    await session.refresh(deliverable)
-    await session.commit()
-
-    # ── Emit event (non-fatal) ────────────────────────────────────────────────
-    with contextlib.suppress(Exception):
-        await publish_event(
-            "draft.generated",
-            draft_id=external_draft.external_id,
-            campaign_id=family,
-            deliverable_id=str(deliverable.id),
-            status="draft_ready",
-        )
-
-    # Return the full deliverable_metadata (includes folder_id, title, etc.)
-    # so callers and the response shape are complete.
-    full_metadata: dict[str, Any] = dict(deliverable.deliverable_metadata or {})
-
-    return Draft(
-        id=deliverable.id,
-        external_id=external_draft.external_id,
-        candidate_id=candidate_id,
         title=title,
-        status="draft_ready",
-        brief_text=brief_text,
-        asset_context_bundle=[],
-        metadata=full_metadata,
-        created_at=deliverable.created_at,
+        metadata=metadata,
+        folder_id=folder.id if folder is not None else None,
+        folder_name=campaign_name if folder is not None else None,
+        ws=external,
+    )
+    draft.brief_text = brief_text
+    return draft
+
+
+async def create_template_draft(
+    session: AsyncSession,
+    *,
+    profile_id: int,
+    template_id: int,
+    template_key: str,
+    template_name: str,
+    template_body: str,
+    title: str,
+    folder_id: int | None = None,
+    ws: Any = None,
+) -> Draft:
+    """Instantiate a structured template into a fresh draft-ready deliverable."""
+    folder = await wr_repo.get_folder(session, folder_id) if folder_id is not None else None
+
+    candidate: CampaignCandidate | None = None
+    if folder is not None and isinstance(folder.campaign_id, str) and folder.campaign_id.isdigit():
+        candidate = await session.get(CampaignCandidate, int(folder.campaign_id))
+    if candidate is None:
+        candidate = await _get_or_create_template_workspace_candidate(session)
+
+    voice_profile_slug: str | None = None
+    profile = await wr_repo.get_profile(session, profile_id)
+    if profile is None:
+        profile = await wr_repo.get_active_profile(session)
+    if profile is not None and profile.name:
+        voice_profile_slug = profile.name.lower().replace(" ", "-")
+
+    created_at = datetime.now(UTC).isoformat()
+    metadata: dict[str, Any] = {
+        "templateSource": {
+            "templateId": template_id,
+            "templateKey": template_key,
+            "templateName": template_name,
+        },
+        "versions": [
+            {
+                "id": "v1",
+                "version_number": 1,
+                "content": template_body,
+                "created_at": created_at,
+                "source": "template_apply",
+            }
+        ],
+    }
+    if voice_profile_slug:
+        metadata["voiceProfileSlug"] = voice_profile_slug
+
+    folder_name = folder.name if folder is not None else None
+    return await _create_manual_draft_record(
+        session,
+        candidate_id=candidate.id,
+        campaign_id=candidate.campaign_family,
+        title=title,
+        metadata=metadata,
+        folder_id=folder.id if folder is not None else None,
+        folder_name=folder_name,
+        ws=ws,
     )
 
 

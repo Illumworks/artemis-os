@@ -77,6 +77,14 @@ class ParsedClaim:
     notes: str | None
 
 
+@dataclass(frozen=True)
+class ParsedTemplate:
+    template_key: str
+    name: str
+    body: str
+    asset_type: str | None
+
+
 # Raw file contents — verbatim from writing-agent-seed/*.md
 # (backslash escapes preserved exactly as stored on disk)
 SEED_FILES: dict[str, str] = {
@@ -726,6 +734,10 @@ _CLAIM_LABEL_RE = re.compile(
     r"Notes"
     r"):\s*(?P<value>.*)$"
 )
+_TEMPLATE_HEADING_RE = re.compile(
+    r"^## Template (?P<key>[A-Z0-9]+)\s+—\s+(?P<name>.+?)\s*$",
+    re.MULTILINE,
+)
 
 
 def _strip_wrapping_quotes(text: str) -> str:
@@ -797,6 +809,30 @@ def parse_claims_register_markdown(markdown: str) -> list[ParsedClaim]:
     return claims
 
 
+def parse_templates_markdown(markdown: str) -> list[ParsedTemplate]:
+    """Parse the template source markdown into structured template rows."""
+    normalized = _normalize(markdown)
+    matches = list(_TEMPLATE_HEADING_RE.finditer(normalized))
+    templates: list[ParsedTemplate] = []
+
+    for index, match in enumerate(matches):
+        block_start = match.end()
+        block_end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        body = normalized[block_start:block_end].strip()
+        if "\n" not in body:
+            body = _strip_wrapping_quotes(body)
+        templates.append(
+            ParsedTemplate(
+                template_key=match.group("key"),
+                name=match.group("name").strip(),
+                body=body,
+                asset_type=None,
+            )
+        )
+
+    return templates
+
+
 async def import_claims_register(
     session: AsyncSession,
     profile_id: int,
@@ -844,6 +880,47 @@ async def import_claims_register(
     return len(parsed_claims)
 
 
+async def import_templates(
+    session: AsyncSession,
+    profile_id: int,
+    *,
+    markdown: str | None = None,
+) -> int:
+    """Upsert structured template rows from the Templates source."""
+    if markdown is None:
+        source = await repo.get_source_by_profile_key(session, profile_id, "07_TEMPLATES")
+        markdown = (
+            source.normalized_content
+            if source is not None
+            else _normalize(SEED_FILES["07_TEMPLATES.md"])
+        )
+
+    parsed_templates = parse_templates_markdown(markdown)
+    for parsed in parsed_templates:
+        existing = await repo.get_template_by_profile_key(session, profile_id, parsed.template_key)
+        if existing is None:
+            await repo.create_template(
+                session,
+                profile_id=profile_id,
+                template_key=parsed.template_key,
+                name=parsed.name,
+                asset_type=parsed.asset_type,
+                body=parsed.body,
+                status="active",
+            )
+        else:
+            await repo.update_template(
+                session,
+                existing.id,
+                name=parsed.name,
+                asset_type=parsed.asset_type,
+                body=parsed.body,
+                status="active",
+            )
+
+    return len(parsed_templates)
+
+
 # ── Idempotent importer ────────────────────────────────────────────────────────
 
 
@@ -880,6 +957,7 @@ async def import_writing_seed_corpus(session: AsyncSession) -> dict[str, Any]:
         "profilesSkipped": profiles_skipped,
         "sourcesUpserted": 0,
         "claimsUpserted": 0,
+        "templatesUpserted": 0,
         "rulesUpserted": 0,
         "examplesUpserted": 0,
         "profilePromptUpdated": False,
@@ -995,4 +1073,5 @@ async def import_writing_seed_corpus(session: AsyncSession) -> dict[str, Any]:
         )
 
     result["claimsUpserted"] = await import_claims_register(session, profile.id)
+    result["templatesUpserted"] = await import_templates(session, profile.id)
     return result
