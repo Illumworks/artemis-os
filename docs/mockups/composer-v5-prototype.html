@@ -1,0 +1,1543 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artemis — Writing Studio Composer v5 Prototype</title>
+<style>
+/* ─── Design Tokens (mirrored from the app's warm-amber palette) ─── */
+:root {
+  --bg:            #f4efe7;
+  --card:          #fffdf9;
+  --ink:           #1e1a15;
+  --ink2:          #544c40;
+  --ink3:          #8a7f6e;
+  --rule:          #e7ded0;
+  --accent:        #c8892f;
+  --accent-soft:   #f1e2c8;
+  --accent-grad:   linear-gradient(135deg, #f0c46c, #d4913a);
+  --green:         #2f7a52;
+  --green-bg:      #eef4ef;
+  --green-border:  #cfe3d5;
+  --warn:          #d97a25;
+  --blue:          #33558c;
+  --blue-bg:       #eaf0fb;
+  --blue-border:   #c7d6f0;
+  --sans:          "Inter", -apple-system, "Segoe UI", sans-serif;
+  --mono:          "JetBrains Mono", ui-monospace, "Menlo", "Cascadia Code", monospace;
+  --serif:         "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Georgia", serif;
+  --radius-sm:     8px;
+  --radius-md:     12px;
+  --radius-lg:     18px;
+  --radius-xl:     24px;
+  --shadow-card:   0 1px 3px rgba(30,26,21,.06), 0 4px 16px rgba(30,26,21,.06);
+  --shadow-pop:    0 16px 40px rgba(30,26,21,.18), 0 2px 8px rgba(30,26,21,.08);
+
+  /* Rail tokens — match the real app */
+  --rail-w:        226px;
+  --rail-bg:       #f2ebe0;
+  --ink-4:         #a09080;
+  --ink-5:         #c8bfb2;
+  --amber:         #c77e2b;
+  --amber-ink:     #a46220;
+  --amber-soft:    rgba(199,126,43,.18);
+  --amber-wash:    rgba(199,126,43,.08);
+  --surface-sunken: rgba(250,244,232,.5);
+  --surface-raised: rgba(255,255,255,.85);
+  --r-sm:          8px;
+  --r-md:          12px;
+  --r-full:        999px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--sans);
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
+}
+
+/* ═══════════════════════════════════════════
+   APP SHELL — rail + content side by side
+   ═══════════════════════════════════════════ */
+.proto-shell {
+  display: grid;
+  grid-template-columns: var(--rail-w) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ─── LEFT NAV RAIL (replicates the real app rail) ─── */
+.proto-rail {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px 16px;
+  background: var(--rail-bg);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-5) transparent;
+  flex-shrink: 0;
+}
+.proto-rail::-webkit-scrollbar { width: 4px; }
+.proto-rail::-webkit-scrollbar-track { background: transparent; }
+.proto-rail::-webkit-scrollbar-thumb { background: var(--ink-5); border-radius: 3px; }
+
+/* Brand row */
+.rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 18px;
+  flex-shrink: 0;
+}
+.rail-brand-wordmark {
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 0.08em;
+  color: var(--amber-ink);
+  font-family: var(--sans);
+}
+.rail-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #4f7a65;
+  box-shadow: 0 0 0 2px rgba(79,122,101,.18);
+  flex-shrink: 0;
+}
+
+/* Section labels */
+.rail-section {
+  margin-top: 18px;
+  flex-shrink: 0;
+}
+.rail-section-label {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  font-weight: 600;
+  padding: 0 10px 8px;
+  font-family: var(--sans);
+  display: block;
+}
+
+/* Nav items */
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px 9px;
+  margin-bottom: 1px;
+  border-radius: var(--r-sm);
+  color: var(--ink2);
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.13s, color 0.13s;
+  font-family: var(--sans);
+}
+.rail-item:hover { background: rgba(30,26,21,.05); color: var(--ink); }
+.rail-item.active {
+  color: var(--ink);
+  background: transparent;
+}
+.rail-item.active::after {
+  content: '';
+  position: absolute;
+  left: 10px; right: 10px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--amber);
+  box-shadow: 0 1px 3px -1px var(--amber-soft);
+}
+.rail-item-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--ink3);
+  flex-shrink: 0;
+}
+.rail-item.active .rail-item-icon { color: var(--amber); }
+.rail-item-badge {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-family: var(--sans);
+}
+
+/* Rail footer / user */
+.rail-footer {
+  margin-top: auto;
+  padding-top: 18px;
+  flex-shrink: 0;
+}
+.rail-user {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.13s;
+}
+.rail-user:hover { background: rgba(30,26,21,.05); }
+.rail-avatar {
+  width: 28px; height: 28px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--amber), #7e5a7e);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+  font-family: var(--sans);
+}
+.rail-user-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--sans);
+}
+.rail-user-meta {
+  font-size: 9px;
+  color: var(--amber-ink);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-top: 1px;
+  font-family: var(--sans);
+}
+
+/* ═══════════════════════════════════════════
+   RIGHT SIDE — the actual composer
+   ═══════════════════════════════════════════ */
+.proto-content {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: rgba(255,253,248,.92);
+  border-top-left-radius: 24px;
+  border-bottom-left-radius: 24px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.9) inset,
+    -8px 0 24px -16px rgba(30,26,21,.14),
+    -2px 0 6px -2px rgba(30,26,21,.08);
+}
+
+/* ─── SLIM TOP HEADER ─── */
+.hdr {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border-bottom: 1px solid var(--rule);
+  padding: 0 16px;
+  height: 48px;
+  position: relative;
+  z-index: 30;
+  border-top-left-radius: inherit;
+}
+
+.drafts-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  font-size: 12.5px;
+  background: #fff;
+  cursor: pointer;
+  color: var(--ink2);
+  white-space: nowrap;
+  transition: border-color 140ms ease;
+  font-family: var(--sans);
+}
+.drafts-btn:hover { border-color: var(--accent); }
+.drafts-btn-icon { font-size: 13px; line-height: 1; }
+
+.hdr-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+  font-family: var(--sans);
+}
+
+.status-pill {
+  background: var(--green-bg);
+  border: 1px solid var(--green-border);
+  color: var(--green);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+
+.hdr-spacer { flex: 1 1 0; min-width: 0; }
+
+.hdr-ind {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink3);
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 120ms ease;
+  font-family: var(--sans);
+}
+.hdr-ind:hover { background: var(--accent-soft); color: var(--ink2); }
+
+.hdr-gdoc {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: 11.5px;
+  color: var(--ink2);
+  background: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 140ms ease;
+  font-family: var(--sans);
+}
+.hdr-gdoc:hover { border-color: var(--accent); }
+
+.btn-primary {
+  background: var(--accent-grad);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+  padding: 6px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+  box-shadow: 0 1px 2px rgba(180,100,20,.18), 0 2px 8px rgba(180,100,20,.10);
+  transition: filter 120ms ease;
+}
+.btn-primary:hover { filter: brightness(1.04); }
+
+/* ─── DRAFTS PICKER POPOVER ─── */
+.picker-wrap { position: relative; }
+.picker {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 300px;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  z-index: 50;
+  padding: 8px;
+  font-family: var(--sans);
+}
+.picker-wrap.open .picker { display: block; }
+
+.picker-hd {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 6px;
+}
+.picker-hd-lbl {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink3);
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.picker-plus {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid var(--rule);
+  background: #fff;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.prow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--ink2);
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.prow:hover { background: var(--bg); }
+.prow.folder { font-weight: 600; color: var(--ink); }
+.prow.file { padding-left: 24px; }
+.prow.active { background: #eadfca; color: var(--ink); }
+.prow .dot {
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+
+/* ─── MAIN PANES (inside proto-content) ─── */
+.panes {
+  flex: 1 1 0;
+  display: grid;
+  /* 38:62 of the content area width */
+  grid-template-columns: 38% 62%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── LEFT: CHAT COLUMN ─── */
+.chat-col {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-right: 1px solid var(--rule);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-eyebrow {
+  flex: 0 0 auto;
+  padding: 8px 16px 7px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink3);
+  text-transform: uppercase;
+  letter-spacing: .09em;
+}
+
+.chat-thread {
+  flex: 1 1 0;
+  overflow-y: auto;
+  padding: 16px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-gutter: stable;
+}
+
+/* scrollbar */
+.chat-thread::-webkit-scrollbar { width: 4px; }
+.chat-thread::-webkit-scrollbar-track { background: transparent; }
+.chat-thread::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 4px; }
+
+.msg { font-size: 13px; line-height: 1.58; font-family: var(--sans); }
+.msg-role {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--ink3);
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  margin-bottom: 4px;
+}
+.msg-user .msg-bub {
+  display: inline-block;
+  background: var(--accent-soft);
+  border: 1px solid #e3cfa6;
+  border-radius: var(--radius-md);
+  padding: 8px 11px;
+  color: #5c4422;
+  max-width: 96%;
+  font-family: var(--sans);
+}
+.msg-assistant .msg-bub { color: var(--ink2); font-family: var(--sans); }
+
+/* typing indicator */
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 0;
+}
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink3);
+  animation: bounce 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0.8); opacity: .5; }
+  40% { transform: scale(1.1); opacity: 1; }
+}
+
+/* ─── CHAT COMPOSER ─── */
+.chat-composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--rule);
+  padding: 12px 13px;
+}
+.cbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: 9px 11px;
+  background: #fff;
+  cursor: text;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.cbox:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--rule));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.cbox-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  line-height: 1.5;
+  resize: none;
+  height: 22px;
+  overflow: hidden;
+}
+.cbox-input::placeholder { color: var(--ink3); }
+.cbox-send {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: filter 120ms ease;
+}
+.cbox-send:hover { filter: brightness(1.08); }
+
+/* ─── RIGHT: DOCUMENT AREA ─── */
+.doc-col {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── TAG BAR ─── */
+.tagbar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 10px 24px 9px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  flex-wrap: wrap;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--accent-soft);
+  border: 1px solid #e3cfa6;
+  color: #6e4f1c;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  font-family: var(--sans);
+}
+.tag-key {
+  color: #a07c3e;
+  font-size: 9.5px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.tag-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1.5px dashed var(--rule);
+  color: var(--ink3);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  background: none;
+  cursor: pointer;
+  font-family: var(--sans);
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.tag-add:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ─── DOC SCROLL AREA ─── */
+.doc-scroll {
+  flex: 1 1 0;
+  overflow-y: auto;
+  padding: 20px 20px 40px;
+  scrollbar-gutter: stable;
+}
+.doc-scroll::-webkit-scrollbar { width: 4px; }
+.doc-scroll::-webkit-scrollbar-track { background: transparent; }
+.doc-scroll::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 4px; }
+
+/* ─── DOC GRID: paper + margin ─── */
+.doc-grid {
+  display: grid;
+  grid-template-columns: 1fr 210px;
+  gap: 0;
+  align-items: start;
+  max-width: 900px;
+}
+/* Jon: collapse the whole comment rail — comments disappear, document reclaims the width */
+.doc-grid.comments-hidden { grid-template-columns: 1fr; }
+.doc-grid.comments-hidden .margin-col { display: none; }
+.hdr-ind.off { opacity: .45; text-decoration: line-through; }
+
+/* ─── PAPER / EDITOR SURFACE ─── */
+.paper {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: 28px 36px;
+  line-height: 1.8;
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+  position: relative;
+  outline: none;
+}
+.paper:focus {
+  box-shadow: var(--shadow-card), 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* ProseMirror container inherits paper styles */
+#pm-editor {
+  min-height: 300px;
+  outline: none;
+  font-family: var(--serif);
+}
+#pm-editor p { margin: 0 0 14px; }
+#pm-editor p:last-child { margin-bottom: 0; }
+#pm-editor h1 { font-size: 22px; font-weight: 700; margin: 0 0 16px; letter-spacing: -.03em; font-family: var(--serif); }
+#pm-editor h2 { font-size: 18px; font-weight: 600; margin: 0 0 12px; letter-spacing: -.02em; font-family: var(--serif); }
+#pm-editor ul, #pm-editor ol { margin: 0 0 14px; padding-left: 22px; }
+#pm-editor li { margin-bottom: 4px; }
+#pm-editor strong { font-weight: 700; }
+#pm-editor em { font-style: italic; }
+
+/* fallback editable div (used before ProseMirror loads) */
+#fallback-editor {
+  min-height: 300px;
+  outline: none;
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--ink);
+}
+#fallback-editor p { margin: 0 0 14px; }
+#fallback-editor p:last-child { margin-bottom: 0; }
+
+/* ─── CLAIM FLAG: orange double underline ─── */
+.claim-flag {
+  text-decoration: underline;
+  text-decoration-color: var(--warn);
+  text-decoration-style: double;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  cursor: pointer;
+  position: relative;
+  transition:
+    text-decoration-thickness 150ms ease,
+    background-color 150ms ease;
+  border-radius: 2px;
+}
+
+/* Change 4: one-time entrance glow — fires on page load via .claim-glow class added by JS */
+@keyframes claimEntrance {
+  0%   { background-color: transparent; }
+  20%  { background-color: rgba(217,122,37,.18); }
+  100% { background-color: transparent; }
+}
+.claim-flag.claim-glow {
+  animation: claimEntrance 1.1s ease-out forwards;
+}
+
+/* Change 4: hover — thicker underline + faint warm tint */
+.claim-flag:hover,
+.claim-wrap:hover .claim-flag {
+  text-decoration-thickness: 2.5px;
+  background-color: rgba(217,122,37,.09);
+}
+
+/* Change 3: hover PEEK tooltip */
+.claim-peek {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 0;
+  z-index: 55;
+  background: rgba(30,26,21,.82);
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+  pointer-events: none;
+  letter-spacing: -0.01em;
+  box-shadow: 0 4px 14px rgba(30,26,21,.22);
+}
+.claim-peek::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  border: 5px solid transparent;
+  border-top-color: rgba(30,26,21,.82);
+}
+/* Show peek only on hover, NOT when popover is open */
+.claim-wrap:hover:not(.open) .claim-peek { display: block; }
+
+/* Change 3: action popover — only on click (.open) */
+.claim-popover {
+  display: none;
+  position: fixed;       /* fixed + JS-positioned: floats OVER content, never pushes flow, clamped on-screen */
+  z-index: 60;
+  width: 264px;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  padding: 12px 14px;
+  /* Change 2: font family + sizes inherit the app's body font — explicitly set */
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink);
+}
+.claim-popover.open { display: block; }
+/* Never show the action popover on hover-only (it requires .open) */
+
+.claim-wrap { position: relative; display: inline; }
+
+.claim-popover-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--warn);
+  font-size: 12.5px;
+  font-family: var(--sans);
+}
+.claim-popover-body {
+  color: var(--ink2);
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin-bottom: 10px;
+  font-family: var(--sans);
+}
+.claim-popover-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.claim-btn {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+  color: var(--ink2);
+  font-family: var(--sans);
+  transition: border-color 120ms, background 120ms;
+}
+.claim-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.claim-btn-approve {
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+/* ─── MERGE TOKEN ─── */
+.token {
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--blue);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+/* ─── MARGIN COMMENT ─── */
+.margin-col {
+  padding-top: 56px;
+  padding-left: 12px;
+}
+
+.comment-anchor {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.comment-connector {
+  flex: 0 0 12px;
+  height: 1px;
+  border-top: 1.5px solid #e3cfa6;
+  margin-top: 18px;
+  margin-left: 0;
+}
+
+.comment-card {
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: 10px 11px;
+  box-shadow: 0 3px 10px rgba(30,26,21,.08);
+  flex: 1;
+  min-width: 0;
+  font-family: var(--sans);
+  font-size: 12px;
+}
+
+.comment-card.collapsed { cursor: pointer; }
+.comment-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+.av {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: var(--sans);
+}
+.comment-name { font-weight: 600; font-size: 11.5px; font-family: var(--sans); }
+.comment-time { font-size: 10px; color: var(--ink3); margin-left: auto; font-family: var(--sans); }
+.comment-body { font-size: 11.5px; color: var(--ink2); line-height: 1.5; margin-bottom: 7px; font-family: var(--sans); }
+.comment-mention { color: var(--blue); background: var(--blue-bg); border-radius: 4px; padding: 0 4px; font-weight: 600; }
+.comment-ping { font-size: 9.5px; color: var(--green); margin-bottom: 5px; font-family: var(--sans); }
+.comment-foot { display: flex; gap: 10px; font-size: 10.5px; color: var(--ink3); font-family: var(--sans); }
+.comment-foot span { cursor: pointer; }
+.comment-foot span:hover { color: var(--ink); }
+
+.comment-collapsed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  padding: 4px 9px;
+  margin-top: 8px;
+  box-shadow: 0 2px 6px rgba(30,26,21,.06);
+  font-size: 10.5px;
+  color: var(--ink3);
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.comment-collapsed-chip:hover { border-color: var(--accent); color: var(--ink2); }
+/* Jon: comments collapse to a compact chip to reclaim margin space */
+.comment-anchor.collapsed #comment-full { display: none; }
+.comment-anchor.collapsed .comment-connector { display: none; }
+.comment-anchor:not(.collapsed) #comment-self-chip { display: none; }
+#comment-collapse-btn { cursor: pointer; }
+#comment-self-chip .av { width: 15px; height: 15px; min-width: 15px; font-size: 9px; }
+
+/* ─── SELECTION TOOLBAR (floating) ─── */
+#sel-toolbar {
+  display: none;
+  position: fixed;
+  z-index: 100;
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  padding: 4px 5px;
+  gap: 2px;
+  align-items: center;
+  white-space: nowrap;
+  pointer-events: auto;
+  font-family: var(--sans);
+}
+#sel-toolbar.visible { display: flex; }
+
+.sel-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink2);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1.3;
+  transition: background 120ms, color 120ms;
+}
+.sel-btn:hover { background: var(--accent-soft); color: var(--ink); }
+.sel-btn-brand {
+  color: var(--accent);
+  font-weight: 600;
+}
+.sel-btn-brand:hover { background: var(--accent-soft); color: var(--accent); }
+.sel-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--rule);
+  margin: 0 2px;
+}
+.sel-btn-edit {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* ─── OVERLAY / BACKDROP ─── */
+.picker-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+}
+.picker-backdrop.active { display: block; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SELECTION TOOLBAR (lives outside layout flow)          -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="sel-toolbar" role="toolbar" aria-label="Text editing actions">
+  <button class="sel-btn" title="Rewrite selection">Rewrite</button>
+  <button class="sel-btn" title="Shorten selection">Shorten</button>
+  <button class="sel-btn" title="Lengthen selection">Lengthen</button>
+  <button class="sel-btn" title="Change tone">Tone</button>
+  <div class="sel-divider"></div>
+  <button class="sel-btn sel-btn-brand" title="Rewrite to match Amira brand voice">Make on-brand</button>
+  <div class="sel-divider"></div>
+  <button class="sel-btn sel-btn-edit" title="Custom instruction">✎</button>
+</div>
+
+<!-- backdrop to close picker -->
+<div class="picker-backdrop" id="picker-backdrop"></div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- PROTO SHELL — rail + composer content                  -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="proto-shell">
+
+  <!-- ══ LEFT NAV RAIL (real-app replica) ══ -->
+  <aside class="proto-rail" aria-label="Main navigation">
+
+    <!-- Brand -->
+    <div class="rail-brand">
+      <span class="rail-brand-wordmark">ARTEMIS</span>
+      <span class="rail-status-dot" title="All systems healthy"></span>
+    </div>
+
+    <!-- Personal Workspace -->
+    <div class="rail-section">
+      <span class="rail-section-label">Personal Workspace</span>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="9" rx="1.5"/>
+          <rect x="14" y="3" width="7" height="5" rx="1.5"/>
+          <rect x="14" y="12" width="7" height="9" rx="1.5"/>
+          <rect x="3" y="16" width="7" height="5" rx="1.5"/>
+        </svg>
+        <span>Focus</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        <span>Calendar</span>
+        <span class="rail-item-badge">4</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/>
+        </svg>
+        <span>Meetings</span>
+        <span class="rail-item-badge">5</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+        </svg>
+        <span>OKR Studio</span>
+      </div>
+    </div>
+
+    <!-- Operations -->
+    <div class="rail-section">
+      <span class="rail-section-label">Operations</span>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+        <span>Skills</span>
+        <span class="rail-item-badge">3</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        <span>Pipelines</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2l2.09 6.26L20 9l-5 4.3L16.18 20 12 16.77 7.82 20 9 13.3 4 9l5.91-.74L12 2z"/>
+        </svg>
+        <span>Agents</span>
+        <span class="rail-item-badge">9</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 3a4 4 0 0 0-4 4v1a3 3 0 0 0-2 2.83V15a3 3 0 0 0 3 3 3 3 0 0 0 3 3h3v-2a1 1 0 0 0-1-1H8a1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1 1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1 1 1 0 0 0 1-1V7a2 2 0 0 1 2-2 1 1 0 0 0 1-1V3H9zM15 3v1a1 1 0 0 0 1 1 2 2 0 0 1 2 2v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1v3a1 1 0 0 1-1 1 1 1 0 0 0-1 1v1a1 1 0 0 1-1 1h-2a1 1 0 0 0-1 1v2h3a3 3 0 0 0 3-3 3 3 0 0 0 3-3v-4.17A3 3 0 0 0 19 8V7a4 4 0 0 0-4-4z"/>
+        </svg>
+        <span>Memory</span>
+        <span class="rail-item-badge">3</span>
+      </div>
+    </div>
+
+    <!-- Marketing -->
+    <div class="rail-section">
+      <span class="rail-section-label">Marketing</span>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+        </svg>
+        <span>Dashboard</span>
+      </div>
+      <!-- Writing Studio — ACTIVE -->
+      <div class="rail-item active" role="button" tabindex="0" aria-current="page">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+        </svg>
+        <span>Writing Studio</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+        </svg>
+        <span>Campaigns</span>
+        <span class="rail-item-badge">3</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <span>Signals Inbox</span>
+      </div>
+      <div class="rail-item" role="button" tabindex="0">
+        <svg class="rail-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+        </svg>
+        <span>Approval Queue</span>
+      </div>
+    </div>
+
+    <!-- Rail footer -->
+    <div class="rail-footer">
+      <div class="rail-user" role="button" tabindex="0">
+        <div class="rail-avatar">J</div>
+        <div>
+          <div class="rail-user-name">Jon Fila</div>
+          <div class="rail-user-meta">Personal · Pro</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ══ RIGHT: COMPOSER CONTENT AREA ══ -->
+  <div class="proto-content">
+
+    <!-- ── HEADER ── -->
+    <header class="hdr">
+
+      <!-- Drafts picker button -->
+      <div class="picker-wrap" id="picker-wrap">
+        <button class="drafts-btn" id="drafts-btn" aria-label="Open drafts picker" aria-expanded="false">
+          <span class="drafts-btn-icon">📁</span>
+          <span style="color:var(--ink3);">▾</span>
+        </button>
+        <div class="picker" id="picker" aria-label="Drafts">
+          <div class="picker-hd">
+            <span class="picker-hd-lbl">Drafts</span>
+            <button class="picker-plus" title="New draft">+</button>
+          </div>
+          <div class="prow folder">▾ 📁 All drafts</div>
+          <div class="prow file active">📄 Indiana Literacy Grant — Supt Outreach <span class="dot"></span></div>
+          <div class="prow file">📄 Board intro letter — IDOE</div>
+          <div class="prow folder">▸ 📁 Indiana Literacy Initiative</div>
+          <div class="prow file" style="padding-left:36px">📄 Supt brief — Lake Central SD</div>
+          <div class="prow folder">▸ 📁 General outreach</div>
+          <div class="prow folder">▸ 📁 Archived</div>
+        </div>
+      </div>
+
+      <!-- Draft title -->
+      <span class="hdr-title">Indiana Literacy Grant — Superintendent Outreach</span>
+
+      <!-- Status -->
+      <span class="status-pill">Draft</span>
+
+      <div class="hdr-spacer"></div>
+
+      <!-- Indicators -->
+      <span class="hdr-ind" title="View variants">◳ 3 variants</span>
+      <span class="hdr-ind" title="View active rules">✓ 5 rules</span>
+      <span class="hdr-ind" id="comments-toggle" title="Show / hide comments">💬 Comments</span>
+      <span class="hdr-ind" title="Version history">⟲ History</span>
+
+      <!-- Google Doc -->
+      <button class="hdr-gdoc" title="Link or export to Google Docs">⊞ Google Doc</button>
+
+      <!-- Actions -->
+      <span class="hdr-ind" title="More actions">⋯</span>
+
+      <!-- Save version -->
+      <button class="btn-primary">Save version</button>
+    </header>
+
+    <!-- ── MAIN PANES ── -->
+    <div class="panes">
+
+      <!-- ── LEFT: CHAT ── -->
+      <div class="chat-col">
+        <div class="chat-eyebrow">Amira · writing chat</div>
+
+        <div class="chat-thread" id="chat-thread">
+
+          <div class="msg msg-user">
+            <div class="msg-role">You</div>
+            <div class="msg-bub">Draft a superintendent outreach email for the Indiana literacy grant. Warm, brief, connect Amira's reading suite to the grant goals, ask for a 20-minute call.</div>
+          </div>
+
+          <div class="msg msg-assistant">
+            <div class="msg-role">Amira</div>
+            <div class="msg-bub">Done — I drafted a 4-paragraph outreach email grounded in Indiana's literacy requirements. I applied the <em>Superintendent voice</em> rule (authoritative but collegial) and the <em>Grant context</em> rule, and connected Amira's Assess–Instruct–Tutor suite directly to the grant's early-reading goals. One efficacy statistic I included is <strong>not yet in your Claim Register</strong> — flagged orange in the document for you to approve before sending.</div>
+          </div>
+
+          <div class="msg msg-user">
+            <div class="msg-role">You</div>
+            <div class="msg-bub">Good. Tighten the opening — lead with the student outcome, not the grant context.</div>
+          </div>
+
+          <div class="msg msg-assistant">
+            <div class="msg-role">Amira</div>
+            <div class="msg-bub">Updated — the opening now leads with the literacy-gap stat and positions the grant as the opportunity to act on it. The claim flag is still live; approve it in the document when ready.</div>
+          </div>
+
+        </div><!-- /chat-thread -->
+
+        <div class="chat-composer">
+          <div class="cbox">
+            <textarea class="cbox-input" id="chat-input" placeholder="Ask Amira to draft, rewrite, or refine…" rows="1" aria-label="Message Amira"></textarea>
+            <button class="cbox-send" title="Send" aria-label="Send message">↑</button>
+          </div>
+        </div>
+      </div><!-- /chat-col -->
+
+      <!-- ── RIGHT: DOCUMENT ── -->
+      <div class="doc-col">
+
+        <!-- Tag chip bar -->
+        <div class="tagbar" role="region" aria-label="Document tags">
+          <span class="tag"><span class="tag-key">Audience</span> Superintendent</span>
+          <span class="tag"><span class="tag-key">Platform</span> Email</span>
+          <button class="tag-add">+ tag</button>
+        </div>
+
+        <!-- Scrollable doc area -->
+        <div class="doc-scroll">
+          <div class="doc-grid">
+
+            <!-- PAPER / EDITOR -->
+            <div class="paper" id="paper">
+
+              <!-- Progressive enhancement: fallback contenteditable, upgraded to ProseMirror -->
+              <div id="fallback-editor" contenteditable="true" spellcheck="true" aria-label="Document body" aria-multiline="true">
+
+                <p>Dear Superintendent <span class="token">{{last_name}}</span>,</p>
+
+                <p>Indiana's third-grade reading data tells a clear story: <span class="claim-wrap" id="claim-wrap"><span class="claim-flag" id="claim-flag">one in three students is not reading proficiently by the end of third grade</span><span class="claim-peek">Claim not in Register — click to resolve</span></span> — a gap that compounds through every subsequent year of school. The Indiana Reads Act creates a direct mandate — and a real funding opportunity — for districts to act now.</p>
+
+                <p>Amira Learning's Assess–Instruct–Tutor suite was built for exactly this moment. Our AI tutor screens a full classroom in under 20 minutes, delivers structured-literacy instruction personalized to each student, and gives teachers a clear, actionable picture of every reader's progress — all aligned to Indiana's LETRS-grounded standards. Districts using Amira consistently see measurable gains in oral reading fluency within a single semester.</p>
+
+                <p>I'd welcome 20 minutes to walk you and your literacy team through what this could look like in your district this fall — and how the Indiana Reads Act funding can cover it. Would a brief call next week work for you?</p>
+
+                <p>Warm regards,<br>
+                <span class="token">{{sender_name}}</span><br>
+                Amira Learning</p>
+
+              </div><!-- /fallback-editor -->
+
+            </div><!-- /paper -->
+
+            <!-- MARGIN COMMENT COLUMN -->
+            <div class="margin-col">
+
+              <div class="comment-anchor" id="comment-anchor">
+                <div class="comment-connector"></div>
+                <div class="comment-card" id="comment-full">
+                  <div class="comment-card-top">
+                    <span class="av">A</span>
+                    <span class="comment-name">Angela</span>
+                    <span class="comment-time">4m ago</span>
+                  </div>
+                  <div class="comment-body">
+                    Lead with the student-outcome stat — the grant hook is secondary. <span class="comment-mention">@Josh</span> does the efficacy claim have a public source we can use?
+                  </div>
+                  <div class="comment-ping">🔔 Josh notified</div>
+                  <div class="comment-foot">
+                    <span>↩ Reply</span>
+                    <span>✓ Resolve</span>
+                    <span id="comment-collapse-btn">⌄ Collapse</span>
+                  </div>
+                </div>
+                <div class="comment-collapsed-chip" id="comment-self-chip" title="Expand comment">
+                  <span class="av">A</span> Angela: Lead with the student-outcome stat… ⌃
+                </div>
+              </div>
+
+              <div class="comment-collapsed-chip" title="Expand comment">
+                💬 1 more · on the claim ⌃
+              </div>
+
+            </div><!-- /margin-col -->
+
+          </div><!-- /doc-grid -->
+
+          <!-- Claim action popover: a top-level div (NOT nested in <p>/<span>), fixed + JS-positioned -->
+          <div class="claim-popover" id="claim-popover">
+            <div class="claim-popover-hd">⚠ Claim not in Register</div>
+            <div class="claim-popover-body">This statistic has not been approved in your Claim Register. Verify the source and approve before sending, or edit to match a registered claim.</div>
+            <div class="claim-popover-actions">
+              <button class="claim-btn claim-btn-approve">✓ Approve claim</button>
+              <button class="claim-btn">Edit</button>
+              <button class="claim-btn">Find source</button>
+            </div>
+          </div>
+        </div><!-- /doc-scroll -->
+
+      </div><!-- /doc-col -->
+    </div><!-- /panes -->
+  </div><!-- /proto-content -->
+</div><!-- /proto-shell -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- SCRIPTS                                                 -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<script type="module">
+// ─── DRAFTS PICKER TOGGLE ───────────────────────────────────────────────────
+const pickerWrap  = document.getElementById('picker-wrap');
+const draftsBtn   = document.getElementById('drafts-btn');
+const pickerBD    = document.getElementById('picker-backdrop');
+
+draftsBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = pickerWrap.classList.toggle('open');
+  draftsBtn.setAttribute('aria-expanded', String(open));
+  pickerBD.classList.toggle('active', open);
+});
+
+pickerBD.addEventListener('click', () => {
+  pickerWrap.classList.remove('open');
+  draftsBtn.setAttribute('aria-expanded', 'false');
+  pickerBD.classList.remove('active');
+});
+
+// ─── CHAT TEXTAREA AUTO-GROW ────────────────────────────────────────────────
+const chatInput = document.getElementById('chat-input');
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+});
+
+// ─── CLAIM FLAG — CHANGE 3: hover peek + click action ───────────────────────
+// - Hover shows .claim-peek tooltip (via CSS: .claim-wrap:hover:not(.open) .claim-peek)
+// - Click toggles .open to show the action popover
+// - Neither CSS hover rule nor JS shows the big popover on hover-only
+const claimWrap = document.getElementById('claim-wrap');
+const claimFlagEl = document.getElementById('claim-flag');
+const claimPopEl = document.getElementById('claim-popover');
+if (claimWrap && claimFlagEl && claimPopEl) {
+  const setOpen = (open) => {
+    claimPopEl.classList.toggle('open', open);   // shows the popover (.claim-popover.open)
+    claimWrap.classList.toggle('open', open);    // hides the hover peek while open
+  };
+  // Position the fixed popover near the clicked claim, clamped inside the viewport
+  const positionClaimPopover = () => {
+    const r = claimFlagEl.getBoundingClientRect();
+    const m = 12;
+    const popW = claimPopEl.offsetWidth || 264;
+    const popH = claimPopEl.offsetHeight || 150;
+    let left = Math.min(r.left, window.innerWidth - popW - m);
+    if (left < m) left = m;
+    let top = r.bottom + 8;
+    if (top + popH > window.innerHeight - m) top = Math.max(m, r.top - popH - 8); // flip above if no room below
+    claimPopEl.style.left = left + 'px';
+    claimPopEl.style.top = top + 'px';
+  };
+  claimFlagEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = !claimPopEl.classList.contains('open');
+    setOpen(willOpen);
+    if (willOpen) positionClaimPopover();   // measure AFTER it's displayed
+  });
+  // Outside-click closes (clicks inside the flag or the popover do not)
+  document.addEventListener('click', (e) => {
+    if (!claimWrap.contains(e.target) && !claimPopEl.contains(e.target)) setOpen(false);
+  });
+
+  // Approve action
+  const approveBtn = claimPopEl.querySelector('.claim-btn-approve');
+  if (approveBtn) {
+    approveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      claimFlagEl.style.textDecoration = 'none';
+      claimFlagEl.style.cursor = 'default';
+      setOpen(false);
+      // Brief visual confirmation
+      claimFlagEl.style.background = '#eef4ef';
+      claimFlagEl.style.borderRadius = '3px';
+      setTimeout(() => { claimFlagEl.style.background = ''; claimFlagEl.style.borderRadius = ''; }, 1600);
+    });
+  }
+}
+
+// ─── CHANGE 4: one-time entrance glow on page load ──────────────────────────
+// Fire once after a short delay (simulates the claim being newly detected).
+// The animation is defined in CSS (@keyframes claimEntrance); we just add the
+// class and remove it after the animation ends so it never loops.
+const claimFlag = document.getElementById('claim-flag');
+if (claimFlag) {
+  const startGlow = () => {
+    claimFlag.classList.add('claim-glow');
+    claimFlag.addEventListener('animationend', () => {
+      claimFlag.classList.remove('claim-glow');
+    }, { once: true });
+  };
+  // Short delay so the page has fully painted before the entrance fires
+  setTimeout(startGlow, 320);
+}
+
+// ─── Comments collapse/expand (Jon): collapse a single card to a compact chip ────
+(() => {
+  const anchor = document.getElementById('comment-anchor');
+  const collapseBtn = document.getElementById('comment-collapse-btn');
+  const selfChip = document.getElementById('comment-self-chip');
+  if (!anchor) return;
+  if (collapseBtn) collapseBtn.addEventListener('click', () => anchor.classList.add('collapsed'));
+  if (selfChip) selfChip.addEventListener('click', () => anchor.classList.remove('collapsed'));
+})();
+
+// ─── Comment RAIL toggle (Jon): hide the whole comments column; document reclaims width ────
+(() => {
+  const toggle = document.getElementById('comments-toggle');
+  const grid = document.querySelector('.doc-grid');
+  if (!toggle || !grid) return;
+  toggle.addEventListener('click', () => {
+    const hidden = grid.classList.toggle('comments-hidden');
+    toggle.classList.toggle('off', hidden);
+    toggle.title = hidden ? 'Show comments' : 'Hide comments';
+  });
+})();
+
+// ─── SELECTION TOOLBAR ──────────────────────────────────────────────────────
+const selToolbar = document.getElementById('sel-toolbar');
+let hideSelTimer  = null;
+
+function positionToolbar(rect) {
+  const tW = selToolbar.offsetWidth || 360;
+  const tH = selToolbar.offsetHeight || 38;
+  let left = rect.left + rect.width / 2 - tW / 2;
+  let top  = rect.top - tH - 10 + window.scrollY;
+  // Keep within viewport
+  left = Math.max(8, Math.min(left, window.innerWidth - tW - 8));
+  if (top < 8 + window.scrollY) top = rect.bottom + 10 + window.scrollY;
+  selToolbar.style.left = left + 'px';
+  selToolbar.style.top  = top + 'px';
+}
+
+function handleSelectionChange() {
+  clearTimeout(hideSelTimer);
+  hideSelTimer = setTimeout(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+      selToolbar.classList.remove('visible');
+      return;
+    }
+    const paper = document.getElementById('paper');
+    if (!paper) return;
+    const range  = sel.getRangeAt(0);
+    const anchor = range.commonAncestorContainer;
+    if (!paper.contains(anchor instanceof Element ? anchor : anchor.parentElement)) {
+      selToolbar.classList.remove('visible');
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    if (!rect.width && !rect.height) { selToolbar.classList.remove('visible'); return; }
+    selToolbar.classList.add('visible');
+    positionToolbar(rect);
+  }, 40);
+}
+
+document.addEventListener('mouseup',         handleSelectionChange);
+document.addEventListener('selectionchange', handleSelectionChange);
+
+// Hide when clicking toolbar buttons (stub actions)
+selToolbar.querySelectorAll('.sel-btn').forEach(btn => {
+  btn.addEventListener('mousedown', (e) => e.preventDefault()); // keep selection alive
+  btn.addEventListener('click', () => {
+    selToolbar.classList.remove('visible');
+    window.getSelection()?.removeAllRanges();
+  });
+});
+
+// ─── PROSEMIRROR — PROGRESSIVE ENHANCEMENT ──────────────────────────────────
+// We load ProseMirror from esm.sh. If import fails for any reason (network off,
+// CDN down, CSP), the fallback contenteditable div remains fully usable.
+
+const ESM_ROOT = 'https://esm.sh';
+// Pinned to known stable releases (all these versions are well over 7 days old):
+const PM_STATE   = `${ESM_ROOT}/prosemirror-state@1.4.3`;
+const PM_VIEW    = `${ESM_ROOT}/prosemirror-view@1.33.6`;
+const PM_MODEL   = `${ESM_ROOT}/prosemirror-model@1.23.0`;
+const PM_SCHEMA  = `${ESM_ROOT}/prosemirror-schema-basic@1.2.3`;
+const PM_SETUP   = `${ESM_ROOT}/prosemirror-example-setup@1.2.3`;
+
+(async () => {
+  const fallback = document.getElementById('fallback-editor');
+  const paper    = document.getElementById('paper');
+  try {
+    const [
+      { EditorState },
+      { EditorView },
+      { DOMParser: PMParser },
+      { schema: basicSchema },
+      { exampleSetup },
+    ] = await Promise.all([
+      import(PM_STATE),
+      import(PM_VIEW),
+      import(PM_MODEL),
+      import(PM_SCHEMA),
+      import(PM_SETUP),
+    ]);
+
+    const contentHtml = fallback.innerHTML;
+    const pmHost = document.createElement('div');
+    pmHost.id = 'pm-editor';
+    pmHost.setAttribute('data-pm', '1');
+
+    const tmpDiv = document.createElement('div');
+    tmpDiv.innerHTML = contentHtml;
+    const pmDoc = PMParser.fromSchema(basicSchema).parse(tmpDiv);
+
+    const state = EditorState.create({
+      doc: pmDoc,
+      plugins: exampleSetup({ schema: basicSchema, menuBar: false }),
+    });
+
+    const view = new EditorView(pmHost, {
+      state,
+      dispatchTransaction(tr) { view.updateState(view.state.apply(tr)); },
+    });
+
+    paper.replaceChild(pmHost, fallback);
+
+    // If ProseMirror strips the claim-flag markup, fall back to the HTML surface
+    // so the claim-flag demo feature remains visible.
+    const pmContent = pmHost.querySelector('.ProseMirror');
+    if (pmContent && !pmContent.querySelector('.claim-flag')) {
+      paper.replaceChild(fallback, pmHost);
+      console.info('[Artemis prototype] ProseMirror loaded; keeping fallback HTML for claim-flag fidelity.');
+    } else {
+      console.info('[Artemis prototype] ProseMirror active.');
+    }
+
+  } catch (err) {
+    // Network/import failure — fallback already visible, nothing to do
+    console.warn('[Artemis prototype] ProseMirror import failed — fallback contenteditable in use.', err.message ?? err);
+  }
+})();
+
+// ─── KEYBOARD: Enter sends chat ─────────────────────────────────────────────
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    chatInput.value = '';
+    chatInput.style.height = '';
+  }
+});
+</script>
+</body>
+</html>
