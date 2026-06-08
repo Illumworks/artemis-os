@@ -24,12 +24,17 @@ import {
   approveClaimApi,
   composeWritingDraftApi,
   createClaimApi,
+  createDraftCommentApi,
   createWritingDraftApi,
   createWritingFolderApi,
   createWritingTemplateApi,
+  fetchAccountInfo,
   fetchWritingDraft,
   fetchWritingStudioOverview,
+  listDraftCommentsApi,
   listWritingTemplatesApi,
+  reopenCommentApi,
+  resolveCommentApi,
   rewriteSpanApi,
   scanDraftClaimsApi,
   updateWritingDraftApi,
@@ -141,12 +146,47 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     },
   });
 
+  // ── Stage 6: Comments highlight plugin ────────────────────────────────────
+  //
+  // Stores comment-anchor highlight decorations (amber/yellow inline spans).
+  // Updated via setMeta payload: { anchors: [{pmFrom, pmTo, commentId}] }.
+  // Sibling to claimFlagsPlugin — same pattern, different visual.
+
+  const commentsKey = new PluginKey("comments");
+
+  const commentsPlugin = new Plugin({
+    key: commentsKey,
+    state: {
+      init(_config, _editorState) {
+        return { decoSet: DecorationSet.empty };
+      },
+      apply(tr, pluginState, _oldState, newState) {
+        const meta = tr.getMeta(commentsKey);
+        if (meta && meta.anchors !== undefined) {
+          const decos = meta.anchors.map((a) =>
+            Decoration.inline(a.pmFrom, a.pmTo, {
+              class: "cv5-comment-anchor-hl",
+              "data-comment-id": String(a.commentId),
+            })
+          );
+          return { decoSet: DecorationSet.create(newState.doc, decos) };
+        }
+        return { decoSet: pluginState.decoSet.map(tr.mapping, newState.doc) };
+      },
+    },
+    props: {
+      decorations(state) {
+        return this.getState(state).decoSet;
+      },
+    },
+  });
+
   // ── ProseMirror editor ─────────────────────────────────────────────────────
   const initialDoc = textToProseMirrorDoc(draft.content || "", composerSchema);
   const state = EditorState.create({
     doc: initialDoc,
     schema: composerSchema,
-    plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin],
+    plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin],
   });
   const view = new EditorView(editorHost, {
     state,
@@ -158,6 +198,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         scheduleScan();
         // Stage 5: recompute page breaks after any document change.
         schedulePageBreakUpdate();
+        // Stage 6: reflow comment card positions after doc edits.
+        scheduleCommentsReflow();
       }
     },
   });
@@ -624,6 +666,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     <div class="cv5-sel-divider" aria-hidden="true"></div>
     <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
     <div class="cv5-sel-divider" aria-hidden="true"></div>
+    <button type="button" class="cv5-sel-btn cv5-sel-btn-comment" data-cv5-sel-action="__comment__" title="Add a comment to the selected text">💬 Comment</button>
+    <div class="cv5-sel-divider" aria-hidden="true"></div>
     <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
   `;
   document.body.appendChild(selToolbar);
@@ -821,6 +865,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       <div class="cv5-sel-divider" aria-hidden="true"></div>
       <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
       <div class="cv5-sel-divider" aria-hidden="true"></div>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-comment" data-cv5-sel-action="__comment__" title="Add a comment to the selected text">💬 Comment</button>
+      <div class="cv5-sel-divider" aria-hidden="true"></div>
       <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
     `;
   }
@@ -838,6 +884,10 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
     if (action === "__add_claim__") {
       void handleAddToClaims();
+      return;
+    }
+    if (action === "__comment__") {
+      openCommentComposer();
       return;
     }
     void triggerSpanRewrite(action);
@@ -1432,6 +1482,604 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
+  // ── Stage 6: Floating margin comments ─────────────────────────────────────
+  //
+  // Comments are fetched on draft load and after any mutation (create / reply /
+  // resolve / reopen).  Each top-level comment:
+  //   1. Paints an inline amber highlight over its anchored span (commentsPlugin).
+  //   2. Renders a floating card in .cv5-margin-col, vertically aligned to the
+  //      top of the highlighted span (via view.coordsAtPos).
+  //
+  // Re-anchor: if the stored offsets have drifted (doc was edited), we fall back
+  // to a text search for anchoredText.  If nothing matches, the card still shows
+  // with an "anchor lost" badge (lossless — comments are never dropped).
+
+  const marginColEl = rootEl.querySelector(".cv5-margin-col");
+
+  // Current user cache (filled on first fetch).
+  let currentUser = null;
+  async function ensureCurrentUser() {
+    if (currentUser) return currentUser;
+    try {
+      currentUser = await fetchAccountInfo();
+    } catch (_) {
+      currentUser = { email: "", name: "You" };
+    }
+    return currentUser;
+  }
+
+  // Live comment state.
+  let commentsData = [];            // top-level CommentRead objects (with .replies)
+  let commentsRefreshTimer = null;
+  const COMMENTS_REFLOW_DEBOUNCE_MS = 300;
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+
+  function _initials(nameOrEmail) {
+    const s = (nameOrEmail || "?").trim();
+    const parts = s.split(/[\s@.]+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  }
+
+  function _formatTimestamp(isoStr) {
+    if (!isoStr) return "";
+    try {
+      const d = new Date(isoStr);
+      const now = new Date();
+      const diffMs = now - d;
+      const diffMin = Math.floor(diffMs / 60000);
+      if (diffMin < 1) return "just now";
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return `${diffHr}h ago`;
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    } catch (_) {
+      return "";
+    }
+  }
+
+  // Parse @email tokens from a body string.
+  function _parseMentions(body) {
+    const tokens = [];
+    const re = /@([^\s@,;:!?'"()\[\]]+)/g;
+    let m;
+    while ((m = re.exec(body)) !== null) {
+      tokens.push(m[1]);
+    }
+    return tokens;
+  }
+
+  // Render a body string with @mention tokens highlighted.
+  function _renderBody(body) {
+    return esc(body).replace(/@([^\s@,;:!?'"()\[\]]+)/g,
+      (_, tok) => `<span class="cv5-comment-mention">@${esc(tok)}</span>`
+    );
+  }
+
+  // Resolve anchorStart/anchorEnd → {pmFrom, pmTo, lost}.
+  // Uses the posMap from serializeDocToTextWithMap (REUSING the Stage-4 map).
+  function _resolveAnchor(comment) {
+    const { text: fullText, posMap } = serializeDocToTextWithMap(view.state.doc);
+    const docSize = view.state.doc.content.size;
+
+    let pmFrom = null;
+    let pmTo   = null;
+    let lost   = false;
+
+    if (comment.anchorStart != null && comment.anchorEnd != null) {
+      const clampStart = Math.max(0, Math.min(comment.anchorStart, posMap.length - 1));
+      const clampEnd   = Math.max(0, Math.min(comment.anchorEnd,   posMap.length - 1));
+      const f = posMap[clampStart] ?? 0;
+      const t = posMap[clampEnd]   ?? docSize;
+      if (f < t) {
+        // Verify the text matches (best-effort drift check).
+        const slicedText = fullText.slice(comment.anchorStart, comment.anchorEnd);
+        if (
+          !comment.anchoredText ||
+          slicedText === comment.anchoredText ||
+          slicedText.trim() === (comment.anchoredText || "").trim()
+        ) {
+          pmFrom = f;
+          pmTo   = t;
+        }
+      }
+    }
+
+    // If positions didn't resolve or text drifted, try text search for anchoredText.
+    if ((pmFrom === null || pmTo === null) && comment.anchoredText) {
+      const needle = comment.anchoredText.trim();
+      const idx = fullText.indexOf(needle);
+      if (idx >= 0) {
+        const searchEnd = idx + needle.length;
+        const cf = Math.max(0, Math.min(idx,       posMap.length - 1));
+        const ct = Math.max(0, Math.min(searchEnd, posMap.length - 1));
+        const sf = posMap[cf] ?? 0;
+        const st = posMap[ct] ?? docSize;
+        if (sf < st) {
+          pmFrom = sf;
+          pmTo   = st;
+        }
+      }
+    }
+
+    if (pmFrom === null || pmTo === null) {
+      lost = true;
+      pmFrom = 0;
+      pmTo   = 0;
+    }
+
+    return { pmFrom, pmTo, lost };
+  }
+
+  // ── Main render pipeline ──────────────────────────────────────────────────
+
+  // commentExpandedSet: set of comment IDs (as strings) that are in expanded state.
+  // Default is expanded for open comments, collapsed for resolved.
+  const commentExpandedSet = new Set();
+
+  async function fetchAndRenderComments() {
+    if (destroyed) return;
+    try {
+      const all = await listDraftCommentsApi(currentDraftId);
+      commentsData = Array.isArray(all) ? all : [];
+    } catch (err) {
+      console.warn("[composer-v5] comments fetch failed:", err);
+      return;
+    }
+    if (destroyed) return;
+    _renderComments();
+  }
+
+  function _renderComments() {
+    if (!marginColEl) return;
+
+    // 1. Resolve anchors for all top-level comments (only top-level get cards).
+    const resolved = commentsData.map((c) => {
+      const { pmFrom, pmTo, lost } = _resolveAnchor(c);
+      return { comment: c, pmFrom, pmTo, lost };
+    });
+
+    // 2. Update the comments plugin highlight decorations.
+    const anchors = resolved
+      .filter((r) => !r.lost && r.pmFrom < r.pmTo)
+      .map((r) => ({ pmFrom: r.pmFrom, pmTo: r.pmTo, commentId: r.comment.id }));
+
+    const tr = view.state.tr.setMeta(commentsKey, { anchors });
+    view.dispatch(tr);
+
+    // 3. Clear and rebuild margin cards.
+    marginColEl.innerHTML = "";
+
+    if (commentsData.length === 0) {
+      marginColEl.innerHTML = `
+        <div class="cv5-margin-empty">
+          Select text and click <strong>💬 Comment</strong> to add a comment.
+        </div>`;
+      return;
+    }
+
+    // 4. Compute vertical positions from the editor + render cards.
+    //    We need the editor to have painted; use coordsAtPos for each anchor.
+    const paperRect = paperEl ? paperEl.getBoundingClientRect() : null;
+    const marginRect = marginColEl.getBoundingClientRect();
+
+    // Track the bottom of the last card so we can push-down on collision.
+    let nextAvailableTop = 0;
+
+    for (const r of resolved) {
+      const { comment, pmFrom, pmTo, lost } = r;
+
+      // Skip replies (they're rendered inside their parent card).
+      if (comment.parentId != null) continue;
+
+      // Default expansion: open comments expanded, resolved collapsed.
+      const isExpanded = commentExpandedSet.has(String(comment.id))
+        ? true
+        : commentExpandedSet.has(String(comment.id) + ":collapsed")
+          ? false
+          : comment.status === "open";
+
+      // Compute top position.
+      let cardTop = nextAvailableTop;
+      if (!lost && pmFrom > 0 && paperRect && marginRect) {
+        try {
+          const coords = view.coordsAtPos(pmFrom);
+          // coords.top is relative to viewport; we need it relative to margin col.
+          const relativeTop = coords.top - marginRect.top + marginColEl.scrollTop;
+          cardTop = Math.max(nextAvailableTop, relativeTop);
+        } catch (_) {
+          // coordsAtPos can throw if doc changed; fall through to nextAvailableTop
+        }
+      }
+
+      // Render the card.
+      const cardEl = document.createElement("div");
+      cardEl.className = "cv5-comment-wrap";
+      cardEl.style.top = cardTop + "px";
+      cardEl.dataset.commentId = String(comment.id);
+      cardEl.innerHTML = _renderCommentCard(comment, isExpanded, lost);
+      marginColEl.appendChild(cardEl);
+
+      // Estimate card height for collision avoidance.
+      // We can't measure before inserting, so use a rough estimate.
+      // On next reflow (RAF) we'll adjust — good enough for v1.
+      const estimatedH = isExpanded ? 120 + (comment.replies || []).length * 70 : 42;
+      nextAvailableTop = cardTop + estimatedH + 8;
+    }
+
+    // Wire card interactions after DOM is populated.
+    _wireCardInteractions();
+  }
+
+  function _renderCommentCard(comment, isExpanded, lost) {
+    const author = comment.author || {};
+    const ini = _initials(author.name || author.email || "?");
+    const authorLabel = esc(author.name || author.email || "Unknown");
+    const timeLabel   = _formatTimestamp(comment.createdAt);
+    const isResolved  = comment.status === "resolved";
+
+    const lostBadge = lost
+      ? `<span class="cv5-comment-lost-badge" title="Original anchor position could not be found">⚠ anchor lost</span>`
+      : "";
+
+    const resolvedBanner = isResolved
+      ? `<div class="cv5-comment-resolved-bar">
+           Resolved by ${esc((comment.resolvedBy?.name || comment.resolvedBy?.email) ?? "someone")}
+           <button type="button" class="cv5-comment-action-btn" data-cv5-comment-reopen="${comment.id}">Reopen</button>
+         </div>`
+      : "";
+
+    const mentionCount = (comment.mentions || []).length;
+    const pingHtml = mentionCount > 0
+      ? `<div class="cv5-comment-ping">🔔 ${mentionCount} notified</div>`
+      : "";
+
+    // Render replies.
+    const repliesHtml = (comment.replies || []).map((r) => _renderReply(r)).join("");
+
+    // Reply input (only for open comments when expanded).
+    const replyInputHtml = !isResolved ? `
+      <div class="cv5-comment-reply-row">
+        <div class="cv5-comment-reply-input-wrap">
+          <input
+            type="text"
+            class="cv5-comment-reply-input"
+            placeholder="Reply…"
+            data-cv5-reply-for="${comment.id}"
+            aria-label="Reply to comment"
+          />
+          <button type="button" class="cv5-comment-reply-submit" data-cv5-reply-submit="${comment.id}" aria-label="Send reply">↑</button>
+        </div>
+      </div>` : "";
+
+    const collapsedChip = `
+      <div class="cv5-comment-chip" data-cv5-comment-expand="${comment.id}">
+        <div class="cv5-comment-av cv5-comment-av--sm">${esc(ini)}</div>
+        <span class="cv5-comment-chip-preview">${esc((comment.body || "").slice(0, 40))}${(comment.body || "").length > 40 ? "…" : ""}</span>
+        ${isResolved ? `<span class="cv5-comment-chip-resolved">✓</span>` : ""}
+      </div>`;
+
+    const fullCard = `
+      <div class="cv5-comment-card${isResolved ? " is-resolved" : ""}${lost ? " is-anchor-lost" : ""}">
+        <div class="cv5-comment-connector"></div>
+        <div class="cv5-comment-card-inner">
+          ${lostBadge}
+          ${resolvedBanner}
+          <div class="cv5-comment-card-top">
+            <div class="cv5-comment-av">${esc(ini)}</div>
+            <span class="cv5-comment-name">${authorLabel}</span>
+            <span class="cv5-comment-time">${timeLabel}</span>
+            <button type="button" class="cv5-comment-collapse-btn" data-cv5-comment-collapse="${comment.id}" title="Collapse">⌄</button>
+          </div>
+          <div class="cv5-comment-body">${_renderBody(comment.body || "")}</div>
+          ${pingHtml}
+          <div class="cv5-comment-foot">
+            ${!isResolved ? `<button type="button" class="cv5-comment-action-btn" data-cv5-comment-resolve="${comment.id}">Resolve</button>` : ""}
+          </div>
+          ${repliesHtml.length > 0 ? `<div class="cv5-comment-replies">${repliesHtml}</div>` : ""}
+          ${replyInputHtml}
+        </div>
+      </div>`;
+
+    return isExpanded ? fullCard : collapsedChip;
+  }
+
+  function _renderReply(reply) {
+    const author = reply.author || {};
+    const ini = _initials(author.name || author.email || "?");
+    const authorLabel = esc(author.name || author.email || "Unknown");
+    const timeLabel   = _formatTimestamp(reply.createdAt);
+    return `
+      <div class="cv5-comment-reply">
+        <div class="cv5-comment-av cv5-comment-av--sm">${esc(ini)}</div>
+        <div class="cv5-comment-reply-body">
+          <div class="cv5-comment-reply-meta">
+            <span class="cv5-comment-name">${authorLabel}</span>
+            <span class="cv5-comment-time">${timeLabel}</span>
+          </div>
+          <div class="cv5-comment-body">${_renderBody(reply.body || "")}</div>
+        </div>
+      </div>`;
+  }
+
+  function _wireCardInteractions() {
+    if (!marginColEl) return;
+
+    // Collapse a card.
+    marginColEl.querySelectorAll("[data-cv5-comment-collapse]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.cv5CommentCollapse;
+        commentExpandedSet.delete(id);
+        commentExpandedSet.add(id + ":collapsed");
+        _renderComments();
+      });
+    });
+
+    // Expand from chip.
+    marginColEl.querySelectorAll("[data-cv5-comment-expand]").forEach((chip) => {
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = chip.dataset.cv5CommentExpand;
+        commentExpandedSet.delete(id + ":collapsed");
+        commentExpandedSet.add(id);
+        _renderComments();
+      });
+    });
+
+    // Resolve.
+    marginColEl.querySelectorAll("[data-cv5-comment-resolve]").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.cv5CommentResolve);
+        btn.disabled = true;
+        try {
+          await resolveCommentApi(id);
+          await fetchAndRenderComments();
+          callbacks.onStatus?.("Comment resolved.");
+        } catch (err) {
+          console.error("[composer-v5] resolve comment failed:", err);
+          callbacks.onError?.(err.message || "Failed to resolve comment.");
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Reopen.
+    marginColEl.querySelectorAll("[data-cv5-comment-reopen]").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.cv5CommentReopen);
+        btn.disabled = true;
+        try {
+          await reopenCommentApi(id);
+          await fetchAndRenderComments();
+          callbacks.onStatus?.("Comment reopened.");
+        } catch (err) {
+          console.error("[composer-v5] reopen comment failed:", err);
+          callbacks.onError?.(err.message || "Failed to reopen comment.");
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Reply submit (button click).
+    marginColEl.querySelectorAll("[data-cv5-reply-submit]").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const parentId = Number(btn.dataset.cv5ReplySubmit);
+        const input = marginColEl.querySelector(`[data-cv5-reply-for="${parentId}"]`);
+        if (!input) return;
+        const body = input.value.trim();
+        if (!body) return;
+        await _submitReply(parentId, body, input, btn);
+      });
+    });
+
+    // Reply submit (Enter key on input).
+    marginColEl.querySelectorAll(".cv5-comment-reply-input").forEach((input) => {
+      input.addEventListener("keydown", async (e) => {
+        if (e.key !== "Enter" || e.shiftKey) return;
+        e.preventDefault();
+        const parentId = Number(input.dataset.cv5ReplyFor);
+        const btn = marginColEl.querySelector(`[data-cv5-reply-submit="${parentId}"]`);
+        const body = input.value.trim();
+        if (!body) return;
+        await _submitReply(parentId, body, input, btn);
+      });
+    });
+  }
+
+  async function _submitReply(parentId, body, inputEl, btnEl) {
+    if (inputEl) inputEl.disabled = true;
+    if (btnEl)   btnEl.disabled   = true;
+    const mentions = _parseMentions(body);
+    try {
+      await createDraftCommentApi(currentDraftId, {
+        body,
+        parentId,
+        mentions,
+      });
+      await fetchAndRenderComments();
+    } catch (err) {
+      console.error("[composer-v5] reply failed:", err);
+      callbacks.onError?.(err.message || "Failed to post reply.");
+      if (inputEl) { inputEl.disabled = false; inputEl.focus(); }
+      if (btnEl)   btnEl.disabled = false;
+    }
+  }
+
+  // ── Comments reflow ───────────────────────────────────────────────────────
+  //
+  // After doc edits we recompute card vertical positions without re-fetching.
+
+  let commentsReflowRaf = null;
+  let commentsReflowTimer = null;
+
+  function scheduleCommentsReflow() {
+    if (commentsReflowTimer) clearTimeout(commentsReflowTimer);
+    commentsReflowTimer = setTimeout(() => {
+      commentsReflowTimer = null;
+      if (commentsReflowRaf) cancelAnimationFrame(commentsReflowRaf);
+      commentsReflowRaf = requestAnimationFrame(() => {
+        commentsReflowRaf = null;
+        if (!destroyed) _renderComments();
+      });
+    }, COMMENTS_REFLOW_DEBOUNCE_MS);
+  }
+
+  // Kick off initial fetch after the editor has painted.
+  setTimeout(() => void fetchAndRenderComments(), 600);
+
+  // ── Comment composer popover ──────────────────────────────────────────────
+  //
+  // Opens when the user clicks "💬 Comment" in the selection toolbar.
+  // Captures the PM selection → char offsets → POST.
+
+  const commentComposerEl = document.createElement("div");
+  commentComposerEl.className = "cv5-comment-composer";
+  commentComposerEl.setAttribute("role", "dialog");
+  commentComposerEl.setAttribute("aria-label", "Add comment");
+  commentComposerEl.style.display = "none";
+  document.body.appendChild(commentComposerEl);
+
+  let commentAnchorRange = null;  // { from, to, anchorStart, anchorEnd, anchoredText }
+
+  function openCommentComposer() {
+    if (!selectionRange) return;
+    const { from, to } = selectionRange;
+
+    // Convert PM positions to char offsets using serializeDocToTextWithMap.
+    // posMap[charIdx] = pmPos.  We need the inverse: for pmPos in [from,to],
+    // find the range of char indices that map into that PM span.
+    const { text: fullText, posMap } = serializeDocToTextWithMap(view.state.doc);
+    let anchorStart = null;
+    let anchorEnd   = null;
+    for (let i = 0; i < posMap.length; i++) {
+      const pmPos = posMap[i];
+      if (pmPos >= from && anchorStart === null) anchorStart = i;
+      if (pmPos < to) anchorEnd = i + 1;
+    }
+    if (anchorStart === null) anchorStart = 0;
+    if (anchorEnd   === null) anchorEnd   = 0;
+    const anchoredText = fullText.slice(anchorStart, anchorEnd);
+
+    commentAnchorRange = { from, to, anchorStart, anchorEnd, anchoredText };
+
+    // Show "commenting as" user.
+    const me = currentUser;
+    const commentingAs = me ? esc(me.name || me.email || "") : "";
+
+    commentComposerEl.innerHTML = `
+      <div class="cv5-cc-header">
+        <span class="cv5-cc-title">Add comment</span>
+        ${commentingAs ? `<span class="cv5-cc-as">as <strong>${commentingAs}</strong></span>` : ""}
+      </div>
+      <div class="cv5-cc-anchor-preview" title="${esc(anchoredText)}">${esc(anchoredText.slice(0, 60))}${anchoredText.length > 60 ? "…" : ""}</div>
+      <textarea
+        class="cv5-cc-body"
+        rows="3"
+        placeholder="Add a comment… Type @ to mention someone"
+        aria-label="Comment body"
+        autofocus
+      ></textarea>
+      <div class="cv5-cc-mention-hint" style="display:none"></div>
+      <div class="cv5-cc-actions">
+        <button type="button" class="cv5-cc-cancel">Cancel</button>
+        <button type="button" class="cv5-cc-submit">Comment</button>
+      </div>
+    `;
+    commentComposerEl.style.display = "block";
+    positionNearSelection(commentComposerEl);
+
+    const textarea = commentComposerEl.querySelector(".cv5-cc-body");
+    const mentionHint = commentComposerEl.querySelector(".cv5-cc-mention-hint");
+    textarea?.focus();
+
+    // @-mention v1: detect "@" typed and show a simple hint / accept on space.
+    textarea?.addEventListener("input", () => {
+      const val = textarea.value;
+      const lastAt = val.lastIndexOf("@");
+      if (lastAt >= 0 && lastAt === val.length - 1) {
+        // "@" just typed — show hint.
+        const meEmail = currentUser?.email || "";
+        mentionHint.textContent = meEmail
+          ? `Mentioning ${meEmail} — press Space or Enter to confirm`
+          : "Type an email after @";
+        mentionHint.style.display = "block";
+      } else {
+        mentionHint.style.display = "none";
+      }
+    });
+
+    commentComposerEl.querySelector(".cv5-cc-cancel")?.addEventListener("click", closeCommentComposer);
+    commentComposerEl.querySelector(".cv5-cc-submit")?.addEventListener("click", () => void submitComment());
+
+    textarea?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.metaKey) {
+        e.preventDefault();
+        void submitComment();
+      } else if (e.key === "Escape") {
+        closeCommentComposer();
+      }
+    });
+  }
+
+  function closeCommentComposer() {
+    commentComposerEl.style.display = "none";
+    commentComposerEl.innerHTML = "";
+    commentAnchorRange = null;
+  }
+
+  async function submitComment() {
+    const textarea = commentComposerEl.querySelector(".cv5-cc-body");
+    const body = textarea?.value?.trim();
+    if (!body) return;
+    if (!commentAnchorRange) return;
+
+    const { anchorStart, anchorEnd, anchoredText } = commentAnchorRange;
+    const mentions = _parseMentions(body);
+
+    const submitBtn = commentComposerEl.querySelector(".cv5-cc-submit");
+    if (submitBtn) submitBtn.disabled = true;
+    if (textarea)  textarea.disabled  = true;
+
+    try {
+      await createDraftCommentApi(currentDraftId, {
+        body,
+        anchorStart,
+        anchorEnd,
+        anchoredText,
+        mentions,
+      });
+      closeCommentComposer();
+      hideSelToolbar();
+      await fetchAndRenderComments();
+      callbacks.onStatus?.("Comment added.");
+    } catch (err) {
+      console.error("[composer-v5] create comment failed:", err);
+      callbacks.onError?.(err.message || "Failed to post comment.");
+      if (submitBtn) submitBtn.disabled = false;
+      if (textarea)  textarea.disabled  = false;
+    }
+  }
+
+  // Close comment composer on outside click.
+  function handleCommentComposerOutsideClick(e) {
+    if (
+      commentComposerEl.style.display !== "none" &&
+      !commentComposerEl.contains(e.target) &&
+      !selToolbar.contains(e.target)
+    ) {
+      closeCommentComposer();
+    }
+  }
+  document.addEventListener("click", handleCommentComposerOutsideClick, true);
+
+  // Fetch current user now so it's ready when the composer opens.
+  void ensureCurrentUser();
+
   // ── Chat (LEFT column) ─────────────────────────────────────────────────────
   // Reuses the existing compose endpoint. Stage 1 keeps the existing thread
   // working; replies that produce/rewrite a draft also refresh the editor.
@@ -1547,9 +2195,12 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     const newState = EditorState.create({
       doc: newDoc,
       schema: composerSchema,
-      plugins: exampleSetup({ schema: composerSchema, menuBar: false }),
+      // Include claim-flags + comments plugins so highlights survive a content refresh.
+      plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin],
     });
     view.updateState(newState);
+    // Re-render comment cards after the doc is replaced.
+    scheduleCommentsReflow();
   }
 
   // ── Public handle ──────────────────────────────────────────────────────────
@@ -1575,6 +2226,12 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       // Stage-8 cleanup: actions menu listeners.
       document.removeEventListener("click", handleActionsOutsideClick);
       document.removeEventListener("keydown", handleActionsEscape);
+      // Stage-6 cleanup: comment composer popover + timers.
+      if (commentsRefreshTimer) { clearTimeout(commentsRefreshTimer); commentsRefreshTimer = null; }
+      if (commentsReflowTimer)  { clearTimeout(commentsReflowTimer);  commentsReflowTimer  = null; }
+      if (commentsReflowRaf)    { cancelAnimationFrame(commentsReflowRaf); commentsReflowRaf = null; }
+      document.removeEventListener("click", handleCommentComposerOutsideClick, true);
+      try { document.body.removeChild(commentComposerEl); } catch (_) { /* noop */ }
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,
@@ -1678,11 +2335,7 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
                 <div data-cv5="editor"></div>
               </div>
               <aside class="cv5-margin-col" aria-label="Comments">
-                <div class="cv5-margin-empty">
-                  Comments anchor here. (Stage 6 adds the floating Google-Docs-style
-                  margin comments with @-mention + ping; this stage ships the rail
-                  toggle only.)
-                </div>
+                <div class="cv5-margin-empty">Select text and click 💬 Comment to add a comment.</div>
               </aside>
             </div>
           </div>

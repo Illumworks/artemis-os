@@ -2723,3 +2723,73 @@ export async function approveClaimApi(claimId) {
   );
   return _readJsonOrThrow(res, "Failed to approve claim");
 }
+
+// ── Stage 6: Draft comments API ───────────────────────────────────────────────
+
+/**
+ * List all comments for a draft.
+ * GET /api/writing-studio/drafts/{draftId}/comments
+ */
+export async function listDraftCommentsApi(draftId) {
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(draftId)}/comments`,
+  );
+  return _readJsonOrThrow(res, "Failed to fetch comments");
+}
+
+/**
+ * Create a comment on a draft.
+ * POST /api/writing-studio/drafts/{draftId}/comments
+ * payload: { body, anchorStart?, anchorEnd?, anchoredText?, parentId?, mentions? }
+ */
+export async function createDraftCommentApi(draftId, payload = {}) {
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(draftId)}/comments`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return _readJsonOrThrow(res, "Failed to create comment");
+}
+
+/**
+ * Resolve a comment.
+ * POST /api/writing-studio/comments/{commentId}/resolve
+ */
+export async function resolveCommentApi(commentId) {
+  const res = await fetch(
+    `/api/writing-studio/comments/${encodeURIComponent(commentId)}/resolve`,
+    { method: "POST" },
+  );
+  return _readJsonOrThrow(res, "Failed to resolve comment");
+}
+
+/**
+ * Reopen a resolved comment.
+ * POST /api/writing-studio/comments/{commentId}/reopen
+ */
+export async function reopenCommentApi(commentId) {
+  const res = await fetch(
+    `/api/writing-studio/comments/${encodeURIComponent(commentId)}/reopen`,
+    { method: "POST" },
+  );
+  return _readJsonOrThrow(res, "Failed to reopen comment");
+}
+
+/**
+ * Update a comment body.
+ * PATCH /api/writing-studio/comments/{commentId}
+ */
+export async function updateCommentApi(commentId, payload = {}) {
+  const res = await fetch(
+    `/api/writing-studio/comments/${encodeURIComponent(commentId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return _readJsonOrThrow(res, "Failed to update comment");
+}
