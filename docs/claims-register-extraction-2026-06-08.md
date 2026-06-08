@@ -1,5 +1,13 @@
 # Claims Register — extraction from published content (2026-06-08)
 
+> **⚠️ SUPERSEDED (2026-06-08) — read this first.** Jon corrected the approach: these published docs ALREADY
+> went through company approval, so the "boasting" claims are **approved** (no legal-hold), and the wording —
+> written by Angela & Julie — must be preserved **verbatim** (rewording = working backwards). The buckets +
+> reworded phrasings below are therefore NOT authoritative. The **canonical load is verbatim + approved** in
+> `scripts/seed_harvested_claims.py` (80 claims, exact wording, loaded as `approved`). Keep this doc only as
+> the original analysis (incl. which claims lacked an in-doc citation — useful for proof-pack follow-up), NOT
+> as the source of phrasing or the load list.
+
 Harvested by 3 Sonnet subagents reading the 15 published PDFs in Jon's Drive (Research · Product Overviews ·
 Enablement). **Every claim is source-cited.** Two buckets: **READY TO PROPOSE** (well-sourced, safe to load
 into the register as `proposed` for Jon to approve) and **HOLD** (strong but unsourced/internal/superlative
