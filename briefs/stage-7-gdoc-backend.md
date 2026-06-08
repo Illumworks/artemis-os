@@ -6,10 +6,12 @@ worktree, cwd inside. Own test DB** (`artemis_test_gdoc`). **Do NOT merge — re
 (OAuth tokens) — store carefully; mock Google in tests, never hit live Google in CI.** New backend files + a
 new router only — do NOT touch `composer-v5.js` or the comments-backend files.
 
-## The point + v1 scope (keep it Friday-feasible)
+## The point + scope (PER-USER — leverage Track A identity)
 Let the composer **import** an existing Google Doc's text into a draft, and **export** a draft to a Google
-Doc. **v1 = a single app-level Google connection** (the operator connects their Google account once; the app
-stores that token and uses it for import/export). Per-user OAuth is a later refinement — do NOT build it now.
+Doc. **PER-USER**: each logged-in user connects their OWN Google account once; the app stores that user's
+token (keyed by their user id from Track A) and uses **that user's** token for their import/export — so each
+person operates on their own Drive/Docs. (This is barely more than a single connection because the current
+user is already available via `get_current_user`, and it avoids everyone's exports landing in one Drive.)
 
 ## Config (in `artemis/config.py` + documented in `.env.example`; values live in `.env`, NOT committed)
 - `ARTEMIS_GOOGLE_CLIENT_ID` = `612420684593-qnuhj6iab2bu8bd9d95ff9ek3on036mq.apps.googleusercontent.com`
@@ -21,14 +23,17 @@ stores that token and uses it for import/export). Per-user OAuth is a later refi
 ## 1. OAuth connect flow + token storage (migration off current head)
 - `GET /api/google/oauth/start` → builds the Google consent URL (client id, redirect, scopes, `access_type=
   offline`, `prompt=consent`) and redirects.
-- `GET /api/google/oauth/callback?code=…` → exchange the code for access+refresh tokens (token endpoint);
-  store them.
-- **Token store:** a small table `google_credentials` (single app-level row for v1: access_token,
-  refresh_token, expiry, scope, connected_email, created/updated). Migration off head. Treat tokens as
-  CREDENTIALS — server-side only, never returned to the FE, never logged. Auto-refresh the access token when
-  expired (use the refresh token).
-- `GET /api/google/status` → `{connected: bool, email?}` (for the FE to show connect state). `POST
-  /api/google/disconnect` → clear/revoke the stored token.
+- `GET /api/google/oauth/start` associates the flow with the current user (state param). `GET
+  /api/google/oauth/callback?code=…` → exchange the code for access+refresh tokens; store them **for the
+  current user**.
+- **Token store:** table `google_credentials` keyed by `user_id` FK→users (ONE row per user): access_token,
+  refresh_token, expiry, scope, connected_email, created/updated. Unique on user_id. Migration off head.
+  Treat tokens as CREDENTIALS — server-side only, never returned to the FE, never logged. Auto-refresh the
+  access token when expired (per-user refresh token).
+- `GET /api/google/status` → `{connected: bool, email?}` for the **current user**. `POST
+  /api/google/disconnect` → clear/revoke the **current user's** token.
+- Import/export below use **`get_current_user`'s** stored token; if the user hasn't connected → 409/"connect
+  Google first" (the FE prompts them to connect).
 
 ## 2. Import + export
 - **Import:** `POST /api/writing-studio/drafts/{id}/google-doc/import` body `{docUrl}` (accept a Google Doc
@@ -55,7 +60,7 @@ stores that token and uses it for import/export). Per-user OAuth is a later refi
   it.
 
 ## OUT OF SCOPE
-Per-user OAuth (v1 is single app connection); the composer FE for Google Doc (terminal does the small header
+The composer FE for Google Doc (terminal does the small header
 affordance after — link/import/export buttons); the Drive picker UI. Don't touch composer-v5.js or comments
 files.
 
