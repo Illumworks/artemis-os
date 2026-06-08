@@ -293,7 +293,10 @@ async def _replace_google_document_content(
 
         requests: list[dict[str, Any]] = []
         end_index = _document_end_index(payload)
-        if end_index > 1:
+        # Only delete when there's a NON-EMPTY range to delete. A fresh/empty doc has
+        # end_index==2 (one trailing newline), so [1, end_index-1] would be [1,1] — an
+        # empty range the Docs API rejects (400 → 502). Require end_index > 2.
+        if end_index > 2:
             requests.append(
                 {
                     "deleteContentRange": {
