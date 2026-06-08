@@ -1610,7 +1610,7 @@ export async function fetchAnalytics(projectPath) {
 }
 
 export async function fetchAccountInfo() {
-  const res = await fetch("/api/account");
+  const res = await fetch("/api/me");
   return res.json();
 }
 
