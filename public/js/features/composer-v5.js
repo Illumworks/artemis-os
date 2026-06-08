@@ -26,6 +26,7 @@ import {
   createClaimApi,
   createWritingDraftApi,
   createWritingFolderApi,
+  createWritingTemplateApi,
   fetchWritingDraft,
   fetchWritingStudioOverview,
   listWritingTemplatesApi,
@@ -155,6 +156,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (tr.docChanged) {
         scheduleAutosave();
         scheduleScan();
+        // Stage 5: recompute page breaks after any document change.
+        schedulePageBreakUpdate();
       }
     },
   });
@@ -1244,6 +1247,191 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     historyBtnEl.addEventListener("click", () => callbacks.onOpenVersionHistory?.());
   }
 
+  // ── Stage 5: format-aware pagination ──────────────────────────────────────
+  //
+  // Long-form asset types (guide, paper, whitepaper, etc.) get visual page
+  // breaks as an overlay inside .cv5-paper. The doc model is NEVER touched —
+  // no PM transaction, no autosave effect, purely presentation.
+  //
+  // Implementation: add a sibling <div class="cv5-page-breaks"> inside
+  // .cv5-paper with pointer-events:none containing N horizontal rule lines
+  // spaced PAGE_HEIGHT_PX apart. Recompute N on doc changes + resize.
+
+  const LONG_FORM_ASSET_TYPES = new Set([
+    "guide", "paper", "whitepaper", "white_paper", "white paper",
+    "long_form", "long-form", "long form", "field_guide", "field guide",
+  ]);
+  const PAGE_HEIGHT_PX = 920; // ~letter-feel at 15px/1.8lh
+
+  function isLongForm(assetType) {
+    if (!assetType) return false;
+    return LONG_FORM_ASSET_TYPES.has(assetType.toLowerCase().trim());
+  }
+
+  const paperEl = rootEl.querySelector('[data-cv5="paper"]');
+  let pageBreaksEl = null;
+  let paginationResizeObserver = null;
+  let paginationRaf = null;
+
+  function mountPagination() {
+    if (!paperEl) return;
+    if (!pageBreaksEl) {
+      pageBreaksEl = document.createElement("div");
+      pageBreaksEl.className = "cv5-page-breaks";
+      pageBreaksEl.setAttribute("aria-hidden", "true");
+      paperEl.appendChild(pageBreaksEl);
+      paperEl.classList.add("cv5-paper--paginated");
+    }
+    updatePageBreaks();
+    if (!paginationResizeObserver) {
+      paginationResizeObserver = new ResizeObserver(() => schedulePageBreakUpdate());
+      paginationResizeObserver.observe(paperEl);
+    }
+  }
+
+  function unmountPagination() {
+    if (paginationResizeObserver) {
+      paginationResizeObserver.disconnect();
+      paginationResizeObserver = null;
+    }
+    if (pageBreaksEl && paperEl) {
+      try { paperEl.removeChild(pageBreaksEl); } catch (_) { /* noop */ }
+      pageBreaksEl = null;
+    }
+    paperEl?.classList.remove("cv5-paper--paginated");
+  }
+
+  function schedulePageBreakUpdate() {
+    if (paginationRaf) cancelAnimationFrame(paginationRaf);
+    paginationRaf = requestAnimationFrame(() => {
+      paginationRaf = null;
+      updatePageBreaks();
+    });
+  }
+
+  function updatePageBreaks() {
+    if (!pageBreaksEl || !paperEl) return;
+    // paperEl's scrollHeight includes padding, so measure the content height
+    // as the total height of all block children of the editor host.
+    const totalH = editorHost ? editorHost.scrollHeight : paperEl.scrollHeight;
+    const n = Math.max(0, Math.floor(totalH / PAGE_HEIGHT_PX));
+    // Build N break lines.
+    let html = "";
+    for (let i = 1; i <= n; i++) {
+      html += `<div class="cv5-page-break-line" style="top:${i * PAGE_HEIGHT_PX}px"></div>`;
+    }
+    pageBreaksEl.innerHTML = html;
+  }
+
+  if (isLongForm(draft.asset_type)) {
+    mountPagination();
+  }
+
+  // ── Stage 8: ⋯ Actions menu ───────────────────────────────────────────────
+  //
+  // The ⋯ button in the header opens a small popover. Items:
+  //   - Save as template (real): POSTs to /api/writing-studio/templates
+  //   - Repurpose: stub toast
+  //   - Brand + readability check: stub toast
+  //
+  // Reuses the .cv5-picker-menu / .cv5-picker-menu-row CSS family so it
+  // matches the "+" create menu in the drafts picker (brief requirement).
+
+  const actionsWrapEl = rootEl.querySelector('[data-cv5="actions-wrap"]');
+  const actionsBtnEl  = rootEl.querySelector('[data-cv5="actions-btn"]');
+  const actionsMenuEl = rootEl.querySelector('[data-cv5="actions-menu"]');
+
+  function openActionsMenu() {
+    if (!actionsWrapEl) return;
+    actionsMenuEl?.classList.add("is-open");
+    actionsBtnEl?.setAttribute("aria-expanded", "true");
+  }
+
+  function closeActionsMenu() {
+    if (!actionsWrapEl) return;
+    actionsMenuEl?.classList.remove("is-open");
+    actionsBtnEl?.setAttribute("aria-expanded", "false");
+  }
+
+  if (actionsBtnEl) {
+    actionsBtnEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = actionsMenuEl?.classList.contains("is-open");
+      if (isOpen) closeActionsMenu();
+      else openActionsMenu();
+    });
+  }
+
+  // Outside-click closes the actions menu independently of the picker.
+  function handleActionsOutsideClick(e) {
+    if (!actionsWrapEl) return;
+    if (!actionsWrapEl.contains(e.target)) closeActionsMenu();
+  }
+  document.addEventListener("click", handleActionsOutsideClick);
+
+  // ESC closes the actions menu.
+  function handleActionsEscape(e) {
+    if (e.key !== "Escape") return;
+    if (actionsMenuEl?.classList.contains("is-open")) closeActionsMenu();
+  }
+  document.addEventListener("keydown", handleActionsEscape);
+
+  if (actionsMenuEl) {
+    actionsMenuEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-cv5-action]");
+      if (!btn) return;
+      e.stopPropagation();
+      const action = btn.dataset.cv5Action;
+      closeActionsMenu();
+
+      if (action === "save-as-template") {
+        await handleSaveAsTemplate();
+      } else if (action === "repurpose") {
+        callbacks.onStatus?.("Repurpose — coming soon.");
+      } else if (action === "brand-check") {
+        callbacks.onStatus?.("Brand + readability check — coming soon.");
+      }
+    });
+  }
+
+  async function handleSaveAsTemplate() {
+    const defaultName = draft.title || "Untitled";
+    const name = window.prompt("Template name:", defaultName);
+    if (name === null) return; // user cancelled
+    const trimmed = name.trim();
+    if (!trimmed) {
+      callbacks.onError?.("Template name cannot be empty.");
+      return;
+    }
+
+    const templateKey = trimmed
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_|_$/g, "");
+    if (!templateKey) {
+      callbacks.onError?.("Template name produced an empty key — please use letters or numbers.");
+      return;
+    }
+
+    const body = serializeDocToText(view.state.doc);
+    const assetType = draft.asset_type || undefined;
+
+    const payload = { templateKey, name: trimmed, body };
+    if (assetType) payload.assetType = assetType;
+
+    try {
+      const created = await createWritingTemplateApi(payload);
+      // Invalidate the picker's templates cache so the next open of
+      // "New from template…" re-fetches and shows the new template.
+      templatesCache = null;
+      callbacks.onStatus?.(`Template "${created.name || trimmed}" saved.`);
+    } catch (err) {
+      console.error("[composer-v5] save-as-template failed:", err);
+      // Surface 409 (key collision) and other errors via onError.
+      callbacks.onError?.(err.message || "Failed to save template.");
+    }
+  }
+
   // ── Chat (LEFT column) ─────────────────────────────────────────────────────
   // Reuses the existing compose endpoint. Stage 1 keeps the existing thread
   // working; replies that produce/rewrite a draft also refresh the editor.
@@ -1381,6 +1569,12 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       // Stage-3 cleanup: drafts-picker listeners.
       document.removeEventListener("click", handlePickerOutsideClick);
       document.removeEventListener("keydown", handlePickerEscape);
+      // Stage-5 cleanup: pagination overlay + resize observer.
+      unmountPagination();
+      if (paginationRaf) { cancelAnimationFrame(paginationRaf); paginationRaf = null; }
+      // Stage-8 cleanup: actions menu listeners.
+      document.removeEventListener("click", handleActionsOutsideClick);
+      document.removeEventListener("keydown", handleActionsEscape);
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,
@@ -1444,7 +1638,23 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
         <button type="button" class="cv5-hdr-ind" data-cv5="comments-toggle" title="Show / hide comments rail">💬 Comments</button>
         <button type="button" class="cv5-hdr-ind" data-cv5="open-history" title="Version history">⟲ History</button>
         <button type="button" class="cv5-hdr-gdoc is-placeholder" disabled aria-disabled="true" title="Google Doc — Stage 7">⊞ Google Doc</button>
-        <button type="button" class="cv5-hdr-ind is-placeholder" disabled aria-disabled="true" title="More actions — Stage 8">⋯</button>
+        <div class="cv5-actions-wrap" data-cv5="actions-wrap">
+          <button type="button" class="cv5-hdr-ind" data-cv5="actions-btn" aria-haspopup="menu" aria-expanded="false" title="More actions">⋯</button>
+          <div class="cv5-picker-menu cv5-actions-menu" data-cv5="actions-menu" role="menu" aria-label="Actions">
+            <button type="button" class="cv5-picker-menu-row" data-cv5-action="save-as-template" role="menuitem">
+              <span aria-hidden="true">📋</span>
+              <span>Save as template</span>
+            </button>
+            <button type="button" class="cv5-picker-menu-row" data-cv5-action="repurpose" role="menuitem">
+              <span aria-hidden="true">♻</span>
+              <span>Repurpose</span>
+            </button>
+            <button type="button" class="cv5-picker-menu-row" data-cv5-action="brand-check" role="menuitem">
+              <span aria-hidden="true">✓</span>
+              <span>Brand + readability check</span>
+            </button>
+          </div>
+        </div>
         <span class="cv5-hdr-saving" data-cv5="saving" aria-live="polite"></span>
         <button type="button" class="cv5-btn-primary" data-cv5="save-version">Save version</button>
       </header>
@@ -1464,7 +1674,7 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
         <section class="cv5-doc-col" aria-label="Document">
           <div class="cv5-doc-scroll">
             <div class="cv5-doc-grid" data-cv5="doc-grid">
-              <div class="cv5-paper">
+              <div class="cv5-paper" data-cv5="paper">
                 <div data-cv5="editor"></div>
               </div>
               <aside class="cv5-margin-col" aria-label="Comments">
