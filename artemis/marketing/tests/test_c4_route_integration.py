@@ -63,14 +63,20 @@ class TestCreateDraftRoute:
         assert data["candidateId"] == candidate.id
         assert data["status"] == "generating"
 
-    async def test_create_draft_missing_candidate_id(
+    async def test_create_draft_no_candidate_id_creates_blank_draft(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
+        """POST /drafts with no candidate_id creates a blank draft under the
+        templates placeholder candidate rather than returning 400.  This is
+        the 'New draft' path from the picker for any draft incl. those without
+        a campaign context."""
         clear_subscribers()
         resp = await client.post("/api/writing-studio/drafts", json={})
-        assert resp.status_code == 400
+        assert resp.status_code == 201
         body = resp.json()
-        assert body["code"] == "missing_candidate_id"
+        assert body["id"] > 0
+        # Title defaults to "New draft" when none supplied.
+        assert body["title"] == "New draft"
 
     async def test_create_draft_invalid_candidate_id(
         self, client: AsyncClient, db_session: AsyncSession

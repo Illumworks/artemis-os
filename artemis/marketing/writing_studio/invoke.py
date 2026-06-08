@@ -509,6 +509,44 @@ async def create_handoff_draft(
     return draft
 
 
+async def create_blank_draft(
+    session: AsyncSession,
+    *,
+    title: str | None = None,
+    folder_id: int | None = None,
+    ws: Any = None,
+) -> Draft:
+    """Create a genuinely blank draft with no campaign context.
+
+    Attaches the templates placeholder candidate so the deliverable row
+    satisfies the candidate_id FK constraint without inventing a new schema.
+    This is the same substrate used by create_template_draft for standalone
+    (non-campaign) drafts.
+
+    Called by POST /drafts when candidate_id is absent (New-draft from the
+    picker for any draft, including those without a campaign context).
+    """
+    candidate = await _get_or_create_template_workspace_candidate(session)
+    draft_title = (title or "").strip() or "New draft"
+    folder: Any = None
+    folder_name: str | None = None
+    if folder_id is not None:
+        folder = await wr_repo.get_folder(session, folder_id)
+        if folder is not None:
+            folder_name = folder.name
+
+    return await _create_manual_draft_record(
+        session,
+        candidate_id=candidate.id,
+        campaign_id=candidate.campaign_family,
+        title=draft_title,
+        metadata={},
+        folder_id=folder.id if folder is not None else None,
+        folder_name=folder_name,
+        ws=ws,
+    )
+
+
 async def create_template_draft(
     session: AsyncSession,
     *,

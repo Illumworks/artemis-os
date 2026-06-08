@@ -1289,17 +1289,38 @@ async def create_draft(
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Create a Writing Studio draft from a campaign candidate.
+    """Create a Writing Studio draft.
 
     Body:
-      candidate_id: int          (required)
-      asset_context: dict | None (optional — pre-assembled asset bundle)
+      candidate_id: int | None   (optional — if absent a blank draft is created
+                                  under the templates placeholder candidate)
+      asset_context: dict | None (optional — pre-assembled asset bundle;
+                                  ignored when candidate_id is absent)
+      title: str | None          (optional — used for blank drafts; default "New draft")
+      folder_id: int | None      (optional — file the blank draft in this folder)
     """
-    candidate_id = body.get("candidate_id")
-    if candidate_id is None:
-        raise bad_request("candidate_id is required", "missing_candidate_id")
+    candidate_id_raw = body.get("candidate_id")
+
+    # ── Blank-draft path (no candidate) ──────────────────────────────────────
+    if candidate_id_raw is None:
+        title = body.get("title") or None
+        folder_id_raw = body.get("folder_id")
+        folder_id: int | None = None
+        if folder_id_raw is not None:
+            try:
+                folder_id = int(folder_id_raw)
+            except (TypeError, ValueError):
+                raise bad_request("folder_id must be an integer", "invalid_folder_id")  # noqa: B904
+        draft = await ws_invoke.create_blank_draft(
+            session,
+            title=title,
+            folder_id=folder_id,
+        )
+        return _serialize_draft(draft)
+
+    # ── Campaign-candidate path ───────────────────────────────────────────────
     try:
-        candidate_id = int(candidate_id)
+        candidate_id = int(candidate_id_raw)
     except (TypeError, ValueError):
         raise bad_request("candidate_id must be an integer", "invalid_candidate_id")  # noqa: B904
 
