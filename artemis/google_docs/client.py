@@ -216,11 +216,18 @@ async def export_google_document(
     document_id: str | None,
 ) -> GoogleDocumentRecord:
     if document_id:
-        effective_title = await _rename_google_document(
-            access_token=access_token,
-            document_id=document_id,
-            title=title,
-        )
+        # Rename goes through the Drive API (drive.file scope), which only covers
+        # files the app CREATED — not a doc imported by URL. So rename can 403 on a
+        # linked imported doc. It's cosmetic — make it best-effort and never let it
+        # fail the export; the content update below uses the full `documents` scope.
+        try:
+            effective_title = await _rename_google_document(
+                access_token=access_token,
+                document_id=document_id,
+                title=title,
+            )
+        except (httpx.HTTPError, GoogleDocsError):
+            effective_title = title
         await _replace_google_document_content(
             access_token=access_token,
             document_id=document_id,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -290,7 +291,13 @@ async def export_draft_to_google_doc(
             else None,
         )
     except httpx.HTTPError as exc:
-        raise _http_error(502, f"Google Docs export failed: {exc}", "google_export_failed") from exc
+        _detail = str(exc)
+        _resp = getattr(exc, "response", None)
+        if _resp is not None:
+            with suppress(Exception):
+                _detail = f"HTTP {_resp.status_code}: {_resp.text[:500]}"
+        logging.getLogger(__name__).warning("Google Docs export failed — %s", _detail)
+        raise _http_error(502, "Google Docs export failed", "google_export_failed") from exc
 
     exported_at = datetime.now(UTC).isoformat()
     meta = dict(draft.deliverable_metadata or {})
