@@ -663,3 +663,155 @@
   .cv5-doc-grid { grid-template-columns: 1fr; }
   .cv5-margin-col { display: none; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Stage 4 — Claim Flags
+   Orange double-underline for unregistered strong claims.
+   Matches the approved prototype: docs/mockups/composer-v5-prototype.html.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Warm-orange warning colour — matches --warn in the prototype design tokens */
+:root {
+  --cv5-warn: #d97a25;
+  --cv5-green: #2f7a52;
+  --cv5-green-bg: #eef4ef;
+  --cv5-green-border: #cfe3d5;
+}
+
+/* Orange double-underline decoration (ProseMirror inline decoration) */
+.cv5-claim-flag {
+  text-decoration: underline;
+  text-decoration-color: var(--cv5-warn);
+  text-decoration-style: double;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition:
+    text-decoration-thickness 150ms ease,
+    background-color 150ms ease;
+}
+
+/* Hover: thicker underline + faint warm tint */
+.cv5-claim-flag:hover {
+  text-decoration-thickness: 2.5px;
+  background-color: rgba(217, 122, 37, 0.09);
+}
+
+/* One-time entrance glow — fires via class added by JS on scan */
+@keyframes cv5ClaimEntrance {
+  0%   { background-color: transparent; }
+  20%  { background-color: rgba(217, 122, 37, 0.18); }
+  100% { background-color: transparent; }
+}
+.cv5-claim-flag--glow {
+  animation: cv5ClaimEntrance 1.1s ease-out forwards;
+}
+
+/* Green flash when approved */
+.cv5-claim-flag--approved {
+  background-color: #eef4ef !important;
+  border-radius: 3px;
+  transition: background-color 400ms ease;
+}
+
+/* Toolbar "+ Add to Claims" button */
+.cv5-sel-btn-claim {
+  color: var(--cv5-accent, #c8892f);
+  font-weight: 600;
+}
+.cv5-sel-btn-claim:hover {
+  background: var(--cv5-accent-soft, #f1e2c8);
+  color: var(--cv5-accent, #c8892f);
+}
+
+/* ── Claim action popover (fixed + JS-positioned) ─────────────────────────── */
+.cv5-claim-popover {
+  position: fixed;
+  z-index: 200;
+  width: 264px;
+  background: #fffdf9;
+  border: 1px solid #e7ded0;
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(30, 26, 21, 0.18), 0 2px 8px rgba(30, 26, 21, 0.08);
+  padding: 12px 14px;
+  font-family: -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: #1e1a15;
+}
+
+.cv5-claim-pop-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--cv5-warn);
+  font-size: 12.5px;
+}
+.cv5-claim-pop-icon {
+  font-style: normal;
+}
+.cv5-claim-pop-body {
+  color: #544c40;
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin-bottom: 10px;
+}
+.cv5-claim-pop-nearest {
+  margin-bottom: 10px;
+}
+.cv5-claim-pop-nearest-label {
+  font-size: 10.5px;
+  color: #8a7f6e;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 4px;
+}
+.cv5-claim-pop-nearest-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  color: #544c40;
+  margin-bottom: 3px;
+  line-height: 1.45;
+}
+.cv5-claim-pop-sim {
+  font-size: 10.5px;
+  font-family: ui-monospace, "Menlo", monospace;
+  color: #8a7f6e;
+  flex-shrink: 0;
+  min-width: 32px;
+}
+
+.cv5-claim-pop-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cv5-claim-btn {
+  border: 1px solid #e7ded0;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+  color: #544c40;
+  font-family: inherit;
+  transition: border-color 120ms, background 120ms;
+}
+.cv5-claim-btn:hover {
+  border-color: #c8892f;
+  background: #f1e2c8;
+}
+.cv5-claim-btn-approve {
+  border-color: var(--cv5-green-border, #cfe3d5);
+  background: var(--cv5-green-bg, #eef4ef);
+  color: var(--cv5-green, #2f7a52);
+}
+.cv5-claim-btn-approve:hover {
+  border-color: var(--cv5-green, #2f7a52);
+  background: #d8eddf;
+  color: var(--cv5-green, #2f7a52);
+}

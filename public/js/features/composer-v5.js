@@ -11,8 +11,8 @@
 // in public/index.html to local files in /public/vendor/prosemirror/ — no
 // runtime CDN.
 
-import { EditorState } from "prosemirror-state";
-import { EditorView } from "prosemirror-view";
+import { EditorState, Plugin, PluginKey } from "prosemirror-state";
+import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
 import { DOMParser as PMDOMParser, DOMSerializer, Schema } from "prosemirror-model";
 import { schema as basicSchema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
@@ -20,9 +20,12 @@ import { exampleSetup } from "prosemirror-example-setup";
 
 import { escapeHtml } from "../core/utils.js";
 import {
+  approveClaimApi,
   composeWritingDraftApi,
+  createClaimApi,
   fetchWritingDraft,
   rewriteSpanApi,
+  scanDraftClaimsApi,
   updateWritingDraftApi,
 } from "../core/api.js";
 
@@ -76,20 +79,306 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
   const pickerEl = rootEl.querySelector('[data-cv5="drafts-picker"]');
   const historyBtnEl = rootEl.querySelector('[data-cv5="open-history"]');
 
+  // ── Stage 4: Claim-flags plugin ────────────────────────────────────────────
+  //
+  // Stores the current set of claim-flag decorations (orange double-underlines).
+  // Decorations are updated by calling updateClaimDecorations(flags) where
+  // flags is the array returned by POST .../claim-scan.
+  //
+  // Plugin state = { decoSet: DecorationSet }.
+  // We update via a transaction meta key so ProseMirror correctly maps positions
+  // through document changes.
+
+  const claimFlagsKey = new PluginKey("claimFlags");
+
+  const claimFlagsPlugin = new Plugin({
+    key: claimFlagsKey,
+    state: {
+      init(_config, editorState) {
+        return { decoSet: DecorationSet.empty };
+      },
+      apply(tr, pluginState, _oldState, newState) {
+        const meta = tr.getMeta(claimFlagsKey);
+        if (meta && meta.flags !== undefined) {
+          // Rebuild decorations from the new flags array.
+          const decos = meta.flags.map((f) =>
+            Decoration.inline(f.pmFrom, f.pmTo, {
+              class: "cv5-claim-flag cv5-claim-flag--glow",
+              "data-claim-reason": f.reason,
+              "data-claim-text": f.text,
+              "data-claim-nearest": JSON.stringify(f.nearestApproved || []),
+              title: "Claim not in Register — click to resolve",
+            })
+          );
+          return { decoSet: DecorationSet.create(newState.doc, decos) };
+        }
+        // Map existing decorations through any document changes.
+        return { decoSet: pluginState.decoSet.map(tr.mapping, newState.doc) };
+      },
+    },
+    props: {
+      decorations(state) {
+        return this.getState(state).decoSet;
+      },
+    },
+  });
+
   // ── ProseMirror editor ─────────────────────────────────────────────────────
   const initialDoc = textToProseMirrorDoc(draft.content || "", composerSchema);
   const state = EditorState.create({
     doc: initialDoc,
     schema: composerSchema,
-    plugins: exampleSetup({ schema: composerSchema, menuBar: false }),
+    plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin],
   });
   const view = new EditorView(editorHost, {
     state,
     dispatchTransaction(tr) {
       const next = view.state.apply(tr);
       view.updateState(next);
-      if (tr.docChanged) scheduleAutosave();
+      if (tr.docChanged) {
+        scheduleAutosave();
+        scheduleScan();
+      }
     },
+  });
+
+  // ── Stage 4: Claim-scan + decoration wiring ───────────────────────────────
+
+  // Live scan state — tracks inflight scan and debounce timer.
+  let scanTimer = null;
+  const SCAN_DEBOUNCE_MS = 1800; // trigger scan 1.8s after last keypress
+
+  // Convert a char-offset flag into PM positions.
+  // The plain text we scan is NOT identical to PM doc positions (PM counts node
+  // boundaries too) but for single-paragraph and multi-paragraph plain-text
+  // it's close enough for decorations — we use textContent-based mapping.
+  function charOffsetToPMPos(text, charOffset) {
+    // Walk the doc and count text characters, mapping char position → PM pos.
+    let pmPos = 0;
+    let charCount = 0;
+    let found = -1;
+    view.state.doc.descendants((node, pos) => {
+      if (found >= 0) return false; // stop once found
+      if (node.isText) {
+        const nodeText = node.text || "";
+        if (charCount + nodeText.length >= charOffset) {
+          found = pos + (charOffset - charCount);
+          return false;
+        }
+        charCount += nodeText.length;
+        pmPos = pos + nodeText.length;
+      } else if (node.isBlock && charCount > 0) {
+        // Block boundaries add a virtual newline in our serialized text.
+        if (charCount === charOffset) {
+          found = pos;
+          return false;
+        }
+        charCount += 1; // the "\n\n" separator between blocks counts as 1
+      }
+      return true;
+    });
+    return found >= 0 ? found : view.state.doc.content.size;
+  }
+
+  async function runClaimScan() {
+    if (destroyed) return;
+    const fullText = serializeDocToText(view.state.doc);
+    if (!fullText.trim()) return;
+
+    let result;
+    try {
+      result = await scanDraftClaimsApi(currentDraftId, { text: fullText });
+    } catch (err) {
+      // Scan failures are non-fatal — don't surface to user.
+      console.warn("[composer-v5] claim-scan failed:", err);
+      return;
+    }
+    if (destroyed) return;
+
+    const flags = (result.flags || []).map((f) => {
+      // Map character offsets → PM positions using the serialized text.
+      const pmFrom = charOffsetToPMPos(fullText, f.start);
+      const pmTo   = charOffsetToPMPos(fullText, f.end);
+      return { ...f, pmFrom, pmTo };
+    }).filter((f) => f.pmFrom < f.pmTo);
+
+    // Dispatch a transaction carrying the new flags for the plugin to pick up.
+    const tr = view.state.tr.setMeta(claimFlagsKey, { flags });
+    view.dispatch(tr);
+
+    // One-time entrance glow: remove the glow class after the animation.
+    setTimeout(() => {
+      editorHost.querySelectorAll(".cv5-claim-flag--glow").forEach((el) => {
+        el.classList.remove("cv5-claim-flag--glow");
+      });
+    }, 1200);
+  }
+
+  function scheduleScan() {
+    if (scanTimer) clearTimeout(scanTimer);
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      void runClaimScan();
+    }, SCAN_DEBOUNCE_MS);
+  }
+
+  // Kick off an initial scan after mount (after a short delay to let the
+  // editor paint first — keeps the initial load from blocking the UI).
+  setTimeout(() => void runClaimScan(), 500);
+
+  // ── Stage 4: Claim-flag popover ───────────────────────────────────────────
+  //
+  // A fixed-position popover that appears when the user clicks a flagged span.
+  // Contains: reason + nearest-approved context + Approve / Edit / Find source.
+  // Approve → POST /claims (create as approved) → re-scan → flag clears.
+
+  const claimPopover = document.createElement("div");
+  claimPopover.className = "cv5-claim-popover";
+  claimPopover.setAttribute("role", "dialog");
+  claimPopover.setAttribute("aria-label", "Claim flag");
+  claimPopover.style.display = "none";
+  document.body.appendChild(claimPopover);
+
+  let activeClaimFlag = null; // the DOM element that opened the popover
+
+  function positionClaimPopover(flagEl) {
+    const r = flagEl.getBoundingClientRect();
+    const m = 12;
+    const popW = claimPopover.offsetWidth || 264;
+    const popH = claimPopover.offsetHeight || 160;
+    let left = Math.min(r.left, window.innerWidth - popW - m);
+    if (left < m) left = m;
+    let top = r.bottom + 8;
+    if (top + popH > window.innerHeight - m) top = Math.max(m, r.top - popH - 8);
+    claimPopover.style.left = left + "px";
+    claimPopover.style.top  = top + "px";
+  }
+
+  function openClaimPopover(flagEl) {
+    if (activeClaimFlag === flagEl && claimPopover.style.display !== "none") {
+      closeClaimPopover();
+      return;
+    }
+    activeClaimFlag = flagEl;
+    const reason    = flagEl.dataset.claimReason || "quantified";
+    const claimText = flagEl.dataset.claimText   || flagEl.textContent || "";
+    let nearest = [];
+    try { nearest = JSON.parse(flagEl.dataset.claimNearest || "[]"); } catch (_) { /* noop */ }
+
+    const reasonLabel = {
+      quantified:   "Quantified claim",
+      superlative:  "Superlative / exclusivity claim",
+      comparative:  "Comparative claim",
+    }[reason] || "Strong claim";
+
+    const nearestHtml = nearest.length
+      ? `<div class="cv5-claim-pop-nearest">
+           <div class="cv5-claim-pop-nearest-label">Nearest approved:</div>
+           ${nearest.map((n) => `
+             <div class="cv5-claim-pop-nearest-item">
+               <span class="cv5-claim-pop-sim">${Math.round(n.similarity * 100)}%</span>
+               <span>${esc(n.phrasing)}</span>
+             </div>`).join("")}
+         </div>`
+      : "";
+
+    claimPopover.innerHTML = `
+      <div class="cv5-claim-pop-hd">
+        <span class="cv5-claim-pop-icon" aria-hidden="true">⚠</span>
+        ${esc(reasonLabel)} — not in Register
+      </div>
+      <div class="cv5-claim-pop-body">Verify the source and approve before sending, or edit to match a registered claim.</div>
+      ${nearestHtml}
+      <div class="cv5-claim-pop-actions">
+        <button type="button" class="cv5-claim-btn cv5-claim-btn-approve" data-claim-text="${esc(claimText)}">✓ Approve claim</button>
+        <button type="button" class="cv5-claim-btn cv5-claim-btn-edit">Edit</button>
+        <button type="button" class="cv5-claim-btn cv5-claim-btn-source">Find source</button>
+      </div>
+    `;
+
+    claimPopover.style.display = "block";
+    positionClaimPopover(flagEl);
+
+    // Wire Approve button.
+    claimPopover.querySelector(".cv5-claim-btn-approve").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const text = e.currentTarget.dataset.claimText || claimText;
+      await handleApprove(text);
+    });
+
+    // Edit: close popover, let user edit.
+    claimPopover.querySelector(".cv5-claim-btn-edit").addEventListener("click", () => {
+      closeClaimPopover();
+    });
+
+    // Find source: stub — close popover for now.
+    claimPopover.querySelector(".cv5-claim-btn-source").addEventListener("click", () => {
+      closeClaimPopover();
+      console.info("[composer-v5] Find source: not yet implemented.");
+    });
+  }
+
+  function closeClaimPopover() {
+    claimPopover.style.display = "none";
+    claimPopover.innerHTML = "";
+    activeClaimFlag = null;
+  }
+
+  async function handleApprove(claimText) {
+    // Create the claim as APPROVED directly (status=approved is the default
+    // in the create endpoint, or we create as proposed then approve — but the
+    // server's create_claim default status is "proposed" so we use the two-
+    // step path: create → approve).
+    const uniqueCode = "user-" + Date.now();
+    try {
+      const created = await createClaimApi({
+        claimCode: uniqueCode,
+        category: "user-approved",
+        approvedPhrasing: claimText,
+        notes: "Approved from composer claim flag",
+      });
+      // The create endpoint creates as "proposed"; approve it immediately.
+      if (created.status !== "approved") {
+        await approveClaimApi(created.id);
+      }
+      // Green flash on the flag element then close popover + re-scan.
+      if (activeClaimFlag) {
+        activeClaimFlag.classList.add("cv5-claim-flag--approved");
+        setTimeout(() => {
+          if (activeClaimFlag) activeClaimFlag.classList.remove("cv5-claim-flag--approved");
+        }, 1600);
+      }
+      closeClaimPopover();
+      // Re-scan so the newly approved claim suppresses this span.
+      setTimeout(() => void runClaimScan(), 300);
+      callbacks.onStatus?.("Claim approved and added to the Register.");
+    } catch (err) {
+      console.error("[composer-v5] approve claim failed:", err);
+      callbacks.onError?.(err.message || "Failed to approve claim.");
+    }
+  }
+
+  // Delegate click on flagged spans inside the editor.
+  editorHost.addEventListener("click", (e) => {
+    const flagEl = e.target.closest(".cv5-claim-flag");
+    if (flagEl) {
+      e.stopPropagation();
+      openClaimPopover(flagEl);
+      return;
+    }
+    // Click outside a flag but inside editor — close popover.
+    closeClaimPopover();
+  });
+
+  // Close popover when clicking outside.
+  document.addEventListener("click", (e) => {
+    if (
+      claimPopover.style.display !== "none" &&
+      !claimPopover.contains(e.target) &&
+      !e.target.closest(".cv5-claim-flag")
+    ) {
+      closeClaimPopover();
+    }
   });
 
   // ── Selection toolbar (Stage 2) ────────────────────────────────────────────
@@ -117,6 +406,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
     <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Make more formal">Tone</button>
     <div class="cv5-sel-divider" aria-hidden="true"></div>
     <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
+    <div class="cv5-sel-divider" aria-hidden="true"></div>
+    <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
     <div class="cv5-sel-divider" aria-hidden="true"></div>
     <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
   `;
@@ -313,6 +604,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       <div class="cv5-sel-divider" aria-hidden="true"></div>
       <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
       <div class="cv5-sel-divider" aria-hidden="true"></div>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
+      <div class="cv5-sel-divider" aria-hidden="true"></div>
       <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
     `;
   }
@@ -328,8 +621,38 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       showCustomAskInput();
       return;
     }
+    if (action === "__add_claim__") {
+      void handleAddToClaims();
+      return;
+    }
     void triggerSpanRewrite(action);
   });
+
+  // ── Stage 4: "Add to Claims Register" from the toolbar ────────────────────
+  async function handleAddToClaims() {
+    const text = selectionText.trim();
+    if (!text) return;
+    hideSelToolbar();
+    const uniqueCode = "user-" + Date.now();
+    try {
+      const created = await createClaimApi({
+        claimCode: uniqueCode,
+        category: "user-approved",
+        approvedPhrasing: text,
+        notes: "Added from composer selection toolbar",
+      });
+      // If created as proposed, approve immediately.
+      if (created.status !== "approved") {
+        await approveClaimApi(created.id);
+      }
+      callbacks.onStatus?.("Added to Claims Register as approved.");
+      // Re-scan so this claim now suppresses any similar flags.
+      setTimeout(() => void runClaimScan(), 300);
+    } catch (err) {
+      console.error("[composer-v5] add-to-claims failed:", err);
+      callbacks.onError?.(err.message || "Failed to add claim.");
+    }
+  }
 
   // Hook into the ProseMirror view to detect selection changes.
   // We wrap dispatchTransaction to call updateSelectionState after each transaction.
@@ -647,6 +970,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       document.removeEventListener("click", handleDocClick, true);
       try { document.body.removeChild(selToolbar); } catch (_) { /* noop */ }
       try { document.body.removeChild(rewritePopover); } catch (_) { /* noop */ }
+      // Stage-4 cleanup: scan timer + claim popover.
+      if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+      try { document.body.removeChild(claimPopover); } catch (_) { /* noop */ }
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,
