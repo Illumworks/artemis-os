@@ -11,8 +11,8 @@
 // in public/index.html to local files in /public/vendor/prosemirror/ — no
 // runtime CDN.
 
-import { EditorState } from "prosemirror-state";
-import { EditorView } from "prosemirror-view";
+import { EditorState, Plugin, PluginKey } from "prosemirror-state";
+import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
 import { DOMParser as PMDOMParser, DOMSerializer, Schema } from "prosemirror-model";
 import { schema as basicSchema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
@@ -20,9 +20,12 @@ import { exampleSetup } from "prosemirror-example-setup";
 
 import { escapeHtml } from "../core/utils.js";
 import {
+  approveClaimApi,
   composeWritingDraftApi,
+  createClaimApi,
   fetchWritingDraft,
   rewriteSpanApi,
+  scanDraftClaimsApi,
   updateWritingDraftApi,
 } from "../core/api.js";
 
@@ -76,20 +79,501 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
   const pickerEl = rootEl.querySelector('[data-cv5="drafts-picker"]');
   const historyBtnEl = rootEl.querySelector('[data-cv5="open-history"]');
 
+  // ── Stage 4: Claim-flags plugin ────────────────────────────────────────────
+  //
+  // Stores the current set of claim-flag decorations (orange double-underlines).
+  // Decorations are updated by calling updateClaimDecorations(flags) where
+  // flags is the array returned by POST .../claim-scan.
+  //
+  // Plugin state = { decoSet: DecorationSet }.
+  // We update via a transaction meta key so ProseMirror correctly maps positions
+  // through document changes.
+
+  const claimFlagsKey = new PluginKey("claimFlags");
+
+  const claimFlagsPlugin = new Plugin({
+    key: claimFlagsKey,
+    state: {
+      init(_config, editorState) {
+        return { decoSet: DecorationSet.empty };
+      },
+      apply(tr, pluginState, _oldState, newState) {
+        const meta = tr.getMeta(claimFlagsKey);
+        if (meta && meta.flags !== undefined) {
+          // Rebuild decorations from the new flags array.
+          const decos = meta.flags.map((f) =>
+            Decoration.inline(f.pmFrom, f.pmTo, {
+              class: "cv5-claim-flag cv5-claim-flag--glow",
+              "data-claim-reason": f.reason,
+              "data-claim-text": f.text,
+              "data-claim-nearest": JSON.stringify(f.nearestApproved || []),
+              title: "Claim not in Register — click to resolve",
+            })
+          );
+          return { decoSet: DecorationSet.create(newState.doc, decos) };
+        }
+        // Map existing decorations through any document changes.
+        return { decoSet: pluginState.decoSet.map(tr.mapping, newState.doc) };
+      },
+    },
+    props: {
+      decorations(state) {
+        return this.getState(state).decoSet;
+      },
+    },
+  });
+
   // ── ProseMirror editor ─────────────────────────────────────────────────────
   const initialDoc = textToProseMirrorDoc(draft.content || "", composerSchema);
   const state = EditorState.create({
     doc: initialDoc,
     schema: composerSchema,
-    plugins: exampleSetup({ schema: composerSchema, menuBar: false }),
+    plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin],
   });
   const view = new EditorView(editorHost, {
     state,
     dispatchTransaction(tr) {
       const next = view.state.apply(tr);
       view.updateState(next);
-      if (tr.docChanged) scheduleAutosave();
+      if (tr.docChanged) {
+        scheduleAutosave();
+        scheduleScan();
+      }
     },
+  });
+
+  // ── Stage 4: Claim-scan + decoration wiring ───────────────────────────────
+
+  // Live scan state — tracks inflight scan and debounce timer.
+  let scanTimer = null;
+  const SCAN_DEBOUNCE_MS = 1800; // trigger scan 1.8s after last keypress
+
+  // serializeDocToTextWithMap — single-pass serializer that emits the same
+  // plain-text representation as serializeDocToText() while simultaneously
+  // building a posMap array:
+  //
+  //   posMap[i]  = the PM position of the content char at text index i
+  //   posMap[text.length]  = the PM end position (for inclusive end-of-text flags)
+  //
+  // For prefix chars (e.g. "# ", "- ", "1. ") and inter-block separators ("\n\n"),
+  // the posMap entries point to the START position of the next real-content
+  // character in the doc (or the last recorded position if there is none) so
+  // that a flag whose text.slice(start, end) spans prefix chars will still
+  // resolve to a PM range that brackets the actual content — not the phantom
+  // chars that exist only in the serialization.
+  //
+  // Convention: posMap entries are filled LEFT-to-RIGHT.  Prefix/separator
+  // entries are backfilled once the first real-content pos is known.
+  function serializeDocToTextWithMap(doc) {
+    const chars = [];   // individual text chars (joined at the end)
+    const posMap = [];  // posMap[i] = PM pos of chars[i]; posMap[chars.length] = pos-after-last
+
+    // pending: indices of posMap slots emitted for prefix/separator chars that
+    // don't yet have a real PM pos.  Filled by flush() once a real pos appears.
+    let pending = [];
+
+    // Last real PM position seen — used to compute the pos-after-last terminal.
+    let lastRealPMPos = 0;
+
+    function flush(pmPos) {
+      for (const idx of pending) posMap[idx] = pmPos;
+      pending = [];
+    }
+
+    function emitReal(ch, pmPos) {
+      flush(pmPos);
+      posMap.push(pmPos);
+      chars.push(ch);
+      lastRealPMPos = pmPos;
+    }
+
+    function emitPhantom(str) {
+      for (const ch of str) {
+        pending.push(posMap.length);
+        posMap.push(-1); // placeholder; filled by flush()
+        chars.push(ch);
+      }
+    }
+
+    let firstBlock = true;
+
+    doc.forEach((blockNode, blockOffset) => {
+      const serialized = serializeBlockWithMap(blockNode, blockOffset, 0);
+      if (serialized === null) return;
+
+      if (!firstBlock) {
+        // "\n\n" separator between top-level blocks is phantom.
+        emitPhantom("\n\n");
+      }
+      firstBlock = false;
+
+      serialized.forEach(([ch, pmPos]) => {
+        if (pmPos === -1) {
+          emitPhantom(ch);
+        } else {
+          emitReal(ch, pmPos);
+        }
+      });
+    });
+
+    // Terminal slot: posMap[chars.length] = one position PAST the last real
+    // content char, so that posMap[f.end] gives a correct exclusive PM end.
+    // Use lastRealPMPos + 1 so the terminal exactly brackets the last char.
+    // If the doc is empty, fall back to doc.content.size.
+    const terminalPos = chars.length > 0 ? lastRealPMPos + 1 : doc.content.size;
+    flush(terminalPos); // also fill any trailing phantom slots
+    posMap.push(terminalPos);
+
+    // Mirror serializeDocToText's final .trim() while keeping posMap aligned.
+    // Calculate the leading/trailing whitespace count so we can slice both
+    // arrays in lockstep.
+    const rawText = chars.join("");
+    const trimmedText = rawText.trim();
+    if (!trimmedText) {
+      return { text: "", posMap: [terminalPos] };
+    }
+    const leadTrim = rawText.length - rawText.trimStart().length;
+    // posMap has rawText.length + 1 entries.
+    // trimmedText[j] == rawText[leadTrim + j], so slicedPosMap[j] = posMap[leadTrim + j].
+    // We need trimmedText.length + 1 entries (including the exclusive-end slot).
+    const slicedPosMap = posMap.slice(leadTrim, leadTrim + trimmedText.length + 1);
+
+    return { text: trimmedText, posMap: slicedPosMap };
+  }
+
+  // serializeBlockWithMap — mirrors serializeBlock() but returns an array of
+  // [char, pmPos] pairs.  pmPos === -1 means "phantom" (prefix/separator char
+  // that has no PM counterpart).
+  function serializeBlockWithMap(node, nodeOffset, indent) {
+    const name = node.type.name;
+
+    if (name === "paragraph") {
+      return serializeInlineWithMap(node, nodeOffset);
+    }
+
+    if (name === "heading") {
+      const level = Math.min(6, Math.max(1, node.attrs.level || 1));
+      const prefix = "#".repeat(level) + " ";
+      const phantom = prefix.split("").map((ch) => [ch, -1]);
+      const inlinePairs = serializeInlineWithMap(node, nodeOffset);
+      return [...phantom, ...inlinePairs];
+    }
+
+    if (name === "bullet_list" || name === "ordered_list") {
+      const ordered = name === "ordered_list";
+      const result = [];
+      let n = 1;
+      let firstItem = true;
+      node.forEach((child, childOffset) => {
+        if (!firstItem) {
+          result.push(["\n", -1]);
+        }
+        firstItem = false;
+
+        const bullet = ordered ? `${n}.` : "-";
+        const bulletPrefix = "  ".repeat(indent) + bullet + " ";
+        for (const ch of bulletPrefix) result.push([ch, -1]);
+        n += 1;
+
+        let firstPara = true;
+        child.forEach((blk, blkOffset) => {
+          const blkAbsOffset = nodeOffset + 1 /* list open */ + childOffset + 1 /* item open */ + blkOffset;
+          if (blk.type.name === "paragraph" && firstPara) {
+            firstPara = false;
+            const pairs = serializeInlineWithMap(blk, blkAbsOffset);
+            result.push(...pairs);
+          } else if (!firstPara) {
+            const nested = serializeBlockWithMap(blk, blkAbsOffset, indent + 1);
+            if (nested) {
+              result.push(["\n", -1]);
+              result.push(...nested);
+            }
+          }
+        });
+      });
+      return result;
+    }
+
+    if (name === "blockquote") {
+      const result = [];
+      let firstInner = true;
+      node.forEach((child, childOffset) => {
+        if (!firstInner) result.push(["\n", -1], ["\n", -1]);
+        firstInner = false;
+        const inner = serializeBlockWithMap(child, nodeOffset + 1 + childOffset, indent);
+        if (inner) {
+          result.push([">", -1], [" ", -1]);
+          result.push(...inner);
+        }
+      });
+      return result;
+    }
+
+    if (name === "code_block") {
+      const result = [];
+      for (const ch of "```\n") result.push([ch, -1]);
+      // textContent inline — use the opening pos of the code_block + 1 for the
+      // node-open token, then character offsets within.
+      const textContent = node.textContent || "";
+      for (let i = 0; i < textContent.length; i++) {
+        result.push([textContent[i], nodeOffset + 1 + i]);
+      }
+      for (const ch of "\n```") result.push([ch, -1]);
+      return result;
+    }
+
+    if (name === "horizontal_rule") {
+      return ["---"].join("").split("").map((ch) => [ch, -1]);
+    }
+
+    // Fallback
+    const fallback = node.textContent || "";
+    return fallback.split("").map((ch, i) => [ch, nodeOffset + 1 + i]);
+  }
+
+  // serializeInlineWithMap — mirrors serializeInline() but returns [char, pmPos]
+  // pairs.  Each content char maps to the PM position of its text node.
+  // Bold/italic wrappers (**  **  *  *) are phantom chars (pmPos === -1).
+  function serializeInlineWithMap(node, nodeOffset) {
+    const result = [];
+    node.forEach((child, childOffset) => {
+      const childAbsPos = nodeOffset + 1 /* node open token */ + childOffset;
+      if (child.isText) {
+        const text = child.text || "";
+        const hasBold   = child.marks.some((m) => m.type.name === "strong");
+        const hasItalic = child.marks.some((m) => m.type.name === "em");
+        if (hasBold)   for (const ch of "**") result.push([ch, -1]);
+        if (hasItalic) for (const ch of "*")  result.push([ch, -1]);
+        for (let i = 0; i < text.length; i++) {
+          result.push([text[i], childAbsPos + i]);
+        }
+        if (hasBold)   for (const ch of "**") result.push([ch, -1]);
+        if (hasItalic) for (const ch of "*")  result.push([ch, -1]);
+      } else if (child.type.name === "hard_break") {
+        result.push(["\n", -1]);
+      } else {
+        const fallback = child.textContent || "";
+        for (let i = 0; i < fallback.length; i++) {
+          result.push([fallback[i], childAbsPos + i]);
+        }
+      }
+    });
+    // serializeInline trims — drop leading/trailing phantom spaces but keep
+    // content chars.  For the posMap version we trim the phantom trailing
+    // whitespace by just not trimming content chars at all; the serializer
+    // contract is that the text() output matches serializeDocToText().
+    // We preserve the trim by stripping leading/trailing phantom-only chars.
+    let lo = 0;
+    while (lo < result.length && result[lo][1] === -1 && result[lo][0].trim() === "") lo += 1;
+    let hi = result.length;
+    while (hi > lo && result[hi - 1][1] === -1 && result[hi - 1][0].trim() === "") hi -= 1;
+    return result.slice(lo, hi);
+  }
+
+  async function runClaimScan() {
+    if (destroyed) return;
+    const { text: fullText, posMap } = serializeDocToTextWithMap(view.state.doc);
+    if (!fullText.trim()) return;
+
+    let result;
+    try {
+      result = await scanDraftClaimsApi(currentDraftId, { text: fullText });
+    } catch (err) {
+      // Scan failures are non-fatal — don't surface to user.
+      console.warn("[composer-v5] claim-scan failed:", err);
+      return;
+    }
+    if (destroyed) return;
+
+    const docSize = view.state.doc.content.size;
+    const flags = (result.flags || []).map((f) => {
+      // posMap[i]             = PM pos of text char i (inclusive start)
+      // posMap[text.length]   = PM pos one past the last char (exclusive end)
+      // f.start / f.end are Python-slice offsets (exclusive end) into fullText.
+      const clampStart = Math.max(0, Math.min(f.start, posMap.length - 1));
+      const clampEnd   = Math.max(0, Math.min(f.end,   posMap.length - 1));
+      const pmFrom = posMap[clampStart] ?? 0;
+      const pmTo   = posMap[clampEnd]   ?? docSize;
+      return { ...f, pmFrom, pmTo };
+    }).filter((f) => f.pmFrom < f.pmTo);
+
+    // Dispatch a transaction carrying the new flags for the plugin to pick up.
+    const tr = view.state.tr.setMeta(claimFlagsKey, { flags });
+    view.dispatch(tr);
+
+    // One-time entrance glow: remove the glow class after the animation.
+    setTimeout(() => {
+      editorHost.querySelectorAll(".cv5-claim-flag--glow").forEach((el) => {
+        el.classList.remove("cv5-claim-flag--glow");
+      });
+    }, 1200);
+  }
+
+  function scheduleScan() {
+    if (scanTimer) clearTimeout(scanTimer);
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      void runClaimScan();
+    }, SCAN_DEBOUNCE_MS);
+  }
+
+  // Kick off an initial scan after mount (after a short delay to let the
+  // editor paint first — keeps the initial load from blocking the UI).
+  setTimeout(() => void runClaimScan(), 500);
+
+  // ── Stage 4: Claim-flag popover ───────────────────────────────────────────
+  //
+  // A fixed-position popover that appears when the user clicks a flagged span.
+  // Contains: reason + nearest-approved context + Approve / Edit / Find source.
+  // Approve → POST /claims (create as approved) → re-scan → flag clears.
+
+  const claimPopover = document.createElement("div");
+  claimPopover.className = "cv5-claim-popover";
+  claimPopover.setAttribute("role", "dialog");
+  claimPopover.setAttribute("aria-label", "Claim flag");
+  claimPopover.style.display = "none";
+  document.body.appendChild(claimPopover);
+
+  let activeClaimFlag = null; // the DOM element that opened the popover
+
+  function positionClaimPopover(flagEl) {
+    const r = flagEl.getBoundingClientRect();
+    const m = 12;
+    const popW = claimPopover.offsetWidth || 264;
+    const popH = claimPopover.offsetHeight || 160;
+    let left = Math.min(r.left, window.innerWidth - popW - m);
+    if (left < m) left = m;
+    let top = r.bottom + 8;
+    if (top + popH > window.innerHeight - m) top = Math.max(m, r.top - popH - 8);
+    claimPopover.style.left = left + "px";
+    claimPopover.style.top  = top + "px";
+  }
+
+  function openClaimPopover(flagEl) {
+    if (activeClaimFlag === flagEl && claimPopover.style.display !== "none") {
+      closeClaimPopover();
+      return;
+    }
+    activeClaimFlag = flagEl;
+    const reason    = flagEl.dataset.claimReason || "quantified";
+    const claimText = flagEl.dataset.claimText   || flagEl.textContent || "";
+    let nearest = [];
+    try { nearest = JSON.parse(flagEl.dataset.claimNearest || "[]"); } catch (_) { /* noop */ }
+
+    const reasonLabel = {
+      quantified:   "Quantified claim",
+      superlative:  "Superlative / exclusivity claim",
+      comparative:  "Comparative claim",
+    }[reason] || "Strong claim";
+
+    const nearestHtml = nearest.length
+      ? `<div class="cv5-claim-pop-nearest">
+           <div class="cv5-claim-pop-nearest-label">Nearest approved:</div>
+           ${nearest.map((n) => `
+             <div class="cv5-claim-pop-nearest-item">
+               <span class="cv5-claim-pop-sim">${Math.round(n.similarity * 100)}%</span>
+               <span>${esc(n.phrasing)}</span>
+             </div>`).join("")}
+         </div>`
+      : "";
+
+    claimPopover.innerHTML = `
+      <div class="cv5-claim-pop-hd">
+        <span class="cv5-claim-pop-icon" aria-hidden="true">⚠</span>
+        ${esc(reasonLabel)} — not in Register
+      </div>
+      <div class="cv5-claim-pop-body">Verify the source and approve before sending, or edit to match a registered claim.</div>
+      ${nearestHtml}
+      <div class="cv5-claim-pop-actions">
+        <button type="button" class="cv5-claim-btn cv5-claim-btn-approve" data-claim-text="${esc(claimText)}">✓ Approve claim</button>
+        <button type="button" class="cv5-claim-btn cv5-claim-btn-edit">Edit</button>
+        <button type="button" class="cv5-claim-btn cv5-claim-btn-source">Find source</button>
+      </div>
+    `;
+
+    claimPopover.style.display = "block";
+    positionClaimPopover(flagEl);
+
+    // Wire Approve button.
+    claimPopover.querySelector(".cv5-claim-btn-approve").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const text = e.currentTarget.dataset.claimText || claimText;
+      await handleApprove(text);
+    });
+
+    // Edit: close popover, let user edit.
+    claimPopover.querySelector(".cv5-claim-btn-edit").addEventListener("click", () => {
+      closeClaimPopover();
+    });
+
+    // Find source: stub — close popover for now.
+    claimPopover.querySelector(".cv5-claim-btn-source").addEventListener("click", () => {
+      closeClaimPopover();
+      console.info("[composer-v5] Find source: not yet implemented.");
+    });
+  }
+
+  function closeClaimPopover() {
+    claimPopover.style.display = "none";
+    claimPopover.innerHTML = "";
+    activeClaimFlag = null;
+  }
+
+  async function handleApprove(claimText) {
+    // Create the claim as APPROVED directly (status=approved is the default
+    // in the create endpoint, or we create as proposed then approve — but the
+    // server's create_claim default status is "proposed" so we use the two-
+    // step path: create → approve).
+    const uniqueCode = "user-" + Date.now();
+    try {
+      const created = await createClaimApi({
+        claimCode: uniqueCode,
+        category: "user-approved",
+        approvedPhrasing: claimText,
+        notes: "Approved from composer claim flag",
+      });
+      // The create endpoint creates as "proposed"; approve it immediately.
+      if (created.status !== "approved") {
+        await approveClaimApi(created.id);
+      }
+      // Green flash on the flag element then close popover + re-scan.
+      if (activeClaimFlag) {
+        activeClaimFlag.classList.add("cv5-claim-flag--approved");
+        setTimeout(() => {
+          if (activeClaimFlag) activeClaimFlag.classList.remove("cv5-claim-flag--approved");
+        }, 1600);
+      }
+      closeClaimPopover();
+      // Re-scan so the newly approved claim suppresses this span.
+      setTimeout(() => void runClaimScan(), 300);
+      callbacks.onStatus?.("Claim approved and added to the Register.");
+    } catch (err) {
+      console.error("[composer-v5] approve claim failed:", err);
+      callbacks.onError?.(err.message || "Failed to approve claim.");
+    }
+  }
+
+  // Delegate click on flagged spans inside the editor.
+  editorHost.addEventListener("click", (e) => {
+    const flagEl = e.target.closest(".cv5-claim-flag");
+    if (flagEl) {
+      e.stopPropagation();
+      openClaimPopover(flagEl);
+      return;
+    }
+    // Click outside a flag but inside editor — close popover.
+    closeClaimPopover();
+  });
+
+  // Close popover when clicking outside.
+  document.addEventListener("click", (e) => {
+    if (
+      claimPopover.style.display !== "none" &&
+      !claimPopover.contains(e.target) &&
+      !e.target.closest(".cv5-claim-flag")
+    ) {
+      closeClaimPopover();
+    }
   });
 
   // ── Selection toolbar (Stage 2) ────────────────────────────────────────────
@@ -117,6 +601,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
     <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Make more formal">Tone</button>
     <div class="cv5-sel-divider" aria-hidden="true"></div>
     <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
+    <div class="cv5-sel-divider" aria-hidden="true"></div>
+    <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
     <div class="cv5-sel-divider" aria-hidden="true"></div>
     <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
   `;
@@ -313,6 +799,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       <div class="cv5-sel-divider" aria-hidden="true"></div>
       <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
       <div class="cv5-sel-divider" aria-hidden="true"></div>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
+      <div class="cv5-sel-divider" aria-hidden="true"></div>
       <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
     `;
   }
@@ -328,8 +816,38 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       showCustomAskInput();
       return;
     }
+    if (action === "__add_claim__") {
+      void handleAddToClaims();
+      return;
+    }
     void triggerSpanRewrite(action);
   });
+
+  // ── Stage 4: "Add to Claims Register" from the toolbar ────────────────────
+  async function handleAddToClaims() {
+    const text = selectionText.trim();
+    if (!text) return;
+    hideSelToolbar();
+    const uniqueCode = "user-" + Date.now();
+    try {
+      const created = await createClaimApi({
+        claimCode: uniqueCode,
+        category: "user-approved",
+        approvedPhrasing: text,
+        notes: "Added from composer selection toolbar",
+      });
+      // If created as proposed, approve immediately.
+      if (created.status !== "approved") {
+        await approveClaimApi(created.id);
+      }
+      callbacks.onStatus?.("Added to Claims Register as approved.");
+      // Re-scan so this claim now suppresses any similar flags.
+      setTimeout(() => void runClaimScan(), 300);
+    } catch (err) {
+      console.error("[composer-v5] add-to-claims failed:", err);
+      callbacks.onError?.(err.message || "Failed to add claim.");
+    }
+  }
 
   // Hook into the ProseMirror view to detect selection changes.
   // We wrap dispatchTransaction to call updateSelectionState after each transaction.
@@ -647,6 +1165,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       document.removeEventListener("click", handleDocClick, true);
       try { document.body.removeChild(selToolbar); } catch (_) { /* noop */ }
       try { document.body.removeChild(rewritePopover); } catch (_) { /* noop */ }
+      // Stage-4 cleanup: scan timer + claim popover.
+      if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+      try { document.body.removeChild(claimPopover); } catch (_) { /* noop */ }
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,

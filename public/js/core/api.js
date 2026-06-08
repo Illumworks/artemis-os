@@ -2640,3 +2640,59 @@ export async function builderMarkAgentReviewed(agentId) {
   if (!res.ok) throw new Error(body.error || "builderMarkAgentReviewed failed");
   return body;
 }
+
+// ── Claims Register (Stage 4 — claim-flags) ────────────────────────────────
+
+/**
+ * Scan a draft for unregistered strong claims.
+ * POST /api/writing-studio/drafts/{id}/claim-scan
+ * body: { text?: string }  — if text is omitted, server uses draft's live_content.
+ * Returns: { flags: [{start, end, text, reason, nearestApproved}], scannedChars, approvedClaimsCount }
+ */
+export async function scanDraftClaimsApi(draftId, payload = {}) {
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(draftId)}/claim-scan`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return _readJsonOrThrow(res, "Failed to scan draft for claims");
+}
+
+/**
+ * List claims (all or filtered by status).
+ * GET /api/writing-studio/claims[?status=approved]
+ */
+export async function fetchClaimsApi(params = {}) {
+  const qs = Object.keys(params).length
+    ? "?" + new URLSearchParams(params).toString()
+    : "";
+  const res = await fetch(`/api/writing-studio/claims${qs}`);
+  return _readJsonOrThrow(res, "Failed to fetch claims");
+}
+
+/**
+ * Create a new claim (POST /api/writing-studio/claims).
+ * Body: { claimCode, category, tier?, approvedPhrasing, notes?, source? }
+ */
+export async function createClaimApi(payload = {}) {
+  const res = await fetch("/api/writing-studio/claims", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return _readJsonOrThrow(res, "Failed to create claim");
+}
+
+/**
+ * Approve an existing claim (POST /api/writing-studio/claims/{id}/approve).
+ */
+export async function approveClaimApi(claimId) {
+  const res = await fetch(
+    `/api/writing-studio/claims/${encodeURIComponent(claimId)}/approve`,
+    { method: "POST" },
+  );
+  return _readJsonOrThrow(res, "Failed to approve claim");
+}

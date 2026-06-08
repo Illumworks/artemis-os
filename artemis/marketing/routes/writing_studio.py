@@ -1193,6 +1193,94 @@ async def rewrite_span(
     }
 
 
+# ── Stage 4: Claim-scan endpoint ─────────────────────────────────────────────
+
+
+@router.post("/drafts/{draft_id}/claim-scan", status_code=200)
+async def claim_scan(
+    draft_id: int = Path(..., ge=1),
+    body: dict[str, Any] | None = None,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Scan a draft's current text for unregistered strong claims.
+
+    POST body (all fields optional):
+      text: str  — draft text to scan; if omitted the draft's live_content or
+                   latest version content is used.
+
+    Returns:
+      {
+        "flags": [
+          {
+            "start": int,
+            "end": int,
+            "text": str,
+            "reason": str,
+            "nearestApproved": [{"id": int, "phrasing": str, "similarity": float}]
+          }
+        ],
+        "scannedChars": int,
+        "approvedClaimsCount": int,
+      }
+
+    Logic (deterministic — no LLM):
+    1. Candidate detection: quantified / superlative / comparative patterns only.
+    2. Suppression: token-set similarity >= SUPPRESS_THRESHOLD against approved claims.
+    3. Return remaining candidates as flags with top 1-2 nearest approved claims.
+    """
+    from artemis.marketing.writing_studio.claim_detector import scan_draft_for_flags
+
+    # Load the draft to get text (if not supplied in body).
+    if body is None:
+        body = {}
+    text: str | None = body.get("text") if isinstance(body, dict) else None
+
+    if not text:
+        deliverable = await session.get(CampaignDeliverable, draft_id)
+        if deliverable is None:
+            raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+        meta = deliverable.deliverable_metadata or {}
+        # Prefer live_content (unsaved edits) over versioned content.
+        text = meta.get("live_content") or ""
+        if not text:
+            versions = meta.get("versions") or []
+            if versions:
+                text = versions[-1].get("content") or ""
+
+    text = (text or "").strip()
+
+    # Load approved claims for the active profile.
+    active_profile = await wr_repo.get_active_profile(session)
+    approved_claims_list: list[tuple[int, str]] = []
+    if active_profile is not None:
+        claims = await wr_repo.list_claims(session, active_profile.id, status="approved")
+        approved_claims_list = [(c.id, c.approved_phrasing) for c in claims]
+
+    flags = scan_draft_for_flags(text, approved_claims_list)
+
+    return {
+        "flags": [
+            {
+                "start": f.start,
+                "end": f.end,
+                "text": f.text,
+                "reason": f.reason,
+                "nearestApproved": [
+                    {
+                        "id": n.id,
+                        "phrasing": n.phrasing,
+                        "similarity": n.similarity,
+                    }
+                    for n in f.nearest_approved
+                ],
+            }
+            for f in flags
+        ],
+        "scannedChars": len(text),
+        "approvedClaimsCount": len(approved_claims_list),
+    }
+
+
 # ── C4: Existing stub routes (kept intact) ────────────────────────────────────
 
 
