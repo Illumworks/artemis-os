@@ -33,8 +33,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/artemis/Desktop/Artemis/artemis-os/.app.log</string>
+    <string>/Users/artemis/Library/Logs/artemisos/app.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/artemis/Desktop/Artemis/artemis-os/.app.err.log</string>
+    <string>/Users/artemis/Library/Logs/artemisos/app.err.log</string>
 </dict>
 </plist>

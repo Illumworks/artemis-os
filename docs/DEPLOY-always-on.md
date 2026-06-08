@@ -1,42 +1,45 @@
 # Deploy — always-on / reboot-resilient (Mac mini)
 
-Goal (Jon, traveling): the app must stay up unattended and **auto-recover after a reboot/power outage**.
+Goal (Jon, traveling): app stays up unattended + **auto-recovers after a reboot/power outage**.
 
-## Current state (2026-06-08)
-- **App** (`:8000`): running via a detached `nohup` process with CF Access login ON (verified: SPA 200,
-  direct `/api/me` → 401). The `nohup` **survives this session ending**, but is NOT agent-managed → it does
-  NOT come back on its own after a reboot/crash. ← the gap.
-- **Tunnel** (`app.artemisos.me` → localhost:8000): managed by the `me.artemisos.tunnel` LaunchAgent
-  (auto-restarts). ✅
-- **Power**: `pmset autorestart=1` (starts after power failure) ✅, `sleep=0` (won't sleep) ✅. Already set.
+## Status (2026-06-08)
+- **App** (`:8000`): now managed by the **`me.artemisos.app` LaunchAgent** (venv uvicorn + CF Access login
+  env baked in, `RunAtLoad` + `KeepAlive`). **Crash-recovery verified** (killed it → auto-restarted, still
+  login-enforcing). ✅
+- **Tunnel** (`app.artemisos.me` → localhost:8000): `me.artemisos.tunnel` LaunchAgent (auto-restart). ✅
+- **Power**: `pmset autorestart=1` (start after power failure) ✅, `sleep=0` ✅.
+- **Login verification**: ON (direct `/api/me` → 401; logged-in Google users via the tunnel → in). ✅
+- **REMAINING — auto-login (Jon's step):** see below. Without it, an unattended reboot brings the Mac back
+  but the LaunchAgents don't load until someone logs in.
 
-## The blocker (root cause, confirmed)
-The repo lives under **`~/Desktop/`**. macOS privacy (TCC) **blocks launchd-spawned third-party binaries**
-(the venv Python) **from reading files under Desktop** — confirmed: a launchd agent running the venv uvicorn
-dies with `PermissionError: Operation not permitted: .venv/pyvenv.cfg`. (Apple binaries like `/bin/bash` are
-exempt, which is why a plain `ls` test passed — and why the app has only ever run from a shell with inherited
-Desktop access, never as a service.) So **the app can't auto-start as a background service while it's in
-Desktop.**
+## How the app agent was made to work (the Desktop/TCC saga)
+The repo is under `~/Desktop/`, which macOS privacy (TCC) protects. Two things had to be fixed:
+1. **Full Disk Access** granted (drag-drop) to the REAL Python binary the venv resolves to —
+   `/opt/homebrew/Cellar/python@3.11/3.11.15/Frameworks/Python.framework/Versions/3.11/bin/python3.11`
+   (NOT the `/opt/homebrew/opt/...` symlink — TCC checks the real path).
+2. The agent's **log files moved off Desktop** → `~/Library/Logs/artemisos/` (launchd couldn't create
+   stdout/stderr files inside the Desktop folder).
 
-## Fix A — grant Full Disk Access (fast; gets reboot-resilience now)  ← recommended before travel
-The app agent (`~/Library/LaunchAgents/me.artemisos.app.plist`) is already configured correctly (venv
-uvicorn + WorkingDirectory + CF env baked in). It just needs the Python interpreter to be allowed to read
-Desktop:
-1. **System Settings → Privacy & Security → Full Disk Access → "+"**.
-2. Press **Cmd+Shift+G**, paste: `/opt/homebrew/opt/python@3.11/bin/` and add **`python3.11`**.
-   (Also add `/opt/homebrew/bin/uv` for good measure.) Toggle them **ON**.
-3. Tell Lead → Lead loads the agent (`launchctl bootstrap gui/$UID …/me.artemisos.app.plist`) and verifies
-   it serves :8000 with CF on + restarts on crash (KeepAlive). Then it survives reboots.
-- Tradeoff: FDA is a broad grant on that Python. Acceptable for a dedicated always-on box. Re-grant if Python
-  is upgraded to a new minor (e.g. 3.12).
+⚠️ **FDA is version-pinned to `3.11.15`.** Do NOT `brew upgrade python@3.11` — it would change the Cellar
+path and break the grant (+ the venv). If Python must be upgraded, re-grant FDA to the new path. The
+permanent fix that removes this fragility is moving the repo off Desktop (below).
 
-## Fix B — move the repo off Desktop (cleaner, permanent; do later)
-Move the repo to e.g. `/Users/artemis/artemis-os` (NOT under Desktop/Documents/Downloads). Then launchd can
-read it with no FDA needed. More robust long-term, but requires re-pointing git worktrees + paths — a
-deliberate migration, not a rushed one. Recommended eventually; the tunnel points at `localhost:8000` so it's
-unaffected by the move.
+## REMAINING — enable auto-login (for unattended power-outage recovery)  ← Jon, before travel
+LaunchAgents load at user **login**. After a power outage the Mac auto-restarts, but the app/tunnel won't
+start until the user session exists. So enable automatic login:
+- **System Settings → Users & Groups → (Login window / Automatically log in as) → select `artemis`** (enter
+  the password once). 
+- Tradeoff: anyone with physical access boots into the session. Acceptable for a dedicated always-on office
+  box; it's the standard choice for a headless server-style Mac.
+- Once on, the full chain works: power outage → auto-restart → auto-login → agents load → app + tunnel up.
 
-## Until fixed
-A reboot/power outage will restart the Mac (autorestart=1) but the **app will NOT auto-recover** (the agent
-fails on Desktop). So either do **Fix A before travel**, or accept that a power event means the app stays
-down until someone restarts it. The `nohup` keeps it up as long as the Mac doesn't reboot.
+## Permanent fix (later, not rushed) — move the repo off Desktop
+Move `~/Desktop/Artemis/artemis-os` → e.g. `/Users/artemis/artemis-os` (non-TCC). Removes the FDA fragility
+entirely (no version-pinned grant). Requires re-pointing git worktrees + updating the agent paths + the
+team's working-dir references — a deliberate, coordinated migration. Do when Jon's back. Tunnel (localhost
+port) is unaffected.
+
+## Files
+- `~/Library/LaunchAgents/me.artemisos.app.plist` (app), `me.artemisos.tunnel.plist` (tunnel) — versioned
+  copies in `deploy/`.
+- `com.artemis.server` LaunchAgent = the OLD Node app (claudeck-artemis, :9009) — unrelated; ignore/disable.
