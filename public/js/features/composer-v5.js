@@ -148,41 +148,231 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
   let scanTimer = null;
   const SCAN_DEBOUNCE_MS = 1800; // trigger scan 1.8s after last keypress
 
-  // Convert a char-offset flag into PM positions.
-  // The plain text we scan is NOT identical to PM doc positions (PM counts node
-  // boundaries too) but for single-paragraph and multi-paragraph plain-text
-  // it's close enough for decorations — we use textContent-based mapping.
-  function charOffsetToPMPos(text, charOffset) {
-    // Walk the doc and count text characters, mapping char position → PM pos.
-    let pmPos = 0;
-    let charCount = 0;
-    let found = -1;
-    view.state.doc.descendants((node, pos) => {
-      if (found >= 0) return false; // stop once found
-      if (node.isText) {
-        const nodeText = node.text || "";
-        if (charCount + nodeText.length >= charOffset) {
-          found = pos + (charOffset - charCount);
-          return false;
-        }
-        charCount += nodeText.length;
-        pmPos = pos + nodeText.length;
-      } else if (node.isBlock && charCount > 0) {
-        // Block boundaries add a virtual newline in our serialized text.
-        if (charCount === charOffset) {
-          found = pos;
-          return false;
-        }
-        charCount += 1; // the "\n\n" separator between blocks counts as 1
+  // serializeDocToTextWithMap — single-pass serializer that emits the same
+  // plain-text representation as serializeDocToText() while simultaneously
+  // building a posMap array:
+  //
+  //   posMap[i]  = the PM position of the content char at text index i
+  //   posMap[text.length]  = the PM end position (for inclusive end-of-text flags)
+  //
+  // For prefix chars (e.g. "# ", "- ", "1. ") and inter-block separators ("\n\n"),
+  // the posMap entries point to the START position of the next real-content
+  // character in the doc (or the last recorded position if there is none) so
+  // that a flag whose text.slice(start, end) spans prefix chars will still
+  // resolve to a PM range that brackets the actual content — not the phantom
+  // chars that exist only in the serialization.
+  //
+  // Convention: posMap entries are filled LEFT-to-RIGHT.  Prefix/separator
+  // entries are backfilled once the first real-content pos is known.
+  function serializeDocToTextWithMap(doc) {
+    const chars = [];   // individual text chars (joined at the end)
+    const posMap = [];  // posMap[i] = PM pos of chars[i]; posMap[chars.length] = pos-after-last
+
+    // pending: indices of posMap slots emitted for prefix/separator chars that
+    // don't yet have a real PM pos.  Filled by flush() once a real pos appears.
+    let pending = [];
+
+    // Last real PM position seen — used to compute the pos-after-last terminal.
+    let lastRealPMPos = 0;
+
+    function flush(pmPos) {
+      for (const idx of pending) posMap[idx] = pmPos;
+      pending = [];
+    }
+
+    function emitReal(ch, pmPos) {
+      flush(pmPos);
+      posMap.push(pmPos);
+      chars.push(ch);
+      lastRealPMPos = pmPos;
+    }
+
+    function emitPhantom(str) {
+      for (const ch of str) {
+        pending.push(posMap.length);
+        posMap.push(-1); // placeholder; filled by flush()
+        chars.push(ch);
       }
-      return true;
+    }
+
+    let firstBlock = true;
+
+    doc.forEach((blockNode, blockOffset) => {
+      const serialized = serializeBlockWithMap(blockNode, blockOffset, 0);
+      if (serialized === null) return;
+
+      if (!firstBlock) {
+        // "\n\n" separator between top-level blocks is phantom.
+        emitPhantom("\n\n");
+      }
+      firstBlock = false;
+
+      serialized.forEach(([ch, pmPos]) => {
+        if (pmPos === -1) {
+          emitPhantom(ch);
+        } else {
+          emitReal(ch, pmPos);
+        }
+      });
     });
-    return found >= 0 ? found : view.state.doc.content.size;
+
+    // Terminal slot: posMap[chars.length] = one position PAST the last real
+    // content char, so that posMap[f.end] gives a correct exclusive PM end.
+    // Use lastRealPMPos + 1 so the terminal exactly brackets the last char.
+    // If the doc is empty, fall back to doc.content.size.
+    const terminalPos = chars.length > 0 ? lastRealPMPos + 1 : doc.content.size;
+    flush(terminalPos); // also fill any trailing phantom slots
+    posMap.push(terminalPos);
+
+    // Mirror serializeDocToText's final .trim() while keeping posMap aligned.
+    // Calculate the leading/trailing whitespace count so we can slice both
+    // arrays in lockstep.
+    const rawText = chars.join("");
+    const trimmedText = rawText.trim();
+    if (!trimmedText) {
+      return { text: "", posMap: [terminalPos] };
+    }
+    const leadTrim = rawText.length - rawText.trimStart().length;
+    // posMap has rawText.length + 1 entries.
+    // trimmedText[j] == rawText[leadTrim + j], so slicedPosMap[j] = posMap[leadTrim + j].
+    // We need trimmedText.length + 1 entries (including the exclusive-end slot).
+    const slicedPosMap = posMap.slice(leadTrim, leadTrim + trimmedText.length + 1);
+
+    return { text: trimmedText, posMap: slicedPosMap };
+  }
+
+  // serializeBlockWithMap — mirrors serializeBlock() but returns an array of
+  // [char, pmPos] pairs.  pmPos === -1 means "phantom" (prefix/separator char
+  // that has no PM counterpart).
+  function serializeBlockWithMap(node, nodeOffset, indent) {
+    const name = node.type.name;
+
+    if (name === "paragraph") {
+      return serializeInlineWithMap(node, nodeOffset);
+    }
+
+    if (name === "heading") {
+      const level = Math.min(6, Math.max(1, node.attrs.level || 1));
+      const prefix = "#".repeat(level) + " ";
+      const phantom = prefix.split("").map((ch) => [ch, -1]);
+      const inlinePairs = serializeInlineWithMap(node, nodeOffset);
+      return [...phantom, ...inlinePairs];
+    }
+
+    if (name === "bullet_list" || name === "ordered_list") {
+      const ordered = name === "ordered_list";
+      const result = [];
+      let n = 1;
+      let firstItem = true;
+      node.forEach((child, childOffset) => {
+        if (!firstItem) {
+          result.push(["\n", -1]);
+        }
+        firstItem = false;
+
+        const bullet = ordered ? `${n}.` : "-";
+        const bulletPrefix = "  ".repeat(indent) + bullet + " ";
+        for (const ch of bulletPrefix) result.push([ch, -1]);
+        n += 1;
+
+        let firstPara = true;
+        child.forEach((blk, blkOffset) => {
+          const blkAbsOffset = nodeOffset + 1 /* list open */ + childOffset + 1 /* item open */ + blkOffset;
+          if (blk.type.name === "paragraph" && firstPara) {
+            firstPara = false;
+            const pairs = serializeInlineWithMap(blk, blkAbsOffset);
+            result.push(...pairs);
+          } else if (!firstPara) {
+            const nested = serializeBlockWithMap(blk, blkAbsOffset, indent + 1);
+            if (nested) {
+              result.push(["\n", -1]);
+              result.push(...nested);
+            }
+          }
+        });
+      });
+      return result;
+    }
+
+    if (name === "blockquote") {
+      const result = [];
+      let firstInner = true;
+      node.forEach((child, childOffset) => {
+        if (!firstInner) result.push(["\n", -1], ["\n", -1]);
+        firstInner = false;
+        const inner = serializeBlockWithMap(child, nodeOffset + 1 + childOffset, indent);
+        if (inner) {
+          result.push([">", -1], [" ", -1]);
+          result.push(...inner);
+        }
+      });
+      return result;
+    }
+
+    if (name === "code_block") {
+      const result = [];
+      for (const ch of "```\n") result.push([ch, -1]);
+      // textContent inline — use the opening pos of the code_block + 1 for the
+      // node-open token, then character offsets within.
+      const textContent = node.textContent || "";
+      for (let i = 0; i < textContent.length; i++) {
+        result.push([textContent[i], nodeOffset + 1 + i]);
+      }
+      for (const ch of "\n```") result.push([ch, -1]);
+      return result;
+    }
+
+    if (name === "horizontal_rule") {
+      return ["---"].join("").split("").map((ch) => [ch, -1]);
+    }
+
+    // Fallback
+    const fallback = node.textContent || "";
+    return fallback.split("").map((ch, i) => [ch, nodeOffset + 1 + i]);
+  }
+
+  // serializeInlineWithMap — mirrors serializeInline() but returns [char, pmPos]
+  // pairs.  Each content char maps to the PM position of its text node.
+  // Bold/italic wrappers (**  **  *  *) are phantom chars (pmPos === -1).
+  function serializeInlineWithMap(node, nodeOffset) {
+    const result = [];
+    node.forEach((child, childOffset) => {
+      const childAbsPos = nodeOffset + 1 /* node open token */ + childOffset;
+      if (child.isText) {
+        const text = child.text || "";
+        const hasBold   = child.marks.some((m) => m.type.name === "strong");
+        const hasItalic = child.marks.some((m) => m.type.name === "em");
+        if (hasBold)   for (const ch of "**") result.push([ch, -1]);
+        if (hasItalic) for (const ch of "*")  result.push([ch, -1]);
+        for (let i = 0; i < text.length; i++) {
+          result.push([text[i], childAbsPos + i]);
+        }
+        if (hasBold)   for (const ch of "**") result.push([ch, -1]);
+        if (hasItalic) for (const ch of "*")  result.push([ch, -1]);
+      } else if (child.type.name === "hard_break") {
+        result.push(["\n", -1]);
+      } else {
+        const fallback = child.textContent || "";
+        for (let i = 0; i < fallback.length; i++) {
+          result.push([fallback[i], childAbsPos + i]);
+        }
+      }
+    });
+    // serializeInline trims — drop leading/trailing phantom spaces but keep
+    // content chars.  For the posMap version we trim the phantom trailing
+    // whitespace by just not trimming content chars at all; the serializer
+    // contract is that the text() output matches serializeDocToText().
+    // We preserve the trim by stripping leading/trailing phantom-only chars.
+    let lo = 0;
+    while (lo < result.length && result[lo][1] === -1 && result[lo][0].trim() === "") lo += 1;
+    let hi = result.length;
+    while (hi > lo && result[hi - 1][1] === -1 && result[hi - 1][0].trim() === "") hi -= 1;
+    return result.slice(lo, hi);
   }
 
   async function runClaimScan() {
     if (destroyed) return;
-    const fullText = serializeDocToText(view.state.doc);
+    const { text: fullText, posMap } = serializeDocToTextWithMap(view.state.doc);
     if (!fullText.trim()) return;
 
     let result;
@@ -195,10 +385,15 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
     }
     if (destroyed) return;
 
+    const docSize = view.state.doc.content.size;
     const flags = (result.flags || []).map((f) => {
-      // Map character offsets → PM positions using the serialized text.
-      const pmFrom = charOffsetToPMPos(fullText, f.start);
-      const pmTo   = charOffsetToPMPos(fullText, f.end);
+      // posMap[i]             = PM pos of text char i (inclusive start)
+      // posMap[text.length]   = PM pos one past the last char (exclusive end)
+      // f.start / f.end are Python-slice offsets (exclusive end) into fullText.
+      const clampStart = Math.max(0, Math.min(f.start, posMap.length - 1));
+      const clampEnd   = Math.max(0, Math.min(f.end,   posMap.length - 1));
+      const pmFrom = posMap[clampStart] ?? 0;
+      const pmTo   = posMap[clampEnd]   ?? docSize;
       return { ...f, pmFrom, pmTo };
     }).filter((f) => f.pmFrom < f.pmTo);
 
