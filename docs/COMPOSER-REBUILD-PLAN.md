@@ -74,8 +74,13 @@ Conclusion: this is "build the document half of the composer," not "polish the e
    (google_credentials by user_id, server-side tokens, auto-refresh — migration 0076, renumbered from a
    0075 collision) + `/api/google/oauth/start|status|disconnect` + draft import/export (Docs↔draft). Live-
    verified status/409/oauth-redirect; tokens never exposed; 7 mocked tests. Secret in `.env` on the box.
-   **Remaining: the FE** (header connect/import/export) — terminal, `briefs/composer-stage-7-gdoc-ui.md` —
-   the LAST composer piece. Live connect = final demo check (operator authorizes in-browser).
+   ✅ **FE DONE + MERGED (2026-06-08):** header "⊞ Google Doc" — status-driven Connect (→ /oauth/start
+   consent), import (URL → editor via replaceEditorContent, lossless), export (→ Doc URL), 409→connect-first.
+   **Only outstanding: ONE live connect** — operator clicks Connect at app.artemisos.me + authorizes, then a
+   real import/export round-trip = the final demo check.
+
+> ✅✅ **COMPOSER v5 FEATURE-COMPLETE (2026-06-08).** All 8 stages merged: editable doc · highlight→AI-edit ·
+> drafts picker · claim flags · pagination · comments · Google Docs · actions menu.
 8. ✅ **ACTIONS MENU (⋯) — DONE + MERGED (2026-06-08).** ⋯ menu in the header + **Save-as-template** (wires to
    templates `POST`, body+asset_type carried, picker re-fetches) — browser-verified round-trip. Repurpose +
    Brand-check render as stubs (functional later). Templates backend (table + CRUD + apply, migration 0073)
