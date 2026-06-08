@@ -22,6 +22,7 @@ import { escapeHtml } from "../core/utils.js";
 import {
   composeWritingDraftApi,
   fetchWritingDraft,
+  rewriteSpanApi,
   updateWritingDraftApi,
 } from "../core/api.js";
 
@@ -90,6 +91,284 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       if (tr.docChanged) scheduleAutosave();
     },
   });
+
+  // ── Selection toolbar (Stage 2) ────────────────────────────────────────────
+  //
+  // A floating toolbar that appears when the user selects non-empty text.
+  // Buttons: Rewrite · Shorten · Lengthen · Tone · Make on-brand · ✎ custom
+  //
+  // The toolbar is a single <div> injected into the document body (so it can
+  // use fixed positioning and not be clipped by the editor's overflow). It is
+  // shared per composer mount and destroyed with the composer.
+  //
+  // Accept/reject UX: after the AI returns a span rewrite, the toolbar hides
+  // and a compact preview popover appears near the selected range showing the
+  // original and proposed text.  The user accepts (replaces the span in PM) or
+  // rejects (no-op) from the popover.
+
+  const selToolbar = document.createElement("div");
+  selToolbar.className = "cv5-sel-toolbar";
+  selToolbar.setAttribute("role", "toolbar");
+  selToolbar.setAttribute("aria-label", "Text editing actions");
+  selToolbar.innerHTML = `
+    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Rewrite">Rewrite</button>
+    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Shorten">Shorten</button>
+    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Lengthen">Lengthen</button>
+    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Make more formal">Tone</button>
+    <div class="cv5-sel-divider" aria-hidden="true"></div>
+    <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
+    <div class="cv5-sel-divider" aria-hidden="true"></div>
+    <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
+  `;
+  document.body.appendChild(selToolbar);
+
+  // Track current selection for the toolbar + accept/reject flow.
+  let selectionRange = null;   // {from, to} in PM positions
+  let selectionText = "";      // plain text of the selected span
+  let pendingRewrite = null;   // {originalText, rewrittenText, from, to} during accept/reject
+
+  // Accept/reject popover — shown after AI returns a rewrite.
+  const rewritePopover = document.createElement("div");
+  rewritePopover.className = "cv5-rewrite-popover";
+  rewritePopover.setAttribute("role", "dialog");
+  rewritePopover.setAttribute("aria-label", "AI rewrite preview");
+  rewritePopover.style.display = "none";
+  document.body.appendChild(rewritePopover);
+
+  function positionNearSelection(el) {
+    // Place the element just above the selection's bounding rect.
+    const domSel = window.getSelection();
+    if (!domSel || domSel.rangeCount === 0) return;
+    const rect = domSel.getRangeAt(0).getBoundingClientRect();
+    if (!rect || (rect.width === 0 && rect.height === 0)) return;
+    const elW = el.offsetWidth || 260;
+    const gap = 8;
+    let left = rect.left + rect.width / 2 - elW / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - elW - 8));
+    let top = rect.top - el.offsetHeight - gap;
+    if (top < 8) top = rect.bottom + gap; // flip below
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }
+
+  function showSelToolbar() {
+    selToolbar.classList.add("is-visible");
+    // Must be visible before measuring offsetWidth for positioning.
+    positionNearSelection(selToolbar);
+  }
+
+  function hideSelToolbar() {
+    selToolbar.classList.remove("is-visible");
+  }
+
+  function showRewritePopover(originalText, rewrittenText) {
+    rewritePopover.innerHTML = `
+      <div class="cv5-rwp-label">Proposed rewrite</div>
+      <div class="cv5-rwp-diff">
+        <div class="cv5-rwp-original">
+          <div class="cv5-rwp-badge cv5-rwp-badge-orig">Before</div>
+          <div class="cv5-rwp-text">${esc(originalText)}</div>
+        </div>
+        <div class="cv5-rwp-arrow" aria-hidden="true">→</div>
+        <div class="cv5-rwp-proposed">
+          <div class="cv5-rwp-badge cv5-rwp-badge-new">After</div>
+          <div class="cv5-rwp-text">${esc(rewrittenText)}</div>
+        </div>
+      </div>
+      <div class="cv5-rwp-actions">
+        <button type="button" class="cv5-rwp-reject">Reject</button>
+        <button type="button" class="cv5-rwp-accept">Accept</button>
+      </div>
+    `;
+    rewritePopover.style.display = "block";
+    positionNearSelection(rewritePopover);
+
+    rewritePopover.querySelector(".cv5-rwp-accept").addEventListener("click", acceptRewrite);
+    rewritePopover.querySelector(".cv5-rwp-reject").addEventListener("click", rejectRewrite);
+  }
+
+  function hideRewritePopover() {
+    rewritePopover.style.display = "none";
+    rewritePopover.innerHTML = "";
+    pendingRewrite = null;
+  }
+
+  function acceptRewrite() {
+    if (!pendingRewrite) return;
+    const { rewrittenText, from, to } = pendingRewrite;
+    // Replace ONLY the selected span in the PM document.
+    // Parse the rewritten text using the same textToProseMirrorDoc helper so
+    // headings/lists/bold are handled correctly — but for a span replacement
+    // we want the *inline* content only.  Use a simple text node insertion
+    // that respects ProseMirror's schema.
+    const tr = view.state.tr;
+    // Insert as plain text — the same format the editor stores. Any markdown
+    // in the rewritten text will be re-parsed on the next Save/load cycle.
+    // For now, replace the range with a plain-text paragraph content.
+    // Build a slice from the replacement text.
+    const replacementDoc = textToProseMirrorDoc(rewrittenText, composerSchema);
+    // Collect all inline text from the replacement doc (handles bold/italic marks).
+    const fragment = replacementDoc.content;
+    tr.replaceWith(from, to, fragment);
+    view.dispatch(tr);
+    // Stage-1 autosave will fire because the transaction changed the doc.
+    scheduleAutosave();
+    hideRewritePopover();
+    callbacks.onStatus?.("Span replaced. Autosaving…");
+  }
+
+  function rejectRewrite() {
+    // Pure no-op — doc is unchanged.
+    hideRewritePopover();
+    callbacks.onStatus?.("Rewrite rejected — document unchanged.");
+  }
+
+  async function triggerSpanRewrite(instruction) {
+    if (!selectionRange || !selectionText.trim()) return;
+    const { from, to } = selectionRange;
+    const originalText = selectionText;
+
+    hideSelToolbar();
+    callbacks.onStatus?.("Rewriting…");
+
+    // Flush autosave so the AI sees the user's latest edits as full-draft context.
+    await flushPendingAutosave();
+    const fullText = serializeDocToText(view.state.doc);
+
+    try {
+      const resp = await rewriteSpanApi(currentDraftId, {
+        selectedText: originalText,
+        instruction,
+        fullText,
+      });
+      const rewrittenText = resp.rewrittenText || "";
+      if (!rewrittenText.trim()) {
+        callbacks.onError?.("AI returned an empty rewrite. Try again.");
+        return;
+      }
+      // Log trace for the tag-scoped-rules showcase (visible in browser console).
+      const ruleCount = resp.trace?.rules?.length ?? 0;
+      const ruleTitles = (resp.trace?.rules ?? []).map((r) => r.title).join(", ");
+      console.info(
+        `[composer-v5] rewrite-span trace: ${ruleCount} rules applied. Titles: ${ruleTitles || "(none)"}`,
+        resp.trace
+      );
+      // Store the pending rewrite so accept/reject can reference it.
+      pendingRewrite = { originalText, rewrittenText, from, to };
+      showRewritePopover(originalText, rewrittenText);
+      callbacks.onStatus?.("Review the proposed rewrite.");
+    } catch (err) {
+      console.error("[composer-v5] rewrite-span failed:", err);
+      callbacks.onError?.(err.message || "Span rewrite failed. Try again.");
+    }
+  }
+
+  // Custom-ask: show a small inline input in the toolbar for free-text.
+  let customAskActive = false;
+  function showCustomAskInput() {
+    customAskActive = true;
+    selToolbar.innerHTML = `
+      <input
+        type="text"
+        class="cv5-sel-custom-input"
+        placeholder="Describe what you want…"
+        autofocus
+        aria-label="Custom rewrite instruction"
+      />
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-go">Go ↑</button>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-cancel">✕</button>
+    `;
+    selToolbar.classList.add("is-visible");
+    positionNearSelection(selToolbar);
+    const input = selToolbar.querySelector(".cv5-sel-custom-input");
+    input?.focus();
+    selToolbar.querySelector(".cv5-sel-btn-go").addEventListener("click", () => {
+      const val = input?.value?.trim();
+      if (val) void triggerSpanRewrite(val);
+      resetToolbarButtons();
+    });
+    selToolbar.querySelector(".cv5-sel-btn-cancel").addEventListener("click", () => {
+      resetToolbarButtons();
+      hideSelToolbar();
+    });
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const val = input.value?.trim();
+        if (val) void triggerSpanRewrite(val);
+        resetToolbarButtons();
+      } else if (e.key === "Escape") {
+        resetToolbarButtons();
+        hideSelToolbar();
+      }
+    });
+  }
+
+  function resetToolbarButtons() {
+    customAskActive = false;
+    selToolbar.innerHTML = `
+      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Rewrite">Rewrite</button>
+      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Shorten">Shorten</button>
+      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Lengthen">Lengthen</button>
+      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Make more formal">Tone</button>
+      <div class="cv5-sel-divider" aria-hidden="true"></div>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
+      <div class="cv5-sel-divider" aria-hidden="true"></div>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
+    `;
+  }
+
+  // Delegate click on toolbar buttons.
+  selToolbar.addEventListener("click", (e) => {
+    if (customAskActive) return;
+    const btn = e.target.closest("[data-cv5-sel-action]");
+    if (!btn) return;
+    const action = btn.dataset.cv5SelAction;
+    if (!action) return;
+    if (action === "__custom__") {
+      showCustomAskInput();
+      return;
+    }
+    void triggerSpanRewrite(action);
+  });
+
+  // Hook into the ProseMirror view to detect selection changes.
+  // We wrap dispatchTransaction to call updateSelectionState after each transaction.
+  function updateSelectionState() {
+    if (destroyed) return;
+    const { selection } = view.state;
+    const isEmpty = selection.empty;
+    if (isEmpty) {
+      selectionRange = null;
+      selectionText = "";
+      if (!pendingRewrite) hideSelToolbar(); // keep toolbar visible during accept/reject
+      return;
+    }
+    const { from, to } = selection;
+    selectionRange = { from, to };
+    selectionText = view.state.doc.textBetween(from, to, " ");
+    if (!pendingRewrite) showSelToolbar(); // don't move toolbar while popover is open
+  }
+
+  // Listen on selectionchange (fires even when PM handles it internally).
+  const handleDocSelectionChange = () => {
+    // Defer to next microtask so PM has updated its state.
+    Promise.resolve().then(() => updateSelectionState());
+  };
+  document.addEventListener("selectionchange", handleDocSelectionChange);
+
+  // Hide toolbar when clicking outside the toolbar, popover, and editor.
+  const handleDocClick = (e) => {
+    if (
+      selToolbar.contains(e.target) ||
+      rewritePopover.contains(e.target) ||
+      editorHost.contains(e.target)
+    ) {
+      return;
+    }
+    hideSelToolbar();
+    if (!pendingRewrite) hideRewritePopover();
+  };
+  document.addEventListener("click", handleDocClick, true);
 
   // ── Autosave plumbing ──────────────────────────────────────────────────────
   let autosaveTimer = null;
@@ -363,6 +642,11 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], callbacks = {} 
       destroyed = true;
       if (autosaveTimer) clearTimeout(autosaveTimer);
       try { view.destroy(); } catch (_) { /* noop */ }
+      // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
+      document.removeEventListener("selectionchange", handleDocSelectionChange);
+      document.removeEventListener("click", handleDocClick, true);
+      try { document.body.removeChild(selToolbar); } catch (_) { /* noop */ }
+      try { document.body.removeChild(rewritePopover); } catch (_) { /* noop */ }
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,

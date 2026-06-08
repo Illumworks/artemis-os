@@ -986,6 +986,213 @@ async def decide_training_candidate_route(
     }
 
 
+# ── Composer Stage 2: rewrite-span ───────────────────────────────────────────
+
+
+@router.post("/drafts/{draft_id}/rewrite-span", status_code=200)
+async def rewrite_span(
+    body: dict[str, Any],
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Rewrite a selected text span, grounded in the draft's tag-scoped rules.
+
+    Stage 2 of the Composer rebuild.  This endpoint powers the floating
+    selection toolbar ("Rewrite · Shorten · Lengthen · Make on-brand …").
+
+    Body (all required unless noted):
+      selectedText  — the exact text span the user highlighted
+      instruction   — rewrite instruction (e.g. "Shorten", "Make on-brand",
+                      "Make more formal")
+      fullText      — optional; the full current draft body to provide context.
+                      When omitted, the stored live_content / latest version is
+                      used.
+
+    Returns:
+      rewrittenText — the clean replacement span (plain-text + light markdown,
+                      same format as the stored draft content — ready to swap
+                      back into the ProseMirror document)
+      trace         — profile / rules / examples used (for on-brand showcase)
+
+    Design guarantees:
+    - Single-shot (max_iterations=1) — no streaming, no conversation state.
+    - Grounds via the SAME machinery as compose_draft:
+        build_writing_memory_prompt (voice) +
+        resolve_grounding_rules on the draft's structured_tags (tag-scoped) +
+        full draft as context
+    - Does NOT persist thread messages (span rewrites aren't chat turns).
+    - Does NOT fork the compose engine.
+    - Lossless: Accept is done client-side via Stage-1 autosave; this endpoint
+      only returns the rewritten text.
+    """
+    import logging
+    from datetime import UTC, datetime
+
+    from artemis.agent import run_turn
+    from artemis.agent import user_message as make_user_msg
+    from artemis.agent.types import Message, TextBlock
+    from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
+
+    _log = logging.getLogger(__name__)
+
+    # ── 1. Load draft ─────────────────────────────────────────────────────────
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+
+    # ── 2. Validate body ──────────────────────────────────────────────────────
+    selected_text = body.get("selectedText")
+    if not isinstance(selected_text, str) or not selected_text.strip():
+        raise bad_request(
+            "selectedText is required and must be a non-empty string", "missing_selected_text"
+        )
+
+    instruction = body.get("instruction")
+    if not isinstance(instruction, str) or not instruction.strip():
+        raise bad_request(
+            "instruction is required and must be a non-empty string", "missing_instruction"
+        )
+
+    # fullText is accepted in the body but not used server-side: the client
+    # flushes autosave before calling this endpoint, so the stored live_content
+    # is already current.  We validate it to avoid silent type confusion if the
+    # caller passes unexpected data, but we do not inject it into the prompt.
+    full_text_body = body.get("fullText")
+    if full_text_body is not None and not isinstance(full_text_body, str):
+        raise bad_request("fullText must be a string when provided", "invalid_full_text")
+
+    # ── 3. Resolve profile, rules, examples (tag-scoped) ─────────────────────
+    meta: dict[str, Any] = deliverable.deliverable_metadata or {}
+    voice_profile_slug: str | None = meta.get("voiceProfileSlug")
+    profile = None
+    if voice_profile_slug:
+        profiles = await wr_repo.list_profiles(session)
+        for p in profiles:
+            if (p.name or "").lower().replace(" ", "-") == voice_profile_slug.lower():
+                profile = p
+                break
+    if profile is None:
+        profile = await wr_repo.get_active_profile(session)
+
+    all_rules = await wr_repo.list_rules(session)
+    structured_tags = wr_repo.get_structured_tags_from_metadata(meta)
+    # resolve_grounding_rules: returns tag-scoped subset when tags are set,
+    # otherwise returns fallback_rules.  This is the showcase path for
+    # "Make on-brand" — an audience=superintendent draft gets superintendent rules.
+    rules = await wr_repo.resolve_grounding_rules(
+        session,
+        profile_id=getattr(profile, "id", None),
+        fallback_rules=all_rules,
+        structured_tags=structured_tags,
+    )
+    examples = await wr_repo.list_examples(session)
+
+    # ── 4. Build a purpose-specific span-rewrite prompt ──────────────────────
+    # We reuse build_writing_memory_prompt for voice + grounding block, but
+    # override the user prompt to be span-focused (return ONLY the rewritten
+    # span, not a full draft response).
+    from artemis.marketing.writing_studio.compose_engine import build_writing_memory_prompt
+
+    # Construct a rewrite-specific request string.
+    rewrite_request = (
+        f"Rewrite the selected passage only. Instruction: {instruction.strip()}.\n"
+        "Return ONLY the rewritten passage — no preamble, no commentary, no "
+        "surrounding text, no 'Proposed learning:' line. The output will be inserted "
+        "verbatim in place of the original passage."
+    )
+
+    prompt = build_writing_memory_prompt(
+        draft=deliverable,
+        profile=profile,
+        rules=rules,
+        examples=examples,
+        request=rewrite_request,
+        selected_text=selected_text,
+        attachments=None,
+        prior_messages=None,
+    )
+
+    # ── 5. Model invocation ───────────────────────────────────────────────────
+    try:
+        adapter = resolve_adapter(
+            getattr(profile, "default_model_provider", None) or None,
+        )
+    except NoProviderAvailableError as exc:
+        raise bad_request(
+            "No LLM provider is available. Add an API key in Integrations.",
+            "no_provider",
+        ) from exc
+
+    messages: list[Message] = [make_user_msg(prompt["userPrompt"])]
+    model_id: str | None = getattr(profile, "default_model_id", None) or None
+
+    t0 = datetime.now(UTC)
+    result = await run_turn(
+        adapter=adapter,
+        messages=messages,
+        system=prompt["systemPrompt"],
+        model=model_id,
+        max_iterations=1,
+    )
+    duration_ms = int((datetime.now(UTC) - t0).total_seconds() * 1000)
+
+    # Record cost for span rewrites (separate feature_tag from compose).
+    try:
+        from artemis.costs.events import adapter_identity, record_cost_event
+
+        _provider, _adapter_model, _path = adapter_identity(adapter)
+        _cost_model = model_id or _adapter_model
+        await record_cost_event(
+            session,
+            provider=_provider,
+            model=_cost_model,
+            provider_path=_path,
+            feature_tag="writing_studio_rewrite_span",
+            input_tokens=getattr(result.usage, "input_tokens", 0) if result.usage else 0,
+            output_tokens=getattr(result.usage, "output_tokens", 0) if result.usage else 0,
+            cache_creation_input_tokens=getattr(result.usage, "cache_creation_input_tokens", 0)
+            if result.usage
+            else 0,
+            cache_read_input_tokens=getattr(result.usage, "cache_read_input_tokens", 0)
+            if result.usage
+            else 0,
+            campaign_candidate_id=deliverable.candidate_id,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        _log.warning(
+            "cost_event recording failed in rewrite_span draft_id=%s",
+            draft_id,
+            exc_info=True,
+        )
+
+    # ── 6. Extract rewritten span text ────────────────────────────────────────
+    rewritten_text = ""
+    for msg in reversed(result.messages):
+        if msg.role == "assistant":
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    rewritten_text += block.text
+            break
+
+    if not rewritten_text.strip():
+        raise bad_request("Model returned no text for the span rewrite", "rewrite_empty_response")
+
+    # Commit cost event (no other DB writes — span rewrites don't persist).
+    await session.commit()
+
+    # ── 7. Return ─────────────────────────────────────────────────────────────
+    return {
+        "rewrittenText": rewritten_text.strip(),
+        "trace": {
+            **prompt["trace"],
+            "instruction": instruction,
+            "selectedTextChars": len(selected_text),
+            "durationMs": duration_ms,
+        },
+    }
+
+
 # ── C4: Existing stub routes (kept intact) ────────────────────────────────────
 
 
