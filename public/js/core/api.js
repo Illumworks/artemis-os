@@ -861,6 +861,24 @@ export async function deleteWritingFolderApi(id) {
   return _readJsonOrThrow(res, "Failed to delete writing folder");
 }
 
+export async function listWritingTemplatesApi(status = "active") {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  const res = await fetch(`/api/writing-studio/templates${qs}`);
+  return _readJsonOrThrow(res, "Failed to load writing templates");
+}
+
+export async function applyWritingTemplateApi(templateId, payload = {}) {
+  const res = await fetch(
+    `/api/writing-studio/templates/${encodeURIComponent(templateId)}/apply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  return _readJsonOrThrow(res, "Failed to apply writing template");
+}
+
 export async function exportWritingStudioSyncApi(payload = {}) {
   const res = await fetch("/api/writing-studio/sync/export", {
     method: "POST",
