@@ -1402,3 +1402,67 @@
   background: var(--cv5-blue-bg, #eaf0fb);
   color: var(--cv5-blue, #33558c);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Stage 7 — Google Docs header affordance
+   Compact header button + dropdown menu for connect / import / export.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Wrapper: relative so the dropdown can anchor below the button. */
+.cv5-gdoc-wrap {
+  position: relative;
+}
+
+/* The button is now live (cursor: pointer, normal opacity). */
+.cv5-hdr-gdoc {
+  cursor: pointer;
+  opacity: 1;
+  transition: border-color 140ms ease, background 120ms ease;
+}
+.cv5-hdr-gdoc:hover { border-color: var(--cv5-accent); }
+
+/* Connected state — subtle green tint to signal "linked". */
+.cv5-hdr-gdoc.is-connected {
+  border-color: var(--cv5-green, #2f7a52);
+  color: var(--cv5-green, #2f7a52);
+}
+.cv5-hdr-gdoc.is-connected:hover {
+  background: var(--cv5-green-bg, #eef4ef);
+}
+
+/* Dropdown menu — reuses .cv5-picker-menu base; overrides position for the
+   header context (drops below-right, matching the actions menu). */
+.cv5-gdoc-menu {
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  min-width: 220px;
+}
+
+/* Small account email label at the top of the connected menu. */
+.cv5-gdoc-email {
+  padding: 6px 12px 4px;
+  font-size: 11px;
+  color: var(--cv5-ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--cv5-rule);
+  margin-bottom: 4px;
+}
+
+/* Separator rule above Disconnect. */
+.cv5-gdoc-separator {
+  height: 1px;
+  background: var(--cv5-rule);
+  margin: 4px 0;
+}
+
+/* Disconnect row — slightly muted destructive style. */
+.cv5-gdoc-disconnect-row {
+  color: #b33;
+}
+.cv5-gdoc-disconnect-row:hover {
+  background: #fef2f2;
+  color: #922;
+}
