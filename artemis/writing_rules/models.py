@@ -29,6 +29,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
@@ -70,6 +71,7 @@ class WritingProfile(Base):
         "WritingExample", back_populates="profile"
     )
     sources: Mapped[list[WritingSource]] = relationship("WritingSource", back_populates="profile")
+    claims: Mapped[list[Claim]] = relationship("Claim", back_populates="profile")
     training_candidates: Mapped[list[WritingTrainingCandidate]] = relationship(
         "WritingTrainingCandidate", back_populates="profile"
     )
@@ -236,6 +238,48 @@ class WritingSource(Base):
     profile: Mapped[WritingProfile | None] = relationship(
         "WritingProfile", back_populates="sources"
     )
+
+
+class Claim(Base):
+    """Structured claims-register row tied to a writing profile."""
+
+    __tablename__ = "claims"
+    __table_args__ = (
+        Index("idx_claims_profile_status", "profile_id", "status"),
+        UniqueConstraint("profile_id", "claim_code", name="uq_claims_profile_code"),
+        CheckConstraint("tier IS NULL OR tier BETWEEN 1 AND 4", name="ck_claims_tier_range"),
+        CheckConstraint(
+            "status IN ('proposed', 'approved', 'retired')",
+            name="ck_claims_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("writing_profiles.id"), nullable=False
+    )
+    claim_code: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    tier: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approved_phrasing: Mapped[str] = mapped_column(Text, nullable=False)
+    packaging: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="approved")
+    superseded_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("claims.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    profile: Mapped[WritingProfile] = relationship("WritingProfile", back_populates="claims")
+    superseded_claim: Mapped[Claim | None] = relationship("Claim", remote_side="Claim.id")
 
 
 class TagDimension(Base):

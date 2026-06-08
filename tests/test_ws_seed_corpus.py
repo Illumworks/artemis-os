@@ -41,6 +41,7 @@ db_module.SessionLocal = async_sessionmaker(
 _TRUNCATE = text(
     """
     TRUNCATE
+        claims,
         writing_sources,
         writing_examples,
         writing_rules,
@@ -63,6 +64,7 @@ _TRUNCATE = text(
 EXPECTED_SOURCES = 9  # one writing_sources row per file
 EXPECTED_EXAMPLES = 7  # 01..07 minus 08 (source_only) and 00 (profile_prompt)
 EXPECTED_RULES = 0  # no rule-target entries in the current corpus
+EXPECTED_CLAIMS = 8  # 05_CLAIMS_REGISTER parses into 8 approved claim rows
 
 
 @pytest.fixture
@@ -127,6 +129,9 @@ async def test_seed_inserts_correct_counts(db_session: AsyncSession) -> None:
     assert result["rulesUpserted"] == EXPECTED_RULES, (
         f"Expected {EXPECTED_RULES} rules, got {result['rulesUpserted']}"
     )
+    assert result["claimsUpserted"] == EXPECTED_CLAIMS, (
+        f"Expected {EXPECTED_CLAIMS} claims, got {result['claimsUpserted']}"
+    )
     assert result["profilePromptUpdated"] is True, "Master prompt should update profile"
     assert result["profileId"] is not None
     assert result["profileName"] == "Amira Marketing"
@@ -166,6 +171,11 @@ async def test_seed_is_idempotent(db_session: AsyncSession) -> None:
         f"Expected {EXPECTED_RULES} rules after 2nd run, got {len(rules)}"
     )
 
+    claims = await repo.list_claims(db_session, profiles[0].id)
+    assert len(claims) == EXPECTED_CLAIMS, (
+        f"Expected {EXPECTED_CLAIMS} claims after 2nd run, got {len(claims)}"
+    )
+
 
 @pytest.mark.asyncio
 async def test_seed_profile_has_system_prompt(db_session: AsyncSession) -> None:
@@ -200,10 +210,12 @@ async def test_seed_import_endpoint_returns_counts(http_client: AsyncClient) -> 
     # Fields the frontend reads
     assert "sourcesUpserted" in data
     assert "rulesUpserted" in data
+    assert "claimsUpserted" in data
     assert "examplesUpserted" in data
     assert data["sourcesUpserted"] == EXPECTED_SOURCES
     assert data["examplesUpserted"] == EXPECTED_EXAMPLES
     assert data["rulesUpserted"] == EXPECTED_RULES
+    assert data["claimsUpserted"] == EXPECTED_CLAIMS
     assert data["profilePromptUpdated"] is True
 
 
@@ -220,3 +232,4 @@ async def test_seed_import_endpoint_idempotent(http_client: AsyncClient) -> None
     assert d1["sourcesUpserted"] == d2["sourcesUpserted"]
     assert d1["examplesUpserted"] == d2["examplesUpserted"]
     assert d1["rulesUpserted"] == d2["rulesUpserted"]
+    assert d1["claimsUpserted"] == d2["claimsUpserted"]

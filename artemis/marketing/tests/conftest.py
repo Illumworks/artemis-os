@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 import artemis.db
 import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata (incl. QualifierRuleApplication, SkippedSignal, DistrictDataMeta, CampaignSend)
 import artemis.pipelines.models  # noqa: F401 — pipeline_runs is a FK dep of signal_queue; needed for ORM sort_tables
+import artemis.writing_rules.models  # noqa: F401 — claims + writing profile/source FK targets
 from artemis.db import attach_pgvector_codec
 
 # Hard guard against live-DB destruction. This conftest TRUNCATEs tables;
@@ -59,6 +60,11 @@ artemis.db.SessionLocal = __import__(
 # signal_reason_codes has no FK children from marketing tables — safe to truncate last.
 _TRUNCATE_SQL = text(
     "TRUNCATE "
+    "claims, "
+    "writing_sources, "
+    "writing_examples, "
+    "writing_rules, "
+    "writing_profiles, "
     "campaign_state_transitions, "
     "approvals, "
     "campaign_sends, "

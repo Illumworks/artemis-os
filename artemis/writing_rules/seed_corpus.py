@@ -67,6 +67,16 @@ class _SeedEntry:
     raw_content: str = field(default="", repr=False)
 
 
+@dataclass(frozen=True)
+class ParsedClaim:
+    claim_code: str
+    category: str
+    tier: int | None
+    approved_phrasing: str
+    packaging: str | None
+    notes: str | None
+
+
 # Raw file contents — verbatim from writing-agent-seed/*.md
 # (backslash escapes preserved exactly as stored on disk)
 SEED_FILES: dict[str, str] = {
@@ -706,6 +716,133 @@ for _entry in SEED_ENTRIES:
 
 DEFAULT_PROFILE_NAME = "Amira Marketing"
 
+_CLAIM_HEADING_RE = re.compile(r"^## Claim (?P<code>\d+)\s+—\s+(?P<category>.+?)\s*$", re.MULTILINE)
+_CLAIM_LABEL_RE = re.compile(
+    r"^(?P<label>"
+    r"Tier|"
+    r"Approved phrasing(?: \(verbatim\))?|"
+    r"Packaging|"
+    r"Required packaging \(mandatory\)|"
+    r"Notes"
+    r"):\s*(?P<value>.*)$"
+)
+
+
+def _strip_wrapping_quotes(text: str) -> str:
+    stripped = text.replace(r"\"", '"').strip()
+    if len(stripped) >= 2 and stripped[0] == '"' and stripped[-1] == '"':
+        return stripped[1:-1].strip()
+    return stripped
+
+
+def parse_claims_register_markdown(markdown: str) -> list[ParsedClaim]:
+    """Parse the approved claims register markdown into structured rows."""
+    normalized = _normalize(markdown)
+    matches = list(_CLAIM_HEADING_RE.finditer(normalized))
+    claims: list[ParsedClaim] = []
+
+    for index, match in enumerate(matches):
+        block_start = match.end()
+        block_end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        block = normalized[block_start:block_end].strip()
+        current_field: str | None = None
+        fields: dict[str, list[str]] = {"approved": [], "packaging": [], "notes": []}
+        tier: int | None = None
+
+        for raw_line in block.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            label_match = _CLAIM_LABEL_RE.match(line)
+            if label_match:
+                label = label_match.group("label")
+                value = label_match.group("value").strip()
+                if label == "Tier":
+                    tier = int(value) if value else None
+                    current_field = None
+                elif label.startswith("Approved phrasing"):
+                    current_field = "approved"
+                    if value:
+                        fields[current_field].append(value)
+                elif label in {"Packaging", "Required packaging (mandatory)"}:
+                    current_field = "packaging"
+                    if value:
+                        fields[current_field].append(value)
+                elif label == "Notes":
+                    current_field = "notes"
+                    if value:
+                        fields[current_field].append(value)
+                continue
+
+            if current_field is not None:
+                fields[current_field].append(line)
+
+        approved_text = _strip_wrapping_quotes(" ".join(fields["approved"]).strip())
+        packaging_text = _strip_wrapping_quotes("\n".join(fields["packaging"]).strip()) or None
+        notes_text = _strip_wrapping_quotes("\n".join(fields["notes"]).strip()) or None
+        if packaging_text == "None":
+            packaging_text = None
+
+        claims.append(
+            ParsedClaim(
+                claim_code=match.group("code"),
+                category=match.group("category").strip(),
+                tier=tier,
+                approved_phrasing=approved_text,
+                packaging=packaging_text,
+                notes=notes_text,
+            )
+        )
+
+    return claims
+
+
+async def import_claims_register(
+    session: AsyncSession,
+    profile_id: int,
+    *,
+    markdown: str | None = None,
+) -> int:
+    """Upsert structured claims rows from the Claims Register source."""
+    if markdown is None:
+        source = await repo.get_source_by_profile_key(session, profile_id, "05_CLAIMS_REGISTER")
+        markdown = (
+            source.normalized_content
+            if source is not None
+            else _normalize(SEED_FILES["05_CLAIMS_REGISTER.md"])
+        )
+
+    parsed_claims = parse_claims_register_markdown(markdown)
+    for parsed in parsed_claims:
+        existing = await repo.get_claim_by_profile_code(session, profile_id, parsed.claim_code)
+        if existing is None:
+            await repo.create_claim(
+                session,
+                profile_id=profile_id,
+                claim_code=parsed.claim_code,
+                category=parsed.category,
+                tier=parsed.tier,
+                approved_phrasing=parsed.approved_phrasing,
+                packaging=parsed.packaging,
+                notes=parsed.notes,
+                source="05_CLAIMS_REGISTER",
+                status="approved",
+            )
+        else:
+            await repo.update_claim(
+                session,
+                existing.id,
+                category=parsed.category,
+                tier=parsed.tier,
+                approved_phrasing=parsed.approved_phrasing,
+                packaging=parsed.packaging,
+                notes=parsed.notes,
+                source="05_CLAIMS_REGISTER",
+                status="approved",
+            )
+
+    return len(parsed_claims)
+
 
 # ── Idempotent importer ────────────────────────────────────────────────────────
 
@@ -742,6 +879,7 @@ async def import_writing_seed_corpus(session: AsyncSession) -> dict[str, Any]:
         "profilesInserted": profiles_inserted,
         "profilesSkipped": profiles_skipped,
         "sourcesUpserted": 0,
+        "claimsUpserted": 0,
         "rulesUpserted": 0,
         "examplesUpserted": 0,
         "profilePromptUpdated": False,
@@ -856,4 +994,5 @@ async def import_writing_seed_corpus(session: AsyncSession) -> dict[str, Any]:
             }
         )
 
+    result["claimsUpserted"] = await import_claims_register(session, profile.id)
     return result

@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.writing_rules.models import (
+    Claim,
     WritingDraftThreadMessage,
     WritingExample,
     WritingFolder,
@@ -663,6 +664,109 @@ async def delete_source(session: AsyncSession, source_id: int) -> bool:
     await session.delete(source)
     await session.flush()
     return True
+
+
+# ── Claims Register ───────────────────────────────────────────────────────────
+
+
+async def list_claims(
+    session: AsyncSession,
+    profile_id: int,
+    status: Literal["proposed", "approved", "retired"] | None = None,
+) -> list[Claim]:
+    q = (
+        select(Claim)
+        .where(Claim.profile_id == profile_id)
+        .order_by(Claim.claim_code, Claim.created_at, Claim.id)
+    )
+    if status is not None:
+        q = q.where(Claim.status == status)
+    result = await session.execute(q)
+    return list(result.scalars())
+
+
+async def get_claim(session: AsyncSession, claim_id: int) -> Claim | None:
+    return await session.get(Claim, claim_id)
+
+
+async def get_claim_by_profile_code(
+    session: AsyncSession,
+    profile_id: int,
+    claim_code: str,
+) -> Claim | None:
+    result = await session.execute(
+        select(Claim).where(Claim.profile_id == profile_id, Claim.claim_code == claim_code).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_claim(
+    session: AsyncSession,
+    *,
+    profile_id: int,
+    claim_code: str,
+    category: str,
+    approved_phrasing: str,
+    tier: int | None = None,
+    packaging: str | None = None,
+    notes: str | None = None,
+    source: str | None = None,
+    superseded_by: int | None = None,
+    status: str = "proposed",
+) -> Claim:
+    claim = Claim(
+        profile_id=profile_id,
+        claim_code=claim_code,
+        category=category,
+        tier=tier,
+        approved_phrasing=approved_phrasing,
+        packaging=packaging,
+        notes=notes,
+        source=source,
+        superseded_by=superseded_by,
+        status=status,
+    )
+    session.add(claim)
+    await session.flush()
+    await session.refresh(claim)
+    return claim
+
+
+async def update_claim(
+    session: AsyncSession,
+    claim_id: int,
+    **kwargs: Any,
+) -> Claim | None:
+    claim = await get_claim(session, claim_id)
+    if claim is None:
+        return None
+    for key, value in kwargs.items():
+        setattr(claim, key, value)
+    claim.updated_at = datetime.now(UTC)
+    await session.flush()
+    return claim
+
+
+async def approve_claim(session: AsyncSession, claim_id: int) -> Claim | None:
+    claim = await get_claim(session, claim_id)
+    if claim is None:
+        return None
+    if claim.status != "proposed":
+        raise ValueError(f"claim id={claim_id} cannot approve from status={claim.status}")
+    claim.status = "approved"
+    claim.updated_at = datetime.now(UTC)
+    await session.flush()
+    return claim
+
+
+async def retire_claim(session: AsyncSession, claim_id: int) -> Claim | None:
+    claim = await get_claim(session, claim_id)
+    if claim is None:
+        return None
+    claim.status = "retired"
+    claim.updated_at = datetime.now(UTC)
+    await session.flush()
+    return claim
 
 
 # ── Thread messages ───────────────────────────────────────────────────────────
