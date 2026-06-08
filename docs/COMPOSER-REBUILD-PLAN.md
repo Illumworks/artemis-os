@@ -47,7 +47,10 @@ Conclusion: this is "build the document half of the composer," not "polish the e
 3. **DRAFTS PICKER → header popover.** Move the drafts list out of the sidebar into a Finder-style popover
    from a header button; single **"+"** menu (New draft / New from template / New folder).
 4. **INLINE CLAIM FLAGS.** Orange double-underline on claims not in the Claims Register; click → approve /
-   source / edit popover (1-click approve into the living Register). Uses PM decorations.
+   source / edit popover (1-click approve into the living Register). Uses PM decorations. **Backend DONE
+   (2026-06-07):** structured Claims Register table + `/api/writing-studio/claims` CRUD (propose/approve/
+   retire, lossless) + seed of the 8 corpus claims — merged + live-verified (migration 0072). Remaining for
+   this stage: claim DETECTION (match draft text → unmatched claims) + the PM-decoration UI.
 5. **FORMAT-AWARE PAGINATION.** Long-form types (guides/papers) break into Page 1·2·3; email/short = one
    continuous page.
 6. **FLOATING COMMENTS (Google-Docs margin).** Anchored to a span via connector, expand/collapse, reply/
