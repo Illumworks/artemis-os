@@ -64,11 +64,12 @@ Conclusion: this is "build the document half of the composer," not "polish the e
 5. ✅ **FORMAT-AWARE PAGINATION — DONE + MERGED (2026-06-08).** Page-break overlay: long-form asset types →
    pages; email/short → one continuous page. Presentation-only (PM doc/autosave bit-for-bit unchanged —
    lossless). Browser-verified (long-form 4 pages vs email continuous).
-6. **FLOATING COMMENTS (Google-Docs margin).** Anchored to a span, expand/collapse, reply/resolve, @mention.
-   ✅ **BACKEND DONE + MERGED (2026-06-08):** comments table (migration 0075) + `/api/writing-studio/.../
-   comments` CRUD (create/reply/resolve/reopen, author=verified user, lossless) — live-verified. **Remaining:
-   the FE** (floating margin UI, @mention, anchored decorations) — terminal next, on composer-v5.js. Identity
-   (Track A) is live, so attribution works.
+6. ✅ **FLOATING COMMENTS — DONE + MERGED + BROWSER-VERIFIED (2026-06-08).** Backend (comments table,
+   migration 0075, CRUD, author=verified user, lossless) + FE (commentsPlugin reusing the Stage-4 offset→PM
+   map to anchor amber highlights + floating margin cards via coordsAtPos; create from selection toolbar,
+   reply, resolve/reopen=dim-not-delete, @mention v1 stored+styled; anchoredText fallback + "anchor lost"
+   badge — never drops a comment). Lead-verified the anchor lands EXACTLY on the target span in a multi-
+   paragraph draft. (Notification DELIVERY + live co-editing deferred per roadmap.)
 7. **GOOGLE DOC import/export.** Compact header affordance. **BACKEND in flight (Codex, `worker/gdoc-backend`,
    per-user OAuth via Track B).** Then the small composer header FE (terminal). ⚠️ gdoc migration will collide
    at 0075 (branched off pre-comments head) — renumber to 0076 at merge.
