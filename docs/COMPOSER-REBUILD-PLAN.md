@@ -70,9 +70,12 @@ Conclusion: this is "build the document half of the composer," not "polish the e
    reply, resolve/reopen=dim-not-delete, @mention v1 stored+styled; anchoredText fallback + "anchor lost"
    badge — never drops a comment). Lead-verified the anchor lands EXACTLY on the target span in a multi-
    paragraph draft. (Notification DELIVERY + live co-editing deferred per roadmap.)
-7. **GOOGLE DOC import/export.** Compact header affordance. **BACKEND in flight (Codex, `worker/gdoc-backend`,
-   per-user OAuth via Track B).** Then the small composer header FE (terminal). ⚠️ gdoc migration will collide
-   at 0075 (branched off pre-comments head) — renumber to 0076 at merge.
+7. **GOOGLE DOC import/export.** ✅ **BACKEND DONE + MERGED + VERIFIED (2026-06-08):** per-user Google OAuth
+   (google_credentials by user_id, server-side tokens, auto-refresh — migration 0076, renumbered from a
+   0075 collision) + `/api/google/oauth/start|status|disconnect` + draft import/export (Docs↔draft). Live-
+   verified status/409/oauth-redirect; tokens never exposed; 7 mocked tests. Secret in `.env` on the box.
+   **Remaining: the FE** (header connect/import/export) — terminal, `briefs/composer-stage-7-gdoc-ui.md` —
+   the LAST composer piece. Live connect = final demo check (operator authorizes in-browser).
 8. ✅ **ACTIONS MENU (⋯) — DONE + MERGED (2026-06-08).** ⋯ menu in the header + **Save-as-template** (wires to
    templates `POST`, body+asset_type carried, picker re-fetches) — browser-verified round-trip. Repurpose +
    Brand-check render as stubs (functional later). Templates backend (table + CRUD + apply, migration 0073)
