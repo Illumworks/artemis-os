@@ -72,6 +72,18 @@ class Settings(BaseSettings):
         default="",
         description="Cloudflare Access application audience tag (AUD).",
     )
+    google_client_id: str = Field(
+        default="",
+        description="Google OAuth client id for per-user Docs/Drive access.",
+    )
+    google_client_secret: str = Field(
+        default="",
+        description="Google OAuth client secret for per-user Docs/Drive access.",
+    )
+    google_redirect_uri: str = Field(
+        default="https://app.artemisos.me/api/google/oauth/callback",
+        description="Google OAuth redirect URI for the Artemis app.",
+    )
 
     embedding_provider: str = Field(
         default="minilm",

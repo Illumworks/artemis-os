@@ -63,6 +63,7 @@ from artemis.routes import costs as costs_routes
 from artemis.routes import costs_routing as costs_routing_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
+from artemis.routes import google_docs as google_docs_routes
 from artemis.routes import health, okr, parallel, status, writing_rules, writing_studio_tags
 from artemis.routes import jira as jira_routes
 from artemis.routes import me as me_routes
@@ -243,6 +244,7 @@ app.include_router(memory_router)
 app.include_router(okr.router)
 app.include_router(writing_rules.router)
 app.include_router(writing_studio_tags.router)
+app.include_router(google_docs_routes.router)
 
 # Phase G1 — Floating Artemis backend (sessions, tools, authority, chat)
 app.include_router(fa_router)
