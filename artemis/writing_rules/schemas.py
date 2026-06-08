@@ -198,6 +198,48 @@ class WritingSourceUpdate(_Base):
     metadata_json: dict[str, Any] | None = Field(default=None, alias="metadataJson")
 
 
+# ── Claims Register ───────────────────────────────────────────────────────────
+
+
+class ClaimCreate(_Base):
+    profile_id: int | None = Field(default=None, alias="profileId")
+    claim_code: str = Field(alias="claimCode")
+    category: str
+    tier: int | None = Field(default=None, ge=1, le=4)
+    approved_phrasing: str = Field(alias="approvedPhrasing")
+    packaging: str | None = None
+    notes: str | None = None
+    source: str | None = None
+    superseded_by: int | None = Field(default=None, alias="supersededBy")
+
+
+class ClaimRead(_Base):
+    id: int
+    profile_id: int = Field(alias="profileId")
+    claim_code: str = Field(alias="claimCode")
+    category: str
+    tier: int | None = Field(default=None, ge=1, le=4)
+    approved_phrasing: str = Field(alias="approvedPhrasing")
+    packaging: str | None = None
+    notes: str | None = None
+    source: str | None = None
+    status: str
+    superseded_by: int | None = Field(default=None, alias="supersededBy")
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+
+class ClaimUpdate(_Base):
+    claim_code: str | None = Field(default=None, alias="claimCode")
+    category: str | None = None
+    tier: int | None = Field(default=None, ge=1, le=4)
+    approved_phrasing: str | None = Field(default=None, alias="approvedPhrasing")
+    packaging: str | None = None
+    notes: str | None = None
+    source: str | None = None
+    superseded_by: int | None = Field(default=None, alias="supersededBy")
+
+
 # ── Migration / dry-run DTOs ──────────────────────────────────────────────────
 
 

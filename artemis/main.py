@@ -36,6 +36,7 @@ from artemis.marketing.routes import (
     campaign_cost,
     campaign_deliverables,
     campaign_ops,
+    claims,
     content_assets,
     districts,
     initiation,
@@ -209,6 +210,7 @@ app.include_router(campaign_deliverables.router)
 app.include_router(content_assets.router)
 app.include_router(approvals.router)
 app.include_router(sends.router)
+app.include_router(claims.router)
 app.include_router(writing_studio.router)
 app.include_router(intel_prioritization.router)
 
