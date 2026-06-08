@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.artemisos.app</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/artemis/Desktop/Artemis/artemis-os</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/artemis/Desktop/Artemis/artemis-os/.venv/bin/uvicorn</string>
+        <string>artemis.main:app</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8000</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/artemis</string>
+        <key>ARTEMIS_CF_ACCESS_ENABLED</key>
+        <string>true</string>
+        <key>ARTEMIS_CF_ACCESS_TEAM_DOMAIN</key>
+        <string>jfila.cloudflareaccess.com</string>
+        <key>ARTEMIS_CF_ACCESS_AUD</key>
+        <string>196c5861dc5fbe509186be11c6006510050ae562f93a52556d7ef9136042b7d6</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/artemis/Desktop/Artemis/artemis-os/.app.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/artemis/Desktop/Artemis/artemis-os/.app.err.log</string>
+</dict>
+</plist>
