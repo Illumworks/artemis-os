@@ -44,11 +44,12 @@ Conclusion: this is "build the document half of the composer," not "polish the e
    page-leave = no data loss. Comments-rail toggle in. Verified on main: assets serve, autosave round-trip
    lossless (versions untouched), PM loads offline (terminal's no-CDN proof). *Legacy layout kept for memory-
    bank + version-history panels.*
-2. **HIGHLIGHT → AI EDIT (the killer feature).** Select text → floating toolbar (Rewrite · Shorten ·
-   Lengthen · Change tone · Fix grammar · **Make on-brand** + custom ask) → scoped compose call (reuse the
-   compose engine + **tag-scoped rules from Phases 1–4** so the rewrite is on-brand for the draft's audience)
-   → show as accept/reject diff (AI proposes, human confirms). *This is where the tagging/rules work pays off
-   visibly.*
+2. ✅ **HIGHLIGHT → AI EDIT — DONE + MERGED + VERIFIED (2026-06-07).** Floating selection toolbar (Rewrite·
+   Shorten·Lengthen·Tone·**Make on-brand**·custom) on the PM editor → `POST /drafts/{id}/rewrite-span`
+   (single-shot, grounds via voice + `resolve_grounding_rules(structured_tags)` — the tagging payoff) →
+   accept/reject popover; Accept replaces ONLY the selection range (`tr.replaceWith(from,to)`) then autosaves
+   (lossless), Reject is a no-op. Verified: tag-scoped rules resolved (not all/none); span-replace invariant
+   holds; no compose-engine fork. *Deferred polish: Tone submenu (fixed instruction for now).*
 3. **DRAFTS PICKER → header popover.** Move the drafts list out of the sidebar into a Finder-style popover
    from a header button; single **"+"** menu (New draft / New from template / New folder).
 4. **INLINE CLAIM FLAGS.** Orange double-underline on claims not in the Claims Register; click → approve /
@@ -64,7 +65,12 @@ Conclusion: this is "build the document half of the composer," not "polish the e
 7. **GOOGLE DOC link/import/export.** Compact header affordance. Backend stubs exist but are UNIMPLEMENTED;
    **rides Google OAuth** (same as SSO).
 8. **ACTIONS MENU (⋯).** Save-as-template (+ apply via the "+" menu — ship both or drop templates), Repurpose,
-   Brand+readability check.
+   Brand+readability check. **Templates BACKEND DONE (2026-06-07):** structured `templates` table + `/api/
+   writing-studio/templates` CRUD (retire=lossless) + seed of 6 corpus templates + `POST /templates/{id}/
+   apply` (instantiates a real draft from the template body) — merged + verified (migration 0073). Known
+   compromise: applied drafts share a placeholder campaign candidate (candidate_id still required) — revisit
+   when wiring into the composer. Remaining for this stage: the composer ⋯ menu UI (Save-as / New-from /
+   Repurpose / Brand-check).
 
 **Order:** 1 → 2 (highest value, showcases tagging) → 3, 4, 5, 8 (largely independent) → 6 (after identity)
 → 7 (after OAuth). Stage 1 must land + be Jon-approved on look before 2+.
