@@ -970,3 +970,435 @@
   background: #d8eddf;
   color: var(--cv5-green, #2f7a52);
 }
+
+/* ── Stage 6: floating margin comments ──────────────────────────────────────── */
+
+/* Anchor highlight on the doc text — subtle amber background */
+.cv5-comment-anchor-hl {
+  background: rgba(200, 137, 47, 0.18);
+  border-bottom: 1.5px solid rgba(200, 137, 47, 0.55);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+/* Margin column becomes a positioned container for floating cards */
+.cv5-margin-col {
+  position: relative;
+  padding-top: 0;
+  padding-left: 0;
+  overflow: visible;
+  min-height: 200px;
+}
+
+/* Individual comment wrapper — absolutely positioned to align with anchor span */
+.cv5-comment-wrap {
+  position: absolute;
+  left: 12px;
+  right: 6px;
+  min-width: 0;
+  z-index: 10;
+}
+
+/* Connector line from card to the paper edge */
+.cv5-comment-connector {
+  position: absolute;
+  left: -12px;
+  top: 16px;
+  width: 12px;
+  height: 0;
+  border-top: 1.5px solid rgba(200, 137, 47, 0.45);
+}
+
+/* Full expanded comment card */
+.cv5-comment-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 12px;
+  box-shadow: 0 3px 10px rgba(30, 26, 21, 0.08);
+  font-size: 12px;
+  font-family: inherit;
+  overflow: hidden;
+}
+
+.cv5-comment-card.is-resolved {
+  opacity: 0.72;
+  background: #faf9f7;
+}
+
+.cv5-comment-card.is-anchor-lost {
+  border-color: #e0b87a;
+}
+
+.cv5-comment-card-inner {
+  padding: 9px 10px 8px;
+}
+
+/* Resolved banner */
+.cv5-comment-resolved-bar {
+  background: var(--cv5-green-bg, #eef4ef);
+  border-bottom: 1px solid var(--cv5-green-border, #cfe3d5);
+  color: var(--cv5-green, #2f7a52);
+  font-size: 10.5px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Anchor-lost badge */
+.cv5-comment-lost-badge {
+  display: inline-block;
+  background: #fff3e0;
+  border: 1px solid #e0b87a;
+  border-radius: 4px;
+  color: #a06020;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  margin-bottom: 5px;
+}
+
+/* Card header row */
+.cv5-comment-card-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+/* Avatar circle */
+.cv5-comment-av {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-radius: 50%;
+  background: var(--cv5-accent, #c8892f);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.cv5-comment-av--sm {
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  font-size: 7.5px;
+}
+
+.cv5-comment-name {
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--cv5-ink, #1e1a15);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cv5-comment-time {
+  font-size: 9.5px;
+  color: var(--cv5-ink3, #8a7f6e);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Collapse button */
+.cv5-comment-collapse-btn {
+  background: none;
+  border: none;
+  color: var(--cv5-ink3, #8a7f6e);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+.cv5-comment-collapse-btn:hover { color: var(--cv5-ink, #1e1a15); }
+
+/* Comment body text */
+.cv5-comment-body {
+  font-size: 11.5px;
+  color: var(--cv5-ink2, #544c40);
+  line-height: 1.5;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+/* @mention chip inside a comment body */
+.cv5-comment-mention {
+  color: var(--cv5-blue, #33558c);
+  background: var(--cv5-blue-bg, #eaf0fb);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-weight: 600;
+  font-family: var(--cv5-mono, ui-monospace);
+  font-size: 10.5px;
+}
+
+/* "🔔 N notified" hint */
+.cv5-comment-ping {
+  font-size: 9.5px;
+  color: var(--cv5-green, #2f7a52);
+  margin-bottom: 4px;
+}
+
+/* Card footer actions */
+.cv5-comment-foot {
+  display: flex;
+  gap: 8px;
+  font-size: 10.5px;
+  flex-wrap: wrap;
+}
+
+.cv5-comment-action-btn {
+  background: none;
+  border: none;
+  color: var(--cv5-ink3, #8a7f6e);
+  cursor: pointer;
+  font-size: 10.5px;
+  padding: 2px 0;
+  font-family: inherit;
+  line-height: 1;
+}
+.cv5-comment-action-btn:hover { color: var(--cv5-ink, #1e1a15); }
+.cv5-comment-action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Replies section */
+.cv5-comment-replies {
+  border-top: 1px solid var(--cv5-rule, #e7ded0);
+  margin-top: 6px;
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cv5-comment-reply {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.cv5-comment-reply-body {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cv5-comment-reply-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+.cv5-comment-reply-meta .cv5-comment-name { flex: none; }
+
+/* Reply input row */
+.cv5-comment-reply-row {
+  margin-top: 7px;
+  border-top: 1px solid var(--cv5-rule, #e7ded0);
+  padding-top: 6px;
+}
+
+.cv5-comment-reply-input-wrap {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.cv5-comment-reply-input {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--cv5-ink, #1e1a15);
+  background: #fff;
+  outline: none;
+}
+.cv5-comment-reply-input:focus {
+  border-color: var(--cv5-accent, #c8892f);
+  box-shadow: 0 0 0 2px rgba(200, 137, 47, 0.12);
+}
+.cv5-comment-reply-input:disabled { opacity: 0.5; }
+
+.cv5-comment-reply-submit {
+  background: var(--cv5-accent, #c8892f);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.cv5-comment-reply-submit:hover { filter: brightness(1.08); }
+.cv5-comment-reply-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Collapsed comment chip */
+.cv5-comment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #fff;
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 18px;
+  padding: 4px 9px 4px 5px;
+  box-shadow: 0 2px 6px rgba(30, 26, 21, 0.06);
+  font-size: 10.5px;
+  color: var(--cv5-ink3, #8a7f6e);
+  cursor: pointer;
+  font-family: inherit;
+  max-width: 100%;
+  overflow: hidden;
+}
+.cv5-comment-chip:hover {
+  border-color: var(--cv5-accent, #c8892f);
+  color: var(--cv5-ink2, #544c40);
+}
+
+.cv5-comment-chip-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cv5-comment-chip-resolved {
+  color: var(--cv5-green, #2f7a52);
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+/* ── Stage 6: comment composer popover ───────────────────────────────────── */
+
+.cv5-comment-composer {
+  position: fixed;
+  z-index: 210;
+  background: var(--cv5-card, #fffdf9);
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 14px;
+  box-shadow: var(--cv5-shadow-pop, 0 16px 40px rgba(30,26,21,.18), 0 2px 8px rgba(30,26,21,.08));
+  padding: 12px 14px 10px;
+  width: 320px;
+  pointer-events: auto;
+  font-family: inherit;
+}
+
+.cv5-cc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.cv5-cc-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cv5-ink, #1e1a15);
+}
+
+.cv5-cc-as {
+  font-size: 10.5px;
+  color: var(--cv5-ink3, #8a7f6e);
+  margin-left: auto;
+}
+
+.cv5-cc-anchor-preview {
+  font-size: 10.5px;
+  color: var(--cv5-ink2, #544c40);
+  background: rgba(200, 137, 47, 0.12);
+  border-left: 2.5px solid var(--cv5-accent, #c8892f);
+  border-radius: 0 4px 4px 0;
+  padding: 3px 7px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--cv5-serif, Georgia, serif);
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.cv5-cc-body {
+  width: 100%;
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--cv5-ink, #1e1a15);
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  background: #fff;
+  box-sizing: border-box;
+}
+.cv5-cc-body:focus {
+  border-color: var(--cv5-accent, #c8892f);
+  box-shadow: 0 0 0 2px rgba(200, 137, 47, 0.12);
+}
+.cv5-cc-body:disabled { opacity: 0.5; }
+
+.cv5-cc-mention-hint {
+  font-size: 10px;
+  color: var(--cv5-ink3, #8a7f6e);
+  padding: 3px 4px 0;
+}
+
+.cv5-cc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.cv5-cc-cancel {
+  background: none;
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  border-radius: 7px;
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--cv5-ink2, #544c40);
+  cursor: pointer;
+}
+.cv5-cc-cancel:hover { border-color: var(--cv5-ink3, #8a7f6e); }
+
+.cv5-cc-submit {
+  background: var(--cv5-accent, #c8892f);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 5px 14px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.cv5-cc-submit:hover { filter: brightness(1.06); }
+.cv5-cc-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Stage 6: 💬 Comment button in the selection toolbar ─────────────────── */
+.cv5-sel-btn-comment {
+  color: var(--cv5-blue, #33558c);
+  font-weight: 600;
+}
+.cv5-sel-btn-comment:hover {
+  background: var(--cv5-blue-bg, #eaf0fb);
+  color: var(--cv5-blue, #33558c);
+}
