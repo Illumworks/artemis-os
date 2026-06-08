@@ -33,6 +33,32 @@
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.6/dist/driver.css">
   <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.6/dist/driver.js.iife.js"></script>
+
+  <!-- ProseMirror — locally vendored ESM bundles. Bare imports inside the
+       bundles (e.g. `from "prosemirror-state"`) are resolved here so every
+       package shares one copy of each class (instanceof keeps working). -->
+  <link rel="stylesheet" href="vendor/prosemirror/prosemirror.css">
+  <link rel="stylesheet" href="vendor/prosemirror/prosemirror-gapcursor.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "prosemirror-state":          "/vendor/prosemirror/prosemirror-state.mjs",
+      "prosemirror-view":           "/vendor/prosemirror/prosemirror-view.mjs",
+      "prosemirror-model":          "/vendor/prosemirror/prosemirror-model.mjs",
+      "prosemirror-transform":      "/vendor/prosemirror/prosemirror-transform.mjs",
+      "prosemirror-schema-basic":   "/vendor/prosemirror/prosemirror-schema-basic.mjs",
+      "prosemirror-schema-list":    "/vendor/prosemirror/prosemirror-schema-list.mjs",
+      "prosemirror-example-setup":  "/vendor/prosemirror/prosemirror-example-setup.mjs",
+      "prosemirror-keymap":         "/vendor/prosemirror/prosemirror-keymap.mjs",
+      "prosemirror-history":        "/vendor/prosemirror/prosemirror-history.mjs",
+      "prosemirror-commands":       "/vendor/prosemirror/prosemirror-commands.mjs",
+      "prosemirror-inputrules":     "/vendor/prosemirror/prosemirror-inputrules.mjs",
+      "prosemirror-dropcursor":     "/vendor/prosemirror/prosemirror-dropcursor.mjs",
+      "prosemirror-gapcursor":      "/vendor/prosemirror/prosemirror-gapcursor.mjs",
+      "prosemirror-menu":           "/vendor/prosemirror/prosemirror-menu.mjs"
+    }
+  }
+  </script>
 </head>
 <body>
   <artemis-welcome-overlay></artemis-welcome-overlay>

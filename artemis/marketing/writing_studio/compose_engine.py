@@ -142,10 +142,20 @@ def _build_runtime_context(
 
 
 def _latest_draft_content(draft: Any) -> str:
-    """Extract the most recent version body from deliverable_metadata.versions."""
+    """Extract the most recent draft body.
+
+    Composer Stage 1 introduces autosaved "live content" stored at
+    ``deliverable_metadata['live_content']`` that does NOT cut a new version
+    row (versions are only minted by the explicit Save-version button). When
+    present, ``live_content`` is the authoritative latest body; otherwise
+    fall back to ``versions[0].content``.
+    """
     meta: dict[str, Any] = {}
     if hasattr(draft, "deliverable_metadata") and isinstance(draft.deliverable_metadata, dict):
         meta = draft.deliverable_metadata
+    live = meta.get("live_content")
+    if isinstance(live, str) and live:
+        return live
     versions: list[Any] = meta.get("versions", [])
     if versions and isinstance(versions[0], dict):
         return str(versions[0].get("content", ""))

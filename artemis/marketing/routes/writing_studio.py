@@ -551,6 +551,26 @@ async def update_draft(
             new_version["metadata"] = metadata_patch
         versions.insert(0, new_version)
         meta["versions"] = versions
+        # An explicit version is now the authoritative latest body — clear any
+        # transient autosave buffer so it doesn't shadow the saved version.
+        meta.pop("live_content", None)
+        meta.pop("live_content_updated_at", None)
+
+    # Composer Stage 1: lossless autosave. liveContent persists the current
+    # editor body WITHOUT minting a new version row. The serializer +
+    # compose engine prefer live_content over versions[0].content when set,
+    # so the user always sees their latest typing, but version history stays
+    # clean (only Save-version creates rows).
+    if "liveContent" in body:
+        live_val = body["liveContent"]
+        if live_val is None:
+            meta.pop("live_content", None)
+            meta.pop("live_content_updated_at", None)
+        else:
+            if not isinstance(live_val, str):
+                raise bad_request("liveContent must be a string or null", "invalid_live_content")
+            meta["live_content"] = live_val
+            meta["live_content_updated_at"] = datetime.now(UTC).isoformat()
 
     deliverable.deliverable_metadata = meta
     deliverable.updated_at = datetime.now(UTC)
@@ -1259,9 +1279,20 @@ def _serialize_deliverable_detail(
     base = _serialize_deliverable_as_draft(d)
     meta = d.deliverable_metadata if isinstance(d.deliverable_metadata, dict) else {}
     versions: list[Any] = meta.get("versions", [])
-    content: str = versions[0]["content"] if versions and isinstance(versions[0], dict) else ""
+    # Composer Stage 1: prefer live_content (autosaved between explicit versions)
+    # over versions[0].content. See compose_engine._latest_draft_content for the
+    # mirror precedence in the LLM prompt path.
+    live = meta.get("live_content")
+    if isinstance(live, str) and live:
+        content: str = live
+    elif versions and isinstance(versions[0], dict):
+        content = versions[0]["content"]
+    else:
+        content = ""
     base["versions"] = versions
     base["content"] = content
+    base["liveContent"] = live if isinstance(live, str) else None
+    base["liveContentUpdatedAt"] = meta.get("live_content_updated_at")
     base["threadMessages"] = [_serialize_thread_message(m) for m in (thread_messages or [])]
     return base
 

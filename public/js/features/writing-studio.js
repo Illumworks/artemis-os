@@ -1,4 +1,5 @@
 import { escapeHtml } from "../core/utils.js";
+import { mountComposerV5 } from "./composer-v5.js";
 import {
   composeWritingDraftApi,
   createWritingDraftApi,
@@ -926,6 +927,16 @@ async function runWritingAction(action, button) {
   }
 }
 
+// Composer v5: one EditorView instance per draft. We tear it down before
+// re-rendering (or switching drafts) to avoid memory leaks + duplicate save
+// timers, and only keep state in writingState.composerV5Handle for cleanup.
+function destroyComposerV5() {
+  if (writingState.composerV5Handle?.destroy) {
+    try { writingState.composerV5Handle.destroy(); } catch (_) { /* noop */ }
+  }
+  writingState.composerV5Handle = null;
+}
+
 function renderWritingStudio() {
   const mount = document.querySelector(SHELL_CONTENT_SELECTOR);
   if (!mount) return;
@@ -939,6 +950,39 @@ function renderWritingStudio() {
   const activeProfile = overview?.activeProfile;
   const googleOverview = writingState.googleOverview;
   const reviewCount = countStatus(candidates, "proposed");
+
+  // Composer v5 path: chat LEFT / document RIGHT, full content-area shell.
+  // Used only when the user is on the draft panel AND has a draft open.
+  // Memory bank, version history, and the no-draft state keep the legacy
+  // sidebar layout (those views aren't part of the Stage-1 foundation).
+  const useV5Composer = writingState.activePanel === "draft" && Boolean(selectedDraft);
+  destroyComposerV5();
+
+  if (useV5Composer) {
+    mount.innerHTML = `
+      <div class="writing-status ${writingState.status ? "visible" : ""}" data-writing-status>${esc(writingState.status)}</div>
+      <div class="cv5-mount" data-cv5-mount></div>
+    `;
+    const v5Host = mount.querySelector("[data-cv5-mount]");
+    writingState.composerV5Handle = mountComposerV5(v5Host, {
+      draft: selectedDraft,
+      allDrafts: drafts,
+      callbacks: {
+        onSelectDraft: (id) => { void loadWritingStudio({ selectedDraftId: id }); },
+        onOpenVersionHistory: () => {
+          writingState.activePanel = "version-history";
+          renderWritingStudio();
+        },
+        onDraftReloaded: async (id) => {
+          await loadWritingStudio({ selectedDraftId: id });
+        },
+        onStatus: (msg) => setWritingStatus(msg),
+        onError: (msg) => setWritingStatus(msg, true),
+      },
+    });
+    syncWritingModalPortal();
+    return;
+  }
 
   mount.innerHTML = `
     <div class="writing-status ${writingState.status ? "visible" : ""}" data-writing-status>${esc(writingState.status)}</div>
@@ -3309,9 +3353,19 @@ function setWritingBusy(isBusy) {
 
 // Close the modal portal whenever the user navigates away from Writing Studio.
 onState("view", (view) => {
-  if (normalizeAppView(view) !== WRITING_STUDIO_VIEW && writingState.activeModal) {
-    writingState.activeModal = null;
-    syncWritingModalPortal();
+  if (normalizeAppView(view) !== WRITING_STUDIO_VIEW) {
+    if (writingState.activeModal) {
+      writingState.activeModal = null;
+      syncWritingModalPortal();
+    }
+    // Tear down the Composer v5 ProseMirror EditorView so leaving the page
+    // doesn't leak the autosave timer / event listeners. A pending autosave
+    // fires via the debounce timer, but we also explicitly flush first to
+    // catch any in-flight typing the user did right before navigating.
+    if (writingState.composerV5Handle?.flush) {
+      writingState.composerV5Handle.flush().catch(() => {});
+    }
+    destroyComposerV5();
   }
 });
 
