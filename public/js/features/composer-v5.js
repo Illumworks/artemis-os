@@ -28,9 +28,13 @@ import {
   createWritingDraftApi,
   createWritingFolderApi,
   createWritingTemplateApi,
+  exportWritingDraftToGoogleDocApi,
   fetchAccountInfo,
   fetchWritingDraft,
   fetchWritingStudioOverview,
+  googleDisconnectApi,
+  googleStatusApi,
+  importWritingDraftFromGoogleDocApi,
   listDraftCommentsApi,
   listWritingTemplatesApi,
   reopenCommentApi,
@@ -1482,6 +1486,255 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
+  // ── Stage 7: Google Docs header connect / import / export ─────────────────
+  //
+  // The "⊞ Google Doc" header button opens a small menu whose contents depend
+  // on whether the current user has a connected Google account:
+  //
+  //   Not connected:
+  //     [Connect Google]
+  //
+  //   Connected (shows account email):
+  //     [Import from Google Doc…]
+  //     [Export to Google Doc]
+  //     ───
+  //     [Disconnect]
+  //
+  // Status is fetched on mount (non-blocking; menu renders after).
+  // Connect → redirect to /api/google/oauth/start (same-tab); the server
+  // redirects back to /?google_connected=1 after OAuth completes.  On return,
+  // re-check status so the menu reflects the updated state.
+  //
+  // Import → URL prompt → POST …/google-doc/import → load returned content
+  // into the editor via replaceEditorContent (same path as draft reload, lossless).
+  // 409 google_not_connected → prompt to Connect first.
+  //
+  // Export → POST …/google-doc/export → toast the returned Doc URL.
+
+  const gdocWrapEl = rootEl.querySelector('[data-cv5="gdoc-wrap"]');
+  const gdocBtnEl  = rootEl.querySelector('[data-cv5="gdoc-btn"]');
+  const gdocMenuEl = rootEl.querySelector('[data-cv5="gdoc-menu"]');
+
+  // Current Google connection state (populated by refreshGdocStatus).
+  let gdocStatus = null; // { connected: bool, email?: string } | null
+
+  function openGdocMenu() {
+    if (!gdocMenuEl) return;
+    gdocMenuEl.classList.add("is-open");
+    gdocBtnEl?.setAttribute("aria-expanded", "true");
+  }
+
+  function closeGdocMenu() {
+    if (!gdocMenuEl) return;
+    gdocMenuEl.classList.remove("is-open");
+    gdocBtnEl?.setAttribute("aria-expanded", "false");
+  }
+
+  function renderGdocMenu() {
+    if (!gdocMenuEl) return;
+    if (gdocStatus === null) {
+      // Still loading — show a loading placeholder row.
+      gdocMenuEl.innerHTML = `<div class="cv5-picker-menu-empty">Checking Google status…</div>`;
+      return;
+    }
+    if (!gdocStatus.connected) {
+      gdocMenuEl.innerHTML = `
+        <button type="button" class="cv5-picker-menu-row" data-cv5-gdoc-action="connect" role="menuitem">
+          <span aria-hidden="true">🔗</span>
+          <span>Connect Google account</span>
+        </button>
+      `;
+    } else {
+      const emailLabel = gdocStatus.email
+        ? `<div class="cv5-gdoc-email">${esc(gdocStatus.email)}</div>`
+        : "";
+      gdocMenuEl.innerHTML = `
+        ${emailLabel}
+        <button type="button" class="cv5-picker-menu-row" data-cv5-gdoc-action="import" role="menuitem">
+          <span aria-hidden="true">⬇</span>
+          <span>Import from Google Doc…</span>
+        </button>
+        <button type="button" class="cv5-picker-menu-row" data-cv5-gdoc-action="export" role="menuitem">
+          <span aria-hidden="true">⬆</span>
+          <span>Export to Google Doc</span>
+        </button>
+        <div class="cv5-gdoc-separator"></div>
+        <button type="button" class="cv5-picker-menu-row cv5-gdoc-disconnect-row" data-cv5-gdoc-action="disconnect" role="menuitem">
+          <span aria-hidden="true">✕</span>
+          <span>Disconnect</span>
+        </button>
+      `;
+    }
+  }
+
+  async function refreshGdocStatus() {
+    try {
+      gdocStatus = await googleStatusApi();
+    } catch (err) {
+      console.warn("[composer-v5] google status fetch failed:", err);
+      gdocStatus = { connected: false };
+    }
+    renderGdocMenu();
+    // Update the button label to reflect connected state.
+    if (gdocBtnEl && gdocStatus?.connected) {
+      gdocBtnEl.classList.add("is-connected");
+    } else if (gdocBtnEl) {
+      gdocBtnEl.classList.remove("is-connected");
+    }
+  }
+
+  // Fire the status fetch immediately on mount (non-blocking).
+  refreshGdocStatus();
+
+  // If the user just completed the OAuth flow the URL will have ?google_connected=1.
+  // Show a brief status toast and clean up the param so it doesn't persist on reload.
+  {
+    const _params = new URLSearchParams(window.location.search);
+    if (_params.get("google_connected") === "1") {
+      callbacks.onStatus?.("Google account connected.");
+      _params.delete("google_connected");
+      const _newSearch = _params.toString();
+      window.history.replaceState(
+        {},
+        "",
+        window.location.pathname + (_newSearch ? `?${_newSearch}` : "") + window.location.hash
+      );
+    }
+  }
+
+  // Wire the toggle button.
+  if (gdocBtnEl) {
+    gdocBtnEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = gdocMenuEl?.classList.contains("is-open");
+      if (isOpen) closeGdocMenu();
+      else {
+        renderGdocMenu(); // ensure fresh render before opening
+        openGdocMenu();
+      }
+    });
+  }
+
+  // Outside-click closes the gdoc menu.
+  function handleGdocOutsideClick(e) {
+    if (!gdocWrapEl) return;
+    if (!gdocWrapEl.contains(e.target)) closeGdocMenu();
+  }
+  document.addEventListener("click", handleGdocOutsideClick);
+
+  // ESC closes the gdoc menu.
+  function handleGdocEscape(e) {
+    if (e.key !== "Escape") return;
+    if (gdocMenuEl?.classList.contains("is-open")) closeGdocMenu();
+  }
+  document.addEventListener("keydown", handleGdocEscape);
+
+  // Handle menu action clicks.
+  if (gdocMenuEl) {
+    gdocMenuEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-cv5-gdoc-action]");
+      if (!btn) return;
+      e.stopPropagation();
+      const action = btn.dataset.cv5GdocAction;
+      closeGdocMenu();
+
+      if (action === "connect") {
+        // Same-tab redirect to Google OAuth consent flow.
+        // The backend redirects back to /?google_connected=1 after completion.
+        window.location.href = "/api/google/oauth/start";
+
+      } else if (action === "import") {
+        await handleGdocImport();
+
+      } else if (action === "export") {
+        await handleGdocExport();
+
+      } else if (action === "disconnect") {
+        await handleGdocDisconnect();
+      }
+    });
+  }
+
+  async function handleGdocImport() {
+    const docUrl = window.prompt("Paste a Google Doc URL to import:");
+    if (docUrl === null) return; // user cancelled
+    const trimmedUrl = docUrl.trim();
+    if (!trimmedUrl) {
+      callbacks.onError?.("Please enter a Google Doc URL.");
+      return;
+    }
+
+    callbacks.onStatus?.("Importing from Google Doc…");
+    try {
+      const result = await importWritingDraftFromGoogleDocApi(draft.id, { docUrl: trimmedUrl });
+      // Load the imported content into the editor (lossless — goes through
+      // live_content path, same as draft reload).
+      if (result.importedContent) {
+        replaceEditorContent(result.importedContent);
+      }
+      callbacks.onStatus?.("Imported from Google Doc.");
+    } catch (err) {
+      console.error("[composer-v5] gdoc import failed:", err);
+      // _readJsonOrThrow throws Error with message = payload.error string.
+      // "Connect Google first" is the 409 google_not_connected payload.
+      if (_isGdocNotConnectedError(err)) {
+        const doConnect = window.confirm(
+          "Your Google account isn't connected. Connect now?"
+        );
+        if (doConnect) window.location.href = "/api/google/oauth/start";
+      } else {
+        callbacks.onError?.(err.message || "Import from Google Doc failed.");
+      }
+    }
+  }
+
+  async function handleGdocExport() {
+    callbacks.onStatus?.("Exporting to Google Doc…");
+    try {
+      const result = await exportWritingDraftToGoogleDocApi(draft.id);
+      const docUrl = result.docUrl || result.url;
+      if (docUrl) {
+        window.open(docUrl, "_blank", "noopener,noreferrer");
+        callbacks.onStatus?.(`Opened in Google Docs. ${docUrl}`);
+      } else {
+        callbacks.onStatus?.("Exported to Google Doc.");
+      }
+    } catch (err) {
+      console.error("[composer-v5] gdoc export failed:", err);
+      if (_isGdocNotConnectedError(err)) {
+        const doConnect = window.confirm(
+          "Your Google account isn't connected. Connect now?"
+        );
+        if (doConnect) window.location.href = "/api/google/oauth/start";
+      } else {
+        callbacks.onError?.(err.message || "Export to Google Doc failed.");
+      }
+    }
+  }
+
+  // Returns true if the error represents a 409 google_not_connected condition.
+  // _readJsonOrThrow throws Error with message = payload.error, which the
+  // backend sets to "Connect Google first" for that code.
+  function _isGdocNotConnectedError(err) {
+    const msg = (err?.message || "").toLowerCase();
+    return msg.includes("connect google") || msg.includes("google_not_connected");
+  }
+
+  async function handleGdocDisconnect() {
+    const confirmed = window.confirm("Disconnect your Google account?");
+    if (!confirmed) return;
+    try {
+      await googleDisconnectApi();
+      gdocStatus = { connected: false };
+      renderGdocMenu();
+      gdocBtnEl?.classList.remove("is-connected");
+      callbacks.onStatus?.("Google account disconnected.");
+    } catch (err) {
+      console.error("[composer-v5] gdoc disconnect failed:", err);
+      callbacks.onError?.("Failed to disconnect Google account.");
+    }
+  }
+
   // ── Stage 6: Floating margin comments ─────────────────────────────────────
   //
   // Comments are fetched on draft load and after any mutation (create / reply /
@@ -2226,6 +2479,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       // Stage-8 cleanup: actions menu listeners.
       document.removeEventListener("click", handleActionsOutsideClick);
       document.removeEventListener("keydown", handleActionsEscape);
+      // Stage-7 cleanup: gdoc menu listeners.
+      document.removeEventListener("click", handleGdocOutsideClick);
+      document.removeEventListener("keydown", handleGdocEscape);
       // Stage-6 cleanup: comment composer popover + timers.
       if (commentsRefreshTimer) { clearTimeout(commentsRefreshTimer); commentsRefreshTimer = null; }
       if (commentsReflowTimer)  { clearTimeout(commentsReflowTimer);  commentsReflowTimer  = null; }
@@ -2294,7 +2550,10 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
         <button type="button" class="cv5-hdr-ind is-placeholder" disabled aria-disabled="true" title="Rules — Stage 8">✓ rules</button>
         <button type="button" class="cv5-hdr-ind" data-cv5="comments-toggle" title="Show / hide comments rail">💬 Comments</button>
         <button type="button" class="cv5-hdr-ind" data-cv5="open-history" title="Version history">⟲ History</button>
-        <button type="button" class="cv5-hdr-gdoc is-placeholder" disabled aria-disabled="true" title="Google Doc — Stage 7">⊞ Google Doc</button>
+        <div class="cv5-gdoc-wrap" data-cv5="gdoc-wrap">
+          <button type="button" class="cv5-hdr-gdoc" data-cv5="gdoc-btn" aria-haspopup="menu" aria-expanded="false" title="Google Docs">⊞ Google Doc</button>
+          <div class="cv5-picker-menu cv5-gdoc-menu" data-cv5="gdoc-menu" role="menu" aria-label="Google Docs"></div>
+        </div>
         <div class="cv5-actions-wrap" data-cv5="actions-wrap">
           <button type="button" class="cv5-hdr-ind" data-cv5="actions-btn" aria-haspopup="menu" aria-expanded="false" title="More actions">⋯</button>
           <div class="cv5-picker-menu cv5-actions-menu" data-cv5="actions-menu" role="menu" aria-label="Actions">

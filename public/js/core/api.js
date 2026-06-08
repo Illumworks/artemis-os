@@ -2793,3 +2793,23 @@ export async function updateCommentApi(commentId, payload = {}) {
   );
   return _readJsonOrThrow(res, "Failed to update comment");
 }
+
+// ── Stage 7: Google Docs connect/status/disconnect ────────────────────────────
+
+/**
+ * Get the current user's Google connection status.
+ * GET /api/google/status → { connected: bool, email?: string }
+ */
+export async function googleStatusApi() {
+  const res = await fetch("/api/google/status");
+  return _readJsonOrThrow(res, "Failed to fetch Google connection status");
+}
+
+/**
+ * Disconnect the current user's Google account.
+ * POST /api/google/disconnect → { ok: true, connected: false }
+ */
+export async function googleDisconnectApi() {
+  const res = await fetch("/api/google/disconnect", { method: "POST" });
+  return _readJsonOrThrow(res, "Failed to disconnect Google account");
+}
