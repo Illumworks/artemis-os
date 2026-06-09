@@ -196,6 +196,46 @@ def test_detail_panel_and_empty_state_render() -> None:
     }
 
 
+def test_manual_cluster_toolbar_and_row_selection_render() -> None:
+    data = run_tree_script(
+        """
+        const extraSignals = [
+          ...signals,
+          mod.normalizeSignal({
+            id: 4,
+            headline: "Pinellas follow-up hearing",
+            summary: "Second board hearing reinforces the same literacy push.",
+            signalStatus: "qualified",
+            urgencyTier: "hot",
+            state: "FL",
+            districtId: "Pinellas County",
+            reasonCodes: [{ code: "POLICY_LIT_MANDATE", confidence: 0.88 }],
+            createdAt: "2026-05-22T12:00:00Z",
+          }),
+        ];
+        const html = mod.renderSignalInboxTree(extraSignals, {
+          mode: "flat",
+          selectedId: 1,
+          selectedSignalIds: [1, 4],
+        });
+        console.log(JSON.stringify({
+          hasManualClusterBar: html.includes("Manual cluster:"),
+          hasManualClusterAction: html.includes("Group into a cluster → Start a campaign"),
+          hasSelectedCount: html.includes("2 selected"),
+          hasSelectableCheckboxes: html.includes('data-signal-select="1"') && html.includes('data-signal-select="4"'),
+          pendingSignalNotSelectable: !html.includes('data-signal-select="2"'),
+        }));
+        """
+    )
+    assert data == {
+        "hasManualClusterBar": True,
+        "hasManualClusterAction": True,
+        "hasSelectedCount": True,
+        "hasSelectableCheckboxes": True,
+        "pendingSignalNotSelectable": True,
+    }
+
+
 def test_local_storage_keys_and_static_wiring() -> None:
     data = run_tree_script(
         """

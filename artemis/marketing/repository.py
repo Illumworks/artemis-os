@@ -337,15 +337,17 @@ async def promote_signal_cluster_to_candidate(
     if not signal_ids:
         raise ValueError("signal_ids must contain at least one signal")
 
+    ordered_signal_ids = list(dict.fromkeys(signal_ids))
+
     result = await session.execute(
         select(SignalQueue)
-        .where(SignalQueue.id.in_(signal_ids))
+        .where(SignalQueue.id.in_(ordered_signal_ids))
         .order_by(SignalQueue.created_at.desc(), SignalQueue.id.desc())
     )
     signals = list(result.scalars().all())
     signal_map = {signal.id: signal for signal in signals}
     ordered_signals: list[SignalQueue] = []
-    for signal_id in signal_ids:
+    for signal_id in ordered_signal_ids:
         signal = signal_map.get(signal_id)
         if signal is None:
             raise ValueError(f"signal_queue id={signal_id} not found")
@@ -354,6 +356,10 @@ async def promote_signal_cluster_to_candidate(
                 f"signal_queue id={signal_id} must be qualified or approved to promote"
             )
         ordered_signals.append(signal)
+
+    families = {signal.campaign_family for signal in ordered_signals if signal.campaign_family}
+    if len(families) != 1:
+        raise ValueError("signal_ids must share one campaign_family to start a campaign")
 
     seed_result = await promote_signal_to_candidate(session, ordered_signals[0])
     candidate = seed_result.candidate

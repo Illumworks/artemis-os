@@ -360,10 +360,14 @@ def test_prioritization_can_render_worklist_cards() -> None:
               scoreReason: '3 stacked signals + recent activity',
               hasHotSignal: true,
               timeSensitive: true,
-              signalIds: [1,2,3],
+              signalIds: [1,2,3,4,5,6],
               signals: [
                 { id: 1, sourceType: 'board_minutes', summary: 'Trustees approved exploring a supplemental reading intervention vendor.', headline: 'Board approved vendor exploration', createdAt: '2026-06-08T12:00:00Z' },
-                { id: 2, sourceType: 'procurement', summary: 'RFP posted; responses due Aug 1.', headline: 'RFP posted', createdAt: '2026-06-07T12:00:00Z' }
+                { id: 2, sourceType: 'procurement', summary: 'RFP posted; responses due Aug 1.', headline: 'RFP posted', createdAt: '2026-06-07T12:00:00Z' },
+                { id: 3, sourceType: 'linkedin_observer', summary: 'Director of literacy hired.', headline: 'Literacy hire', createdAt: '2026-06-06T12:00:00Z' },
+                { id: 4, sourceType: 'board_minutes', summary: 'Board packet mentions intervention pilots.', headline: 'Intervention pilots', createdAt: '2026-06-05T12:00:00Z' },
+                { id: 5, sourceType: 'regional_news', summary: 'Local outlet covered reading gains.', headline: 'Reading gains news', createdAt: '2026-06-04T12:00:00Z' },
+                { id: 6, sourceType: 'procurement', summary: 'Procurement Q&A posted.', headline: 'RFP Q&A', createdAt: '2026-06-03T12:00:00Z' }
               ]
             }
           ]
@@ -375,6 +379,10 @@ def test_prioritization_can_render_worklist_cards() -> None:
           hasBrowseMeta: html.includes('worth a look now'),
           hasHotBadge: html.includes('mkt-worklist-badge--hot'),
           hasTimeBadge: html.includes('mkt-worklist-badge--time'),
+          hasHotCardClass: html.includes('mkt-worklist-card--hot'),
+          hasClusterFilter: html.includes('data-worklist-search-input="12|obc"'),
+          hasSourceFilter: html.includes('data-worklist-source-filter="12|obc"'),
+          hasShowAll: html.includes('Show all 6'),
         }));
         """
     )
@@ -385,6 +393,10 @@ def test_prioritization_can_render_worklist_cards() -> None:
         "hasBrowseMeta": True,
         "hasHotBadge": True,
         "hasTimeBadge": True,
+        "hasHotCardClass": True,
+        "hasClusterFilter": True,
+        "hasSourceFilter": True,
+        "hasShowAll": True,
     }
 
 

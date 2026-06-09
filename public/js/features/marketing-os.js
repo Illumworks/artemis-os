@@ -27,7 +27,7 @@ import {
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
   fetchSignalWorklistApi,
   mergeSignalWorklistCardsApi,
-  promoteSignalWorklistClusterApi,
+  promoteSignalClusterApi,
   qualifySignalApi,
   removeSignalFromWorklistApi,
   listScoutRunsApi, listScoutPackagesApi,
@@ -65,13 +65,17 @@ const MKT_SIGNAL_TREE_STATE = {
   query: '',
   filters: { urgencies: [], statuses: [], reasons: [], geographies: [] },
   selectedId: null,
+  selectedSignalIds: [],
   hideUnsupported: readHideUnsupported(),
 };
 
 const MKT_WORKLIST_UI_STATE = {
   payload: null,
   filter: readWorklistFilter(),
+  cardUi: {},
 };
+
+const WORKLIST_SIGNAL_PREVIEW_COUNT = 5;
 
 const SP_SCOUTS = [
   "board_minutes", "federal_funding", "leadership_transition", "legislative",
@@ -2505,6 +2509,13 @@ function _signalCardHtml(signal) {
 }
 
 export function renderMarketingSignals(signals = []) {
+  const signalIdSet = new Set(
+    signals
+      .filter((signal) => signal.signalStatus === 'qualified')
+      .map((signal) => String(signal.id)),
+  );
+  MKT_SIGNAL_TREE_STATE.selectedSignalIds = MKT_SIGNAL_TREE_STATE.selectedSignalIds
+    .filter((signalId) => signalIdSet.has(String(signalId)));
   const completedRuns = MKT_SIGNAL_TREE_STATE.pipelineRuns
     .filter((run) => ['succeeded', 'skipped', 'partial_complete'].includes(run.status));
   return renderSignalInboxTree(signals, {
@@ -2513,6 +2524,7 @@ export function renderMarketingSignals(signals = []) {
     query: MKT_SIGNAL_TREE_STATE.query,
     filters: MKT_SIGNAL_TREE_STATE.filters,
     selectedId: MKT_SIGNAL_TREE_STATE.selectedId,
+    selectedSignalIds: MKT_SIGNAL_TREE_STATE.selectedSignalIds,
     collapsed: readCollapsedSignalGroups(),
     hideUnsupported: MKT_SIGNAL_TREE_STATE.hideUnsupported,
     emptyMessage: completedRuns.length
@@ -3132,6 +3144,43 @@ function _wireSignalActions(container) {
       if (form) { form.hidden = false; btn.hidden = true; }
       return;
     }
+    if (action === 'group-clear') {
+      MKT_SIGNAL_TREE_STATE.selectedSignalIds = [];
+      _renderSignalTreeState(container);
+      return;
+    }
+    if (action === 'group-start-campaign') {
+      if (MKT_SIGNAL_TREE_STATE.selectedSignalIds.length < 2) return;
+      btn.disabled = true;
+      btn.textContent = 'Starting…';
+      try {
+        const result = await promoteSignalClusterApi({
+          signalIds: MKT_SIGNAL_TREE_STATE.selectedSignalIds.map((signalId) => Number(signalId)),
+          title: _deriveManualClusterTitle(
+            MKT_SIGNAL_TREE_STATE.signals.map(normalizeSignal),
+            MKT_SIGNAL_TREE_STATE.selectedSignalIds,
+          ),
+        });
+        MKT_SIGNAL_TREE_STATE.selectedSignalIds = [];
+        await _refreshSignalTree(container);
+        if (result.candidateId) {
+          const toast = document.createElement('div');
+          toast.className = 'mkt-signal-toast';
+          toast.innerHTML = `Manual cluster grouped ${esc((result.linkedSignalIds || []).length || 0)} signals. <a href="#" data-mkt-open-candidate="${esc(result.candidateId)}">Open workspace →</a>`;
+          container.querySelector('[data-signal-tree]')?.prepend(toast);
+          setTimeout(() => toast.remove(), 6000);
+        }
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Group into a cluster → Start a campaign';
+        const toast = document.createElement('p');
+        toast.className = 'mkt-signal-inline-error';
+        toast.textContent = err.message || 'Could not start campaign from manual cluster.';
+        container.querySelector('.mkt-signals-cluster-builder')?.appendChild(toast);
+        setTimeout(() => toast.remove(), 5000);
+      }
+      return;
+    }
     if (action === 'add-cancel') {
       const form = container.querySelector('.mkt-signal-add-form');
       if (form) form.hidden = true;
@@ -3303,6 +3352,16 @@ function _wireSignalActions(container) {
   });
 
   container.addEventListener('change', (e) => {
+    if (e.target.matches('[data-signal-select]')) {
+      const signalId = e.target.dataset.signalSelect;
+      if (!signalId) return;
+      const next = new Set(MKT_SIGNAL_TREE_STATE.selectedSignalIds.map((value) => String(value)));
+      if (e.target.checked) next.add(String(signalId));
+      else next.delete(String(signalId));
+      MKT_SIGNAL_TREE_STATE.selectedSignalIds = [...next];
+      _renderSignalTreeState(container);
+      return;
+    }
     if (e.target.matches('[data-signal-sort]')) {
       MKT_SIGNAL_TREE_STATE.sort = e.target.value === 'urgency' ? 'urgency' : 'newest';
       _renderSignalTreeState(container);
@@ -4928,6 +4987,77 @@ function _formatWorklistSource(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function _worklistSignalSearchText(signal = {}) {
+  return [
+    signal.summary,
+    signal.headline,
+    signal.sourceType,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+export function filterWorklistSignals(signals = [], { query = '', sourceType = 'all' } = {}) {
+  const search = String(query || '').trim().toLowerCase();
+  return signals.filter((signal) => {
+    if (sourceType !== 'all' && signal.sourceType !== sourceType) return false;
+    if (search && !_worklistSignalSearchText(signal).includes(search)) return false;
+    return true;
+  });
+}
+
+export function partitionWorklistSignals(
+  signals = [],
+  { query = '', sourceType = 'all', showAll = false, previewLimit = WORKLIST_SIGNAL_PREVIEW_COUNT } = {},
+) {
+  const filtered = filterWorklistSignals(signals, { query, sourceType });
+  return {
+    filtered,
+    visible: showAll ? filtered : filtered.slice(0, previewLimit),
+  };
+}
+
+function _syncWorklistCardUiState(cards = []) {
+  const next = {};
+  for (const card of cards) {
+    next[card.clusterKey] = {
+      open: false,
+      query: '',
+      sourceType: 'all',
+      showAll: false,
+      ...(MKT_WORKLIST_UI_STATE.cardUi[card.clusterKey] || {}),
+    };
+  }
+  MKT_WORKLIST_UI_STATE.cardUi = next;
+}
+
+function _getWorklistCardUiState(clusterKey) {
+  if (!MKT_WORKLIST_UI_STATE.cardUi[clusterKey]) {
+    MKT_WORKLIST_UI_STATE.cardUi[clusterKey] = {
+      open: false,
+      query: '',
+      sourceType: 'all',
+      showAll: false,
+    };
+  }
+  return MKT_WORKLIST_UI_STATE.cardUi[clusterKey];
+}
+
+function _renderPrioritizationState(container) {
+  if (!container || !MKT_WORKLIST_UI_STATE.payload) return;
+  container.innerHTML = renderMarketingPrioritization(MKT_WORKLIST_UI_STATE.payload);
+}
+
+function _deriveManualClusterTitle(signals = [], selectedIds = []) {
+  const selectedSet = new Set(selectedIds.map((id) => String(id)));
+  const selectedSignals = signals.filter((signal) => selectedSet.has(String(signal.id)));
+  const districts = [...new Set(selectedSignals.map((signal) => signal.district).filter(Boolean))];
+  if (districts.length === 1) return districts[0];
+  if (selectedSignals[0]?.headline) return selectedSignals[0].headline;
+  return `Manual cluster (${selectedSignals.length} signals)`;
+}
+
 function _renderWorklistDoneCard(candidateId, candidateName) {
   return `
     <div class="mkt-worklist-done-row">
@@ -4946,13 +5076,27 @@ function _renderSignalsWorklistCard(card, cards = []) {
   if (card.recentSignalCount) whyBits.push(`${card.recentSignalCount} new ${card.recentSignalCount === 1 ? 'signal' : 'signals'} in 14d`);
   if (card.velocityRank) whyBits.push(`velocity rank #${card.velocityRank}`);
   if (card.scoreReason) whyBits.push(card.scoreReason);
+  const ui = _getWorklistCardUiState(card.clusterKey);
+  const { filtered, visible } = partitionWorklistSignals(card.signals, {
+    query: ui.query,
+    sourceType: ui.sourceType,
+    showAll: ui.showAll,
+  });
+  const sourceTypes = [...new Set(card.signals.map((signal) => signal.sourceType).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+  const showAllLabel = ui.showAll
+    ? `Show top ${Math.min(WORKLIST_SIGNAL_PREVIEW_COUNT, filtered.length)}`
+    : `Show all ${filtered.length}`;
+  const resultsSummary = filtered.length === card.signals.length && !ui.query && ui.sourceType === 'all'
+    ? `${card.signalCount} signals`
+    : `${filtered.length} matching · ${card.signalCount} total`;
   const mergeOptions = cards
     .filter((other) => other.clusterKey !== card.clusterKey)
     .map((other) => `<option value="${esc(other.clusterKey)}">${esc(other.title)}</option>`)
     .join('');
   return `
-    <article class="mkt-worklist-card" data-worklist-card="${esc(card.clusterKey)}">
-      <button class="mkt-worklist-card-head" type="button" data-worklist-toggle="${esc(card.clusterKey)}">
+    <article class="mkt-worklist-card${card.hasHotSignal ? ' mkt-worklist-card--hot' : ''}${ui.open ? ' is-open' : ''}" data-worklist-card="${esc(card.clusterKey)}">
+      <button class="mkt-worklist-card-head" type="button" data-worklist-toggle="${esc(card.clusterKey)}" aria-expanded="${ui.open ? 'true' : 'false'}">
         <span class="mkt-worklist-rank">${esc(card.rank)}</span>
         <span class="mkt-worklist-main">
           <span class="mkt-worklist-title">${esc(card.title)}</span>
@@ -4965,17 +5109,36 @@ function _renderSignalsWorklistCard(card, cards = []) {
         </span>
         <span class="mkt-worklist-chev">▸</span>
       </button>
-      <div class="mkt-worklist-card-body" hidden>
-        ${card.signals.map((signal) => `
+      <div class="mkt-worklist-card-body" ${ui.open ? '' : 'hidden'}>
+        <div class="mkt-worklist-card-tools">
+          <label class="mkt-worklist-card-filter">
+            <span>Filter</span>
+            <input type="search" value="${esc(ui.query)}" placeholder="Search this cluster" data-worklist-search-input="${esc(card.clusterKey)}">
+          </label>
+          <label class="mkt-worklist-card-filter">
+            <span>Source</span>
+            <select data-worklist-source-filter="${esc(card.clusterKey)}">
+              <option value="all">All sources</option>
+              ${sourceTypes.map((sourceType) => `
+                <option value="${esc(sourceType)}"${ui.sourceType === sourceType ? ' selected' : ''}>${esc(_formatWorklistSource(sourceType))}</option>
+              `).join('')}
+            </select>
+          </label>
+          <div class="mkt-worklist-card-count">${esc(resultsSummary)}</div>
+        </div>
+        ${filtered.length ? visible.map((signal) => `
           <div class="mkt-worklist-signal-row">
             <div class="mkt-worklist-signal-source">${esc(_formatWorklistSource(signal.sourceType))}</div>
             <div class="mkt-worklist-signal-copy">
               <div class="mkt-worklist-signal-text">${esc(signal.summary || signal.headline || 'Signal')}</div>
               <div class="mkt-worklist-signal-meta">${esc(signal.headline || '')} · ${esc(_worklistTimeAgo(signal.createdAt))}</div>
             </div>
-            <button class="mkt-worklist-remove-signal" type="button" data-worklist-action="remove-signal" data-signal-id="${esc(signal.id)}" aria-label="Remove signal from this card">×</button>
+            <button class="mkt-worklist-remove-signal" type="button" data-worklist-action="remove-signal" data-cluster-key="${esc(card.clusterKey)}" data-signal-id="${esc(signal.id)}" aria-label="Remove signal from this card">×</button>
           </div>
-        `).join('')}
+        `).join('') : '<p class="mkt-worklist-empty">No signals match this filter.</p>'}
+        ${filtered.length > WORKLIST_SIGNAL_PREVIEW_COUNT ? `
+          <button class="mkt-worklist-show-all" type="button" data-worklist-action="toggle-show-all" data-cluster-key="${esc(card.clusterKey)}">${esc(showAllLabel)}</button>
+        ` : ''}
         <div class="mkt-worklist-actions">
           <button class="mkt-btn-primary" type="button" data-worklist-action="start-campaign" data-cluster-key="${esc(card.clusterKey)}">Start a campaign</button>
           <button class="mkt-btn-secondary" type="button" data-worklist-action="snooze-cluster" data-cluster-key="${esc(card.clusterKey)}">Snooze</button>
@@ -4996,6 +5159,7 @@ function _renderSignalsWorklistCard(card, cards = []) {
 export function renderMarketingPrioritization(payload, { stateFilter = '' } = {}) {
   if (payload && Array.isArray(payload.cards)) {
     const allCards = payload.cards;
+    _syncWorklistCardUiState(allCards);
     const cards = MKT_WORKLIST_UI_STATE.filter === 'time-sensitive'
       ? allCards.filter((card) => card.timeSensitive)
       : allCards;
@@ -5118,6 +5282,7 @@ export async function loadMarketingPrioritization(container) {
       limit: 25,
     });
     MKT_WORKLIST_UI_STATE.payload = payload;
+    _syncWorklistCardUiState(payload.cards || []);
     container.innerHTML = renderMarketingPrioritization(payload);
     _wirePrioritizationActions(container);
   } catch (err) {
@@ -5153,10 +5318,11 @@ function _wirePrioritizationActions(container) {
 
     const toggle = event.target.closest('[data-worklist-toggle]');
     if (toggle) {
-      const card = toggle.closest('[data-worklist-card]');
-      const body = card?.querySelector('.mkt-worklist-card-body');
-      const isOpen = card?.classList.toggle('is-open');
-      if (body) body.hidden = !isOpen;
+      const clusterKey = toggle.dataset.worklistToggle;
+      if (!clusterKey || !MKT_WORKLIST_UI_STATE.payload) return;
+      const ui = _getWorklistCardUiState(clusterKey);
+      ui.open = !ui.open;
+      _renderPrioritizationState(container);
       return;
     }
 
@@ -5164,8 +5330,7 @@ function _wirePrioritizationActions(container) {
     if (filterBtn && MKT_WORKLIST_UI_STATE.payload) {
       MKT_WORKLIST_UI_STATE.filter = filterBtn.dataset.worklistFilter || 'all';
       writeWorklistFilter(MKT_WORKLIST_UI_STATE.filter);
-      container.innerHTML = renderMarketingPrioritization(MKT_WORKLIST_UI_STATE.payload);
-      _wirePrioritizationActions(container);
+      _renderPrioritizationState(container);
       return;
     }
 
@@ -5177,7 +5342,8 @@ function _wirePrioritizationActions(container) {
 
     const actionBtn = event.target.closest('[data-worklist-action]');
     if (!actionBtn || !MKT_WORKLIST_UI_STATE.payload) return;
-    const clusterKey = actionBtn.dataset.clusterKey;
+    const clusterKey = actionBtn.dataset.clusterKey
+      || actionBtn.closest('[data-worklist-card]')?.dataset.worklistCard;
     const card = MKT_WORKLIST_UI_STATE.payload.cards.find((entry) => entry.clusterKey === clusterKey);
     if (!card) return;
 
@@ -5201,11 +5367,19 @@ function _wirePrioritizationActions(container) {
       return;
     }
 
+    if (actionBtn.dataset.worklistAction === 'toggle-show-all') {
+      const ui = _getWorklistCardUiState(clusterKey);
+      ui.showAll = !ui.showAll;
+      ui.open = true;
+      _renderPrioritizationState(container);
+      return;
+    }
+
     if (actionBtn.dataset.worklistAction === 'start-campaign') {
       actionBtn.disabled = true;
       actionBtn.textContent = 'Starting…';
       try {
-        const result = await promoteSignalWorklistClusterApi({
+        const result = await promoteSignalClusterApi({
           signalIds: card.signalIds,
           title: card.title,
         });
@@ -5234,6 +5408,38 @@ function _wirePrioritizationActions(container) {
       await Promise.all(card.signalIds.map((signalId) => archiveSignalApi(signalId)));
       await loadMarketingPrioritization(container);
     }
+  });
+
+  container.addEventListener('input', (event) => {
+    const search = event.target.closest('[data-worklist-search-input]');
+    if (!search || !MKT_WORKLIST_UI_STATE.payload) return;
+    const clusterKey = search.dataset.worklistSearchInput;
+    if (!clusterKey) return;
+    const ui = _getWorklistCardUiState(clusterKey);
+    ui.query = search.value || '';
+    ui.open = true;
+    ui.showAll = false;
+    _renderPrioritizationState(container);
+    const nextInput = container.querySelector(`[data-worklist-search-input="${CSS.escape(clusterKey)}"]`);
+    if (nextInput) {
+      nextInput.focus();
+      const cursor = ui.query.length;
+      if (typeof nextInput.setSelectionRange === 'function') {
+        nextInput.setSelectionRange(cursor, cursor);
+      }
+    }
+  });
+
+  container.addEventListener('change', (event) => {
+    const source = event.target.closest('[data-worklist-source-filter]');
+    if (!source || !MKT_WORKLIST_UI_STATE.payload) return;
+    const clusterKey = source.dataset.worklistSourceFilter;
+    if (!clusterKey) return;
+    const ui = _getWorklistCardUiState(clusterKey);
+    ui.sourceType = source.value || 'all';
+    ui.open = true;
+    ui.showAll = false;
+    _renderPrioritizationState(container);
   });
 }
 

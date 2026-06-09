@@ -38,6 +38,7 @@ from artemis.marketing.repository import (
     create_signal,
     find_signal_by_dedupe_key,
     get_active_ruleset_version,
+    get_candidate_signals,
     get_signal,
     list_signal_worklist_overrides,
     list_signals,
@@ -307,24 +308,30 @@ async def get_worklist(
     }
 
 
+@router.post("/clusters/promote")
 @router.post("/worklist/promote")
-async def promote_signal_worklist_cluster(
+async def promote_signal_cluster(
     body: WorklistPromoteRequest,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Promote one operator-picked worklist cluster into a campaign workspace."""
+    """Promote an arbitrary operator-picked signal set into one campaign candidate."""
     if not body.signal_ids:
         raise bad_request("signalIds must contain at least one signal")  # noqa: B904
 
-    candidate = await promote_signal_cluster_to_candidate(session, body.signal_ids)
+    try:
+        candidate = await promote_signal_cluster_to_candidate(session, body.signal_ids)
+    except ValueError as exc:
+        raise bad_request(str(exc)) from exc
     await session.commit()
     await session.refresh(candidate)
+    links = await get_candidate_signals(session, candidate.id)
     return {
         "candidateId": candidate.id,
         "candidateName": candidate.name or body.title or f"Campaign {candidate.id}",
         "workspaceState": candidate.workspace_state,
         "initiatedAt": candidate.initiated_at.isoformat() if candidate.initiated_at else None,
         "signalIds": body.signal_ids,
+        "linkedSignalIds": [link.signal_id for link in links],
     }
 
 
@@ -776,8 +783,10 @@ def _signal_fit_score(signal: SignalQueue) -> float:
     qual = signal.qualification_json or {}
     if isinstance(qual, dict):
         for key in ("fit_score", "adjustedScore", "rawScore"):
-            with suppress(TypeError, ValueError):
-                return float(qual.get(key))
+            value = qual.get(key)
+            if value is not None:
+                with suppress(TypeError, ValueError):
+                    return float(value)
         scores = qual.get("scores")
         if isinstance(scores, list):
             for score in scores:
@@ -785,8 +794,10 @@ def _signal_fit_score(signal: SignalQueue) -> float:
                     isinstance(score, dict)
                     and score.get("campaignFamily") == signal.campaign_family
                 ):
-                    with suppress(TypeError, ValueError):
-                        return float(score.get("adjustedScore"))
+                    score_value = score.get("adjustedScore")
+                    if score_value is not None:
+                        with suppress(TypeError, ValueError):
+                            return float(score_value)
     return 0.0
 
 

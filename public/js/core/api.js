@@ -2410,13 +2410,17 @@ export async function fetchSignalWorklistApi({ windowDays = 30, horizonDays = 60
   return _readJsonOrThrow(res, "Failed to fetch signal worklist");
 }
 
-export async function promoteSignalWorklistClusterApi({ signalIds, title, updatedBy } = {}) {
-  const res = await fetch("/api/signal-queue/worklist/promote", {
+export async function promoteSignalClusterApi({ signalIds, title, updatedBy } = {}) {
+  const res = await fetch("/api/signal-queue/clusters/promote", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ signalIds, title, updatedBy }),
   });
   return _readJsonOrThrow(res, "Failed to promote signal cluster");
+}
+
+export async function promoteSignalWorklistClusterApi(args = {}) {
+  return promoteSignalClusterApi(args);
 }
 
 export async function removeSignalFromWorklistApi({ signalId, updatedBy } = {}) {

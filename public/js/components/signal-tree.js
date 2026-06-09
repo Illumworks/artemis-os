@@ -294,8 +294,14 @@ function signalTitle(signal) {
   return `${code} · ${place}`;
 }
 
-function rowHtml(signal, selectedId) {
+export function isSignalSelectableForCluster(signal) {
+  return signal?.signalStatus === "qualified";
+}
+
+function rowHtml(signal, selectedId, selectedSignalIds = []) {
   const selected = String(signal.id) === String(selectedId);
+  const selectable = isSignalSelectableForCluster(signal);
+  const checked = selectedSignalIds.includes(String(signal.id));
   const initial = (signal.district || signal.headline || "?").trim()[0]?.toUpperCase() || "?";
   const pipelineBadge = signal.pipelineRun
     ? `<span class="mkt-signal-row-pipeline">${esc(signal.pipelineRun.pipelineName)} · ${esc(String(signal.pipelineRun.id).slice(0, 8))}</span>`
@@ -304,22 +310,29 @@ function rowHtml(signal, selectedId) {
     ? `<span class="mkt-signal-row-pipeline">→ ${esc(signal.campaignCandidateName || "Campaign workspace")}</span>`
     : "";
   return `
-    <button class="mkt-signal-row${selected ? " is-selected" : ""}" type="button"
-            data-signal-row="${esc(signal.id)}" aria-pressed="${selected ? "true" : "false"}">
-      <span class="mkt-signal-row-geo">${esc(signal.stateCode || "--")}</span>
-      <span class="mkt-signal-row-initial">${esc(initial)}</span>
-      <span class="mkt-signal-row-main">
-        <span class="mkt-signal-row-title">${esc(signalTitle(signal))}</span>
-        <span class="mkt-signal-row-sub">${esc(signal.headline)}</span>
-        ${pipelineBadge}
-        ${campaignBadge}
-      </span>
-      <span class="mkt-signal-row-side">
-        <span class="mkt-signal-row-urgency mkt-signal-row-urgency--${esc(signal.urgencyTier)}">${esc(signal.urgencyTier)}</span>
-        <span class="mkt-signal-row-age">${esc(timeAgo(signal.discoveredAt))}</span>
-      </span>
-      <span class="mkt-signal-row-dot mkt-signal-row-dot--${esc(signal.signalStatus)}" title="${esc(signal.signalStatus)}"></span>
-    </button>`;
+    <div class="mkt-signal-row-wrap${checked ? " is-checked" : ""}">
+      ${selectable ? `
+        <label class="mkt-signal-row-select" aria-label="Select signal ${esc(signal.id)} for manual cluster">
+          <input type="checkbox" data-signal-select="${esc(signal.id)}"${checked ? " checked" : ""}>
+        </label>
+      ` : '<span class="mkt-signal-row-select-spacer" aria-hidden="true"></span>'}
+      <button class="mkt-signal-row${selected ? " is-selected" : ""}" type="button"
+              data-signal-row="${esc(signal.id)}" aria-pressed="${selected ? "true" : "false"}">
+        <span class="mkt-signal-row-geo">${esc(signal.stateCode || "--")}</span>
+        <span class="mkt-signal-row-initial">${esc(initial)}</span>
+        <span class="mkt-signal-row-main">
+          <span class="mkt-signal-row-title">${esc(signalTitle(signal))}</span>
+          <span class="mkt-signal-row-sub">${esc(signal.headline)}</span>
+          ${pipelineBadge}
+          ${campaignBadge}
+        </span>
+        <span class="mkt-signal-row-side">
+          <span class="mkt-signal-row-urgency mkt-signal-row-urgency--${esc(signal.urgencyTier)}">${esc(signal.urgencyTier)}</span>
+          <span class="mkt-signal-row-age">${esc(timeAgo(signal.discoveredAt))}</span>
+        </span>
+        <span class="mkt-signal-row-dot mkt-signal-row-dot--${esc(signal.signalStatus)}" title="${esc(signal.signalStatus)}"></span>
+      </button>
+    </div>`;
 }
 
 function groupHtml(group, context, depth = 0) {
@@ -327,7 +340,9 @@ function groupHtml(group, context, depth = 0) {
   const collapsed = !context.forceOpen && !!context.collapsed[id];
   const count = group.signals.length + group.children.reduce((sum, child) => sum + child.signals.length, 0);
   const rows = group.signals.length
-    ? group.signals.map((signal) => rowHtml(signal, context.selectedId)).join("")
+    ? group.signals
+      .map((signal) => rowHtml(signal, context.selectedId, context.selectedSignalIds))
+      .join("")
     : "";
   const children = group.children.map((child) => groupHtml(child, context, depth + 1)).join("");
   const empty = !count ? '<p class="mkt-signal-folder-empty">No signals matching filter.</p>' : "";
@@ -516,6 +531,9 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
   const filters = options.filters || {};
   // DIST4: hide-unsupported toggle (default OFF — D4 still visible, per D-4 decision)
   const hideUnsupported = !!options.hideUnsupported;
+  const selectedSignalIds = Array.isArray(options.selectedSignalIds)
+    ? options.selectedSignalIds.map((value) => String(value))
+    : [];
   const selectedId = options.selectedId || signals[0]?.id || null;
   const selected = signals.find((s) => String(s.id) === String(selectedId)) || signals[0] || null;
   const filtered = sortSignals(filterSignals(signals, { query, filters, hideUnsupported }), sort);
@@ -523,6 +541,7 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
   const filterOptions = summarizeFilterOptions(signals);
   const collapsed = options.collapsed || readCollapsedSignalGroups();
   const forceOpen = !!query;
+  const selectedCount = selectedSignalIds.length;
   const filtersHtml = [
     ...SIGNAL_URGENCIES.map((u) => filterChip(`Urgency: ${u}`, u, "urgencies", filters.urgencies?.includes(u))),
     ...filterOptions.statuses.map((s) => filterChip(`State: ${STATUS_LABELS[s] || s}`, s, "statuses", filters.statuses?.includes(s))),
@@ -530,8 +549,16 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
     ...filterOptions.geographies.map((g) => filterChip(`Geo: ${g}`, g, "geographies", filters.geographies?.includes(g))),
   ].join("");
   const groupsHtml = mode === "flat"
-    ? filtered.map((signal) => rowHtml(signal, selected?.id)).join("")
-    : tree.map((group) => groupHtml(group, { mode, selectedId: selected?.id, collapsed, forceOpen })).join("");
+    ? filtered.map((signal) => rowHtml(signal, selected?.id, selectedSignalIds)).join("")
+    : tree
+      .map((group) => groupHtml(group, {
+        mode,
+        selectedId: selected?.id,
+        selectedSignalIds,
+        collapsed,
+        forceOpen,
+      }))
+      .join("");
   const emptyPage = signals.length === 0;
   const treeEmpty = !emptyPage && filtered.length === 0;
 
@@ -553,6 +580,16 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
         ${SIGNAL_GROUPS.map((g) => `<button type="button" class="${mode === g ? "is-active" : ""}" data-signal-group="${g}">${esc(g === "reason" ? "Reason Code" : g === "pipeline" ? "Pipeline Run" : g[0].toUpperCase() + g.slice(1))}</button>`).join("")}
       </div>
       <div class="mkt-signals-filters">${filtersHtml}</div>
+      <div class="mkt-signals-cluster-builder">
+        <div class="mkt-signals-cluster-copy">
+          <strong>Manual cluster:</strong> pick 2+ qualified signals in Browse all, then group them into a cluster and start a campaign.
+          <span class="mkt-signals-cluster-count">${esc(selectedCount)} selected</span>
+        </div>
+        <div class="mkt-signals-cluster-actions">
+          <button class="mkt-btn-primary" type="button" data-signal-action="group-start-campaign"${selectedCount < 2 ? " disabled" : ""}>Group into a cluster → Start a campaign</button>
+          <button class="mkt-btn-ghost" type="button" data-signal-action="group-clear"${selectedCount === 0 ? " disabled" : ""}>Clear selection</button>
+        </div>
+      </div>
       <div class="mkt-signals-add-row">
         <button class="mkt-btn-secondary mkt-signals-add-btn" type="button" data-signal-action="add-open">+ Add Signal</button>
       </div>

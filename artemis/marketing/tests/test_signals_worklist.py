@@ -149,12 +149,13 @@ async def test_worklist_promote_creates_one_candidate_for_cluster(
     sig_b_id = sig_b.id
 
     response = await client.post(
-        "/api/signal-queue/worklist/promote",
+        "/api/signal-queue/clusters/promote",
         json={"signalIds": [sig_a_id, sig_b_id], "title": "Fort Bend ISD"},
     )
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["candidateId"] is not None
+    assert set(payload["linkedSignalIds"]) == {sig_a_id, sig_b_id}
 
     links = (
         (
@@ -174,6 +175,30 @@ async def test_worklist_promote_creates_one_candidate_for_cluster(
     refreshed_b = await db_session.get(SignalQueue, sig_b_id)
     assert refreshed_a is not None and refreshed_a.signal_status == "approved"
     assert refreshed_b is not None and refreshed_b.signal_status == "approved"
+
+
+async def test_freeform_cluster_rejects_mixed_campaign_families(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await _reset(db_session)
+    async with db_session.begin():
+        district = await _seed_district(
+            db_session, name="Humble ISD", state="TX", nces="666666666666"
+        )
+        sig_a = await _seed_signal(
+            db_session, headline="Humble board note", district=district, family="obc"
+        )
+        sig_b = await _seed_signal(
+            db_session, headline="Humble biliteracy note", district=district, family="biliteracy"
+        )
+
+    response = await client.post(
+        "/api/signal-queue/clusters/promote",
+        json={"signalIds": [sig_a.id, sig_b.id], "title": "Mixed families"},
+    )
+    assert response.status_code == 400, response.text
+    assert "campaign_family" in response.text
 
 
 async def test_browse_all_surfaces_campaign_trace_for_converted_signals(
