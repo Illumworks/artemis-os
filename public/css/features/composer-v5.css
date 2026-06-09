@@ -523,7 +523,7 @@
   border-radius: 18px;
   padding: 26px 34px;
   line-height: 1.8;
-  font-family: var(--cv5-serif);
+  font-family: var(--font-sans, "Inter", -apple-system, system-ui, sans-serif);
   font-size: 15px;
   color: var(--cv5-ink);
   box-shadow: var(--cv5-shadow-card);
@@ -533,7 +533,7 @@
 .cv5-paper .ProseMirror {
   outline: none;
   min-height: 320px;
-  font-family: var(--cv5-serif);
+  font-family: var(--font-sans, "Inter", -apple-system, system-ui, sans-serif);
   font-size: 15px;
   color: var(--cv5-ink);
   line-height: 1.8;

@@ -1133,6 +1133,10 @@ async def rewrite_span(
         selected_text=selected_text,
         attachments=None,
         prior_messages=None,
+        # Span rewrites return ONLY the replacement passage — never the
+        # chat-presentation/deliverable-fence directive, or the ```artemis-draft```
+        # markers would be inserted verbatim into the document.
+        include_chat_presentation=False,
     )
 
     # ── 5. Model invocation ───────────────────────────────────────────────────
@@ -1197,6 +1201,16 @@ async def rewrite_span(
                 if isinstance(block, TextBlock):
                     rewritten_text += block.text
             break
+
+    # Defensive: if the model wrapped the passage in an ```artemis-draft``` (or
+    # bare ```) fence despite the instruction, unwrap it so the markers never
+    # reach the document. Span replacement must be plain text only.
+    from artemis.marketing.writing_studio.compose_engine import parse_draft_fence
+
+    _chat, _fenced = parse_draft_fence(rewritten_text)
+    if _fenced is not None:
+        rewritten_text = _fenced
+    rewritten_text = re.sub(r"^```[a-zA-Z-]*\n?|\n?```$", "", rewritten_text.strip()).strip()
 
     if not rewritten_text.strip():
         raise bad_request("Model returned no text for the span rewrite", "rewrite_empty_response")

@@ -358,6 +358,7 @@ def build_writing_memory_prompt(
     selected_text: str | None = None,
     attachments: list[dict[str, Any]] | None = None,
     prior_messages: list[Any] | None = None,
+    include_chat_presentation: bool = True,
 ) -> dict[str, Any]:
     """Assemble system + user prompts for one Writing Studio compose turn.
 
@@ -432,9 +433,14 @@ def build_writing_memory_prompt(
         runtime_context,
         "",
         grounding_block,
-        "",
-        COMPOSE_CHAT_PRESENTATION_DIRECTIVE,
     ]
+    # The chat-presentation + deliverable-fence directive applies ONLY to the
+    # interactive compose chat. Span rewrites (and other single-shot callers)
+    # pass include_chat_presentation=False so the model never wraps output in an
+    # ```artemis-draft``` fence — otherwise those markers get inserted verbatim
+    # into the document by the rewrite Accept path.
+    if include_chat_presentation:
+        system_parts += ["", COMPOSE_CHAT_PRESENTATION_DIRECTIVE]
     system_prompt = "\n".join(system_parts)
 
     # ── User prompt ───────────────────────────────────────────────────────────
