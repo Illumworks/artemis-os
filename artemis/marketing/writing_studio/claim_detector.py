@@ -8,7 +8,10 @@ Stage 4 of the Composer rebuild.  This module:
      against the profile's APPROVED claims from the Claims Register.
   3. SUPPRESSES candidates that are sufficiently similar to an approved claim
      (score >= SUPPRESS_THRESHOLD) — they are already registered language.
-  4. Returns the remaining candidates as flags with the top 1-2 nearest approved
+  4. SUPPRESSES candidates that match a dismissed span stored in
+     ``dismissed_claims`` (exact normalised-text match) — the user told us not
+     to flag this text on this draft.
+  5. Returns the remaining candidates as flags with the top 1-2 nearest approved
      claims for popover context.
 
 Design goals:
@@ -18,6 +21,13 @@ Design goals:
 - No external dependencies beyond the Python stdlib (re, string).
 - Complexity is O(candidates × approved_claims); fast at realistic sizes (~100
   approved claims, <10 candidate spans per draft).
+
+Precision rules (2026-06-09):
+- Questions (sentences ending in "?") are EXCLUDED — always rhetorical.
+- Soft/motivational superlatives ("what matters most", bare "most" without a
+  real comparative object) are EXCLUDED.
+- Ordinal/leading "First …" (sentence-initial position) is EXCLUDED; only the
+  market-claim form "X is the first Y to/that …" fires.
 """
 
 from __future__ import annotations
@@ -92,11 +102,11 @@ _SUPERLATIVE_RE = re.compile(
     r"""
     \b(?:
         only           # "the only solution"
-      | first(?:\s+ever)?  # "first ever"
+      | first(?:\s+ever)?  # "first ever" — positional filtering applied below
       | best           # "best in class"
       | \#1            # "#1 rated"
       | number\s+one   # "number one"
-      | most           # "most effective"
+      | most           # "most effective" — vagueness filtering applied below
       | leading        # "leading platform"
       | industry[- ]leading
       | proven         # "proven results"
@@ -110,6 +120,21 @@ _SUPERLATIVE_RE = re.compile(
     )\b
     """,
     re.IGNORECASE | re.VERBOSE,
+)
+
+# Market-claim "first" — must match "X is/are the first Y to/that …"
+# (not a leading/ordinal "First paragraph…" or "First, …")
+_MARKET_FIRST_RE = re.compile(
+    r"""\b(?:is|are|was|were|becomes?|became)\s+the\s+first\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Superlative "most" that is attached to a real claim object.
+# We require the pattern: "most <adjective/noun> <in/at/for/of/on|that|to|among>"
+# OR "#1 …" / "number one …" — bare "most" in motivational copy is excluded.
+_MOST_WITH_OBJECT_RE = re.compile(
+    r"""\bmost\s+\w+(?:\s+\w+){0,3}?\s+(?:in|at|for|of|on|that|to|among)\b""",
+    re.IGNORECASE,
 )
 
 _COMPARATIVE_RE = re.compile(
@@ -232,11 +257,43 @@ def _extract_sentence_containing(text: str, pos: int) -> tuple[int, int] | None:
     return (start, end)
 
 
+def _is_question(span: str) -> bool:
+    """Return True if the span is a question (ends with '?')."""
+    return span.rstrip().endswith("?")
+
+
+def _is_excluded_superlative_match(match_text: str, span: str) -> bool:
+    """Return True if this superlative match should be excluded as non-claim.
+
+    Rules applied in order:
+    1. "first" tokens: only flag if the sentence contains a market-claim form
+       ("X is/was the first Y to/that …").  Leading/ordinal "First …" at the
+       sentence start (or "First, …") is excluded.
+    2. "most" tokens: only flag if followed by a real comparative object
+       (see _MOST_WITH_OBJECT_RE).  Bare motivational "what matters most",
+       "matters most", "most important thing" without a comparison anchor
+       are excluded.
+    """
+    token_lower = match_text.lower()
+
+    if token_lower.startswith("first"):
+        # Allow only if the span contains a market-claim "is/are the first" form.
+        return not bool(_MARKET_FIRST_RE.search(span))
+
+    if token_lower == "most":
+        # Allow only if "most" appears in a real comparative phrase.
+        return not bool(_MOST_WITH_OBJECT_RE.search(span))
+
+    return False  # all other superlatives pass through
+
+
 def _extract_candidates(text: str) -> list[tuple[int, int, str, str]]:
     """Return list of (start, end, span_text, reason) for every candidate span.
 
     Overlapping spans are deduplicated (longest wins).
     Spans that are too short (length or word count) are discarded.
+    Questions (sentences ending in '?') are excluded.
+    Soft/motivational superlatives ('first' ordinal, bare 'most') are excluded.
     """
     found: list[tuple[int, int, str, str]] = []
 
@@ -253,6 +310,17 @@ def _extract_candidates(text: str) -> list[tuple[int, int, str, str]]:
                 continue
             if len(span.split()) < MIN_CANDIDATE_WORDS:
                 continue
+
+            # ── Precision exclusions ──────────────────────────────────────────
+            # 1. Questions are rhetorical, never a market claim.
+            if _is_question(span):
+                continue
+
+            # 2. Superlative class: apply per-token exclusion rules.
+            if class_name == "superlative" and _is_excluded_superlative_match(m.group(0), span):
+                continue
+            # ─────────────────────────────────────────────────────────────────
+
             found.append((start, end, span, class_name))
 
     if not found:
@@ -281,23 +349,38 @@ def _extract_candidates(text: str) -> list[tuple[int, int, str, str]]:
 def scan_draft_for_flags(
     draft_text: str,
     approved_claims: list[tuple[int, str]],  # [(claim_id, approved_phrasing), …]
+    dismissed_claims: list[str] | None = None,  # [normalised_text, …]
 ) -> list[ClaimFlag]:
     """Scan *draft_text* and return flagged spans.
 
     Args:
-        draft_text:      The full plain-text draft to scan.
-        approved_claims: List of (id, phrasing) for all APPROVED claims in the
-                         profile.  Used for suppression + nearestApproved.
+        draft_text:       The full plain-text draft to scan.
+        approved_claims:  List of (id, phrasing) for all APPROVED claims in the
+                          profile.  Used for suppression + nearestApproved.
+        dismissed_claims: Normalised texts that the user has dismissed via the
+                          Disregard action.  Matching candidates are suppressed
+                          without creating a flag (lossless — dismissals are
+                          stored in draft metadata, not deleted).
 
     Returns:
         List of ClaimFlag objects (start, end in character offsets of the
         original *draft_text*).  Candidates similar to approved claims are
-        SUPPRESSED (not returned).
+        SUPPRESSED (not returned).  Candidates matching a dismissed span are
+        also SUPPRESSED.
     """
     candidates = _extract_candidates(draft_text)
     flags: list[ClaimFlag] = []
 
+    # Build a fast lookup set for dismissed spans (normalised).
+    dismissed_set: set[str] = set()
+    for d in dismissed_claims or []:
+        dismissed_set.add(_normalize(d))
+
     for start, end, span_text, reason in candidates:
+        # Suppress if the span was previously dismissed by the user.
+        if dismissed_set and _normalize(span_text) in dismissed_set:
+            continue
+
         # Compute similarity against all approved claims.
         scored: list[tuple[float, int, str]] = []  # (score, claim_id, phrasing)
         for claim_id, phrasing in approved_claims:

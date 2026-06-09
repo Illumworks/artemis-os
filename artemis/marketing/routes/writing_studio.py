@@ -1233,13 +1233,22 @@ async def claim_scan(
     """
     from artemis.marketing.writing_studio.claim_detector import scan_draft_for_flags
 
-    # Load the draft to get text (if not supplied in body).
+    # Load the draft to get text (if not supplied in body) and dismissed claims.
     if body is None:
         body = {}
     text: str | None = body.get("text") if isinstance(body, dict) else None
 
+    # Always load the draft so we can retrieve dismissedClaims from metadata.
+    # When `text` was supplied in the body we still need the draft for dismissals
+    # (silently ignore 404 — text-only scans without a real draft are used in
+    # tests and the dismissedClaims list will simply be empty).
+    dismissed_claims: list[str] = []
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is not None:
+        _meta_for_dismissed = deliverable.deliverable_metadata or {}
+        dismissed_claims = list(_meta_for_dismissed.get("dismissedClaims", []))
+
     if not text:
-        deliverable = await session.get(CampaignDeliverable, draft_id)
         if deliverable is None:
             raise not_found(f"Draft {draft_id} not found", "draft_not_found")
         meta = deliverable.deliverable_metadata or {}
@@ -1259,7 +1268,7 @@ async def claim_scan(
         claims = await wr_repo.list_claims(session, active_profile.id, status="approved")
         approved_claims_list = [(c.id, c.approved_phrasing) for c in claims]
 
-    flags = scan_draft_for_flags(text, approved_claims_list)
+    flags = scan_draft_for_flags(text, approved_claims_list, dismissed_claims)
 
     return {
         "flags": [
@@ -1281,6 +1290,70 @@ async def claim_scan(
         ],
         "scannedChars": len(text),
         "approvedClaimsCount": len(approved_claims_list),
+    }
+
+
+# ── Stage 4: Claim-dismiss endpoint ──────────────────────────────────────────
+
+
+@router.post("/drafts/{draft_id}/claim-dismiss", status_code=200)
+async def claim_dismiss(
+    draft_id: int = Path(..., ge=1),
+    body: dict[str, Any] | None = None,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Record a "Disregard" dismissal for a flagged claim span.
+
+    POST body (one of the following is required):
+      text: str  — the exact text of the flagged span to dismiss.
+      span: str  — alias for text (either key accepted).
+
+    Dismissals are stored ADDITIVELY in ``deliverable_metadata.dismissedClaims``
+    (a JSON array of span texts).  The list grows; entries are never deleted
+    (lossless rule).  The claim-scan endpoint suppresses any candidate whose
+    normalised text matches a dismissed entry.
+
+    Returns:
+      { "ok": true, "dismissedClaims": [...all dismissed texts for this draft] }
+
+    404 if the draft does not exist.
+    400 if body is missing or neither `text` nor `span` is provided.
+    """
+    if body is None:
+        body = {}
+
+    span_text: str | None = body.get("text") or body.get("span") or None
+    if not span_text or not isinstance(span_text, str) or not span_text.strip():
+        raise bad_request(
+            "text (or span) is required and must be a non-empty string",
+            "missing_dismiss_text",
+        )
+
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+
+    meta: dict[str, Any] = dict(deliverable.deliverable_metadata or {})
+    existing: list[str] = list(meta.get("dismissedClaims", []))
+
+    # Deduplicate by normalised text — don't store the same dismissal twice.
+    from artemis.marketing.writing_studio.claim_detector import _normalize
+
+    norm_new = _normalize(span_text)
+    already_dismissed = any(_normalize(e) == norm_new for e in existing)
+    if not already_dismissed:
+        existing.append(span_text.strip())
+        meta["dismissedClaims"] = existing
+        deliverable.deliverable_metadata = meta
+        deliverable.updated_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(deliverable)
+
+    return {
+        "ok": True,
+        "dismissedClaims": list(
+            (deliverable.deliverable_metadata or {}).get("dismissedClaims", [])
+        ),
     }
 
 

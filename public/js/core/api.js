@@ -2724,6 +2724,27 @@ export async function approveClaimApi(claimId) {
   return _readJsonOrThrow(res, "Failed to approve claim");
 }
 
+/**
+ * Disregard (dismiss) a claim flag for a specific draft.
+ * POST /api/writing-studio/drafts/{id}/claim-dismiss
+ * body: { text: string }  — the exact span text to dismiss.
+ * Returns: { ok: true, dismissedClaims: string[] }
+ *
+ * Lossless: dismissals are stored additively in deliverable_metadata and
+ * suppressed on future scans.  The flag does NOT come back on re-scan.
+ */
+export async function dismissClaimApi(draftId, spanText) {
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(draftId)}/claim-dismiss`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: spanText }),
+    },
+  );
+  return _readJsonOrThrow(res, "Failed to dismiss claim");
+}
+
 // ── Stage 6: Draft comments API ───────────────────────────────────────────────
 
 /**

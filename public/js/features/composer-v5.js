@@ -29,6 +29,7 @@ import {
   createWritingFolderApi,
   createWritingTemplateApi,
   deleteWritingFolderApi,
+  dismissClaimApi,
   exportWritingDraftToGoogleDocApi,
   fetchAccountInfo,
   fetchWritingDraft,
@@ -555,6 +556,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         <button type="button" class="cv5-claim-btn cv5-claim-btn-approve" data-claim-text="${esc(claimText)}">✓ Approve claim</button>
         <button type="button" class="cv5-claim-btn cv5-claim-btn-edit">Edit</button>
         <button type="button" class="cv5-claim-btn cv5-claim-btn-source">Find source</button>
+        <button type="button" class="cv5-claim-btn cv5-claim-btn-disregard" data-claim-text="${esc(claimText)}" title="Not a market claim — dismiss and never re-flag">Disregard</button>
       </div>
     `;
 
@@ -577,6 +579,13 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     claimPopover.querySelector(".cv5-claim-btn-source").addEventListener("click", () => {
       closeClaimPopover();
       console.info("[composer-v5] Find source: not yet implemented.");
+    });
+
+    // Disregard: dismiss the flag for this draft — it will not re-appear on re-scan.
+    claimPopover.querySelector(".cv5-claim-btn-disregard").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const text = e.currentTarget.dataset.claimText || claimText;
+      await handleDisregard(text);
     });
   }
 
@@ -617,6 +626,21 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     } catch (err) {
       console.error("[composer-v5] approve claim failed:", err);
       callbacks.onError?.(err.message || "Failed to approve claim.");
+    }
+  }
+
+  async function handleDisregard(spanText) {
+    // Dismiss the flag permanently for this draft: POST claim-dismiss, then
+    // re-scan so the decoration is removed immediately.
+    try {
+      await dismissClaimApi(currentDraftId, spanText);
+      closeClaimPopover();
+      // Re-scan so the dismissed span no longer appears as a decoration.
+      setTimeout(() => void runClaimScan(), 300);
+      callbacks.onStatus?.("Flag dismissed — won't re-appear on re-scan.");
+    } catch (err) {
+      console.error("[composer-v5] disregard claim failed:", err);
+      callbacks.onError?.(err.message || "Failed to disregard claim.");
     }
   }
 

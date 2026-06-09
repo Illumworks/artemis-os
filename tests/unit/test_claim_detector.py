@@ -251,3 +251,142 @@ def test_flag_dataclass_fields() -> None:
         nearest_approved=[NearestApproved(id=1, phrasing="bar baz", similarity=0.5)],
     )
     assert flag2.nearest_approved[0].id == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Precision tuning (2026-06-09) — questions, soft superlatives, ordinal "First"
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_question_is_not_flagged() -> None:
+    """A sentence ending in '?' must NEVER be flagged — it's rhetorical."""
+    text = "How do we truly understand what matters most to school leaders?"
+    flags = scan_draft_for_flags(text, [])
+    assert flags == [], f"Expected no flags for a question, got: {[f.text for f in flags]}"
+
+
+def test_what_matters_most_is_not_flagged() -> None:
+    """Motivational 'what matters most' copy is not a market claim."""
+    text = "What matters most is helping every student reach their reading potential."
+    flags = scan_draft_for_flags(text, [])
+    assert flags == [], f"Expected no flags for 'what matters most', got: {[f.text for f in flags]}"
+
+
+def test_matters_most_without_comparative_object_is_not_flagged() -> None:
+    """Bare 'most' without a real comparative anchor must not flag."""
+    text = "Reading matters most in the early grades."
+    flags = scan_draft_for_flags(text, [])
+    assert flags == [], f"Expected no flags for soft 'most', got: {[f.text for f in flags]}"
+
+
+def test_ordinal_first_paragraph_is_not_flagged() -> None:
+    """Leading/ordinal 'First ...' (sentence-initial position) must not flag."""
+    text = "First paragraph: Amira listens as students read aloud."
+    flags = scan_draft_for_flags(text, [])
+    assert flags == [], f"Expected no flags for ordinal 'First', got: {[f.text for f in flags]}"
+
+
+def test_ordinal_first_with_comma_is_not_flagged() -> None:
+    """'First, ...' (rhetorical enumeration) must not flag."""
+    text = "First, we screen every student in the classroom."
+    flags = scan_draft_for_flags(text, [])
+    assert flags == [], (
+        f"Expected no flags for enumeration 'First,', got: {[f.text for f in flags]}"
+    )
+
+
+def test_market_claim_first_is_flagged() -> None:
+    """'Amira is the first reading agent proven to ...' IS a market claim — must flag."""
+    text = "Amira is the first reading agent proven to deliver measurable results."
+    flags = scan_draft_for_flags(text, [])
+    assert len(flags) >= 1, (
+        "Expected at least 1 flag for 'Amira is the first ... proven', got none."
+    )
+
+
+def test_quantified_invented_stat_is_flagged() -> None:
+    """An invented quantified stat must flag (false positives are OK here)."""
+    text = "Amira improves reading scores by 99% over one semester."
+    flags = scan_draft_for_flags(text, [])
+    assert len(flags) >= 1, "Expected at least 1 flag for an invented '99%' stat, got none."
+
+
+def test_precision_paragraph_only_last_two_flag() -> None:
+    """The brief's acceptance test paragraph: only the quantified + market-first flag."""
+    paragraphs = [
+        "How do we truly understand what matters most to our students?",  # question → no flag
+        "What matters most is the evidence behind every product we choose.",  # soft most → no flag
+        "First paragraph: context is everything in early literacy.",  # ordinal first → no flag
+        "Amira is the first reading agent proven to deliver measurable literacy gains.",  # market first → FLAG
+        "Students improve scores by 99% after one semester of daily use.",  # invented stat → FLAG
+    ]
+    full_text = "\n".join(paragraphs)
+    flags = scan_draft_for_flags(full_text, [])
+    flag_texts = [f.text for f in flags]
+
+    # No flags on the first three sentences.
+    for sentence in paragraphs[:3]:
+        for flag in flags:
+            assert sentence.strip("?") not in flag.text or not flag.text.endswith("?"), (
+                f"Unexpected flag on non-claim sentence: {flag.text!r}"
+            )
+
+    # The last two sentences must produce at least one flag each.
+    market_first_flagged = any("first reading agent" in f.text for f in flags)
+    invented_stat_flagged = any("99%" in f.text for f in flags)
+    assert market_first_flagged, (
+        f"'first reading agent proven to' must be flagged. Got: {flag_texts}"
+    )
+    assert invented_stat_flagged, f"Invented '99%' stat must be flagged. Got: {flag_texts}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# dismissed_claims suppression
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_dismissed_claim_is_suppressed() -> None:
+    """A span text that was dismissed must not appear in flags on re-scan."""
+    text = "Amira improves reading scores by 99% in a single semester of daily practice."
+    # First confirm it flags without dismissal.
+    flags_before = scan_draft_for_flags(text, [])
+    assert len(flags_before) >= 1, "Precondition: claim must flag before dismissal."
+
+    flagged_text = flags_before[0].text
+    flags_after = scan_draft_for_flags(text, [], dismissed_claims=[flagged_text])
+    assert flags_after == [], (
+        f"Dismissed span must be suppressed on re-scan, got: {[f.text for f in flags_after]}"
+    )
+
+
+def test_dismissed_claim_suppression_is_normalised() -> None:
+    """Dismissal lookup is normalised — trailing punctuation / case differences
+    should not cause the flag to re-appear."""
+    text = "Amira is the first reading agent proven to deliver measurable results."
+    flags_before = scan_draft_for_flags(text, [])
+    assert len(flags_before) >= 1, "Precondition: claim must flag."
+
+    flagged_text = flags_before[0].text
+    # Dismiss with slightly different casing / trailing whitespace.
+    dismissed = [flagged_text.upper() + "   "]
+    flags_after = scan_draft_for_flags(text, [], dismissed_claims=dismissed)
+    assert flags_after == [], (
+        f"Normalised dismissal must suppress the flag, got: {[f.text for f in flags_after]}"
+    )
+
+
+def test_unrelated_dismissed_claim_does_not_suppress_other_flags() -> None:
+    """Dismissing claim A must not suppress claim B."""
+    text_a = "Amira improves reading scores by 99% in a single semester."
+    text_b = "Amira is the first reading agent proven to deliver measurable results."
+    full_text = text_a + " " + text_b
+
+    flags_all = scan_draft_for_flags(full_text, [])
+    assert len(flags_all) >= 2, "Precondition: both claims must flag."
+
+    # Dismiss only claim A's span text.
+    dismissed = [flags_all[0].text]
+    flags_after = scan_draft_for_flags(full_text, [], dismissed_claims=dismissed)
+
+    # At least one flag must remain (the one that wasn't dismissed).
+    assert len(flags_after) >= 1, "Dismissing one claim must not suppress unrelated flags."
