@@ -686,20 +686,38 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   selToolbar.setAttribute("role", "toolbar");
   selToolbar.setAttribute("aria-label", "Text editing actions");
   selToolbar.innerHTML = `
-    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Rewrite">Rewrite</button>
-    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Shorten">Shorten</button>
-    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Lengthen">Lengthen</button>
-    <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Make more formal">Tone</button>
-    <div class="cv5-sel-divider" aria-hidden="true"></div>
-    <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
-    <div class="cv5-sel-divider" aria-hidden="true"></div>
-    <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
-    <div class="cv5-sel-divider" aria-hidden="true"></div>
-    <button type="button" class="cv5-sel-btn cv5-sel-btn-comment" data-cv5-sel-action="__comment__" title="Add a comment to the selected text">💬 Comment</button>
-    <div class="cv5-sel-divider" aria-hidden="true"></div>
-    <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
+    <div class="cv5-sel-intent-row">
+      <input
+        type="text"
+        class="cv5-sel-intent-input"
+        placeholder="What should change?"
+        aria-label="What should change? (custom rewrite instruction)"
+        data-cv5-sel-intent
+      />
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-go-intent" data-cv5-sel-action="__intent_go__" title="Rewrite with this instruction">↑</button>
+    </div>
+    <div class="cv5-sel-presets-row">
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-preset" data-cv5-sel-action="Rewrite">Rewrite</button>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-preset" data-cv5-sel-action="Shorten">Shorten</button>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-preset" data-cv5-sel-action="Lengthen">Lengthen</button>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-preset" data-cv5-sel-action="Make more formal">Tone</button>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-brand cv5-sel-btn-preset" data-cv5-sel-action="Make on-brand">On-brand</button>
+      <div class="cv5-sel-divider" aria-hidden="true"></div>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Claim</button>
+      <button type="button" class="cv5-sel-btn cv5-sel-btn-comment" data-cv5-sel-action="__comment__" title="Add a comment to the selected text">💬</button>
+    </div>
   `;
   document.body.appendChild(selToolbar);
+
+  // Wire the intent input: Enter key submits; the Go button also submits.
+  selToolbar.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches(".cv5-sel-intent-input")) {
+      e.preventDefault();
+      const val = e.target.value.trim();
+      if (val) void triggerSpanRewrite(val);
+      e.target.value = "";
+    }
+  });
 
   // Track current selection for the toolbar + accept/reject flow.
   let selectionRange = null;   // {from, to} in PM positions
@@ -716,13 +734,52 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   function positionNearSelection(el) {
     // Place the element just above the selection's bounding rect.
+    // For full-paragraph / multi-paragraph selections, getBoundingClientRect()
+    // can return a zero-size rect in some browsers. Fall back to:
+    //   1. First non-empty client rect from getClientRects()
+    //   2. ProseMirror coordsAtPos at the selection end (most reliable)
     const domSel = window.getSelection();
     if (!domSel || domSel.rangeCount === 0) return;
-    const rect = domSel.getRangeAt(0).getBoundingClientRect();
-    if (!rect || (rect.width === 0 && rect.height === 0)) return;
+
+    let rect = domSel.getRangeAt(0).getBoundingClientRect();
+
+    // If rect is degenerate, try iterating client rects to find a real one.
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      const rects = domSel.getRangeAt(0).getClientRects();
+      for (let i = 0; i < rects.length; i++) {
+        if (rects[i].width > 0 || rects[i].height > 0) {
+          rect = rects[i];
+          break;
+        }
+      }
+    }
+
+    // Still degenerate? Use ProseMirror coordsAtPos at the selection end.
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      const { selection } = view.state;
+      const pos = selection.empty ? selection.head : selection.to;
+      try {
+        const coords = view.coordsAtPos(pos);
+        // coords gives viewport-relative {top, bottom, left, right}
+        rect = {
+          left: coords.left,
+          right: coords.right,
+          top: coords.top,
+          bottom: coords.bottom,
+          width: coords.right - coords.left,
+          height: coords.bottom - coords.top,
+        };
+      } catch (_) {
+        // If coordsAtPos also fails, bail — can't position safely.
+        return;
+      }
+    }
+
     const elW = el.offsetWidth || 260;
     const gap = 8;
-    let left = rect.left + rect.width / 2 - elW / 2;
+    // For multi-line selections, rect may span the whole selection; centre on it.
+    const rectCentreX = rect.left + (rect.width > 0 ? rect.width / 2 : 0);
+    let left = rectCentreX - elW / 2;
     left = Math.max(8, Math.min(left, window.innerWidth - elW - 8));
     let top = rect.top - el.offsetHeight - gap;
     if (top < 8) top = rect.bottom + gap; // flip below
@@ -842,72 +899,40 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
-  // Custom-ask: show a small inline input in the toolbar for free-text.
+  // Custom-ask: no longer a separate mode — the intent input is always visible.
+  // Keep this no-op for any remaining callers during the transition.
   let customAskActive = false;
   function showCustomAskInput() {
-    customAskActive = true;
-    selToolbar.innerHTML = `
-      <input
-        type="text"
-        class="cv5-sel-custom-input"
-        placeholder="Describe what you want…"
-        autofocus
-        aria-label="Custom rewrite instruction"
-      />
-      <button type="button" class="cv5-sel-btn cv5-sel-btn-go">Go ↑</button>
-      <button type="button" class="cv5-sel-btn cv5-sel-btn-cancel">✕</button>
-    `;
-    selToolbar.classList.add("is-visible");
-    positionNearSelection(selToolbar);
-    const input = selToolbar.querySelector(".cv5-sel-custom-input");
+    // Intent input is always in the toolbar; just focus it.
+    const input = selToolbar.querySelector(".cv5-sel-intent-input");
     input?.focus();
-    selToolbar.querySelector(".cv5-sel-btn-go").addEventListener("click", () => {
-      const val = input?.value?.trim();
-      if (val) void triggerSpanRewrite(val);
-      resetToolbarButtons();
-    });
-    selToolbar.querySelector(".cv5-sel-btn-cancel").addEventListener("click", () => {
-      resetToolbarButtons();
-      hideSelToolbar();
-    });
-    input?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        const val = input.value?.trim();
-        if (val) void triggerSpanRewrite(val);
-        resetToolbarButtons();
-      } else if (e.key === "Escape") {
-        resetToolbarButtons();
-        hideSelToolbar();
-      }
-    });
   }
 
   function resetToolbarButtons() {
     customAskActive = false;
-    selToolbar.innerHTML = `
-      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Rewrite">Rewrite</button>
-      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Shorten">Shorten</button>
-      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Lengthen">Lengthen</button>
-      <button type="button" class="cv5-sel-btn" data-cv5-sel-action="Make more formal">Tone</button>
-      <div class="cv5-sel-divider" aria-hidden="true"></div>
-      <button type="button" class="cv5-sel-btn cv5-sel-btn-brand" data-cv5-sel-action="Make on-brand">Make on-brand</button>
-      <div class="cv5-sel-divider" aria-hidden="true"></div>
-      <button type="button" class="cv5-sel-btn cv5-sel-btn-claim" data-cv5-sel-action="__add_claim__" title="Add selection to Claims Register as approved">＋ Add to Claims</button>
-      <div class="cv5-sel-divider" aria-hidden="true"></div>
-      <button type="button" class="cv5-sel-btn cv5-sel-btn-comment" data-cv5-sel-action="__comment__" title="Add a comment to the selected text">💬 Comment</button>
-      <div class="cv5-sel-divider" aria-hidden="true"></div>
-      <button type="button" class="cv5-sel-btn cv5-sel-btn-edit" data-cv5-sel-action="__custom__" title="Custom instruction">✎</button>
-    `;
+    // Clear the intent input so it's fresh for the next selection.
+    const input = selToolbar.querySelector(".cv5-sel-intent-input");
+    if (input) input.value = "";
   }
 
   // Delegate click on toolbar buttons.
   selToolbar.addEventListener("click", (e) => {
-    if (customAskActive) return;
     const btn = e.target.closest("[data-cv5-sel-action]");
     if (!btn) return;
     const action = btn.dataset.cv5SelAction;
     if (!action) return;
+    if (action === "__intent_go__") {
+      // Submit the current value of the intent input.
+      const input = selToolbar.querySelector(".cv5-sel-intent-input");
+      const val = input?.value?.trim();
+      if (val) {
+        void triggerSpanRewrite(val);
+        if (input) input.value = "";
+      }
+      return;
+    }
     if (action === "__custom__") {
+      // Legacy: focus the intent input.
       showCustomAskInput();
       return;
     }
@@ -2406,6 +2431,106 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // Holds the previous editor content so the user can revert after Apply.
   let applyUndoContent = null;
 
+  // ── Deliverable preview popover ───────────────────────────────────────────
+  // Shown when the user clicks "Preview & apply" in the chat thread.
+  // Matches the rewrite-span accept/reject popover pattern (cv5-rwp-* classes).
+  const deliverablePreviewPopover = document.createElement("div");
+  deliverablePreviewPopover.className = "cv5-rewrite-popover cv5-deliverable-preview";
+  deliverablePreviewPopover.setAttribute("role", "dialog");
+  deliverablePreviewPopover.setAttribute("aria-label", "Proposed document");
+  deliverablePreviewPopover.style.display = "none";
+  document.body.appendChild(deliverablePreviewPopover);
+
+  let pendingDeliverableContent = null; // string — the deliverable text staged for apply
+
+  function openDeliverablePreview(newContent, triggerEl) {
+    pendingDeliverableContent = newContent;
+    // Truncate for the preview — show up to ~600 chars then a "Show full…" toggle.
+    const PREVIEW_MAX = 600;
+    const truncated = newContent.length > PREVIEW_MAX;
+    const previewText = truncated ? newContent.slice(0, PREVIEW_MAX) + "…" : newContent;
+
+    deliverablePreviewPopover.innerHTML = `
+      <div class="cv5-rwp-label">Proposed document</div>
+      <div class="cv5-deliverable-preview-body">
+        <div class="cv5-deliverable-preview-text" data-cv5-deliverable-preview-text>${esc(previewText)}</div>
+        ${truncated ? `<button type="button" class="cv5-deliverable-preview-expand" data-cv5-deliverable-expand>Show full document ▾</button>` : ""}
+      </div>
+      <div class="cv5-rwp-actions">
+        <button type="button" class="cv5-rwp-reject" data-cv5-deliverable-discard>Discard</button>
+        <button type="button" class="cv5-rwp-accept" data-cv5-deliverable-apply>Apply to document</button>
+      </div>
+    `;
+    deliverablePreviewPopover.style.display = "block";
+
+    // Position the popover near the trigger button (in the chat thread).
+    if (triggerEl) {
+      const btnRect = triggerEl.getBoundingClientRect();
+      const popW = 520; // approximate; CSS constrains max-width
+      const m = 10;
+      let left = btnRect.left;
+      if (left + popW > window.innerWidth - m) left = Math.max(m, window.innerWidth - popW - m);
+      let top = btnRect.bottom + 8;
+      const popH = deliverablePreviewPopover.offsetHeight || 360;
+      if (top + popH > window.innerHeight - m) top = Math.max(m, btnRect.top - popH - 8);
+      deliverablePreviewPopover.style.left = `${left}px`;
+      deliverablePreviewPopover.style.top = `${top}px`;
+    }
+
+    // Wire expand toggle.
+    deliverablePreviewPopover.querySelector("[data-cv5-deliverable-expand]")?.addEventListener("click", (e) => {
+      const textEl = deliverablePreviewPopover.querySelector("[data-cv5-deliverable-preview-text]");
+      const btn = e.currentTarget;
+      if (textEl && pendingDeliverableContent) {
+        if (btn.dataset.expanded === "1") {
+          textEl.textContent = previewText;
+          btn.textContent = "Show full document ▾";
+          delete btn.dataset.expanded;
+        } else {
+          textEl.textContent = pendingDeliverableContent;
+          btn.textContent = "Show less ▴";
+          btn.dataset.expanded = "1";
+        }
+      }
+    });
+
+    // Wire Discard.
+    deliverablePreviewPopover.querySelector("[data-cv5-deliverable-discard]")?.addEventListener("click", () => {
+      closeDeliverablePreview();
+      callbacks.onStatus?.("Discarded — document unchanged.");
+    });
+
+    // Wire Apply.
+    deliverablePreviewPopover.querySelector("[data-cv5-deliverable-apply]")?.addEventListener("click", () => {
+      if (!pendingDeliverableContent) return;
+      applyUndoContent = serializeDocToText(view.state.doc);
+      replaceEditorContent(pendingDeliverableContent);
+      scheduleAutosave();
+      callbacks.onStatus?.("Draft applied to document. Autosaving…");
+      closeDeliverablePreview();
+      // Re-render the chat thread to reveal the Undo button.
+      renderChatThread();
+    });
+  }
+
+  function closeDeliverablePreview() {
+    deliverablePreviewPopover.style.display = "none";
+    deliverablePreviewPopover.innerHTML = "";
+    pendingDeliverableContent = null;
+  }
+
+  // Close preview on outside click.
+  function handleDeliverablePreviewOutsideClick(e) {
+    if (
+      deliverablePreviewPopover.style.display !== "none" &&
+      !deliverablePreviewPopover.contains(e.target) &&
+      !e.target.closest(".cv5-preview-apply-btn")
+    ) {
+      closeDeliverablePreview();
+    }
+  }
+  document.addEventListener("click", handleDeliverablePreviewOutsideClick, true);
+
   function renderChatThread() {
     if (!chatThreadEl) return;
     if (!chatHistory.length) {
@@ -2435,7 +2560,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
     const applyBtn = showApply
       ? `<div class="cv5-msg-apply-row">
-           <button type="button" class="cv5-apply-btn" data-cv5-apply="${esc(applyPayload)}">Apply to document</button>
+           <button type="button" class="cv5-apply-btn cv5-preview-apply-btn" data-cv5-preview-apply="${esc(applyPayload)}" title="Preview the proposed document before applying">Preview &amp; apply…</button>
            ${applyUndoContent !== null ? `<button type="button" class="cv5-apply-undo">Undo apply</button>` : ""}
          </div>`
       : "";
@@ -2472,17 +2597,13 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // Delegated on chatThreadEl so it works after innerHTML replaces (no memory
   // leak — one listener per mount, removed on destroy).
   function handleChatThreadClick(evt) {
-    const applyBtn = evt.target.closest(".cv5-apply-btn");
-    if (applyBtn) {
-      const newContent = applyBtn.dataset.cv5Apply;
+    // "Preview & apply…" opens the preview popover — does NOT apply directly.
+    const previewBtn = evt.target.closest(".cv5-preview-apply-btn");
+    if (previewBtn) {
+      evt.stopPropagation();
+      const newContent = previewBtn.dataset.cv5PreviewApply;
       if (!newContent) return;
-      // Snapshot current editor content for undo.
-      applyUndoContent = serializeDocToText(view.state.doc);
-      replaceEditorContent(newContent);
-      scheduleAutosave();
-      callbacks.onStatus?.("Draft applied to document. Autosaving…");
-      // Re-render the chat thread to reveal the Undo button.
-      renderChatThread();
+      openDeliverablePreview(newContent, previewBtn);
       return;
     }
     const undoBtn = evt.target.closest(".cv5-apply-undo");
@@ -2492,6 +2613,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       scheduleAutosave();
       callbacks.onStatus?.("Apply undone — previous document restored. Autosaving…");
       applyUndoContent = null;
+      closeDeliverablePreview();
       renderChatThread();
       return;
     }
@@ -2617,8 +2739,10 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (commentsReflowRaf)    { cancelAnimationFrame(commentsReflowRaf); commentsReflowRaf = null; }
       document.removeEventListener("click", handleCommentComposerOutsideClick, true);
       try { document.body.removeChild(commentComposerEl); } catch (_) { /* noop */ }
-      // Apply-to-document cleanup.
+      // Apply-to-document + deliverable preview cleanup.
       if (chatThreadEl) chatThreadEl.removeEventListener("click", handleChatThreadClick);
+      document.removeEventListener("click", handleDeliverablePreviewOutsideClick, true);
+      try { document.body.removeChild(deliverablePreviewPopover); } catch (_) { /* noop */ }
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,
