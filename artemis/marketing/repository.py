@@ -35,6 +35,7 @@ from artemis.marketing.models import (
     Ruleset,
     ScoutRun,
     SignalQueue,
+    SignalWorklistOverride,
     TerritoryConfig,
 )
 from artemis.marketing.state_machine import WorkspaceState
@@ -287,6 +288,86 @@ async def _attach_signal_to_candidate(
         )
     )
     await session.flush()
+
+
+async def upsert_signal_worklist_override(
+    session: AsyncSession,
+    signal_id: int,
+    *,
+    worklist_cluster_key: str | None = None,
+    hidden_from_worklist: bool | None = None,
+    updated_by: str | None = None,
+) -> SignalWorklistOverride:
+    """Create or update one Signals-worklist override row."""
+    result = await session.execute(
+        select(SignalWorklistOverride).where(SignalWorklistOverride.signal_id == signal_id).limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = SignalWorklistOverride(signal_id=signal_id)
+        session.add(row)
+    row.worklist_cluster_key = worklist_cluster_key
+    if hidden_from_worklist is not None:
+        row.hidden_from_worklist = hidden_from_worklist
+    row.updated_by = updated_by
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
+async def list_signal_worklist_overrides(
+    session: AsyncSession,
+    signal_ids: list[int],
+) -> dict[int, SignalWorklistOverride]:
+    """Return active worklist overrides keyed by signal_id."""
+    if not signal_ids:
+        return {}
+    result = await session.execute(
+        select(SignalWorklistOverride).where(SignalWorklistOverride.signal_id.in_(signal_ids))
+    )
+    rows = list(result.scalars().all())
+    return {row.signal_id: row for row in rows}
+
+
+async def promote_signal_cluster_to_candidate(
+    session: AsyncSession,
+    signal_ids: list[int],
+) -> CampaignCandidate:
+    """Promote an explicit cluster of signals into one shared candidate."""
+    if not signal_ids:
+        raise ValueError("signal_ids must contain at least one signal")
+
+    result = await session.execute(
+        select(SignalQueue)
+        .where(SignalQueue.id.in_(signal_ids))
+        .order_by(SignalQueue.created_at.desc(), SignalQueue.id.desc())
+    )
+    signals = list(result.scalars().all())
+    signal_map = {signal.id: signal for signal in signals}
+    ordered_signals: list[SignalQueue] = []
+    for signal_id in signal_ids:
+        signal = signal_map.get(signal_id)
+        if signal is None:
+            raise ValueError(f"signal_queue id={signal_id} not found")
+        if signal.signal_status not in {"qualified", "approved"}:
+            raise ValueError(
+                f"signal_queue id={signal_id} must be qualified or approved to promote"
+            )
+        ordered_signals.append(signal)
+
+    seed_result = await promote_signal_to_candidate(session, ordered_signals[0])
+    candidate = seed_result.candidate
+
+    from artemis.marketing.state_machine import SignalState, transition
+
+    for signal in ordered_signals[1:]:
+        if signal.signal_status != SignalState.APPROVED:
+            await transition(session, "signal", signal.id, SignalState.APPROVED)
+        await _attach_signal_to_candidate(session, candidate, signal, is_primary=False)
+
+    await session.flush()
+    await session.refresh(candidate)
+    return candidate
 
 
 def _candidate_district_family_stmt(signal: SignalQueue) -> Select[tuple[CampaignCandidate]]:

@@ -321,14 +321,14 @@ def test_prioritization_empty_combined_shows_empty_state() -> None:
 def test_signals_page_scaffold_wraps_shortlist_and_collapsible_inbox() -> None:
     data = _run_node(
         """
-        const html = mod.renderMarketingSignalsPageScaffold({ inboxExpanded: true });
+        const html = mod.renderMarketingSignalsPageScaffold({ inboxExpanded: false });
         console.log(JSON.stringify({
           hasSignalsHero: html.includes('mkt-hero-title">Signals</h2>'),
           hasPlaybookLink: html.includes('href="#signal-playbook"'),
           hasShortlistPanel: html.includes('data-signals-prioritization-panel'),
           hasCollapsibleInbox: html.includes('data-signals-collapsible') && html.includes('data-signals-inbox-panel'),
-          defaultsOpen: html.includes('data-signals-collapsible open'),
-          hasToggleLabel: html.includes('Show all signals'),
+          defaultsClosed: !html.includes('data-signals-collapsible open'),
+          hasToggleLabel: html.includes('Browse all signals'),
         }));
         """
     )
@@ -337,8 +337,101 @@ def test_signals_page_scaffold_wraps_shortlist_and_collapsible_inbox() -> None:
         "hasPlaybookLink": True,
         "hasShortlistPanel": True,
         "hasCollapsibleInbox": True,
-        "defaultsOpen": True,
+        "defaultsClosed": True,
         "hasToggleLabel": True,
+    }
+
+
+def test_prioritization_can_render_worklist_cards() -> None:
+    data = _run_node(
+        """
+        const html = mod.renderMarketingPrioritization({
+          asOf: '2026-06-09T12:00:00Z',
+          cards: [
+            {
+              rank: 1,
+              clusterKey: '12|obc',
+              title: 'Fort Worth ISD',
+              state: 'TX',
+              tier: 'D1',
+              signalCount: 3,
+              recentSignalCount: 3,
+              velocityRank: 1,
+              scoreReason: '3 stacked signals + recent activity',
+              hasHotSignal: true,
+              timeSensitive: true,
+              signalIds: [1,2,3],
+              signals: [
+                { id: 1, sourceType: 'board_minutes', summary: 'Trustees approved exploring a supplemental reading intervention vendor.', headline: 'Board approved vendor exploration', createdAt: '2026-06-08T12:00:00Z' },
+                { id: 2, sourceType: 'procurement', summary: 'RFP posted; responses due Aug 1.', headline: 'RFP posted', createdAt: '2026-06-07T12:00:00Z' }
+              ]
+            }
+          ]
+        });
+        console.log(JSON.stringify({
+          hasCards: html.includes('mkt-worklist-card'),
+          hasTitle: html.includes('Fort Worth ISD'),
+          hasStart: html.includes('Start a campaign'),
+          hasBrowseMeta: html.includes('worth a look now'),
+          hasHotBadge: html.includes('mkt-worklist-badge--hot'),
+          hasTimeBadge: html.includes('mkt-worklist-badge--time'),
+        }));
+        """
+    )
+    assert data == {
+        "hasCards": True,
+        "hasTitle": True,
+        "hasStart": True,
+        "hasBrowseMeta": True,
+        "hasHotBadge": True,
+        "hasTimeBadge": True,
+    }
+
+
+def test_document_approvals_render_queue_to_send_outcome() -> None:
+    data = _run_node(
+        """
+        const html = mod.renderMarketingApprovals([
+          {
+            id: 77,
+            kind: 'content_draft',
+            createdAt: '2026-06-09T12:00:00Z',
+            pipe4Context: {
+              pipeline_run_id: 'run-77',
+              pipeline_name: 'Campaign Deliverables',
+              node_label: 'Gate 2',
+              context: {
+                approval_kind: 'content_draft',
+                campaign_name: 'Fort Worth literacy push',
+                district_label: 'Fort Worth ISD',
+                campaign_family: 'obc',
+                deliverables: [
+                  {
+                    id: 9,
+                    title: 'Outreach Email Draft',
+                    deliverableTypeSlug: 'outreach_email',
+                    status: 'draft_ready',
+                    updatedAt: '2026-06-09T12:00:00Z',
+                    draftPreview: 'Families deserve a clearer district reading plan.',
+                  }
+                ],
+              },
+            },
+          }
+        ]);
+        console.log(JSON.stringify({
+          hasDocumentOnlyTitle: html.includes('Document Approvals'),
+          hasQueuedOutcome: html.includes('Approve queues this draft to send.'),
+          hasQueueButton: html.includes('Approve → Queue to send'),
+          hasNoSignalApproveCopy: !html.includes('Approve this cluster'),
+        }));
+        """
+    )
+    assert data == {
+        "hasDocumentOnlyTitle": True,
+        "hasQueuedOutcome": True,
+        "hasQueueButton": True,
+        "hasNoSignalApproveCopy": True,
     }
 
 

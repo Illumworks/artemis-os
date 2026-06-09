@@ -20,7 +20,7 @@ export const SIGNAL_URGENCIES = ["hot", "standard", "enrichment"];
 const STATUS_LABELS = {
   pending_qualification: "Pending qualification",
   qualified: "Qualified",
-  approved: "Approved",
+  approved: "Converted to campaign",
   suppressed_stale: "Suppressed stale",
   rejected_hard_filter: "Rejected hard filter",
   rejected_at_gate_1: "Rejected",
@@ -142,6 +142,10 @@ export function normalizeSignal(signal = {}) {
     relatedSignalsCount: Number(signal.relatedSignalsCount || 0),
     qualificationJson: signal.qualificationJson || null,
     briefId: signal.briefId || signal.campaignBriefId || null,
+    campaignCandidateId: signal.campaignCandidateId || signal.candidateId || null,
+    campaignCandidateName: signal.campaignCandidateName || signal.campaignName || null,
+    campaignWorkspaceState: signal.campaignWorkspaceState || null,
+    campaignInitiatedAt: signal.campaignInitiatedAt || null,
     pipelineRun,
     approval: signal.approval || signal.gateApproval || null,
     // DIST4: district context from qualification_json.districtContext
@@ -296,6 +300,9 @@ function rowHtml(signal, selectedId) {
   const pipelineBadge = signal.pipelineRun
     ? `<span class="mkt-signal-row-pipeline">${esc(signal.pipelineRun.pipelineName)} · ${esc(String(signal.pipelineRun.id).slice(0, 8))}</span>`
     : "";
+  const campaignBadge = signal.signalStatus === "approved" && signal.campaignCandidateId
+    ? `<span class="mkt-signal-row-pipeline">→ ${esc(signal.campaignCandidateName || "Campaign workspace")}</span>`
+    : "";
   return `
     <button class="mkt-signal-row${selected ? " is-selected" : ""}" type="button"
             data-signal-row="${esc(signal.id)}" aria-pressed="${selected ? "true" : "false"}">
@@ -305,6 +312,7 @@ function rowHtml(signal, selectedId) {
         <span class="mkt-signal-row-title">${esc(signalTitle(signal))}</span>
         <span class="mkt-signal-row-sub">${esc(signal.headline)}</span>
         ${pipelineBadge}
+        ${campaignBadge}
       </span>
       <span class="mkt-signal-row-side">
         <span class="mkt-signal-row-urgency mkt-signal-row-urgency--${esc(signal.urgencyTier)}">${esc(signal.urgencyTier)}</span>
@@ -475,7 +483,7 @@ export function renderSignalDetailPanel(signal) {
       <section>
         <h5>Brief Preview</h5>
         ${signal.briefId || signal.campaignCandidateId
-          ? `<a href="#" data-mkt-open-candidate="${esc(signal.campaignCandidateId || "")}">Open campaign workspace</a>`
+          ? `<a href="#" data-mkt-open-candidate="${esc(signal.campaignCandidateId || "")}">Open campaign workspace${signal.campaignCandidateName ? ` → ${esc(signal.campaignCandidateName)}` : ''}</a>`
           : '<p class="mkt-signal-detail-muted">No composed brief yet.</p>'}
       </section>
       <div class="mkt-signal-actions">

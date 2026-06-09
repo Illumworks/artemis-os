@@ -165,6 +165,13 @@ class SignalQueue(Base):
         cascade="all, delete-orphan",
         lazy="noload",
     )
+    worklist_override: Mapped[SignalWorklistOverride | None] = relationship(
+        "SignalWorklistOverride",
+        back_populates="signal",
+        cascade="all, delete-orphan",
+        lazy="noload",
+        uselist=False,
+    )
 
 
 class ScoutRun(Base):
@@ -704,6 +711,43 @@ class MarketingClusteringConfig(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SignalWorklistOverride(Base):
+    """Persistent UI-only cluster overrides for the Signals worklist."""
+
+    __tablename__ = "signal_worklist_overrides"
+    __table_args__ = (
+        UniqueConstraint("signal_id", name="uq_signal_worklist_overrides_signal"),
+        Index("idx_signal_worklist_overrides_hidden", "hidden_from_worklist"),
+        Index("idx_signal_worklist_overrides_cluster_key", "worklist_cluster_key"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "signal_queue.id", name="fk_signal_worklist_overrides_signal", ondelete="CASCADE"
+        ),
+        nullable=False,
+    )
+    worklist_cluster_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hidden_from_worklist: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    signal: Mapped[SignalQueue] = relationship(
+        "SignalQueue",
+        back_populates="worklist_override",
+        lazy="noload",
     )
 
 

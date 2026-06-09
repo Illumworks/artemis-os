@@ -14,16 +14,22 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
+from artemis.marketing.intel.trends import compute_time_sensitivity, compute_velocity_ranking
 from artemis.marketing.models import (
     Approval,
+    CampaignCandidate,
+    CampaignCandidateSignal,
+    District,
     SignalQueue,
     SignalReasonCode,
 )
@@ -33,15 +39,20 @@ from artemis.marketing.repository import (
     find_signal_by_dedupe_key,
     get_active_ruleset_version,
     get_signal,
+    list_signal_worklist_overrides,
     list_signals,
+    promote_signal_cluster_to_candidate,
     promote_signal_to_candidate,
     update_signal,
+    upsert_signal_worklist_override,
 )
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
+from artemis.marketing.routes.intel_prioritization import _build_combined
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.marketing.state_machine import SignalState, transition
 from artemis.pipelines.models import Pipeline, PipelineRun
+from artemis.pipelines.node_executors.human_gate_executor import _cluster_score
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +68,29 @@ _RELATED_SIGNAL_STATUSES = {
     SignalState.qualified.value,
     SignalState.APPROVED.value,
 }
+
+
+class WorklistPromoteRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    signal_ids: list[int] = Field(default_factory=list, alias="signalIds")
+    title: str | None = None
+    updated_by: str | None = Field(default=None, alias="updatedBy")
+
+
+class WorklistRemoveRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    signal_id: int = Field(alias="signalId")
+    updated_by: str | None = Field(default=None, alias="updatedBy")
+
+
+class WorklistMergeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    signal_ids: list[int] = Field(default_factory=list, alias="signalIds")
+    target_cluster_key: str = Field(alias="targetClusterKey")
+    updated_by: str | None = Field(default=None, alias="updatedBy")
 
 
 # ── Intake ────────────────────────────────────────────────────────────────────
@@ -231,6 +265,109 @@ async def list_queue(
     return {
         "signals": [_serialize_signal(s, contexts.get(s.id)) for s in signals],
         "total": len(signals),
+    }
+
+
+@router.get("/worklist")
+async def get_worklist(
+    window_days: int = Query(default=30, ge=7, le=180),
+    horizon_days: int = Query(default=60, ge=7, le=180),
+    limit: int = Query(default=25, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return ranked Signals worklist cards grouped into actionable clusters."""
+    as_of = datetime.now(UTC)
+    signals = (
+        (
+            await session.execute(
+                select(SignalQueue)
+                .where(SignalQueue.signal_status == SignalState.qualified.value)
+                .order_by(SignalQueue.created_at.desc(), SignalQueue.id.desc())
+                .limit(500)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    cards = await _build_signal_worklist_cards(
+        session,
+        signals=list(signals),
+        as_of=as_of,
+        window_days=window_days,
+        horizon_days=horizon_days,
+        limit=limit,
+    )
+    return {
+        "asOf": as_of.isoformat(),
+        "windowDays": window_days,
+        "horizonDays": horizon_days,
+        "cards": cards,
+        "totalCards": len(cards),
+        "qualifiedSignals": len(signals),
+    }
+
+
+@router.post("/worklist/promote")
+async def promote_signal_worklist_cluster(
+    body: WorklistPromoteRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Promote one operator-picked worklist cluster into a campaign workspace."""
+    if not body.signal_ids:
+        raise bad_request("signalIds must contain at least one signal")  # noqa: B904
+
+    candidate = await promote_signal_cluster_to_candidate(session, body.signal_ids)
+    await session.commit()
+    await session.refresh(candidate)
+    return {
+        "candidateId": candidate.id,
+        "candidateName": candidate.name or body.title or f"Campaign {candidate.id}",
+        "workspaceState": candidate.workspace_state,
+        "initiatedAt": candidate.initiated_at.isoformat() if candidate.initiated_at else None,
+        "signalIds": body.signal_ids,
+    }
+
+
+@router.post("/worklist/remove")
+async def remove_signal_from_worklist(
+    body: WorklistRemoveRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Remove a signal from ranked worklist cards without deleting it."""
+    signal = await get_signal(session, body.signal_id)
+    await upsert_signal_worklist_override(
+        session,
+        signal.id,
+        worklist_cluster_key=None,
+        hidden_from_worklist=True,
+        updated_by=body.updated_by or "operator",
+    )
+    await session.commit()
+    return {"ok": True, "signalId": signal.id, "hiddenFromWorklist": True}
+
+
+@router.post("/worklist/merge")
+async def merge_signal_worklist_cards(
+    body: WorklistMergeRequest,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Merge one card's signals into another card's cluster key, losslessly."""
+    if not body.signal_ids:
+        raise bad_request("signalIds must contain at least one signal")  # noqa: B904
+    for signal_id in body.signal_ids:
+        await get_signal(session, signal_id)
+        await upsert_signal_worklist_override(
+            session,
+            signal_id,
+            worklist_cluster_key=body.target_cluster_key,
+            hidden_from_worklist=False,
+            updated_by=body.updated_by or "operator",
+        )
+    await session.commit()
+    return {
+        "ok": True,
+        "mergedSignalCount": len(body.signal_ids),
+        "targetClusterKey": body.target_cluster_key,
     }
 
 
@@ -565,6 +702,32 @@ async def _load_signal_contexts(
         related_count = max(int(total or 0) - 1, 0)
         for signal_id in signal_ids:
             contexts[signal_id]["relatedSignalsCount"] = related_count
+
+    if wanted:
+        candidate_rows = await session.execute(
+            select(
+                CampaignCandidateSignal.signal_id,
+                CampaignCandidate.id,
+                CampaignCandidate.name,
+                CampaignCandidate.workspace_state,
+                CampaignCandidate.initiated_at,
+            )
+            .join(
+                CampaignCandidate,
+                CampaignCandidate.id == CampaignCandidateSignal.candidate_id,
+            )
+            .where(CampaignCandidateSignal.signal_id.in_(list(wanted.values())))
+            .order_by(CampaignCandidate.id.desc())
+        )
+        for signal_id, candidate_id, name, workspace_state, initiated_at in candidate_rows.all():
+            if "campaign" in contexts[signal_id]:
+                continue
+            contexts[signal_id]["campaign"] = {
+                "candidateId": candidate_id,
+                "name": name,
+                "workspaceState": workspace_state,
+                "initiatedAt": initiated_at.isoformat() if initiated_at else None,
+            }
     return contexts
 
 
@@ -597,9 +760,201 @@ def _serialize_signal(signal: SignalQueue, context: dict[str, Any] | None = None
         "provenance": signal.provenance,
         "qualificationJson": signal.qualification_json,
         "signalStatus": signal.signal_status,
+        "campaignCandidateId": context.get("campaign", {}).get("candidateId"),
+        "campaignCandidateName": context.get("campaign", {}).get("name"),
+        "campaignWorkspaceState": context.get("campaign", {}).get("workspaceState"),
+        "campaignInitiatedAt": context.get("campaign", {}).get("initiatedAt"),
         "snoozedUntil": signal.snoozed_until.isoformat() if signal.snoozed_until else None,
         "rejectedReason": signal.rejected_reason,
         "ownerUserId": signal.owner_user_id,
         "createdAt": signal.created_at.isoformat(),
         "updatedAt": signal.updated_at.isoformat(),
     }
+
+
+def _signal_fit_score(signal: SignalQueue) -> float:
+    qual = signal.qualification_json or {}
+    if isinstance(qual, dict):
+        for key in ("fit_score", "adjustedScore", "rawScore"):
+            with suppress(TypeError, ValueError):
+                return float(qual.get(key))
+        scores = qual.get("scores")
+        if isinstance(scores, list):
+            for score in scores:
+                if (
+                    isinstance(score, dict)
+                    and score.get("campaignFamily") == signal.campaign_family
+                ):
+                    with suppress(TypeError, ValueError):
+                        return float(score.get("adjustedScore"))
+    return 0.0
+
+
+def _effective_worklist_cluster_key(
+    signal: SignalQueue,
+    override: Any | None,
+) -> str | None:
+    if override is not None and override.hidden_from_worklist:
+        return None
+    if override is not None and override.worklist_cluster_key:
+        return str(override.worklist_cluster_key)
+    if signal.resolved_district_id is not None and signal.campaign_family:
+        return f"{signal.resolved_district_id}|{signal.campaign_family}"
+    return f"signal:{signal.id}"
+
+
+async def _build_signal_worklist_cards(
+    session: AsyncSession,
+    *,
+    signals: list[SignalQueue],
+    as_of: datetime,
+    window_days: int,
+    horizon_days: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not signals:
+        return []
+
+    signal_ids = [signal.id for signal in signals]
+    overrides = await list_signal_worklist_overrides(session, signal_ids)
+
+    velocity = await compute_velocity_ranking(
+        session,
+        as_of=as_of,
+        window_days=window_days,
+        limit=max(limit * 4, 100),
+    )
+    time_sensitive = await compute_time_sensitivity(
+        session,
+        as_of=as_of,
+        horizon_days=horizon_days,
+        limit=max(limit * 4, 100),
+    )
+    combined = _build_combined(velocity, time_sensitive)
+    priority_map = {row.district_id: idx for idx, row in enumerate(combined)}
+    priority_rows = {row.district_id: row for row in combined}
+
+    district_ids = sorted(
+        {
+            signal.resolved_district_id
+            for signal in signals
+            if signal.resolved_district_id is not None
+        }
+    )
+    district_cache: dict[int, District] = {}
+    for district_id in district_ids:
+        district = await session.get(District, district_id)
+        if district is not None:
+            district_cache[district_id] = district
+
+    groups: dict[str, list[SignalQueue]] = {}
+    for signal in signals:
+        cluster_key = _effective_worklist_cluster_key(signal, overrides.get(signal.id))
+        if cluster_key is None:
+            continue
+        groups.setdefault(cluster_key, []).append(signal)
+
+    cards: list[dict[str, Any]] = []
+    recent_cutoff = as_of - timedelta(days=14)
+    for cluster_key, group_signals in groups.items():
+        sorted_group = sorted(
+            group_signals,
+            key=lambda signal: (
+                -_signal_fit_score(signal),
+                -signal.created_at.timestamp(),
+                signal.id,
+            ),
+        )
+        primary = sorted_group[0]
+        cluster_district_id: int | None = None
+        cluster_family = primary.campaign_family
+        if "|" in cluster_key:
+            dist_part, family_part = cluster_key.split("|", 1)
+            with suppress(TypeError, ValueError):
+                cluster_district_id = int(dist_part)
+            if family_part:
+                cluster_family = family_part
+        district = (
+            district_cache.get(cluster_district_id)
+            if cluster_district_id is not None
+            else (
+                district_cache.get(primary.resolved_district_id)
+                if primary.resolved_district_id is not None
+                else None
+            )
+        )
+        score, score_reason = _cluster_score(group_signals, now_utc=as_of)
+        district_priority_index = (
+            priority_map.get(cluster_district_id) if cluster_district_id is not None else None
+        )
+        priority_row = (
+            priority_rows.get(cluster_district_id) if cluster_district_id is not None else None
+        )
+        signal_items = []
+        for signal in sorted_group:
+            signal_items.append(
+                {
+                    "id": signal.id,
+                    "headline": signal.headline,
+                    "summary": signal.summary,
+                    "sourceType": signal.source_type,
+                    "campaignFamily": signal.campaign_family,
+                    "urgencyTier": signal.urgency_tier,
+                    "createdAt": signal.created_at.isoformat(),
+                    "fitScore": _signal_fit_score(signal),
+                }
+            )
+        cards.append(
+            {
+                "clusterKey": cluster_key,
+                "title": district.name
+                if district is not None
+                else (primary.district_id or primary.headline),
+                "districtId": cluster_district_id
+                if cluster_district_id is not None
+                else primary.resolved_district_id,
+                "districtLabel": (
+                    f"{district.name} ({district.state})"
+                    if district is not None and district.state
+                    else (district.name if district is not None else (primary.district_id or None))
+                ),
+                "state": district.state if district is not None else primary.state,
+                "tier": district.tier if district is not None else None,
+                "campaignFamily": cluster_family,
+                "score": score,
+                "scoreReason": score_reason,
+                "velocityScore": priority_row.velocity_score if priority_row is not None else None,
+                "velocityRank": priority_row.velocity_rank if priority_row is not None else None,
+                "timeSensitive": bool(
+                    priority_row.has_time_sensitive_signal if priority_row is not None else False
+                ),
+                "earliestSignalCreatedAtIso": (
+                    priority_row.earliest_signal_created_at_iso
+                    if priority_row is not None
+                    else None
+                ),
+                "signalCount": len(sorted_group),
+                "recentSignalCount": sum(
+                    1 for signal in sorted_group if signal.created_at >= recent_cutoff
+                ),
+                "hasHotSignal": any(signal.urgency_tier == "hot" for signal in sorted_group),
+                "signalIds": [signal.id for signal in sorted_group],
+                "signals": signal_items,
+                "priorityIndex": district_priority_index
+                if district_priority_index is not None
+                else 9999,
+            }
+        )
+
+    cards.sort(
+        key=lambda card: (
+            card["priorityIndex"],
+            -(card["velocityScore"] or 0.0),
+            -card["score"],
+            card["clusterKey"],
+        )
+    )
+    for idx, card in enumerate(cards, start=1):
+        card["rank"] = idx
+        card.pop("priorityIndex", None)
+    return cards[:limit]

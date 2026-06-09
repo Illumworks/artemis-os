@@ -25,7 +25,11 @@ import {
   fetchAccountInfo,
   listSignalQueueApi, createSignalApi,
   approveSignalApi, rejectSignalApi, snoozeSignalApi, archiveSignalApi,
+  fetchSignalWorklistApi,
+  mergeSignalWorklistCardsApi,
+  promoteSignalWorklistClusterApi,
   qualifySignalApi,
+  removeSignalFromWorklistApi,
   listScoutRunsApi, listScoutPackagesApi,
   listPipelinesApi,
   fetchMarketingQueuedSends,
@@ -47,8 +51,11 @@ const MKT_CAMPAIGN_KEY = 'artemis-mkt-selected-campaign';
 const MKT_WORKSPACE_TAB_KEY = 'artemis-mkt-workspace-tab';
 // DIST4: localStorage key for the hide-unsupported-tiers toggle (default OFF)
 const MKT_HIDE_UNSUPPORTED_KEY = 'artemis-mkt-hide-unsupported-tiers';
+const MKT_WORKLIST_FILTER_KEY = 'artemis-mkt-worklist-filter';
 function readHideUnsupported() { try { return localStorage.getItem(MKT_HIDE_UNSUPPORTED_KEY) === 'true'; } catch { return false; } }
 function writeHideUnsupported(v) { try { localStorage.setItem(MKT_HIDE_UNSUPPORTED_KEY, v ? 'true' : 'false'); } catch {} }
+function readWorklistFilter() { try { return localStorage.getItem(MKT_WORKLIST_FILTER_KEY) || 'all'; } catch { return 'all'; } }
+function writeWorklistFilter(v) { try { localStorage.setItem(MKT_WORKLIST_FILTER_KEY, v); } catch {} }
 
 const MKT_SIGNAL_TREE_STATE = {
   signals: [],
@@ -59,6 +66,11 @@ const MKT_SIGNAL_TREE_STATE = {
   filters: { urgencies: [], statuses: [], reasons: [], geographies: [] },
   selectedId: null,
   hideUnsupported: readHideUnsupported(),
+};
+
+const MKT_WORKLIST_UI_STATE = {
+  payload: null,
+  filter: readWorklistFilter(),
 };
 
 const SP_SCOUTS = [
@@ -2516,11 +2528,11 @@ export function renderMarketingApprovals(approvals = []) {
     return `
       <section class="mkt-section">
         <div class="mkt-section-header">
-          <h3 class="mkt-section-title">Approval Queue</h3>
+          <h3 class="mkt-section-title">Document Approvals</h3>
         </div>
         <div class="mkt-empty-state">
-          <h4>No approvals waiting</h4>
-          <p>New approvals will appear here when the workflow creates them.</p>
+          <h4>No documents waiting</h4>
+          <p>Gate-2 draft reviews will appear here when content is ready to approve and queue to send.</p>
         </div>
       </section>
     `;
@@ -2529,7 +2541,7 @@ export function renderMarketingApprovals(approvals = []) {
   return `
     <section class="mkt-section">
       <div class="mkt-section-header">
-        <h3 class="mkt-section-title">Approval Queue</h3>
+        <h3 class="mkt-section-title">Document Approvals</h3>
       </div>
       <div class="mkt-approvals-list">${approvals.map(_renderUnifiedApprovalCard).join('')}</div>
     </section>
@@ -2670,11 +2682,12 @@ function _renderPipe4ApprovalCard(a) {
         ${reasonCodes ? `<div class="mkt-pipe4-brief"><span class="mkt-pipe4-label">Signals</span> ${reasonCodes}</div>` : ''}
         ${ctx.brief_preview ? `<div class="mkt-pipe4-brief"><span class="mkt-pipe4-label">Brief</span> ${esc(ctx.brief_preview)}</div>` : ''}
         <div class="mkt-approvals-list">${deliverableCards}</div>
-        <div class="mkt-signal-actions">
-          <button class="mkt-btn-primary" type="button" data-approve-id="${esc(String(a.id))}">Approve</button>
-          <button class="mkt-btn-ghost" type="button" data-revision-id="${esc(String(a.id))}">Request revision</button>
-          <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-reject-id="${esc(String(a.id))}">Reject</button>
-          ${runHref ? `<a class="mkt-btn-link" href="${runHref}">View pipeline run →</a>` : ''}
+        <div class="mkt-pipe4-brief"><span class="mkt-pipe4-label">Outcome</span> Approve queues this draft to send.</div>
+      <div class="mkt-signal-actions">
+        <button class="mkt-btn-primary" type="button" data-approve-id="${esc(String(a.id))}">Approve → Queue to send</button>
+        <button class="mkt-btn-ghost" type="button" data-revision-id="${esc(String(a.id))}">Request revision</button>
+        <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-reject-id="${esc(String(a.id))}">Reject</button>
+        ${runHref ? `<a class="mkt-btn-link" href="${runHref}">View pipeline run →</a>` : ''}
         </div>
         <div class="mkt-reject-reason-form" data-reject-reason-for="${esc(String(a.id))}" hidden>
           <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
@@ -2924,7 +2937,7 @@ export async function loadMarketingCampaigns(container) {
   }
 }
 
-export function renderMarketingSignalsPageScaffold({ inboxExpanded = true } = {}) {
+export function renderMarketingSignalsPageScaffold({ inboxExpanded = false } = {}) {
   return `
     <div class="mkt-hero mkt-signals-page-hero">
       <div>
@@ -2950,8 +2963,8 @@ export function renderMarketingSignalsPageScaffold({ inboxExpanded = true } = {}
       </section>
       <details class="mkt-signals-page-collapsible" data-signals-collapsible ${inboxExpanded ? 'open' : ''}>
         <summary class="mkt-signals-page-summary">
-          <span class="mkt-signals-page-summary-title">Show all signals</span>
-          <span class="mkt-signals-page-summary-copy">Expand the full inbox, grouped with the existing live actions.</span>
+          <span class="mkt-signals-page-summary-title">Browse all signals</span>
+          <span class="mkt-signals-page-summary-copy">Open the full live inbox, including converted campaigns and every other status.</span>
         </summary>
         <div class="mkt-signals-page-body" data-signals-inbox-panel>
           <section class="mkt-section">
@@ -3012,7 +3025,7 @@ async function loadMarketingSignalsInboxPanel(container) {
 
 export async function loadMarketingSignals(container) {
   if (!container) return;
-  container.innerHTML = renderMarketingSignalsPageScaffold({ inboxExpanded: true });
+  container.innerHTML = renderMarketingSignalsPageScaffold({ inboxExpanded: false });
   const prioritizationPanel = container.querySelector('[data-signals-prioritization-panel]');
   const inboxPanel = container.querySelector('[data-signals-inbox-panel]');
   await Promise.all([
@@ -3064,6 +3077,17 @@ function _wireSignalActions(container) {
   if (container.dataset.signalsWired === 'true') return;
   container.dataset.signalsWired = 'true';
   container.addEventListener('click', async (e) => {
+    const openLink = e.target.closest('[data-mkt-open-candidate]');
+    if (openLink) {
+      e.preventDefault();
+      const candidateId = openLink.dataset.mktOpenCandidate;
+      if (candidateId) {
+        try { localStorage.setItem(MKT_CAMPAIGN_KEY, candidateId); } catch {}
+        setState('view', MARKETING_CAMPAIGNS_VIEW);
+      }
+      return;
+    }
+
     const groupBtn = e.target.closest('[data-signal-group]');
     if (groupBtn) {
       MKT_SIGNAL_TREE_STATE.mode = groupBtn.dataset.signalGroup || 'state';
@@ -3299,16 +3323,16 @@ export async function loadMarketingApprovals(container) {
   container.innerHTML = `
     <section class="mkt-section">
       <div class="mkt-section-header">
-        <h3 class="mkt-section-title">Approval Queue</h3>
+        <h3 class="mkt-section-title">Document Approvals</h3>
       </div>
       <div class="mkt-placeholder-panel">
-        <p>Loading pending approvals…</p>
+        <p>Loading pending document approvals…</p>
       </div>
     </section>
   `;
 
   try {
-    const res = await listApprovalsApi({ status: 'pending' });
+    const res = await listApprovalsApi({ status: 'pending', kind: 'content_draft' });
     const liveApprovals = Array.isArray(res) ? res : [];
     container.innerHTML = renderMarketingApprovals(liveApprovals);
     if (liveApprovals.length === 0) return;
@@ -3322,8 +3346,12 @@ export async function loadMarketingApprovals(container) {
         try {
           const opts = { decision: 'approve' };
           if (clusterKey) opts.selected_cluster_keys = [clusterKey];
-          await decideApprovalApi(id, opts);
-          _showMarketingApprovalToast(container, 'Approval recorded. Pipeline resumed.');
+          const outcome = await decideApprovalApi(id, opts);
+          const queued = Array.isArray(outcome?.resume?.sends) && outcome.resume.sends.length > 0;
+          _showMarketingApprovalToast(
+            container,
+            queued ? 'Queued to send. Pipeline resumed.' : 'Approved. Pipeline resumed.'
+          );
           await loadMarketingApprovals(container);
         } catch (err) {
           btn.disabled = false;
@@ -3391,11 +3419,11 @@ export async function loadMarketingApprovals(container) {
     container.innerHTML = `
       <section class="mkt-section">
         <div class="mkt-section-header">
-          <h3 class="mkt-section-title">Approval Queue</h3>
+          <h3 class="mkt-section-title">Document Approvals</h3>
         </div>
         <div class="mkt-empty-state">
-          <h4>Approvals unavailable</h4>
-          <p>${esc(err?.message || 'Live approvals could not be loaded.')}</p>
+          <h4>Document approvals unavailable</h4>
+          <p>${esc(err?.message || 'Live document approvals could not be loaded.')}</p>
         </div>
       </section>
     `;
@@ -4858,6 +4886,22 @@ function _formatPrioritizationDeadline(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function _worklistTimeAgo(iso) {
+  if (!iso) return 'Unknown timing';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Unknown timing';
+  const diffMs = Date.now() - d.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return '1 day ago';
+  if (diffDays < 30) return `${diffDays} days ago`;
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths === 1) return '1 month ago';
+  if (diffMonths < 12) return `${diffMonths} months ago`;
+  const diffYears = Math.floor(diffMonths / 12);
+  return diffYears === 1 ? '1 year ago' : `${diffYears} years ago`;
+}
+
 function _buildPrioritizationWhy(row) {
   const parts = [];
   if (Number.isFinite(row.velocity_score)) {
@@ -4872,7 +4916,116 @@ function _buildPrioritizationWhy(row) {
   return parts.join(' · ') || 'Surfaced by velocity ranking';
 }
 
+function _formatWorklistFamily(value) {
+  return String(value || 'campaign')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function _formatWorklistSource(value) {
+  return String(value || 'signal')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function _renderWorklistDoneCard(candidateId, candidateName) {
+  return `
+    <div class="mkt-worklist-done-row">
+      <div class="mkt-worklist-done-check">✓</div>
+      <div class="mkt-worklist-done-main">
+        <div class="mkt-worklist-done-title">${esc(candidateName)}</div>
+        <div class="mkt-worklist-done-sub">→ Campaign started — workspace ready</div>
+      </div>
+      <a class="mkt-worklist-done-link" href="#" data-mkt-open-candidate="${esc(candidateId)}">Open workspace →</a>
+    </div>
+  `;
+}
+
+function _renderSignalsWorklistCard(card, cards = []) {
+  const whyBits = [];
+  if (card.recentSignalCount) whyBits.push(`${card.recentSignalCount} new ${card.recentSignalCount === 1 ? 'signal' : 'signals'} in 14d`);
+  if (card.velocityRank) whyBits.push(`velocity rank #${card.velocityRank}`);
+  if (card.scoreReason) whyBits.push(card.scoreReason);
+  const mergeOptions = cards
+    .filter((other) => other.clusterKey !== card.clusterKey)
+    .map((other) => `<option value="${esc(other.clusterKey)}">${esc(other.title)}</option>`)
+    .join('');
+  return `
+    <article class="mkt-worklist-card" data-worklist-card="${esc(card.clusterKey)}">
+      <button class="mkt-worklist-card-head" type="button" data-worklist-toggle="${esc(card.clusterKey)}">
+        <span class="mkt-worklist-rank">${esc(card.rank)}</span>
+        <span class="mkt-worklist-main">
+          <span class="mkt-worklist-title">${esc(card.title)}</span>
+          <span class="mkt-worklist-why">${esc(whyBits.join(' · ') || `${card.signalCount} qualified signals`)}</span>
+        </span>
+        <span class="mkt-worklist-badges">
+          ${card.state ? `<span class="mkt-worklist-badge mkt-worklist-badge--geo">${esc(card.state)}${card.tier ? ` · ${esc(card.tier)}` : ''}</span>` : ''}
+          ${card.hasHotSignal ? '<span class="mkt-worklist-badge mkt-worklist-badge--hot">hot</span>' : ''}
+          ${card.timeSensitive ? '<span class="mkt-worklist-badge mkt-worklist-badge--time">time-sensitive</span>' : ''}
+        </span>
+        <span class="mkt-worklist-chev">▸</span>
+      </button>
+      <div class="mkt-worklist-card-body" hidden>
+        ${card.signals.map((signal) => `
+          <div class="mkt-worklist-signal-row">
+            <div class="mkt-worklist-signal-source">${esc(_formatWorklistSource(signal.sourceType))}</div>
+            <div class="mkt-worklist-signal-copy">
+              <div class="mkt-worklist-signal-text">${esc(signal.summary || signal.headline || 'Signal')}</div>
+              <div class="mkt-worklist-signal-meta">${esc(signal.headline || '')} · ${esc(_worklistTimeAgo(signal.createdAt))}</div>
+            </div>
+            <button class="mkt-worklist-remove-signal" type="button" data-worklist-action="remove-signal" data-signal-id="${esc(signal.id)}" aria-label="Remove signal from this card">×</button>
+          </div>
+        `).join('')}
+        <div class="mkt-worklist-actions">
+          <button class="mkt-btn-primary" type="button" data-worklist-action="start-campaign" data-cluster-key="${esc(card.clusterKey)}">Start a campaign</button>
+          <button class="mkt-btn-secondary" type="button" data-worklist-action="snooze-cluster" data-cluster-key="${esc(card.clusterKey)}">Snooze</button>
+          <button class="mkt-btn-ghost" type="button" data-worklist-action="dismiss-cluster" data-cluster-key="${esc(card.clusterKey)}">Dismiss</button>
+          <span class="mkt-worklist-merge-wrap">
+            <select data-worklist-merge-target="${esc(card.clusterKey)}">
+              <option value="">Merge into…</option>
+              ${mergeOptions}
+            </select>
+            <button class="mkt-btn-ghost" type="button" data-worklist-action="merge-card" data-cluster-key="${esc(card.clusterKey)}">Merge</button>
+          </span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
 export function renderMarketingPrioritization(payload, { stateFilter = '' } = {}) {
+  if (payload && Array.isArray(payload.cards)) {
+    const allCards = payload.cards;
+    const cards = MKT_WORKLIST_UI_STATE.filter === 'time-sensitive'
+      ? allCards.filter((card) => card.timeSensitive)
+      : allCards;
+    const asOf = payload?.asOf ? new Date(payload.asOf) : null;
+    const asOfLabel = asOf && !Number.isNaN(asOf.getTime())
+      ? asOf.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : '—';
+    return `
+      <div class="mkt-hero">
+        <h2 class="mkt-hero-title">Where to focus</h2>
+        <p class="mkt-hero-sub">Your prioritized worklist. Start at the top, decide what becomes a campaign, and dip into the full signal firehose only when you need it.</p>
+      </div>
+      <section class="mkt-section" data-marketing-prioritization>
+        <div class="mkt-prioritization-controls mkt-worklist-controls">
+          <div class="mkt-worklist-meta">${esc(cards.length)} worth a look now · ranked by signal density + recency · as of ${esc(asOfLabel)}</div>
+          <div class="mkt-worklist-filter-row">
+            <button class="mkt-worklist-chip${MKT_WORKLIST_UI_STATE.filter === 'all' ? ' is-active' : ''}" type="button" data-worklist-filter="all">All</button>
+            <button class="mkt-worklist-chip${MKT_WORKLIST_UI_STATE.filter === 'time-sensitive' ? ' is-active' : ''}" type="button" data-worklist-filter="time-sensitive">Time-sensitive</button>
+            <button class="mkt-worklist-chip" type="button" data-prioritization-refresh>Refresh</button>
+          </div>
+        </div>
+        <div class="mkt-worklist-cards">
+          ${cards.length
+            ? cards.map((card) => _renderSignalsWorklistCard(card, allCards)).join('')
+            : '<div class="mkt-prioritization-empty">No ranked clusters match this filter.</div>'}
+        </div>
+      </section>
+    `;
+  }
+
   const combined = payload && Array.isArray(payload.combined) ? payload.combined : [];
   const windowDays = payload?.window_days ?? 30;
   const horizonDays = payload?.horizon_days ?? 60;
@@ -4947,26 +5100,25 @@ export function renderMarketingPrioritization(payload, { stateFilter = '' } = {}
 
 export async function loadMarketingPrioritization(container) {
   if (!container) return;
-  const stateFilter = _readPrioritizationStateFilter();
   container.innerHTML = `
     <section class="mkt-section">
       <div class="mkt-section-header">
         <h3 class="mkt-section-title">Where to focus</h3>
       </div>
       <div class="mkt-placeholder-panel">
-        <p>Loading prioritization…</p>
+        <p>Loading prioritized worklist…</p>
       </div>
     </section>
   `;
 
   try {
-    const payload = await fetchMarketingPrioritizationApi({
+    const payload = await fetchSignalWorklistApi({
       windowDays: 30,
       horizonDays: 60,
       limit: 25,
-      state: stateFilter || undefined,
     });
-    container.innerHTML = renderMarketingPrioritization(payload, { stateFilter });
+    MKT_WORKLIST_UI_STATE.payload = payload;
+    container.innerHTML = renderMarketingPrioritization(payload);
     _wirePrioritizationActions(container);
   } catch (err) {
     container.innerHTML = `
@@ -4975,8 +5127,8 @@ export async function loadMarketingPrioritization(container) {
           <h3 class="mkt-section-title">Where to focus</h3>
         </div>
         <div class="mkt-empty-state">
-          <h4>Prioritization unavailable</h4>
-          <p>${esc(err?.message || 'Live prioritization data could not be loaded.')}</p>
+          <h4>Worklist unavailable</h4>
+          <p>${esc(err?.message || 'Live Signals worklist data could not be loaded.')}</p>
         </div>
       </section>
     `;
@@ -4984,20 +5136,105 @@ export async function loadMarketingPrioritization(container) {
 }
 
 function _wirePrioritizationActions(container) {
-  const select = container.querySelector('[data-prioritization-state]');
-  if (select) {
-    select.addEventListener('change', () => {
-      const value = String(select.value || '').toUpperCase().slice(0, 2);
-      _writePrioritizationStateFilter(value);
-      loadMarketingPrioritization(container);
-    });
-  }
-  const refresh = container.querySelector('[data-prioritization-refresh]');
-  if (refresh) {
-    refresh.addEventListener('click', () => {
-      loadMarketingPrioritization(container);
-    });
-  }
+  if (container.dataset.prioritizationWired === 'true') return;
+  container.dataset.prioritizationWired = 'true';
+
+  container.addEventListener('click', async (event) => {
+    const openLink = event.target.closest('[data-mkt-open-candidate]');
+    if (openLink) {
+      event.preventDefault();
+      const candidateId = openLink.dataset.mktOpenCandidate;
+      if (candidateId) {
+        try { localStorage.setItem(MKT_CAMPAIGN_KEY, candidateId); } catch {}
+        setState('view', MARKETING_CAMPAIGNS_VIEW);
+      }
+      return;
+    }
+
+    const toggle = event.target.closest('[data-worklist-toggle]');
+    if (toggle) {
+      const card = toggle.closest('[data-worklist-card]');
+      const body = card?.querySelector('.mkt-worklist-card-body');
+      const isOpen = card?.classList.toggle('is-open');
+      if (body) body.hidden = !isOpen;
+      return;
+    }
+
+    const filterBtn = event.target.closest('[data-worklist-filter]');
+    if (filterBtn && MKT_WORKLIST_UI_STATE.payload) {
+      MKT_WORKLIST_UI_STATE.filter = filterBtn.dataset.worklistFilter || 'all';
+      writeWorklistFilter(MKT_WORKLIST_UI_STATE.filter);
+      container.innerHTML = renderMarketingPrioritization(MKT_WORKLIST_UI_STATE.payload);
+      _wirePrioritizationActions(container);
+      return;
+    }
+
+    const refresh = event.target.closest('[data-prioritization-refresh]');
+    if (refresh) {
+      await loadMarketingPrioritization(container);
+      return;
+    }
+
+    const actionBtn = event.target.closest('[data-worklist-action]');
+    if (!actionBtn || !MKT_WORKLIST_UI_STATE.payload) return;
+    const clusterKey = actionBtn.dataset.clusterKey;
+    const card = MKT_WORKLIST_UI_STATE.payload.cards.find((entry) => entry.clusterKey === clusterKey);
+    if (!card) return;
+
+    if (actionBtn.dataset.worklistAction === 'remove-signal') {
+      actionBtn.disabled = true;
+      await removeSignalFromWorklistApi({ signalId: Number(actionBtn.dataset.signalId) });
+      await loadMarketingPrioritization(container);
+      return;
+    }
+
+    if (actionBtn.dataset.worklistAction === 'merge-card') {
+      const select = container.querySelector(`[data-worklist-merge-target="${CSS.escape(clusterKey)}"]`);
+      const targetClusterKey = select?.value;
+      if (!targetClusterKey) return;
+      actionBtn.disabled = true;
+      await mergeSignalWorklistCardsApi({
+        signalIds: card.signalIds,
+        targetClusterKey,
+      });
+      await loadMarketingPrioritization(container);
+      return;
+    }
+
+    if (actionBtn.dataset.worklistAction === 'start-campaign') {
+      actionBtn.disabled = true;
+      actionBtn.textContent = 'Starting…';
+      try {
+        const result = await promoteSignalWorklistClusterApi({
+          signalIds: card.signalIds,
+          title: card.title,
+        });
+        const cardEl = actionBtn.closest('[data-worklist-card]');
+        if (cardEl) {
+          cardEl.classList.add('is-done');
+          cardEl.innerHTML = _renderWorklistDoneCard(result.candidateId, result.candidateName || card.title);
+        }
+      } catch (err) {
+        actionBtn.disabled = false;
+        actionBtn.textContent = 'Start a campaign';
+        _showMarketingApprovalToast(container, err?.message || 'Could not start campaign.', true);
+      }
+      return;
+    }
+
+    if (actionBtn.dataset.worklistAction === 'snooze-cluster') {
+      actionBtn.disabled = true;
+      await Promise.all(card.signalIds.map((signalId) => snoozeSignalApi(signalId, { days: 14 })));
+      await loadMarketingPrioritization(container);
+      return;
+    }
+
+    if (actionBtn.dataset.worklistAction === 'dismiss-cluster') {
+      actionBtn.disabled = true;
+      await Promise.all(card.signalIds.map((signalId) => archiveSignalApi(signalId)));
+      await loadMarketingPrioritization(container);
+    }
+  });
 }
 
 // ── Exports for re-use / testing ──────────────────────────────────────────

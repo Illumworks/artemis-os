@@ -2097,9 +2097,10 @@ export async function retryPipelineRunApi(pipelineId) {
 
 // ── Approvals ─────────────────────────────────────────────────────────────────
 
-export async function listApprovalsApi({ status, targetType, limit = 50 } = {}) {
+export async function listApprovalsApi({ status, kind, targetType, limit = 50 } = {}) {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
+  if (kind) params.set("kind", kind);
   if (targetType) params.set("target_type", targetType);
   params.set("limit", String(limit));
   const res = await fetch(`/api/approvals?${params}`);
@@ -2397,6 +2398,43 @@ export async function listSignalQueueApi(params = {}) {
   const res = await fetch(`/api/signal-queue${query}`);
   if (!res.ok) throw new Error("listSignalQueueApi failed");
   return res.json();
+}
+
+export async function fetchSignalWorklistApi({ windowDays = 30, horizonDays = 60, limit = 25 } = {}) {
+  const search = new URLSearchParams({
+    window_days: String(windowDays),
+    horizon_days: String(horizonDays),
+    limit: String(limit),
+  });
+  const res = await fetch(`/api/signal-queue/worklist?${search}`);
+  return _readJsonOrThrow(res, "Failed to fetch signal worklist");
+}
+
+export async function promoteSignalWorklistClusterApi({ signalIds, title, updatedBy } = {}) {
+  const res = await fetch("/api/signal-queue/worklist/promote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ signalIds, title, updatedBy }),
+  });
+  return _readJsonOrThrow(res, "Failed to promote signal cluster");
+}
+
+export async function removeSignalFromWorklistApi({ signalId, updatedBy } = {}) {
+  const res = await fetch("/api/signal-queue/worklist/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ signalId, updatedBy }),
+  });
+  return _readJsonOrThrow(res, "Failed to remove signal from worklist");
+}
+
+export async function mergeSignalWorklistCardsApi({ signalIds, targetClusterKey, updatedBy } = {}) {
+  const res = await fetch("/api/signal-queue/worklist/merge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ signalIds, targetClusterKey, updatedBy }),
+  });
+  return _readJsonOrThrow(res, "Failed to merge worklist cards");
 }
 
 export async function createSignalApi(payload = {}) {
