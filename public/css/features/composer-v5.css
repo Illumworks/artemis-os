@@ -1492,7 +1492,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: var(--cv5-serif, Georgia, serif);
+  font-family: var(--font-sans, "Inter", -apple-system, system-ui, sans-serif);
   font-style: italic;
   line-height: 1.45;
 }
