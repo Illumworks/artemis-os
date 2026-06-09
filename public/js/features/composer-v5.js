@@ -28,6 +28,7 @@ import {
   createWritingDraftApi,
   createWritingFolderApi,
   createWritingTemplateApi,
+  deleteWritingFolderApi,
   exportWritingDraftToGoogleDocApi,
   fetchAccountInfo,
   fetchWritingDraft,
@@ -1193,6 +1194,15 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         return;
       }
 
+      // ── Delete-folder button ────────────────────────────────────────────
+      const delBtn = e.target.closest("[data-cv5-delete-folder]");
+      if (delBtn) {
+        e.stopPropagation();
+        const folderId = Number(delBtn.dataset.cv5DeleteFolder);
+        if (folderId) await handleDeleteFolder(folderId);
+        return;
+      }
+
       // ── Folder expand/collapse ─────────────────────────────────────────
       const folderRow = e.target.closest("[data-cv5-folder-key]");
       if (folderRow) {
@@ -1219,17 +1229,12 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // ── Picker action handlers ────────────────────────────────────────────────
 
   async function handleCreateBlankDraft() {
-    // Reuse the existing POST /drafts path. That endpoint requires a
-    // candidate_id; we use the current draft's candidate_id so the new draft
-    // hangs off the same campaign context (status "generating" — same as the
-    // existing manual-create flow).
+    // POST /drafts with no candidate_id — the backend attaches the templates
+    // placeholder candidate so the deliverable row satisfies the FK constraint.
+    // This path works regardless of whether the current draft has a campaign
+    // context, fixing the silent no-op on no-candidate drafts.
     try {
-      const candidateId = draft.candidate_id;
-      if (!candidateId) {
-        callbacks.onError?.("No campaign context — open a draft first.");
-        return;
-      }
-      const created = await createWritingDraftApi({ candidate_id: candidateId });
+      const created = await createWritingDraftApi({});
       callbacks.onStatus?.("New draft created.");
       closePicker();
       callbacks.onSelectDraft?.(created.id);
@@ -1294,6 +1299,40 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     } catch (err) {
       console.error("[composer-v5] create folder failed:", err);
       callbacks.onError?.(err.message || "Failed to create folder.");
+    }
+  }
+
+  async function handleDeleteFolder(folderId) {
+    // Only real (numeric) folder IDs are deletable — synthetic groups
+    // ("all", "ungrouped") are never passed here.
+    const folder = currentFolders.find((f) => f.id === folderId);
+    const name = folder?.name || `Folder ${folderId}`;
+    const confirmed = window.confirm(
+      `Delete folder "${name}"?\n\nDrafts inside will remain available in All drafts.`
+    );
+    if (!confirmed) return;
+    try {
+      await deleteWritingFolderApi(folderId);
+      // Remove from local state so the folder disappears immediately.
+      pickerExpandedFolders.delete(String(folderId));
+      try {
+        const overview = await fetchWritingStudioOverview();
+        if (Array.isArray(overview?.folders)) currentFolders = overview.folders;
+        if (Array.isArray(overview?.drafts)) currentDrafts = overview.drafts;
+      } catch (_) {
+        // Best-effort refresh — optimistic removal on failure.
+        currentFolders = currentFolders.filter((f) => f.id !== folderId);
+        // Clear folder_id from any drafts that were in this folder so they
+        // fall back to Ungrouped immediately.
+        currentDrafts = currentDrafts.map((d) =>
+          d.folder_id === folderId ? { ...d, folder_id: null } : d
+        );
+      }
+      rerenderPickerOnly();
+      callbacks.onStatus?.(`Folder "${name}" deleted.`);
+    } catch (err) {
+      console.error("[composer-v5] delete folder failed:", err);
+      callbacks.onError?.(err.message || "Failed to delete folder.");
     }
   }
 
@@ -2650,12 +2689,15 @@ function renderPickerBody({ allDrafts, allFolders, activeId, expandedFolders }) 
       const count = inside.length;
       const caret = expanded ? "▾" : "▸";
       return `
-        <button type="button" class="cv5-picker-row cv5-picker-folder" data-cv5-folder-key="${esc(key)}" aria-expanded="${expanded}">
-          <span class="cv5-picker-caret" aria-hidden="true">${caret}</span>
-          <span aria-hidden="true">📁</span>
-          <span class="cv5-picker-folder-name">${esc(f.name || "Untitled folder")}</span>
-          <span class="cv5-picker-row-meta">${count > 0 ? count : ""}</span>
-        </button>
+        <div class="cv5-picker-folder-wrap">
+          <button type="button" class="cv5-picker-row cv5-picker-folder" data-cv5-folder-key="${esc(key)}" aria-expanded="${expanded}">
+            <span class="cv5-picker-caret" aria-hidden="true">${caret}</span>
+            <span aria-hidden="true">📁</span>
+            <span class="cv5-picker-folder-name">${esc(f.name || "Untitled folder")}</span>
+            <span class="cv5-picker-row-meta">${count > 0 ? count : ""}</span>
+          </button>
+          <button type="button" class="cv5-picker-folder-del" data-cv5-delete-folder="${f.id}" title="Delete folder" aria-label="Delete folder ${esc(f.name || "Untitled folder")}">🗑</button>
+        </div>
         ${insideRows}
       `;
     })
