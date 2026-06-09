@@ -212,6 +212,22 @@ def test_extract_proposed_learnings_multiple() -> None:
     assert "Avoid passive constructions in CTAs." in results
 
 
+def test_strip_proposed_learning_lines_removes_visible_line_only() -> None:
+    from artemis.marketing.writing_studio.compose_engine import strip_proposed_learning_lines
+
+    text = (
+        "Here is a tighter opening.\n\n"
+        "**Proposed learning: Lead with the outcome before the feature.**\n"
+        "Closing note."
+    )
+
+    cleaned = strip_proposed_learning_lines(text)
+
+    assert "Proposed learning:" not in cleaned
+    assert "Here is a tighter opening." in cleaned
+    assert "Closing note." in cleaned
+
+
 # ---------------------------------------------------------------------------
 # (b) build_writing_memory_prompt — rule injection + prior turns
 # ---------------------------------------------------------------------------
@@ -310,6 +326,8 @@ def test_build_prompt_no_rules_fallback() -> None:
         request="Write something.",
     )
     assert "No approved rules are available" in result["systemPrompt"]
+    assert "Do NOT emit 'Recommended framing'" in result["systemPrompt"]
+    assert result["systemPrompt"].strip().endswith("Keep replies tight, natural, and human.")
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +425,7 @@ async def test_compose_returns_response_text_and_proposed_candidates(
 
     assert "responseText" in data
     assert "refined" in data["responseText"]
+    assert "Proposed learning:" not in data["responseText"]
 
     assert "proposedCandidates" in data
     assert len(data["proposedCandidates"]) == 1
@@ -416,6 +435,18 @@ async def test_compose_returns_response_text_and_proposed_candidates(
     assert data["proposedCandidates"][0]["status"] == "proposed"
     assert data["proposedCandidates"][0]["draft_id"] == draft_id
     assert data["proposedCandidates"][0]["id"] is not None
+
+    from artemis.writing_rules import repository as wr_repo
+
+    engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+    attach_pgvector_codec(engine)
+    async with AsyncSession(engine, expire_on_commit=False) as verify_session:
+        messages = await wr_repo.list_thread_messages_for_draft(verify_session, draft_id)
+    await engine.dispose()
+
+    assistant_messages = [message for message in messages if message.role == "assistant"]
+    assert len(assistant_messages) == 1
+    assert "Proposed learning:" not in assistant_messages[0].content
 
 
 @pytest.mark.asyncio

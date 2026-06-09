@@ -50,6 +50,20 @@ ANTI_FABRICATION_GUARDRAIL = (
     "reasonable assumption instead of inventing unseen source text."
 )
 
+COMPOSE_CHAT_PRESENTATION_DIRECTIVE = (
+    "You are replying inside a live document editor, conversationally, as a writing collaborator "
+    "not a report generator. Do NOT emit 'Recommended framing' or 'Compliance check' section "
+    "headers, and do NOT enumerate Tier ratings, proof-pack IDs (E001-style), or claim-evidence "
+    "tables in your reply. Compliance is handled by the document's inline claim flags. If a "
+    "sentence you write uses an unapproved or Tier-4 strong claim, add at most one short plain-"
+    "English heads-up line at the end, not a section. Keep replies tight, natural, and human."
+)
+
+_PROPOSED_LEARNING_RE = re.compile(
+    r"^proposed\s+(?:reusable\s+)?learning[s]?[:\-]?\s+(.+)",
+    flags=re.IGNORECASE,
+)
+
 
 # ── Private helpers ───────────────────────────────────────────────────────────
 
@@ -69,6 +83,10 @@ def _optional_string(value: Any) -> str | None:
 
 def _normalize_comparable(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _strip_markdown_edge_bold(value: str) -> str:
+    return re.sub(r"^\*{1,2}|\*{1,2}$", "", value).strip()
 
 
 def _example_relevance_score(example: Any, draft: Any) -> int:
@@ -400,6 +418,8 @@ def build_writing_memory_prompt(
         runtime_context,
         "",
         grounding_block,
+        "",
+        COMPOSE_CHAT_PRESENTATION_DIRECTIVE,
     ]
     system_prompt = "\n".join(system_parts)
 
@@ -492,14 +512,21 @@ def extract_proposed_learnings(response_text: str) -> list[str]:
     """
     results: list[str] = []
     for line in response_text.split("\n"):
-        stripped = re.sub(r"^\*{1,2}|\*{1,2}$", "", line).strip()
-        match = re.match(
-            r"^proposed\s+(?:reusable\s+)?learning[s]?[:\-]?\s+(.+)",
-            stripped,
-            flags=re.IGNORECASE,
-        )
+        stripped = _strip_markdown_edge_bold(line)
+        match = _PROPOSED_LEARNING_RE.match(stripped)
         if match:
             text = match.group(1).strip().strip("\"'‘’“”")
             if len(text) >= 10:
                 results.append(text)
     return results
+
+
+def strip_proposed_learning_lines(response_text: str) -> str:
+    """Remove visible proposed-learning lines while preserving the rest of the reply."""
+    kept_lines: list[str] = []
+    for line in response_text.split("\n"):
+        stripped = _strip_markdown_edge_bold(line)
+        if _PROPOSED_LEARNING_RE.match(stripped):
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines).strip()

@@ -44,6 +44,7 @@ from artemis.marketing.writing_studio.compose_engine import (
     _latest_draft_content,
     build_writing_memory_prompt,
     extract_proposed_learnings,
+    strip_proposed_learning_lines,
 )
 from artemis.writing_rules import repository as wr_repo
 from artemis.writing_rules import tag_registry_repository as tag_repo
@@ -781,6 +782,8 @@ async def compose_draft(
     if not response_text.strip():
         raise bad_request("Model returned no text", "compose_empty_response")
 
+    cleaned_response_text = strip_proposed_learning_lines(response_text)
+
     # ── 6. Persist thread messages ─────────────────────────────────────────────
     user_label = request_text or (
         "Adding source files for the next pass." if attachments else "Continue shaping this draft."
@@ -797,7 +800,7 @@ async def compose_draft(
         session,
         draft_id=draft_id,
         role="assistant",
-        content=response_text,
+        content=cleaned_response_text,
         label="Artemis",
         trace=prompt["trace"],
         prompt={
@@ -845,7 +848,7 @@ async def compose_draft(
 
     # ── 8. Return response ────────────────────────────────────────────────────
     return {
-        "responseText": response_text,
+        "responseText": cleaned_response_text,
         "proposedCandidates": proposed_candidates,
         "persistedMessages": {
             "user": _serialize_thread_message(persisted_user),

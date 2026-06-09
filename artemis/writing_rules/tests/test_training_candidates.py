@@ -338,6 +338,7 @@ class TestComposePersistence:
 
         assert resp.status_code == 200
         data = resp.json()
+        assert "Proposed learning:" not in data["responseText"]
         assert len(data["proposedCandidates"]) == 1
         candidate_payload = data["proposedCandidates"][0]
         # Persisted candidates have id and created_at.
@@ -350,6 +351,11 @@ class TestComposePersistence:
         assert len(rows) == 1
         assert rows[0].proposed_text == "keep paragraphs short and tactical."
         assert rows[0].draft_id == deliverable.id
+
+        messages = await wr_repo.list_thread_messages_for_draft(db_session, deliverable.id)
+        assistant_messages = [message for message in messages if message.role == "assistant"]
+        assert len(assistant_messages) == 1
+        assert "Proposed learning:" not in assistant_messages[0].content
 
 
 # ── 6. Endpoint contract ──────────────────────────────────────────────────────
