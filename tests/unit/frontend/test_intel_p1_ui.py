@@ -318,14 +318,68 @@ def test_prioritization_empty_combined_shows_empty_state() -> None:
     }
 
 
+def test_signals_page_scaffold_wraps_shortlist_and_collapsible_inbox() -> None:
+    data = _run_node(
+        """
+        const html = mod.renderMarketingSignalsPageScaffold({ inboxExpanded: true });
+        console.log(JSON.stringify({
+          hasSignalsHero: html.includes('mkt-hero-title">Signals</h2>'),
+          hasPlaybookLink: html.includes('href="#signal-playbook"'),
+          hasShortlistPanel: html.includes('data-signals-prioritization-panel'),
+          hasCollapsibleInbox: html.includes('data-signals-collapsible') && html.includes('data-signals-inbox-panel'),
+          defaultsOpen: html.includes('data-signals-collapsible open'),
+          hasToggleLabel: html.includes('Show all signals'),
+        }));
+        """
+    )
+    assert data == {
+        "hasSignalsHero": True,
+        "hasPlaybookLink": True,
+        "hasShortlistPanel": True,
+        "hasCollapsibleInbox": True,
+        "defaultsOpen": True,
+        "hasToggleLabel": True,
+    }
+
+
 # ── Static wiring + integration points ────────────────────────────────────
 
 
-def test_navigation_exposes_prioritization_view() -> None:
+def test_navigation_aliases_legacy_signals_routes_to_unified_view() -> None:
+    script = f"""
+      const nav = await import({json.dumps(NAV_JS.as_uri())});
+      console.log(JSON.stringify({{
+        signals: nav.normalizeAppView('marketing-signals'),
+        prioritizationAlias: nav.normalizeAppView('marketing-prioritization'),
+        whereAlias: nav.normalizeAppView('where-to-focus'),
+        inboxAlias: nav.normalizeAppView('signals-inbox'),
+      }}));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    data = json.loads(result.stdout)
+    assert data == {
+        "signals": "marketing-signals",
+        "prioritizationAlias": "marketing-signals",
+        "whereAlias": "marketing-signals",
+        "inboxAlias": "marketing-signals",
+    }
+
+
+def test_navigation_moves_playbook_out_of_marketing_and_renames_signals_nav() -> None:
     nav = NAV_JS.read_text()
-    assert 'MARKETING_PRIORITIZATION_VIEW = "marketing-prioritization"' in nav
-    assert "Where to focus" in nav, "navigation entry missing"
-    assert "marketing-prioritization" in nav
+    index_html = (ROOT / "public/index.html").read_text()
+    assert 'label: "Signals"' in nav
+    assert 'label: "Signals Inbox"' not in nav
+    assert 'label: "Where to focus"' not in nav
+    assert 'section: "Settings"' in nav
+    assert ">Signals</span>" in index_html
+    assert ">Signal Playbook</span>" not in index_html
+    assert ">Where to focus</span>" not in index_html
 
 
 def test_api_exports_prioritization_fetch() -> None:
@@ -344,8 +398,11 @@ def test_marketing_module_exports_render_helpers() -> None:
     js = MKT_JS.read_text()
     css = MKT_CSS.read_text()
     assert "export function renderTrendContextSection" in js
+    assert "export function renderMarketingSignalsPageScaffold" in js
     assert "export function renderMarketingPrioritization" in js
     assert "export async function loadMarketingPrioritization" in js
+    assert 'href="#signal-playbook"' in js
+    assert "loadMarketingSignalsInboxPanel" in js
     assert "renderTrendContextSection(bundle?.trendContext)" in js, (
         "trend block must be injected into the initiation modal"
     )
@@ -358,5 +415,6 @@ def test_marketing_module_exports_render_helpers() -> None:
     assert "getCampaignInitiationProposalApi(campaign.id)" in js
     assert "_shouldLoadBriefTabData(campaign.id)" in js
     assert ".mkt-trend-context" in css
+    assert ".mkt-signals-page-collapsible" in css
     assert ".mkt-prioritization-table" in css
     assert ".mkt-prioritization-disclaimer" in css

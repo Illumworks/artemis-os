@@ -203,9 +203,9 @@ export const SECONDARY_NAV_DESTINATIONS = [
   },
   {
     id: MARKETING_SIGNALS_VIEW,
-    label: "Signals Inbox",
+    label: "Signals",
     shortLabel: "Signals",
-    description: "Detected legislative and funding signals for review.",
+    description: "Ranked signal shortlist with the full inbox below it.",
     section: "Marketing",
     view: MARKETING_SIGNALS_VIEW,
   },
@@ -232,7 +232,7 @@ export const SECONDARY_NAV_DESTINATIONS = [
     label: "Signal Playbook",
     shortLabel: "Playbook",
     description: "Editable campaign-signal criteria and reason-code registry.",
-    section: "Marketing",
+    section: "Settings",
     view: MARKETING_SIGNAL_PLAYBOOK_VIEW,
   },
   {
@@ -242,14 +242,6 @@ export const SECONDARY_NAV_DESTINATIONS = [
     description: "Read-only debug surface for scout harness run history and intake results.",
     section: "Marketing",
     view: MARKETING_SCOUT_RUNS_VIEW,
-  },
-  {
-    id: MARKETING_PRIORITIZATION_VIEW,
-    label: "Where to focus",
-    shortLabel: "Focus",
-    description: "Phase 1 intel: ranked districts by velocity + time-sensitivity proxy (estimate, not hard deadlines).",
-    section: "Marketing",
-    view: MARKETING_PRIORITIZATION_VIEW,
   },
   {
     id: "files",
@@ -306,13 +298,14 @@ export function normalizeAppView(view) {
   if (view === "marketing-os") return MARKETING_OS_VIEW;
   if (view === "marketing-dashboard") return MARKETING_DASHBOARD_VIEW;
   if (view === "marketing-campaigns") return MARKETING_CAMPAIGNS_VIEW;
+  if (view === "signals-inbox" || view === "where-to-focus") return MARKETING_SIGNALS_VIEW;
   if (view === "marketing-signals") return MARKETING_SIGNALS_VIEW;
   if (view === "marketing-approvals") return MARKETING_APPROVALS_VIEW;
   if (view === "marketing-outbox") return MARKETING_OUTBOX_VIEW;
   if (view === "marketing-rulesets") return MARKETING_RULESETS_VIEW;
   if (view === "signal-playbook") return MARKETING_SIGNAL_PLAYBOOK_VIEW;
   if (view === "marketing-scout-runs") return MARKETING_SCOUT_RUNS_VIEW;
-  if (view === "marketing-prioritization") return MARKETING_PRIORITIZATION_VIEW;
+  if (view === "marketing-prioritization") return MARKETING_SIGNALS_VIEW;
   if (view === "pipelines") return "pipelines";
   if (view === "dev-projects") return "chat";
   if (view === "integrations") return INTEGRATIONS_VIEW;

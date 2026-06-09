@@ -55,7 +55,9 @@ const RAIL_NAV_VIEW_MAP = {
   'marketing-signals': MARKETING_SIGNALS_VIEW,
   'marketing-approvals': MARKETING_APPROVALS_VIEW,
   'signal-playbook': MARKETING_SIGNAL_PLAYBOOK_VIEW,
-  'marketing-prioritization': 'marketing-prioritization',
+  'marketing-prioritization': MARKETING_SIGNALS_VIEW,
+  'signals-inbox': MARKETING_SIGNALS_VIEW,
+  'where-to-focus': MARKETING_SIGNALS_VIEW,
 };
 
 // Focus hints for Workspace sub-sections that still share a parent view.
@@ -565,6 +567,10 @@ function initProfilePopover() {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="7" height="8" rx="1.5"/><rect x="14" y="8" width="7" height="8" rx="1.5"/><path d="M10 12h4"/><path d="M6.5 8V5.5M6.5 18.5V16"/><path d="M17.5 8V5.5M17.5 18.5V16"/></svg>
         <span>Connectors</span>
       </div>
+      <div class="settings-pop-item" data-action="signal-playbook">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M8 7h8"/><path d="M8 11h6"/></svg>
+        <span>Signal Playbook</span>
+      </div>
       <div class="settings-pop-item" data-action="cost">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="1" x2="12" y2="23"/>
@@ -639,6 +645,10 @@ function initProfilePopover() {
       case 'connectors': {
         // Open the Integrations modal (rail page removed — modal is the only surface)
         openIntegrationsModal();
+        break;
+      }
+      case 'signal-playbook': {
+        setState('view', MARKETING_SIGNAL_PLAYBOOK_VIEW);
         break;
       }
       case 'cost': {
