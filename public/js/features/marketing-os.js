@@ -2924,7 +2924,52 @@ export async function loadMarketingCampaigns(container) {
   }
 }
 
-export async function loadMarketingSignals(container) {
+export function renderMarketingSignalsPageScaffold({ inboxExpanded = true } = {}) {
+  return `
+    <div class="mkt-hero mkt-signals-page-hero">
+      <div>
+        <h2 class="mkt-hero-title">Signals</h2>
+        <p class="mkt-hero-sub">Start with the ranked shortlist, then expand into the full inbox when you need the whole picture.</p>
+      </div>
+      <div class="mkt-signals-page-actions">
+        <a class="mkt-btn-secondary" href="#signal-playbook">Open Signal Playbook</a>
+      </div>
+    </div>
+    <div class="mkt-signals-page-grid" data-marketing-signals-page>
+      <section class="mkt-signals-page-shortlist">
+        <div data-signals-prioritization-panel>
+          <section class="mkt-section">
+            <div class="mkt-section-header">
+              <h3 class="mkt-section-title">Where to focus</h3>
+            </div>
+            <div class="mkt-placeholder-panel">
+              <p>Loading prioritization…</p>
+            </div>
+          </section>
+        </div>
+      </section>
+      <details class="mkt-signals-page-collapsible" data-signals-collapsible ${inboxExpanded ? 'open' : ''}>
+        <summary class="mkt-signals-page-summary">
+          <span class="mkt-signals-page-summary-title">Show all signals</span>
+          <span class="mkt-signals-page-summary-copy">Expand the full inbox, grouped with the existing live actions.</span>
+        </summary>
+        <div class="mkt-signals-page-body" data-signals-inbox-panel>
+          <section class="mkt-section">
+            <div class="mkt-signals-hero">
+              <h3 class="mkt-signals-title">Signals Inbox</h3>
+              <p class="mkt-signals-sub">Loading live signals…</p>
+            </div>
+            <div class="mkt-placeholder-panel">
+              <p>Fetching the current signal tree…</p>
+            </div>
+          </section>
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+async function loadMarketingSignalsInboxPanel(container) {
   if (!container) return;
   container.innerHTML = `
     <section class="mkt-section">
@@ -2963,6 +3008,17 @@ export async function loadMarketingSignals(container) {
       </section>
     `;
   }
+}
+
+export async function loadMarketingSignals(container) {
+  if (!container) return;
+  container.innerHTML = renderMarketingSignalsPageScaffold({ inboxExpanded: true });
+  const prioritizationPanel = container.querySelector('[data-signals-prioritization-panel]');
+  const inboxPanel = container.querySelector('[data-signals-inbox-panel]');
+  await Promise.all([
+    loadMarketingPrioritization(prioritizationPanel),
+    loadMarketingSignalsInboxPanel(inboxPanel),
+  ]);
 }
 
 function _renderSignalTreeState(container) {
