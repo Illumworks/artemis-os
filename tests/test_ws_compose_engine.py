@@ -327,7 +327,11 @@ def test_build_prompt_no_rules_fallback() -> None:
     )
     assert "No approved rules are available" in result["systemPrompt"]
     assert "Do NOT emit 'Recommended framing'" in result["systemPrompt"]
-    assert result["systemPrompt"].strip().endswith("Keep replies tight, natural, and human.")
+    assert "Keep replies tight, natural, and human." in result["systemPrompt"]
+    # The directive now appends the deliverable fence rule after the natural-tone
+    # sentence — assert the fence rule is present rather than that it's the last line.
+    assert "DELIVERABLE FENCE RULE" in result["systemPrompt"]
+    assert "artemis-draft" in result["systemPrompt"]
 
 
 # ---------------------------------------------------------------------------
@@ -719,3 +723,189 @@ async def test_draft_detail_returns_thread_messages(
     roles = {m["role"] for m in detail["threadMessages"]}
     assert "user" in roles
     assert "assistant" in roles
+
+
+# ---------------------------------------------------------------------------
+# (d2) compose endpoint — chatMessage + deliverable in response
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compose_returns_chat_message_and_deliverable_when_fence_present(
+    db_session: AsyncSession,
+) -> None:
+    """When the model emits an artemis-draft fence, compose returns chatMessage +
+    deliverable and persists the conversational part (no fence) as the thread msg."""
+    from unittest.mock import patch
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
+    from artemis.db import attach_pgvector_codec
+    from artemis.writing_rules import repository as wr_repo
+
+    fenced_reply = (
+        "Here's a tighter opening — benefit-led.\n\n"
+        "```artemis-draft\n"
+        "Every student deserves to read with confidence.\n"
+        "```"
+    )
+    adapter = FakeAdapter([ScriptedReply(text=fenced_reply, stop_reason="end_turn")])
+
+    draft_id = await _make_deliverable(db_session, title="Fence Test Draft")
+
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
+        from artemis.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/writing-studio/drafts/{draft_id}/compose",
+                json={"request": "Tighten the opening"},
+                headers={"X-Artemis-Token": "test-token"},
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # responseText is backward-compatible: still present, fence-stripped.
+    assert "responseText" in data
+    # chatMessage = conversational part without the fence block.
+    assert "chatMessage" in data
+    assert "Here's a tighter opening" in data["chatMessage"]
+    assert "artemis-draft" not in data["chatMessage"]
+    assert "Every student deserves" not in data["chatMessage"]
+    # deliverable = copy inside the fence.
+    assert data["deliverable"] == "Every student deserves to read with confidence."
+
+    # The persisted assistant message must store chatMessage (no fence).
+    engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+    attach_pgvector_codec(engine)
+    async with AsyncSession(engine, expire_on_commit=False) as verify_session:
+        messages = await wr_repo.list_thread_messages_for_draft(verify_session, draft_id)
+    await engine.dispose()
+
+    asst_msgs = [m for m in messages if m.role == "assistant"]
+    assert len(asst_msgs) == 1
+    assert "artemis-draft" not in asst_msgs[0].content
+    assert "Every student deserves" not in asst_msgs[0].content
+    assert "Here's a tighter opening" in asst_msgs[0].content
+
+
+@pytest.mark.asyncio
+async def test_compose_returns_null_deliverable_when_no_fence(
+    db_session: AsyncSession,
+) -> None:
+    """When the model emits no fence, deliverable is null and chatMessage = responseText."""
+    from unittest.mock import patch
+
+    from httpx import ASGITransport, AsyncClient
+
+    from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
+
+    no_fence_reply = "The proof pack for the growth stat is reference E003 in the claims register."
+    adapter = FakeAdapter([ScriptedReply(text=no_fence_reply, stop_reason="end_turn")])
+
+    draft_id = await _make_deliverable(db_session, title="QA Test Draft")
+
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
+        from artemis.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/writing-studio/drafts/{draft_id}/compose",
+                json={"request": "What's the proof pack for the growth stat?"},
+                headers={"X-Artemis-Token": "test-token"},
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["deliverable"] is None
+    assert data["chatMessage"] == no_fence_reply
+    assert data["responseText"] == no_fence_reply
+
+
+# ---------------------------------------------------------------------------
+# (e) parse_draft_fence — unit tests for the fence parser
+# ---------------------------------------------------------------------------
+
+
+def test_parse_draft_fence_with_fence() -> None:
+    """When a fence is present, deliverable is the fenced text; chat_message is the rest."""
+    from artemis.marketing.writing_studio.compose_engine import parse_draft_fence
+
+    response = (
+        "Here's the revised opening — tighter and benefit-led.\n\n"
+        "```artemis-draft\n"
+        "Amira helps every student read confidently.\n"
+        "```"
+    )
+    chat_message, deliverable = parse_draft_fence(response)
+    assert deliverable == "Amira helps every student read confidently."
+    assert "Here's the revised opening" in chat_message
+    assert "artemis-draft" not in chat_message
+    assert "```" not in chat_message
+
+
+def test_parse_draft_fence_no_fence() -> None:
+    """When no fence is present, deliverable is None and chat_message is the full text."""
+    from artemis.marketing.writing_studio.compose_engine import parse_draft_fence
+
+    response = "That's a great question! The proof pack for the growth stat is E003."
+    chat_message, deliverable = parse_draft_fence(response)
+    assert deliverable is None
+    assert chat_message == response
+
+
+def test_parse_draft_fence_malformed_partial_fence() -> None:
+    """A partial/unclosed fence should not error — deliverable is None."""
+    from artemis.marketing.writing_studio.compose_engine import parse_draft_fence
+
+    response = "Here is some content\n```artemis-draft\nIncomplete fence without closing"
+    chat_message, deliverable = parse_draft_fence(response)
+    assert deliverable is None
+    assert chat_message == response
+
+
+def test_parse_draft_fence_empty_fence() -> None:
+    """An empty fence body is treated as no deliverable."""
+    from artemis.marketing.writing_studio.compose_engine import parse_draft_fence
+
+    response = "Hmm, let me think.\n```artemis-draft\n   \n```"
+    chat_message, deliverable = parse_draft_fence(response)
+    assert deliverable is None
+    assert chat_message == response
+
+
+def test_parse_draft_fence_only_fence_fallback_message() -> None:
+    """When the entire response is inside a fence, chat_message gets a fallback."""
+    from artemis.marketing.writing_studio.compose_engine import parse_draft_fence
+
+    response = "```artemis-draft\nFull revised body text here.\n```"
+    chat_message, deliverable = parse_draft_fence(response)
+    assert deliverable == "Full revised body text here."
+    assert chat_message  # non-empty fallback
+    assert "artemis-draft" not in chat_message
+
+
+def test_parse_draft_fence_strips_leading_proposed_learning_already_removed() -> None:
+    """When called after strip_proposed_learning_lines, fence parsing still works."""
+    from artemis.marketing.writing_studio.compose_engine import (
+        parse_draft_fence,
+        strip_proposed_learning_lines,
+    )
+
+    raw = (
+        "Here is a tighter version.\n\n"
+        "```artemis-draft\n"
+        "Improved copy here.\n"
+        "```\n\n"
+        "Proposed learning: Lead with outcome."
+    )
+    cleaned = strip_proposed_learning_lines(raw)
+    chat_message, deliverable = parse_draft_fence(cleaned)
+    assert deliverable == "Improved copy here."
+    assert "Proposed learning" not in chat_message
+    assert "Here is a tighter version." in chat_message

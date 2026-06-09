@@ -44,6 +44,7 @@ from artemis.marketing.writing_studio.compose_engine import (
     _latest_draft_content,
     build_writing_memory_prompt,
     extract_proposed_learnings,
+    parse_draft_fence,
     strip_proposed_learning_lines,
 )
 from artemis.writing_rules import repository as wr_repo
@@ -784,6 +785,14 @@ async def compose_draft(
 
     cleaned_response_text = strip_proposed_learning_lines(response_text)
 
+    # ── Parse deliverable fence ────────────────────────────────────────────────
+    # chat_message = conversational part (fence stripped); draft_copy = copy
+    # inside the fence, or None.  Both are derived from the cleaned text so
+    # Proposed-learning lines are already removed.
+    # (Note: `deliverable` is already used above as the CampaignDeliverable ORM
+    # object; use `draft_copy` for the fenced text to avoid a name collision.)
+    chat_message, draft_copy = parse_draft_fence(cleaned_response_text)
+
     # ── 6. Persist thread messages ─────────────────────────────────────────────
     user_label = request_text or (
         "Adding source files for the next pass." if attachments else "Continue shaping this draft."
@@ -796,11 +805,15 @@ async def compose_draft(
         label="You",
         attachments=attachments or None,
     )
+    # Persist the clean conversational message (fence stripped) so chat history
+    # reads naturally on reload.  The deliverable itself is written to
+    # live_content when the user clicks "Apply to document" via the autosave
+    # path — we do NOT persist it here as separate metadata.
     persisted_assistant = await wr_repo.create_thread_message(
         session,
         draft_id=draft_id,
         role="assistant",
-        content=cleaned_response_text,
+        content=chat_message,
         label="Artemis",
         trace=prompt["trace"],
         prompt={
@@ -848,7 +861,14 @@ async def compose_draft(
 
     # ── 8. Return response ────────────────────────────────────────────────────
     return {
+        # responseText: full cleaned text (backward-compatible; do not remove).
         "responseText": cleaned_response_text,
+        # chatMessage: conversational part only (fence stripped). Use this for
+        # display in the chat thread.
+        "chatMessage": chat_message,
+        # deliverable: the copy inside the ```artemis-draft fence, or null.
+        # When non-null the FE renders an "Apply to document" affordance.
+        "deliverable": draft_copy,
         "proposedCandidates": proposed_candidates,
         "persistedMessages": {
             "user": _serialize_thread_message(persisted_user),

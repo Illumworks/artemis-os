@@ -2402,6 +2402,10 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   const chatHistory = Array.isArray(draft.threadMessages) ? [...draft.threadMessages] : [];
   renderChatThread();
 
+  // ── Apply-to-document undo state ─────────────────────────────────────────
+  // Holds the previous editor content so the user can revert after Apply.
+  let applyUndoContent = null;
+
   function renderChatThread() {
     if (!chatThreadEl) return;
     if (!chatHistory.length) {
@@ -2414,15 +2418,47 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     chatThreadEl.scrollTop = chatThreadEl.scrollHeight;
   }
 
+  /**
+   * Heuristic: should we show a fallback "Apply to document" button when the
+   * model didn't emit a fence?  Conservative: only if the message is long AND
+   * the original request didn't look like a question.
+   */
+  function _shouldShowFallbackApply(m) {
+    if (m.role !== "assistant" || m.pending) return false;
+    const text = m.text || m.content || "";
+    if (text.length < 300) return false;
+    // If the request that triggered this looks like a question, skip.
+    const req = m._request || "";
+    if (req.trim().endsWith("?")) return false;
+    return true;
+  }
+
   function renderChatMessage(m) {
     const role = m.role === "user" ? "user" : "assistant";
     const label = m.label || (role === "user" ? "You" : "Amira");
     const pending = m.pending ? " pending" : "";
     const text = m.text || m.content || "";
+
+    // Determine if we should show an Apply affordance.
+    const hasDeliverable = role === "assistant" && !m.pending && typeof m.deliverable === "string";
+    const hasFallbackApply = !hasDeliverable && _shouldShowFallbackApply(m);
+    const showApply = hasDeliverable || hasFallbackApply;
+
+    // The deliverable text to apply: explicit fence content, or fallback = full message.
+    const applyPayload = hasDeliverable ? m.deliverable : (hasFallbackApply ? text : "");
+
+    const applyBtn = showApply
+      ? `<div class="cv5-msg-apply-row">
+           <button type="button" class="cv5-apply-btn" data-cv5-apply="${esc(applyPayload)}">Apply to document</button>
+           ${applyUndoContent !== null ? `<button type="button" class="cv5-apply-undo">Undo apply</button>` : ""}
+         </div>`
+      : "";
+
     return `
       <div class="cv5-msg ${role}${pending}">
         <div class="cv5-msg-role">${esc(label)}</div>
         <div class="cv5-msg-bub">${esc(text)}</div>
+        ${applyBtn}
       </div>
     `;
   }
@@ -2444,6 +2480,38 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   }
   if (chatSendEl) {
     chatSendEl.addEventListener("click", () => void sendChatMessage());
+  }
+
+  // ── Apply-to-document event delegation ────────────────────────────────────
+  // Delegated on chatThreadEl so it works after innerHTML replaces (no memory
+  // leak — one listener per mount, removed on destroy).
+  function handleChatThreadClick(evt) {
+    const applyBtn = evt.target.closest(".cv5-apply-btn");
+    if (applyBtn) {
+      const newContent = applyBtn.dataset.cv5Apply;
+      if (!newContent) return;
+      // Snapshot current editor content for undo.
+      applyUndoContent = serializeDocToText(view.state.doc);
+      replaceEditorContent(newContent);
+      scheduleAutosave();
+      callbacks.onStatus?.("Draft applied to document. Autosaving…");
+      // Re-render the chat thread to reveal the Undo button.
+      renderChatThread();
+      return;
+    }
+    const undoBtn = evt.target.closest(".cv5-apply-undo");
+    if (undoBtn) {
+      if (applyUndoContent === null) return;
+      replaceEditorContent(applyUndoContent);
+      scheduleAutosave();
+      callbacks.onStatus?.("Apply undone — previous document restored. Autosaving…");
+      applyUndoContent = null;
+      renderChatThread();
+      return;
+    }
+  }
+  if (chatThreadEl) {
+    chatThreadEl.addEventListener("click", handleChatThreadClick);
   }
 
   async function sendChatMessage() {
@@ -2475,18 +2543,30 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (idxU >= 0 && persistedUser) chatHistory[idxU] = persistedUser;
       const idxA = chatHistory.findIndex((e) => e.id === pendingAsstId);
       if (idxA >= 0) {
-        chatHistory[idxA] = persistedAsst || {
-          id: `cv5-a-${Date.now()}`,
-          role: "assistant",
-          label: "Amira",
-          text: resp.responseText || "",
-        };
+        // Use chatMessage (fence-stripped) for display; fall back to responseText
+        // for backward compat if the field is absent (old server).
+        const displayText = resp.chatMessage ?? resp.responseText ?? "";
+        const asstEntry = persistedAsst
+          ? { ...persistedAsst, text: persistedAsst.text || displayText }
+          : {
+              id: `cv5-a-${Date.now()}`,
+              role: "assistant",
+              label: "Amira",
+              text: displayText,
+            };
+        // Attach deliverable + originating request so renderChatMessage can
+        // show the Apply button and the fallback heuristic has the request.
+        if (typeof resp.deliverable === "string") {
+          asstEntry.deliverable = resp.deliverable;
+        }
+        asstEntry._request = request;
+        chatHistory[idxA] = asstEntry;
       }
       renderChatThread();
-      // If the compose engine produced a new draft body, refresh the editor
-      // so the chat reply lands as the visible doc. (Stage 1 keeps the
-      // existing compose path; a chat that *replaces* the draft body comes
-      // back via /drafts/{id} → versions[0].content or live_content.)
+      // Stage-1 path: if the compose engine produced a new draft body via the
+      // old "versions" mechanism, still refresh the editor.  With the new fence
+      // path the user explicitly applies via the Apply button — so we don't
+      // auto-replace here.
       try {
         const refreshed = await fetchWritingDraft(currentDraftId);
         if (refreshed?.content && refreshed.content !== lastSavedContent) {
@@ -2551,6 +2631,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (commentsReflowRaf)    { cancelAnimationFrame(commentsReflowRaf); commentsReflowRaf = null; }
       document.removeEventListener("click", handleCommentComposerOutsideClick, true);
       try { document.body.removeChild(commentComposerEl); } catch (_) { /* noop */ }
+      // Apply-to-document cleanup.
+      if (chatThreadEl) chatThreadEl.removeEventListener("click", handleChatThreadClick);
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,

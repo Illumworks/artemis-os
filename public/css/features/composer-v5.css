@@ -392,6 +392,43 @@
   word-wrap: break-word;
 }
 .cv5-msg.pending .cv5-msg-bub { opacity: 0.65; font-style: italic; }
+
+/* Apply-to-document affordance — mirrors the rewrite-span accept/reject style. */
+.cv5-msg-apply-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+.cv5-apply-btn {
+  background: linear-gradient(135deg, #f0c46c, #d4913a);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 7px;
+  padding: 5px 13px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 1px 2px rgba(180,100,20,.18);
+  transition: filter 120ms;
+  line-height: 1.4;
+}
+.cv5-apply-btn:hover { filter: brightness(1.07); }
+.cv5-apply-undo {
+  border: 1px solid var(--cv5-rule, #e7ded0);
+  background: #fff;
+  color: var(--cv5-ink2, #544c40);
+  border-radius: 7px;
+  padding: 5px 11px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms;
+  line-height: 1.4;
+}
+.cv5-apply-undo:hover { background: color-mix(in srgb, #f44 8%, #fff); color: #c00; }
+
 .cv5-chat-empty {
   color: var(--cv5-ink3);
   font-size: 12.5px;

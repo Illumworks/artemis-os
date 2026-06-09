@@ -56,7 +56,21 @@ COMPOSE_CHAT_PRESENTATION_DIRECTIVE = (
     "headers, and do NOT enumerate Tier ratings, proof-pack IDs (E001-style), or claim-evidence "
     "tables in your reply. Compliance is handled by the document's inline claim flags. If a "
     "sentence you write uses an unapproved or Tier-4 strong claim, add at most one short plain-"
-    "English heads-up line at the end, not a section. Keep replies tight, natural, and human."
+    "English heads-up line at the end, not a section. Keep replies tight, natural, and human.\n\n"
+    "DELIVERABLE FENCE RULE: When you produce new or revised draft copy that should replace the "
+    "document body, wrap ONLY that copy in a fenced block like this:\n"
+    "```artemis-draft\n"
+    "<the revised copy here>\n"
+    "```\n"
+    "Any conversational lead-in or brief explanation stays OUTSIDE the fence, before it. "
+    "For pure questions, feedback, or turns where you are NOT rewriting the document, emit NO "
+    "fence at all. Never put section headers, your explanation, or meta-commentary inside the fence."
+)
+
+# Regex to extract the content of an ```artemis-draft ... ``` fenced block.
+_ARTEMIS_DRAFT_FENCE_RE = re.compile(
+    r"```artemis-draft\s*\n(.*?)\n?```",
+    re.DOTALL,
 )
 
 _PROPOSED_LEARNING_RE = re.compile(
@@ -530,3 +544,36 @@ def strip_proposed_learning_lines(response_text: str) -> str:
             continue
         kept_lines.append(line)
     return "\n".join(kept_lines).strip()
+
+
+def parse_draft_fence(response_text: str) -> tuple[str, str | None]:
+    """Split an assistant response into (chat_message, deliverable).
+
+    If the response contains a ``\\`\\`\\`artemis-draft ... \\`\\`\\``` fenced block:
+      - ``deliverable`` = the text inside the fence (stripped).
+      - ``chat_message`` = the response with the entire fence block removed,
+        then whitespace-trimmed.  If nothing remains outside the fence,
+        ``chat_message`` falls back to a short acknowledgment.
+
+    If no fence is present:
+      - ``deliverable`` = ``None``.
+      - ``chat_message`` = the full response text (unchanged).
+
+    This function never raises; a malformed/partial fence returns
+    ``deliverable=None`` and the original text as ``chat_message``.
+    """
+    match = _ARTEMIS_DRAFT_FENCE_RE.search(response_text)
+    if not match:
+        return response_text, None
+
+    deliverable = match.group(1).strip()
+    if not deliverable:
+        # Empty fence — treat as no deliverable.
+        return response_text, None
+
+    # Strip the entire fence block (opening + content + closing backticks).
+    chat_message = _ARTEMIS_DRAFT_FENCE_RE.sub("", response_text).strip()
+    if not chat_message:
+        chat_message = "Here's the revised draft — applied to the document."
+
+    return chat_message, deliverable
