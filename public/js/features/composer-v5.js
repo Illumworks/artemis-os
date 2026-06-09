@@ -2418,34 +2418,20 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     chatThreadEl.scrollTop = chatThreadEl.scrollHeight;
   }
 
-  /**
-   * Heuristic: should we show a fallback "Apply to document" button when the
-   * model didn't emit a fence?  Conservative: only if the message is long AND
-   * the original request didn't look like a question.
-   */
-  function _shouldShowFallbackApply(m) {
-    if (m.role !== "assistant" || m.pending) return false;
-    const text = m.text || m.content || "";
-    if (text.length < 300) return false;
-    // If the request that triggered this looks like a question, skip.
-    const req = m._request || "";
-    if (req.trim().endsWith("?")) return false;
-    return true;
-  }
-
   function renderChatMessage(m) {
     const role = m.role === "user" ? "user" : "assistant";
     const label = m.label || (role === "user" ? "You" : "Amira");
     const pending = m.pending ? " pending" : "";
     const text = m.text || m.content || "";
 
-    // Determine if we should show an Apply affordance.
-    const hasDeliverable = role === "assistant" && !m.pending && typeof m.deliverable === "string";
-    const hasFallbackApply = !hasDeliverable && _shouldShowFallbackApply(m);
-    const showApply = hasDeliverable || hasFallbackApply;
+    // Show the Apply affordance ONLY when the model emitted an explicit
+    // ```artemis-draft``` fence (parsed server-side into m.deliverable). No
+    // heuristic fallback: a fence-less reply is conversational, so applying it
+    // would dump chat prose into the document. Fence present = real revised copy.
+    const showApply = role === "assistant" && !m.pending && typeof m.deliverable === "string";
 
-    // The deliverable text to apply: explicit fence content, or fallback = full message.
-    const applyPayload = hasDeliverable ? m.deliverable : (hasFallbackApply ? text : "");
+    // The deliverable text to apply: the fence content only.
+    const applyPayload = showApply ? m.deliverable : "";
 
     const applyBtn = showApply
       ? `<div class="cv5-msg-apply-row">
