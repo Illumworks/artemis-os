@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -163,6 +164,31 @@ async def _send_approval_dm(
 
 # Marketing approval gates that should also post to the shared marketing channel.
 _MARKETING_CHANNEL_KINDS = frozenset({"content_draft", "signal_brief", "campaign_initiation"})
+
+# ── Marketing-owner DM suppression ────────────────────────────────────────────
+# When a gate ALSO posts to the marketing channel the channel post is the
+# shared review surface — the owner's personal Artemis DM must not receive a
+# duplicate marketing card (docs/agent-slack-architecture.md §Marketing
+# notification routing; docs/callie-build-plan.md "Marketing notification
+# routing"). We suppress the per-approver DM **only** for the Slack user that
+# owns this integration (Jon, U09F3EPJXSQ). Non-owner approvers and
+# non-marketing gates are completely unaffected.
+#
+# Identity resolution order (interim until Callie C2/C3 owns this):
+#   1. SLACK_AUTHED_USER_ID env var — same source as resolve_slack_config's
+#      authed_user_id, written during Slack OAuth install.
+#   2. Hard-coded constant below — acceptable for this interim fix;
+#      documented here so it is trivial to remove when C2 lands.
+#
+# To revert entirely: delete this block and the _is_marketing_owner_dm()
+# call inside execute_human_gate(), restore the unconditional DM loop.
+
+_MARKETING_OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"  # Jon Fila — interim constant
+
+
+def _marketing_owner_slack_id() -> str:
+    """Return the Slack user ID of the integration owner, env-first with fallback."""
+    return os.environ.get("SLACK_AUTHED_USER_ID", "").strip() or _MARKETING_OWNER_SLACK_ID_FALLBACK
 
 
 async def _post_approval_to_channel(
@@ -1127,7 +1153,42 @@ async def execute_human_gate_node(
         # so testing doesn't ping the configured reviewers. Channel post is unaffected.
         notify_override = settings.approval_notify_override.strip()
         notify_emails = [notify_override] if notify_override else approvers
+
+        # Resolve marketing-channel details up-front so the DM loop can use them.
+        channel_id = settings.marketing_campaigns_slack_channel.strip()
+        is_marketing_gate = bool(channel_id and kind in _MARKETING_CHANNEL_KINDS)
+        # Interim suppression: when this gate also posts to the marketing channel,
+        # skip the personal DM to the integration owner (Jon).  The channel post
+        # is already the shared review surface for marketing content.
+        # See _marketing_owner_slack_id() for identity resolution logic.
+        marketing_owner_id = _marketing_owner_slack_id() if is_marketing_gate else ""
+
         for email in notify_emails:
+            if is_marketing_gate and marketing_owner_id:
+                # Look up this approver's Slack ID to compare against the owner.
+                approver_slack_id = await _lookup_slack_user_id(email, slack_token)
+                if approver_slack_id and approver_slack_id == marketing_owner_id:
+                    logger.info(
+                        "Suppressing marketing-gate DM to owner %r (%s) for run %s node %s "
+                        "— channel %s already covers it",
+                        email,
+                        marketing_owner_id,
+                        run_id,
+                        node_id,
+                        channel_id,
+                    )
+                    delivery_log.append(
+                        {
+                            "email": email,
+                            "sent_at": datetime.now(UTC).isoformat(),
+                            "channel": None,
+                            "error": None,
+                            "fallback": False,
+                            "suppressed": True,
+                            "suppression_reason": "marketing_gate_owner_dm_suppressed",
+                        }
+                    )
+                    continue
             entry = await _send_approval_dm(
                 email=email,
                 token=slack_token,
@@ -1143,8 +1204,7 @@ async def execute_human_gate_node(
             )
             delivery_log.append(entry)
         # Post ONCE to the shared marketing channel (in addition to DMs) for marketing gates.
-        channel_id = settings.marketing_campaigns_slack_channel.strip()
-        if channel_id and kind in _MARKETING_CHANNEL_KINDS:
+        if is_marketing_gate:
             delivery_log.append(
                 await _post_approval_to_channel(
                     channel_id=channel_id,
