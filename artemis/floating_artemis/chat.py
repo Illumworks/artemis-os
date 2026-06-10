@@ -140,7 +140,7 @@ def _build_system_prompt(
 
     # Slack-originated session: establish the conversational context.
     if session_id.startswith("slack-"):
-        who = f" You are speaking with {speaker_name}." if speaker_name else ""
+        who = f" The operator is {speaker_name}." if speaker_name else ""
         parts.append(
             "**You are responding in Slack.** The operator @-mentioned you directly. "
             "**Assume they are addressing you and respond on-topic.** "
