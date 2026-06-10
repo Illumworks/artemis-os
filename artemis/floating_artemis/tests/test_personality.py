@@ -167,3 +167,25 @@ def test_build_system_prompt_includes_full_profile() -> None:
     assert "chief of operations" in prompt
     # Presence of the profile heading
     assert "Full personality profile" in prompt
+
+
+def test_build_system_prompt_voice_samples_are_calibration_only() -> None:
+    prompt = _build_system_prompt(
+        voice_samples=["Already on it."],
+        page_context=None,
+        available_surfaces=[],
+        session_id="fa-test",
+    )
+    assert "Characteristic phrases (calibration only)" in prompt
+    assert "Never quote them verbatim or near-verbatim." in prompt
+    assert "Generate fresh lines in this spirit:" in prompt
+
+
+def test_build_system_prompt_includes_no_dash_no_emoji_lint() -> None:
+    prompt = _build_system_prompt(
+        voice_samples=[],
+        page_context=None,
+        available_surfaces=[],
+        session_id="fa-test",
+    )
+    assert "No em or en dashes. No emojis." in prompt

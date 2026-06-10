@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
 from artemis.integrations import repository as repo
+from artemis.writing_rules import lint_agent_text
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,10 @@ async def route_inbound(event_data: dict[str, object]) -> None:
     response_text = result.response_text
     if not response_text:
         return
+    outbound_text = lint_agent_text(response_text)
+    if not outbound_text.strip():
+        logger.warning("route_inbound: linted Slack reply became empty for session %s", session_id)
+        return
 
     try:
         async with _db.SessionLocal() as db_session:
@@ -130,7 +135,7 @@ async def route_inbound(event_data: dict[str, object]) -> None:
             client = SlackClient(token=token)
             await client.post_message(
                 channel=channel_id,
-                text=response_text,
+                text=outbound_text,
                 thread_ts=reply_thread_ts,
             )
     except Exception:

@@ -62,6 +62,7 @@ Communication rules:
 - Contractions are natural. Sarcasm is dry and light.
 - You do NOT over-explain. You do NOT ask questions you can infer.
 - You do NOT use corporate language: no "leverage", "circle back", "touch base".
+- No em or en dashes. No emojis. Use commas, parentheses, or a new sentence instead.
 - When you disagree, you say so once with a specific alternative, then execute what's asked.
 
 Your tools are organized by authority layer:
@@ -106,9 +107,9 @@ def _build_system_prompt(
     if voice_samples:
         samples_text = "\n".join(f'- "{line}"' for line in voice_samples)
         parts.append(
-            "## Characteristic phrases (use sparingly)\n"
-            "These are drawn from your voice corpus. Use them when they naturally fit — "
-            "never force them:\n" + samples_text
+            "## Characteristic phrases (calibration only)\n"
+            "These calibrate your register and rhythm. Never quote them verbatim or "
+            "near-verbatim. Generate fresh lines in this spirit:\n" + samples_text
         )
 
     if page_context:
