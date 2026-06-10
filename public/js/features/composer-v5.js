@@ -973,6 +973,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       return;
     }
     if (action === "__comment__") {
+      hideSelToolbar();
       openCommentComposer();
       return;
     }
