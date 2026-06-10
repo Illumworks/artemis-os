@@ -62,7 +62,7 @@ function renderMonitor(data) {
 
   html += `<div class="am-section">
     <div class="am-section-title">About This Preview</div>
-    <div class="am-empty">This monitor starts helping after a preview agent, chain, DAG, or orchestration run has launched. It is useful for recent run status, cost, and rough comparisons, but it only shows lightweight recent activity. It is not yet durable run history, an audit trail, a maintenance surface, or the final launch-debug experience.</div>
+    <div class="am-empty">No agent activity yet — runs will appear here once launched.</div>
   </div>`;
 
   // ── Summary cards ──
@@ -205,7 +205,7 @@ function renderMonitor(data) {
   }
 
   if (!agents.length && !recent.length) {
-    html += `<div class="am-empty">No preview runs recorded yet. Launch an agent, chain, DAG, or orchestration run to start seeing recent status, cost, and completion snapshots here.</div>`;
+    html += `<div class="am-empty">No runs yet — launch an agent to see status, cost, and timing here.</div>`;
   }
 
   el.innerHTML = html;

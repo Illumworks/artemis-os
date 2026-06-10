@@ -3106,8 +3106,7 @@ function renderEmptyState() {
 function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
   const titleText = draft.title || `Draft ${draft.id}`;
   const status = (draft.status || "draft").replace(/_/g, " ");
-  const versionsCount = Array.isArray(draft.versions) ? draft.versions.length : 0;
-  const varsLabel = versionsCount > 0 ? `${versionsCount} version${versionsCount === 1 ? "" : "s"}` : "0 versions";
+
   return `
     <div class="cv5-root">
       <header class="cv5-hdr">
@@ -3142,8 +3141,6 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
         <span class="cv5-hdr-title" title="${esc(titleText)}">${esc(titleText)}</span>
         <span class="cv5-hdr-status">${esc(status)}</span>
         <div class="cv5-hdr-spacer"></div>
-        <button type="button" class="cv5-hdr-ind is-placeholder" disabled aria-disabled="true" title="Variants — Stage 8">◳ ${esc(varsLabel)}</button>
-        <button type="button" class="cv5-hdr-ind is-placeholder" disabled aria-disabled="true" title="Rules — Stage 8">✓ rules</button>
         <button type="button" class="cv5-hdr-ind" data-cv5="comments-toggle" title="Show / hide comments rail">💬 Comments</button>
         <button type="button" class="cv5-hdr-ind" data-cv5="open-history" title="Version history">⟲ History</button>
         <div class="cv5-gdoc-wrap" data-cv5="gdoc-wrap">

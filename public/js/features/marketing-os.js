@@ -2154,7 +2154,8 @@ export function renderTabAssets(c, deliverables, linkedAssets) {
             <button class="mkt-btn-ghost mkt-btn-danger mkt-deliverable-remove-btn"
                     type="button"
                     data-remove-deliverable="${esc(String(d.id))}"
-                    title="Remove from campaign">✕</button>
+                    title="Remove from campaign"
+                    aria-label="Remove from campaign">✕</button>
           </div>
         `;
       }).join('');
@@ -2351,10 +2352,10 @@ function renderTabPerformance(c) {
         ${kpis && kpis.opens > 0 ? `
           <div class="mkt-perf-preview">
             <div class="mkt-tile-kpi-row">
-              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.opens}</span><span class="mkt-kpi-label">opens (mock)</span></div>
-              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.clicks}</span><span class="mkt-kpi-label">clicks (mock)</span></div>
-              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.downloads}</span><span class="mkt-kpi-label">downloads (mock)</span></div>
-              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.bdrQueued}</span><span class="mkt-kpi-label">BDR queued (mock)</span></div>
+              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.opens}</span><span class="mkt-kpi-label">opens</span></div>
+              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.clicks}</span><span class="mkt-kpi-label">clicks</span></div>
+              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.downloads}</span><span class="mkt-kpi-label">downloads</span></div>
+              <div class="mkt-tile-kpi"><span class="mkt-kpi-value">${kpis.bdrQueued}</span><span class="mkt-kpi-label">BDR queued</span></div>
             </div>
           </div>
         ` : ''}

@@ -8,7 +8,7 @@ class AgentMonitorModal extends HTMLElement {
         <button id="agent-monitor-close" class="modal-close">&times;</button>
       </div>
       <div class="af-preview-note">
-        Preview monitor: this view helps after a run has launched, but it only shows lightweight recent activity. It is not yet the final Artemis launch-debug, durable run-history, or maintenance surface.
+        Recent agent activity — status, cost, and timing for your latest runs.
       </div>
       <div id="agent-monitor-content"></div>
     </div>
