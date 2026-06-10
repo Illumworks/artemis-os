@@ -45,6 +45,11 @@ import {
   rewriteSpanApi,
   scanDraftClaimsApi,
   updateWritingDraftApi,
+  decideApprovalApi,
+  listApprovalsApi,
+  attachDeliverableApi,
+  listUnlinkedDraftsApi,
+  fetchMarketingCampaignsApi,
 } from "../core/api.js";
 
 // Schema: paragraphs, headings, lists, bold/italic — the prototype's basic set.
@@ -1546,6 +1551,48 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   }
   document.addEventListener("keydown", handleActionsEscape);
 
+  // State for the campaign-action buttons — populated on draft open.
+  let _pendingCampaignApproval = null; // Approval row if this draft has a pending content_draft approval
+  let _draftCampaignDeliverableId = null; // campaign_deliverables.id for this draft (if linked)
+
+  async function _refreshCampaignActionState() {
+    // Fetch pending content_draft approvals to see if this draft is pending review.
+    _pendingCampaignApproval = null;
+    try {
+      const approvals = await listApprovalsApi({ status: "pending", kind: "content_draft" });
+      if (Array.isArray(approvals)) {
+        // Match by checking if this deliverable's id appears in any approval's context.
+        for (const approval of approvals) {
+          const deliverableIds = approval?.pipe4Context?.context?.deliverable_ids || [];
+          const deliverables = approval?.pipe4Context?.context?.deliverables || [];
+          const allIds = [
+            ...deliverableIds.map(String),
+            ...deliverables.map((d) => String(d?.id)),
+          ];
+          if (draft.id && allIds.includes(String(draft.id))) {
+            _pendingCampaignApproval = approval;
+            break;
+          }
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+
+    // Show/hide the "Approve for campaign" button based on whether there's a pending approval.
+    const approveBtn = actionsMenuEl?.querySelector('[data-cv5-action="approve-for-campaign"]');
+    if (approveBtn) {
+      if (_pendingCampaignApproval) {
+        approveBtn.removeAttribute("hidden");
+      } else {
+        approveBtn.setAttribute("hidden", "");
+      }
+    }
+  }
+
+  // Refresh campaign action state on mount.
+  _refreshCampaignActionState().catch(() => {});
+
   if (actionsMenuEl) {
     actionsMenuEl.addEventListener("click", async (e) => {
       const btn = e.target.closest("[data-cv5-action]");
@@ -1560,8 +1607,98 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         callbacks.onStatus?.("Repurpose — coming soon.");
       } else if (action === "brand-check") {
         callbacks.onStatus?.("Brand + readability check — coming soon.");
+      } else if (action === "approve-for-campaign") {
+        await handleApproveForCampaign();
+      } else if (action === "attach-to-campaign") {
+        await handleAttachToCampaign();
       }
     });
+  }
+
+  async function handleApproveForCampaign() {
+    if (!_pendingCampaignApproval) {
+      callbacks.onStatus?.("No pending review for this draft.");
+      return;
+    }
+    try {
+      await decideApprovalApi(_pendingCampaignApproval.id, { decision: "approved", reviewer: "operator" });
+      _pendingCampaignApproval = null;
+      // Hide the button after approving
+      const approveBtn = actionsMenuEl?.querySelector('[data-cv5-action="approve-for-campaign"]');
+      approveBtn?.setAttribute("hidden", "");
+      callbacks.onStatus?.("Draft approved for campaign.");
+    } catch (err) {
+      console.error("[composer-v5] approve-for-campaign failed:", err);
+      callbacks.onError?.(err.message || "Failed to approve draft.");
+    }
+  }
+
+  async function handleAttachToCampaign() {
+    // Fetch all campaigns so the operator can pick one.
+    let campaigns = [];
+    try {
+      campaigns = await fetchMarketingCampaignsApi();
+    } catch (err) {
+      callbacks.onError?.("Failed to load campaigns.");
+      return;
+    }
+    if (!Array.isArray(campaigns) || campaigns.length === 0) {
+      callbacks.onStatus?.("No campaigns available to attach to.");
+      return;
+    }
+
+    // Show a simple picker inline in the actions area.
+    _showCampaignAttachPicker(campaigns);
+  }
+
+  function _showCampaignAttachPicker(campaigns) {
+    // Remove existing picker if any.
+    rootEl.querySelector(".cv5-campaign-attach-picker")?.remove();
+
+    const picker = document.createElement("div");
+    picker.className = "cv5-picker-menu cv5-campaign-attach-picker is-open";
+    picker.style.cssText = "position:absolute;right:0;top:100%;z-index:200;min-width:260px;";
+    picker.innerHTML = `
+      <div style="padding:6px 10px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border)">
+        Attach to campaign
+      </div>
+      <ul style="list-style:none;margin:0;padding:4px 0;max-height:240px;overflow-y:auto">
+        ${campaigns.map((c) => `
+          <li class="cv5-picker-menu-row" data-attach-campaign-id="${escapeHtml(String(c.id))}" style="cursor:pointer">
+            <span>${escapeHtml(c.name || c.family || String(c.id))}</span>
+          </li>
+        `).join("")}
+      </ul>
+    `;
+
+    // Attach relative to the actions-wrap
+    const actionsWrap = rootEl.querySelector('[data-cv5="actions-wrap"]');
+    if (!actionsWrap) return;
+    actionsWrap.style.position = "relative";
+    actionsWrap.appendChild(picker);
+
+    picker.querySelectorAll("[data-attach-campaign-id]").forEach((li) => {
+      li.addEventListener("click", async () => {
+        const candidateId = Number(li.dataset.attachCampaignId);
+        li.style.opacity = "0.5";
+        picker.remove();
+        try {
+          await attachDeliverableApi(draft.id, candidateId);
+          callbacks.onStatus?.("Draft attached to campaign.");
+        } catch (err) {
+          console.error("[composer-v5] attach-to-campaign failed:", err);
+          callbacks.onError?.(err.message || "Failed to attach draft to campaign.");
+        }
+      });
+    });
+
+    function handleOutside(e) {
+      if (!picker.contains(e.target)) {
+        picker.remove();
+        document.removeEventListener("click", handleOutside);
+      }
+    }
+    setTimeout(() => document.addEventListener("click", handleOutside), 0);
   }
 
   async function handleSaveAsTemplate() {
@@ -3028,6 +3165,14 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
             <button type="button" class="cv5-picker-menu-row" data-cv5-action="brand-check" role="menuitem">
               <span aria-hidden="true">✓</span>
               <span>Brand + readability check</span>
+            </button>
+            <button type="button" class="cv5-picker-menu-row" data-cv5-action="approve-for-campaign" role="menuitem" hidden>
+              <span aria-hidden="true">✅</span>
+              <span>Approve for campaign</span>
+            </button>
+            <button type="button" class="cv5-picker-menu-row" data-cv5-action="attach-to-campaign" role="menuitem">
+              <span aria-hidden="true">🔗</span>
+              <span>Attach to campaign</span>
             </button>
           </div>
         </div>

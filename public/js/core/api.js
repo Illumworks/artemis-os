@@ -953,6 +953,39 @@ export async function getCampaignDeliverableApi(id) {
   return _readJsonOrThrow(res, "Failed to fetch campaign deliverable");
 }
 
+export async function unlinkDeliverableApi(deliverableId) {
+  const res = await fetch(`/api/campaign-deliverables/${encodeURIComponent(deliverableId)}/unlink`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return _readJsonOrThrow(res, "Failed to unlink deliverable");
+}
+
+export async function attachDeliverableApi(deliverableId, candidateId) {
+  const res = await fetch(`/api/campaign-deliverables/${encodeURIComponent(deliverableId)}/attach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ candidateId }),
+  });
+  return _readJsonOrThrow(res, "Failed to attach deliverable");
+}
+
+export async function createBlankDeliverableApi(candidateId, title) {
+  const payload = { candidateId };
+  if (title) payload.title = title;
+  const res = await fetch("/api/campaign-deliverables/blank", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return _readJsonOrThrow(res, "Failed to create blank deliverable");
+}
+
+export async function listUnlinkedDraftsApi() {
+  const res = await fetch("/api/campaign-deliverables/unlinked-drafts");
+  return _readJsonOrThrow(res, "Failed to list unlinked drafts");
+}
+
 export async function assembleCampaignBriefApi(candidateId, { assembledBy } = {}) {
   const res = await fetch(
     `/api/campaign-ops/candidates/${encodeURIComponent(candidateId)}/brief/assemble`,

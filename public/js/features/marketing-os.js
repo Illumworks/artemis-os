@@ -35,6 +35,10 @@ import {
   fetchMarketingQueuedSends,
   sendMarketingOutboxItem,
   fetchMarketingPrioritizationApi,
+  unlinkDeliverableApi,
+  attachDeliverableApi,
+  createBlankDeliverableApi,
+  listUnlinkedDraftsApi,
 } from '../core/api.js';
 import {
   filterSignals,
@@ -164,8 +168,17 @@ function _refreshPendingDraftApprovals(approvals = []) {
   for (const approval of approvals) {
     const candidateId = _pendingDraftApprovalCandidateId(approval);
     if (!candidateId || approval?.status !== 'pending') continue;
-    _pendingDraftApprovalsByCandidate.set(candidateId, approval);
+    // Collect as array — a campaign may have multiple pending content_draft approvals.
+    const existing = _pendingDraftApprovalsByCandidate.get(candidateId) || [];
+    existing.push(approval);
+    _pendingDraftApprovalsByCandidate.set(candidateId, existing);
   }
+}
+
+// Return the first pending approval for a candidate (for legacy single-approval code paths).
+function _firstPendingApproval(candidateId) {
+  const list = _pendingDraftApprovalsByCandidate.get(_campaignMapKey(candidateId));
+  return Array.isArray(list) ? (list[0] || null) : null;
 }
 
 function esc(s) {
@@ -508,7 +521,8 @@ export function renderMarketingCampaigns(campaignsOrId = null, selectedId = null
 }
 
 function renderCampaignWorkspace(campaign) {
-  const pendingApproval = _pendingDraftApprovalsByCandidate.get(_campaignMapKey(campaign.id)) || null;
+  const pendingApprovals = _pendingDraftApprovalsByCandidate.get(_campaignMapKey(campaign.id)) || [];
+  const pendingApproval = pendingApprovals[0] || null;
   const storedTab = (() => {
     try { return localStorage.getItem(MKT_WORKSPACE_TAB_KEY) || 'audience'; } catch { return 'audience'; }
   })();
@@ -535,7 +549,7 @@ function renderCampaignWorkspace(campaign) {
 
   const actionsHtml = campaign._fromApi ? _renderWorkspaceActions(campaign) : '';
   const writingStudioHtml = campaign._fromApi ? _renderWritingStudioSection(campaign, pendingApproval) : '';
-  const pendingApprovalHtml = campaign._fromApi ? _renderCampaignPendingApprovalSection(pendingApproval) : '';
+  const pendingApprovalHtml = campaign._fromApi ? _renderCampaignPendingApprovalSection(pendingApprovals) : '';
   const initiationActionHtml = campaign._fromApi && !campaign.initiatedAt
     ? `<button class="mkt-btn-secondary mkt-initiation-open-btn" type="button" data-mkt-initiation-open="${esc(campaign.id)}">Review initiation proposal</button>`
     : '';
@@ -621,24 +635,59 @@ function _renderWorkspaceActions(c) {
   `;
 }
 
-function _renderCampaignPendingApprovalSection(approval) {
-  if (!approval || approval.status !== 'pending') return '';
-  const deliverableId = _primaryApprovalDeliverableId(approval);
+function _approvalAssetTitle(approval) {
+  // Try to extract asset title from pipe4Context.context.deliverables
+  const deliverables = approval?.pipe4Context?.context?.deliverables;
+  if (Array.isArray(deliverables) && deliverables.length > 0) {
+    const titles = deliverables.map((d) => {
+      const title = d?.draftTitle || d?.title || d?.externalTitle;
+      const type = d?.deliverableTypeSlug || d?.asset_type;
+      if (title && type) return `${title} (${type.replace(/_/g, ' ')})`;
+      if (title) return title;
+      if (type) return type.replace(/_/g, ' ');
+      return null;
+    }).filter(Boolean);
+    if (titles.length > 0) return titles.join(', ');
+  }
+  // Fallback: try draft_title from context
+  const ctx = approval?.pipe4Context?.context || {};
+  const fallback = ctx.draft_title || ctx.campaign_name;
+  return fallback || null;
+}
+
+function _renderCampaignPendingApprovalSection(approvals) {
+  const list = Array.isArray(approvals) ? approvals.filter((a) => a?.status === 'pending') : [];
+  if (list.length === 0) return '';
+
+  const items = list.map((approval) => {
+    const deliverableId = _primaryApprovalDeliverableId(approval);
+    const assetTitle = _approvalAssetTitle(approval);
+    return `
+      <div class="mkt-review-item" data-campaign-approval-card="${esc(String(approval.id))}">
+        <div class="mkt-review-item-head">
+          <span class="mkt-review-item-name">${assetTitle ? esc(assetTitle) : 'Content asset'}</span>
+          <span class="mkt-pill mkt-pill-pending">Pending</span>
+        </div>
+        <div class="mkt-workspace-actions">
+          ${deliverableId ? `<a class="mkt-btn-secondary mkt-ws-open-draft-btn" href="${writingStudioDraftHref(deliverableId)}" data-ws-draft-id="${esc(String(deliverableId))}">Edit in Writing Studio</a>` : ''}
+          <button class="mkt-btn-primary" type="button" data-campaign-approve-id="${esc(String(approval.id))}">Approve</button>
+          <button class="mkt-btn-ghost" type="button" data-campaign-revision-id="${esc(String(approval.id))}">Request revision</button>
+          <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-campaign-reject-id="${esc(String(approval.id))}">Reject</button>
+        </div>
+        <div class="mkt-reject-reason-form" data-campaign-reject-reason-for="${esc(String(approval.id))}" hidden>
+          <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
+        </div>
+      </div>
+    `;
+  }).join('');
+
   return `
-    <div class="mkt-writing-studio-review-card" data-campaign-approval-card="${esc(String(approval.id))}">
+    <div class="mkt-writing-studio-review-card">
       <div class="mkt-writing-studio-review-head">
         <span class="mkt-writing-studio-label">Content review pending</span>
-        <span class="mkt-pill mkt-pill-pending">Pending</span>
+        <span class="mkt-pill mkt-pill-pending">${list.length} pending</span>
       </div>
-      <div class="mkt-workspace-actions">
-        ${deliverableId ? `<a class="mkt-btn-secondary mkt-ws-open-draft-btn" href="${writingStudioDraftHref(deliverableId)}" data-ws-draft-id="${esc(String(deliverableId))}">Edit in Writing Studio</a>` : ''}
-        <button class="mkt-btn-primary" type="button" data-campaign-approve-id="${esc(String(approval.id))}">Approve</button>
-        <button class="mkt-btn-ghost" type="button" data-campaign-revision-id="${esc(String(approval.id))}">Request revision</button>
-        <button class="mkt-btn-ghost mkt-btn-danger" type="button" data-campaign-reject-id="${esc(String(approval.id))}">Reject</button>
-      </div>
-      <div class="mkt-reject-reason-form" data-campaign-reject-reason-for="${esc(String(approval.id))}" hidden>
-        <textarea class="mkt-signal-notes-input" placeholder="Why? (optional)" rows="2"></textarea>
-      </div>
+      ${items}
     </div>
   `;
 }
@@ -2075,22 +2124,37 @@ export function renderTabAssets(c, deliverables, linkedAssets) {
       `;
     }
 
+    const _assetTabFooter = `
+      <div class="mkt-assets-tab-footer">
+        <button class="mkt-btn-secondary" type="button" data-deliverable-action="add-new" data-campaign-id="${esc(String(c.id))}">+ Add new asset</button>
+        <button class="mkt-btn-ghost" type="button" data-deliverable-action="link-existing" data-campaign-id="${esc(String(c.id))}">+ Link asset</button>
+      </div>
+    `;
+
     if (deliverables.length > 0) {
       const rows = deliverables.map((d) => {
-        const title = d.draftTitle || (d.formatMode ? `${d.formatMode} draft` : 'Draft');
-        const format = d.formatMode ? esc(d.formatMode.replace(/_/g, ' ')) : null;
+        // Read real title + type from metadata (set by invoke.py at draft creation).
+        const meta = d.metadata || {};
+        const title = meta.title || meta.externalTitle || meta.draftTitle || 'Untitled draft';
+        const assetType = meta.asset_type || meta.assetType || meta.deliverableTypeSlug || null;
+        const status = d.status || 'unknown';
+        // `d.id` is the campaign_deliverable PK; used to navigate to the WS draft.
         return `
-          <div class="mkt-deliverable-row">
+          <div class="mkt-deliverable-row" style="cursor:pointer"
+               data-ws-draft-id="${esc(String(d.id))}"
+               data-deliverable-row>
             <div class="mkt-deliverable-row-body">
               <span class="mkt-deliverable-title">${esc(title)}</span>
-              ${format ? `<span class="mkt-deliverable-format">${format}</span>` : ''}
+              ${assetType ? `<span class="mkt-deliverable-format">${esc(assetType.replace(/_/g, ' '))}</span>` : ''}
             </div>
-            <span class="mkt-pill ${_deliverableStatePill(d.state)}">${_deliverableStateLabel(d.state)}</span>
-            ${d.writingStudioDraftId
-              ? `<button class="mkt-asset-open-btn mkt-ws-open-draft-btn"
-                         data-ws-draft-id="${esc(String(d.writingStudioDraftId))}"
-                         type="button">Open →</button>`
-              : '<span class="mkt-deliverable-no-draft">—</span>'}
+            <span class="mkt-pill ${_deliverableStatePill(status)}">${_deliverableStateLabel(status)}</span>
+            <button class="mkt-asset-open-btn mkt-ws-open-draft-btn"
+                    data-ws-draft-id="${esc(String(d.id))}"
+                    type="button">Open →</button>
+            <button class="mkt-btn-ghost mkt-btn-danger mkt-deliverable-remove-btn"
+                    type="button"
+                    data-remove-deliverable="${esc(String(d.id))}"
+                    title="Remove from campaign">✕</button>
           </div>
         `;
       }).join('');
@@ -2106,6 +2170,7 @@ export function renderTabAssets(c, deliverables, linkedAssets) {
           ${summaryBar}
           <div class="mkt-deliverables-list">${rows}</div>
           ${_renderLinkedCollateral(c, linkedAssets)}
+          ${_assetTabFooter}
         </div>
       `;
     }
@@ -2123,7 +2188,7 @@ export function renderTabAssets(c, deliverables, linkedAssets) {
         ${count === 0 ? `
           <div class="mkt-placeholder-panel">
             <h4>No drafts yet</h4>
-            <p>Use "Create draft in Writing Studio" above to start a content asset for this campaign.</p>
+            <p>Use "Add new asset" below to start a content asset for this campaign.</p>
           </div>
         ` : `
           <div class="mkt-writing-drafts-list">
@@ -2137,6 +2202,7 @@ export function renderTabAssets(c, deliverables, linkedAssets) {
           </div>
         `}
         ${_renderLinkedCollateral(c, linkedAssets)}
+        ${_assetTabFooter}
       </div>
     `;
   }
@@ -3969,7 +4035,7 @@ function _wireBriefTabActions(container, campaign) {
 }
 
 function _wireAssetTabActions(container, campaign) {
-  // Unlink buttons
+  // Unlink content-asset links (reusable assets) — existing behaviour unchanged
   container.querySelectorAll('[data-unlink-asset]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const assetId = btn.dataset.unlinkAsset;
@@ -3988,7 +4054,37 @@ function _wireAssetTabActions(container, campaign) {
     });
   });
 
-  // Link existing asset picker — shows a small inline search UI
+  // Remove-from-campaign buttons (deliverable rows)
+  container.querySelectorAll('[data-remove-deliverable]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation(); // don't bubble to row-click handler
+      const deliverableId = btn.dataset.removeDeliverable;
+      if (!window.confirm('Remove this draft from the campaign? The draft will not be deleted — it will move to unlinked drafts.')) return;
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        await unlinkDeliverableApi(deliverableId);
+        _deliverablesCache.delete(campaign.id);
+        await _loadAndRenderAssetsTab(container, campaign);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = origText;
+        console.error('[assets] remove-deliverable failed:', err?.message ?? err);
+      }
+    });
+  });
+
+  // Clicking the row body opens the draft in Writing Studio
+  container.querySelectorAll('[data-deliverable-row]').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return; // let buttons handle their own clicks
+      const draftId = row.dataset.wsDraftId;
+      if (draftId) window.location.hash = writingStudioDraftHref(draftId);
+    });
+  });
+
+  // Link existing asset picker — shows a small inline search UI (content assets, unchanged)
   const linkBtn = container.querySelector('[data-asset-action="link"]');
   if (linkBtn) {
     linkBtn.addEventListener('click', async () => {
@@ -4009,13 +4105,126 @@ function _wireAssetTabActions(container, campaign) {
     });
   }
 
-  // Add new asset inline form
+  // Add new asset inline form (content assets, unchanged)
   const addBtn = container.querySelector('[data-asset-action="add"]');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
       _showAddAssetForm(container, campaign, addBtn);
     });
   }
+
+  // "Add new asset" footer button — create a blank draft linked to this campaign
+  const addNewBtn = container.querySelector('[data-deliverable-action="add-new"]');
+  if (addNewBtn) {
+    addNewBtn.addEventListener('click', async () => {
+      const origText = addNewBtn.textContent;
+      addNewBtn.disabled = true;
+      addNewBtn.textContent = 'Creating…';
+      try {
+        const result = await createBlankDeliverableApi(campaign.id);
+        // Navigate to the new draft in Writing Studio
+        if (result.deliverableId) {
+          _deliverablesCache.delete(campaign.id);
+          window.location.hash = writingStudioDraftHref(result.deliverableId);
+        }
+      } catch (err) {
+        addNewBtn.disabled = false;
+        addNewBtn.textContent = origText;
+        console.error('[assets] add-new failed:', err?.message ?? err);
+      }
+    });
+  }
+
+  // "+ Link asset" footer button — pick an unlinked draft and attach to this campaign
+  const linkDraftBtn = container.querySelector('[data-deliverable-action="link-existing"]');
+  if (linkDraftBtn) {
+    linkDraftBtn.addEventListener('click', async () => {
+      const origText = linkDraftBtn.textContent;
+      linkDraftBtn.disabled = true;
+      linkDraftBtn.textContent = 'Loading…';
+      let unlinked = [];
+      try {
+        unlinked = await listUnlinkedDraftsApi();
+      } catch {
+        linkDraftBtn.disabled = false;
+        linkDraftBtn.textContent = origText;
+        return;
+      }
+      linkDraftBtn.disabled = false;
+      linkDraftBtn.textContent = origText;
+      _showDeliverableLinkPicker(container, campaign, unlinked, linkDraftBtn);
+    });
+  }
+}
+
+function _showDeliverableLinkPicker(container, campaign, deliverables, triggerBtn) {
+  const existing = container.querySelector('.mkt-deliverable-link-picker');
+  if (existing) { existing.remove(); return; }
+
+  const picker = document.createElement('div');
+  picker.className = 'mkt-asset-picker mkt-deliverable-link-picker';
+  if (deliverables.length === 0) {
+    picker.innerHTML = `<p class="mkt-asset-picker-empty">No unlinked drafts available. Use "+ Add new asset" to create one.</p>`;
+  } else {
+    picker.innerHTML = `
+      <input class="mkt-asset-picker-search" type="text" placeholder="Search drafts…" autocomplete="off" />
+      <ul class="mkt-asset-picker-list">
+        ${deliverables.map((d) => {
+          const meta = d.metadata || {};
+          const title = meta.title || meta.externalTitle || 'Untitled draft';
+          const type = meta.asset_type || meta.assetType || '';
+          return `
+            <li class="mkt-asset-picker-item" data-pick-deliverable="${esc(String(d.id))}">
+              <span class="mkt-asset-picker-title">${esc(title)}</span>
+              ${type ? `<span class="mkt-asset-picker-type">${esc(type.replace(/_/g, ' '))}</span>` : ''}
+              <span class="mkt-pill ${_deliverableStatePill(d.status)}">${_deliverableStateLabel(d.status)}</span>
+            </li>
+          `;
+        }).join('')}
+      </ul>
+    `;
+  }
+
+  // Insert after the trigger button
+  triggerBtn.insertAdjacentElement('afterend', picker);
+
+  // Search filter
+  const searchInput = picker.querySelector('.mkt-asset-picker-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.toLowerCase();
+      picker.querySelectorAll('.mkt-asset-picker-item').forEach((li) => {
+        li.style.display = li.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+    searchInput.focus();
+  }
+
+  // Pick an item
+  picker.querySelectorAll('[data-pick-deliverable]').forEach((li) => {
+    li.addEventListener('click', async () => {
+      const deliverableId = li.dataset.pickDeliverable;
+      li.style.opacity = '0.5';
+      try {
+        await attachDeliverableApi(Number(deliverableId), campaign.id);
+        _deliverablesCache.delete(campaign.id);
+        picker.remove();
+        await _loadAndRenderAssetsTab(container, campaign);
+      } catch (err) {
+        li.style.opacity = '';
+        console.error('[assets] attach-deliverable failed:', err?.message ?? err);
+      }
+    });
+  });
+
+  // Close on outside click
+  function handleOutside(e) {
+    if (!picker.contains(e.target) && e.target !== triggerBtn) {
+      picker.remove();
+      document.removeEventListener('click', handleOutside);
+    }
+  }
+  setTimeout(() => document.addEventListener('click', handleOutside), 0);
 }
 
 function _showAssetPicker(container, campaign, assets, triggerBtn) {
