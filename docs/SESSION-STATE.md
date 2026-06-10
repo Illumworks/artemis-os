@@ -63,7 +63,14 @@ design — the agent builder must scaffold this. Workers stay faceless/ephemeral
 - **Angela** is reviewing `docs/Angela-Writing-Memory-Review.docx` (38 proposed Writing-Studio voice rules,
   Approve/Reject per item). When she returns it: load the approved ones as active Writing-Studio rules, drop
   the rejected. Source proposals: `docs/angela-writing-memory-proposals.md`.
-- **Callie persona** — Jon revising `callie-personality-profile.md`.
+- **Personas — ADOPTED 2026-06-10.** `artemis-personality-profile.md` → v1.2.2 (partner-mode, autonomy
+  0-3, principled challenger; salutation rule = no honorifics, "Jon" sparingly), `callie-personality-profile.md`
+  → v1.1.3 (Mark dropped; "Compass" = the real Writing Studio **Message Compass**; Coherence Map kept; Callie
+  reports ONLY to Artemis, may delegate to workers; analyst-not-ticker, owns `campaign signals` + `Marketing
+  Campaigns`). Both committed + loader-verified. **Callie is still design-only (P4)** — only her persona exists.
+  Pending build: `briefs/lint-named-agent-output.md` (deterministic no-em-dash/no-emoji output lint + voice-
+  corpus-as-calibration prompt change) is READY for Codex pickup — the persona declares those lints but live
+  output still violates them.
 - **Chapter 2 P1 (Slack two-way)** — CORRECTION (2026-06-10 audit): the inbound plumbing was already
   SHIPPED by the J1/J9 series (built 2026-05-17/18, before state-capture tightened) — Events receiver +
   HMAC, dedupe, `route_inbound`→`handle_turn`→reply, Slack tools in FA registry, owner-mode credential UI,
