@@ -207,6 +207,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         // Stage 6: reflow comment card positions after doc edits.
         scheduleCommentsReflow();
       }
+      // Stage 2: the selection toolbar follows the editor's OWN selection state,
+      // so it tracks drags/clicks in the editor and ignores everything else.
+      if (typeof updateSelectionState === "function") updateSelectionState();
     },
   });
 
@@ -739,50 +742,25 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   document.body.appendChild(rewritePopover);
 
   function positionNearSelection(el) {
-    // Place the element just above the selection's bounding rect.
-    // For full-paragraph / multi-paragraph selections, getBoundingClientRect()
-    // can return a zero-size rect in some browsers. Fall back to:
-    //   1. First non-empty client rect from getClientRects()
-    //   2. ProseMirror coordsAtPos at the selection end (most reliable)
-    let rect = null;
-    const domSel = window.getSelection();
-    if (domSel && domSel.rangeCount > 0) {
-      const range = domSel.getRangeAt(0);
-      rect = range.getBoundingClientRect();
-      // If degenerate, try the individual client rects to find a real one.
-      if (!rect || (rect.width === 0 && rect.height === 0)) {
-        const rects = range.getClientRects();
-        for (let i = 0; i < rects.length; i++) {
-          if (rects[i].width > 0 || rects[i].height > 0) { rect = rects[i]; break; }
-        }
-      }
+    // Position from the EDITOR's authoritative selection coords (view.coordsAtPos),
+    // never the DOM selection — so the toolbar always sits over the editor's
+    // selection and can't be dragged to the chat box's cursor.
+    if (!selectionRange) return;
+    let startC;
+    let endC;
+    try {
+      startC = view.coordsAtPos(selectionRange.from);
+      endC = view.coordsAtPos(selectionRange.to);
+    } catch (_) {
+      return; // doc changed underneath — skip; next update repositions
     }
-
-    // Degenerate (common for full-block selections)? Use ProseMirror coordsAtPos.
-    if (!rect || (rect.width === 0 && rect.height === 0)) {
-      try {
-        const { selection } = view.state;
-        const pos = selection.empty ? selection.head : selection.to;
-        const c = view.coordsAtPos(pos);
-        rect = { left: c.left, right: c.right, top: c.top, bottom: c.bottom, width: c.right - c.left, height: c.bottom - c.top };
-      } catch (_) { rect = null; }
-    }
-
-    // Last resort: anchor near the top of the editor so the toolbar ALWAYS
-    // appears somewhere reachable rather than silently not showing.
-    if (!rect) {
-      const host = editorHost.getBoundingClientRect();
-      rect = { left: host.left + 40, right: host.left + 40, top: host.top + 64, bottom: host.top + 64, width: 0, height: 0 };
-    }
-
-    const elW = el.offsetWidth || 260;
+    const elW = el.offsetWidth || 280;
     const gap = 8;
-    // For multi-line selections, rect may span the whole selection; centre on it.
-    const rectCentreX = rect.left + (rect.width > 0 ? rect.width / 2 : 0);
-    let left = rectCentreX - elW / 2;
+    // Anchor above the START of the selection, clamped on-screen.
+    let left = startC.left - elW / 2;
     left = Math.max(8, Math.min(left, window.innerWidth - elW - 8));
-    let top = rect.top - el.offsetHeight - gap;
-    if (top < 8) top = rect.bottom + gap; // flip below
+    let top = startC.top - el.offsetHeight - gap;
+    if (top < 8) top = endC.bottom + gap; // flip below if no room above
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
   }
@@ -973,124 +951,39 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
-  // Hook into the ProseMirror view to detect selection changes.
-  // We wrap dispatchTransaction to call updateSelectionState after each transaction.
-  // The toolbar must NOT appear/reposition while the user is typing somewhere
-  // else (e.g. the comment composer's @mention box) — focus there fires
-  // selectionchange and the editor selection is still non-empty, causing the
-  // toolbar to flicker open/closed. Suppress whenever focus is in an input/
-  // textarea outside the toolbar, or a comment composer / rewrite popover is open.
-  function toolbarSuppressed() {
-    const ae = document.activeElement;
-    if (!ae) return false;
-    if (selToolbar.contains(ae)) return false;   // the toolbar's own intent input
-    if (editorHost.contains(ae)) return false;   // focus is in the editor — fine
-    // Focus is in some OTHER text field (e.g. the comment composer's @mention
-    // box) — suppress so the toolbar doesn't flicker open while typing there.
-    if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable) {
-      return true;
-    }
-    return false;
-  }
-
+  // ── Selection-driven toolbar visibility ─────────────────────────────────────
+  // Driven by ProseMirror's OWN update cycle (dispatchTransaction calls this
+  // after every editor transaction), so it reacts ONLY to the editor — never to
+  // the chat box or other page activity. Shows when the editor has a non-empty
+  // selection and focus; hides on collapse/blur. (Dismissal on an outside press
+  // is handled separately by handleOutsidePointerDown.)
   function updateSelectionState() {
     if (destroyed) return;
     // Using the toolbar's own input — the editor blurs and collapses; don't react.
     if (selToolbar.contains(document.activeElement)) return;
     // Don't touch the toolbar during a rewrite accept/reject.
     if (pendingRewrite) return;
-    // Typing in another field (e.g. the comment composer's @mention box) — hide.
-    if (toolbarSuppressed()) { hideSelToolbar(); return; }
+    // Editor not focused (clicked into the chat / nav) → no toolbar.
+    if (!view.hasFocus()) { selectionRange = null; selectionText = ""; hideSelToolbar(); return; }
 
     const { selection } = view.state;
-    let from = selection.from;
-    let to = selection.to;
-    let empty = selection.empty;
-
-    // Fast/loose drags can leave PM's selection empty while the browser still
-    // shows highlighted text; map by the highlighted text's SCREEN COORDS.
-    if (empty) {
-      const ds = window.getSelection();
-      const range = ds && ds.rangeCount && !ds.isCollapsed ? ds.getRangeAt(0) : null;
-      const touchesEditor = range && (
-        editorHost.contains(range.startContainer) ||
-        editorHost.contains(range.endContainer) ||
-        editorHost.contains(range.commonAncestorContainer)
-      );
-      if (touchesEditor) {
-        const rects = range.getClientRects();
-        if (rects.length) {
-          try {
-            const f = rects[0];
-            const l = rects[rects.length - 1];
-            const a = view.posAtCoords({ left: f.left + 1, top: f.top + f.height / 2 });
-            const b = view.posAtCoords({ left: Math.max(l.right - 1, l.left + 1), top: l.top + l.height / 2 });
-            if (a && b && a.pos != null && b.pos != null) {
-              from = Math.min(a.pos, b.pos);
-              to = Math.max(a.pos, b.pos);
-              if (to > from) empty = false;
-            }
-          } catch (_) { /* ignore */ }
-        }
-      }
-    }
-
-    if (!empty) {
-      selectionRange = { from, to };
-      selectionText = view.state.doc.textBetween(from, to, " ");
-      showSelToolbar();
-      return;
-    }
-    // Empty selection: do NOT hide here. A drag that releases over the margin
-    // fires a spurious "collapsed" event — keeping the toolbar (and its last
-    // stored selection) shown is what makes a sloppy drag work. Dismissal is
-    // explicit: a fresh mousedown in the editor (handleEditorMouseDown), an
-    // outside click (handleDocClick), or Escape.
+    if (selection.empty) { selectionRange = null; selectionText = ""; hideSelToolbar(); return; }
+    selectionRange = { from: selection.from, to: selection.to };
+    selectionText = view.state.doc.textBetween(selection.from, selection.to, " ");
+    showSelToolbar();
   }
 
-  // Listen on selectionchange (fires even when PM handles it internally).
-  const handleDocSelectionChange = () => {
-    // Defer to next microtask so PM has updated its state.
-    Promise.resolve().then(() => updateSelectionState());
-  };
-  document.addEventListener("selectionchange", handleDocSelectionChange);
-
-  // selectionchange can fire BEFORE ProseMirror finalizes a drag- or triple-
-  // click selection (e.g. selecting a whole paragraph), so the toolbar misses
-  // it. Re-evaluate on mouseup/keyup in the editor so a full-paragraph
-  // selection reliably pops the toolbar.
-  // A fresh press ANYWHERE outside the toolbar dismisses it. If the press
-  // becomes a drag-selection, selectionchange re-shows it; a plain click leaves
-  // it dismissed. This is what lets a sloppy drag keep the toolbar (the
-  // empty-on-release event no longer hides) while any click still dismisses it —
-  // including clicks in the paper margin (not just the editor text).
-  const handleEditorMouseDown = (e) => {
-    if (selToolbar.contains(e.target) || rewritePopover.contains(e.target)) return;
-    selectionRange = null;
-    selectionText = "";
-    hideSelToolbar();
-  };
-  document.addEventListener("mousedown", handleEditorMouseDown, true);
-
-  // Re-evaluate on release (catches drags that end outside the editor) and on
-  // keyboard selection.
-  const handleDocMouseUp = () => { Promise.resolve().then(() => updateSelectionState()); };
-  document.addEventListener("mouseup", handleDocMouseUp);
-  editorHost.addEventListener("keyup", handleDocSelectionChange);
-
-  // Hide toolbar when clicking outside the toolbar, popover, and editor.
-  const handleDocClick = (e) => {
-    if (
-      selToolbar.contains(e.target) ||
-      rewritePopover.contains(e.target) ||
-      editorHost.contains(e.target)
-    ) {
-      return;
-    }
+  // Hide on any press OUTSIDE the editor + toolbar (chat box, nav, paper margin).
+  // HIDE-ONLY — never shows — so page-wide activity (e.g. the chat box) can't
+  // flash the toolbar in or reposition it. Showing is driven solely by the
+  // editor's own transactions (updateSelectionState via dispatchTransaction).
+  const handleOutsidePointerDown = (e) => {
+    if (selToolbar.contains(e.target) || rewritePopover.contains(e.target) || editorHost.contains(e.target)) return;
     hideSelToolbar();
     if (!pendingRewrite) hideRewritePopover();
   };
-  document.addEventListener("click", handleDocClick, true);
+  document.addEventListener("mousedown", handleOutsidePointerDown, true);
+  document.addEventListener("click", handleOutsidePointerDown, true);
 
   // ── Autosave plumbing ──────────────────────────────────────────────────────
   let autosaveTimer = null;
@@ -2794,11 +2687,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (autosaveTimer) clearTimeout(autosaveTimer);
       try { view.destroy(); } catch (_) { /* noop */ }
       // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
-      document.removeEventListener("selectionchange", handleDocSelectionChange);
-      document.removeEventListener("mousedown", handleEditorMouseDown, true);
-      document.removeEventListener("mouseup", handleDocMouseUp);
-      editorHost.removeEventListener("keyup", handleDocSelectionChange);
-      document.removeEventListener("click", handleDocClick, true);
+      document.removeEventListener("mousedown", handleOutsidePointerDown, true);
+      document.removeEventListener("click", handleOutsidePointerDown, true);
       try { document.body.removeChild(selToolbar); } catch (_) { /* noop */ }
       try { document.body.removeChild(rewritePopover); } catch (_) { /* noop */ }
       // Stage-4 cleanup: scan timer + claim popover.

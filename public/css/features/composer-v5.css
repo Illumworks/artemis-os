@@ -528,7 +528,10 @@
   background: var(--cv5-card);
   border: 1px solid var(--cv5-rule);
   border-radius: 18px;
-  padding: 26px 34px;
+  /* Padding moved INTO the editor (.ProseMirror) so the whole paper is the
+     editable/selectable surface — there's no dead margin for a drag to release
+     into (which collapsed the selection). */
+  padding: 0;
   line-height: 1.8;
   font-family: var(--font-sans, "Inter", -apple-system, system-ui, sans-serif);
   font-size: 15px;
@@ -536,10 +539,14 @@
   box-shadow: var(--cv5-shadow-card);
   position: relative;
   min-height: 360px;
+  display: flex;
+  flex-direction: column;
 }
 .cv5-paper .ProseMirror {
   outline: none;
+  flex: 1 1 auto;            /* fill the paper so the whole surface is editable */
   min-height: 320px;
+  padding: 26px 34px;        /* the visual text inset now lives here */
   font-family: var(--font-sans, "Inter", -apple-system, system-ui, sans-serif);
   font-size: 15px;
   color: var(--cv5-ink);
