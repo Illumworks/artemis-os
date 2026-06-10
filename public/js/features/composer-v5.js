@@ -48,7 +48,6 @@ import {
   decideApprovalApi,
   listApprovalsApi,
   attachDeliverableApi,
-  listUnlinkedDraftsApi,
   fetchMarketingCampaignsApi,
 } from "../core/api.js";
 
