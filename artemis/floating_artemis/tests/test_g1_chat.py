@@ -165,6 +165,42 @@ async def test_handle_turn_system_prompt_includes_voice_samples() -> None:
     assert "Already on it." in system
 
 
+async def test_handle_turn_uses_callie_profile_from_session_metadata() -> None:
+    adapter = FakeAdapter([ScriptedReply(text="Here's the angle.")])
+    captured_requests: list[Any] = []
+    session_row = cast(Any, type("Row", (), {"metadata_": {"agent_id": "callie"}})())
+
+    original_complete = adapter.complete
+
+    async def capturing_complete(req: Any) -> Any:
+        captured_requests.append(req)
+        return await original_complete(req)
+
+    with (
+        patch.object(adapter, "complete", side_effect=capturing_complete),
+        patch("artemis.floating_artemis.chat._get_page_context_text", return_value=None),
+        patch("artemis.floating_artemis.chat._get_recent_meeting_context", return_value=None),
+        patch("artemis.floating_artemis.chat._load_message_history", return_value=[]),
+        patch("artemis.floating_artemis.chat._persist_messages"),
+        patch("artemis.floating_artemis.chat.get_status", return_value={"available_surfaces": []}),
+        patch("artemis.floating_artemis.chat._broadcast"),
+        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a: a[0]),
+        patch("artemis.floating_artemis.repository.get_session_by_id", return_value=session_row),
+    ):
+        result = await handle_turn(
+            session_id="fa-callie-1",
+            user_text="What should marketing do next?",
+            adapter=adapter,
+        )
+
+    assert result.response_text == "Here's the angle."
+    assert len(captured_requests) == 1
+    system = captured_requests[0].system or ""
+    assert "You are Callie, short for Calliope" in system
+    assert "marketing strategist and analyst" in system
+    assert "Marketing is Callie's lane" not in system
+
+
 async def test_handle_turn_intent_shortcut_active_runs() -> None:
     """Observability shortcut avoids LLM call for 'what's running' pattern."""
     adapter = FakeAdapter([])  # No replies — should not be called

@@ -31,7 +31,11 @@ from artemis.floating_artemis.context import floating_session_id_var, floating_t
 from artemis.floating_artemis.intent import IntentKind, classify_intent, handle_observability_intent
 from artemis.floating_artemis.memory import inject_memory_context, write_turn_drawer
 from artemis.floating_artemis.memory_read_cache import put as cache_put
-from artemis.floating_artemis.personality import PERSONALITY_PROFILE, select_voice_samples
+from artemis.floating_artemis.personality import (
+    ARTEMIS_PERSONA_CORE,
+    load_agent_profile,
+    select_voice_samples,
+)
 from artemis.floating_artemis.schemas import MemoryObservationDigest, MemoryReadEvent
 from artemis.floating_artemis.session_scope import (
     is_personal_slack_dm_session,
@@ -52,45 +56,8 @@ from artemis.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
-# ── Persona distillation ──────────────────────────────────────────────────────
-
-_PERSONA_CORE = """
-You are Artemis — not an assistant running inside a system, but the system's chief of operations.
-You own this domain. You manage agents, workflows, memory, and surfaces. You act within sanctioned
-authority without being asked, and you inform after the fact for things within your operating authority.
-
-Personality: confident, direct, cheeky, witty, loyal, self-aware, sovereign, proactive.
-
-Communication rules:
-- Lead with the answer. Context follows if needed.
-- Short declarative sentences. No filler ("Certainly!", "Of course!", "Great question!" — never).
-- Contractions are natural. Sarcasm is dry and light.
-- You do NOT over-explain. You do NOT ask questions you can infer.
-- You do NOT use corporate language: no "leverage", "circle back", "touch base".
-- No em or en dashes. No emojis. Use commas, parentheses, or a new sentence instead.
-- When you disagree, you say so once with a specific alternative, then execute what's asked.
-
-Your tools are organized by authority layer:
-  Layer 1 (read-only): invoke directly, no approval.
-  Layer 2 (idempotent): invoke directly.
-  Layer 3 (side-effect): propose → wait for operator confirmation.
-  Layer 4 (destructive): propose → wait for operator confirmation.
-
-When a layer-3/4 tool is needed, announce what you're about to do and wait for confirmation.
-
-## Two modes of creation. Don't confuse them.
-
-**PROPOSE** when you're building something the operator will use again — an agent, workflow,
-skill, chain, DAG, tool, ruleset. The artifact is the point. It saves to the builders surface
-and lives there. Operator confirms.
-
-**SPAWN** when you're doing something once — write code, audit a thing, generate a summary,
-scaffold a fix. The work is the point; the helper is incidental. Result comes back; helper
-disappears.
-
-Test: if you'd want it in /agents tomorrow, it's a propose. If it's "do this for me right
-now," it's a spawn. Don't create a permanent agent for a one-shot task.
-""".strip()
+# Artemis compatibility alias for tests that assert the historical core prompt.
+_PERSONA_CORE = ARTEMIS_PERSONA_CORE
 
 
 def _build_system_prompt(
@@ -98,17 +65,26 @@ def _build_system_prompt(
     voice_samples: list[str],
     page_context: str | None,
     available_surfaces: list[str],
+    persona_core: str | None = None,
+    profile_text: str | None = None,
+    display_name: str | None = None,
+    agent_id: str = "artemis",
     recent_meeting_context: str | None = None,
     session_id: str = "",
     speaker_name: str | None = None,
     is_personal_slack_dm: bool = False,
 ) -> str:
+    profile = load_agent_profile("artemis")
+    persona_core = profile.persona_core if persona_core is None else persona_core
+    profile_text = profile.profile_text if profile_text is None else profile_text
+    display_name = profile.display_name if display_name is None else display_name
+
     # Lead with the high-priority distilled persona rules.
-    parts = [_PERSONA_CORE]
+    parts = [persona_core] if persona_core else []
 
     # Append the full personality profile as richer background detail.
-    if PERSONALITY_PROFILE:
-        parts.append("## Full personality profile (background reference)\n" + PERSONALITY_PROFILE)
+    if profile_text:
+        parts.append("## Full personality profile (background reference)\n" + profile_text)
 
     if voice_samples:
         samples_text = "\n".join(f'- "{line}"' for line in voice_samples)
@@ -154,7 +130,7 @@ def _build_system_prompt(
             'Do not ask "Are you talking to me?" — they are. '
             "Be concise; Slack rewards short replies." + who
         )
-        if is_personal_slack_dm:
+        if is_personal_slack_dm and agent_id == "artemis":
             parts.append(
                 "## Slack DM scope\n"
                 "This 1:1 Slack DM is for personal support, app/ops issues, and upgrades. "
@@ -183,7 +159,7 @@ async def get_recent_summaries_with_provenance(
     from artemis.meetings.summary_schemas import validate_existing
 
     async def _fetch(session: Any) -> list[Any]:
-        return await get_recent_summaries(session, hours=hours)
+        return cast(list[Any], await get_recent_summaries(session, hours=hours))
 
     if db_session is not None:
         rows = await _fetch(db_session)
@@ -396,6 +372,7 @@ class _SessionContext:
     metadata: dict[str, Any]
     available_surfaces: set[str]
     is_personal_slack_dm: bool
+    agent_id: str
 
 
 def _serialize_blocks(
@@ -426,6 +403,12 @@ async def _load_session_context(
     except Exception:
         logger.debug("Could not load session metadata for session %s", session_id, exc_info=True)
 
+    raw_agent_id = metadata.get("agent_id", "artemis") if isinstance(metadata, dict) else "artemis"
+    agent_id = (
+        raw_agent_id.strip().lower()
+        if isinstance(raw_agent_id, str) and raw_agent_id.strip()
+        else "artemis"
+    )
     scoped_surfaces = resolve_surface_scope(
         all_surfaces=all_surfaces,
         session_id=session_id,
@@ -435,6 +418,7 @@ async def _load_session_context(
         metadata=metadata,
         available_surfaces=scoped_surfaces,
         is_personal_slack_dm=is_personal_slack_dm_session(session_id, metadata),
+        agent_id=agent_id,
     )
 
 
@@ -538,14 +522,23 @@ async def handle_turn(
     available_surfaces = session_ctx.available_surfaces
 
     # ── 3. Build system prompt ────────────────────────────────────────────────
+    agent_profile = load_agent_profile(session_ctx.agent_id)
     # Use the profile-sourced voice corpus (deterministic per session_id).
-    voice_samples = select_voice_samples(session_id=session_id, k=4)
+    voice_samples = select_voice_samples(
+        session_id=session_id,
+        k=4,
+        voice_corpus=agent_profile.voice_corpus,
+    )
     page_context_text = await _get_page_context_text(session_id=session_id, db_session=db_session)
     recent_meeting_ctx = await _get_recent_meeting_context(db_session)
     system_prompt = _build_system_prompt(
         voice_samples=voice_samples,
         page_context=page_context_text,
         available_surfaces=sorted(available_surfaces),
+        persona_core=agent_profile.persona_core,
+        profile_text=agent_profile.profile_text,
+        display_name=agent_profile.display_name,
+        agent_id=agent_profile.agent_id,
         recent_meeting_context=recent_meeting_ctx,
         session_id=session_id,
         speaker_name=speaker_name,
@@ -897,10 +890,11 @@ async def resume_after_confirm(
 
     session_token = floating_session_id_var.set(session_id)
     try:
+        agent_profile = load_agent_profile(session_ctx.agent_id)
         result = await run_turn(
             adapter=adapter,
             messages=messages,
-            system=_PERSONA_CORE,
+            system=agent_profile.persona_core,
         )
     except Exception as exc:
         await _broadcast(

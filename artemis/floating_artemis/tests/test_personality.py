@@ -18,6 +18,25 @@ def test_personality_profile_non_empty() -> None:
     assert "Artemis" in pm.PERSONALITY_PROFILE
 
 
+def test_load_agent_profile_artemis_compatibility() -> None:
+    profile = pm.load_agent_profile("artemis")
+    assert profile.agent_id == "artemis"
+    assert profile.display_name == "Artemis"
+    assert profile.persona_core == pm.ARTEMIS_PERSONA_CORE
+    assert profile.profile_text == pm.PERSONALITY_PROFILE
+    assert profile.voice_corpus == pm.VOICE_CORPUS
+
+
+def test_load_agent_profile_callie_returns_committed_profile() -> None:
+    profile = pm.load_agent_profile("callie")
+    assert profile.agent_id == "callie"
+    assert profile.display_name == "Callie"
+    assert "marketing strategist and analyst" in profile.persona_core
+    assert "bridge between signal and story" in profile.profile_text
+    assert "Three signals worth your time. The rest I triaged." in profile.voice_corpus
+    assert all("—" not in phrase and "–" not in phrase for phrase in profile.voice_corpus)
+
+
 def test_load_profile_missing_file_returns_empty(tmp_path: Path) -> None:
     """_load_profile returns '' (not an exception) when the file is absent."""
     result = pm._load_profile(tmp_path / "does_not_exist.md")
@@ -37,6 +56,7 @@ def test_load_profile_reads_custom_path(tmp_path: Path) -> None:
 def test_voice_corpus_non_empty() -> None:
     """VOICE_CORPUS should parse at least one phrase from the real profile."""
     assert len(pm.VOICE_CORPUS) >= 1, f"Expected phrases, got: {pm.VOICE_CORPUS!r}"
+    assert len(pm.VOICE_CORPUS) >= 12
 
 
 def test_voice_corpus_known_phrase() -> None:
@@ -115,6 +135,11 @@ def test_select_voice_samples_clamps_to_corpus_size() -> None:
     assert set(result) == {"a", "b"}
 
 
+def test_select_voice_samples_uses_explicit_voice_corpus() -> None:
+    result = pm.select_voice_samples(session_id="s", k=10, voice_corpus=["x", "y"])
+    assert set(result) == {"x", "y"}
+
+
 # ── _build_system_prompt: Slack assume-yes block ──────────────────────────────
 
 
@@ -189,3 +214,49 @@ def test_build_system_prompt_includes_no_dash_no_emoji_lint() -> None:
         session_id="fa-test",
     )
     assert "No em or en dashes. No emojis." in prompt
+
+
+def test_build_system_prompt_artemis_profile_matches_legacy_output() -> None:
+    profile = pm.load_agent_profile("artemis")
+
+    def build_legacy_prompt() -> str:
+        parts = [pm.ARTEMIS_PERSONA_CORE]
+        if pm.PERSONALITY_PROFILE:
+            parts.append(
+                "## Full personality profile (background reference)\n" + pm.PERSONALITY_PROFILE
+            )
+        parts.append(
+            "## Characteristic phrases (calibration only)\n"
+            "These calibrate your register and rhythm. Never quote them verbatim or "
+            'near-verbatim. Generate fresh lines in this spirit:\n- "Already on it."'
+        )
+        parts.append("## Current operator context\nPage: okr")
+        parts.append("## Available surfaces (your tools are gated by these)\nokr")
+        parts.append(
+            "**You are responding in Slack.** The operator @-mentioned you directly. "
+            "**Assume they are addressing you and respond on-topic.** "
+            'Do not ask "Are you talking to me?" — they are. '
+            "Be concise; Slack rewards short replies. The operator is Jon."
+        )
+        parts.append(
+            "## Slack DM scope\n"
+            "This 1:1 Slack DM is for personal support, app/ops issues, and upgrades. "
+            "You are Jon's orchestrator and personal partner here. "
+            "Do not volunteer marketing in this DM. Marketing is Callie's lane and only "
+            "comes here if Jon explicitly asks."
+        )
+        return "\n\n".join(parts)
+
+    prompt = _build_system_prompt(
+        voice_samples=["Already on it."],
+        page_context="Page: okr",
+        available_surfaces=["okr"],
+        persona_core=profile.persona_core,
+        profile_text=profile.profile_text,
+        display_name=profile.display_name,
+        agent_id=profile.agent_id,
+        session_id="slack-T1-D123-_",
+        speaker_name="Jon",
+        is_personal_slack_dm=True,
+    )
+    assert prompt == build_legacy_prompt()
