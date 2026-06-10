@@ -995,15 +995,39 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   function updateSelectionState() {
     if (destroyed) return;
+    // If the user is interacting with the toolbar itself (e.g. typing in the
+    // "What should change?" input), the editor blurs and its selection collapses
+    // — but we must NOT react to that, or we'd hide the toolbar mid-use and lose
+    // the stored selection. Bail and keep the last selectionRange/text.
+    if (selToolbar.contains(document.activeElement)) return;
+
     const { selection } = view.state;
-    const isEmpty = selection.empty;
-    if (isEmpty) {
+    let from = selection.from;
+    let to = selection.to;
+    let empty = selection.empty;
+
+    // Fast / loose drags that end outside the text leave PM's own selection
+    // EMPTY even though the browser shows highlighted text. Fall back to the DOM
+    // selection (mapped back to PM positions) so the toolbar still appears.
+    if (empty) {
+      const ds = window.getSelection();
+      if (ds && ds.rangeCount && !ds.isCollapsed && ds.anchorNode && editorHost.contains(ds.anchorNode)) {
+        try {
+          const a = view.posAtDOM(ds.anchorNode, ds.anchorOffset);
+          const b = view.posAtDOM(ds.focusNode, ds.focusOffset);
+          from = Math.min(a, b);
+          to = Math.max(a, b);
+          if (to > from) empty = false;
+        } catch (_) { /* posAtDOM can throw on odd nodes — ignore */ }
+      }
+    }
+
+    if (empty) {
       selectionRange = null;
       selectionText = "";
       if (!pendingRewrite) hideSelToolbar(); // keep toolbar visible during accept/reject
       return;
     }
-    const { from, to } = selection;
     selectionRange = { from, to };
     selectionText = view.state.doc.textBetween(from, to, " ");
     // Don't move the toolbar while a rewrite popover is open.
@@ -1025,7 +1049,10 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // click selection (e.g. selecting a whole paragraph), so the toolbar misses
   // it. Re-evaluate on mouseup/keyup in the editor so a full-paragraph
   // selection reliably pops the toolbar.
-  editorHost.addEventListener("mouseup", handleDocSelectionChange);
+  // mouseup on the whole document (not just the editor) so a drag that ENDS in
+  // the paper margin / outside the text — where the cursor turns to an arrow —
+  // still re-evaluates and shows the toolbar.
+  document.addEventListener("mouseup", handleDocSelectionChange);
   editorHost.addEventListener("keyup", handleDocSelectionChange);
 
   // Hide toolbar when clicking outside the toolbar, popover, and editor.
@@ -2745,7 +2772,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       try { view.destroy(); } catch (_) { /* noop */ }
       // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
       document.removeEventListener("selectionchange", handleDocSelectionChange);
-      editorHost.removeEventListener("mouseup", handleDocSelectionChange);
+      document.removeEventListener("mouseup", handleDocSelectionChange);
       editorHost.removeEventListener("keyup", handleDocSelectionChange);
       document.removeEventListener("click", handleDocClick, true);
       try { document.body.removeChild(selToolbar); } catch (_) { /* noop */ }
