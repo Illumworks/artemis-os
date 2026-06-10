@@ -1641,6 +1641,17 @@ export async function fetchAccountInfo() {
   return res.json();
 }
 
+/**
+ * List teammates for @mention autocomplete.
+ * GET /api/users?q=<partial>  — optional name/email filter
+ * Returns [{id, email, name}, …]
+ */
+export async function fetchTeammatesApi(q = "") {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  const res = await fetch(`/api/users${qs}`);
+  return _readJsonOrThrow(res, "Failed to load teammates");
+}
+
 export async function fetchProviderStatuses() {
   const res = await fetch("/api/stats/providers");
   return res.json();

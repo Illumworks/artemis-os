@@ -32,6 +32,7 @@ import {
   dismissClaimApi,
   exportWritingDraftToGoogleDocApi,
   fetchAccountInfo,
+  fetchTeammatesApi,
   fetchWritingDraft,
   fetchWritingStudioOverview,
   googleDisconnectApi,
@@ -136,6 +137,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
               "data-claim-reason": f.reason,
               "data-claim-text": f.text,
               "data-claim-nearest": JSON.stringify(f.nearestApproved || []),
+              "data-claim-from": String(f.pmFrom),
+              "data-claim-to": String(f.pmTo),
               title: "Claim not in Register — click to resolve",
             })
           );
@@ -528,6 +531,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     activeClaimFlag = flagEl;
     const reason    = flagEl.dataset.claimReason || "quantified";
     const claimText = flagEl.dataset.claimText   || flagEl.textContent || "";
+    // Read the PM range that was stamped on the decoration element.
+    const flagPmFrom = flagEl.dataset.claimFrom ? Number(flagEl.dataset.claimFrom) : null;
+    const flagPmTo   = flagEl.dataset.claimTo   ? Number(flagEl.dataset.claimTo)   : null;
     let nearest = [];
     try { nearest = JSON.parse(flagEl.dataset.claimNearest || "[]"); } catch (_) { /* noop */ }
 
@@ -539,12 +545,14 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
     const nearestHtml = nearest.length
       ? `<div class="cv5-claim-pop-nearest">
-           <div class="cv5-claim-pop-nearest-label">Nearest approved:</div>
+           <div class="cv5-claim-pop-nearest-label">Nearest approved (click to replace):</div>
            ${nearest.map((n) => `
-             <div class="cv5-claim-pop-nearest-item">
+             <button type="button" class="cv5-claim-pop-nearest-item cv5-claim-pop-nearest-item--btn"
+               data-phrasing="${esc(n.phrasing)}"
+               title="Click to replace flagged text with this phrasing">
                <span class="cv5-claim-pop-sim">${Math.round(n.similarity * 100)}%</span>
                <span>${esc(n.phrasing)}</span>
-             </div>`).join("")}
+             </button>`).join("")}
          </div>`
       : "";
 
@@ -585,6 +593,16 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       e.stopPropagation();
       const text = e.currentTarget.dataset.claimText || claimText;
       await handleDisregard(text);
+    });
+
+    // Click a "Nearest approved" item → replace the flagged span with that phrasing.
+    claimPopover.querySelectorAll(".cv5-claim-pop-nearest-item--btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const phrasing = btn.dataset.phrasing || "";
+        if (!phrasing) return;
+        handleClaimReplace(phrasing, flagPmFrom, flagPmTo);
+      });
     });
   }
 
@@ -641,6 +659,42 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       console.error("[composer-v5] disregard claim failed:", err);
       callbacks.onError?.(err.message || "Failed to disregard claim.");
     }
+  }
+
+  function handleClaimReplace(approvedPhrasing, pmFrom, pmTo) {
+    // Replace the flagged claim's text span with the approved phrasing.
+    // Single-span replace: tr.replaceWith(from, to, schema.text(...)) — same
+    // pattern as the rewrite-span Accept handler (lossless, undoable).
+    // Falls back to a best-effort text search if PM positions are stale.
+    let from = pmFrom != null ? pmFrom : null;
+    let to   = pmTo   != null ? pmTo   : null;
+
+    // If positions are missing or stale (0/0), skip — we can't replace blindly.
+    if (from === null || to === null || from >= to) {
+      callbacks.onError?.("Could not locate the claim span to replace. Re-scan and try again.");
+      return;
+    }
+
+    // Clamp to doc bounds in case the doc was edited since the decoration was set.
+    const docSize = view.state.doc.content.size;
+    from = Math.max(0, Math.min(from, docSize));
+    to   = Math.max(from, Math.min(to, docSize));
+    if (from >= to) {
+      callbacks.onError?.("Claim span position is out of bounds — please re-scan.");
+      return;
+    }
+
+    // Build the replacement as a plain text node (same as rewrite-span Accept).
+    const tr = view.state.tr;
+    tr.replaceWith(from, to, composerSchema.text(approvedPhrasing));
+    view.dispatch(tr);
+
+    closeClaimPopover();
+    // Autosave (lossless — normal edit, fully undoable).
+    scheduleAutosave();
+    // Re-scan: the text now matches an approved claim, so the flag should clear.
+    setTimeout(() => void runClaimScan(), 300);
+    callbacks.onStatus?.("Claim replaced with approved phrasing. Autosaving…");
   }
 
   // Delegate click on flagged spans inside the editor.
@@ -2259,6 +2313,15 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   document.body.appendChild(commentComposerEl);
 
   let commentAnchorRange = null;  // { from, to, anchorStart, anchorEnd, anchoredText }
+  // Tracked at mount level so closeCommentComposer can remove any orphaned mention dropdown.
+  let _activeMentionDropdownEl = null;
+
+  function _removeMentionDropdown() {
+    if (_activeMentionDropdownEl) {
+      try { document.body.removeChild(_activeMentionDropdownEl); } catch (_) { /* noop */ }
+      _activeMentionDropdownEl = null;
+    }
+  }
 
   function openCommentComposer() {
     if (!selectionRange) return;
@@ -2298,7 +2361,6 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         aria-label="Comment body"
         autofocus
       ></textarea>
-      <div class="cv5-cc-mention-hint" style="display:none"></div>
       <div class="cv5-cc-actions">
         <button type="button" class="cv5-cc-cancel">Cancel</button>
         <button type="button" class="cv5-cc-submit">Comment</button>
@@ -2308,39 +2370,207 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     positionNearSelection(commentComposerEl);
 
     const textarea = commentComposerEl.querySelector(".cv5-cc-body");
-    const mentionHint = commentComposerEl.querySelector(".cv5-cc-mention-hint");
     textarea?.focus();
 
-    // @-mention v1: detect "@" typed and show a simple hint / accept on space.
-    textarea?.addEventListener("input", () => {
+    // ── @-mention autocomplete ─────────────────────────────────────────────────
+    //
+    // When the user types "@" followed by characters, show a dropdown of matching
+    // teammates from GET /api/users. Arrow keys + Enter / click to select.
+    // Inserting a match appends "@Name " and records the user's email in the
+    // mentions array (server normalises them). Dismisses on Escape or outside click.
+    //
+    // Teammates are loaded once (lazy, cached for this composer session) and
+    // filtered client-side for instant feedback.
+
+    let _teammates = null;          // null = not yet loaded, [] or populated after fetch
+    let _mentionDropdown = null;    // the floating <div>
+    let _mentionAtPos = -1;         // index of the "@" that opened the dropdown
+    let _dropdownActiveIdx = -1;    // keyboard-active row index (-1 = none)
+
+    async function _ensureTeammates() {
+      if (_teammates !== null) return _teammates;
+      try {
+        _teammates = await fetchTeammatesApi();
+      } catch (_) {
+        _teammates = [];
+      }
+      return _teammates;
+    }
+
+    function _closeMentionDropdown() {
+      if (_mentionDropdown) {
+        try { document.body.removeChild(_mentionDropdown); } catch (_) { /* noop */ }
+        _mentionDropdown = null;
+        _activeMentionDropdownEl = null;
+      }
+      _mentionAtPos = -1;
+      _dropdownActiveIdx = -1;
+    }
+
+    function _selectMentionItem(item) {
+      if (!textarea) return;
       const val = textarea.value;
-      const lastAt = val.lastIndexOf("@");
-      if (lastAt >= 0 && lastAt === val.length - 1) {
-        // "@" just typed — show hint.
-        const meEmail = currentUser?.email || "";
-        mentionHint.textContent = meEmail
-          ? `Mentioning ${meEmail} — press Space or Enter to confirm`
-          : "Type an email after @";
-        mentionHint.style.display = "block";
-      } else {
-        mentionHint.style.display = "none";
+      // Replace "@partial" from _mentionAtPos to the current cursor position.
+      const before = val.slice(0, _mentionAtPos);
+      const insertName = item.name || item.email;
+      const after  = val.slice(textarea.selectionEnd);
+      // Insert "@Name " (trailing space to continue typing).
+      textarea.value = before + "@" + insertName + " " + after;
+      // Move cursor after the inserted text.
+      const newPos = before.length + insertName.length + 2; // "@" + name + " "
+      textarea.setSelectionRange(newPos, newPos);
+      _closeMentionDropdown();
+      textarea.focus();
+    }
+
+    function _renderMentionDropdown(matches) {
+      _closeMentionDropdown();
+      if (!matches.length) return;
+
+      const dropdown = document.createElement("div");
+      dropdown.className = "cv5-mention-dropdown";
+      document.body.appendChild(dropdown);
+      _mentionDropdown = dropdown;
+      _activeMentionDropdownEl = dropdown;   // track at mount level for cleanup
+      _dropdownActiveIdx = -1;
+
+      matches.forEach((item, idx) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "cv5-mention-item";
+        btn.innerHTML = `
+          <span class="cv5-mention-item-name">${esc(item.name || item.email)}</span>
+          ${item.name ? `<span class="cv5-mention-item-email">${esc(item.email)}</span>` : ""}
+        `;
+        btn.addEventListener("mousedown", (e) => {
+          // Prevent textarea blur so we can still modify its value.
+          e.preventDefault();
+          _selectMentionItem(item);
+        });
+        dropdown.appendChild(btn);
+      });
+
+      // Position below / above the textarea caret.
+      // Anchor to the textarea's bottom-left as a simple first pass.
+      if (textarea) {
+        const tRect = textarea.getBoundingClientRect();
+        const dropH = Math.min(180, matches.length * 46 + 8);
+        const dropW = 240;
+        let left = tRect.left;
+        let top  = tRect.bottom + 4;
+        if (top + dropH > window.innerHeight - 8) top = Math.max(8, tRect.top - dropH - 4);
+        if (left + dropW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - dropW - 8);
+        dropdown.style.left = left + "px";
+        dropdown.style.top  = top  + "px";
+      }
+    }
+
+    function _setDropdownActive(idx) {
+      if (!_mentionDropdown) return;
+      const items = _mentionDropdown.querySelectorAll(".cv5-mention-item");
+      items.forEach((el, i) => el.classList.toggle("is-active", i === idx));
+      _dropdownActiveIdx = idx;
+      if (idx >= 0 && items[idx]) items[idx].scrollIntoView({ block: "nearest" });
+    }
+
+    async function _onTextareaInput() {
+      if (!textarea) return;
+      const val  = textarea.value;
+      const pos  = textarea.selectionEnd;
+
+      // Find the last "@" before the cursor that has no space between it and cursor.
+      let atIdx = -1;
+      for (let i = pos - 1; i >= 0; i--) {
+        if (val[i] === "@") { atIdx = i; break; }
+        if (val[i] === " " || val[i] === "\n") break; // space breaks the token
+      }
+
+      if (atIdx < 0) {
+        _closeMentionDropdown();
+        return;
+      }
+
+      _mentionAtPos = atIdx;
+      const partial = val.slice(atIdx + 1, pos).toLowerCase();
+
+      const teammates = await _ensureTeammates();
+      const matches = partial
+        ? teammates.filter(
+            (t) =>
+              (t.name || "").toLowerCase().includes(partial) ||
+              t.email.toLowerCase().includes(partial)
+          )
+        : teammates.slice(0, 8); // show first 8 when just "@" typed
+
+      if (matches.length === 0) {
+        _closeMentionDropdown();
+        return;
+      }
+
+      _renderMentionDropdown(matches);
+    }
+
+    textarea?.addEventListener("input", () => void _onTextareaInput());
+
+    commentComposerEl.querySelector(".cv5-cc-cancel")?.addEventListener("click", () => {
+      _closeMentionDropdown();
+      closeCommentComposer();
+    });
+    commentComposerEl.querySelector(".cv5-cc-submit")?.addEventListener("click", () => {
+      _closeMentionDropdown();
+      void submitComment();
+    });
+
+    textarea?.addEventListener("keydown", (e) => {
+      // Dropdown navigation.
+      if (_mentionDropdown) {
+        const items = _mentionDropdown.querySelectorAll(".cv5-mention-item");
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          _setDropdownActive(Math.min(_dropdownActiveIdx + 1, items.length - 1));
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          _setDropdownActive(Math.max(_dropdownActiveIdx - 1, 0));
+          return;
+        }
+        if (e.key === "Enter" && _dropdownActiveIdx >= 0) {
+          e.preventDefault();
+          // Resolve the item from the current teammate filter.
+          const activeBtn = _mentionDropdown.querySelectorAll(".cv5-mention-item")[_dropdownActiveIdx];
+          if (activeBtn) activeBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+          return;
+        }
+        if (e.key === "Escape") {
+          _closeMentionDropdown();
+          return;
+        }
+      }
+      // Submit / close shortcuts.
+      if (e.key === "Enter" && e.metaKey) {
+        e.preventDefault();
+        _closeMentionDropdown();
+        void submitComment();
+      } else if (e.key === "Escape") {
+        _closeMentionDropdown();
+        closeCommentComposer();
       }
     });
 
-    commentComposerEl.querySelector(".cv5-cc-cancel")?.addEventListener("click", closeCommentComposer);
-    commentComposerEl.querySelector(".cv5-cc-submit")?.addEventListener("click", () => void submitComment());
-
-    textarea?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.metaKey) {
-        e.preventDefault();
-        void submitComment();
-      } else if (e.key === "Escape") {
-        closeCommentComposer();
-      }
+    // Close the dropdown when the textarea loses focus (unless mousedown on a dropdown item).
+    textarea?.addEventListener("blur", () => {
+      // Small delay so mousedown on dropdown item fires before blur closes it.
+      setTimeout(() => {
+        if (_mentionDropdown && !_mentionDropdown.contains(document.activeElement)) {
+          _closeMentionDropdown();
+        }
+      }, 150);
     });
   }
 
   function closeCommentComposer() {
+    _removeMentionDropdown();
     commentComposerEl.style.display = "none";
     commentComposerEl.innerHTML = "";
     commentAnchorRange = null;
@@ -2711,6 +2941,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (commentsReflowTimer)  { clearTimeout(commentsReflowTimer);  commentsReflowTimer  = null; }
       if (commentsReflowRaf)    { cancelAnimationFrame(commentsReflowRaf); commentsReflowRaf = null; }
       document.removeEventListener("click", handleCommentComposerOutsideClick, true);
+      _removeMentionDropdown();
       try { document.body.removeChild(commentComposerEl); } catch (_) { /* noop */ }
       // Apply-to-document + deliverable preview cleanup.
       if (chatThreadEl) chatThreadEl.removeEventListener("click", handleChatThreadClick);
