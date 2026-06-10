@@ -12,13 +12,20 @@
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: calc(100vh - 132px);
+  min-height: calc(100vh - 48px);
+}
+
+/* The shell page wrapper reserves a larger bottom pad (56px) than top (24px)
+   for other wide pages; for the composer we want EQUAL margins all around, so
+   trim the bottom pad to match the top — scoped to the composer via :has(). */
+.home-page.shell-page-wide:has(.cv5-mount) {
+  padding-bottom: 24px;
 }
 
 .cv5-root {
   /* min-height keeps the editor visible even when the shell parent's height
      resolves to "auto" — without it the inner flex: 1 children collapse. */
-  min-height: calc(100vh - 132px);
+  min-height: calc(100vh - 48px);
   --cv5-card: var(--surface-panel-strong, #fffdf9);
   --cv5-ink:  var(--text-primary, #1e1a15);
   --cv5-ink2: var(--text-secondary, #544c40);
