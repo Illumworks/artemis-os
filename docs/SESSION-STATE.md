@@ -68,9 +68,9 @@ design — the agent builder must scaffold this. Workers stay faceless/ephemeral
   → v1.1.3 (Mark dropped; "Compass" = the real Writing Studio **Message Compass**; Coherence Map kept; Callie
   reports ONLY to Artemis, may delegate to workers; analyst-not-ticker, owns `campaign signals` + `Marketing
   Campaigns`). Both committed + loader-verified. **Callie is still design-only (P4)** — only her persona exists.
-  Pending build: `briefs/lint-named-agent-output.md` (deterministic no-em-dash/no-emoji output lint + voice-
-  corpus-as-calibration prompt change) is READY for Codex pickup — the persona declares those lints but live
-  output still violates them.
+  Output lint MERGED (67617d0, `briefs/lint-named-agent-output.md`): deterministic no-em-dash/no-emoji lint
+  on named-agent outbound (Codex implemented, Opus Lead verified + merged); voice samples reframed
+  calibration-only. NOTE: takes effect live only after the next app restart.
 - **Chapter 2 P1 (Slack two-way)** — CORRECTION (2026-06-10 audit): the inbound plumbing was already
   SHIPPED by the J1/J9 series (built 2026-05-17/18, before state-capture tightened) — Events receiver +
   HMAC, dedupe, `route_inbound`→`handle_turn`→reply, Slack tools in FA registry, owner-mode credential UI,
@@ -85,6 +85,17 @@ design — the agent builder must scaffold this. Workers stay faceless/ephemeral
   required a Slack-side fix: App Home → Messages Tab → "Allow users to send messages" was OFF. **Next on
   this lane:** the personal DM still leads with *marketing* context (old session history) — that's the
   Artemis-personal vs Callie-marketing split (App Modes), future Chapter 2 work, not P1.
+- **App Modes / Artemis-Callie Slack split (Chapter 2, in progress).** Re-scoped 2026-06-10: the real need is
+  the *Slack agent-domain split*, not web nav. Documented in `docs/agent-slack-architecture.md` (tightened:
+  Artemis DM = personal/ops/upgrades, **no unprompted marketing**; marketing only on explicit ask or a
+  Callie-escalated decision; Callie owns marketing channels; remove Artemis from those channels once Callie
+  is live). **Slice 1 brief READY:** `briefs/personal-scope-artemis-dm.md` (Codex) — personal surface scope
+  for the DM, personal-scope prompt, and LOSSLESS retirement of the marketing-polluted DM history (tagged to
+  hand to Callie later). Web nav hiding = shelved/cosmetic. Bringing Callie online = the next major build (P4).
+- **RADAR (not now): mockup cleanup.** The current campaigns + their docs are mostly MOCKUPS. Leave ONE
+  campaign as the **Friday presentation mockup**; clean up the rest (campaigns + docs) afterward. The
+  incoming-signal marketing history should move from Artemis to Callie (handled lossless in slice 1, migrated
+  at Callie build).
 - Parked: marketing-pipeline bug fixes (snooze/reject/qualifier); the QA test drafts (#39/#40 — harmless
   "ignore" markers in live).
 
