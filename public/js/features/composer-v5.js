@@ -11,7 +11,7 @@
 // in public/index.html to local files in /public/vendor/prosemirror/ — no
 // runtime CDN.
 
-import { EditorState, Plugin, PluginKey } from "prosemirror-state";
+import { EditorState, Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
 import { DOMParser as PMDOMParser, DOMSerializer, Schema } from "prosemirror-model";
 import { schema as basicSchema } from "prosemirror-schema-basic";
@@ -728,6 +728,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // Track current selection for the toolbar + accept/reject flow.
   let selectionRange = null;   // {from, to} in PM positions
   let selectionText = "";      // plain text of the selected span
+  let lastDragRange = null;    // last non-empty selection from the current drag (for restore-on-collapse)
   let pendingRewrite = null;   // {originalText, rewrittenText, from, to} during accept/reject
 
   // Accept/reject popover — shown after AI returns a rewrite.
@@ -1044,11 +1045,16 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     if (empty) {
       selectionRange = null;
       selectionText = "";
-      if (!pendingRewrite) hideSelToolbar(); // keep toolbar visible during accept/reject
+      // Don't hide while a drag is pending restore: a fast drag that ends in the
+      // margin collapses the selection on mouseup, and handleDocMouseUp restores
+      // it. Only hide on genuine deselects (no pending drag) — keep visible
+      // during accept/reject too.
+      if (!pendingRewrite && !lastDragRange) hideSelToolbar();
       return;
     }
     selectionRange = { from, to };
     selectionText = view.state.doc.textBetween(from, to, " ");
+    lastDragRange = { from, to };
     // Don't move the toolbar while a rewrite popover is open.
     if (pendingRewrite) return;
     // While the user is typing elsewhere (e.g. the comment composer), actively
@@ -1068,10 +1074,30 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // click selection (e.g. selecting a whole paragraph), so the toolbar misses
   // it. Re-evaluate on mouseup/keyup in the editor so a full-paragraph
   // selection reliably pops the toolbar.
-  // mouseup on the whole document (not just the editor) so a drag that ENDS in
-  // the paper margin / outside the text — where the cursor turns to an arrow —
-  // still re-evaluates and shows the toolbar.
-  document.addEventListener("mouseup", handleDocSelectionChange);
+  // Reset the per-drag range when a new press starts.
+  const handleEditorMouseDown = () => { lastDragRange = null; };
+  editorHost.addEventListener("mousedown", handleEditorMouseDown);
+
+  // On release ANYWHERE: a drag that ends in the paper margin (cursor=arrow)
+  // makes the browser collapse the selection to a caret on mouseup, which hid
+  // the toolbar. If we captured a dragged range during this press, restore it so
+  // the selection + toolbar persist; then re-evaluate.
+  const handleDocMouseUp = () => {
+    Promise.resolve().then(() => {
+      if (lastDragRange && view.state.selection.empty) {
+        const size = view.state.doc.content.size;
+        const from = Math.max(0, Math.min(lastDragRange.from, size));
+        const to = Math.max(0, Math.min(lastDragRange.to, size));
+        if (to > from) {
+          try {
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)));
+          } catch (_) { /* ignore */ }
+        }
+      }
+      updateSelectionState();
+    });
+  };
+  document.addEventListener("mouseup", handleDocMouseUp);
   editorHost.addEventListener("keyup", handleDocSelectionChange);
 
   // Hide toolbar when clicking outside the toolbar, popover, and editor.
@@ -2791,7 +2817,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       try { view.destroy(); } catch (_) { /* noop */ }
       // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
       document.removeEventListener("selectionchange", handleDocSelectionChange);
-      document.removeEventListener("mouseup", handleDocSelectionChange);
+      editorHost.removeEventListener("mousedown", handleEditorMouseDown);
+      document.removeEventListener("mouseup", handleDocMouseUp);
       editorHost.removeEventListener("keyup", handleDocSelectionChange);
       document.removeEventListener("click", handleDocClick, true);
       try { document.body.removeChild(selToolbar); } catch (_) { /* noop */ }
