@@ -555,7 +555,6 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       <div class="cv5-claim-pop-actions">
         <button type="button" class="cv5-claim-btn cv5-claim-btn-approve" data-claim-text="${esc(claimText)}">✓ Approve claim</button>
         <button type="button" class="cv5-claim-btn cv5-claim-btn-edit">Edit</button>
-        <button type="button" class="cv5-claim-btn cv5-claim-btn-source">Find source</button>
         <button type="button" class="cv5-claim-btn cv5-claim-btn-disregard" data-claim-text="${esc(claimText)}" title="Not a market claim — dismiss and never re-flag">Disregard</button>
       </div>
     `;
@@ -575,11 +574,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       closeClaimPopover();
     });
 
-    // Find source: stub — close popover for now.
-    claimPopover.querySelector(".cv5-claim-btn-source").addEventListener("click", () => {
-      closeClaimPopover();
-      console.info("[composer-v5] Find source: not yet implemented.");
-    });
+    // ("Find source" removed — was a no-op. The claim `source` label remains in
+    // the data model so the action can be revived later.)
 
     // Disregard: dismiss the flag for this draft — it will not re-appear on re-scan.
     claimPopover.querySelector(".cv5-claim-btn-disregard").addEventListener("click", async (e) => {
@@ -719,6 +715,16 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   });
 
+  // Keep the editor's selection alive when the user mousedowns on a toolbar
+  // BUTTON. Without this, the mousedown blurs the contenteditable, the DOM
+  // selection collapses, selectionchange fires, and updateSelectionState hides
+  // the toolbar — so the click never lands ("clicking it closes it"). The text
+  // input is exempt because it legitimately needs focus.
+  selToolbar.addEventListener("mousedown", (e) => {
+    if (e.target.closest(".cv5-sel-intent-input")) return;
+    e.preventDefault();
+  });
+
   // Track current selection for the toolbar + accept/reject flow.
   let selectionRange = null;   // {from, to} in PM positions
   let selectionText = "";      // plain text of the selected span
@@ -738,41 +744,35 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     // can return a zero-size rect in some browsers. Fall back to:
     //   1. First non-empty client rect from getClientRects()
     //   2. ProseMirror coordsAtPos at the selection end (most reliable)
+    let rect = null;
     const domSel = window.getSelection();
-    if (!domSel || domSel.rangeCount === 0) return;
-
-    let rect = domSel.getRangeAt(0).getBoundingClientRect();
-
-    // If rect is degenerate, try iterating client rects to find a real one.
-    if (!rect || (rect.width === 0 && rect.height === 0)) {
-      const rects = domSel.getRangeAt(0).getClientRects();
-      for (let i = 0; i < rects.length; i++) {
-        if (rects[i].width > 0 || rects[i].height > 0) {
-          rect = rects[i];
-          break;
+    if (domSel && domSel.rangeCount > 0) {
+      const range = domSel.getRangeAt(0);
+      rect = range.getBoundingClientRect();
+      // If degenerate, try the individual client rects to find a real one.
+      if (!rect || (rect.width === 0 && rect.height === 0)) {
+        const rects = range.getClientRects();
+        for (let i = 0; i < rects.length; i++) {
+          if (rects[i].width > 0 || rects[i].height > 0) { rect = rects[i]; break; }
         }
       }
     }
 
-    // Still degenerate? Use ProseMirror coordsAtPos at the selection end.
+    // Degenerate (common for full-block selections)? Use ProseMirror coordsAtPos.
     if (!rect || (rect.width === 0 && rect.height === 0)) {
-      const { selection } = view.state;
-      const pos = selection.empty ? selection.head : selection.to;
       try {
-        const coords = view.coordsAtPos(pos);
-        // coords gives viewport-relative {top, bottom, left, right}
-        rect = {
-          left: coords.left,
-          right: coords.right,
-          top: coords.top,
-          bottom: coords.bottom,
-          width: coords.right - coords.left,
-          height: coords.bottom - coords.top,
-        };
-      } catch (_) {
-        // If coordsAtPos also fails, bail — can't position safely.
-        return;
-      }
+        const { selection } = view.state;
+        const pos = selection.empty ? selection.head : selection.to;
+        const c = view.coordsAtPos(pos);
+        rect = { left: c.left, right: c.right, top: c.top, bottom: c.bottom, width: c.right - c.left, height: c.bottom - c.top };
+      } catch (_) { rect = null; }
+    }
+
+    // Last resort: anchor near the top of the editor so the toolbar ALWAYS
+    // appears somewhere reachable rather than silently not showing.
+    if (!rect) {
+      const host = editorHost.getBoundingClientRect();
+      rect = { left: host.left + 40, right: host.left + 40, top: host.top + 64, bottom: host.top + 64, width: 0, height: 0 };
     }
 
     const elW = el.offsetWidth || 260;
@@ -975,6 +975,24 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   // Hook into the ProseMirror view to detect selection changes.
   // We wrap dispatchTransaction to call updateSelectionState after each transaction.
+  // The toolbar must NOT appear/reposition while the user is typing somewhere
+  // else (e.g. the comment composer's @mention box) — focus there fires
+  // selectionchange and the editor selection is still non-empty, causing the
+  // toolbar to flicker open/closed. Suppress whenever focus is in an input/
+  // textarea outside the toolbar, or a comment composer / rewrite popover is open.
+  function toolbarSuppressed() {
+    const ae = document.activeElement;
+    if (!ae) return false;
+    if (selToolbar.contains(ae)) return false;   // the toolbar's own intent input
+    if (editorHost.contains(ae)) return false;   // focus is in the editor — fine
+    // Focus is in some OTHER text field (e.g. the comment composer's @mention
+    // box) — suppress so the toolbar doesn't flicker open while typing there.
+    if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable) {
+      return true;
+    }
+    return false;
+  }
+
   function updateSelectionState() {
     if (destroyed) return;
     const { selection } = view.state;
@@ -988,7 +1006,12 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     const { from, to } = selection;
     selectionRange = { from, to };
     selectionText = view.state.doc.textBetween(from, to, " ");
-    if (!pendingRewrite) showSelToolbar(); // don't move toolbar while popover is open
+    // Don't move the toolbar while a rewrite popover is open.
+    if (pendingRewrite) return;
+    // While the user is typing elsewhere (e.g. the comment composer), actively
+    // hide the toolbar so it doesn't sit over the comment box or flicker.
+    if (toolbarSuppressed()) { hideSelToolbar(); return; }
+    showSelToolbar();
   }
 
   // Listen on selectionchange (fires even when PM handles it internally).
@@ -997,6 +1020,13 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     Promise.resolve().then(() => updateSelectionState());
   };
   document.addEventListener("selectionchange", handleDocSelectionChange);
+
+  // selectionchange can fire BEFORE ProseMirror finalizes a drag- or triple-
+  // click selection (e.g. selecting a whole paragraph), so the toolbar misses
+  // it. Re-evaluate on mouseup/keyup in the editor so a full-paragraph
+  // selection reliably pops the toolbar.
+  editorHost.addEventListener("mouseup", handleDocSelectionChange);
+  editorHost.addEventListener("keyup", handleDocSelectionChange);
 
   // Hide toolbar when clicking outside the toolbar, popover, and editor.
   const handleDocClick = (e) => {
@@ -2715,6 +2745,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       try { view.destroy(); } catch (_) { /* noop */ }
       // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
       document.removeEventListener("selectionchange", handleDocSelectionChange);
+      editorHost.removeEventListener("mouseup", handleDocSelectionChange);
+      editorHost.removeEventListener("keyup", handleDocSelectionChange);
       document.removeEventListener("click", handleDocClick, true);
       try { document.body.removeChild(selToolbar); } catch (_) { /* noop */ }
       try { document.body.removeChild(rewritePopover); } catch (_) { /* noop */ }
