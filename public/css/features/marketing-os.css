@@ -3689,9 +3689,10 @@
 }
 
 .mkt-worklist-card--hot {
-  border-color: color-mix(in srgb, var(--amber, #c77e2b) 35%, transparent);
+  /* Hot = a full amber border/outline (not a left-edge bar). */
+  border-color: var(--amber, #c77e2b);
   box-shadow:
-    inset 4px 0 0 var(--amber, #c77e2b),
+    0 0 0 1px color-mix(in srgb, var(--amber, #c77e2b) 45%, transparent),
     0 2px 12px rgba(16, 24, 40, 0.05);
   background: linear-gradient(
     180deg,
