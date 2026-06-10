@@ -5,9 +5,16 @@ and `agent-slack-architecture.md` against the actual code. Persona is committed
 (`callie-personality-profile.md` v1.1.3). No build off this doc until Jon greenlights phase order.
 
 ## Goal
-Bring **Callie** online as a second Named agent: always-on and conversational in the **marketing Slack
-channels**, the analyst (not the ticker), reporting only to Artemis, able to delegate to faceless workers.
-Artemis comes out of the marketing channels once Callie holds them.
+Bring **Callie** online as a second Named agent: always-on and conversational in **`campaign signals`
+(C0B9CHVC7KQ)**, **`Marketing Campaigns`**, and **her own Slack DMs** — the analyst (not the ticker),
+reporting only to Artemis, able to delegate to faceless workers. Artemis comes out of the marketing channels
+once Callie holds them.
+
+**Callie's Slack app (C0 done, 2026-06-10):** "Calliope", App ID `A0B9Q790Y9Y`, Client ID
+`157781284437.11330247032338` — created by **duplicating Artemis's manifest**, so her app points at the
+**same** events endpoint. Consequences for C2: events must be routed by **`api_app_id`** (Artemis vs Callie),
+and HMAC verified with **her own signing secret**. Secrets (signing secret, bot OAuth token) are stored
+**encrypted in the DB** (a second `integrations` row, via the OAuth install flow) — never in the repo/briefs.
 
 ## Named Agent Standard — Callie checklist
 1. Persona + avatar — persona DONE (v1.1.3); **avatar TODO (Jon generates/approves)**.
@@ -52,13 +59,19 @@ Parameterize the loop by `agent_id` ("artemis" default):
   Callie's persona + marketing scope. **This is the foundation; build first, ships safely on its own.**
 
 ### C2 — Multi-bot Slack routing — Codex, needs Callie's token (C0)
-- Relax `integrations` uniqueness (allow a 2nd Slack bot per workspace; distinguish by `bot_user_id`/kind).
-- `select_agent_for_session(channel_id, metadata)`: marketing channels → "callie"; Jon's DM → "artemis".
-- `route_inbound`: include bot/agent in session key + metadata; resolve the **correct reply token** for the
-  bot the event targeted; keep all P1 guards (bot-self filter per bot, dedupe, channel-appropriate auth).
-- Callie's surface scope = marketing surfaces (the inverse of the personal-DM scope).
-- Acceptance (Lead verifies LIVE): Callie replies in `campaign signals` as herself, marketing-scoped; Artemis's
-  DM still personal; no cross-talk, no echo.
+- Relax `integrations` uniqueness (allow a 2nd Slack bot per workspace; distinguish by `bot_user_id`/app).
+- **Route by `api_app_id`** (both apps share the endpoint): map app → agent ("artemis"/"callie"). **HMAC verify
+  with the per-app signing secret** (store Callie's alongside Artemis's). Resolve the **correct reply token**
+  for the targeted app.
+- `select_agent_for_session(api_app_id, channel_id, metadata)`: Callie's app → "callie"; Artemis's app → 
+  "artemis". Include agent/app in the session key + metadata so the two bots never collide on a session.
+- **Make DM scope agent-aware (fixes a slice-1 assumption):** `is_personal_slack_dm_session` currently treats
+  ANY `D…` channel as personal/marketing-stripped. That is only right for **Artemis's** DM. Callie's own DMs
+  must be **marketing-scoped**. Scope must key off agent_id: Artemis-DM → personal; Callie-DM/channels →
+  marketing.
+- Keep all P1 guards (bot-self filter per bot, dedupe, channel-appropriate auth).
+- Acceptance (Lead verifies LIVE): Callie replies as herself (marketing-scoped) in `campaign signals`,
+  `Marketing Campaigns`, and her own DM; Artemis's DM stays personal; no cross-talk, no echo.
 
 ### C3 — Callie's domain tools — Codex
 - Writing Studio **read** tools: `get_message_compass`, `search_claims_register`, `check_coherence`; campaign/
