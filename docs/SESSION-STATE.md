@@ -92,10 +92,16 @@ design — the agent builder must scaffold this. Workers stay faceless/ephemeral
   is live). **Slice 1 brief READY:** `briefs/personal-scope-artemis-dm.md` (Codex) — personal surface scope
   for the DM, personal-scope prompt, and LOSSLESS retirement of the marketing-polluted DM history (tagged to
   hand to Callie later). Web nav hiding = shelved/cosmetic. Bringing Callie online = the next major build (P4).
-- **RADAR (not now): mockup cleanup.** The current campaigns + their docs are mostly MOCKUPS. Leave ONE
-  campaign as the **Friday presentation mockup**; clean up the rest (campaigns + docs) afterward. The
-  incoming-signal marketing history should move from Artemis to Callie (handled lossless in slice 1, migrated
-  at Callie build).
+- **Friday demo campaign — RESET DONE 2026-06-10.** The 3 mock campaigns (ids 14/15/16) + dependents were
+  deleted (atomic; pipeline-run history preserved). A REAL campaign was created from hot signal #624
+  ("Texas Personal Financial Literacy Course Requirement (HB27)") via the real Gate-1 promotion
+  (`promote_signal_to_candidate`): **campaign_candidate id=18**, stage `human_gate_1`, `in_inbox`, family
+  `general_growth`; signal 624 now `approved`. NOT yet run through the initiation wizard (scope/deliverables/
+  proposal) — open choice: walk it live in the demo vs pre-build it. FE polish: `briefs/fe-friday-demo-polish.md`
+  (terminal) removes the FE mock-campaign fallback + tidies composer/agent-monitor.
+- **Callie C1 MERGED** (e41f2d9): FA loop persona-parameterized by `agent_id` (Artemis byte-stable; Callie
+  persona loads). Next: C2 (multi-bot routing, dedicated `/events/callie` endpoint) — needs Callie's bot token
+  (OAuth install of her app A0B9Q790Y9Y). Plan: `docs/callie-build-plan.md`.
 - Parked: marketing-pipeline bug fixes (snooze/reject/qualifier); the QA test drafts (#39/#40 — harmless
   "ignore" markers in live).
 
