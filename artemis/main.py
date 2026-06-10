@@ -68,12 +68,12 @@ from artemis.routes import google_docs as google_docs_routes
 from artemis.routes import health, okr, parallel, status, writing_rules, writing_studio_tags
 from artemis.routes import jira as jira_routes
 from artemis.routes import me as me_routes
-from artemis.routes import users as users_routes
 from artemis.routes import meetings as meetings_routes
 from artemis.routes import notifications as notifications_routes
 from artemis.routes import people as people_routes
 from artemis.routes import sessions as sessions_routes
 from artemis.routes import stats as stats_routes
+from artemis.routes import users as users_routes
 from artemis.routes.builders import (
     agent_chains,
     agent_dags,
