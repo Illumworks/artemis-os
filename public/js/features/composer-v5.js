@@ -11,7 +11,7 @@
 // in public/index.html to local files in /public/vendor/prosemirror/ — no
 // runtime CDN.
 
-import { EditorState, Plugin, PluginKey, TextSelection } from "prosemirror-state";
+import { EditorState, Plugin, PluginKey } from "prosemirror-state";
 import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
 import { DOMParser as PMDOMParser, DOMSerializer, Schema } from "prosemirror-model";
 import { schema as basicSchema } from "prosemirror-schema-basic";
@@ -728,7 +728,6 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // Track current selection for the toolbar + accept/reject flow.
   let selectionRange = null;   // {from, to} in PM positions
   let selectionText = "";      // plain text of the selected span
-  let lastDragRange = null;    // last non-empty selection from the current drag (for restore-on-collapse)
   let pendingRewrite = null;   // {originalText, rewrittenText, from, to} during accept/reject
 
   // Accept/reject popover — shown after AI returns a rewrite.
@@ -996,22 +995,20 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   function updateSelectionState() {
     if (destroyed) return;
-    // If the user is interacting with the toolbar itself (e.g. typing in the
-    // "What should change?" input), the editor blurs and its selection collapses
-    // — but we must NOT react to that, or we'd hide the toolbar mid-use and lose
-    // the stored selection. Bail and keep the last selectionRange/text.
+    // Using the toolbar's own input — the editor blurs and collapses; don't react.
     if (selToolbar.contains(document.activeElement)) return;
+    // Don't touch the toolbar during a rewrite accept/reject.
+    if (pendingRewrite) return;
+    // Typing in another field (e.g. the comment composer's @mention box) — hide.
+    if (toolbarSuppressed()) { hideSelToolbar(); return; }
 
     const { selection } = view.state;
     let from = selection.from;
     let to = selection.to;
     let empty = selection.empty;
 
-    // Fast / loose drags that end outside the text leave PM's own selection
-    // EMPTY even though the browser shows highlighted text — and the drag's end
-    // node can be in the margin (outside the editor), which breaks node-based
-    // mapping. So map by the highlighted text's SCREEN COORDS (posAtCoords),
-    // which is robust no matter where the mouse released.
+    // Fast/loose drags can leave PM's selection empty while the browser still
+    // shows highlighted text; map by the highlighted text's SCREEN COORDS.
     if (empty) {
       const ds = window.getSelection();
       const range = ds && ds.rangeCount && !ds.isCollapsed ? ds.getRangeAt(0) : null;
@@ -1033,34 +1030,22 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
               to = Math.max(a.pos, b.pos);
               if (to > from) empty = false;
             }
-          } catch (_) { /* posAtCoords can throw — ignore */ }
+          } catch (_) { /* ignore */ }
         }
-        // There IS a visible selection over the editor but we couldn't map it
-        // (e.g. mid-drag into the margin). Keep the toolbar in its current state
-        // rather than hiding, so it doesn't vanish when the cursor strays out.
-        if (empty && selectionRange) return;
       }
     }
 
-    if (empty) {
-      selectionRange = null;
-      selectionText = "";
-      // Don't hide while a drag is pending restore: a fast drag that ends in the
-      // margin collapses the selection on mouseup, and handleDocMouseUp restores
-      // it. Only hide on genuine deselects (no pending drag) — keep visible
-      // during accept/reject too.
-      if (!pendingRewrite && !lastDragRange) hideSelToolbar();
+    if (!empty) {
+      selectionRange = { from, to };
+      selectionText = view.state.doc.textBetween(from, to, " ");
+      showSelToolbar();
       return;
     }
-    selectionRange = { from, to };
-    selectionText = view.state.doc.textBetween(from, to, " ");
-    lastDragRange = { from, to };
-    // Don't move the toolbar while a rewrite popover is open.
-    if (pendingRewrite) return;
-    // While the user is typing elsewhere (e.g. the comment composer), actively
-    // hide the toolbar so it doesn't sit over the comment box or flicker.
-    if (toolbarSuppressed()) { hideSelToolbar(); return; }
-    showSelToolbar();
+    // Empty selection: do NOT hide here. A drag that releases over the margin
+    // fires a spurious "collapsed" event — keeping the toolbar (and its last
+    // stored selection) shown is what makes a sloppy drag work. Dismissal is
+    // explicit: a fresh mousedown in the editor (handleEditorMouseDown), an
+    // outside click (handleDocClick), or Escape.
   }
 
   // Listen on selectionchange (fires even when PM handles it internally).
@@ -1074,29 +1059,22 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // click selection (e.g. selecting a whole paragraph), so the toolbar misses
   // it. Re-evaluate on mouseup/keyup in the editor so a full-paragraph
   // selection reliably pops the toolbar.
-  // Reset the per-drag range when a new press starts.
-  const handleEditorMouseDown = () => { lastDragRange = null; };
-  editorHost.addEventListener("mousedown", handleEditorMouseDown);
-
-  // On release ANYWHERE: a drag that ends in the paper margin (cursor=arrow)
-  // makes the browser collapse the selection to a caret on mouseup, which hid
-  // the toolbar. If we captured a dragged range during this press, restore it so
-  // the selection + toolbar persist; then re-evaluate.
-  const handleDocMouseUp = () => {
-    Promise.resolve().then(() => {
-      if (lastDragRange && view.state.selection.empty) {
-        const size = view.state.doc.content.size;
-        const from = Math.max(0, Math.min(lastDragRange.from, size));
-        const to = Math.max(0, Math.min(lastDragRange.to, size));
-        if (to > from) {
-          try {
-            view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)));
-          } catch (_) { /* ignore */ }
-        }
-      }
-      updateSelectionState();
-    });
+  // A fresh press ANYWHERE outside the toolbar dismisses it. If the press
+  // becomes a drag-selection, selectionchange re-shows it; a plain click leaves
+  // it dismissed. This is what lets a sloppy drag keep the toolbar (the
+  // empty-on-release event no longer hides) while any click still dismisses it —
+  // including clicks in the paper margin (not just the editor text).
+  const handleEditorMouseDown = (e) => {
+    if (selToolbar.contains(e.target) || rewritePopover.contains(e.target)) return;
+    selectionRange = null;
+    selectionText = "";
+    hideSelToolbar();
   };
+  document.addEventListener("mousedown", handleEditorMouseDown, true);
+
+  // Re-evaluate on release (catches drags that end outside the editor) and on
+  // keyboard selection.
+  const handleDocMouseUp = () => { Promise.resolve().then(() => updateSelectionState()); };
   document.addEventListener("mouseup", handleDocMouseUp);
   editorHost.addEventListener("keyup", handleDocSelectionChange);
 
@@ -2817,7 +2795,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       try { view.destroy(); } catch (_) { /* noop */ }
       // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
       document.removeEventListener("selectionchange", handleDocSelectionChange);
-      editorHost.removeEventListener("mousedown", handleEditorMouseDown);
+      document.removeEventListener("mousedown", handleEditorMouseDown, true);
       document.removeEventListener("mouseup", handleDocMouseUp);
       editorHost.removeEventListener("keyup", handleDocSelectionChange);
       document.removeEventListener("click", handleDocClick, true);
