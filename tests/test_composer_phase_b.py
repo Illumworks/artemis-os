@@ -232,7 +232,7 @@ class TestCommentSlackDMHook:
             import inspect
 
             if inspect.iscoroutine(coro):
-                coro.close()  # type: ignore[union-attr]
+                coro.close()
 
         with patch(
             "artemis.marketing.routes.comments.asyncio.ensure_future",
