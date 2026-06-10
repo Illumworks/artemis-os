@@ -89,6 +89,24 @@ Parameterize the loop by `agent_id` ("artemis" default):
 - A delegate-to-worker tool (wrap `spawn_subagent` / named-agent invoke) so Callie farms scoped tasks out.
 - Acceptance: Callie escalates a decision to Artemis; Callie delegates a draft to a worker and synthesizes it.
 
+## Marketing notification routing (hard requirement, surfaced 2026-06-10)
+The pipeline posts Gate-2 approval cards via `human_gate_executor.py` two ways using the **Artemis bot**:
+(1) a **DM to each approver by email** — since Jon is the approver, this lands in his PERSONAL Artemis DM
+(violating "Artemis DM = personal/ops only"); (2) a post to `marketing_campaigns_slack_channel`. This is a
+SEPARATE path from the conversational loop — slice-1's personal-DM scoping does NOT catch it (slice-1 scoped
+`handle_turn`; these cards are posted directly via `SlackClient`). **C2/C3 must route marketing gate
+notifications to Callie's marketing channel (posted by Callie's bot), NOT Jon's Artemis DM**, and stop the
+approver-DM-to-Jon for marketing gates. Until then, marketing approval cards will keep leaking into the
+personal DM on every campaign.
+
+## Deliverable -> Writing Studio draft body gap (surfaced 2026-06-10)
+For campaign #18, the deliverables pipeline generated real content (it's in `campaign_deliverables.metadata`
+and rendered in the Slack approval cards), but the editable Writing Studio drafts came out body-empty because
+the **stub external writing adapter** (`StubWritingStudio`, the default when its backend env is unset) creates
+title-only draft shells and never pipes the generated body into the WS draft. Result: Slack card has text, WS
+draft is empty. Fix path: engage the real compose/external path so the generated body lands in the WS draft
+(tie to C3 Writing Studio wiring). Content is NOT lost (recoverable from deliverable metadata).
+
 ## Cross-cutting / fold-in
 - **Retired DM history handoff:** the `callie_handoff_pending` backlog (tagged in slice 1) becomes Callie's
   marketing memory when she's live (C2/C3).
