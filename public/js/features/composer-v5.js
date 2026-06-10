@@ -1007,18 +1007,37 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     let empty = selection.empty;
 
     // Fast / loose drags that end outside the text leave PM's own selection
-    // EMPTY even though the browser shows highlighted text. Fall back to the DOM
-    // selection (mapped back to PM positions) so the toolbar still appears.
+    // EMPTY even though the browser shows highlighted text — and the drag's end
+    // node can be in the margin (outside the editor), which breaks node-based
+    // mapping. So map by the highlighted text's SCREEN COORDS (posAtCoords),
+    // which is robust no matter where the mouse released.
     if (empty) {
       const ds = window.getSelection();
-      if (ds && ds.rangeCount && !ds.isCollapsed && ds.anchorNode && editorHost.contains(ds.anchorNode)) {
-        try {
-          const a = view.posAtDOM(ds.anchorNode, ds.anchorOffset);
-          const b = view.posAtDOM(ds.focusNode, ds.focusOffset);
-          from = Math.min(a, b);
-          to = Math.max(a, b);
-          if (to > from) empty = false;
-        } catch (_) { /* posAtDOM can throw on odd nodes — ignore */ }
+      const range = ds && ds.rangeCount && !ds.isCollapsed ? ds.getRangeAt(0) : null;
+      const touchesEditor = range && (
+        editorHost.contains(range.startContainer) ||
+        editorHost.contains(range.endContainer) ||
+        editorHost.contains(range.commonAncestorContainer)
+      );
+      if (touchesEditor) {
+        const rects = range.getClientRects();
+        if (rects.length) {
+          try {
+            const f = rects[0];
+            const l = rects[rects.length - 1];
+            const a = view.posAtCoords({ left: f.left + 1, top: f.top + f.height / 2 });
+            const b = view.posAtCoords({ left: Math.max(l.right - 1, l.left + 1), top: l.top + l.height / 2 });
+            if (a && b && a.pos != null && b.pos != null) {
+              from = Math.min(a.pos, b.pos);
+              to = Math.max(a.pos, b.pos);
+              if (to > from) empty = false;
+            }
+          } catch (_) { /* posAtCoords can throw — ignore */ }
+        }
+        // There IS a visible selection over the editor but we couldn't map it
+        // (e.g. mid-drag into the margin). Keep the toolbar in its current state
+        // rather than hiding, so it doesn't vanish when the cursor strays out.
+        if (empty && selectionRange) return;
       }
     }
 
