@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import desc, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -199,6 +199,28 @@ async def list_messages(
         q = q.where(FloatingArtemisMessage.id > cursor)
     result = await session.execute(q)
     return list(result.scalars().all())
+
+
+async def list_messages_for_context(
+    session: AsyncSession,
+    session_id: str,
+    *,
+    limit: int = 100,
+    created_at_gte: datetime | None = None,
+) -> list[FloatingArtemisMessage]:
+    """Return the newest context messages, chronologically ordered."""
+    q = select(FloatingArtemisMessage).where(FloatingArtemisMessage.session_id == session_id)
+    if created_at_gte is not None:
+        q = q.where(FloatingArtemisMessage.created_at >= created_at_gte)
+    q = q.order_by(
+        desc(FloatingArtemisMessage.created_at),
+        desc(FloatingArtemisMessage.id),
+    ).limit(limit)
+
+    result = await session.execute(q)
+    rows = list(result.scalars().all())
+    rows.reverse()
+    return rows
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -33,6 +33,11 @@ from artemis.floating_artemis.memory import inject_memory_context, write_turn_dr
 from artemis.floating_artemis.memory_read_cache import put as cache_put
 from artemis.floating_artemis.personality import PERSONALITY_PROFILE, select_voice_samples
 from artemis.floating_artemis.schemas import MemoryObservationDigest, MemoryReadEvent
+from artemis.floating_artemis.session_scope import (
+    is_personal_slack_dm_session,
+    parse_history_cutover_at,
+    resolve_surface_scope,
+)
 from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
 from artemis.floating_artemis.tools.builders import register_builders_tools
 from artemis.floating_artemis.tools.core import register_core_tools
@@ -96,6 +101,7 @@ def _build_system_prompt(
     recent_meeting_context: str | None = None,
     session_id: str = "",
     speaker_name: str | None = None,
+    is_personal_slack_dm: bool = False,
 ) -> str:
     # Lead with the high-priority distilled persona rules.
     parts = [_PERSONA_CORE]
@@ -148,6 +154,14 @@ def _build_system_prompt(
             'Do not ask "Are you talking to me?" — they are. '
             "Be concise; Slack rewards short replies." + who
         )
+        if is_personal_slack_dm:
+            parts.append(
+                "## Slack DM scope\n"
+                "This 1:1 Slack DM is for personal support, app/ops issues, and upgrades. "
+                "You are Jon's orchestrator and personal partner here. "
+                "Do not volunteer marketing in this DM. Marketing is Callie's lane and only "
+                "comes here if Jon explicitly asks."
+            )
 
     return "\n\n".join(parts)
 
@@ -377,10 +391,51 @@ class TurnResult:
     intent_shortcut: bool = False
 
 
+@dataclass(frozen=True)
+class _SessionContext:
+    metadata: dict[str, Any]
+    available_surfaces: set[str]
+    is_personal_slack_dm: bool
+
+
 def _serialize_blocks(
     blocks: list[TextBlock | ToolUseBlock | ToolResultBlock],
 ) -> list[dict[str, Any]]:
     return [block.to_api() for block in blocks]
+
+
+async def _load_session_context(
+    *,
+    session_id: str,
+    db_session: Any | None,
+    all_surfaces: set[str],
+) -> _SessionContext:
+    metadata: dict[str, Any] = {}
+    try:
+        import artemis.db as _db
+        from artemis.floating_artemis.repository import get_session_by_id
+
+        if db_session is not None:
+            row = await get_session_by_id(db_session, session_id)
+        else:
+            async with _db.SessionLocal() as session:
+                row = await get_session_by_id(session, session_id)
+        metadata_raw = getattr(row, "metadata_", {}) or {}
+        if isinstance(metadata_raw, dict):
+            metadata = metadata_raw
+    except Exception:
+        logger.debug("Could not load session metadata for session %s", session_id, exc_info=True)
+
+    scoped_surfaces = resolve_surface_scope(
+        all_surfaces=all_surfaces,
+        session_id=session_id,
+        metadata=metadata,
+    )
+    return _SessionContext(
+        metadata=metadata,
+        available_surfaces=scoped_surfaces,
+        is_personal_slack_dm=is_personal_slack_dm_session(session_id, metadata),
+    )
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -472,9 +527,15 @@ async def handle_turn(
     try:
         status = await get_status()
         surfaces_list = status.get("available_surfaces", []) if isinstance(status, dict) else []
-        available_surfaces: set[str] = set(surfaces_list if isinstance(surfaces_list, list) else [])
+        all_surfaces: set[str] = set(surfaces_list if isinstance(surfaces_list, list) else [])
     except Exception:
-        available_surfaces = set()
+        all_surfaces = set()
+    session_ctx = await _load_session_context(
+        session_id=session_id,
+        db_session=db_session,
+        all_surfaces=all_surfaces,
+    )
+    available_surfaces = session_ctx.available_surfaces
 
     # ── 3. Build system prompt ────────────────────────────────────────────────
     # Use the profile-sourced voice corpus (deterministic per session_id).
@@ -488,10 +549,15 @@ async def handle_turn(
         recent_meeting_context=recent_meeting_ctx,
         session_id=session_id,
         speaker_name=speaker_name,
+        is_personal_slack_dm=session_ctx.is_personal_slack_dm,
     )
 
     # ── 4. Load history ───────────────────────────────────────────────────────
-    history = await _load_message_history(session_id=session_id, db_session=db_session)
+    history = await _load_message_history(
+        session_id=session_id,
+        db_session=db_session,
+        session_metadata=session_ctx.metadata,
+    )
 
     # ── 4b. M4: inject memory context into system prompt ─────────────────────
     # Augment after history load so we can use recent turns as retrieval context.
@@ -799,7 +865,16 @@ async def resume_after_confirm(
     ]
 
     # Load current history and append the tool_result
-    history = await _load_message_history(session_id=session_id, db_session=db_session)
+    session_ctx = await _load_session_context(
+        session_id=session_id,
+        db_session=db_session,
+        all_surfaces=set(),
+    )
+    history = await _load_message_history(
+        session_id=session_id,
+        db_session=db_session,
+        session_metadata=session_ctx.metadata,
+    )
 
     # Append a user message containing the tool_result (protocol: tool results are user-role)
     tool_result_msg = Message(role="user", content=tool_result_blocks)
@@ -989,18 +1064,31 @@ async def _load_message_history(
     *,
     session_id: str,
     db_session: Any | None,
+    session_metadata: dict[str, Any] | None = None,
     max_messages: int = 40,
 ) -> list[Message]:
     """Load recent message history from the DB, token-budgeted."""
     try:
         import artemis.db as _db
-        from artemis.floating_artemis.repository import list_messages
+        from artemis.floating_artemis.repository import list_messages_for_context
+
+        cutover_at = parse_history_cutover_at(session_metadata)
 
         if db_session is not None:
-            msgs = await list_messages(db_session, session_id, limit=max_messages)
+            msgs = await list_messages_for_context(
+                db_session,
+                session_id,
+                limit=max_messages,
+                created_at_gte=cutover_at,
+            )
         else:
             async with _db.SessionLocal() as session:
-                msgs = await list_messages(session, session_id, limit=max_messages)
+                msgs = await list_messages_for_context(
+                    session,
+                    session_id,
+                    limit=max_messages,
+                    created_at_gte=cutover_at,
+                )
 
         result: list[Message] = []
         for m in msgs:
