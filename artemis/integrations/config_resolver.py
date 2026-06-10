@@ -38,6 +38,26 @@ class SlackConfig:
     # the "slack" provider key "authed_user_id".  May be empty string when not
     # configured — callers must check before using.
     authed_user_id: str
+    # P1-hardening: the set of Slack user IDs permitted to hold a conversation
+    # with Artemis over the inbound bridge.  The owner (authed_user_id) is always
+    # included when set; extra IDs come from integration_configs["slack"]
+    # ["allowed_user_ids"] (list) or the SLACK_ALLOWED_USER_IDS env var
+    # (comma-separated).  An EMPTY tuple means fail-closed: no one is allowed and
+    # no inbound message is routed into an agent session.
+    allowed_user_ids: tuple[str, ...] = ()
+
+    def is_user_allowed(self, user_id: str) -> bool:
+        """Return True iff this Slack user may converse with Artemis (fail-closed)."""
+        return bool(user_id) and user_id in self.allowed_user_ids
+
+
+def _parse_allowed_user_ids(raw: object) -> list[str]:
+    """Normalize an allowlist from a stored list or a comma-separated string."""
+    if isinstance(raw, list | tuple):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str):
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    return []
 
 
 async def resolve_slack_config(session: AsyncSession) -> SlackConfig:
@@ -62,6 +82,17 @@ async def resolve_slack_config(session: AsyncSession) -> SlackConfig:
         "SLACK_AUTHED_USER_ID", ""
     )
 
+    # P1-hardening: resolve the inbound-conversation allowlist.  The owner
+    # (authed_user_id) is always permitted when known; extra IDs come from the DB
+    # config or the SLACK_ALLOWED_USER_IDS env var.  Order-preserving + de-duped.
+    extras = _parse_allowed_user_ids(stored.get("allowed_user_ids")) or _parse_allowed_user_ids(
+        os.environ.get("SLACK_ALLOWED_USER_IDS", "")
+    )
+    allowed_ordered: list[str] = []
+    for candidate in ([authed_user_id] if authed_user_id else []) + extras:
+        if candidate and candidate not in allowed_ordered:
+            allowed_ordered.append(candidate)
+
     missing = [
         name
         for name, val in [
@@ -79,6 +110,7 @@ async def resolve_slack_config(session: AsyncSession) -> SlackConfig:
         client_secret=client_secret,
         signing_secret=signing_secret,
         authed_user_id=authed_user_id,
+        allowed_user_ids=tuple(allowed_ordered),
     )
 
 

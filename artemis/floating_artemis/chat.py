@@ -94,6 +94,7 @@ def _build_system_prompt(
     available_surfaces: list[str],
     recent_meeting_context: str | None = None,
     session_id: str = "",
+    speaker_name: str | None = None,
 ) -> str:
     # Lead with the high-priority distilled persona rules.
     parts = [_PERSONA_CORE]
@@ -139,11 +140,12 @@ def _build_system_prompt(
 
     # Slack-originated session: establish the conversational context.
     if session_id.startswith("slack-"):
+        who = f" You are speaking with {speaker_name}." if speaker_name else ""
         parts.append(
             "**You are responding in Slack.** The operator @-mentioned you directly. "
             "**Assume they are addressing you and respond on-topic.** "
             'Do not ask "Are you talking to me?" — they are. '
-            "Be concise; Slack rewards short replies."
+            "Be concise; Slack rewards short replies." + who
         )
 
     return "\n\n".join(parts)
@@ -391,6 +393,7 @@ async def handle_turn(
     speed_tier: str | None = None,
     adapter: ModelAdapter | None = None,
     owner_user_id: int | None = None,
+    speaker_name: str | None = None,
     db_session: Any | None = None,
 ) -> TurnResult:
     """Run one user turn for the given Floating Artemis session.
@@ -405,6 +408,10 @@ async def handle_turn(
         Optional ModelAdapter override (for tests). Defaults to AnthropicAdapter.
     owner_user_id:
         Owner user ID for surface filtering and memory queries.
+    speaker_name:
+        Display name of the person speaking (e.g. resolved from the Slack user
+        cache for inbound DMs). Threaded into the system prompt so Artemis
+        addresses the operator by name. None for the web UI / unknown speakers.
     db_session:
         Optional SQLAlchemy AsyncSession (for tests). If None, a new session is
         opened from SessionLocal per DB operation.
@@ -479,6 +486,7 @@ async def handle_turn(
         available_surfaces=sorted(available_surfaces),
         recent_meeting_context=recent_meeting_ctx,
         session_id=session_id,
+        speaker_name=speaker_name,
     )
 
     # ── 4. Load history ───────────────────────────────────────────────────────
