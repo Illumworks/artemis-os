@@ -985,6 +985,27 @@ function renderWritingStudio() {
     return;
   }
 
+  // No draft open on the draft panel → show the v5-styled empty state (with a
+  // working create affordance), NOT the legacy sidebar. Keeps the Studio from
+  // appearing to "revert" to the old layout whenever drafts hit zero (e.g. after
+  // a campaign/mock reset). composer-v5 is the only Studio surface we ship now.
+  if (writingState.activePanel === "draft" && !selectedDraft) {
+    mount.innerHTML = `
+      <div class="writing-status ${writingState.status ? "visible" : ""}" data-writing-status>${esc(writingState.status)}</div>
+      <div class="cv5-mount" data-cv5-mount>
+        <div class="cv5-root">
+          <div class="cv5-empty">
+            <h3>No drafts yet</h3>
+            <p>Start a new document, or open one from a campaign.</p>
+            <button type="button" class="cv5-empty-new" data-writing-action="writing-new-draft-blank">+ New draft</button>
+          </div>
+        </div>
+      </div>
+    `;
+    syncWritingModalPortal();
+    return;
+  }
+
   mount.innerHTML = `
     <div class="writing-status ${writingState.status ? "visible" : ""}" data-writing-status>${esc(writingState.status)}</div>
 
