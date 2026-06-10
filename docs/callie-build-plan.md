@@ -60,9 +60,12 @@ Parameterize the loop by `agent_id` ("artemis" default):
 
 ### C2 — Multi-bot Slack routing — Codex, needs Callie's token (C0)
 - Relax `integrations` uniqueness (allow a 2nd Slack bot per workspace; distinguish by `bot_user_id`/app).
-- **Route by `api_app_id`** (both apps share the endpoint): map app → agent ("artemis"/"callie"). **HMAC verify
-  with the per-app signing secret** (store Callie's alongside Artemis's). Resolve the **correct reply token**
-  for the targeted app.
+- **Dedicated per-bot endpoint (decided 2026-06-10):** Artemis stays on `/api/integrations/slack/events`;
+  Callie gets `/api/integrations/slack/events/callie` (same handler mounted at a 2nd path, agent resolved from
+  the path). Each path HMAC-verifies with **its own signing secret** and replies with **its own token** — no
+  shared-handler `api_app_id` guessing. (Her manifest is an Artemis clone, so a distinct path is the clean
+  separator. `api_app_id` routing on one endpoint is the viable alternative, not chosen.) Jon repoints her
+  Request URL to the `/events/callie` path once C2 deploys it.
 - `select_agent_for_session(api_app_id, channel_id, metadata)`: Callie's app → "callie"; Artemis's app → 
   "artemis". Include agent/app in the session key + metadata so the two bots never collide on a session.
 - **Make DM scope agent-aware (fixes a slice-1 assumption):** `is_personal_slack_dm_session` currently treats
