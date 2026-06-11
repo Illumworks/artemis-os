@@ -346,3 +346,132 @@ def test_registry_includes_cc12_tools() -> None:
         "campaign_brief.read",
         "content_registry.list_approved_assets",
     } <= names
+
+
+# ── C3d: round-trip — pipeline body readable by _latest_draft_content ──────────
+
+
+@pytest.mark.asyncio
+async def test_enqueue_body_readable_by_latest_draft_content(db_session: AsyncSession) -> None:
+    """Round-trip: writing_studio.enqueue body → _latest_draft_content returns it.
+
+    This is the C3d regression guard.  Before the fix, the tool wrote only
+    ``draftBody`` while ``_latest_draft_content`` reads ``live_content`` /
+    ``versions[0].content`` — so the editor rendered an empty document.
+    After the fix, the enqueue tool also populates ``versions[0].content``
+    so both the LLM compose prompt and the detail-view serializer return
+    the composed body correctly.
+    """
+    from artemis.marketing.writing_studio.compose_engine import _latest_draft_content
+
+    brief = await _fixture_brief(db_session)
+    composed_body = "This is the pipeline-generated draft body."
+
+    result = json.loads(
+        await _call_tool(
+            db_session,
+            "writing_studio.enqueue",
+            {
+                "campaign_brief_id": brief.id,
+                "draft_title": "Round-trip test draft",
+                "draft_body": composed_body,
+                "voice_profile_slug": "amira-marketing-voice",
+            },
+        )
+    )
+    row = await db_session.get(CampaignDeliverable, result["deliverable_id"])
+    assert row is not None
+
+    # Verify versions[0].content was written.
+    meta = row.deliverable_metadata or {}
+    versions = meta.get("versions", [])
+    assert len(versions) == 1, "Expected exactly one version entry after enqueue"
+    assert versions[0]["content"] == composed_body
+    assert versions[0]["source"] == "pipeline_generated"
+
+    # The canonical reader must return the body (this is the failing path pre-fix).
+    returned = _latest_draft_content(row)
+    assert returned == composed_body, (
+        f"_latest_draft_content returned {returned!r}; expected {composed_body!r}. "
+        "The read↔write alignment is broken."
+    )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_keeps_draftbody_for_backwards_compat(db_session: AsyncSession) -> None:
+    """Backwards compat: draftBody is still written (Slack gate cards read it)."""
+    brief = await _fixture_brief(db_session)
+    composed_body = "Draft body for backwards compat check."
+
+    result = json.loads(
+        await _call_tool(
+            db_session,
+            "writing_studio.enqueue",
+            {
+                "campaign_brief_id": brief.id,
+                "draft_title": "Compat test",
+                "draft_body": composed_body,
+                "voice_profile_slug": "amira-marketing-voice",
+            },
+        )
+    )
+    row = await db_session.get(CampaignDeliverable, result["deliverable_id"])
+    assert row is not None
+    meta = row.deliverable_metadata or {}
+    assert meta.get("draftBody") == composed_body
+
+
+@pytest.mark.asyncio
+async def test_backfill_legacy_deliverable_becomes_readable(db_session: AsyncSession) -> None:
+    """Simulates the pre-fix write and verifies a manual versions backfill makes it readable.
+
+    This mirrors the migration 0079 logic applied to any legacy row that only
+    has draftBody (created before the fix) and verifies that after copying to
+    versions, _latest_draft_content picks it up.
+    """
+    from artemis.marketing.writing_studio.compose_engine import _latest_draft_content
+
+    # Create a legacy row (draftBody only, no versions).
+    brief = await _fixture_brief(db_session)
+    candidate_id = brief.candidate_id
+    legacy_body = "Legacy pipeline-generated body without versions."
+    legacy_meta: dict[str, Any] = {
+        "draftBody": legacy_body,
+        "draftTitle": "Legacy draft",
+        "externalDraftId": "stub-legacy-1",
+    }
+    legacy_row = CampaignDeliverable(
+        candidate_id=candidate_id,
+        deliverable_id="stub-legacy-1",
+        campaign_id="obc",
+        status="draft_ready",
+        deliverable_metadata=legacy_meta,
+    )
+    db_session.add(legacy_row)
+    await db_session.flush()
+
+    # Before backfill: _latest_draft_content returns empty (the pre-fix bug).
+    content_before = _latest_draft_content(legacy_row)
+    assert content_before == "", (
+        f"Pre-backfill content should be empty, got {content_before!r}"
+    )
+
+    # Apply the backfill (mirrors the 0079 migration logic in Python).
+    backfilled_meta = dict(legacy_meta)
+    backfilled_meta["versions"] = [
+        {
+            "id": "v1",
+            "version_number": 1,
+            "content": legacy_body,
+            "created_at": "2026-06-10T00:00:00+00:00",
+            "source": "pipeline_generated",
+        }
+    ]
+    legacy_row.deliverable_metadata = backfilled_meta
+    await db_session.flush()
+
+    # After backfill: _latest_draft_content returns the body.
+    content_after = _latest_draft_content(legacy_row)
+    assert content_after == legacy_body, (
+        f"Post-backfill content should be {legacy_body!r}, got {content_after!r}"
+    )
