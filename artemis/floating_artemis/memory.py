@@ -6,6 +6,11 @@ Cache: 5-second per-session retrieval cache to avoid hot-loop DB calls.
 
 Failure isolation is the load-bearing constraint: every public function is
 wrapped in try/except. Memory failures NEVER break chat.
+
+Agent scoping:
+  Each named agent (e.g. "callie") gets its own ``agent:<agent_id>`` memory
+  scope so observations from different agents are retrievable in isolation.
+  The Artemis default is ``agent:floating-artemis`` for backward compat.
 """
 
 from __future__ import annotations
@@ -20,8 +25,21 @@ from artemis.memory.store import write_drawer
 
 logger = logging.getLogger(__name__)
 
-# Scope shared by both M3 and M4
+# Default scope for Artemis (backward compat)
 _FA_SCOPE = Scope(scope_kind="agent", scope_id="floating-artemis")
+
+
+def _scope_for_agent(agent_id: str) -> Scope:
+    """Return the memory scope for a named agent.
+
+    - ``"artemis"`` (or any unrecognised value) → ``agent:floating-artemis``
+      (the legacy Artemis scope; preserves backward compat).
+    - ``"callie"`` → ``agent:callie`` (Callie's isolated marketing scope).
+    """
+    normalized = (agent_id or "").strip().lower()
+    if normalized and normalized != "artemis":
+        return Scope(scope_kind="agent", scope_id=normalized)
+    return _FA_SCOPE
 
 # ── 5-second retrieval cache ─────────────────────────────────────────────────
 # Key: (session_id, query_prefix)  Value: (timestamp, results)
@@ -59,11 +77,16 @@ async def write_turn_drawer(
     user_msg_id: int,
     user_text: str,
     assistant_text: str,
+    *,
+    agent_id: str = "artemis",
 ) -> None:
     """Write a memory drawer capturing this turn. Failure-isolated.
 
     Uses a fresh SessionLocal per M1's session pattern so that memory writes
     never share a transaction with the chat flow and cannot cause deadlocks.
+
+    ``agent_id`` controls the target scope: ``"callie"`` writes to
+    ``agent:callie``; any other value uses ``agent:floating-artemis``.
     """
     try:
         import artemis.db as _db
@@ -73,10 +96,11 @@ async def write_turn_drawer(
             source_kind="floating_artemis_message",
             source_id=str(user_msg_id),
         )
+        scope = _scope_for_agent(agent_id)
         async with _db.SessionLocal() as session:
             await write_drawer(
                 session,
-                scope=_FA_SCOPE,
+                scope=scope,
                 content=content,
                 source=source,
             )
@@ -97,6 +121,8 @@ async def inject_memory_context(
     user_msg: str,
     history: list[Any],
     session_id: str,
+    *,
+    agent_id: str = "artemis",
 ) -> str:
     """Inject relevant memory observations into the system prompt. Failure-isolated.
 
@@ -104,6 +130,9 @@ async def inject_memory_context(
     avoid SAVEPOINT collisions with the chat flow session).
 
     Returns the original prompt unchanged if retrieval fails or finds nothing.
+
+    ``agent_id`` controls the retrieval scope: ``"callie"`` queries
+    ``agent:callie``; any other value queries ``agent:floating-artemis``.
     """
     try:
         import artemis.db as _db
@@ -122,10 +151,11 @@ async def inject_memory_context(
         if cached is not None:
             results = cached
         else:
+            scope = _scope_for_agent(agent_id)
             async with _db.SessionLocal() as session:
                 results = await search_observations(
                     session,
-                    scope_set=[_FA_SCOPE],
+                    scope_set=[scope],
                     query=query,
                     limit=5,
                 )
