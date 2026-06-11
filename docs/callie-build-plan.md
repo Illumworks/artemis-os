@@ -76,12 +76,25 @@ Parameterize the loop by `agent_id` ("artemis" default):
 - Acceptance (Lead verifies LIVE): Callie replies as herself (marketing-scoped) in `campaign signals`,
   `Marketing Campaigns`, and her own DM; Artemis's DM stays personal; no cross-talk, no echo.
 
-### C3 — Callie's domain tools — Codex
-- Writing Studio **read** tools: `get_message_compass`, `search_claims_register`, `check_coherence`; campaign/
-  pipeline **performance** reads. Gate by marketing surface.
-- Analyst Slack posting tool (synthesis/digests/nudges) — explicitly NOT the raw signal ticker or approval
-  cards (those stay with the pipeline; see `briefs/slack-signal-routing.md`).
-- Acceptance: Callie can pull brand sources + claims, tier a claim, and post a synthesized recommendation.
+### C3 — Callie's domain tools + content wiring — Codex (split, grounded 2026-06-10)
+Read APIs all already exist (clean): Message Compass = `writing_rules.repository.get_source_by_profile_key(
+…, "01_MESSAGE_COMPASS")`; claims = `list_claims(profile_id, status="approved")`; Coherence Map is embedded
+in the Compass (no separate API). Tools register in `floating_artemis/tools/marketing.py` (gate
+`[surface:marketing-os]`). Split:
+- **C3a — analyst toolset (READY, do first):** `briefs/callie-c3a-analyst-toolset.md` — `get_message_compass`,
+  `search_claims_register`, `get_campaign_performance` (synthesized from raw reads; no aggregate metric API
+  yet), and `post_analyst_message` (posts synthesis to her channel via HER token, lint-clean). Makes Callie a
+  real analyst.
+- **C3b — finish notification routing:** post the pipeline Gate-2 *channel card* via Callie's token
+  (`human_gate_executor.py`: refactor `_get_slack_token` → `_get_slack_token_for_agent(agent_id)`; marketing
+  kinds post as Callie). Completes QW1 (which only suppressed the owner-DM).
+- **C3c — retired-history handoff:** ingest the `callie_handoff_pending` Artemis-DM backlog
+  (`slack-…-D0AN8CCJC4C-_`, ~246 msgs) into Callie's memory scope (`floating_artemis/memory.py` write path
+  + `memory/store.py`). Unknown: scope-inheritance semantics — trace `memory/retrieval.py` first.
+- **C3d — NEEDS JON DECISION (deferred QW2):** editable-WS-draft body. The external adapter defaults to
+  `StubWritingStudio` (title-only, no body); the real path needs `RealWritingStudio.update_draft()`
+  (unimplemented) + `ARTEMIS_WRITING_STUDIO_URL/TOKEN` or a Google Docs sync. Decide the real backend before
+  building. Content is NOT lost (lives in `campaign_deliverables.metadata`).
 
 ### C4 — Orchestration: report-up + delegate — Codex
 - Escalation Callie→Artemis (a decision that needs Jon flows Callie→Artemis→Jon's DM, per the tightened
