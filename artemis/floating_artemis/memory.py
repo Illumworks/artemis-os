@@ -41,6 +41,7 @@ def _scope_for_agent(agent_id: str) -> Scope:
         return Scope(scope_kind="agent", scope_id=normalized)
     return _FA_SCOPE
 
+
 # ── 5-second retrieval cache ─────────────────────────────────────────────────
 # Key: (session_id, query_prefix)  Value: (timestamp, results)
 _retrieval_cache: dict[tuple[str, str], tuple[float, list[Any]]] = {}
@@ -79,6 +80,8 @@ async def write_turn_drawer(
     assistant_text: str,
     *,
     agent_id: str = "artemis",
+    speaker_name: str | None = None,
+    speaker_id: str | None = None,
 ) -> None:
     """Write a memory drawer capturing this turn. Failure-isolated.
 
@@ -87,14 +90,41 @@ async def write_turn_drawer(
 
     ``agent_id`` controls the target scope: ``"callie"`` writes to
     ``agent:callie``; any other value uses ``agent:floating-artemis``.
+
+    When ``speaker_name`` or ``speaker_id`` is provided the drawer content is
+    prefixed with a structured ``[SPEAKER]`` line so that the speaker attribution
+    survives into the searchable observation text after consolidation.  The same
+    information is also stored in ``source_extra`` for structured, lossless
+    metadata access.  When both are absent the output is byte-for-byte identical
+    to the previous behaviour (backward compat / web UI path).
     """
     try:
         import artemis.db as _db
 
-        content = f"[USER] {user_text}\n[ASSISTANT] {assistant_text}"
+        # Build content — prepend speaker attribution when known.
+        if speaker_name or speaker_id:
+            speaker_label = speaker_name or ""
+            speaker_suffix = f" ({speaker_id})" if speaker_id else ""
+            content = (
+                f"[SPEAKER] {speaker_label}{speaker_suffix}\n"
+                f"[USER] {user_text}\n[ASSISTANT] {assistant_text}"
+            )
+            source_extra: dict[str, Any] | None = {
+                k: v
+                for k, v in {
+                    "speaker_id": speaker_id,
+                    "speaker_name": speaker_name,
+                }.items()
+                if v is not None
+            }
+        else:
+            content = f"[USER] {user_text}\n[ASSISTANT] {assistant_text}"
+            source_extra = None
+
         source = Source(
             source_kind="floating_artemis_message",
             source_id=str(user_msg_id),
+            source_extra=source_extra,
         )
         scope = _scope_for_agent(agent_id)
         async with _db.SessionLocal() as session:
@@ -123,6 +153,8 @@ async def inject_memory_context(
     session_id: str,
     *,
     agent_id: str = "artemis",
+    speaker_name: str | None = None,
+    speaker_id: str | None = None,
 ) -> str:
     """Inject relevant memory observations into the system prompt. Failure-isolated.
 
@@ -133,6 +165,15 @@ async def inject_memory_context(
 
     ``agent_id`` controls the retrieval scope: ``"callie"`` queries
     ``agent:callie``; any other value queries ``agent:floating-artemis``.
+
+    When ``speaker_name`` is supplied the retrieval query is biased toward that
+    person's attributed observations (the speaker name is appended to the query
+    text so FTS/semantic ranking naturally favours ``[SPEAKER] {name}`` drawers).
+    An additional cheap lookup (limit 3) keyed on the speaker name is used to
+    build a short ``## What I know about {speaker_name}`` digest that is
+    prepended to the general memory block.  Both the bias and the per-person
+    digest respect the existing 5-second retrieval cache.  Any failure in the
+    per-person lookup is silently swallowed — it must never break chat.
     """
     try:
         import artemis.db as _db
@@ -144,7 +185,10 @@ async def inject_memory_context(
                 text = getattr(block, "text", None)
                 if text:
                     history_texts.append(text)
-        query = user_msg + ("\n" + "\n".join(history_texts) if history_texts else "")
+        base_query = user_msg + ("\n" + "\n".join(history_texts) if history_texts else "")
+
+        # Bias toward this speaker's attributed observations when identity is known.
+        query = f"{base_query}\n{speaker_name}" if speaker_name else base_query
 
         # Check cache first
         cached = _get_cached(session_id, query)
@@ -161,7 +205,33 @@ async def inject_memory_context(
                 )
             _put_cache(session_id, query, results)
 
-        if not results:
+        # Per-person recall digest — cheap extra lookup keyed on speaker name.
+        person_results: list[Any] = []
+        if speaker_name:
+            person_cache_key = f"__person__{session_id}__{speaker_name}"
+            cached_person = _get_cached(person_cache_key, speaker_name)
+            if cached_person is not None:
+                person_results = cached_person
+            else:
+                try:
+                    scope = _scope_for_agent(agent_id)
+                    async with _db.SessionLocal() as session:
+                        person_results = await search_observations(
+                            session,
+                            scope_set=[scope],
+                            query=speaker_name,
+                            limit=3,
+                        )
+                    _put_cache(person_cache_key, speaker_name, person_results)
+                except Exception:
+                    logger.warning(
+                        "Per-person recall lookup failed for speaker=%s",
+                        speaker_name,
+                        exc_info=True,
+                    )
+                    person_results = []
+
+        if not results and not person_results:
             return prompt
 
         memory_block = (
@@ -169,6 +239,17 @@ async def inject_memory_context(
             "These are observations the platform has recorded across past conversations. "
             "Use them for continuity but verify before acting on specific claims.\n\n"
         )
+
+        # Prepend per-person digest when available (deduped against general results).
+        general_ids = {getattr(obs, "id", None) for obs in results}
+        unique_person = [o for o in person_results if getattr(o, "id", None) not in general_ids]
+        if speaker_name and unique_person:
+            memory_block += f"### What I know about {speaker_name}\n\n"
+            for obs in unique_person:
+                content_preview = obs.content[:500] if len(obs.content) > 500 else obs.content
+                memory_block += f"- {content_preview}\n"
+            memory_block += "\n"
+
         for obs in results:
             content_preview = obs.content[:500] if len(obs.content) > 500 else obs.content
             memory_block += f"- {content_preview}\n"

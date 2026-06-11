@@ -459,7 +459,12 @@ async def route_inbound(
             await db_session.commit()
 
     try:
-        result = await handle_turn(session_id=session_id, user_text=text, speaker_name=speaker_name)
+        result = await handle_turn(
+            session_id=session_id,
+            user_text=text,
+            speaker_name=speaker_name,
+            speaker_id=slack_user_id if slack_user_id else None,
+        )
     except Exception:
         logger.exception("route_inbound: handle_turn failed for session %s", session_id)
         return
