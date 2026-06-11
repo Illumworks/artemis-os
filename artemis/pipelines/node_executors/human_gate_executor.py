@@ -258,31 +258,67 @@ async def _post_approval_to_channel(
     return log_entry
 
 
-async def _get_slack_token(session: AsyncSession) -> str | None:
-    """Retrieve active Slack bot_token from integrations table."""
+async def _get_slack_token_for_agent(
+    session: AsyncSession,
+    agent_id: str = "artemis",
+) -> str | None:
+    """Retrieve active Slack bot_token for a specific agent from the integrations table.
+
+    Selects the ``integrations`` row whose ``agent_id`` matches the requested agent
+    (default: ``"artemis"``).  Falls back to the first active Slack row when no
+    agent-scoped row exists so that non-marketing paths are never broken by a missing
+    Callie integration.
+    """
     try:
         from sqlalchemy import select
 
         from artemis.integrations.crypto import decrypt_credentials
         from artemis.integrations.models import Integration
 
+        # Try the requested agent first.
         result = await session.execute(
             select(Integration)
             .where(
                 Integration.provider == "slack",
                 Integration.status == "active",
+                Integration.agent_id == agent_id,
             )
             .limit(1)
         )
         row = result.scalar_one_or_none()
+
+        # If no agent-specific row found, fall back to any active Slack row.
+        if row is None:
+            result = await session.execute(
+                select(Integration)
+                .where(
+                    Integration.provider == "slack",
+                    Integration.status == "active",
+                )
+                .limit(1)
+            )
+            row = result.scalar_one_or_none()
+
         if row is None:
             return None
         creds = decrypt_credentials(row.encrypted_credentials)
         bot_token = creds.get("bot_token") or creds.get("token") or creds.get("access_token")
         return str(bot_token) if bot_token else None
     except Exception:
-        logger.exception("Failed to load Slack token")
+        logger.exception("Failed to load Slack token for agent %r", agent_id)
         return None
+
+
+async def _get_slack_token(session: AsyncSession) -> str | None:
+    """Retrieve active Slack bot_token from integrations table.
+
+    .. deprecated::
+        Prefer :func:`_get_slack_token_for_agent` with an explicit ``agent_id``.
+        This shim calls through to ``_get_slack_token_for_agent("artemis")`` to
+        keep the escalation-timeout path and any future call sites working without
+        change.
+    """
+    return await _get_slack_token_for_agent(session, agent_id="artemis")
 
 
 # Gate kinds whose approval card renders qualified signals. For these, in the
@@ -1144,7 +1180,8 @@ async def execute_human_gate_node(
     dm_context: dict[str, Any] = pipe4_ctx
 
     # Send Slack DMs
-    slack_token = await _get_slack_token(session)
+    # DMs always use the Artemis token; marketing channel posts use Callie's token.
+    slack_token = await _get_slack_token_for_agent(session, agent_id="artemis")
     delivery_log: list[dict[str, Any]] = []
 
     if slack_token:
@@ -1204,11 +1241,15 @@ async def execute_human_gate_node(
             )
             delivery_log.append(entry)
         # Post ONCE to the shared marketing channel (in addition to DMs) for marketing gates.
+        # C3b: channel posts go via Callie's bot token (agent_id="callie"), not Artemis.
+        # Falls back to the Artemis token when Callie's integration row is absent so
+        # non-marketing gates and partially-migrated environments are never broken.
         if is_marketing_gate:
+            channel_token = await _get_slack_token_for_agent(session, agent_id="callie")
             delivery_log.append(
                 await _post_approval_to_channel(
                     channel_id=channel_id,
-                    token=slack_token,
+                    token=channel_token or slack_token,
                     pipeline_name=pipeline_name,
                     node_label=node_label,
                     run_id=run_id,

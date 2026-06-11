@@ -117,7 +117,7 @@ async def _run_gate(
 
     # ---------- stub fakes -----------------------------------------------
 
-    async def _fake_token(_session: Any) -> str:
+    async def _fake_token_for_agent(_session: Any, agent_id: str = "artemis") -> str:
         return "xoxb-fake-token"
 
     async def _fake_lookup(email: str, token: str) -> str | None:
@@ -159,10 +159,10 @@ async def _run_gate(
             return_value=approval_instance,
             create=True,
         ),
-        # Slack / token helpers
+        # Slack / token helpers — patch the new agent-scoped function (C3b).
         patch(
-            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token",
-            new=_fake_token,
+            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token_for_agent",
+            new=_fake_token_for_agent,
         ),
         patch(
             "artemis.pipelines.node_executors.human_gate_executor._lookup_slack_user_id",
