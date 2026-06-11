@@ -21,12 +21,18 @@ from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.models import Integration
 from artemis.integrations.slack.client import SlackClient
 from artemis.proactivity import repository as repo
+from artemis.proactivity.okr_checkin import (
+    build_okr_checkin_proposal,
+    format_checkin_for_slack,
+    gather_checkin_sources,
+)
 from artemis.writing_rules import lint_agent_text
 
 logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
 _MORNING_BRIEF_JOB_ID = "proactivity_morning_brief"
+_OKR_CHECKIN_JOB_ID = "proactivity_okr_checkin"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -42,12 +48,14 @@ def start_proactivity_scheduler() -> None:
     """Register and start scheduled proactive jobs."""
     scheduler = get_proactivity_scheduler()
     _register_morning_brief_job(scheduler)
+    _register_okr_checkin_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
-            "Proactivity scheduler started (morning brief cron=%r tz=%s)",
+            "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
+            settings.okr_checkin_cron,
         )
 
 
@@ -72,6 +80,91 @@ def _register_morning_brief_job(scheduler: AsyncIOScheduler) -> None:
         max_instances=1,
         misfire_grace_time=3600,
     )
+
+
+def _register_okr_checkin_job(scheduler: AsyncIOScheduler) -> None:
+    """Register the Friday 4pm OKR check-in job.
+
+    Uses the same timezone as the morning brief so both fire in Jon's local time.
+    """
+    trigger = CronTrigger.from_crontab(
+        settings.okr_checkin_cron,
+        timezone=settings.morning_brief_tz,
+    )
+    scheduler.add_job(
+        _fire_okr_checkin,
+        trigger=trigger,
+        id=_OKR_CHECKIN_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+async def _fire_okr_checkin() -> None:
+    """Gather OKR evidence, build a cited proposal, and DM Jon.
+
+    SAFETY: This function NEVER writes any OKR.  It only gathers evidence and
+    posts an informational proposal to Jon's Slack DM.  OKR writes happen only
+    when Jon explicitly approves via the DM agent loop (update_okr_kr layer 3).
+    """
+    async with _db.SessionLocal() as session:
+        delivery_id: int | None = None
+        try:
+            recipient_id = await _resolve_morning_brief_recipient(session)
+            delivery_date = datetime.now(ZoneInfo(settings.morning_brief_tz)).date()
+
+            delivery_row, created = await repo.reserve_okr_checkin_delivery(
+                session,
+                recipient_id=recipient_id,
+                delivery_date=delivery_date,
+            )
+            delivery_id = delivery_row.id
+            await session.commit()
+
+            if not created:
+                logger.info(
+                    "OKR check-in already reserved for %s -> %s (status=%s); skipping",
+                    delivery_date.isoformat(),
+                    recipient_id,
+                    delivery_row.status,
+                )
+                return
+
+            # Gather evidence — this opens its own sessions internally.
+            sources = await gather_checkin_sources(session)
+            proposals = build_okr_checkin_proposal(sources)
+
+            slack_text = format_checkin_for_slack(proposals, delivery_date=delivery_date)
+
+            token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
+            if not token:
+                raise RuntimeError("No active Slack token found for agent_id='artemis'")
+
+            # Post the proposal to Jon's DM.  No OKR write happens here.
+            await SlackClient(token=token).post_dm(user=recipient_id, text=slack_text)
+
+            await repo.mark_okr_checkin_delivery_sent(
+                session,
+                delivery_id=delivery_id,
+            )
+            await session.commit()
+            logger.info(
+                "OKR check-in proposal delivered to Slack user %s for %s (%d KR proposals)",
+                recipient_id,
+                delivery_date.isoformat(),
+                len(proposals),
+            )
+        except Exception as exc:
+            logger.exception("OKR check-in delivery failed")
+            await session.rollback()
+            if delivery_id is not None:
+                await repo.mark_okr_checkin_delivery_failed(
+                    session,
+                    delivery_id=delivery_id,
+                    error=str(exc),
+                )
+                await session.commit()
 
 
 async def _fire_morning_brief() -> None:
