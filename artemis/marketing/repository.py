@@ -42,6 +42,16 @@ from artemis.marketing.state_machine import WorkspaceState
 
 
 @dataclass(slots=True)
+class KeywordSearchResult:
+    """Lightweight projection returned by find_signals_and_candidates_by_keyword."""
+
+    signals: list[tuple[int, str, str, str]]
+    """List of (id, urgency_tier, signal_status, headline)."""
+    candidates: list[tuple[int, str, str]]
+    """List of (id, name, decision_state)."""
+
+
+@dataclass(slots=True)
 class CandidatePredecessorContext:
     candidate_id: int
     name: str | None
@@ -139,6 +149,58 @@ async def save_signal_qualification(
 ) -> SignalQueue:
     """Attach a qualification result to a signal."""
     return await update_signal(session, signal_id, qualification_json=qualification_json)
+
+
+async def find_signals_and_candidates_by_keyword(
+    session: AsyncSession,
+    query: str,
+    *,
+    limit: int = 20,
+) -> KeywordSearchResult:
+    """Case-insensitive substring search across signal headlines and campaign names.
+
+    Searches:
+      - signal_queue.headline   ILIKE '%query%'
+      - campaign_candidates.name ILIKE '%query%'
+
+    Returns lightweight projections — no heavy relationship loading.
+    Raises ValueError when query is empty.
+    """
+    if not query.strip():
+        raise ValueError("query must be a non-empty string")
+
+    pattern = f"%{query}%"
+
+    signal_result = await session.execute(
+        select(
+            SignalQueue.id,
+            SignalQueue.urgency_tier,
+            SignalQueue.signal_status,
+            SignalQueue.headline,
+        )
+        .where(SignalQueue.headline.ilike(pattern))
+        .order_by(SignalQueue.id.desc())
+        .limit(limit)
+    )
+    signals: list[tuple[int, str, str, str]] = [
+        (row[0], row[1], row[2], row[3]) for row in signal_result.all()
+    ]
+
+    candidate_result = await session.execute(
+        select(
+            CampaignCandidate.id,
+            CampaignCandidate.name,
+            CampaignCandidate.decision_state,
+        )
+        .where(CampaignCandidate.name.ilike(pattern))
+        .order_by(CampaignCandidate.id.desc())
+        .limit(limit)
+    )
+    candidates: list[tuple[int, str, str]] = [
+        (row[0], row[1] or "", row[2]) for row in candidate_result.all()
+    ]
+
+    return KeywordSearchResult(signals=signals, candidates=candidates)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
