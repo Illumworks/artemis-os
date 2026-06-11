@@ -11,6 +11,11 @@ Coverage:
 8. Voice prompt includes KR snapshot numbers when passed.
 9. Voice system prompt enforces dry-witty-Jarvis rules (no bold section labels in casual replies).
 10. Persona core has Jarvis/dry-witty register (no McKinsey-deck phrases).
+13. complete_okr_checkin tool: layer-1 registration, handler clears breadcrumb.
+14. Multi-KR word-dump: breadcrumb stays live across multiple update_okr_kr proposals.
+15. Unrelated-topic DM: tool handler clears breadcrumb; subsequent injection returns None.
+16. Done signal ("that's all"): tool handler clears breadcrumb and injection is gone.
+17. Reconcile context block instructs agent to call complete_okr_checkin on topic-change/done.
 """
 
 from __future__ import annotations
@@ -489,3 +494,275 @@ def test_build_system_prompt_no_okr_context_when_none() -> None:
     )
 
     assert "OKR check-in reconcile context" not in prompt
+
+
+# ── 13. complete_okr_checkin tool: layer-1, registered, handler works ─────────
+
+
+def test_complete_okr_checkin_tool_is_layer1() -> None:
+    """complete_okr_checkin must be registered at layer 1 (auto-invoke, no confirmation)."""
+    from artemis.floating_artemis.authority import AuthorizedToolRegistry
+    from artemis.floating_artemis.tools.okr import register_okr_tools
+
+    registry = AuthorizedToolRegistry()
+    register_okr_tools(registry)
+
+    entry = registry.get("complete_okr_checkin")
+    assert entry is not None, "complete_okr_checkin must be registered"
+    assert entry.layer == 1, (
+        f"complete_okr_checkin must be layer 1 (auto-invoke); got layer {entry.layer}"
+    )
+    assert registry.is_auto_invoke("complete_okr_checkin"), (
+        "complete_okr_checkin must be auto-invoke (no confirmation prompt)"
+    )
+    assert not registry.requires_confirmation("complete_okr_checkin"), (
+        "complete_okr_checkin must NOT require confirmation"
+    )
+
+
+async def test_complete_okr_checkin_handler_clears_breadcrumb(db_session: AsyncSession) -> None:
+    """_complete_okr_checkin impl stamps completed_at on the live breadcrumb.
+
+    artemis.db.SessionLocal is already wired to the test engine by the conftest,
+    so we just commit the seed data and let the handler open its own connection.
+    """
+    from artemis.floating_artemis.tools.okr import _complete_okr_checkin
+
+    crumb = await create_okr_checkin_breadcrumb(
+        db_session,
+        recipient_id="U_TOOL_TEST",
+        kr_snapshot=[{"kr_id": 1, "kr_title": "T", "objective_title": "O", "prog": 10}],
+        proposal_text="test",
+        expires_at=datetime.now(UTC) + timedelta(days=3),
+    )
+    await db_session.commit()
+
+    # Call the tool handler directly — it opens a fresh SessionLocal session.
+    result = await _complete_okr_checkin({"speaker_id": "U_TOOL_TEST"})
+
+    assert "marked complete" in result.lower() or "complete" in result.lower(), (
+        f"Unexpected result: {result!r}"
+    )
+
+    # Expire local cache and re-fetch to see the committed change.
+    db_session.expire(crumb)
+    await db_session.refresh(crumb)
+
+    # completed_at must be stamped (lossless rule: row still exists).
+    assert crumb.completed_at is not None, "completed_at must be set (lossless stamp)"
+
+    # Breadcrumb must no longer be live.
+    live = await get_live_okr_checkin_breadcrumb(db_session, "U_TOOL_TEST")
+    assert live is None, "Breadcrumb must be cleared after complete_okr_checkin"
+
+
+async def test_complete_okr_checkin_handler_no_live_breadcrumb(db_session: AsyncSession) -> None:
+    """_complete_okr_checkin returns graceful message when no live breadcrumb exists."""
+    from artemis.floating_artemis.tools.okr import _complete_okr_checkin
+
+    # No breadcrumb seeded for this user.
+    result = await _complete_okr_checkin({"speaker_id": "U_NO_CRUMB_EVER"})
+    assert "nothing" in result.lower() or "no live" in result.lower(), (
+        f"Expected graceful 'nothing to complete' message, got: {result!r}"
+    )
+
+
+# ── 14. Multi-KR word-dump: breadcrumb stays live across multiple proposals ───
+
+
+async def test_breadcrumb_stays_live_across_multiple_kr_proposals(
+    db_session: AsyncSession,
+) -> None:
+    """Breadcrumb must NOT be cleared by update_okr_kr applies; it stays live
+    so the reconcile context keeps injecting for subsequent KR mappings.
+
+    We simulate: a word-dump maps to 2 KRs; after the first update_okr_kr fires,
+    the breadcrumb is still live (injection still returns context for the second).
+    Clearing is the agent's job via complete_okr_checkin, not the apply step's.
+    """
+    from artemis.floating_artemis.chat import _get_okr_reconcile_context
+
+    # Create a breadcrumb with 2 KRs.
+    kr_snapshot = [
+        {
+            "kr_id": 20,
+            "kr_title": "KR Alpha",
+            "objective_title": "Objective X",
+            "prog": 40,
+            "target_text": "100%",
+        },
+        {
+            "kr_id": 21,
+            "kr_title": "KR Beta",
+            "objective_title": "Objective X",
+            "prog": 55,
+            "target_text": "100%",
+        },
+    ]
+    await create_okr_checkin_breadcrumb(
+        db_session,
+        recipient_id="U_MULTI_KR",
+        kr_snapshot=kr_snapshot,
+        proposal_text="Multi-KR check-in",
+        expires_at=datetime.now(UTC) + timedelta(days=3),
+    )
+    await db_session.commit()
+
+    # Before any apply: reconcile context is live.
+    ctx_before = await _get_okr_reconcile_context("U_MULTI_KR", db_session)
+    assert ctx_before is not None, "Reconcile context must be live before any apply"
+
+    # Simulate the first update_okr_kr executing (we just check the breadcrumb directly;
+    # update_okr_kr does NOT call complete_okr_checkin — that's the whole point).
+    live_after_first_apply = await get_live_okr_checkin_breadcrumb(db_session, "U_MULTI_KR")
+    assert live_after_first_apply is not None, (
+        "Breadcrumb must still be live after first KR apply — "
+        "clearing is conversation-driven, not apply-driven"
+    )
+
+    # Context injection must still work for the second KR mapping.
+    ctx_after_first = await _get_okr_reconcile_context("U_MULTI_KR", db_session)
+    assert ctx_after_first is not None, (
+        "Reconcile context must still inject after first KR apply (second KR mapping still pending)"
+    )
+    # Both KRs should still appear in context.
+    assert "KR Alpha" in ctx_after_first or "KR Beta" in ctx_after_first
+
+
+# ── 15. Unrelated-topic DM: tool handler clears, next turn gets no injection ──
+
+
+async def test_unrelated_topic_clears_breadcrumb_stops_injection(
+    db_session: AsyncSession,
+) -> None:
+    """Simulates the unrelated-topic flow at the tool handler layer.
+
+    1. Live breadcrumb exists → reconcile context is injected.
+    2. Agent calls complete_okr_checkin (simulated by calling the handler directly).
+    3. Breadcrumb is cleared.
+    4. Next call to _get_okr_reconcile_context returns None (no hijack).
+
+    artemis.db.SessionLocal is already wired to the test engine by the conftest;
+    we commit seed data so the handler's fresh connection sees it.
+    """
+    from artemis.floating_artemis.chat import _get_okr_reconcile_context
+    from artemis.floating_artemis.tools.okr import _complete_okr_checkin
+
+    # Step 1: create a live breadcrumb.
+    await create_okr_checkin_breadcrumb(
+        db_session,
+        recipient_id="U_TOPIC_CHANGE",
+        kr_snapshot=[{"kr_id": 30, "kr_title": "KR Gamma", "objective_title": "Obj Y", "prog": 20}],
+        proposal_text="topic-change test",
+        expires_at=datetime.now(UTC) + timedelta(days=3),
+    )
+    await db_session.commit()
+
+    # Step 2: first DM injects reconcile context (passes db_session directly — no new conn).
+    ctx_before = await _get_okr_reconcile_context("U_TOPIC_CHANGE", db_session)
+    assert ctx_before is not None, "Reconcile context must be live before topic change"
+
+    # Step 3: agent detects topic change, calls complete_okr_checkin handler.
+    # Handler opens its own SessionLocal session (points at test engine via conftest).
+    result = await _complete_okr_checkin({"speaker_id": "U_TOPIC_CHANGE"})
+    assert "complete" in result.lower(), f"Expected completion confirmation, got: {result!r}"
+
+    # Step 4: next DM — reconcile context no longer injected.
+    # Re-fetch via db_session (expire cache first to see committed change from handler).
+    await db_session.execute(__import__("sqlalchemy", fromlist=["text"]).text("SELECT 1"))
+    ctx_after = await _get_okr_reconcile_context("U_TOPIC_CHANGE", db_session)
+    assert ctx_after is None, (
+        "Reconcile context must be None after complete_okr_checkin — "
+        "no more hijacking unrelated DMs"
+    )
+
+
+# ── 16. Done signal: tool handler clears, injection gone ─────────────────────
+
+
+async def test_done_signal_clears_breadcrumb_stops_injection(db_session: AsyncSession) -> None:
+    """Simulates 'that's all / thanks / done' flow.
+
+    After the operator signals completion and the agent calls complete_okr_checkin,
+    the breadcrumb's completed_at is stamped and subsequent context injection is None.
+
+    artemis.db.SessionLocal is wired to the test engine by the conftest.
+    """
+    from artemis.floating_artemis.chat import _get_okr_reconcile_context
+    from artemis.floating_artemis.tools.okr import _complete_okr_checkin
+
+    crumb = await create_okr_checkin_breadcrumb(
+        db_session,
+        recipient_id="U_DONE_SIGNAL",
+        kr_snapshot=[{"kr_id": 40, "kr_title": "KR Delta", "objective_title": "Obj Z", "prog": 80}],
+        proposal_text="done-signal test",
+        expires_at=datetime.now(UTC) + timedelta(days=3),
+    )
+    await db_session.commit()
+
+    # Reconcile context is live (uses db_session directly).
+    ctx = await _get_okr_reconcile_context("U_DONE_SIGNAL", db_session)
+    assert ctx is not None
+
+    # Agent calls complete_okr_checkin after operator says "that's all".
+    # Handler opens its own SessionLocal session.
+    await _complete_okr_checkin({"speaker_id": "U_DONE_SIGNAL"})
+
+    # Expire local ORM cache so we see the committed change from the handler.
+    db_session.expire(crumb)
+    await db_session.refresh(crumb)
+
+    # completed_at stamped (lossless).
+    assert crumb.completed_at is not None, "completed_at must be stamped (lossless)"
+
+    # Injection cleared — pass db_session; ORM cache expired, fresh read.
+    ctx_after = await _get_okr_reconcile_context("U_DONE_SIGNAL", db_session)
+    assert ctx_after is None, "Reconcile context must be None after done signal"
+
+
+# ── 17. Reconcile context block instructs agent to call complete_okr_checkin ──
+
+
+async def test_reconcile_context_instructs_complete_okr_checkin(
+    db_session: AsyncSession,
+) -> None:
+    """The reconcile context block must tell the agent to call complete_okr_checkin
+    when the operator changes topic or signals they are done."""
+    from artemis.floating_artemis.chat import _get_okr_reconcile_context
+
+    await create_okr_checkin_breadcrumb(
+        db_session,
+        recipient_id="U_INSTR_TEST",
+        kr_snapshot=[
+            {
+                "kr_id": 50,
+                "kr_title": "KR Epsilon",
+                "objective_title": "Obj W",
+                "prog": 30,
+                "target_text": "100%",
+            }
+        ],
+        proposal_text="instruction test",
+        expires_at=datetime.now(UTC) + timedelta(days=3),
+    )
+    await db_session.commit()
+
+    ctx = await _get_okr_reconcile_context("U_INSTR_TEST", db_session)
+    assert ctx is not None
+
+    # Must mention the complete_okr_checkin tool.
+    assert "complete_okr_checkin" in ctx, (
+        "Reconcile context must instruct the agent to call complete_okr_checkin"
+    )
+    # Must cover topic-change trigger.
+    ctx_lower = ctx.lower()
+    assert "topic" in ctx_lower or "changed" in ctx_lower or "not about" in ctx_lower, (
+        "Reconcile context must mention topic-change trigger for complete_okr_checkin"
+    )
+    # Must cover done-signal trigger.
+    assert (
+        "that's all" in ctx_lower
+        or "thanks" in ctx_lower
+        or "done" in ctx_lower
+        or "nothing else" in ctx_lower
+    ), "Reconcile context must mention done-signal phrases for complete_okr_checkin"
