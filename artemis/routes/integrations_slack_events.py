@@ -16,7 +16,9 @@ import logging
 import os
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
@@ -37,6 +39,149 @@ router = APIRouter(prefix="/api/integrations/slack", tags=["slack-events"])
 # Regex to strip the leading bot-mention from a message text, e.g. "<@U12345> hello"
 _BOT_MENTION_RE = re.compile(r"^<@[A-Z0-9]+>\s*", re.IGNORECASE)
 _CALLIE_CAMPAIGN_SIGNALS_CHANNEL = "C0B9CHVC7KQ"
+
+# Idle gap after which a re-engagement reply should @mention the asker again.
+# During active flow (last message < this threshold ago) the ping is suppressed.
+_REENGAGE_PING_GAP = timedelta(minutes=5)
+
+# Model used for the cheap "should I respond?" gate — haiku-tier so the
+# classifier never costs more than a rounding error vs staying silent.
+_GATE_MODEL = "claude-haiku-4-5-20251001"
+_GATE_SYSTEM = (
+    "Answer only YES or NO: is this Slack message a marketing question "
+    "addressed to Callie (a marketing analyst assistant) that she should answer? "
+    "Reply YES only if the message is clearly asking for marketing help. "
+    "Otherwise reply NO."
+)
+
+# ── Pure gate helpers ─────────────────────────────────────────────────────────
+
+# Type alias for an injected classifier callable used by should_respond_to_channel_message.
+# Signature: (text: str) -> Awaitable[bool]
+ChannelClassifier = Callable[[str], Awaitable[bool]]
+
+
+def should_ping_asker(
+    *,
+    is_dm: bool,
+    last_message_at: datetime | None,
+    now: datetime | None = None,
+) -> bool:
+    """Return True if the reply should be prefixed with <@user_id>.
+
+    Rules:
+    - DMs (1:1) never get the ping.
+    - Cold start (no prior messages in session) → ping.
+    - Re-engagement after idle gap > _REENGAGE_PING_GAP → ping.
+    - Active flow (last message < _REENGAGE_PING_GAP ago) → no ping.
+
+    This function is PURE — it does no I/O. Pass ``now`` explicitly in tests.
+    """
+    if is_dm:
+        return False
+    if last_message_at is None:
+        # Cold start — no prior messages in this session
+        return True
+    effective_now = now if now is not None else datetime.now(UTC)
+    # Normalise timezone: if last_message_at is naive, treat it as UTC
+    if last_message_at.tzinfo is None:
+        last_message_at = last_message_at.replace(tzinfo=UTC)
+    gap = effective_now - last_message_at
+    return gap >= _REENGAGE_PING_GAP
+
+
+async def _default_channel_classifier(text: str) -> bool:
+    """Real cheap haiku classifier — returns True iff the message should get a reply.
+
+    Uses a ~5-token YES/NO completion; never runs a full agent turn.
+    Any non-clear-YES answer → False (conservative default).
+    """
+    from artemis.agent.client import AnthropicAdapter, CompletionRequest
+    from artemis.agent.types import Message, TextBlock
+
+    adapter = AnthropicAdapter()
+    req = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text=text)])],
+        system=_GATE_SYSTEM,
+        model=_GATE_MODEL,
+        max_tokens=5,
+        cache_system=False,
+        cache_tools=False,
+    )
+    try:
+        resp = await adapter.complete(req)
+        answer = ""
+        for block in resp.message.content:
+            if hasattr(block, "text"):
+                answer = block.text.strip().upper()
+                break
+        return answer.startswith("YES")
+    except Exception:
+        logger.warning("channel gate classifier failed — defaulting to silent", exc_info=True)
+        return False
+
+
+async def should_respond_to_channel_message(
+    *,
+    is_mention: bool,
+    session_id: str,
+    text: str,
+    classifier: ChannelClassifier | None = None,
+) -> bool:
+    """Return True iff Callie should respond to this channel message.
+
+    Gate logic (in order — first True wins):
+      (a) app_mention → always respond.
+      (b) agent has prior history in this session → respond (continuity).
+      (c) cheap classifier says YES → respond.
+      default → stay silent.
+
+    The ``classifier`` arg is injectable for tests (pass a fake to avoid LLM calls).
+    The DB session for history check is opened here; it is read-only / non-transactional.
+    """
+    # (a) Direct mention — always respond
+    if is_mention:
+        return True
+
+    # (b) Continuity — any prior message in this session means Callie is already engaged
+    try:
+        import artemis.db as _db
+        from artemis.floating_artemis import repository as fa_repo
+
+        async with _db.SessionLocal() as db_session:
+            messages = await fa_repo.list_messages(db_session, session_id, limit=1)
+            if messages:
+                return True
+    except Exception:
+        logger.debug(
+            "should_respond_to_channel_message: history check failed for session=%s — skipping continuity gate",
+            session_id,
+            exc_info=True,
+        )
+
+    # (c) Cheap classifier
+    _classifier = classifier if classifier is not None else _default_channel_classifier
+    return await _classifier(text)
+
+
+async def _last_message_timestamp(session_id: str) -> datetime | None:
+    """Fetch the created_at of the most recent message in a session, or None."""
+    try:
+        import artemis.db as _db
+        from artemis.floating_artemis import repository as fa_repo
+
+        async with _db.SessionLocal() as db_session:
+            # list_messages_for_context returns newest-first when limit=1 and no cutoff
+            rows = await fa_repo.list_messages_for_context(db_session, session_id, limit=1)
+            if rows:
+                return rows[0].created_at
+    except Exception:
+        logger.debug(
+            "_last_message_timestamp: failed for session=%s",
+            session_id,
+            exc_info=True,
+        )
+    return None
 
 
 @dataclass(frozen=True)
@@ -248,12 +393,23 @@ def _verify_slack_signature(
 # ── route_inbound stub ────────────────────────────────────────────────────────
 
 
-async def route_inbound(event_data: dict[str, object], *, agent_id: str = "artemis") -> None:
+async def route_inbound(
+    event_data: dict[str, object],
+    *,
+    agent_id: str = "artemis",
+    ping_user_id: str | None = None,
+) -> None:
     """Route an inbound Slack event into a floating-artemis session.
 
     Session key: (team_id, channel_id, thread_ts or "_").
     The session is marked surface=slack so the web UI panel doesn't show it.
     After handle_turn completes, the response text is posted back in-thread.
+
+    Args:
+        event_data: Slack event fields (team_id, channel, user, text, ts, thread_ts).
+        agent_id: Which agent to route to.
+        ping_user_id: When set, prepend ``<@{ping_user_id}>`` to the outbound text
+            (cold-start / re-engagement @mention).  None = no ping (active flow or DM).
     """
     team_id = str(event_data.get("team_id", ""))
     channel_id = str(event_data.get("channel", ""))
@@ -316,6 +472,10 @@ async def route_inbound(event_data: dict[str, object], *, agent_id: str = "artem
         logger.warning("route_inbound: linted Slack reply became empty for session %s", session_id)
         return
 
+    # Prepend @mention AFTER linting — only on cold-start / re-engagement
+    if ping_user_id:
+        outbound_text = f"<@{ping_user_id}> {outbound_text}"
+
     try:
         async with _db.SessionLocal() as db_session:
             from artemis.integrations.slack.client import SlackClient
@@ -370,20 +530,33 @@ async def _handle_mentionable_event(
     session: AsyncSession,
     *,
     agent_id: str,
+    inner_type: str = "",
+    channel_classifier: ChannelClassifier | None = None,
 ) -> None:
     """Dedupe and background-dispatch a mentionable event (app_mention / im message).
 
-    Two guards stand between an inbound event and Artemis's agent loop:
+    Three guards stand between an inbound event and the agent loop:
       1. Bot-self filter — drop bot-authored events (kills the reply echo loop).
-      2. Allowlist gate — only dispatch when the sender is permitted to converse
-         with Artemis.  Fail-closed: when no allowlist is configured, nothing is
-         routed.  Non-allowed human messages are still recorded for audit/triage.
+      2. Allowlist gate — only dispatch when the sender is permitted to converse.
+         Fail-closed: when no allowlist is configured, nothing is routed.
+         Non-allowed human messages are still recorded for audit/triage.
+      3. Relevance gate (channel messages only) — for listen_channel_messages agents
+         (e.g. Callie), channel ``message`` events are only dispatched when the
+         agent is already in the thread OR the message is a marketing question.
+         app_mention and DM messages bypass this gate.
+
+    Args:
+        inner_type: The Slack event ``type`` field (e.g. ``"app_mention"`` or ``"message"``).
+            Used to decide whether to run the relevance gate.
+        channel_classifier: Injectable callable for the relevance gate — default is
+            the real cheap haiku classifier.  Pass a fake in tests.
     """
     from artemis.integrations.slack.triage import classify_mention_type
 
     event_id: str = str(payload.get("event_id", ""))
     team_id: str = str(payload.get("team_id", ""))
     channel_id: str = str(event.get("channel", ""))
+    channel_type: str = str(event.get("channel_type", ""))
     user_id: str = str(event.get("user", ""))
     ts: str = str(event.get("ts", ""))
     thread_ts: str | None = str(event["thread_ts"]) if "thread_ts" in event else None
@@ -432,7 +605,7 @@ async def _handle_mentionable_event(
     if not _is_authorized_inbound(
         agent_cfg=agent_cfg,
         channel_id=channel_id,
-        channel_type=str(event.get("channel_type", "")),
+        channel_type=channel_type,
         user_id=user_id,
     ):
         logger.info(
@@ -444,6 +617,44 @@ async def _handle_mentionable_event(
         )
         return
 
+    # ── Guard 3: relevance gate (channel messages for listen_channel_messages agents) ─
+    # app_mention and DM messages bypass this gate.
+    is_dm = channel_type == "im" or channel_id.startswith("D")
+    is_direct_mention = inner_type == "app_mention"
+    needs_gate = (
+        not is_direct_mention
+        and not is_dm
+        and inner_type == "message"
+        and agent_cfg.listen_channel_messages
+    )
+
+    # Build session_id here (mirrors route_inbound logic) so the gate can check history.
+    normalized_agent = _normalize_agent_id(agent_cfg.agent_id)
+    bucket = str(thread_ts) if thread_ts else "_"
+    session_id = f"slack-{normalized_agent}-{team_id}-{channel_id}-{bucket}"
+
+    if needs_gate:
+        should_respond = await should_respond_to_channel_message(
+            is_mention=False,
+            session_id=session_id,
+            text=text or "",
+            classifier=channel_classifier,
+        )
+        if not should_respond:
+            logger.debug(
+                "Slack channel message event_id=%s — relevance gate: silent (no prior participation, classifier=NO)",
+                event_id,
+            )
+            return
+
+    # ── Ping decision — @mention the asker on cold-start / re-engagement ─────────
+    # Never ping in DMs. Never ping for Artemis personal DM path.
+    ping_user_id: str | None = None
+    if not is_dm and agent_cfg.agent_id != "artemis":
+        last_ts = await _last_message_timestamp(session_id)
+        if should_ping_asker(is_dm=False, last_message_at=last_ts):
+            ping_user_id = user_id if user_id else None
+
     event_data: dict[str, object] = {
         "event_id": event_id,
         "team_id": team_id,
@@ -453,7 +664,12 @@ async def _handle_mentionable_event(
         "ts": ts,
         "thread_ts": thread_ts,
     }
-    background_tasks.add_task(route_inbound, event_data, agent_id=agent_cfg.agent_id)
+    background_tasks.add_task(
+        route_inbound,
+        event_data,
+        agent_id=agent_cfg.agent_id,
+        ping_user_id=ping_user_id,
+    )
 
 
 # ── Main endpoint ─────────────────────────────────────────────────────────────
@@ -528,6 +744,7 @@ async def _slack_events(
                 background_tasks,
                 session,
                 agent_id=agent_cfg.agent_id,
+                inner_type=inner_type,
             )
         else:
             logger.debug(
