@@ -32,15 +32,25 @@ def test_personal_surfaces_remove_marketing_surfaces() -> None:
 def test_is_personal_slack_dm_session_requires_dm_channel() -> None:
     assert (
         is_personal_slack_dm_session(
-            "slack-T1-D123-_",
-            {"surface": "slack", "channel_id": "D123"},
+            "slack-artemis-T1-D123-_",
+            {"surface": "slack", "agent_id": "artemis", "channel_id": "D123"},
         )
         is True
     )
     assert (
         is_personal_slack_dm_session(
-            "slack-T1-C123-_",
-            {"surface": "slack", "channel_id": "C123"},
+            "slack-artemis-T1-C123-_",
+            {"surface": "slack", "agent_id": "artemis", "channel_id": "C123"},
+        )
+        is False
+    )
+
+
+def test_is_personal_slack_dm_session_excludes_callie_dm() -> None:
+    assert (
+        is_personal_slack_dm_session(
+            "slack-callie-T1-D123-_",
+            {"surface": "slack", "agent_id": "callie", "channel_id": "D123"},
         )
         is False
     )
@@ -50,10 +60,20 @@ def test_resolve_surface_scope_personal_slack_dm_filters_marketing() -> None:
     all_surfaces = {"okr", "marketing-os", "signal-queue", "floating-artemis"}
     resolved = resolve_surface_scope(
         all_surfaces=all_surfaces,
-        session_id="slack-T1-D123-_",
-        metadata={"surface": "slack", "channel_id": "D123"},
+        session_id="slack-artemis-T1-D123-_",
+        metadata={"surface": "slack", "agent_id": "artemis", "channel_id": "D123"},
     )
     assert resolved == {"okr", "floating-artemis"}
+
+
+def test_resolve_surface_scope_callie_dm_keeps_marketing() -> None:
+    all_surfaces = {"okr", "marketing-os", "signal-queue", "floating-artemis"}
+    resolved = resolve_surface_scope(
+        all_surfaces=all_surfaces,
+        session_id="slack-callie-T1-D123-_",
+        metadata={"surface": "slack", "agent_id": "callie", "channel_id": "D123"},
+    )
+    assert resolved == all_surfaces
 
 
 def test_build_tool_registry_dm_scope_excludes_marketing_tools() -> None:
@@ -68,7 +88,7 @@ def test_build_system_prompt_personal_slack_dm_has_no_unprompted_marketing_frame
         voice_samples=[],
         page_context=None,
         available_surfaces=["okr"],
-        session_id="slack-T1-D123-_",
+        session_id="slack-artemis-T1-D123-_",
         is_personal_slack_dm=True,
     )
     assert "This 1:1 Slack DM is for personal support, app/ops issues, and upgrades." in prompt
@@ -105,7 +125,7 @@ async def test_handle_turn_personal_slack_dm_scopes_prompt_tools_and_history() -
         limit: int = 40,
         created_at_gte: datetime | None = None,
     ) -> list[object]:
-        assert session_id == "slack-T1-D123-_"
+        assert session_id == "slack-artemis-T1-D123-_"
         assert limit == 40
         assert created_at_gte == cutover
         return [new_row]
@@ -113,6 +133,7 @@ async def test_handle_turn_personal_slack_dm_scopes_prompt_tools_and_history() -
     session_row = MagicMock()
     session_row.metadata_ = {
         "surface": "slack",
+        "agent_id": "artemis",
         "channel_id": "D123",
         "history_cutover_at": cutover.isoformat(),
         "retired_history_owner": "callie",
@@ -138,7 +159,7 @@ async def test_handle_turn_personal_slack_dm_scopes_prompt_tools_and_history() -
         ),
     ):
         result = await handle_turn(
-            session_id="slack-T1-D123-_",
+            session_id="slack-artemis-T1-D123-_",
             user_text="Hey Artemis",
             adapter=adapter,
         )

@@ -27,16 +27,18 @@ async def upsert_integration(
     *,
     provider: str,
     workspace_id: str,
+    agent_id: str = "default",
     encrypted_credentials: bytes,
     display_name: str | None = None,
     bot_user_id: str | None = None,
     scopes: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> Integration:
-    """Insert or update an integration row keyed on (provider, workspace_id)."""
+    """Insert or update an integration row keyed on (provider, workspace_id, agent_id)."""
     values: dict[str, Any] = {
         "provider": provider,
         "workspace_id": workspace_id,
+        "agent_id": agent_id,
         "encrypted_credentials": encrypted_credentials,
         "display_name": display_name,
         "bot_user_id": bot_user_id,
@@ -52,11 +54,11 @@ async def upsert_integration(
         pg_insert(Integration.__table__)  # type: ignore[arg-type]
         .values(**values)
         .on_conflict_do_update(
-            index_elements=["provider", "workspace_id"],
+            index_elements=["provider", "workspace_id", "agent_id"],
             set_={
                 k: v
                 for k, v in values.items()
-                if k not in ("provider", "workspace_id", "connected_at")
+                if k not in ("provider", "workspace_id", "agent_id", "connected_at")
             },
         )
         .returning(Integration.__table__.c.id)
@@ -72,18 +74,22 @@ async def get_by_provider_and_workspace(
     session: AsyncSession,
     provider: str,
     workspace_id: str,
+    *,
+    agent_id: str = "default",
 ) -> Integration:
     result = await session.execute(
         select(Integration).where(
             Integration.provider == provider,
             Integration.workspace_id == workspace_id,
+            Integration.agent_id == agent_id,
             Integration.status == "active",
         )
     )
     row = result.scalar_one_or_none()
     if row is None:
         raise ValueError(
-            f"No active integration for provider={provider!r} workspace={workspace_id!r}"
+            "No active integration for "
+            f"provider={provider!r} workspace={workspace_id!r} agent_id={agent_id!r}"
         )
     return row
 

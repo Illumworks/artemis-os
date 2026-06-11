@@ -221,6 +221,7 @@ async def slack_oauth_callback(
         session,
         provider=integration_row.provider,
         workspace_id=integration_row.workspace_id,
+        agent_id="artemis",
         encrypted_credentials=integration_row.encrypted_credentials,
         display_name=integration_row.display_name,
         bot_user_id=integration_row.bot_user_id,

@@ -90,13 +90,18 @@ async def test_route_inbound_lints_outbound_slack_post_only() -> None:
             return_value=turn_result,
         ),
         patch(
-            "artemis.integrations.repository.list_active",
+            "artemis.routes.integrations_slack_events._resolve_agent_slack_config",
             new_callable=AsyncMock,
-            return_value=[SimpleNamespace(encrypted_credentials=b"ciphertext")],
-        ),
-        patch(
-            "artemis.integrations.crypto.decrypt_credentials",
-            return_value={"access_token": "xoxb-test"},
+            return_value=SimpleNamespace(
+                agent_id="artemis",
+                signing_secret="",
+                access_token="xoxb-test",
+                bot_user_id="UBOT",
+                authed_user_id="",
+                allowed_user_ids=(),
+                allowed_channel_ids=(),
+                listen_channel_messages=False,
+            ),
         ),
         patch("artemis.integrations.slack.client.SlackClient", return_value=slack_client),
     ):

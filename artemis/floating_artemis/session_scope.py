@@ -33,10 +33,26 @@ def _session_channel_id(session_id: str, metadata: dict[str, Any] | None) -> str
     if not session_id.startswith("slack-"):
         return None
 
-    parts = session_id.split("-", 3)
+    parts = session_id.split("-")
     if len(parts) < 4:
         return None
+    if len(parts) >= 5:
+        return parts[3]
     return parts[2]
+
+
+def _session_agent_id(session_id: str, metadata: dict[str, Any] | None) -> str:
+    agent_id = metadata.get("agent_id") if isinstance(metadata, dict) else None
+    if isinstance(agent_id, str) and agent_id.strip():
+        return agent_id.strip().lower()
+
+    if not session_id.startswith("slack-"):
+        return "artemis"
+
+    parts = session_id.split("-")
+    if len(parts) >= 5 and parts[1].strip():
+        return parts[1].strip().lower()
+    return "artemis"
 
 
 def is_personal_slack_dm_session(session_id: str, metadata: dict[str, Any] | None) -> bool:
@@ -44,6 +60,8 @@ def is_personal_slack_dm_session(session_id: str, metadata: dict[str, Any] | Non
     if not session_id.startswith("slack-"):
         return False
     if not isinstance(metadata, dict) or metadata.get("surface") != "slack":
+        return False
+    if _session_agent_id(session_id, metadata) != "artemis":
         return False
     channel_id = _session_channel_id(session_id, metadata)
     return isinstance(channel_id, str) and channel_id.startswith("D")

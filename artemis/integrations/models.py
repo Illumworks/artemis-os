@@ -24,11 +24,16 @@ STATUS_REVOKED = "revoked"
 
 class Integration(Base):
     __tablename__ = "integrations"
-    __table_args__ = (UniqueConstraint("provider", "workspace_id"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "workspace_id", "agent_id", name="uq_integrations_provider_workspace_agent"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     workspace_id: Mapped[str] = mapped_column(Text, nullable=False)
+    agent_id: Mapped[str] = mapped_column(Text, nullable=False, server_default="'default'")
     display_name: Mapped[str | None] = mapped_column(Text)
     bot_user_id: Mapped[str | None] = mapped_column(Text)
     encrypted_credentials: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
