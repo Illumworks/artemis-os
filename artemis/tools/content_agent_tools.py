@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -155,10 +156,25 @@ def _enqueue_factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             reason="writing_studio.enqueue",
         )
         metadata = dict(deliverable.deliverable_metadata or {})
+        composed_body = body.strip()
+        composed_at = datetime.now(UTC).isoformat()
         metadata.update(
             {
                 "draftTitle": title.strip(),
-                "draftBody": body.strip(),
+                # draftBody retained for backwards compat (Slack gate cards still read it).
+                "draftBody": composed_body,
+                # Canonical body location: versions[0].content is where
+                # _latest_draft_content (compose_engine) and _serialize_deliverable_detail
+                # (writing_studio route) both read from when live_content is absent.
+                "versions": [
+                    {
+                        "id": "v1",
+                        "version_number": 1,
+                        "content": composed_body,
+                        "created_at": composed_at,
+                        "source": "pipeline_generated",
+                    }
+                ],
                 "voiceProfileSlug": voice_slug,
                 "campaignBriefId": brief.id,
                 "contextSummary": arguments.get("context_summary"),
