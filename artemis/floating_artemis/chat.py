@@ -128,7 +128,10 @@ def _build_system_prompt(
             "**You are responding in Slack.** The operator @-mentioned you directly. "
             "**Assume they are addressing you and respond on-topic.** "
             'Do not ask "Are you talking to me?" — they are. '
-            "Be concise; Slack rewards short replies." + who
+            "Be concise; Slack rewards short replies. "
+            "**Do NOT use markdown tables** (`| Field | Value |` pipe-table syntax) — "
+            "Slack renders them as raw pipes and dashes. "
+            "Use **bold labels** with short bullet lines or plain sentences instead." + who
         )
         if is_personal_slack_dm and agent_id == "artemis":
             parts.append(
