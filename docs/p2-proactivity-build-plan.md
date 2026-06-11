@@ -37,9 +37,12 @@ follow-ups. **Extend the existing schedulers, do NOT build a new stack.**
   due, sensitivity, status active|snoozed|done, snoozed_until), NOT pure memory observations — they have a
   lifecycle (snooze/done) that's awkward as keystone supersession. **Also mirror** a memory observation
   (`category='commitment'`) so agents can recall them in conversation. (Best of both.)
-- **Autonomy by sensitivity (matches persona Autonomy Levels):** informational proactivity (morning brief,
-  "you have X due tomorrow") = **auto-deliver, no confirm** (Level 0). Proactivity that ACTS (draft+send a
-  reply, schedule, edit) = **propose→confirm** (Level 2+). Sensitive topics = humour off / escalate.
+- **Approval-first (Jon's rule, 2026-06-11): NOTHING is sent to others or changes data without Jon's explicit
+  approval.** Artemis/Callie always PROPOSE; Jon approves; THEN they act. Nothing fabricated or added without
+  approval (esp. OKRs — "I don't want that turning into a mess"). The ONLY auto-push is **informing Jon in his
+  own DM** (the morning brief, "you have X due tomorrow") — that's surfacing TO him, not sending/acting; he's
+  the recipient, nothing changes. Everything else (send to others, edit OKRs/docs, schedule, Jira writes) =
+  **propose→confirm**. (Confirm this DM-informing exception with Jon; if he wants even briefs gated, easy.)
 - **Delivery routing:** personal/ops commitments → Artemis DM; marketing → Callie's channel. Reuse per-agent
   tokens. Dedupe so the same commitment isn't re-pinged (track last_notified_at).
 - **Reuse the automations *scheduler + dispatch*, NOT its routes** (HTTP routes are deprecated/410). Build a
@@ -66,6 +69,28 @@ through the autonomy gate (informational auto; action → propose→confirm via 
 a lightweight confirm endpoint, distinct from the reactive session-bound confirmation_store). Dedupe + snooze.
 
 Later: chat/email extraction (P3 agency-writes overlaps for send), digests, escalation Callie→Artemis→Jon.
+
+## Flagship flow — Friday 4pm OKR check-in (Jon's ask, 2026-06-11)
+A recurring scheduled proactive flow, the canonical propose→approve→act pattern:
+1. **Fri 4pm (Jon's tz)** Artemis assembles what she KNOWS we accomplished this week (from meetings/
+   action_items, commitments, OKR Studio current state, Jira/activity she has visibility into) and **proposes**
+   OKR updates in Jon's DM — clearly labeled as proposals, sourced, nothing invented.
+2. Jon **approves / corrects**, then gives a free-form **word-dump** of the week.
+3. Artemis reconciles the proposal + his word-dump into concrete OKR updates and **applies them to OKR Studio
+   ONLY after his explicit go** — a conversational confirm, not auto.
+**Hard rule:** nothing fabricated or added without Jon's approval; every proposed update cites its basis;
+OKR Studio writes are gated (operating rules already flag OKR Studio as approval-required). This is a P2c-class
+flow (scheduled + propose→confirm + a gated OKR write) and a strong demo of the whole engine.
+
+## Callie gets proactivity too (shared engine, marketing tasks)
+The scheduler + commitments + delivery engine is **shared** — both Named agents use it (per the Named Agent
+Standard). The proactive TASKS differ by domain:
+- **Artemis (personal/ops):** morning brief, the Friday OKR check-in, commitment follow-ups for Jon, app-health
+  nudges. Surfaces in his DM.
+- **Callie (marketing analyst):** campaign-lifecycle nudges ("campaign Y has 3 drafts pending review 2 days",
+  "this asset needs its proof pack before it ships"), synthesized signal-cluster digests — in her channels,
+  same approval-first rule (she proposes/surfaces; sends + canonical edits need approval).
+Same engine, per-agent proactive registrations (mirrors how C1/C2 made the loop + routing agent-parameterized).
 
 ## Open unknowns (flag during build)
 - `automations.approval_policy` JSONB is undocumented — reverse-engineer before wiring confirms.
