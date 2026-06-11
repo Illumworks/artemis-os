@@ -68,6 +68,7 @@ import './ui/context-gauge.js';
 import './ui/shortcuts.js';
 import './ui/sidebar-toggle.js';
 import './ui/artemis-shell.js';
+import './ui/nav-badges.js';
 import './features/voice-input.js';
 import './features/welcome.js';
 import './features/home.js';
