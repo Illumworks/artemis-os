@@ -79,15 +79,18 @@ def _build_context_string(sources: dict[str, Any]) -> str:
             lines.append("In progress:")
             for t in in_prog[:4]:
                 priority = t.get("priority") or "–"
-                lines.append(f"  - [{t.get('key', '?')}] {t.get('summary', '')} ({priority})")
+                title = t.get("title") or t.get("summary") or ""
+                lines.append(f"  - [{t.get('key', '?')}] {title} ({priority})")
         if review:
             lines.append("In review:")
             for t in review[:3]:
-                lines.append(f"  - [{t.get('key', '?')}] {t.get('summary', '')}")
+                title = t.get("title") or t.get("summary") or ""
+                lines.append(f"  - [{t.get('key', '?')}] {title}")
         if blocked:
             lines.append("Blocked:")
             for t in blocked[:2]:
-                lines.append(f"  - [{t.get('key', '?')}] {t.get('summary', '')}")
+                title = t.get("title") or t.get("summary") or ""
+                lines.append(f"  - [{t.get('key', '?')}] {title}")
 
     # Calendar
     calendar = sources.get("calendar")
@@ -175,7 +178,8 @@ Generate a JSON object matching this exact schema (no other text, valid JSON onl
 
 Rules:
 - Be direct and opinionated. Say "Focus on X first" not "You might consider X"
-- Ground every priority and highlight in actual data from the context (ticket numbers, KR names, session titles, meeting names)
+- Ground every priority and highlight in actual data from the context (ticket names, KR names, session titles, meeting names)
+- CRITICAL: Never use bare Jira keys (e.g. "MT-456") alone. Always include the ticket title: write "MT-456 — Fix login redirect" or just "Fix login redirect". The context above already shows the title next to each key — use it.
 - Use 2-3 priorities ordered most-urgent first. The "urgency" field accepts only "high", "medium", or "low"
 - Keep each "rationale" under 30 words
 - highlights, next_actions, and risks may be empty arrays if the context doesn't support specific entries — do not invent
