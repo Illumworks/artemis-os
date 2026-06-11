@@ -59,6 +59,10 @@ from artemis.pipelines.scheduler import (
     start_pipeline_scheduler,
     stop_pipeline_scheduler,
 )
+from artemis.proactivity.scheduler import (
+    start_proactivity_scheduler,
+    stop_proactivity_scheduler,
+)
 from artemis.routes import calendar as calendar_routes
 from artemis.routes import costs as costs_routes
 from artemis.routes import costs_routing as costs_routing_routes
@@ -111,6 +115,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_pipeline_scheduler()
     # Start daily memory maintenance (quick-win gap #4).
     start_memory_scheduler()
+    # Start proactive morning-brief delivery (P2a).
+    start_proactivity_scheduler()
     try:
         yield
     finally:
@@ -124,6 +130,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_scout_scheduler()
         stop_pipeline_scheduler()
         stop_memory_scheduler()
+        stop_proactivity_scheduler()
 
 
 app = FastAPI(

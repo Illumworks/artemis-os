@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     archive_age_days: int = Field(
         default=90, description="Archive raw_inputs rows older than this many days."
     )
+    morning_brief_cron: str = Field(
+        default="0 8 * * *",
+        description="Cron expression for the scheduled Slack morning brief.",
+    )
+    morning_brief_tz: str = Field(
+        default="America/New_York",
+        description="IANA timezone for the scheduled Slack morning brief.",
+    )
 
 
 @lru_cache(maxsize=1)
