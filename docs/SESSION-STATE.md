@@ -6,6 +6,50 @@ auto-loaded memory index (`MEMORY.md`). Opus Lead = the planning/verify/merge ag
 
 ---
 
+## ⏩ CURRENT STATE — 2026-06-10 (late session checkpoint, read FIRST)
+
+**Move:** done. Repo lives at `/Users/artemis/Artemis/artemis-os`, git HEAD intact. App restart =
+`launchctl kickstart -k gui/$(id -u)/me.artemisos.app` (NOT start-app.sh — dual-bind footgun). App serves the
+working-tree `public/` live; backend code changes need a kickstart.
+
+**Chapter 2 = personal assistant + Named agents. Build split: Codex=backend, terminal=FE, Opus=architect/
+verify/merge. Workers run on `worker/<scope>` branches; Lead FF-merges to main.** (Hazard seen this session:
+all agents share ONE working tree → branch confusion; my commits once landed on a worker branch. Watch for it.)
+
+**DONE + merged to main:**
+- **P1 Slack two-way (Artemis DM):** inbound hardened — bot-self echo filter, owner allowlist (Jon =
+  `U09F3EPJXSQ`, in `integration_configs[slack].authed_user_id`), identity→handle_turn. LIVE-VERIFIED.
+- **Personas:** Artemis v1.2.2 + Callie v1.1.3 adopted (`*-personality-profile.md`).
+- **Output lint:** deterministic no-em-dash/no-emoji on named-agent outbound.
+- **Slice-1:** Artemis DM personal-scoped (marketing surfaces/tools dropped; old marketing DM history retired
+  lossless, tagged `callie_handoff_pending`). LIVE-VERIFIED ("Here. What do you need?").
+- **Callie C1:** FA loop persona-parameterized by `agent_id` (`load_agent_profile`; Artemis byte-stable).
+- **FE Friday polish** + **WS empty-state fix** (the "old Studio" = zero-draft fallback after the mock reset;
+  now shows v5 "No drafts yet"). **QW1:** marketing Gate-2 approver-DM no longer hits Jon's personal DM
+  (channel-only for the owner) — `human_gate_executor.py`.
+- **Friday demo campaign:** 3 mock campaigns deleted; **real campaign #18 "Texas HB27…" built** from hot
+  signal #624 (TX scope, brief, 4 deliverables w/ real content in `campaign_deliverables.metadata` + Slack
+  cards). NOTE: editable WS draft *bodies* are empty (stub external adapter) — content not lost; real fix = C3.
+
+**IN FLIGHT / NEXT:**
+- **Callie C2 (Codex, in flight):** `briefs/callie-c2-multibot-routing.md` — multi-bot routing, dedicated
+  `/events/callie`, per-app HMAC+token, **registry-driven so N named agents = a Slack app + an integrations
+  row (no new code)**, agent-aware scope (Callie channels/DMs = marketing). Callie app INSTALLED+VERIFIED
+  (bot `U0B9S32PTAM`); creds in gitignored `.env.callie` (Codex stores encrypted then deletes it).
+  **On C2 deploy:** ONE `launchctl kickstart` makes C2 + QW1 + lint + slice-1 + C1 all live; then Jon
+  repoints Callie's Slack Request URL to `…/events/callie` + Retry; Lead verifies live in `campaign signals`/
+  `Marketing Campaigns`/her DM.
+- **C3 (after C2):** Callie's domain tools (Writing Studio reads: Message Compass, claims register, Coherence
+  Map; performance data; analyst posting), the **deliverable→editable-WS-draft body fix (QW2 folded here)**,
+  the retired-history handoff to Callie. Plan: `docs/callie-build-plan.md`.
+- **C4:** escalation Callie→Artemis + delegate-to-worker.
+- **Marketing-routing (systemic):** Gate notifications must route to Callie's channel, never Artemis's DM
+  (QW1 was the interim owner-DM suppression; C2/C3 is the proper home). Slice-1 only scoped the chat loop,
+  NOT the pipeline posting path — that's why QW1 was needed separately.
+- **App-Modes web-nav:** dropped (cosmetic; the split that matters is the Slack one).
+
+---
+
 ## The move that's happening (why this doc exists)
 The repo is being relocated **`~/Desktop/Artemis` → `~/Artemis`** (whole workspace folder) to escape the
 macOS Desktop/Full-Disk-Access fragility that wedged the shell mid-session. Repo becomes
