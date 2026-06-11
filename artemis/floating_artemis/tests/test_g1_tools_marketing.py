@@ -15,11 +15,15 @@ from artemis.floating_artemis.context import floating_session_id_var
 from artemis.floating_artemis.tools.marketing import (
     _approve_signal,
     _fire_scout,
+    _get_campaign_performance,
+    _get_message_compass,
     _list_content_assets,
     _list_signals,
+    _post_analyst_message,
     _propose_ruleset_change,
     _qualify_signal,
     _reject_signal,
+    _search_claims_register,
     _snooze_signal,
     _submit_draft_for_review,
     register_marketing_tools,
@@ -43,6 +47,9 @@ def test_register_marketing_tools() -> None:
     reg = AuthorizedToolRegistry()
     register_marketing_tools(reg)
     expected = {
+        "get_message_compass",
+        "search_claims_register",
+        "get_campaign_performance",
         "list_signals",
         "get_signal",
         "qualify_signal",
@@ -59,6 +66,7 @@ def test_register_marketing_tools() -> None:
         "propose_ruleset_change",
         "list_content_assets",
         "link_content_asset",
+        "post_analyst_message",
     }
     registered = {e.tool.name for e in reg.all_entries()}
     assert expected == registered
@@ -69,6 +77,9 @@ def test_marketing_tool_layers() -> None:
     register_marketing_tools(reg)
     # Layer 1: read-only
     for name in [
+        "get_message_compass",
+        "search_claims_register",
+        "get_campaign_performance",
         "list_signals",
         "get_signal",
         "list_candidates",
@@ -91,6 +102,7 @@ def test_marketing_tool_layers() -> None:
         "decide_approval",
         "propose_ruleset_change",
         "link_content_asset",
+        "post_analyst_message",
     ]:
         e = reg.get(name)
         assert e is not None and e.layer == 3, f"{name} should be layer 3"
@@ -204,6 +216,170 @@ async def test_list_signals_db_error_graceful() -> None:
     with patch("artemis.db.SessionLocal", side_effect=Exception("db")):
         result = await _list_signals({"status": "pending"})
     assert "failed" in result.lower() or isinstance(result, str)
+
+
+async def test_get_message_compass_returns_seeded_profile_content() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+    source = type(
+        "WritingSourceRow",
+        (),
+        {
+            "normalized_content": "# Amira Message Compass\nSource of Truth: approved",
+            "original_content": "fallback",
+        },
+    )()
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.floating_artemis.tools.marketing._resolve_active_writing_profile_id",
+            new=AsyncMock(return_value=1),
+        ),
+        patch(
+            "artemis.writing_rules.repository.get_source_by_profile_key",
+            new=AsyncMock(return_value=source),
+        ),
+    ):
+        result = await _get_message_compass({})
+
+    assert "Amira Message Compass" in result
+    assert "Source of Truth" in result
+
+
+async def test_get_message_compass_graceful_without_active_profile() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.floating_artemis.tools.marketing._resolve_active_writing_profile_id",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await _get_message_compass({})
+
+    assert result == "No active writing profile. Message Compass is unavailable."
+
+
+async def test_search_claims_register_returns_seeded_approved_claim() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+    claims = [
+        type(
+            "ClaimRow",
+            (),
+            {
+                "claim_code": "HB27-004",
+                "category": "proof",
+                "tier": 4,
+                "approved_phrasing": "HB27 rollout proof we can stand behind",
+                "notes": "Use in analyst digest",
+            },
+        )(),
+        type(
+            "ClaimRow",
+            (),
+            {
+                "claim_code": "OTHER-001",
+                "category": "proof",
+                "tier": 2,
+                "approved_phrasing": "Different claim",
+                "notes": "",
+            },
+        )(),
+    ]
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.floating_artemis.tools.marketing._resolve_active_writing_profile_id",
+            new=AsyncMock(return_value=1),
+        ),
+        patch(
+            "artemis.writing_rules.repository.list_claims",
+            new=AsyncMock(return_value=claims),
+        ),
+    ):
+        result = await _search_claims_register({"query": "HB27", "tier": 4, "limit": 5})
+
+    assert "HB27-004" in result
+    assert "Tier 4" in result
+
+
+async def test_search_claims_register_graceful_without_active_profile() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.floating_artemis.tools.marketing._resolve_active_writing_profile_id",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await _search_claims_register({"query": "proof"})
+
+    assert result == "No active writing profile. Claims Register is unavailable."
+
+
+async def test_get_campaign_performance_returns_campaign_18_summary() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+    candidate = type(
+        "CandidateRow",
+        (),
+        {
+            "id": 18,
+            "campaign_family": "hb27",
+            "decision_state": "approved",
+            "workspace_state": "pending_content",
+            "created_at": None,
+        },
+    )()
+    brief = type("BriefRow", (), {"id": 41})()
+    runs = [
+        type("RunRow", (), {"status": "running", "created_at": None})(),
+        type("RunRow", (), {"status": "succeeded", "created_at": None})(),
+    ]
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.marketing.repository.get_candidate",
+            new=AsyncMock(return_value=candidate),
+        ),
+        patch(
+            "artemis.marketing.repository.get_candidate_signals",
+            new=AsyncMock(return_value=[object(), object()]),
+        ),
+        patch(
+            "artemis.marketing.repository.get_campaign_brief",
+            new=AsyncMock(return_value=brief),
+        ),
+        patch(
+            "artemis.floating_artemis.tools.marketing._list_candidate_related_pipeline_runs",
+            new=AsyncMock(return_value=runs),
+        ),
+    ):
+        result = await _get_campaign_performance({"candidate_id": 18})
+
+    assert "campaign #18" in result
+    assert "signals=2" in result
+    assert "brief=yes" in result
+    assert "latest_run=running" in result
+    assert "runs=running x1, succeeded x1" in result
+
+
+async def test_get_campaign_performance_graceful_when_candidate_missing() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.marketing.repository.get_candidate",
+            new=AsyncMock(side_effect=ValueError("missing")),
+        ),
+    ):
+        result = await _get_campaign_performance({"candidate_id": 18})
+
+    assert result == "No campaign candidate id=18."
 
 
 # ── propose_ruleset_change (layer 3) ─────────────────────────────────────────
@@ -331,6 +507,87 @@ async def test_list_content_assets_returns_real_rows() -> None:
         result = await _list_content_assets({"limit": 5, "campaign_family": "obc"})
 
     assert "Reusable approval-card copy" in result
+
+
+async def test_post_analyst_message_uses_callie_token_and_lints_text() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+    default_row = type(
+        "IntegrationRow",
+        (),
+        {
+            "agent_id": "default",
+            "encrypted_credentials": b"default",
+            "metadata_": {},
+        },
+    )()
+    callie_row = type(
+        "IntegrationRow",
+        (),
+        {
+            "agent_id": "callie",
+            "encrypted_credentials": b"callie",
+            "metadata_": {"allowed_channel_ids": ["C0B9CHVC7KQ", "C_MARKETING"]},
+        },
+    )()
+    slack_client = AsyncMock()
+    slack_client.post_message = AsyncMock(return_value={"ok": True, "ts": "123.456"})
+
+    def _decrypt(blob: bytes) -> dict[str, object]:
+        if blob == b"default":
+            return {"access_token": "xoxb-default"}
+        return {"access_token": "xoxb-callie"}
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.integrations.repository.list_active",
+            new=AsyncMock(return_value=[default_row, callie_row]),
+        ),
+        patch("artemis.integrations.crypto.decrypt_credentials", side_effect=_decrypt),
+        patch(
+            "artemis.integrations.slack.client.SlackClient", return_value=slack_client
+        ) as mock_cls,
+    ):
+        result = await _post_analyst_message(
+            {"channel": "campaign_signals", "text": "Status — complete ✅"}
+        )
+
+    assert result == "Posted analyst message to C0B9CHVC7KQ as Callie (ts=123.456)."
+    mock_cls.assert_called_once_with("xoxb-callie")
+    slack_client.post_message.assert_awaited_once_with(
+        "C0B9CHVC7KQ",
+        "Status, complete",
+        thread_ts=None,
+    )
+
+
+async def test_post_analyst_message_rejects_non_callie_channel() -> None:
+    mock_session, mock_cm = _mock_session_cm()
+    callie_row = type(
+        "IntegrationRow",
+        (),
+        {
+            "agent_id": "callie",
+            "encrypted_credentials": b"callie",
+            "metadata_": {"allowed_channel_ids": ["C0B9CHVC7KQ", "C_MARKETING"]},
+        },
+    )()
+
+    with (
+        patch("artemis.db.SessionLocal", return_value=mock_cm),
+        patch(
+            "artemis.integrations.repository.list_active",
+            new=AsyncMock(return_value=[callie_row]),
+        ),
+        patch(
+            "artemis.integrations.crypto.decrypt_credentials",
+            return_value={"access_token": "xoxb-callie"},
+        ),
+    ):
+        result = await _post_analyst_message({"channel": "C_NOT_ALLOWED", "text": "Ready"})
+
+    assert "configured channels" in result
+    assert "C0B9CHVC7KQ" in result
 
 
 # ── surface tags ──────────────────────────────────────────────────────────────

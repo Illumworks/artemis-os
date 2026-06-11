@@ -92,6 +92,10 @@ def test_build_tool_registry_marketing_when_signal_queue_available() -> None:
 def test_build_tool_registry_marketing_when_marketing_os_available() -> None:
     reg = _build_tool_registry(available_surfaces={"marketing-os"})
     assert "list_signals" in reg
+    assert "get_message_compass" in reg
+    assert "search_claims_register" in reg
+    assert "get_campaign_performance" in reg
+    assert "post_analyst_message" in reg
 
 
 def test_build_auto_invoke_tool_registry_excludes_confirmation_tools() -> None:

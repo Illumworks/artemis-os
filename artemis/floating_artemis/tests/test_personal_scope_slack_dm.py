@@ -81,6 +81,10 @@ def test_build_tool_registry_dm_scope_excludes_marketing_tools() -> None:
     assert "list_okr_objectives" in reg
     assert "list_signals" not in reg
     assert "approve_signal" not in reg
+    assert "get_message_compass" not in reg
+    assert "search_claims_register" not in reg
+    assert "get_campaign_performance" not in reg
+    assert "post_analyst_message" not in reg
 
 
 def test_build_system_prompt_personal_slack_dm_has_no_unprompted_marketing_frame() -> None:

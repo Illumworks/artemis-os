@@ -15,6 +15,7 @@ marketing-os surface availability.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from artemis.agent.types import Tool
@@ -22,9 +23,337 @@ from artemis.floating_artemis.authority import AuthorizedToolRegistry
 from artemis.floating_artemis.context import floating_session_id_var
 
 _SURFACE = "[surface:marketing-os]"
+_CALLIE_CAMPAIGN_SIGNALS_CHANNEL = "C0B9CHVC7KQ"
+
+
+def _truncate(text: str | None, *, limit: int = 140) -> str:
+    value = (text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3].rstrip() + "..."
+
+
+def _age_text(when: datetime | None) -> str:
+    if when is None:
+        return "unknown"
+    current = datetime.now(UTC)
+    stamp = when if when.tzinfo is not None else when.replace(tzinfo=UTC)
+    delta = current - stamp.astimezone(UTC)
+    seconds = max(int(delta.total_seconds()), 0)
+    if seconds < 3600:
+        minutes = max(seconds // 60, 1)
+        return f"{minutes}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def _parse_id_list(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        items = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(part).strip() for part in value]
+    else:
+        items = []
+    ordered: list[str] = []
+    for item in items:
+        if item and item not in ordered:
+            ordered.append(item)
+    return tuple(ordered)
+
+
+def _default_callie_channel_ids() -> tuple[str, ...]:
+    from artemis.config import settings
+
+    ordered = [_CALLIE_CAMPAIGN_SIGNALS_CHANNEL]
+    marketing_campaigns_channel = settings.marketing_campaigns_slack_channel.strip()
+    if marketing_campaigns_channel and marketing_campaigns_channel not in ordered:
+        ordered.append(marketing_campaigns_channel)
+    return tuple(ordered)
+
+
+def _resolve_callie_channel(requested: object, allowed_channel_ids: tuple[str, ...]) -> str | None:
+    if not allowed_channel_ids:
+        return None
+
+    if requested is None or str(requested).strip() == "":
+        return allowed_channel_ids[0]
+
+    raw = str(requested).strip()
+    if raw in allowed_channel_ids:
+        return raw
+
+    normalized = raw.lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "campaign_signals": _CALLIE_CAMPAIGN_SIGNALS_CHANNEL,
+    }
+    marketing_campaigns_channel = next(
+        (channel for channel in allowed_channel_ids if channel != _CALLIE_CAMPAIGN_SIGNALS_CHANNEL),
+        None,
+    )
+    if marketing_campaigns_channel is not None:
+        alias_map["marketing_campaigns"] = marketing_campaigns_channel
+
+    resolved = alias_map.get(normalized)
+    if resolved in allowed_channel_ids:
+        return resolved
+    return None
+
+
+async def _resolve_active_writing_profile_id(session: Any) -> int | None:
+    from artemis.marketing.routes.claims import _resolve_profile_id
+
+    return await _resolve_profile_id(session, None, required=False)
+
+
+async def _list_candidate_related_pipeline_runs(session: Any, candidate_id: int) -> list[Any]:
+    from sqlalchemy import select
+
+    from artemis.marketing import repository as marketing_repo
+    from artemis.pipelines import repository as pipeline_repo
+    from artemis.pipelines.models import PipelineRun
+
+    signal_rows = await marketing_repo.get_candidate_signal_rows(session, candidate_id)
+    source_run_ids = {row.pipeline_run_id for row in signal_rows if row.pipeline_run_id}
+    runs_by_id: dict[str, Any] = {}
+    pipeline_ids: set[str] = set()
+
+    for run_id in source_run_ids:
+        try:
+            run = await pipeline_repo.get_pipeline_run(session, run_id)
+        except ValueError:
+            continue
+        runs_by_id[run.id] = run
+        pipeline_ids.add(run.pipeline_id)
+
+    result = await session.execute(
+        select(PipelineRun.pipeline_id)
+        .where(PipelineRun.target_candidate_id == candidate_id)
+        .distinct()
+    )
+    pipeline_ids.update(str(row[0]) for row in result.all() if row[0])
+
+    for pipeline_id in pipeline_ids:
+        pipeline_runs = await pipeline_repo.list_pipeline_runs(session, pipeline_id, limit=20)
+        for run in pipeline_runs:
+            if run.id in source_run_ids or run.target_candidate_id == candidate_id:
+                runs_by_id.setdefault(run.id, run)
+
+    return sorted(
+        runs_by_id.values(),
+        key=lambda run: run.created_at or run.started_at or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+
+
+async def _resolve_callie_slack_posting(
+    session: Any,
+) -> tuple[str, tuple[str, ...]] | tuple[None, None]:
+    from artemis.integrations import repository as repo
+    from artemis.integrations.crypto import decrypt_credentials
+
+    integrations = await repo.list_active(session, provider="slack")
+    callie_row = next(
+        (row for row in integrations if str(getattr(row, "agent_id", "")) == "callie"), None
+    )
+    if callie_row is None:
+        return None, None
+
+    creds_raw = decrypt_credentials(bytes(callie_row.encrypted_credentials))
+    creds = creds_raw if isinstance(creds_raw, dict) else {}
+    token = str(creds.get("access_token") or creds.get("bot_token") or creds.get("token") or "")
+    if not token:
+        return None, None
+
+    metadata_raw = getattr(callie_row, "metadata_", {}) or {}
+    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+    allowed_channel_ids = _parse_id_list(
+        metadata.get("allowed_channel_ids") or creds.get("allowed_channel_ids")
+    )
+    if not allowed_channel_ids:
+        allowed_channel_ids = _default_callie_channel_ids()
+
+    return token, allowed_channel_ids
 
 
 # ── Implementations ───────────────────────────────────────────────────────────
+
+
+async def _get_message_compass(inp: dict[str, Any]) -> str:  # noqa: ARG001
+    try:
+        import artemis.db as _db
+        from artemis.writing_rules import repository as wr_repo
+
+        async with _db.SessionLocal() as session:
+            profile_id = await _resolve_active_writing_profile_id(session)
+            if profile_id is None:
+                return "No active writing profile. Message Compass is unavailable."
+            source = await wr_repo.get_source_by_profile_key(
+                session, profile_id, "01_MESSAGE_COMPASS"
+            )
+        if source is None:
+            return "Message Compass not found for the active writing profile."
+        return source.normalized_content or source.original_content
+    except Exception as exc:
+        return f"get_message_compass failed: {exc}"
+
+
+async def _search_claims_register(inp: dict[str, Any]) -> str:
+    query = str(inp.get("query", "")).strip().lower()
+    tier_raw = inp.get("tier")
+    tier: int | None = None
+    if isinstance(tier_raw, int):
+        tier = tier_raw
+    elif isinstance(tier_raw, str) and tier_raw.strip():
+        tier = int(tier_raw)
+    limit = int(inp.get("limit", 10))
+    try:
+        import artemis.db as _db
+        from artemis.writing_rules import repository as wr_repo
+
+        async with _db.SessionLocal() as session:
+            profile_id = await _resolve_active_writing_profile_id(session)
+            if profile_id is None:
+                return "No active writing profile. Claims Register is unavailable."
+            claims = await wr_repo.list_claims(session, profile_id, status="approved")
+
+        filtered: list[Any] = []
+        for claim in claims:
+            if tier is not None and claim.tier != tier:
+                continue
+            if query:
+                haystack = " ".join(
+                    [
+                        str(claim.claim_code or ""),
+                        str(claim.category or ""),
+                        str(claim.approved_phrasing or ""),
+                        str(claim.notes or ""),
+                    ]
+                ).lower()
+                if query not in haystack:
+                    continue
+            filtered.append(claim)
+
+        if not filtered:
+            details: list[str] = []
+            if query:
+                details.append(f"query={query!r}")
+            if tier is not None:
+                details.append(f"tier={tier}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            return f"No approved claims found{suffix}."
+
+        lines = []
+        for claim in filtered[:limit]:
+            tier_text = f"Tier {claim.tier}" if claim.tier is not None else "Tier ?"
+            phrasing = _truncate(claim.approved_phrasing, limit=160)
+            lines.append(f"{claim.claim_code} | {tier_text} | {phrasing}")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"search_claims_register failed: {exc}"
+
+
+async def _get_campaign_performance(inp: dict[str, Any]) -> str:
+    candidate_id_raw = inp.get("candidate_id")
+    campaign_family = inp.get("campaign_family")
+    limit = int(inp.get("limit", 10))
+    try:
+        import artemis.db as _db
+        from artemis.marketing import repository as marketing_repo
+
+        async with _db.SessionLocal() as session:
+            if candidate_id_raw not in (None, ""):
+                try:
+                    candidate_id = (
+                        candidate_id_raw
+                        if isinstance(candidate_id_raw, int)
+                        else int(str(candidate_id_raw))
+                    )
+                    candidates = [await marketing_repo.get_candidate(session, candidate_id)]
+                except ValueError:
+                    return f"No campaign candidate id={candidate_id_raw}."
+            else:
+                candidates = await marketing_repo.list_candidates(
+                    session,
+                    campaign_family=str(campaign_family) if campaign_family else None,
+                    limit=limit,
+                )
+            if not candidates:
+                return "No campaign candidates found."
+
+            lines = [
+                "Raw campaign reads only — status, age, signal counts, and run state. Not aggregated KPIs."
+            ]
+            for candidate in candidates:
+                signal_links = await marketing_repo.get_candidate_signals(session, candidate.id)
+                brief = await marketing_repo.get_campaign_brief(session, candidate.id)
+                runs = await _list_candidate_related_pipeline_runs(session, candidate.id)
+                latest_run = runs[0] if runs else None
+                run_summary = "none"
+                if runs:
+                    counts: dict[str, int] = {}
+                    for run in runs:
+                        counts[run.status] = counts.get(run.status, 0) + 1
+                    run_summary = ", ".join(
+                        f"{status} x{count}" for status, count in sorted(counts.items())
+                    )
+                lines.append(
+                    " | ".join(
+                        [
+                            f"campaign #{candidate.id}",
+                            candidate.campaign_family,
+                            f"decision={candidate.decision_state}",
+                            f"workspace={candidate.workspace_state}",
+                            f"age={_age_text(getattr(candidate, 'created_at', None))}",
+                            f"signals={len(signal_links)}",
+                            f"brief={'yes' if brief is not None else 'no'}",
+                            f"latest_run={latest_run.status if latest_run is not None else 'none'}",
+                            f"run_age={_age_text(latest_run.created_at if latest_run is not None else None)}",
+                            f"runs={run_summary}",
+                        ]
+                    )
+                )
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"get_campaign_performance failed: {exc}"
+
+
+async def _post_analyst_message(inp: dict[str, Any]) -> str:
+    text = str(inp.get("text", "")).strip()
+    thread_ts = str(inp["thread_ts"]) if inp.get("thread_ts") else None
+    if not text:
+        return "Error: text is required"
+    try:
+        import artemis.db as _db
+        from artemis.integrations.slack.client import SlackClient
+        from artemis.writing_rules import lint_agent_text
+
+        async with _db.SessionLocal() as session:
+            token, allowed_channel_ids = await _resolve_callie_slack_posting(session)
+        if not token or not allowed_channel_ids:
+            return "Callie's Slack integration is not configured for analyst posting."
+
+        resolved_channel = _resolve_callie_channel(
+            inp.get("channel") or inp.get("channel_id"), allowed_channel_ids
+        )
+        if resolved_channel is None:
+            allowed = ", ".join(allowed_channel_ids)
+            return f"Error: channel must be one of Callie's configured channels: {allowed}"
+
+        outbound_text = lint_agent_text(text)
+        if not outbound_text.strip():
+            return "Error: text is empty after linting"
+
+        result = await SlackClient(token).post_message(
+            resolved_channel,
+            outbound_text,
+            thread_ts=thread_ts,
+        )
+        ts = str(result.get("ts", ""))
+        suffix = f" (ts={ts})" if ts else ""
+        return f"Posted analyst message to {resolved_channel} as Callie{suffix}."
+    except Exception as exc:
+        return f"post_analyst_message failed: {exc}"
 
 
 async def _list_signals(inp: dict[str, Any]) -> str:
@@ -387,6 +716,40 @@ async def _link_content_asset(inp: dict[str, Any]) -> str:
 
 _s = _SURFACE  # shorthand
 
+GET_MESSAGE_COMPASS = Tool(
+    name="get_message_compass",
+    description=f"Read the active Message Compass source of truth for marketing messaging. {_s} [layer:1]",
+    input_schema={"type": "object", "properties": {}, "required": []},
+)
+
+SEARCH_CLAIMS_REGISTER = Tool(
+    name="search_claims_register",
+    description=f"Search approved claims from the active Claims Register by substring and optional tier. {_s} [layer:1]",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "tier": {"type": "integer"},
+            "limit": {"type": "integer", "default": 10},
+        },
+        "required": [],
+    },
+)
+
+GET_CAMPAIGN_PERFORMANCE = Tool(
+    name="get_campaign_performance",
+    description=f"Summarize raw campaign status, age, signal volume, and linked pipeline run state. Not aggregated KPIs. {_s} [layer:1]",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "candidate_id": {"type": "integer"},
+            "campaign_family": {"type": "string"},
+            "limit": {"type": "integer", "default": 10},
+        },
+        "required": [],
+    },
+)
+
 LIST_SIGNALS = Tool(
     name="list_signals",
     description=f"List marketing signals from the signal queue. {_s} [layer:1]",
@@ -588,9 +951,33 @@ LINK_CONTENT_ASSET = Tool(
     },
 )
 
+POST_ANALYST_MESSAGE = Tool(
+    name="post_analyst_message",
+    description=f"Post a synthesized analyst update to one of Callie's configured Slack channels using Callie's bot identity. Requires confirmation. {_s} [layer:3]",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "channel": {
+                "type": "string",
+                "description": "Configured Callie channel ID or alias (campaign_signals, marketing_campaigns). Defaults to campaign_signals.",
+            },
+            "channel_id": {
+                "type": "string",
+                "description": "Alias for channel.",
+            },
+            "text": {"type": "string"},
+            "thread_ts": {"type": "string"},
+        },
+        "required": ["text"],
+    },
+)
+
 
 def register_marketing_tools(registry: AuthorizedToolRegistry) -> None:
     """Register all marketing tools into the provided registry."""
+    registry.register(GET_MESSAGE_COMPASS, _get_message_compass, layer=1)
+    registry.register(SEARCH_CLAIMS_REGISTER, _search_claims_register, layer=1)
+    registry.register(GET_CAMPAIGN_PERFORMANCE, _get_campaign_performance, layer=1)
     registry.register(LIST_SIGNALS, _list_signals, layer=1)
     registry.register(GET_SIGNAL, _get_signal, layer=1)
     registry.register(QUALIFY_SIGNAL, _qualify_signal, layer=2)
@@ -607,3 +994,4 @@ def register_marketing_tools(registry: AuthorizedToolRegistry) -> None:
     registry.register(PROPOSE_RULESET_CHANGE, _propose_ruleset_change, layer=3)
     registry.register(LIST_CONTENT_ASSETS, _list_content_assets, layer=1)
     registry.register(LINK_CONTENT_ASSET, _link_content_asset, layer=3)
+    registry.register(POST_ANALYST_MESSAGE, _post_analyst_message, layer=3)
