@@ -68,8 +68,12 @@ all agents share ONE working tree → branch confusion; my commits once landed o
   silent) + @mention-asker only on cold-start / >5min re-engage (silent in active flow, never in DMs); W3
   `find_by_keyword` (signal+campaign search by bill number — verified HB27→#624+#18). Two stale-test failures
   fixed (g1_chat agent_id kwarg; j8 test's 2-col ON CONFLICT) — both test-only, prod `upsert_integration` was
-  already 3-col. 356 tests green. **Remaining: Jon live-checks W2 in a channel** (natural reply / gate /
-  cold-ping vs active-flow silence).
+  already 3-col. 356 tests green. **W2 live blocker found 2026-06-11:** campaign-signals (C0B9CHVC7KQ) +
+  marketing-campaigns (C0B8QE17DGQ) are **PRIVATE** → Slack fires **`message.groups`**, not `message.channels`;
+  Callie's app only subscribed to `message.channels`, so non-@mention private-channel messages never arrived
+  (app_mention still worked). FIX (Jon, Slack-side, NO code): add **`message.groups`** to Callie's bot event
+  subscriptions (groups:history already granted). Receiver already handles channel_type="group" via
+  listen_channel_messages + channel allowlist. If reinstall prompted, re-verify her token. Then redo W2 step 1.
 
 ---
 
