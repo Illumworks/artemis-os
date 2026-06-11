@@ -437,6 +437,7 @@ async def handle_turn(
     adapter: ModelAdapter | None = None,
     owner_user_id: int | None = None,
     speaker_name: str | None = None,
+    speaker_id: str | None = None,
     db_session: Any | None = None,
 ) -> TurnResult:
     """Run one user turn for the given Floating Artemis session.
@@ -455,6 +456,10 @@ async def handle_turn(
         Display name of the person speaking (e.g. resolved from the Slack user
         cache for inbound DMs). Threaded into the system prompt so Artemis
         addresses the operator by name. None for the web UI / unknown speakers.
+    speaker_id:
+        Stable platform identifier for the speaker (e.g. Slack user ID such as
+        ``U01ABCDEF``).  Used alongside ``speaker_name`` for per-person memory
+        attribution.  None for the web UI / unknown speakers.
     db_session:
         Optional SQLAlchemy AsyncSession (for tests). If None, a new session is
         opened from SessionLocal per DB operation.
@@ -494,6 +499,8 @@ async def handle_turn(
                         user_msg_id=shortcut_user_msg_id,
                         user_text=user_text,
                         assistant_text=response,
+                        speaker_name=speaker_name,
+                        speaker_id=speaker_id,
                     )
                 except Exception:
                     logger.warning(
@@ -563,6 +570,8 @@ async def handle_turn(
         history,
         session_id,
         agent_id=session_ctx.agent_id,
+        speaker_name=speaker_name,
+        speaker_id=speaker_id,
     )
 
     if adapter is None:
@@ -769,6 +778,8 @@ async def handle_turn(
                 user_text=user_text,
                 assistant_text=response_text,
                 agent_id=session_ctx.agent_id,
+                speaker_name=speaker_name,
+                speaker_id=speaker_id,
             )
         except Exception:
             logger.warning(
