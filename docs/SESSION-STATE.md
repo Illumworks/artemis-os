@@ -42,9 +42,16 @@ all agents share ONE working tree → branch confusion; my commits once landed o
 - **C3a — DONE + live (merged worker/callie-c3a-analyst-toolset):** Callie's analyst tools —
   `get_message_compass`, `search_claims_register`, `get_campaign_performance` (layer 1, marketing-scoped),
   `post_analyst_message` (layer 3, posts to her channels via her own token, lint-clean). 57 tests green.
-  REMAINING C3: **C3b** (Gate-2 channel card via Callie's token, finish QW1), **C3c** (retired Artemis-DM
-  history → Callie's memory), **C3d** (deliverable→editable-draft body = DB-shape align, NO Google Docs —
-  see plan). Plan: `docs/callie-build-plan.md`.
+  **C3b/c/d — DONE + live + DB-verified (2026-06-10):** C3b marketing Gate cards post as Callie's bot;
+  C3d deliverable body now in canonical `versions[0].content` (migration 0079 backfilled #18's 42-45 — they
+  render); C3c ran live: 245 obs ingested into `agent:callie` memory scope, `callie_handoff_pending` cleared,
+  Artemis scope untouched. 100 tests green; test DB repaired (artemis_test @ 0079). **Callie thread CLOSED.**
+  Remaining LIVE checks for Jon: trigger a marketing gate → card as Callie; open #18 draft → body renders;
+  ask Callie about retired history → recalls.
+- **NEXT idea raised (Jon): hot-signal → `incoming signals` channel ticker** (detailed, NO buttons, view-only,
+  C0B989DS5DZ). NOT done — it's queued `briefs/slack-signal-routing.md`. Dependency (signals-funnel redesign)
+  has landed → buildable. **Needs reconcile for the Callie split:** raw ticker = pipeline/faceless;
+  `campaign signals` = Callie's analyst lane; Artemis no longer posts (out of marketing channels).
 - **Slack split COMPLETE:** Jon removed Artemis from the marketing channels; Artemis = personal DM only,
   Callie = marketing channels. **Future idea (Jon, 2026-06-10):** Artemis (overseer/delegate lane) helping
   manage Jon's contractor in the marketing DESIGN channel on his behalf — not yet scoped.
