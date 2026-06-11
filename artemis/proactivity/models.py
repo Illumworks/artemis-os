@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from sqlalchemy import BigInteger, CheckConstraint, Date, ForeignKey, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
 from artemis.db import Base
@@ -48,6 +49,37 @@ class MorningBriefDelivery(Base):
     )
     delivered_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+
+
+class OkrCheckinBreadcrumb(Base):
+    """Breadcrumb left when a Friday OKR check-in is posted.
+
+    Exists for the TTL window (expires end of following Monday) so that
+    handle_turn can detect a live check-in and inject OKR-reconcile context
+    into the next DM turn, mapping Jon's word-dump to specific KRs and
+    proposing update_okr_kr via the layer-3 confirm path.
+
+    Lossless invariant: rows are never deleted. Expiry is via expires_at + completed_at.
+    """
+
+    __tablename__ = "okr_checkin_breadcrumbs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # Slack user-ID of the check-in recipient (used to scope injection).
+    recipient_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # Serialised snapshot: list[{kr_id, kr_title, objective_title, prog, target_text}]
+    kr_snapshot: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    # The full check-in text as delivered (for reference / audit).
+    proposal_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # TTL: expires end of the following Monday so the window covers the whole weekend.
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    # Set when reconcile completes (layer-3 applied or declined), superseding the crumb.
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default="now()",

@@ -34,21 +34,25 @@ def _build_voice_system_prompt(voice_samples: list[str]) -> str:
     samples_block = ""
     if voice_samples:
         samples_lines = "\n".join(f'- "{s}"' for s in voice_samples)
-        samples_block = f"\n\nCharacteristic phrases (use this register):\n{samples_lines}"
+        samples_block = f"\n\nCharacteristic phrases (calibrate register, never quote verbatim):\n{samples_lines}"
 
     return f"""{persona}{samples_block}
 
 You are writing a SHORT Slack message to Jon Fila, your operator.
-Rules:
-- NO labeled sections like "Summary:", "Highlights:", "Priorities:", "Risks:", "OKR Status:".
+
+Voice: dry-witty British chief of staff. Think Jarvis. Confident, economical, talks TO Jon not AT a room.
+Short declarative sentences. Contractions natural. Light dry wit where it fits. Never formal or consultant-register.
+
+Hard rules:
+- NO labeled section headers ("Summary:", "Highlights:", "Priorities:", "Risks:", "OKR Status:", "Context:").
+- NO bold labels followed by colons in casual replies (e.g. "*Status:*", "*Priority:*").
 - NO tables. NO em-dashes. NO emojis.
-- Conversational chief-of-staff tone — like a sharp colleague briefing you, not a form.
-- Lead with the most important thing. Keep it scannable.
-- Every stated fact must come from the grounded data provided. Do not invent.
-- If the data has nothing substantive, say so plainly in one sentence.
-- Keep total output SHORT: 3-8 lines for a brief, 4-10 lines for an OKR check-in.
-- Slack bold syntax (*text*) is allowed for KR names and objective names only.
-- Output ONLY the Slack message text — no preamble, no sign-off, no "Here is:".
+- NO deck scaffolding, no numbered intro lists like "A few things worth noting:".
+- Lead with the substance. Scannable. Every fact from the grounded data — nothing invented.
+- If data has nothing substantive, say so in one sentence.
+- SHORT: 3-8 lines for a brief, 4-10 lines for an OKR check-in.
+- Slack bold (*text*) allowed for KR names and objective names only.
+- Output ONLY the Slack message — no preamble, no sign-off, no "Here is:".
 """
 
 
@@ -123,24 +127,41 @@ def _build_brief_voice_prompt(brief: dict[str, Any], delivery_date: date) -> str
 def _build_checkin_voice_prompt(
     proposals: list[dict[str, Any]],
     delivery_date: date,
+    kr_snapshot: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Build the user prompt for the OKR check-in voice pass."""
+    """Build the user prompt for the OKR check-in voice pass.
+
+    Part C: kr_snapshot (all active KRs) is included so the opener shows
+    where KRs currently stand, not an empty promise.
+    """
     date_str = f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
     parts: list[str] = [
         f"Today is {date_str} (Friday OKR check-in).",
         "",
-        "Here is the grounded OKR evidence. Your job:",
-        "1. Lead with where his KRs currently stand (progress % and objective).",
-        "2. For any KR with evidence, present it as CONTEXT (not claimed accomplishment).",
+        "Here is the grounded OKR data. Your job:",
+        "1. Lead with where his KRs currently stand (show the numbers from the snapshot below).",
+        "2. For any KR with evidence this week, present it as CONTEXT (not claimed accomplishment).",
         "3. ASK Jon what HE actually moved this week — his answer is the source of truth.",
-        "4. Close with the safety reminder that nothing updates until he says go.",
+        "4. Close with: nothing updates until he says go.",
         "",
-        "Grounded KR data:",
     ]
 
+    # Part C: all-KR snapshot
+    if kr_snapshot:
+        parts.append("All active KRs (show these numbers):")
+        for entry in kr_snapshot:
+            obj_title = str(entry.get("objective_title") or "").strip()
+            kr_title = str(entry.get("kr_title") or "").strip()
+            prog = int(entry.get("prog") or 0)
+            target = str(entry.get("target_text") or "").strip()
+            target_str = f" (target: {target})" if target else ""
+            parts.append(f"  *{obj_title}* > *{kr_title}* — {prog}%{target_str}")
+        parts.append("")
+
+    parts.append("Evidence found this week (context only, not claimed accomplishments):")
     if not proposals:
         parts.append(
-            "  (No KR evidence found this week — no OKR activity, no matching Jira, no meeting items.)"
+            "  (No grounded evidence this week — no OKR activity, no matching Jira, no meeting items.)"
         )
     else:
         for p in proposals:
@@ -156,9 +177,10 @@ def _build_checkin_voice_prompt(
 
     parts.append("")
     parts.append(
-        "Now write the Slack message. Conversational, direct. "
-        "No labeled section headers. No assertions about what Jon did — "
-        "only ask + present evidence as context."
+        "Now write the Slack message. Conversational, direct, dry-witty chief-of-staff voice. "
+        "No labeled section headers. No tables. No em-dashes. No emojis. "
+        "Show the actual KR numbers from the snapshot. "
+        "Do NOT assert what Jon accomplished — only present evidence as context and ask."
     )
     return "\n".join(parts)
 
@@ -256,6 +278,7 @@ async def render_checkin_with_voice(
     delivery_date: date,
     *,
     session_id: str = "",
+    kr_snapshot: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Return a voice-rendered Slack string for the Friday OKR check-in.
 
@@ -266,6 +289,13 @@ async def render_checkin_with_voice(
     - Output is lint-clean.
     - Output leads with KR state + asks what Jon moved.
     - Output does NOT assert Jon did X — presents evidence as context or questions.
+
+    Args:
+        proposals: Grounded KR proposals for this week.
+        delivery_date: The Friday delivery date.
+        session_id: Used for deterministic voice sample selection.
+        kr_snapshot: All active KR state (Part C). When provided, the voice
+            prompt instructs the LLM to show the actual numbers.
     """
     from artemis.floating_artemis.personality import load_agent_profile, select_voice_samples
 
@@ -274,7 +304,7 @@ async def render_checkin_with_voice(
     voice_samples = select_voice_samples(session_seed, k=4, voice_corpus=profile.voice_corpus)
 
     system = _build_voice_system_prompt(voice_samples)
-    user_prompt = _build_checkin_voice_prompt(proposals, delivery_date)
+    user_prompt = _build_checkin_voice_prompt(proposals, delivery_date, kr_snapshot=kr_snapshot)
 
     try:
         raw = await _call_voice_llm(system, user_prompt)

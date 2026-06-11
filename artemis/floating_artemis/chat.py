@@ -73,6 +73,7 @@ def _build_system_prompt(
     session_id: str = "",
     speaker_name: str | None = None,
     is_personal_slack_dm: bool = False,
+    okr_reconcile_context: str | None = None,
 ) -> str:
     profile = load_agent_profile("artemis")
     persona_core = profile.persona_core if persona_core is None else persona_core
@@ -120,6 +121,12 @@ def _build_system_prompt(
             "via granola tools rather than trusting the summary alone\n\n"
             f"{recent_meeting_context}"
         )
+
+    # OKR reconcile context: injected when a live check-in breadcrumb exists for
+    # this session's speaker.  Instructs Artemis to map the word-dump to KRs and
+    # propose update_okr_kr (layer-3) without bypassing the confirmation gate.
+    if okr_reconcile_context:
+        parts.append(okr_reconcile_context)
 
     # Slack-originated session: establish the conversational context.
     if session_id.startswith("slack-"):
@@ -214,6 +221,72 @@ async def _get_recent_meeting_context(db_session: Any | None) -> str | None:
         return "\n".join(lines)
     except Exception:
         logger.debug("Failed to fetch recent meeting context", exc_info=True)
+        return None
+
+
+async def _get_okr_reconcile_context(
+    speaker_id: str | None,
+    db_session: Any | None,
+) -> str | None:
+    """Return OKR-reconcile system context if a live check-in breadcrumb exists.
+
+    When the Friday check-in fires, it persists a breadcrumb keyed to Jon's
+    Slack user ID.  While that breadcrumb is live (not expired, not completed),
+    we inject context into the system prompt so the next DM reply gets mapped
+    to specific KRs and a layer-3 update_okr_kr is proposed.
+
+    Returns None when no live breadcrumb exists (normal DM path, no injection).
+    Failure-isolated: any DB/import error returns None so chat is never broken.
+    """
+    if not speaker_id:
+        return None
+    try:
+        import artemis.db as _db
+        from artemis.proactivity.repository import get_live_okr_checkin_breadcrumb
+
+        if db_session is not None:
+            crumb = await get_live_okr_checkin_breadcrumb(db_session, speaker_id)
+        else:
+            async with _db.SessionLocal() as session:
+                crumb = await get_live_okr_checkin_breadcrumb(session, speaker_id)
+
+        if crumb is None:
+            return None
+
+        # Build the reconcile context block from the snapshot.
+        snapshot = crumb.kr_snapshot or []
+        if not snapshot:
+            kr_list = "(no KR snapshot available)"
+        else:
+            lines = []
+            for entry in snapshot:
+                obj_title = str(entry.get("objective_title") or "").strip()
+                kr_title = str(entry.get("kr_title") or "").strip()
+                prog = int(entry.get("prog") or 0)
+                target = str(entry.get("target_text") or "").strip()
+                target_str = f" (target: {target})" if target else ""
+                lines.append(
+                    f"  KR {entry.get('kr_id')}: *{obj_title}* > *{kr_title}* "
+                    f"— currently {prog}%{target_str}"
+                )
+            kr_list = "\n".join(lines)
+
+        return (
+            "## OKR check-in reconcile context\n\n"
+            "You ran a Friday OKR check-in earlier. The operator's reply is their "
+            "word-dump of what they moved this week. Your job:\n\n"
+            "1. Engage with the substance of what they describe (be helpful, warm, on-topic).\n"
+            "2. ALSO: map concrete accomplishments to SPECIFIC KRs from the list below.\n"
+            "3. For each mapped accomplishment, PROPOSE `update_okr_kr` citing their "
+            "own words as the basis. Do NOT invent KRs or progress. If something "
+            "doesn't map to an existing KR, say so plainly.\n"
+            "4. `update_okr_kr` is layer-3 — it will pause for explicit 'go' before "
+            "writing. Nothing updates without that confirmation.\n\n"
+            f"Current KR snapshot:\n{kr_list}\n\n"
+            "Reconcile their word-dump to these KRs. Cite their words. Propose, don't apply."
+        )
+    except Exception:
+        logger.debug("_get_okr_reconcile_context failed — skipping injection", exc_info=True)
         return None
 
 
@@ -541,6 +614,13 @@ async def handle_turn(
     )
     page_context_text = await _get_page_context_text(session_id=session_id, db_session=db_session)
     recent_meeting_ctx = await _get_recent_meeting_context(db_session)
+
+    # Part A: OKR reconcile context — only for personal Slack DM turns when a
+    # live check-in breadcrumb exists for the speaker.  No-ops for all other turns.
+    okr_reconcile_ctx: str | None = None
+    if session_ctx.is_personal_slack_dm and speaker_id:
+        okr_reconcile_ctx = await _get_okr_reconcile_context(speaker_id, db_session)
+
     system_prompt = _build_system_prompt(
         voice_samples=voice_samples,
         page_context=page_context_text,
@@ -553,6 +633,7 @@ async def handle_turn(
         session_id=session_id,
         speaker_name=speaker_name,
         is_personal_slack_dm=session_ctx.is_personal_slack_dm,
+        okr_reconcile_context=okr_reconcile_ctx,
     )
 
     # ── 4. Load history ───────────────────────────────────────────────────────
