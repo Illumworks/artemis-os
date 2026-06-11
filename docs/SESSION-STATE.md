@@ -39,9 +39,17 @@ all agents share ONE working tree → branch confusion; my commits once landed o
   Callie replied in her DM + `campaign signals` (C0B9CHVC7KQ) + `Marketing Campaigns` (C0B8QE17DGQ), her own
   token, zero echo, Artemis untouched. The C2 restart also made QW1 + lint + slice-1 + C1 live.
   **Jon TODO:** remove the Artemis bot from the marketing channels now that Callie holds them.
-- **C3 (after C2):** Callie's domain tools (Writing Studio reads: Message Compass, claims register, Coherence
-  Map; performance data; analyst posting), the **deliverable→editable-WS-draft body fix (QW2 folded here)**,
-  the retired-history handoff to Callie. Plan: `docs/callie-build-plan.md`.
+- **C3a — DONE + live (merged worker/callie-c3a-analyst-toolset):** Callie's analyst tools —
+  `get_message_compass`, `search_claims_register`, `get_campaign_performance` (layer 1, marketing-scoped),
+  `post_analyst_message` (layer 3, posts to her channels via her own token, lint-clean). 57 tests green.
+  REMAINING C3: **C3b** (Gate-2 channel card via Callie's token, finish QW1), **C3c** (retired Artemis-DM
+  history → Callie's memory), **C3d** (deliverable→editable-draft body = DB-shape align, NO Google Docs —
+  see plan). Plan: `docs/callie-build-plan.md`.
+- **Slack split COMPLETE:** Jon removed Artemis from the marketing channels; Artemis = personal DM only,
+  Callie = marketing channels. **Future idea (Jon, 2026-06-10):** Artemis (overseer/delegate lane) helping
+  manage Jon's contractor in the marketing DESIGN channel on his behalf — not yet scoped.
+- **Still open (env):** the test DB (`artemis_test`) is in a dirty migration state (pre-existing, post-move) —
+  Codex had to mock around it for C3a. Repair tracked separately; run `alembic upgrade head` vs the test DB.
 - **C4:** escalation Callie→Artemis + delegate-to-worker.
 - **Marketing-routing (systemic):** Gate notifications must route to Callie's channel, never Artemis's DM
   (QW1 was the interim owner-DM suppression; C2/C3 is the proper home). Slice-1 only scoped the chat loop,
