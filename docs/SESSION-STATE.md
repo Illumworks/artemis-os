@@ -62,6 +62,14 @@ all agents share ONE working tree → branch confusion; my commits once landed o
   (QW1 was the interim owner-DM suppression; C2/C3 is the proper home). Slice-1 only scoped the chat loop,
   NOT the pipeline posting path — that's why QW1 was needed separately.
 - **App-Modes web-nav:** dropped (cosmetic; the split that matters is the Slack one).
+- **Callie/Artemis Slack polish — DONE + live (2026-06-11):** W1 Callie scoped marketing-only (per-agent
+  surface allowlist; verified 8 surfaces, no Jira/Calendar/OKR leak — **add Jira+Calendar back here when scope
+  expands**); W2 natural channel replies on `message.channels` + cheap haiku "should I respond?" gate (default
+  silent) + @mention-asker only on cold-start / >5min re-engage (silent in active flow, never in DMs); W3
+  `find_by_keyword` (signal+campaign search by bill number — verified HB27→#624+#18). Two stale-test failures
+  fixed (g1_chat agent_id kwarg; j8 test's 2-col ON CONFLICT) — both test-only, prod `upsert_integration` was
+  already 3-col. 356 tests green. **Remaining: Jon live-checks W2 in a channel** (natural reply / gate /
+  cold-ping vs active-flow silence).
 
 ---
 
