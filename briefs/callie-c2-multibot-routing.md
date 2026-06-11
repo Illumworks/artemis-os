@@ -9,10 +9,18 @@ in session metadata, `resolve_surface_scope`). **Plan:** `docs/callie-build-plan
 Make **Callie** conversational as her own bot in `campaign signals` (C0B9CHVC7KQ), `Marketing Campaigns`,
 and her own DMs — marketing-scoped, reusing the C1 persona-parameterized loop. Artemis (DM) is unchanged.
 
-## Callie's Slack app
-"Calliope", App ID `A0B9Q790Y9Y`. Manifest is an Artemis clone (same scopes/events). Jon installs it to the
-workspace to produce a **Bot User OAuth Token** + provides her **Signing Secret**. Store both **encrypted in
-the DB as a second `integrations` row** (the OAuth install flow, mirroring Artemis) — never in repo/chat.
+## Callie's Slack app (INSTALLED + VERIFIED 2026-06-10)
+"Calliope" (bot username `callie2`), App ID `A0B9Q790Y9Y`, Client ID `157781284437.11330247032338`,
+**bot_user_id `U0B9S32PTAM`** (verified via auth.test; team "Amira Learning"). Manifest is an Artemis clone.
+
+**Secure credential capture (do this first):** Jon's secrets are in the gitignored file
+`/Users/artemis/Artemis/artemis-os/.env.callie` with keys: `CALLIE_SLACK_BOT_TOKEN` (xoxb),
+`CALLIE_SLACK_SIGNING_SECRET`, `CALLIE_SLACK_CLIENT_SECRET`, `CALLIE_BOT_USER_ID` (=U0B9S32PTAM).
+Read that file, store the bot token + signing secret **encrypted in the DB as a second `integrations` row**
+(mirror Artemis's row: provider="slack", bot_user_id=U0B9S32PTAM, encrypted_credentials via
+`artemis.integrations.crypto.encrypt_credentials`; the signing secret goes where the events receiver can
+resolve it per-app). Then **delete `.env.callie`**. Never echo the values or commit them. Reuse the existing
+integration model/repo; relax the `(provider, workspace_id)` uniqueness so Artemis + Callie can coexist.
 
 ## Scope
 
