@@ -130,6 +130,24 @@ title-only draft shells and never pipes the generated body into the WS draft. Re
 draft is empty. Fix path: engage the real compose/external path so the generated body lands in the WS draft
 (tie to C3 Writing Studio wiring). Content is NOT lost (recoverable from deliverable metadata).
 
+## Post-launch polish + parked expansions (surfaced via live test 2026-06-10)
+- **Callie over-scoped (bug → fixing):** `resolve_surface_scope` only strips marketing from Artemis's DM;
+  every other session (incl. Callie) gets the FULL surface set, so Callie had Jira/Calendar/OKR tools (she
+  searched Jira live). Fix = a **per-agent surface allowlist**; Callie = marketing-only for now.
+- **PARKED (do NOT forget — Jon, 2026-06-10):** when the app's scope expands, **add Jira + Calendar back to
+  Callie's allowed surfaces.** Build the restriction as an extensible allowlist so this is a one-line add.
+- **Natural channel replies (no @mention):** in her DM Callie already needs no @mention (message.im). In
+  channels she only gets `app_mention`. To let Jon reply naturally without @mentioning: add `message.channels`
+  to her Slack app's event subscriptions (she already has `listen_channel_messages=True`) + a "should I
+  respond?" relevance/address gate so she doesn't reply to EVERY channel message. Optional refinement.
+- **@mention the asker in replies:** both agents post plain text; given the question→answer lag, prefix
+  replies with `<@asker>` so they're pinged.
+- **Context continuity:** top-level channel mentions already share one session/channel (verified). Threaded
+  replies are separate sessions (by design); decide whether to unify.
+- **Callie tool-use (LOW priority, NOT a bug):** her memory correctly lacked HB27 (ingested history predates
+  campaign #18); she's working. Optional nicety: have her live signal/campaign search fuzzy-match a bill
+  number (e.g. "HB27") to a headline so she connects it to signal #624 / campaign #18.
+
 ## Cross-cutting / fold-in
 - **Retired DM history handoff:** the `callie_handoff_pending` backlog (tagged in slice 1) becomes Callie's
   marketing memory when she's live (C2/C3).
