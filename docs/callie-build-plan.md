@@ -101,6 +101,10 @@ in the Compass (no separate API). Tools register in `floating_artemis/tools/mark
   abstraction — NOT required here. The composer's "Google Doc" button is an optional export, unrelated. So
   C3d is a contained pipeline/DB-shape fix, no backend decision. (Earlier note wrongly tied this to Google
   Docs — retracted.)
+- **PARKED idea (distinct from C3d, intentionally held):** auto-create a **Google Doc** when a draft lands in
+  Writing Studio (drafts ↔ live Google Docs). This is a separate feature Jon and Lead have discussed and
+  deliberately deferred. It is NOT required for C3d (which only aligns the in-app draft body). Keep the two
+  separate; don't let C3d pull in GDoc auto-creation.
 
 ### C4 — Orchestration: report-up + delegate — Codex
 - Escalation Callie→Artemis (a decision that needs Jon flows Callie→Artemis→Jon's DM, per the tightened
