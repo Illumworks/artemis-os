@@ -2,7 +2,7 @@
 
 Authority layers:
   1: list_okr_objectives
-  2: update_okr_kr
+  3: update_okr_kr  — propose→confirm; OKR writes MUST NOT happen without Jon's explicit approval.
 
 [surface:okr] — gated by okr surface availability.
 """
@@ -64,7 +64,10 @@ LIST_OKR_OBJECTIVES = Tool(
 
 UPDATE_OKR_KR = Tool(
     name="update_okr_kr",
-    description=f"Update the current progress value for a key result. {_SURFACE} [layer:2]",
+    description=(
+        f"Update the current progress value for a key result. {_SURFACE} [layer:3] "
+        "REQUIRES Jon's explicit confirmation before executing — never auto-invoked."
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -78,4 +81,4 @@ UPDATE_OKR_KR = Tool(
 
 def register_okr_tools(registry: AuthorizedToolRegistry) -> None:
     registry.register(LIST_OKR_OBJECTIVES, _list_okr_objectives, layer=1)
-    registry.register(UPDATE_OKR_KR, _update_okr_kr, layer=2)
+    registry.register(UPDATE_OKR_KR, _update_okr_kr, layer=3)

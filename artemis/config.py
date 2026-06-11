@@ -119,6 +119,10 @@ class Settings(BaseSettings):
         default="America/New_York",
         description="IANA timezone for the scheduled Slack morning brief.",
     )
+    okr_checkin_cron: str = Field(
+        default="0 16 * * 5",
+        description="Cron expression for the Friday 4pm OKR check-in (default: Fri 16:00).",
+    )
 
 
 @lru_cache(maxsize=1)

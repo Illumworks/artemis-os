@@ -1,4 +1,4 @@
-"""Repository helpers for morning brief delivery state."""
+"""Repository helpers for proactive scheduled delivery state."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.proactivity.models import MorningBriefDelivery
 
 _DELIVERY_KIND = "morning_brief"
+_OKR_CHECKIN_KIND = "okr_checkin"
 _PROVIDER = "slack"
 
 
@@ -77,6 +78,93 @@ async def mark_morning_brief_delivery_sent(
 
 
 async def mark_morning_brief_delivery_failed(
+    session: AsyncSession,
+    *,
+    delivery_id: int,
+    error: str,
+) -> None:
+    await session.execute(
+        update(MorningBriefDelivery)
+        .where(MorningBriefDelivery.id == delivery_id)
+        .values(
+            status="failed",
+            last_error=error[:2000],
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+
+# ── OKR check-in reservation (once-per-Friday idempotency) ───────────────────
+# Uses the same MorningBriefDelivery table with delivery_kind='okr_checkin'.
+# The delivery_date is set to the Friday itself so the unique constraint
+# (delivery_kind, provider, recipient_id, delivery_date) gives once-per-Friday
+# idempotency at no extra schema cost.
+
+
+async def reserve_okr_checkin_delivery(
+    session: AsyncSession,
+    *,
+    recipient_id: str,
+    delivery_date: date,
+) -> tuple[MorningBriefDelivery, bool]:
+    """Create the once-per-Friday OKR check-in reservation or return the existing row.
+
+    Returns (row, created) where created=True on first insert, False on conflict.
+    """
+    now = datetime.now(UTC)
+    stmt = (
+        pg_insert(MorningBriefDelivery)
+        .values(
+            delivery_kind=_OKR_CHECKIN_KIND,
+            provider=_PROVIDER,
+            recipient_id=recipient_id,
+            delivery_date=delivery_date,
+            status="reserved",
+            reserved_at=now,
+            updated_at=now,
+        )
+        .on_conflict_do_nothing(
+            index_elements=["delivery_kind", "provider", "recipient_id", "delivery_date"]
+        )
+        .returning(MorningBriefDelivery.id)
+    )
+    inserted_id = (await session.execute(stmt)).scalar_one_or_none()
+    if inserted_id is not None:
+        row = await session.get(MorningBriefDelivery, inserted_id)
+        assert row is not None
+        return row, True
+
+    result = await session.execute(
+        select(MorningBriefDelivery).where(
+            MorningBriefDelivery.delivery_kind == _OKR_CHECKIN_KIND,
+            MorningBriefDelivery.provider == _PROVIDER,
+            MorningBriefDelivery.recipient_id == recipient_id,
+            MorningBriefDelivery.delivery_date == delivery_date,
+        )
+    )
+    row = result.scalar_one()
+    return row, False
+
+
+async def mark_okr_checkin_delivery_sent(
+    session: AsyncSession,
+    *,
+    delivery_id: int,
+) -> None:
+    now = datetime.now(UTC)
+    await session.execute(
+        update(MorningBriefDelivery)
+        .where(MorningBriefDelivery.id == delivery_id)
+        .values(
+            status="sent",
+            last_error=None,
+            delivered_at=now,
+            updated_at=now,
+        )
+    )
+
+
+async def mark_okr_checkin_delivery_failed(
     session: AsyncSession,
     *,
     delivery_id: int,
