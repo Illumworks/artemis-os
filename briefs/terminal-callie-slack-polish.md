@@ -36,11 +36,19 @@ Callie's app.
      her / is a marketing question she can help with.
    Default = **stay silent** (matches Callie's persona: speaks only with a so-what). Never run a full agent
    turn just to decide silence — the gate must be cheap. Never respond to bot/automated messages.
-3. **@mention the asker** in CHANNEL replies: prefix the reply with `<@{user_id}>` (the asker) so they're
-   pinged given the question→answer lag. DMs (1:1) do NOT need this — skip there.
-- Acceptance: in Callie's channels, a natural (non-@mention) question gets a reply that @mentions the asker;
-  idle chatter does NOT trigger her; her own/ticker posts never loop; @mention still works; DM replies
-  unchanged (no self-ping). Artemis's personal DM path untouched.
+3. **@mention the asker — but ONLY when the reply is "cold," not every turn.** Pinging on every reply in an
+   active back-and-forth is annoying (Jon's explicit note). Rule: prefix the reply with `<@{user_id}>` only
+   when the asker is probably not actively watching:
+   - the **first reply** in this session/thread (cold start), OR
+   - **re-engagement after an idle gap** — the last message in this conversation (session/thread) was more
+     than ~5 minutes ago.
+   During **active flow** (last message < ~5 min ago) reply **without** the `<@…>` ping. Use the existing
+   message-history timestamps to measure the gap. DMs (1:1) never need the ping — skip there. Make the
+   threshold a small named constant so it's easy to tune.
+- Acceptance: first/cold question → reply @mentions the asker; rapid follow-ups in the same thread → replies
+  WITHOUT pings (no spam); re-engaging after a lull → ping again; idle chatter does NOT trigger her; her
+  own/ticker posts never loop; @mention still works; DM replies unchanged (no self-ping). Artemis's personal
+  DM path untouched.
 
 ## Constraints (both)
 - Do NOT regress P1 (Artemis Jon-allowlist), C2 routing/HMAC, slice-1 personal scope, or the bot-self filter.
