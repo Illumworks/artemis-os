@@ -19,6 +19,15 @@ _MARKETING_SURFACES = frozenset(
     }
 )
 
+# Per-agent surface allowlist.  When an agent's id appears here,
+# resolve_surface_scope returns all_surfaces ∩ allowlist for that agent.
+# Agents NOT listed default to the full surface set.
+_AGENT_SURFACE_ALLOWLIST: dict[str, frozenset[str]] = {
+    # Callie is a marketing-only analyst agent — she may only see marketing surfaces.
+    # To grant Callie a new surface later (e.g. "jira-board", "calendar"), add it here.
+    "callie": _MARKETING_SURFACES,
+}
+
 
 def personal_surfaces(all_surfaces: set[str]) -> set[str]:
     """Return the personal-scope surface set for Artemis's Slack DM."""
@@ -73,9 +82,19 @@ def resolve_surface_scope(
     session_id: str,
     metadata: dict[str, Any] | None,
 ) -> set[str]:
-    """Resolve the surface set available to this session."""
+    """Resolve the surface set available to this session.
+
+    Priority order:
+    1. Artemis personal Slack DM → personal_surfaces (marketing stripped).
+    2. Agent with an allowlist entry → all_surfaces ∩ allowlist.
+    3. All other sessions → full all_surfaces.
+    """
     if is_personal_slack_dm_session(session_id, metadata):
         return personal_surfaces(all_surfaces)
+    agent_id = _session_agent_id(session_id, metadata)
+    allowlist = _AGENT_SURFACE_ALLOWLIST.get(agent_id)
+    if allowlist is not None:
+        return all_surfaces & allowlist
     return set(all_surfaces)
 
 

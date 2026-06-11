@@ -10,6 +10,7 @@ from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
 from artemis.agent.types import Message, TextBlock
 from artemis.floating_artemis.chat import _build_system_prompt, _build_tool_registry, handle_turn
 from artemis.floating_artemis.session_scope import (
+    _MARKETING_SURFACES,
     is_personal_slack_dm_session,
     parse_history_cutover_at,
     personal_surfaces,
@@ -66,14 +67,90 @@ def test_resolve_surface_scope_personal_slack_dm_filters_marketing() -> None:
     assert resolved == {"okr", "floating-artemis"}
 
 
-def test_resolve_surface_scope_callie_dm_keeps_marketing() -> None:
+def test_resolve_surface_scope_callie_dm_restricted_to_marketing() -> None:
+    """Callie's DM resolves to only marketing surfaces (the allowlist intersection)."""
     all_surfaces = {"okr", "marketing-os", "signal-queue", "floating-artemis"}
     resolved = resolve_surface_scope(
         all_surfaces=all_surfaces,
         session_id="slack-callie-T1-D123-_",
         metadata={"surface": "slack", "agent_id": "callie", "channel_id": "D123"},
     )
+    assert resolved == {"marketing-os", "signal-queue"}
+
+
+def test_resolve_surface_scope_callie_excludes_non_marketing_surfaces() -> None:
+    """Callie cannot see jira-board, calendar, okr, or dev-projects even if present."""
+    extra_surfaces = {"jira-board", "calendar", "okr", "dev-projects"}
+    all_surfaces = extra_surfaces | {"scouts", "signal-queue", "campaign-ops"}
+    resolved = resolve_surface_scope(
+        all_surfaces=all_surfaces,
+        session_id="slack-callie-T123-C456-_",
+        metadata={"surface": "slack", "agent_id": "callie", "channel_id": "C456"},
+    )
+    # None of the non-marketing extras appear
+    assert resolved.isdisjoint(extra_surfaces)
+    # Marketing surfaces that were present are included
+    assert {"scouts", "signal-queue", "campaign-ops"}.issubset(resolved)
+
+
+def test_resolve_surface_scope_callie_includes_all_marketing_surfaces_present() -> None:
+    """Callie's resolved set contains every marketing surface present in all_surfaces."""
+    all_surfaces = set(_MARKETING_SURFACES) | {"okr", "floating-artemis"}
+    resolved = resolve_surface_scope(
+        all_surfaces=all_surfaces,
+        session_id="slack-callie-T1-C999-_",
+        metadata={"surface": "slack", "agent_id": "callie", "channel_id": "C999"},
+    )
+    assert resolved == set(_MARKETING_SURFACES)
+
+
+def test_resolve_surface_scope_callie_intersection_does_not_invent_surfaces() -> None:
+    """If all_surfaces lacks a marketing surface, Callie's result doesn't invent it."""
+    # all_surfaces has only a subset of marketing surfaces
+    all_surfaces = {"scouts", "signal-queue"}
+    resolved = resolve_surface_scope(
+        all_surfaces=all_surfaces,
+        session_id="slack-callie-T1-C999-_",
+        metadata={"agent_id": "callie"},
+    )
+    assert resolved == {"scouts", "signal-queue"}
+
+
+def test_resolve_surface_scope_unknown_agent_gets_full_surfaces() -> None:
+    """An agent with no allowlist entry receives the full surface set unchanged."""
+    all_surfaces = {"okr", "marketing-os", "jira-board", "dev-projects", "floating-artemis"}
+    resolved = resolve_surface_scope(
+        all_surfaces=all_surfaces,
+        session_id="slack-unknown-T1-C123-_",
+        metadata={"surface": "slack", "agent_id": "unknown-bot", "channel_id": "C123"},
+    )
     assert resolved == all_surfaces
+
+
+def test_resolve_surface_scope_artemis_non_dm_gets_full_surfaces() -> None:
+    """Artemis in a non-DM channel (public/private channel) receives all surfaces."""
+    all_surfaces = {"okr", "marketing-os", "signal-queue", "jira-board", "floating-artemis"}
+    resolved = resolve_surface_scope(
+        all_surfaces=all_surfaces,
+        session_id="slack-artemis-T1-C123-_",
+        metadata={"surface": "slack", "agent_id": "artemis", "channel_id": "C123"},
+    )
+    assert resolved == all_surfaces
+
+
+def test_resolve_surface_scope_callie_channel_same_as_callie_dm() -> None:
+    """Callie's allowlist applies regardless of channel type (DM or channel)."""
+    all_surfaces = {"okr", "marketing-os", "scouts", "dev-projects"}
+    for channel_id in ("D999", "C999"):
+        resolved = resolve_surface_scope(
+            all_surfaces=all_surfaces,
+            session_id=f"slack-callie-T1-{channel_id}-_",
+            metadata={"surface": "slack", "agent_id": "callie", "channel_id": channel_id},
+        )
+        assert "okr" not in resolved
+        assert "dev-projects" not in resolved
+        assert "marketing-os" in resolved
+        assert "scouts" in resolved
 
 
 def test_build_tool_registry_dm_scope_excludes_marketing_tools() -> None:
@@ -150,7 +227,9 @@ async def test_handle_turn_personal_slack_dm_scopes_prompt_tools_and_history() -
         patch("artemis.floating_artemis.chat._get_recent_meeting_context", return_value=None),
         patch("artemis.floating_artemis.chat._persist_messages", new_callable=AsyncMock),
         patch("artemis.floating_artemis.chat._broadcast"),
-        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **kw: a[0]),
+        patch(
+            "artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **kw: a[0]
+        ),
         patch("artemis.floating_artemis.chat.write_turn_drawer"),
         patch(
             "artemis.floating_artemis.chat.get_status",
