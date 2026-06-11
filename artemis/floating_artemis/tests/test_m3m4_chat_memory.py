@@ -77,7 +77,9 @@ async def test_m3_drawer_written_after_successful_turn() -> None:
 
     write_calls: list[dict[str, Any]] = []
 
-    async def fake_write_turn_drawer(user_msg_id: int, user_text: str, assistant_text: str) -> None:
+    async def fake_write_turn_drawer(
+        user_msg_id: int, user_text: str, assistant_text: str, **kwargs: Any
+    ) -> None:
         write_calls.append(
             {
                 "user_msg_id": user_msg_id,
@@ -191,7 +193,7 @@ async def test_m3_failure_isolation_write_error_does_not_break_chat(caplog: Any)
     adapter = FakeAdapter([ScriptedReply(text="No worries.")])
 
     async def raising_write_turn_drawer(
-        user_msg_id: int, user_text: str, assistant_text: str
+        user_msg_id: int, user_text: str, assistant_text: str, **kwargs: Any
     ) -> None:
         raise RuntimeError("DB offline — simulated failure")
 
@@ -445,14 +447,18 @@ async def test_e2e_three_turns_three_drawers_memory_in_second_prompt() -> None:
             return mid
         return None
 
-    async def fake_write_drawer(user_msg_id: int, user_text: str, assistant_text: str) -> None:
+    async def fake_write_drawer(
+        user_msg_id: int, user_text: str, assistant_text: str, **kwargs: Any
+    ) -> None:
         drawer_writes.append(
             {"user_msg_id": user_msg_id, "user_text": user_text, "assistant_text": assistant_text}
         )
 
     turn_call_count = [0]
 
-    async def fake_inject(prompt: str, user_msg: str, history: list[Any], session_id: str) -> str:
+    async def fake_inject(
+        prompt: str, user_msg: str, history: list[Any], session_id: str, **kwargs: Any
+    ) -> str:
         turn_call_count[0] += 1
         # Simulate memory injection on turn 2+ (after turn 1 drawer exists)
         if turn_call_count[0] >= 2 and drawer_writes:

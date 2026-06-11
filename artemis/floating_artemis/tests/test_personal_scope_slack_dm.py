@@ -150,7 +150,7 @@ async def test_handle_turn_personal_slack_dm_scopes_prompt_tools_and_history() -
         patch("artemis.floating_artemis.chat._get_recent_meeting_context", return_value=None),
         patch("artemis.floating_artemis.chat._persist_messages", new_callable=AsyncMock),
         patch("artemis.floating_artemis.chat._broadcast"),
-        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a: a[0]),
+        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **kw: a[0]),
         patch("artemis.floating_artemis.chat.write_turn_drawer"),
         patch(
             "artemis.floating_artemis.chat.get_status",

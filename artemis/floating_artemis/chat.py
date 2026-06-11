@@ -559,6 +559,7 @@ async def handle_turn(
         user_text,
         history,
         session_id,
+        agent_id=session_ctx.agent_id,
     )
 
     if adapter is None:
@@ -764,6 +765,7 @@ async def handle_turn(
                 user_msg_id=user_msg_id,
                 user_text=user_text,
                 assistant_text=response_text,
+                agent_id=session_ctx.agent_id,
             )
         except Exception:
             logger.warning(
