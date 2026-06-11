@@ -103,7 +103,21 @@ async def _safe_slack_signals() -> dict[str, Any] | None:
 
 
 async def gather_sources(session: AsyncSession) -> dict[str, Any]:
-    """Gather all data sources concurrently. Missing sources return None / []."""
+    """Gather all data sources concurrently. Missing sources return None / [].
+
+    Each session-using source opens its OWN session via ``_own``: a single
+    AsyncSession is NOT safe for the concurrent reads ``asyncio.gather`` issues
+    (it raises "This session is provisioning a new connection; concurrent
+    operations are not permitted", silently dropping sources). The ``session``
+    arg is retained for API compatibility but is not shared across the gathered
+    coroutines.
+    """
+    import artemis.db as _db
+
+    async def _own(fn: Any) -> Any:
+        async with _db.SessionLocal() as own_session:
+            return await fn(own_session)
+
     (
         jira,
         calendar,
@@ -113,13 +127,13 @@ async def gather_sources(session: AsyncSession) -> dict[str, Any]:
         memory,
         previous_brief,
     ) = await asyncio.gather(
-        _safe_jira(session),
-        _safe_calendar(session),
+        _own(_safe_jira),
+        _own(_safe_calendar),
         _safe_slack_signals(),
-        _safe_okr(session),
+        _own(_safe_okr),
         _safe_sessions(),
-        _safe_memory(session),
-        _safe_previous_brief(session),
+        _own(_safe_memory),
+        _own(_safe_previous_brief),
         return_exceptions=True,
     )
 
