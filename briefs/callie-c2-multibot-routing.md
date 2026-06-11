@@ -58,6 +58,16 @@ configured channels (`campaign signals`, `Marketing Campaigns`) and in her DMs. 
 one of Callie's channels / a DM to Callie", not the Jon-only allowlist. Keep dedupe + the bot-self filter.
 (If we later want a marketing-team allowlist for her DMs, leave a seam; not required now.)
 
+## Build for N named agents (don't hardcode 2)
+Resolve the agent from DATA, not an `if artemis/elif callie` switch. Each Named agent = one `integrations`
+row carrying its `bot_user_id`, token, signing secret, and `agent_id` (+ owned channels / scope hints in
+metadata). The events receiver resolves the agent + per-app signing secret + reply token from that registry
+(keyed by `api_app_id` and/or the path segment). Goal: adding agent #3 is just **a Slack app + an
+integrations row** — no new branching in the loop or receiver. A single parameterized `/events/{agent}`
+route (or registry lookup by app) is preferred over N hand-written endpoints. C1's `load_agent_profile` is
+already registry-shaped; mirror that here. This keeps us aligned with the Named Agent Standard
+(`agent-slack-architecture.md`).
+
 ## Constraints
 - Do NOT regress Artemis's P1 path (bot-self filter, Jon allowlist, dedupe, identity) or slice-1 personal DM.
 - Lossless; no deps <7 days; ruff + mypy strict; `./scripts/check.sh`.
