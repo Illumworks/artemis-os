@@ -236,7 +236,11 @@ def test_build_system_prompt_artemis_profile_matches_legacy_output() -> None:
             "**You are responding in Slack.** The operator @-mentioned you directly. "
             "**Assume they are addressing you and respond on-topic.** "
             'Do not ask "Are you talking to me?" — they are. '
-            "Be concise; Slack rewards short replies. The operator is Jon."
+            "Be concise; Slack rewards short replies. "
+            "**Do NOT use markdown tables** (`| Field | Value |` pipe-table syntax) — "
+            "Slack renders them as raw pipes and dashes. "
+            "Use **bold labels** with short bullet lines or plain sentences instead."
+            " The operator is Jon."
         )
         parts.append(
             "## Slack DM scope\n"
