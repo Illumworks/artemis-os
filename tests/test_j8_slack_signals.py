@@ -363,13 +363,14 @@ async def test_compute_bad_credentials_returns_unavailable(
         .values(
             provider="slack",
             workspace_id="T-bad",
+            agent_id="default",
             display_name="Bad Creds",
             encrypted_credentials=b"not-valid-fernet-data",
             status="active",
             metadata={},
         )
         .on_conflict_do_update(
-            index_elements=["provider", "workspace_id"],
+            index_elements=["provider", "workspace_id", "agent_id"],
             set_={"status": "active", "encrypted_credentials": b"not-valid-fernet-data"},
         )
     )
