@@ -47,6 +47,7 @@ def test_register_marketing_tools() -> None:
     reg = AuthorizedToolRegistry()
     register_marketing_tools(reg)
     expected = {
+        "find_by_keyword",
         "get_message_compass",
         "search_claims_register",
         "get_campaign_performance",
@@ -77,6 +78,7 @@ def test_marketing_tool_layers() -> None:
     register_marketing_tools(reg)
     # Layer 1: read-only
     for name in [
+        "find_by_keyword",
         "get_message_compass",
         "search_claims_register",
         "get_campaign_performance",

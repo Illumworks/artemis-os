@@ -253,6 +253,34 @@ async def _search_claims_register(inp: dict[str, Any]) -> str:
         return f"search_claims_register failed: {exc}"
 
 
+async def _find_by_keyword(inp: dict[str, Any]) -> str:
+    query = str(inp.get("query", "")).strip()
+    if not query:
+        return "Error: query is required"
+    limit = int(inp.get("limit", 20))
+    try:
+        import artemis.db as _db
+        from artemis.marketing import repository as repo
+
+        async with _db.SessionLocal() as session:
+            result = await repo.find_signals_and_candidates_by_keyword(session, query, limit=limit)
+
+        lines: list[str] = []
+        if result.signals:
+            lines.append("signals:")
+            for sig_id, urgency_tier, signal_status, headline in result.signals:
+                lines.append(f"  #{sig_id} [{urgency_tier}] [{signal_status}] {headline}")
+        if result.candidates:
+            lines.append("campaigns:")
+            for cand_id, name, decision_state in result.candidates:
+                lines.append(f"  #{cand_id} [{decision_state}] {name}")
+        if not lines:
+            return f"No signals or campaigns matched {query!r}."
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"find_by_keyword failed: {exc}"
+
+
 async def _get_campaign_performance(inp: dict[str, Any]) -> str:
     candidate_id_raw = inp.get("candidate_id")
     campaign_family = inp.get("campaign_family")
@@ -716,6 +744,28 @@ async def _link_content_asset(inp: dict[str, Any]) -> str:
 
 _s = _SURFACE  # shorthand
 
+FIND_BY_KEYWORD = Tool(
+    name="find_by_keyword",
+    description=(
+        f"Search signals and campaigns by keyword or bill number. "
+        f"Matches signal_queue.headline and campaign_candidates.name "
+        f"case-insensitively (substring). Returns matching signals "
+        f"(id, urgency_tier, signal_status, headline) and campaigns "
+        f"(id, name, decision_state). {_s} [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Keyword or bill number to search for (e.g. 'HB27').",
+            },
+            "limit": {"type": "integer", "default": 20},
+        },
+        "required": ["query"],
+    },
+)
+
 GET_MESSAGE_COMPASS = Tool(
     name="get_message_compass",
     description=f"Read the active Message Compass source of truth for marketing messaging. {_s} [layer:1]",
@@ -975,6 +1025,7 @@ POST_ANALYST_MESSAGE = Tool(
 
 def register_marketing_tools(registry: AuthorizedToolRegistry) -> None:
     """Register all marketing tools into the provided registry."""
+    registry.register(FIND_BY_KEYWORD, _find_by_keyword, layer=1)
     registry.register(GET_MESSAGE_COMPASS, _get_message_compass, layer=1)
     registry.register(SEARCH_CLAIMS_REGISTER, _search_claims_register, layer=1)
     registry.register(GET_CAMPAIGN_PERFORMANCE, _get_campaign_performance, layer=1)
