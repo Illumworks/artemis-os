@@ -152,6 +152,15 @@ async def test_callie_events_path_routes_allowed_channel_messages() -> None:
                 new_callable=AsyncMock,
                 return_value=True,
             ),
+            # Channel messages now pass through the "should I respond?" relevance
+            # gate (see test_slack_events_channel_gate.py). This test covers the
+            # multibot ROUTING contract, so we stipulate the gate says respond and
+            # assert the message reaches Callie's agent path.
+            patch(
+                "artemis.routes.integrations_slack_events.should_respond_to_channel_message",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch(
                 "artemis.routes.integrations_slack_events.route_inbound",
                 new_callable=AsyncMock,
