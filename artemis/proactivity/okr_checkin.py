@@ -1,7 +1,7 @@
 """Friday OKR check-in: proposal generator + Slack delivery.
 
 Flow:
-  1. Gather this week's evidence from OKR activity, Jira (closed this week),
+  1. Gather this week's evidence from OKR activity, Jira (Jon's own closed tickets),
      meeting action items, and OKR current state.
   2. For each active KR, attempt to ground a proposed change in at least one
      source. If no source is found for a KR, no change is proposed for it.
@@ -12,6 +12,12 @@ Flow:
 Design constraints:
   - The Friday job writes NO OKR by itself.  It only posts a proposal.
   - Every proposed KR change MUST cite a basis.
+  - Jira evidence is SCOPED TO JON's OWN tickets (assignee = currentUser()).
+    If a Jira ticket is not assigned to Jon, it is presented as clearly-labeled
+    team context ("I noticed the team closed X"), never as his accomplishment.
+  - One Jira ticket maps to AT MOST one KR (no fan-out).
+  - The check-in leads with KR state and asks Jon what he moved — his word-dump
+    is the source of truth for his accomplishments.
   - Reuses the morning-brief reservation pattern (delivery_kind='okr_checkin',
     once-per-Friday idempotency keyed on ISO week number).
 """
@@ -41,7 +47,12 @@ __all__ = [
 
 
 async def _safe_jira_done_this_week(session: AsyncSession) -> list[dict[str, Any]]:
-    """Return Jira issues closed/updated this week.  Returns [] on any error."""
+    """Return Jon's OWN Jira issues closed this week (assignee = currentUser()).
+
+    GROUNDING RULE: We only fetch tickets assigned to the authenticated user
+    (i.e. Jon's own work).  We must never assert that Jon completed a ticket
+    that belonged to someone else.  Returns [] on any error.
+    """
     try:
         from artemis.integrations import repository as integration_repo
         from artemis.integrations.crypto import decrypt_credentials
@@ -73,11 +84,15 @@ async def _safe_jira_done_this_week(session: AsyncSession) -> list[dict[str, Any
             return []
 
         client = JiraClient(site_url=site_url, email=email, api_token=api_token)
-        # Last 7 days of done/closed issues.
+        # Last 7 days of Jon's OWN done/closed issues.
+        # `assignee = currentUser()` resolves to the authenticated email (Jon's).
         week_ago = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%d")
         import httpx
 
-        jql = f'status IN ("Done", "Closed", "Resolved") AND updated >= "{week_ago}" ORDER BY updated DESC'
+        jql = (
+            'assignee = currentUser() AND status IN ("Done", "Closed", "Resolved") '
+            f'AND updated >= "{week_ago}" ORDER BY updated DESC'
+        )
         async with httpx.AsyncClient(timeout=20) as http_client:
             items = await client._fetch_column(http_client, jql, max_items=30)
         return items
@@ -172,6 +187,12 @@ def build_okr_checkin_proposal(sources: dict[str, Any]) -> list[dict[str, Any]]:
     Only KRs that can be grounded in at least one source are included.
     Never fabricates a change.
 
+    Grounding rules:
+    - Jira items are Jon's OWN tickets (already filtered by assignee at gather time).
+    - Each Jira ticket maps to AT MOST one KR (first keyword match wins; no fan-out).
+    - Meeting action items may cite multiple KRs (they aren't ticket-keyed).
+    - OKR activity is per-KR and does not fan-out.
+
     Each item:
       {
         "kr_id": int,
@@ -208,12 +229,17 @@ def build_okr_checkin_proposal(sources: dict[str, Any]) -> list[dict[str, Any]]:
         if kr_id is not None:
             activity_by_kr.setdefault(int(kr_id), []).append(str(text))
 
-    # Build keyword set from Jira done-this-week titles.
-    jira_keywords: list[str] = [
-        str(issue.get("title") or issue.get("summary") or issue.get("key") or "").lower()
-        for issue in jira_done
-        if issue
-    ]
+    # Build Jira items list (title + key) for matching.
+    # Each item tracks whether it has already been assigned to a KR
+    # so we never fan-out one ticket to multiple KRs.
+    jira_items: list[dict[str, Any]] = []
+    for issue in jira_done:
+        if not issue:
+            continue
+        title = str(issue.get("title") or issue.get("summary") or issue.get("key") or "")
+        key = str(issue.get("key") or "")
+        if title or key:
+            jira_items.append({"key": key, "title": title, "used": False})
 
     # Build action-item phrases.
     action_phrases: list[str] = []
@@ -221,7 +247,9 @@ def build_okr_checkin_proposal(sources: dict[str, Any]) -> list[dict[str, Any]]:
         item = ai.get("item")
         if not item:
             continue
-        text_str = item if isinstance(item, str) else str(item.get("text") or item.get("action") or item)
+        text_str = (
+            item if isinstance(item, str) else str(item.get("text") or item.get("action") or item)
+        )
         action_phrases.append(text_str.lower())
 
     proposals: list[dict[str, Any]] = []
@@ -236,15 +264,22 @@ def build_okr_checkin_proposal(sources: dict[str, Any]) -> list[dict[str, Any]]:
             kr_title_lower = kr.title.lower()
             basis: list[str] = []
 
-            # 1. OKR activity this week for this KR.
+            # 1. OKR activity this week for this KR (per-KR, no fan-out risk).
             for act_text in activity_by_kr.get(kr_id, []):
                 basis.append(f"OKR activity: {act_text}")
 
-            # 2. Jira issues whose title overlaps with the KR title.
+            # 2. Jon's Jira tickets whose title overlaps with the KR title.
+            #    ONE ticket per KR max — mark used to prevent fan-out across KRs.
             words = {w for w in kr_title_lower.split() if len(w) > 3}
-            for kw in jira_keywords:
+            for jira_item in jira_items:
+                if jira_item["used"]:
+                    continue
+                kw = jira_item["title"].lower()
                 if words and any(w in kw for w in words):
-                    basis.append(f"Jira closed this week: {kw[:80]}")
+                    label = jira_item["title"][:80] or jira_item["key"]
+                    basis.append(f"Your Jira ticket closed this week: {label}")
+                    # Mark as used so it cannot be claimed by another KR.
+                    jira_item["used"] = True
                     break  # one Jira citation per KR is enough
 
             # 3. Meeting action items that mention words from the KR title.
@@ -280,35 +315,57 @@ def format_checkin_for_slack(
 ) -> str:
     """Format the OKR check-in proposal for Slack delivery.
 
+    Reframed (P2 grounding fix):
+    - LEADS with where KRs currently stand.
+    - ASKS what Jon moved this week — his answer is the source of truth.
+    - Jira/meeting evidence is presented as optional context, not claimed
+      accomplishments.
+    - Nothing is asserted as Jon's work unless it came from OKR activity
+      entries that Jon recorded himself.
+
     This is informational — no OKR writes happen here.
     Jon's reply (approve + word-dump) flows through the DM agent loop,
     which calls update_okr_kr (layer 3) only on his explicit confirm.
     """
-    day_label = f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
+    day_label = (
+        f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
+    )
     lines: list[str] = [
-        f"*Friday OKR check-in for {day_label}*",
+        f"*Friday check-in — {day_label}*",
         "",
-        "Here is what I found this week grounded in actual evidence. "
-        "Reply with any corrections + a word-dump of what you accomplished "
-        "and I'll update the KRs only once you say go.",
+        "Here is where your KRs stand. Tell me what you actually moved this week "
+        "and I'll map it to the right KRs. Nothing updates until you say go.",
         "",
     ]
 
     if not proposals:
         lines.append(
-            "I could not ground any KR updates in this week's activity, Jira, or meeting notes. "
-            "Send me a word-dump of what you got done and I'll map it to KRs."
+            "I don't have any grounded evidence to show you — no OKR activity logged, "
+            "no Jira tickets assigned to you closed this week, no relevant meeting items."
         )
+        lines.append("What did you get done? Send me a word-dump and I'll map it to KRs.")
     else:
         for p in proposals:
-            lines.append(f"*{p['objective_title']}* > {p['kr_title']} (current: {p['current_prog']}%)")
+            lines.append(
+                f"*{p['objective_title']}* > *{p['kr_title']}* — currently at {p['current_prog']}%"
+            )
             for b in p["basis"]:
-                lines.append(f"  - {b}")
+                b_str = str(b)
+                # OKR activity = Jon logged it himself (ground truth).
+                if b_str.startswith("OKR activity:"):
+                    lines.append(f"  - {b_str}")
+                # Jira ticket or meeting item = context, not claimed accomplishment.
+                elif b_str.startswith("Your Jira ticket") or b_str.startswith(
+                    "Meeting action item:"
+                ):
+                    lines.append(f"  - Context: {b_str}")
+                else:
+                    lines.append(f"  - {b_str}")
             lines.append("")
 
     lines.append(
-        "_Nothing will change until you explicitly approve. "
-        "Reply with corrections + your word-dump, then say 'go' when ready._"
+        "_What did you actually move this week? Reply with a word-dump. "
+        "Nothing changes until you explicitly say go._"
     )
 
     try:

@@ -149,9 +149,7 @@ async def test_fire_okr_checkin_delivers_proposal_once(db_session: AsyncSession)
 
     # Exactly one reservation row.
     result = await db_session.execute(
-        select(MorningBriefDelivery).where(
-            MorningBriefDelivery.delivery_kind == "okr_checkin"
-        )
+        select(MorningBriefDelivery).where(MorningBriefDelivery.delivery_kind == "okr_checkin")
     )
     rows = list(result.scalars().all())
     assert len(rows) == 1
@@ -234,9 +232,7 @@ def test_build_proposal_no_source_produces_no_change() -> None:
     }
 
     proposals = build_okr_checkin_proposal(sources)
-    assert proposals == [], (
-        f"Expected no proposals for ungrounded KR, got {proposals}"
-    )
+    assert proposals == [], f"Expected no proposals for ungrounded KR, got {proposals}"
 
 
 def test_build_proposal_with_activity_includes_kr() -> None:
@@ -304,9 +300,11 @@ def test_build_proposal_archived_kr_excluded() -> None:
 def test_format_checkin_empty_proposals() -> None:
     """Empty proposals produce a message asking Jon to send a word-dump."""
     text = format_checkin_for_slack([], delivery_date=date(2026, 6, 13))
-    assert "Friday OKR check-in" in text
+    # P2 reframe: header is now "Friday check-in" (no "OKR" in the plain header).
+    assert "Friday" in text
+    assert "check-in" in text or "check in" in text or "KR" in text
     assert "word-dump" in text
-    assert "go'" in text or "go" in text
+    assert "go" in text
 
 
 def test_format_checkin_with_proposals() -> None:

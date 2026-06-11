@@ -26,6 +26,7 @@ from artemis.proactivity.okr_checkin import (
     format_checkin_for_slack,
     gather_checkin_sources,
 )
+from artemis.proactivity.voice_render import render_brief_with_voice, render_checkin_with_voice
 from artemis.writing_rules import lint_agent_text
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,16 @@ async def _fire_okr_checkin() -> None:
             sources = await gather_checkin_sources(session)
             proposals = build_okr_checkin_proposal(sources)
 
-            slack_text = format_checkin_for_slack(proposals, delivery_date=delivery_date)
+            # Attempt voice rendering pass first; fall back to plain rendering on failure.
+            voice_text = await render_checkin_with_voice(
+                proposals,
+                delivery_date,
+                session_id=f"checkin-{delivery_date.isoformat()}",
+            )
+            if voice_text:
+                slack_text = voice_text
+            else:
+                slack_text = format_checkin_for_slack(proposals, delivery_date=delivery_date)
 
             token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
             if not token:
@@ -193,7 +203,13 @@ async def _fire_morning_brief() -> None:
                 return
 
             brief = await generate_brief(session)
-            slack_text = _format_brief_for_slack(brief, delivery_date=delivery_date)
+            # Attempt voice rendering pass first; fall back to plain rendering on failure.
+            voice_text = await render_brief_with_voice(
+                brief,
+                delivery_date,
+                session_id=f"brief-{delivery_date.isoformat()}",
+            )
+            slack_text = voice_text or _format_brief_for_slack(brief, delivery_date=delivery_date)
             token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
             if not token:
                 raise RuntimeError("No active Slack token found for agent_id='artemis'")
@@ -271,7 +287,9 @@ async def _resolve_morning_brief_recipient(session: AsyncSession) -> str:
 
 def _format_brief_for_slack(brief: dict[str, Any], *, delivery_date: date) -> str:
     """Render the stored brief JSON into Slack-friendly plain text."""
-    date_label = f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
+    date_label = (
+        f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
+    )
     lines: list[str] = [f"*Morning brief for {date_label}*"]
 
     summary = _clean_string(brief.get("summary"))
