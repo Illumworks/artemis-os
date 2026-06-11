@@ -63,6 +63,7 @@ behind").
 - **C3b:** route the pipeline Gate-2 *channel card* via Callie's token (finish QW1) — `human_gate_executor.py`
   `_get_slack_token_for_agent(agent_id)`.
 - **C3c:** retired Artemis-DM history handoff into Callie's memory scope (`callie_handoff_pending`).
-- **C3d (needs Jon decision):** editable-WS-draft body fix (QW2) — requires connecting the REAL external
-  Writing Studio backend (`RealWritingStudio.update_draft()` unimplemented; `ARTEMIS_WRITING_STUDIO_URL/TOKEN`
-  or a Google Docs path). Not a quick build; decide the real backend first.
+- **C3d:** editable-draft body fix (QW2). A draft IS a `campaign_deliverables` row, content in
+  `deliverable_metadata`, read by `_latest_draft_content`. Fix = align where the deliverables pipeline writes
+  the composed body with where the composer reads it (+ ensure all deliverables get a real body, not a stub).
+  Contained DB/pipeline fix — NO external backend / Google Docs (that was a retracted earlier guess).

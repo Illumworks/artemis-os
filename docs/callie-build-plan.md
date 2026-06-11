@@ -91,10 +91,16 @@ in the Compass (no separate API). Tools register in `floating_artemis/tools/mark
 - **C3c — retired-history handoff:** ingest the `callie_handoff_pending` Artemis-DM backlog
   (`slack-…-D0AN8CCJC4C-_`, ~246 msgs) into Callie's memory scope (`floating_artemis/memory.py` write path
   + `memory/store.py`). Unknown: scope-inheritance semantics — trace `memory/retrieval.py` first.
-- **C3d — NEEDS JON DECISION (deferred QW2):** editable-WS-draft body. The external adapter defaults to
-  `StubWritingStudio` (title-only, no body); the real path needs `RealWritingStudio.update_draft()`
-  (unimplemented) + `ARTEMIS_WRITING_STUDIO_URL/TOKEN` or a Google Docs sync. Decide the real backend before
-  building. Content is NOT lost (lives in `campaign_deliverables.metadata`).
+- **C3d — editable-draft body (deferred QW2). CORRECTED 2026-06-10 (no external backend / no Google Docs).**
+  A composer "draft" IS a `campaign_deliverables` row (invoke.py:54), content in `deliverable_metadata`; the
+  composer reads it via `_latest_draft_content`. The empty drafts = the deliverables pipeline wrote the
+  composed body to a field/shape that `_latest_draft_content` does NOT read (deliverable 42 had it, 43-45
+  didn't). Fix = ALIGN where the pipeline writes the composed body with where the composer reads it
+  (`_latest_draft_content`), and ensure all generated deliverables get a composed body, not a stub shell. The
+  `external.py` Stub/Real adapter + `ARTEMIS_WRITING_STUDIO_URL/TOKEN` are a separate, largely-unused
+  abstraction — NOT required here. The composer's "Google Doc" button is an optional export, unrelated. So
+  C3d is a contained pipeline/DB-shape fix, no backend decision. (Earlier note wrongly tied this to Google
+  Docs — retracted.)
 
 ### C4 — Orchestration: report-up + delegate — Codex
 - Escalation Callie→Artemis (a decision that needs Jon flows Callie→Artemis→Jon's DM, per the tightened
