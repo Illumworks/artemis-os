@@ -275,3 +275,85 @@ def test_build_prompt_references_dailybrief_schema() -> None:
 
     for enum_value in ('"high"', '"medium"', '"low"'):
         assert enum_value in prompt, f"Enum value {enum_value} missing from prompt"
+
+    # Cleanup 3: prompt must instruct the LLM to include ticket titles, not bare keys
+    assert "ticket title" in prompt.lower() or "title" in prompt.lower()
+    assert "bare jira key" in prompt.lower() or "bare" in prompt.lower()
+
+
+# ── Test 9: _build_context_string carries Jira ticket titles ─────────────────
+
+
+def test_build_context_string_includes_jira_titles() -> None:
+    """Context fed to the LLM must include ticket title (not just bare key).
+
+    The Jira column items use the key 'title' (from _map_column_item).
+    _build_context_string must read 'title' so the LLM can refer to it.
+    """
+    from artemis.brief.prompt import _build_context_string
+
+    sources = {
+        "jira": {
+            "connected": True,
+            "columns": [
+                {
+                    "key": "prog",
+                    "items": [
+                        {"key": "MT-456", "title": "Fix login redirect", "priority": "High"},
+                        {"key": "MT-551", "title": "Update email templates", "priority": "Medium"},
+                    ],
+                },
+                {"key": "review", "items": []},
+                {"key": "blocked", "items": []},
+            ],
+        },
+    }
+
+    ctx = _build_context_string(sources)
+
+    # Titles must appear in the context
+    assert "Fix login redirect" in ctx
+    assert "Update email templates" in ctx
+
+    # Keys should also appear (for full KEY — Title references)
+    assert "MT-456" in ctx
+    assert "MT-551" in ctx
+
+
+def test_build_context_string_jira_falls_back_to_summary_key() -> None:
+    """If items use 'summary' instead of 'title', context builder still works."""
+    from artemis.brief.prompt import _build_context_string
+
+    sources = {
+        "jira": {
+            "connected": True,
+            "columns": [
+                {
+                    "key": "prog",
+                    "items": [
+                        {"key": "MT-100", "summary": "Legacy summary field", "priority": "Low"},
+                    ],
+                },
+                {"key": "review", "items": []},
+                {"key": "blocked", "items": []},
+            ],
+        },
+    }
+
+    ctx = _build_context_string(sources)
+
+    assert "Legacy summary field" in ctx
+    assert "MT-100" in ctx
+
+
+def test_build_prompt_instructs_no_bare_keys() -> None:
+    """Prompt must contain a CRITICAL rule forbidding bare Jira keys."""
+    from artemis.brief.prompt import _build_prompt
+
+    prompt = _build_prompt("today is test day")
+
+    # The rule must be explicit and marked as critical
+    assert "CRITICAL" in prompt
+    assert "bare" in prompt.lower()
+    # Must tell LLM to include the title alongside the key
+    assert "title" in prompt.lower()

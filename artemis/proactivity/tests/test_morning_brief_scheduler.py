@@ -127,6 +127,46 @@ def test_format_brief_for_slack_lints_tables_and_banned_chars() -> None:
     assert "Ship it, today" in text
 
 
+def test_format_brief_no_confidence_line_no_trailing_tags() -> None:
+    """Cleanup brief: no 'Confidence' line, no '; source' or '; level' suffixes."""
+    delivery_date = datetime(2026, 6, 11, tzinfo=ZoneInfo("America/New_York")).date()
+    brief = {
+        "summary": "A focused day.",
+        "highlights": [
+            {"title": "Pipeline ready", "detail": "Three sends cleared", "source": "jira"},
+            {"title": "Solo headline", "detail": None, "source": "calendar"},
+        ],
+        "priorities": [
+            {"item": "Ship the release", "rationale": "Blocked team downstream", "urgency": "high"},
+            {"item": "Review OKR progress", "rationale": None, "urgency": "medium"},
+        ],
+        "next_actions": [],
+        "risks": [],
+        "confidence": "high",
+    }
+
+    text = _format_brief_for_slack(brief, delivery_date=delivery_date)
+
+    # Cleanup 1: no Confidence block at all
+    assert "Confidence" not in text
+
+    # Cleanup 2: highlights — detail present (not equal to title) → shown, but NO trailing source tag
+    assert "Pipeline ready: Three sends cleared" in text
+    assert "; jira" not in text
+    assert "; calendar" not in text
+
+    # Cleanup 2: priorities — rationale shown when present, but NO trailing urgency tag
+    assert "Ship the release: Blocked team downstream" in text
+    assert "; high" not in text
+    assert "; medium" not in text
+
+    # Sanity: core content still present
+    assert "A focused day" in text
+    assert "Pipeline ready" in text
+    assert "Ship the release" in text
+    assert "Review OKR progress" in text
+
+
 @pytest.mark.asyncio
 async def test_scheduler_registration_uses_configured_cron() -> None:
     with (

@@ -193,11 +193,10 @@ def _format_brief_for_slack(brief: dict[str, Any], *, delivery_date: date) -> st
                 continue
             title = _clean_string(item.get("title"))
             detail = _clean_string(item.get("detail"))
-            source = _clean_string(item.get("source"))
             bullet = title or detail
             if not bullet:
                 continue
-            extras = [segment for segment in [detail if detail != bullet else None, source] if segment]
+            extras = [segment for segment in [detail if detail != bullet else None] if segment]
             lines.append("- " + bullet + (f": {'; '.join(extras)}" if extras else ""))
 
     priorities = brief.get("priorities") or []
@@ -208,10 +207,9 @@ def _format_brief_for_slack(brief: dict[str, Any], *, delivery_date: date) -> st
                 continue
             label = _clean_string(item.get("item"))
             rationale = _clean_string(item.get("rationale"))
-            urgency = _clean_string(item.get("urgency"))
             if not label:
                 continue
-            extras = [segment for segment in [rationale, urgency] if segment]
+            extras = [segment for segment in [rationale] if segment]
             lines.append("- " + label + (f": {'; '.join(extras)}" if extras else ""))
 
     next_actions = brief.get("next_actions") or []
@@ -241,10 +239,6 @@ def _format_brief_for_slack(brief: dict[str, Any], *, delivery_date: date) -> st
             risk_text = _clean_string(risk)
             if risk_text:
                 lines.append(f"- {risk_text}")
-
-    confidence = _clean_string(brief.get("confidence"))
-    if confidence:
-        lines.extend(["", f"*Confidence:* {confidence}"])
 
     if len(lines) == 1:
         lines.extend(["", "No major items surfaced yet."])
