@@ -702,9 +702,15 @@ async def handle_turn(
             usage=getattr(pending_exc, "usage", Usage()),
             db_session=db_session,
         )
+        # Extract text from the assistant's proposal message so Slack/other
+        # non-WS surfaces can post it without needing WS broadcast access.
+        _proposal_texts = [
+            b.text for b in pending_exc.assistant_message.content if isinstance(b, TextBlock)
+        ]
+        _proposal_text = " ".join(_proposal_texts) if _proposal_texts else None
         return TurnResult(
             session_id=session_id,
-            response_text=None,
+            response_text=_proposal_text,
             stop_reason="tool_pending",
             usage=Usage(),
             pending_tool_use_id=pending_exc.tool_use_id,
