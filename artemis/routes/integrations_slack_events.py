@@ -54,11 +54,33 @@ _GATE_SYSTEM = (
     "Otherwise reply NO."
 )
 
+# Model used for the cheap layer-3 confirm/cancel classifier.
+# Same haiku-tier — a tiny YES/NO/NEITHER completion, never a full turn.
+_CONFIRM_CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
+_CONFIRM_CLASSIFIER_SYSTEM = (
+    "You are classifying a Slack reply to decide whether the user is confirming "
+    "or cancelling a proposed action, or asking something else entirely.\n\n"
+    "Reply with exactly one word:\n"
+    "  YES    — if the message clearly approves / confirms the action "
+    '(e.g. "go", "yes", "do it", "approve", "ship it", "yep", "sure", "ok", '
+    '"proceed", "sounds good", "let\'s do it").\n'
+    "  NO     — if the message clearly declines / cancels the action "
+    '(e.g. "no", "hold", "not yet", "cancel", "stop", "don\'t", "wait").\n'
+    "  NEITHER — for anything else: a new question, a correction, a long message, "
+    "ambiguous phrasing, or anything that isn't a clear yes or no.\n\n"
+    "Be conservative: only reply YES or NO when the intent is unambiguous. "
+    "When in doubt, reply NEITHER."
+)
+
 # ── Pure gate helpers ─────────────────────────────────────────────────────────
 
 # Type alias for an injected classifier callable used by should_respond_to_channel_message.
 # Signature: (text: str) -> Awaitable[bool]
 ChannelClassifier = Callable[[str], Awaitable[bool]]
+
+# Type alias for an injected confirm-reply classifier.
+# Signature: (text: str) -> Awaitable[Literal["YES", "NO", "NEITHER"]]
+ConfirmClassifier = Callable[[str], Awaitable[str]]
 
 
 def should_ping_asker(
@@ -119,6 +141,41 @@ async def _default_channel_classifier(text: str) -> bool:
     except Exception:
         logger.warning("channel gate classifier failed — defaulting to silent", exc_info=True)
         return False
+
+
+async def _default_confirm_classifier(text: str) -> str:
+    """Classify a Slack reply as YES / NO / NEITHER for layer-3 confirm flow.
+
+    Uses a ~5-token single-word completion via haiku-tier model.
+    Conservative default: any failure or unexpected output → "NEITHER".
+    """
+    from artemis.agent.client import AnthropicAdapter, CompletionRequest
+    from artemis.agent.types import Message, TextBlock
+
+    adapter = AnthropicAdapter()
+    req = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text=text)])],
+        system=_CONFIRM_CLASSIFIER_SYSTEM,
+        model=_CONFIRM_CLASSIFIER_MODEL,
+        max_tokens=5,
+        cache_system=False,
+        cache_tools=False,
+    )
+    try:
+        resp = await adapter.complete(req)
+        answer = ""
+        for block in resp.message.content:
+            if hasattr(block, "text"):
+                answer = block.text.strip().upper()
+                break
+        if answer.startswith("YES"):
+            return "YES"
+        if answer.startswith("NO"):
+            return "NO"
+        return "NEITHER"
+    except Exception:
+        logger.warning("confirm classifier failed — defaulting to NEITHER", exc_info=True)
+        return "NEITHER"
 
 
 async def should_respond_to_channel_message(
@@ -393,11 +450,49 @@ def _verify_slack_signature(
 # ── route_inbound stub ────────────────────────────────────────────────────────
 
 
+async def _post_slack_message(
+    *,
+    session_id: str,
+    normalized_agent: str,
+    team_id: str,
+    channel_id: str,
+    reply_thread_ts: str | None,
+    outbound_text: str,
+) -> None:
+    """Post a message to Slack — shared by the normal path and the confirm path."""
+    import artemis.db as _db
+
+    try:
+        async with _db.SessionLocal() as db_session:
+            from artemis.integrations.slack.client import SlackClient
+
+            agent_cfg = await _resolve_agent_slack_config(
+                db_session,
+                agent_id=normalized_agent,
+                team_id=team_id,
+            )
+            if not agent_cfg.access_token:
+                logger.warning(
+                    "route_inbound: no Slack access token configured for agent=%s",
+                    normalized_agent,
+                )
+                return
+            client = SlackClient(token=agent_cfg.access_token)
+            await client.post_message(
+                channel=channel_id,
+                text=outbound_text,
+                thread_ts=reply_thread_ts,
+            )
+    except Exception:
+        logger.exception("route_inbound: failed to post Slack reply for session %s", session_id)
+
+
 async def route_inbound(
     event_data: dict[str, object],
     *,
     agent_id: str = "artemis",
     ping_user_id: str | None = None,
+    confirm_classifier: ConfirmClassifier | None = None,
 ) -> None:
     """Route an inbound Slack event into a floating-artemis session.
 
@@ -405,11 +500,21 @@ async def route_inbound(
     The session is marked surface=slack so the web UI panel doesn't show it.
     After handle_turn completes, the response text is posted back in-thread.
 
+    **Conversational layer-3 confirm flow (no buttons):**
+    When a session has a pending layer-3 confirmation (from a previous turn
+    that yielded), the inbound text is classified as YES / NO / NEITHER before
+    running a new turn:
+      - YES  → resume_after_confirm("run")  → post result text to Slack.
+      - NO   → resume_after_confirm("cancel") → post brief ack.
+      - NEITHER → fall through to normal handle_turn (pending stays intact).
+
     Args:
         event_data: Slack event fields (team_id, channel, user, text, ts, thread_ts).
         agent_id: Which agent to route to.
         ping_user_id: When set, prepend ``<@{ping_user_id}>`` to the outbound text
             (cold-start / re-engagement @mention).  None = no ping (active flow or DM).
+        confirm_classifier: Injectable callable for the YES/NO/NEITHER classifier.
+            Defaults to the real haiku-tier LLM classifier.  Pass a fake in tests.
     """
     team_id = str(event_data.get("team_id", ""))
     channel_id = str(event_data.get("channel", ""))
@@ -432,7 +537,8 @@ async def route_inbound(
 
     import artemis.db as _db
     from artemis.floating_artemis import repository as fa_repo
-    from artemis.floating_artemis.chat import handle_turn
+    from artemis.floating_artemis.authority import confirmation_store
+    from artemis.floating_artemis.chat import handle_turn, resume_after_confirm
 
     # Resolve the speaker's display name from the J9b user cache so Artemis knows
     # who she's addressing.  Falls back to the raw id when the user isn't cached.
@@ -458,6 +564,67 @@ async def route_inbound(
             )
             await db_session.commit()
 
+    # ── Conversational confirm gate ───────────────────────────────────────────
+    # If there is a pending layer-3 confirmation for this session, classify the
+    # reply BEFORE running a new turn.  Only clear/unambiguous YES or NO resolves
+    # the pending; anything else falls through to normal handle_turn.
+    pendings = confirmation_store.list_for_session(session_id)
+    if pendings:
+        # Take the most recently added pending (last in list).
+        pending = pendings[-1]
+        _classifier = (
+            confirm_classifier if confirm_classifier is not None else _default_confirm_classifier
+        )
+        verdict = await _classifier(text)
+        logger.debug(
+            "route_inbound: confirm classifier verdict=%r for session=%s tool_use_id=%s",
+            verdict,
+            session_id,
+            pending.tool_use_id,
+        )
+
+        if verdict in ("YES", "NO"):
+            decision = "run" if verdict == "YES" else "cancel"
+            try:
+                resume_result = await resume_after_confirm(
+                    session_id=session_id,
+                    tool_use_id=pending.tool_use_id,
+                    decision=decision,
+                )
+            except Exception:
+                logger.exception(
+                    "route_inbound: resume_after_confirm failed for session=%s tool_use_id=%s",
+                    session_id,
+                    pending.tool_use_id,
+                )
+                return
+
+            # Post the result text (or a fallback ack for cancel).
+            if resume_result.response_text:
+                outbound_text = lint_agent_text(resume_result.response_text)
+            elif decision == "cancel":
+                outbound_text = "Got it — I've cancelled that."
+            else:
+                outbound_text = "Done."
+
+            if outbound_text.strip():
+                await _post_slack_message(
+                    session_id=session_id,
+                    normalized_agent=normalized_agent,
+                    team_id=team_id,
+                    channel_id=channel_id,
+                    reply_thread_ts=reply_thread_ts,
+                    outbound_text=outbound_text,
+                )
+            return
+
+        # NEITHER — fall through to normal turn; pending confirmation stays intact.
+        logger.debug(
+            "route_inbound: confirm classifier=NEITHER — treating as new turn, pending stays for session=%s",
+            session_id,
+        )
+
+    # ── Normal turn ───────────────────────────────────────────────────────────
     try:
         result = await handle_turn(
             session_id=session_id,
@@ -481,29 +648,14 @@ async def route_inbound(
     if ping_user_id:
         outbound_text = f"<@{ping_user_id}> {outbound_text}"
 
-    try:
-        async with _db.SessionLocal() as db_session:
-            from artemis.integrations.slack.client import SlackClient
-
-            agent_cfg = await _resolve_agent_slack_config(
-                db_session,
-                agent_id=normalized_agent,
-                team_id=team_id,
-            )
-            if not agent_cfg.access_token:
-                logger.warning(
-                    "route_inbound: no Slack access token configured for agent=%s",
-                    normalized_agent,
-                )
-                return
-            client = SlackClient(token=agent_cfg.access_token)
-            await client.post_message(
-                channel=channel_id,
-                text=outbound_text,
-                thread_ts=reply_thread_ts,
-            )
-    except Exception:
-        logger.exception("route_inbound: failed to post Slack reply for session %s", session_id)
+    await _post_slack_message(
+        session_id=session_id,
+        normalized_agent=normalized_agent,
+        team_id=team_id,
+        channel_id=channel_id,
+        reply_thread_ts=reply_thread_ts,
+        outbound_text=outbound_text,
+    )
 
 
 # ── Bot-self / non-human filter ────────────────────────────────────────────────
