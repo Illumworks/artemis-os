@@ -32,13 +32,13 @@ all agents share ONE working tree → branch confusion; my commits once landed o
   cards). NOTE: editable WS draft *bodies* are empty (stub external adapter) — content not lost; real fix = C3.
 
 **IN FLIGHT / NEXT:**
-- **Callie C2 (Codex, in flight):** `briefs/callie-c2-multibot-routing.md` — multi-bot routing, dedicated
-  `/events/callie`, per-app HMAC+token, **registry-driven so N named agents = a Slack app + an integrations
-  row (no new code)**, agent-aware scope (Callie channels/DMs = marketing). Callie app INSTALLED+VERIFIED
-  (bot `U0B9S32PTAM`); creds in gitignored `.env.callie` (Codex stores encrypted then deletes it).
-  **On C2 deploy:** ONE `launchctl kickstart` makes C2 + QW1 + lint + slice-1 + C1 all live; then Jon
-  repoints Callie's Slack Request URL to `…/events/callie` + Retry; Lead verifies live in `campaign signals`/
-  `Marketing Campaigns`/her DM.
+- **Callie C2 — DONE + LIVE-VERIFIED (2026-06-10, merged b6e8292).** Multi-bot routing, dedicated
+  `/events/callie`, per-app HMAC+token, **registry-driven (agent #3 = a Slack app + an integrations row, no
+  new code)**, agent-aware scope (Callie channels/DMs = marketing; Artemis DM still personal). Callie bot
+  `U0B9S32PTAM`, creds stored encrypted (migration 0078 added `integrations.agent_id`). Live test passed:
+  Callie replied in her DM + `campaign signals` (C0B9CHVC7KQ) + `Marketing Campaigns` (C0B8QE17DGQ), her own
+  token, zero echo, Artemis untouched. The C2 restart also made QW1 + lint + slice-1 + C1 live.
+  **Jon TODO:** remove the Artemis bot from the marketing channels now that Callie holds them.
 - **C3 (after C2):** Callie's domain tools (Writing Studio reads: Message Compass, claims register, Coherence
   Map; performance data; analyst posting), the **deliverable→editable-WS-draft body fix (QW2 folded here)**,
   the retired-history handoff to Callie. Plan: `docs/callie-build-plan.md`.
