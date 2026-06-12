@@ -25,9 +25,21 @@ working-tree `public/` live; backend code changes need a kickstart. NOTE: app bi
   TTL) → next personal-DM reply gets reconcile context injected → word-dump maps to specific KRs → proposes
   `update_okr_kr` (layer-3 → "go" applies). Clear is conversation-driven via `complete_okr_checkin` tool (NOT
   apply-clearing — multi-KR dumps survive). KR state shown in opener. DB at 0081 head.
-- **PENDING:** live Friday-style dry-run w/ Jon — fire check-in → word-dump brand-hub/AppScript/skill work →
-  expect KR 6/7/8/9/11 proposed → "go" → confirm a KR row changes only then → change topic → next DM clean.
-  (OKR Studio has 4 objectives / 20 KRs; values currently unset.)
+- **OKR round-trip LIVE-VERIFIED 2026-06-12:** word-dump → `stage_okr_updates` (DB breadcrumb) → "go" →
+  KR 7/9/11 `prog` written (62/78/72 from 30/50/60 baseline) + `okr_activity` rows with Jon's words; breadcrumb
+  completed + cleared. Required two more subscription-path fixes: (a) gated tools served via the SUBPROCESS
+  `mcp_server` (strips layer>2) + in-memory `confirmation_store` can't cross the process boundary → DB-backed
+  breadcrumb staging (migration 0082 `staged_updates`); (b) the confirm classifier called AnthropicAdapter
+  (NO API key) → crashed → defaulted NEITHER → "go" never applied + model falsely claimed "Applied" → replaced
+  with a DETERMINISTIC keyword classifier. See [[fa-claude-code-adapter-strips-layer3]].
+- **PENDING (closes the OKR flow):** `worker/p2-okr-done-bullets` — apply must append the accomplishment
+  BULLET to the KR `done_bullets` (visible in OKR Studio), not just bump `prog`. Brief written; Jon caught that
+  only the number moved, not the visible "what we did" text.
+- **NEXT SEQUENCING (Jon's call 2026-06-12):** finish the **Writing Studio backlog** (`docs/writing-studio-
+  backlog.md`, 5 items incl. "Ready for review → Callie pings Angela" orchestration bridge), THEN resume the
+  **proactivity engine** (P2b commitments → P2c follow-ups). See [[roadmap-sequencing-ws-then-proactivity]].
+- **Same-bug follow-up (background task):** the channel-relevance classifier has the identical no-API-key
+  crash (defaults to silent) — latent, will bite when Callie next handles a non-mention channel message.
 
 **Chapter 2 = personal assistant + Named agents. Build split: Codex=backend, terminal=FE, Opus=architect/
 verify/merge. Workers run on `worker/<scope>` branches; Lead FF-merges to main.** (Hazard seen this session:
