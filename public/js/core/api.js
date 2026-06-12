@@ -1118,8 +1118,24 @@ export async function deleteCampaignAssetLinkApi(campaignId, assetId) {
   }
 }
 
+export async function listWritingRulesApi(params = {}) {
+  const res = await fetch(`/api/writing-rules/rules${_buildQueryString(params)}`);
+  return _readJsonOrThrow(res, "Failed to load writing rules");
+}
+
+export async function listWritingExamplesApi(params = {}) {
+  const res = await fetch(`/api/writing-rules/examples${_buildQueryString(params)}`);
+  return _readJsonOrThrow(res, "Failed to load writing examples");
+}
+
+export async function listWritingSourcesApi(params = {}) {
+  const res = await fetch(`/api/writing-rules/sources${_buildQueryString(params)}`);
+  return _readJsonOrThrow(res, "Failed to load writing sources");
+}
+
 export async function createWritingRuleApi(payload = {}) {
-  const res = await fetch("/api/writing-studio/rules", {
+  // Routes live under /api/writing-rules (not /api/writing-studio/rules).
+  const res = await fetch("/api/writing-rules/rules", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1127,27 +1143,30 @@ export async function createWritingRuleApi(payload = {}) {
   return _readJsonOrThrow(res, "Failed to create writing rule");
 }
 
+// CORRECTED: was PUT /api/writing-studio/rules/{id} — real route is PATCH /api/writing-rules/rules/{id}
 export async function updateWritingRuleApi(id, payload = {}) {
-  const res = await fetch(`/api/writing-studio/rules/${encodeURIComponent(id)}`, {
-    method: "PUT",
+  const res = await fetch(`/api/writing-rules/rules/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   return _readJsonOrThrow(res, "Failed to update writing rule");
 }
 
+// CORRECTED: was PUT /api/writing-studio/examples/{id} — real route is PATCH /api/writing-rules/examples/{id}
 export async function updateWritingExampleApi(id, payload = {}) {
-  const res = await fetch(`/api/writing-studio/examples/${encodeURIComponent(id)}`, {
-    method: "PUT",
+  const res = await fetch(`/api/writing-rules/examples/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   return _readJsonOrThrow(res, "Failed to update writing example");
 }
 
+// CORRECTED: was PUT /api/writing-studio/sources/{id} — real route is PATCH /api/writing-rules/sources/{id}
 export async function updateWritingSourceApi(id, payload = {}) {
-  const res = await fetch(`/api/writing-studio/sources/${encodeURIComponent(id)}`, {
-    method: "PUT",
+  const res = await fetch(`/api/writing-rules/sources/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
