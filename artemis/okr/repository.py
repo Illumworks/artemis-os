@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from artemis.okr.models import (
     OkrActivity,
@@ -127,6 +128,33 @@ async def delete_key_result(session: AsyncSession, kr_id: int) -> bool:
     await session.delete(kr)
     await session.flush()
     return True
+
+
+async def append_done_bullet(
+    session: AsyncSession,
+    kr_id: int,
+    text: str,
+) -> OkrKeyResult | None:
+    """Losslessly append a bullet to a KR's done_bullets JSONB list.
+
+    Reads the existing list, appends the new text (non-empty), assigns a NEW
+    list object, and calls flag_modified so SQLAlchemy detects the mutation
+    on the JSONB column.  Never clobbers existing bullets.
+    Returns the updated OkrKeyResult, or None if the KR does not exist.
+    """
+    text = text.strip()
+    if not text:
+        return None
+    kr = await get_key_result(session, kr_id)
+    if kr is None:
+        return None
+    existing: list[Any] = list(kr.done_bullets) if kr.done_bullets else []
+    existing.append(text)
+    kr.done_bullets = existing
+    flag_modified(kr, "done_bullets")
+    kr.updated_at = datetime.now(UTC)
+    await session.flush()
+    return kr
 
 
 # ── Activity ──────────────────────────────────────────────────────────────────
