@@ -124,7 +124,8 @@ def _build_system_prompt(
 
     # OKR reconcile context: injected when a live check-in breadcrumb exists for
     # this session's speaker.  Instructs Artemis to map the word-dump to KRs and
-    # propose update_okr_kr (layer-3) without bypassing the confirmation gate.
+    # CALL update_okr_krs (layer-3 batch tool) — calling IS the proposal; the
+    # tool suspends and waits for the operator's explicit 'go' before writing.
     if okr_reconcile_context:
         parts.append(okr_reconcile_context)
 
@@ -233,7 +234,8 @@ async def _get_okr_reconcile_context(
     When the Friday check-in fires, it persists a breadcrumb keyed to Jon's
     Slack user ID.  While that breadcrumb is live (not expired, not completed),
     we inject context into the system prompt so the next DM reply gets mapped
-    to specific KRs and a layer-3 update_okr_kr is proposed.
+    to specific KRs and update_okr_krs (layer-3 batch tool) is called — calling
+    the tool IS the proposal; it suspends for the operator's explicit 'go'.
 
     Returns None when no live breadcrumb exists (normal DM path, no injection).
     Failure-isolated: any DB/import error returns None so chat is never broken.
@@ -276,12 +278,22 @@ async def _get_okr_reconcile_context(
             "You ran a Friday OKR check-in earlier. The operator's reply is their "
             "word-dump of what they moved this week. Your job:\n\n"
             "1. Engage with the substance of what they describe (be helpful, warm, on-topic).\n"
-            "2. ALSO: map concrete accomplishments to SPECIFIC KRs from the list below.\n"
-            "3. For each mapped accomplishment, PROPOSE `update_okr_kr` citing their "
-            "own words as the basis. Do NOT invent KRs or progress. If something "
-            "doesn't map to an existing KR, say so plainly.\n"
-            "4. `update_okr_kr` is layer-3 — it will pause for explicit 'go' before "
-            "writing. Nothing updates without that confirmation.\n"
+            "2. ALSO: map concrete accomplishments to SPECIFIC KRs from the snapshot below. "
+            "Do NOT invent KRs or fabricate progress. If something doesn't map, say so.\n"
+            "3. **Call `update_okr_krs` with ALL mapped updates in a single batch call** — "
+            "one tool call, one proposal, one operator 'go'. Do NOT make separate "
+            "`update_okr_kr` calls per KR during a check-in word-dump; use the batch tool.\n"
+            "   - CALLING the tool IS the proposal. `update_okr_krs` is layer-3: it "
+            "pauses immediately after you call it and asks the operator for explicit 'go' "
+            "before writing anything. It does NOT apply on its own. The gate is inside "
+            "the tool — there is no separate 'apply' step you must avoid.\n"
+            "   - Do NOT describe the updates only in prose and wait for the operator to "
+            "ask you to apply. Make the tool call so the confirmation can happen.\n"
+            "   - Never claim `update_okr_krs` or `update_okr_kr` is unavailable. Both "
+            "write tools exist and are wired. The layer-3 gate means they pause before "
+            "writing — they are not absent.\n"
+            "4. Each update in the batch MUST cite the operator's own words as `basis`. "
+            "Empty-basis items are dropped automatically.\n"
             "5. Topic-change / done detection: if the operator's message is NOT about "
             "their weekly work / KR reconciliation (they have changed topic), OR they "
             "signal they are done (e.g. 'that\\'s all', 'thanks', 'nothing else', "
@@ -290,7 +302,9 @@ async def _get_okr_reconcile_context(
             "normally. Do NOT keep injecting reconcile context after the check-in "
             "is closed.\n\n"
             f"Current KR snapshot:\n{kr_list}\n\n"
-            "Reconcile their word-dump to these KRs. Cite their words. Propose, don't apply."
+            "Reconcile their word-dump to these KRs, cite their words as basis, "
+            "and CALL `update_okr_krs` to propose the batch — the tool handles the "
+            "confirmation gate; you do not need to ask separately."
         )
     except Exception:
         logger.debug("_get_okr_reconcile_context failed — skipping injection", exc_info=True)
