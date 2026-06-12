@@ -7,6 +7,7 @@ CF-Access-on-upgrade flow.  Identity is resolved manually per-connection.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -19,13 +20,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/writing-studio", tags=["writing-studio-collab"])
 
 
+def _peer_dict(client_id: str, identity_email: str, identity_name: str | None) -> dict[str, str]:
+    return {"clientId": client_id, "email": identity_email, "name": identity_name or ""}
+
+
 @router.websocket("/drafts/{draft_id}/collab")
 async def collab_ws(websocket: WebSocket, draft_id: int) -> None:
     """Per-draft collab WebSocket.
 
-    Phase 0: identity verification, heartbeat keep-alive, and presence
-    broadcasting (room count).  No editor synchronisation yet — that lands
-    in Phase 1 (OT deltas) and Phase 2 (soft-lock / version CAS).
+    Phase 1: full presence roster protocol — presence.init on join,
+    presence.join / presence.leave broadcasts, and peer.selection relaying.
     """
     identity = await resolve_ws_identity(websocket)
     if identity is None:
@@ -34,21 +38,77 @@ async def collab_ws(websocket: WebSocket, draft_id: int) -> None:
         return
 
     room = str(draft_id)
-    await collab_manager.connect(room, websocket, identity)
+
+    # connect() calls websocket.accept() and returns the new clientId.
+    client_id = await collab_manager.connect(room, websocket, identity)
+
     try:
-        # Announce the updated room size to everyone (including the new joiner).
+        # 1. Send presence.init to the JOINING socket only (peers = everyone else).
+        existing_peers = collab_manager.peers(room, exclude=websocket)
+        await websocket.send_json(
+            {
+                "type": "presence.init",
+                "you": _peer_dict(client_id, identity.email, identity.name),
+                "peers": [
+                    _peer_dict(p.client_id, p.identity.email, p.identity.name)
+                    for p in existing_peers
+                ],
+            }
+        )
+
+        # 2. Broadcast presence.join to OTHERS (exclude the joiner).
         await collab_manager.broadcast(
             room,
-            {"type": "collab.presence", "count": collab_manager.room_count(room)},
+            {
+                "type": "presence.join",
+                "peer": _peer_dict(client_id, identity.email, identity.name),
+            },
+            exclude=websocket,
         )
+
+        # 3. Receive loop.
         while True:
-            # Heartbeat frames are accepted but the payload is ignored in Phase 0.
-            await websocket.receive_text()
+            data = await websocket.receive_text()
+
+            # Non-JSON frames (e.g. 'ping' keepalive) are ignored harmlessly.
+            try:
+                msg = json.loads(data)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            if not isinstance(msg, dict):
+                continue
+
+            msg_type = msg.get("type")
+
+            if msg_type == "selection":
+                # Relay peer.selection to everyone EXCEPT the sender.
+                sender_client_id = collab_manager.client_id_for(room, websocket)
+                if sender_client_id is None:
+                    continue
+                try:
+                    from_pos = int(msg["from"])
+                    to_pos = int(msg["to"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                await collab_manager.broadcast(
+                    room,
+                    {
+                        "type": "peer.selection",
+                        "clientId": sender_client_id,
+                        "from": from_pos,
+                        "to": to_pos,
+                    },
+                    exclude=websocket,
+                )
+            # Unknown type — ignore defensively.
+
     except WebSocketDisconnect:
         pass
     finally:
-        await collab_manager.disconnect(room, websocket)
-        await collab_manager.broadcast(
-            room,
-            {"type": "collab.presence", "count": collab_manager.room_count(room)},
-        )
+        departing_client_id = collab_manager.disconnect(room, websocket)
+        if departing_client_id is not None:
+            await collab_manager.broadcast(
+                room,
+                {"type": "presence.leave", "clientId": departing_client_id},
+            )

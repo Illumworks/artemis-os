@@ -2188,3 +2188,94 @@
 .cv5-memory-delete-btn { color: #b33; border-color: #f1c9c9; }
 .cv5-memory-delete-btn:hover { background: #fef2f2; border-color: #e89a9a; }
 .cv5-memory-delete-btn[disabled] { opacity: 0.45; cursor: default; }
+
+/* ── Phase 1: Presence — who's-here avatars + remote cursors + selection bands */
+
+/* Avatar cluster in the cv5-hdr (between status pill and spacer) */
+.cv5-presence-avatars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  transition: opacity 300ms ease;
+}
+.cv5-presence-avatars.is-dimmed { opacity: 0.4; }
+
+/* Individual avatar circle (24px, white bold initials) */
+.cv5-presence-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.02em;
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,0.85);
+  flex-shrink: 0;
+  cursor: default;
+  user-select: none;
+}
+
+/* +N overflow chip */
+.cv5-presence-avatar--overflow {
+  background: var(--cv5-rule, #ddd);
+  color: var(--cv5-ink3, #888);
+  font-size: 8.5px;
+  font-weight: 600;
+  width: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+}
+
+/* Remote caret — 2px vertical bar, pointer-events:none, absolutely positioned
+   by ProseMirror's widget machinery so it renders inline inside text flow.    */
+.cv5-presence-caret {
+  display: inline-block;
+  position: relative;
+  width: 2px;
+  height: 1.15em;
+  vertical-align: text-bottom;
+  background: var(--presence-color, #888);
+  border-radius: 1px;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Name flag riding above the caret */
+.cv5-presence-flag {
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--presence-color, #888);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 2px 5px;
+  border-radius: 4px;
+  pointer-events: none;
+  user-select: none;
+  line-height: 1.3;
+  /* Idle-fade: hold for ~2s then ease to 0; fill-mode forwards keeps it hidden. */
+  animation: cv5-presence-flag-fade 2.8s ease forwards;
+}
+
+@keyframes cv5-presence-flag-fade {
+  0%   { opacity: 1; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Remote selection range band — per-peer color comes from inline style;
+   this class adds the border-radius / box-decoration-break only.
+   pointer-events:none so it never intercepts clicks or drag.                 */
+.cv5-presence-range {
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  pointer-events: none;
+}

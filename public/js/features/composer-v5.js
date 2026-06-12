@@ -19,6 +19,7 @@ import { addListNodes } from "prosemirror-schema-list";
 import { exampleSetup } from "prosemirror-example-setup";
 
 import { openCollabSocket } from "../core/collab-socket.js";
+import { presenceColor } from "../core/presence-color.js";
 import { escapeHtml } from "../core/utils.js";
 import {
   applyWritingTemplateApi,
@@ -144,6 +145,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   const pickerEl = rootEl.querySelector('[data-cv5="drafts-picker"]');
   const historyBtnEl = rootEl.querySelector('[data-cv5="open-history"]');
   const draftTitleEl = rootEl.querySelector('[data-cv5="draft-title"]');
+  const presenceAvatarsEl = rootEl.querySelector('[data-cv5="presence-avatars"]');
 
   // ── Stage 4: Claim-flags plugin ────────────────────────────────────────────
   //
@@ -226,12 +228,129 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     },
   });
 
+  // ── Phase 1: Presence plugin ───────────────────────────────────────────────
+  //
+  // Tracks remote peers' cursor positions and selection ranges via
+  // Decoration.widget (2px caret) and Decoration.inline (low-alpha band).
+  // State is updated via setMeta(presenceKey, {op, ...}); positions are mapped
+  // through tr.mapping on every local transaction so remote carets track typing.
+  //
+  // Plugin state = { peers: Map<clientId, {from,to,color,name}>, decoSet }.
+  // Supported ops: {op:'upsert', clientId, from, to, color, name}
+  //                {op:'remove', clientId}
+  //                {op:'clear'}
+
+  const presenceKey = new PluginKey("presence");
+
+  function _makeCaretDOM(color, name) {
+    const wrap = document.createElement("span");
+    wrap.className = "cv5-presence-caret";
+    wrap.style.setProperty("--presence-color", color);
+    const flag = document.createElement("span");
+    flag.className = "cv5-presence-flag";
+    flag.textContent = name || "";
+    flag.style.setProperty("--presence-color", color);
+    wrap.appendChild(flag);
+    return wrap;
+  }
+
+  function _presenceDecosFor(peers, doc) {
+    const decos = [];
+    const maxPos = doc.content.size;
+    for (const [clientId, peer] of peers) {
+      if (peer.from == null || peer.to == null) continue;
+      const from = Math.max(0, Math.min(peer.from, maxPos));
+      const to   = Math.max(0, Math.min(peer.to,   maxPos));
+      if (from === to) {
+        // Collapsed selection → widget caret.
+        decos.push(
+          Decoration.widget(from, () => _makeCaretDOM(peer.color, peer.name), {
+            key: `caret-${clientId}`,
+            side: -1,
+          })
+        );
+      } else {
+        // Range selection → inline highlight band.
+        decos.push(
+          Decoration.inline(
+            Math.min(from, to),
+            Math.max(from, to),
+            {
+              class: "cv5-presence-range",
+              style: `background: ${_presenceRgba(peer.color)}`,
+            }
+          )
+        );
+      }
+    }
+    return decos;
+  }
+
+  function _presenceRgba(hslColor) {
+    // Convert "hsl(H, S%, L%)" to "hsla(H, S%, L%, 0.22)" for the band.
+    return hslColor.replace(/^hsl\(/, "hsla(").replace(/\)$/, ", 0.22)");
+  }
+
+  const presencePlugin = new Plugin({
+    key: presenceKey,
+    state: {
+      init(_config, _editorState) {
+        return { peers: new Map(), decoSet: DecorationSet.empty };
+      },
+      apply(tr, prev, _oldState, newState) {
+        // Start from cloned peers map; map positions through any doc change.
+        /** @type {Map<string,{from:number,to:number,color:string,name:string}>} */
+        const peers = new Map(prev.peers);
+        if (tr.docChanged) {
+          for (const [clientId, peer] of peers) {
+            if (peer.from == null || peer.to == null) continue;
+            const newFrom = tr.mapping.map(peer.from);
+            const newTo   = tr.mapping.map(peer.to);
+            // Drop the range if it maps outside the document.
+            if (newFrom < 0 || newTo > newState.doc.content.size) {
+              peers.delete(clientId);
+            } else {
+              peers.set(clientId, { ...peer, from: newFrom, to: newTo });
+            }
+          }
+        }
+
+        const meta = tr.getMeta(presenceKey);
+        if (meta) {
+          if (meta.op === "upsert") {
+            peers.set(meta.clientId, {
+              from:  meta.from,
+              to:    meta.to,
+              color: meta.color,
+              name:  meta.name,
+            });
+          } else if (meta.op === "remove") {
+            peers.delete(meta.clientId);
+          } else if (meta.op === "clear") {
+            peers.clear();
+          }
+        }
+
+        const decoSet = DecorationSet.create(
+          newState.doc,
+          _presenceDecosFor(peers, newState.doc)
+        );
+        return { peers, decoSet };
+      },
+    },
+    props: {
+      decorations(state) {
+        return this.getState(state).decoSet;
+      },
+    },
+  });
+
   // ── ProseMirror editor ─────────────────────────────────────────────────────
   const initialDoc = textToProseMirrorDoc(draft.content || "", composerSchema);
   const state = EditorState.create({
     doc: initialDoc,
     schema: composerSchema,
-    plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin],
+    plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin, presencePlugin],
   });
   const view = new EditorView(editorHost, {
     state,
@@ -249,6 +368,20 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       // Stage 2: the selection toolbar follows the editor's OWN selection state,
       // so it tracks drags/clicks in the editor and ignores everything else.
       if (typeof updateSelectionState === "function") updateSelectionState();
+      // Phase 1: broadcast local selection to peers (debounced ~180ms).
+      if (presenceConnected) {
+        if (_selectionBroadcastTimer !== null) clearTimeout(_selectionBroadcastTimer);
+        _selectionBroadcastTimer = setTimeout(() => {
+          _selectionBroadcastTimer = null;
+          if (!presenceConnected) return;
+          const { from, to } = view.state.selection;
+          collabSocket?.send(JSON.stringify({
+            type: "selection",
+            from: Math.min(from, to),
+            to:   Math.max(from, to),
+          }));
+        }, 180);
+      }
     },
   });
 
@@ -1085,20 +1218,137 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   let destroyed = false;
   let currentDraftId = draft.id;
 
-  // Phase 0 collab plumbing — identity-aware WebSocket, no editor UI yet.
+  // ── Phase 1 collab presence ───────────────────────────────────────────────
+  //
+  // collabSocket: the WebSocket handle (Phase 0 plumbing).
+  // presenceConnected: true while the socket is open; gates selection broadcast.
+  // peers: Map<clientId, {email, name, from?, to?}> — remote peer roster.
+  // selfClientId / selfEmail: identity assigned by the server on presence.init.
+  // _selectionBroadcastTimer: debounce handle for the 180ms selection emit.
+
   let collabSocket = null;
-  {
-    // dev-only: ?collab_as=alice@example.com lets two local windows be distinct users.
-    const _collabAs = new URLSearchParams(location.search).get('collab_as');
-    collabSocket = openCollabSocket({
-      draftId: currentDraftId,
-      asEmail: _collabAs || null,
-      asName: _collabAs || null,
-      onEvent: (evt) => {
-        if (evt?.type === 'collab.presence') console.debug('[collab] room count', evt.count);
-      },
-    });
+  let presenceConnected = false;
+  let selfClientId = null;
+  let selfEmail = null;
+  let _selectionBroadcastTimer = null;
+  /** @type {Map<string, {email:string, name:string, from?:number, to?:number}>} */
+  const peers = new Map();
+
+  /**
+   * Render the presence avatar cluster from the current `peers` map.
+   * Avatars are 24px circles with initials, capped at 5 with a +N chip.
+   * The cluster is dimmed while disconnected.
+   */
+  function renderPresenceAvatars() {
+    if (!presenceAvatarsEl) return;
+    const list = Array.from(peers.values());
+    const shown = list.slice(0, 5);
+    const overflow = list.length - shown.length;
+
+    presenceAvatarsEl.innerHTML = shown
+      .map((p) => {
+        const initials = _peerInitials(p.name || p.email);
+        const color = presenceColor(p.email);
+        const label = `${p.name || p.email} <${p.email}>`;
+        return `<span class="cv5-presence-avatar" title="${esc(label)}" style="background:${esc(color)}">${esc(initials)}</span>`;
+      })
+      .join("") +
+      (overflow > 0
+        ? `<span class="cv5-presence-avatar cv5-presence-avatar--overflow">+${overflow}</span>`
+        : "");
   }
+
+  function _peerInitials(nameOrEmail) {
+    const s = (nameOrEmail || "?").trim();
+    const parts = s.split(/[\s@.]+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  }
+
+  // dev-only: ?collab_as=alice@example.com lets two local windows be distinct users.
+  const _collabAs = new URLSearchParams(location.search).get('collab_as');
+  collabSocket = openCollabSocket({
+    draftId: currentDraftId,
+    asEmail: _collabAs || null,
+    asName: _collabAs || null,
+    onEvent: (evt) => {
+      if (!evt || !evt.type) return;
+
+      switch (evt.type) {
+        case 'collab:connected':
+        case 'collab:reconnected': {
+          const isReconnect = evt.type === 'collab:reconnected';
+          presenceConnected = true;
+          if (presenceAvatarsEl) presenceAvatarsEl.classList.remove('is-dimmed');
+          if (isReconnect) {
+            // Clear stale peer state; server will re-send presence.init.
+            peers.clear();
+            renderPresenceAvatars();
+            view.dispatch(view.state.tr.setMeta(presenceKey, { op: 'clear' }));
+          }
+          console.debug('[collab] connected' + (isReconnect ? ' (reconnected)' : ''));
+          break;
+        }
+
+        case 'collab:disconnected': {
+          presenceConnected = false;
+          if (presenceAvatarsEl) presenceAvatarsEl.classList.add('is-dimmed');
+          view.dispatch(view.state.tr.setMeta(presenceKey, { op: 'clear' }));
+          console.debug('[collab] disconnected');
+          break;
+        }
+
+        case 'presence.init': {
+          // Server sends this only to the joining socket.
+          selfClientId = evt.you?.clientId ?? null;
+          selfEmail    = evt.you?.email ?? null;
+          peers.clear();
+          for (const p of (evt.peers || [])) {
+            peers.set(p.clientId, { email: p.email, name: p.name });
+          }
+          renderPresenceAvatars();
+          break;
+        }
+
+        case 'presence.join': {
+          const p = evt.peer;
+          if (p?.clientId) peers.set(p.clientId, { email: p.email, name: p.name });
+          renderPresenceAvatars();
+          break;
+        }
+
+        case 'presence.leave': {
+          peers.delete(evt.clientId);
+          renderPresenceAvatars();
+          view.dispatch(view.state.tr.setMeta(presenceKey, { op: 'remove', clientId: evt.clientId }));
+          break;
+        }
+
+        case 'peer.selection': {
+          const peer = peers.get(evt.clientId);
+          if (!peer) break;
+          // Update in-memory from/to for the roster (for future re-renders).
+          peers.set(evt.clientId, { ...peer, from: evt.from, to: evt.to });
+          // Dispatch a setMeta-only transaction to update the decoration plugin.
+          view.dispatch(
+            view.state.tr.setMeta(presenceKey, {
+              op:       'upsert',
+              clientId: evt.clientId,
+              from:     evt.from,
+              to:       evt.to,
+              color:    presenceColor(peer.email),
+              name:     peer.name || peer.email,
+            })
+          );
+          break;
+        }
+
+        default:
+          // Unknown frame — ignore.
+          break;
+      }
+    },
+  });
 
   function setSavingIndicator(state, message) {
     if (!savingEl) return;
@@ -3454,8 +3704,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     const newState = EditorState.create({
       doc: newDoc,
       schema: composerSchema,
-      // Include claim-flags + comments plugins so highlights survive a content refresh.
-      plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin],
+      // Include claim-flags + comments + presence plugins so decorations survive a content refresh.
+      plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin, presencePlugin],
     });
     view.updateState(newState);
     // Re-render comment cards after the doc is replaced.
@@ -3952,7 +4202,12 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     destroy() {
       destroyed = true;
       if (autosaveTimer) clearTimeout(autosaveTimer);
-      // Phase 0 collab cleanup — close WebSocket before tearing down the view.
+      // Phase 1 collab cleanup — clear selection debounce, then close WebSocket.
+      if (_selectionBroadcastTimer !== null) {
+        clearTimeout(_selectionBroadcastTimer);
+        _selectionBroadcastTimer = null;
+      }
+      presenceConnected = false;
       try { collabSocket?.close(); } catch (_) { /* noop */ }
       collabSocket = null;
       try { view.destroy(); } catch (_) { /* noop */ }
@@ -4051,6 +4306,7 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
         </div>
         <span class="cv5-hdr-title" data-cv5="draft-title" title="Click to rename" tabindex="0" role="button" aria-label="Draft name: ${esc(titleText)} — click to rename">${esc(titleText)}</span>
         <span class="cv5-hdr-status">${esc(status)}</span>
+        <div class="cv5-presence-avatars" data-cv5="presence-avatars" aria-label="People editing"></div>
         <div class="cv5-hdr-spacer"></div>
         <button type="button" class="cv5-hdr-ind" data-cv5="rules-btn" title="Proposed rules &amp; manual propose">Rules<span class="cv5-rules-badge" data-cv5="rules-badge" hidden></span></button>
         <button type="button" class="cv5-hdr-ind" data-cv5="memory-btn" title="View &amp; edit voice memory (rules, sources, examples)">Memory</button>

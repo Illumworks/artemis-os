@@ -43,15 +43,18 @@ def test_two_connections_room_count() -> None:
     draft_id = 1001
 
     with tc.websocket_connect(f"/api/writing-studio/drafts/{draft_id}/collab") as ws1:
+        ws1.receive_json()  # consume presence.init for ws1
         assert collab_manager.room_count(str(draft_id)) == 1
 
         with tc.websocket_connect(f"/api/writing-studio/drafts/{draft_id}/collab") as ws2:
             assert collab_manager.room_count(str(draft_id)) == 2
 
-            # The second connection should have received a collab.presence event.
-            evt = ws2.receive_json()
-            assert evt["type"] == "collab.presence"
-            assert evt["count"] == 2
+            # Phase 1: ws1 gets presence.join; ws2 gets presence.init (with ws1 as peer).
+            join_evt = ws1.receive_json()
+            assert join_evt["type"] == "presence.join"
+            init_evt = ws2.receive_json()
+            assert init_evt["type"] == "presence.init"
+            assert len(init_evt["peers"]) == 1
 
             ws2.close()
 
@@ -160,7 +163,7 @@ def test_auth_rejection_no_jwt(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_presence_event_on_connect() -> None:
-    """First client receives a collab.presence event with count=1 on connect."""
+    """First client receives a presence.init event with empty peers on connect (Phase 1 protocol)."""
     from artemis.marketing.writing_studio.collab.manager import collab_manager
 
     collab_manager._rooms.clear()
@@ -171,5 +174,7 @@ def test_presence_event_on_connect() -> None:
 
     with tc.websocket_connect(f"/api/writing-studio/drafts/{draft_id}/collab") as ws:
         evt = ws.receive_json()
-        assert evt["type"] == "collab.presence"
-        assert evt["count"] == 1
+        # Phase 1 replaced collab.presence count with the full roster protocol.
+        assert evt["type"] == "presence.init"
+        assert evt["peers"] == []
+        assert "you" in evt

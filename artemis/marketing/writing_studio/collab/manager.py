@@ -1,7 +1,8 @@
 """Per-draft collaborative editing connection registry.
 
 Tracks which WebSocket connections are active in each draft "room" and records
-the identity of each participant so Phase 1 can render a presence roster.
+the identity and client-id of each participant so Phase 1 can render a
+presence roster and route peer.selection broadcasts.
 
 Thread/task safety: single-process asyncio server; no cross-process fan-out.
 """
@@ -9,6 +10,8 @@ Thread/task safety: single-process asyncio server; no cross-process fan-out.
 from __future__ import annotations
 
 import logging
+import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import WebSocket
@@ -18,35 +21,59 @@ from artemis.identity.dependencies import RequestIdentity
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class _Peer:
+    """Per-connection record stored in a room."""
+
+    client_id: str
+    identity: RequestIdentity
+
+
 class CollabManager:
     """Tracks active collab connections, organised by room (str(draft_id))."""
 
     def __init__(self) -> None:
-        # room -> {WebSocket: RequestIdentity}
-        self._rooms: dict[str, dict[WebSocket, RequestIdentity]] = {}
+        # room -> {WebSocket: _Peer}
+        self._rooms: dict[str, dict[WebSocket, _Peer]] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def connect(self, room: str, websocket: WebSocket, identity: RequestIdentity) -> None:
-        """Accept *websocket*, record its *identity*, and add to *room*."""
+    async def connect(self, room: str, websocket: WebSocket, identity: RequestIdentity) -> str:
+        """Accept *websocket*, record its *identity*, add to *room*, return clientId."""
         await websocket.accept()
-        self._rooms.setdefault(room, {})[websocket] = identity
+        client_id = uuid.uuid4().hex
+        self._rooms.setdefault(room, {})[websocket] = _Peer(client_id=client_id, identity=identity)
         logger.debug(
-            "collab:connect room=%s user=%s total=%d",
+            "collab:connect room=%s user=%s client=%s total=%d",
             room,
             identity.email,
+            client_id,
             len(self._rooms[room]),
         )
+        return client_id
 
-    async def disconnect(self, room: str, websocket: WebSocket) -> None:
-        """Remove *websocket* from *room*; clean up empty rooms."""
-        if room in self._rooms:
-            self._rooms[room].pop(websocket, None)
-            if not self._rooms[room]:
-                del self._rooms[room]
-                logger.debug("collab:room_empty room=%s", room)
+    def disconnect(self, room: str, websocket: WebSocket) -> str | None:
+        """Remove *websocket* from *room*; return the departing clientId (or None).
+
+        Callers use the returned clientId to broadcast ``presence.leave``.
+        Cleans up empty rooms.
+        """
+        if room not in self._rooms:
+            return None
+        peer = self._rooms[room].pop(websocket, None)
+        if not self._rooms[room]:
+            del self._rooms[room]
+            logger.debug("collab:room_empty room=%s", room)
+        if peer is None:
+            return None
+        logger.debug(
+            "collab:disconnect room=%s client=%s",
+            room,
+            peer.client_id,
+        )
+        return peer.client_id
 
     # ------------------------------------------------------------------
     # Broadcast
@@ -89,11 +116,17 @@ class CollabManager:
         return len(self._rooms.get(room, {}))
 
     def roster(self, room: str) -> list[RequestIdentity]:
-        """Return the list of identities currently connected to *room*.
+        """Return the list of identities currently connected to *room*."""
+        return [p.identity for p in self._rooms.get(room, {}).values()]
 
-        Phase 1 will use this to render presence avatars.
-        """
-        return list(self._rooms.get(room, {}).values())
+    def peers(self, room: str, exclude: WebSocket | None = None) -> list[_Peer]:
+        """Return all _Peer records in *room*, optionally excluding one WebSocket."""
+        return [peer for ws, peer in self._rooms.get(room, {}).items() if ws is not exclude]
+
+    def client_id_for(self, room: str, websocket: WebSocket) -> str | None:
+        """Return the clientId assigned to *websocket* in *room*, or None."""
+        peer = self._rooms.get(room, {}).get(websocket)
+        return peer.client_id if peer is not None else None
 
 
 # Module-level singleton — import this everywhere instead of constructing
