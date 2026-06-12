@@ -55,24 +55,6 @@ _GATE_SYSTEM = (
     "Otherwise reply NO."
 )
 
-# Model used for the cheap layer-3 confirm/cancel classifier.
-# Same haiku-tier — a tiny YES/NO/NEITHER completion, never a full turn.
-_CONFIRM_CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
-_CONFIRM_CLASSIFIER_SYSTEM = (
-    "You are classifying a Slack reply to decide whether the user is confirming "
-    "or cancelling a proposed action, or asking something else entirely.\n\n"
-    "Reply with exactly one word:\n"
-    "  YES    — if the message clearly approves / confirms the action "
-    '(e.g. "go", "yes", "do it", "approve", "ship it", "yep", "sure", "ok", '
-    '"proceed", "sounds good", "let\'s do it").\n'
-    "  NO     — if the message clearly declines / cancels the action "
-    '(e.g. "no", "hold", "not yet", "cancel", "stop", "don\'t", "wait").\n'
-    "  NEITHER — for anything else: a new question, a correction, a long message, "
-    "ambiguous phrasing, or anything that isn't a clear yes or no.\n\n"
-    "Be conservative: only reply YES or NO when the intent is unambiguous. "
-    "When in doubt, reply NEITHER."
-)
-
 # ── Pure gate helpers ─────────────────────────────────────────────────────────
 
 # Type alias for an injected classifier callable used by should_respond_to_channel_message.
@@ -144,39 +126,91 @@ async def _default_channel_classifier(text: str) -> bool:
         return False
 
 
+# Deterministic confirm vocabulary. The confirm decision is a small, bounded
+# choice, so keyword matching is more reliable (and has no API-key dependency —
+# Artemis runs on the Claude Code subscription with NO Anthropic key, so any
+# AnthropicAdapter call here would raise and default every reply to NEITHER,
+# silently breaking the apply-on-"go" path).
+_CONFIRM_AFFIRMATIVES = frozenset(
+    {
+        "go",
+        "yes",
+        "yep",
+        "yeah",
+        "yup",
+        "ok",
+        "okay",
+        "sure",
+        "approve",
+        "approved",
+        "confirm",
+        "confirmed",
+        "apply",
+        "proceed",
+        "ship",
+    }
+)
+# Multi-word affirmative phrases (matched as substrings on the normalized text).
+_CONFIRM_AFFIRMATIVE_PHRASES = (
+    "good to go",
+    "go ahead",
+    "do it",
+    "ship it",
+    "send it",
+    "sounds good",
+    "looks good",
+    "let's do it",
+    "lets do it",
+    "make it so",
+    "go for it",
+)
+_CONFIRM_NEGATIVES = frozenset(
+    {
+        "no",
+        "nope",
+        "nah",
+        "hold",
+        "cancel",
+        "stop",
+        "don't",
+        "dont",
+        "wait",
+        "discard",
+        "scrap",
+    }
+)
+_CONFIRM_NEGATIVE_PHRASES = ("not yet", "never mind", "nevermind", "hold off", "don't")
+
+
 async def _default_confirm_classifier(text: str) -> str:
-    """Classify a Slack reply as YES / NO / NEITHER for layer-3 confirm flow.
+    """Classify a Slack reply as YES / NO / NEITHER for the layer-3 confirm flow.
 
-    Uses a ~5-token single-word completion via haiku-tier model.
-    Conservative default: any failure or unexpected output → "NEITHER".
+    Deterministic, keyword-based — no LLM/API dependency (Artemis has no Anthropic
+    API key; an API call here would raise and break apply-on-"go"). Negation wins
+    over affirmation (cancel-safe). Mixed/none → NEITHER (falls through to a normal
+    turn, which never applies anything).
     """
-    from artemis.agent.client import AnthropicAdapter, CompletionRequest
-    from artemis.agent.types import Message, TextBlock
+    normalized = text.strip().lower()
+    if not normalized:
+        return "NEITHER"
 
-    adapter = AnthropicAdapter()
-    req = CompletionRequest(
-        messages=[Message(role="user", content=[TextBlock(text=text)])],
-        system=_CONFIRM_CLASSIFIER_SYSTEM,
-        model=_CONFIRM_CLASSIFIER_MODEL,
-        max_tokens=5,
-        cache_system=False,
-        cache_tools=False,
+    # Word-boundary tokens for single-word matching (so "go" matches in "good to
+    # go" but not in "going"; "no" matches as a word but not in "now"/"nothing").
+    tokens = set(re.findall(r"[a-z']+", normalized))
+
+    has_negative = bool(tokens & _CONFIRM_NEGATIVES) or any(
+        phrase in normalized for phrase in _CONFIRM_NEGATIVE_PHRASES
     )
-    try:
-        resp = await adapter.complete(req)
-        answer = ""
-        for block in resp.message.content:
-            if hasattr(block, "text"):
-                answer = block.text.strip().upper()
-                break
-        if answer.startswith("YES"):
-            return "YES"
-        if answer.startswith("NO"):
-            return "NO"
-        return "NEITHER"
-    except Exception:
-        logger.warning("confirm classifier failed — defaulting to NEITHER", exc_info=True)
-        return "NEITHER"
+    has_affirmative = bool(tokens & _CONFIRM_AFFIRMATIVES) or any(
+        phrase in normalized for phrase in _CONFIRM_AFFIRMATIVE_PHRASES
+    )
+
+    # Negation wins (cancel-safe): "no, not yet" or "go but wait" → do not apply.
+    if has_negative:
+        return "NO"
+    if has_affirmative:
+        return "YES"
+    return "NEITHER"
 
 
 async def should_respond_to_channel_message(

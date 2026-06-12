@@ -683,24 +683,29 @@ async def test_web_tool_confirm_404_when_not_found() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_default_confirm_classifier_system_prompt_is_conservative() -> None:
-    """The confirm classifier system prompt mentions conservative defaults."""
-    from artemis.routes.integrations_slack_events import _CONFIRM_CLASSIFIER_SYSTEM
+async def test_default_confirm_classifier_is_deterministic_no_api() -> None:
+    """The confirm classifier is deterministic keyword-based — no LLM/API call.
 
-    # System prompt should guide toward NEITHER when uncertain
-    assert "NEITHER" in _CONFIRM_CLASSIFIER_SYSTEM
-    assert "conservative" in _CONFIRM_CLASSIFIER_SYSTEM.lower()
-
-
-async def test_default_confirm_classifier_failure_returns_neither() -> None:
-    """When the LLM call fails, _default_confirm_classifier returns 'NEITHER'."""
+    Critical: Artemis runs on the Claude Code subscription with NO Anthropic key.
+    An API-backed classifier raised on every reply and defaulted to NEITHER, which
+    silently broke apply-on-"go". This must work with zero API dependency.
+    """
     from artemis.routes.integrations_slack_events import _default_confirm_classifier
 
+    # Even if an AnthropicAdapter call WOULD raise, the classifier must still work.
     with patch(
         "artemis.agent.client.AnthropicAdapter.complete",
         new_callable=AsyncMock,
-        side_effect=RuntimeError("API unavailable"),
+        side_effect=RuntimeError("API unavailable — no key"),
     ):
-        result = await _default_confirm_classifier("go ahead")
+        # The exact live phrasing that previously failed.
+        assert await _default_confirm_classifier("good to go Artemis thank you") == "YES"
 
-    assert result == "NEITHER", f"Expected NEITHER on failure, got {result!r}"
+    for affirmative in ("go", "yes", "do it", "approve", "ship it", "go ahead", "sure"):
+        assert await _default_confirm_classifier(affirmative) == "YES", affirmative
+    for negative in ("no", "not yet", "cancel", "hold off", "stop"):
+        assert await _default_confirm_classifier(negative) == "NO", negative
+    for neither in ("what's the URL?", "maybe later", ""):
+        assert await _default_confirm_classifier(neither) == "NEITHER", neither
+    # Cancel-safe: negation wins over a co-present affirmative.
+    assert await _default_confirm_classifier("good to go but wait") == "NO"
