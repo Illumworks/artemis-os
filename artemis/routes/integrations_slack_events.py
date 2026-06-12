@@ -19,6 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
@@ -504,9 +505,19 @@ async def route_inbound(
     When a session has a pending layer-3 confirmation (from a previous turn
     that yielded), the inbound text is classified as YES / NO / NEITHER before
     running a new turn:
-      - YES  → resume_after_confirm("run")  → post result text to Slack.
-      - NO   → resume_after_confirm("cancel") → post brief ack.
-      - NEITHER → fall through to normal handle_turn (pending stays intact).
+      - YES  -> resume_after_confirm("run")  -> post result text to Slack.
+      - NO   -> resume_after_confirm("cancel") -> post brief ack.
+      - NEITHER -> fall through to normal handle_turn (pending stays intact).
+
+    **DB-backed staged-updates confirm flow (subscription/claude-code path):**
+    When the speaker has a live breadcrumb with non-empty staged_updates (set by
+    stage_okr_updates layer-1 tool), the inbound text is classified BEFORE running
+    a new turn:
+      - YES ("go") -> apply each staged update server-side (KR row + activity log),
+        clear staged_updates, complete the breadcrumb, post result.
+      - NO -> clear staged_updates, post brief ack.
+      - NEITHER -> fall through to normal handle_turn (staged_updates remain).
+    This path works regardless of adapter (main process, reads the DB directly).
 
     Args:
         event_data: Slack event fields (team_id, channel, user, text, ts, thread_ts).
@@ -528,7 +539,7 @@ async def route_inbound(
 
     normalized_agent = _normalize_agent_id(agent_id)
 
-    # Stable session key — one FA session per Slack thread (or channel if not threaded)
+    # Stable session key -- one FA session per Slack thread (or channel if not threaded)
     bucket = str(thread_ts) if thread_ts else "_"
     session_id = f"slack-{normalized_agent}-{team_id}-{channel_id}-{bucket}"
     # Reply in-thread ONLY when the source was already a thread reply.
@@ -564,7 +575,7 @@ async def route_inbound(
             )
             await db_session.commit()
 
-    # ── Conversational confirm gate ───────────────────────────────────────────
+    # ── Conversational confirm gate (in-process, web/intercepting path) ──────
     # If there is a pending layer-3 confirmation for this session, classify the
     # reply BEFORE running a new turn.  Only clear/unambiguous YES or NO resolves
     # the pending; anything else falls through to normal handle_turn.
@@ -603,7 +614,7 @@ async def route_inbound(
             if resume_result.response_text:
                 outbound_text = lint_agent_text(resume_result.response_text)
             elif decision == "cancel":
-                outbound_text = "Got it — I've cancelled that."
+                outbound_text = "Got it, cancelled."
             else:
                 outbound_text = "Done."
 
@@ -618,11 +629,123 @@ async def route_inbound(
                 )
             return
 
-        # NEITHER — fall through to normal turn; pending confirmation stays intact.
+        # NEITHER -- fall through to normal turn; pending confirmation stays intact.
         logger.debug(
-            "route_inbound: confirm classifier=NEITHER — treating as new turn, pending stays for session=%s",
+            "route_inbound: confirm classifier=NEITHER -- treating as new turn, pending stays for session=%s",
             session_id,
         )
+
+    # ── DB-backed staged-updates gate (subscription/claude-code path) ────────
+    # Check whether the speaker has a live breadcrumb with staged_updates.
+    # This path runs regardless of adapter since it is in the main process.
+    if slack_user_id:
+        try:
+            from artemis.proactivity.repository import (
+                clear_staged_updates,
+                complete_okr_checkin_breadcrumb,
+                get_live_okr_checkin_breadcrumb,
+            )
+
+            async with _db.SessionLocal() as db_session:
+                crumb = await get_live_okr_checkin_breadcrumb(db_session, slack_user_id)
+
+            if crumb is not None and crumb.staged_updates:
+                staged: list[dict[str, Any]] = list(crumb.staged_updates)
+                _classifier = (
+                    confirm_classifier
+                    if confirm_classifier is not None
+                    else _default_confirm_classifier
+                )
+                verdict = await _classifier(text)
+                logger.debug(
+                    "route_inbound: staged-updates classifier verdict=%r for session=%s speaker=%s",
+                    verdict,
+                    session_id,
+                    slack_user_id,
+                )
+
+                if verdict == "YES":
+                    # Apply staged updates server-side.
+                    applied: list[str] = []
+                    try:
+                        from artemis.okr import repository as okr_repo
+
+                        async with _db.SessionLocal() as db_session:
+                            for item in staged:
+                                kr_id = int(item["kr_id"])
+                                # KR.prog is an Integer column; coerce to int.
+                                progress = int(round(float(item["progress"])))
+                                basis = str(item.get("basis") or "").strip()
+                                await okr_repo.update_key_result(db_session, kr_id, prog=progress)
+                                activity_text = "updated via Friday check-in, approved by Jon" + (
+                                    f" -- basis: {basis}" if basis else ""
+                                )
+                                await okr_repo.create_activity(
+                                    db_session,
+                                    kr_id=kr_id,
+                                    text=activity_text,
+                                    raw_text=basis or None,
+                                )
+                                applied.append(f"KR {kr_id} -> {progress}")
+                            await clear_staged_updates(db_session, crumb.id)
+                            await complete_okr_checkin_breadcrumb(db_session, crumb.id)
+                            await db_session.commit()
+
+                        kr_summary = ", ".join(applied) if applied else "no changes"
+                        outbound_text = f"Done. {kr_summary}."
+                    except Exception:
+                        logger.exception(
+                            "route_inbound: staged-updates apply failed for session=%s speaker=%s",
+                            session_id,
+                            slack_user_id,
+                        )
+                        outbound_text = "Something went wrong applying the staged updates."
+
+                    await _post_slack_message(
+                        session_id=session_id,
+                        normalized_agent=normalized_agent,
+                        team_id=team_id,
+                        channel_id=channel_id,
+                        reply_thread_ts=reply_thread_ts,
+                        outbound_text=outbound_text,
+                    )
+                    return
+
+                elif verdict == "NO":
+                    # Clear staged updates, nothing written.
+                    try:
+                        async with _db.SessionLocal() as db_session:
+                            await clear_staged_updates(db_session, crumb.id)
+                            await db_session.commit()
+                    except Exception:
+                        logger.exception(
+                            "route_inbound: staged-updates clear failed for session=%s speaker=%s",
+                            session_id,
+                            slack_user_id,
+                        )
+
+                    await _post_slack_message(
+                        session_id=session_id,
+                        normalized_agent=normalized_agent,
+                        team_id=team_id,
+                        channel_id=channel_id,
+                        reply_thread_ts=reply_thread_ts,
+                        outbound_text="Cleared, nothing changed.",
+                    )
+                    return
+
+                # NEITHER -- fall through to normal turn; staged_updates remain.
+                logger.debug(
+                    "route_inbound: staged-updates classifier=NEITHER -- "
+                    "treating as new turn, staged intact for session=%s",
+                    session_id,
+                )
+        except Exception:
+            logger.exception(
+                "route_inbound: staged-updates gate failed for session=%s speaker=%s -- continuing",
+                session_id,
+                slack_user_id,
+            )
 
     # ── Normal turn ───────────────────────────────────────────────────────────
     try:

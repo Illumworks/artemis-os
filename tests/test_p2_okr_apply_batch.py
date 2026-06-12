@@ -150,7 +150,12 @@ async def test_reconcile_context_no_propose_dont_apply() -> None:
 
 
 async def test_reconcile_context_instructs_calling_the_tool() -> None:
-    """_get_okr_reconcile_context must instruct calling update_okr_krs, not prose narration."""
+    """_get_okr_reconcile_context must instruct calling stage_okr_updates, not prose narration.
+
+    On the claude-code subscription surface the layer-3 write tools are stripped, so the
+    reconcile context now instructs `stage_okr_updates` (the reachable staging tool) which
+    pauses for the operator's explicit 'go' (applied server-side in route_inbound).
+    """
     from artemis.floating_artemis.chat import _get_okr_reconcile_context
 
     mock_crumb = MagicMock()
@@ -172,20 +177,20 @@ async def test_reconcile_context_instructs_calling_the_tool() -> None:
         context = await _get_okr_reconcile_context(_SPEAKER_ID, None)
 
     assert context is not None
-    # Must instruct calling the tool (not describing in prose)
-    assert "update_okr_krs" in context, (
-        "Reconcile context must mention update_okr_krs (the batch tool)"
+    # Must instruct calling the staging tool (not describing in prose)
+    assert "stage_okr_updates" in context, (
+        "Reconcile context must instruct calling stage_okr_updates (the staging tool)"
     )
     assert "CALL" in context or "Call" in context, (
         "Reconcile context must explicitly instruct making the tool call"
     )
-    # Must mention the layer-3 gate
-    assert "layer-3" in context or "pauses" in context or "pause" in context, (
-        "Reconcile context must mention that the tool pauses for confirmation"
+    # Must convey that staging pauses for 'go'
+    assert "go" in context and ("pause" in context or "discard" in context), (
+        "Reconcile context must convey that staging pauses for the operator's 'go'"
     )
     # Must forbid claiming the tool is unavailable
     assert "unavailable" in context, (
-        "Reconcile context must explicitly forbid claiming write tools are unavailable"
+        "Reconcile context must explicitly forbid claiming the staging tool is unavailable"
     )
 
 

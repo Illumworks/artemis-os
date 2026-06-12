@@ -77,6 +77,10 @@ class OkrCheckinBreadcrumb(Base):
     proposal_text: Mapped[str] = mapped_column(Text, nullable=False)
     # TTL: expires end of the following Monday so the window covers the whole weekend.
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    # Staged KR updates awaiting operator 'go'. List of {kr_id, progress, basis}.
+    # Null / empty when nothing is staged. Written by stage_okr_updates (layer-1 tool);
+    # applied server-side in route_inbound on explicit 'go'; cleared on apply or 'no'.
+    staged_updates: Mapped[Any] = mapped_column(JSONB, nullable=True)
     # Set when reconcile completes (layer-3 applied or declined), superseding the crumb.
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

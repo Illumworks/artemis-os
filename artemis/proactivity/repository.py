@@ -244,3 +244,31 @@ async def complete_okr_checkin_breadcrumb(
         .where(OkrCheckinBreadcrumb.id == breadcrumb_id)
         .values(completed_at=datetime.now(UTC))
     )
+
+
+async def set_staged_updates(
+    session: AsyncSession,
+    breadcrumb_id: int,
+    staged: list[dict[str, Any]],
+) -> None:
+    """Write the staged_updates list to a breadcrumb row.
+
+    Pass an empty list (or None) to clear.  Never deletes the row (lossless).
+    """
+    await session.execute(
+        update(OkrCheckinBreadcrumb)
+        .where(OkrCheckinBreadcrumb.id == breadcrumb_id)
+        .values(staged_updates=staged or None)
+    )
+
+
+async def clear_staged_updates(
+    session: AsyncSession,
+    breadcrumb_id: int,
+) -> None:
+    """Clear staged_updates on a breadcrumb without completing it."""
+    await session.execute(
+        update(OkrCheckinBreadcrumb)
+        .where(OkrCheckinBreadcrumb.id == breadcrumb_id)
+        .values(staged_updates=None)
+    )

@@ -25,6 +25,24 @@ import pytest
 
 pytestmark = pytest.mark.asyncio
 
+
+@pytest.fixture(autouse=True)
+def _no_live_okr_breadcrumb() -> Any:
+    """Neutralize the DB-backed staged-updates gate for this module.
+
+    These tests exercise the in-process confirmation_store confirm path with
+    SessionLocal fully mocked. A mocked session would make
+    get_live_okr_checkin_breadcrumb return a truthy MagicMock, wrongly tripping
+    the staged-updates gate added to route_inbound. None reflects the real
+    scenario here (no Friday OKR check-in staged), keeping these tests focused.
+    """
+    with patch(
+        "artemis.proactivity.repository.get_live_okr_checkin_breadcrumb",
+        new=AsyncMock(return_value=None),
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Helpers for route_inbound
 # ---------------------------------------------------------------------------
