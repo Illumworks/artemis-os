@@ -146,6 +146,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   const historyBtnEl = rootEl.querySelector('[data-cv5="open-history"]');
   const draftTitleEl = rootEl.querySelector('[data-cv5="draft-title"]');
   const presenceAvatarsEl = rootEl.querySelector('[data-cv5="presence-avatars"]');
+  const conflictBannerEl = rootEl.querySelector('[data-cv5="conflict-banner"]');
+  const conflictBannerMsgEl = rootEl.querySelector('[data-cv5="conflict-banner-msg"]');
+  const conflictBannerReloadEl = rootEl.querySelector('[data-cv5="conflict-banner-reload"]');
 
   // ── Stage 4: Claim-flags plugin ────────────────────────────────────────────
   //
@@ -1217,6 +1220,11 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   let lastSavedContent = serializeDocToText(view.state.doc);
   let destroyed = false;
   let currentDraftId = draft.id;
+  // Phase 2 soft-lock: track the server's live_content_version so autosave
+  // can send a baseVersion for compare-and-set; set staleConflict to halt
+  // further autosaves until the user reloads.
+  let liveContentVersion = draft.liveContentVersion ?? 0;
+  let staleConflict = false;
 
   // ── Phase 1 collab presence ───────────────────────────────────────────────
   //
@@ -1366,7 +1374,41 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
+  /**
+   * Phase 2 soft-lock: show or hide the stale-conflict banner.
+   * When visible: informs the user that concurrent edits were rejected and
+   * offers a Reload button to re-fetch and re-mount the composer with the
+   * current server content.  The editor content is NOT cleared — the user's
+   * unsaved text stays on screen.
+   *
+   * @param {boolean} visible
+   * @param {string=} peerName  Display name of the other editor (optional).
+   */
+  function showConflictBanner(visible, peerName) {
+    if (!conflictBannerEl) return;
+    if (!visible) {
+      conflictBannerEl.hidden = true;
+      return;
+    }
+    const who = peerName || "Someone else";
+    if (conflictBannerMsgEl) {
+      conflictBannerMsgEl.textContent =
+        `${who} is also editing this draft — your latest changes weren't saved. Reload to merge.`;
+    }
+    conflictBannerEl.hidden = false;
+  }
+
+  // Wire Reload button in the conflict banner.
+  if (conflictBannerReloadEl) {
+    conflictBannerReloadEl.addEventListener("click", () => {
+      callbacks.onDraftReloaded?.(currentDraftId);
+    });
+  }
+
   function scheduleAutosave() {
+    // Phase 2: stop scheduling new autosaves after a stale-conflict rejection.
+    // The user must reload to clear the conflict before saves resume.
+    if (staleConflict) return;
     dirty = true;
     if (autosaveTimer) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
@@ -1377,6 +1419,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   async function runAutosave() {
     if (destroyed) return;
+    // Phase 2: halt autosave after a stale-conflict rejection until reload.
+    if (staleConflict) return;
     const snapshot = serializeDocToText(view.state.doc);
     if (snapshot === lastSavedContent) {
       dirty = false;
@@ -1391,16 +1435,40 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     inflight = { content: snapshot };
     setSavingIndicator("busy", "Saving…");
     try {
-      await updateWritingDraftApi(currentDraftId, { liveContent: snapshot });
+      // Phase 2: send baseVersion so the server can detect concurrent edits.
+      const result = await updateWritingDraftApi(currentDraftId, { liveContent: snapshot, baseVersion: liveContentVersion });
+      // Advance our local version to match the server's new counter.
+      liveContentVersion = result?.liveContentVersion ?? (liveContentVersion + 1);
       lastSavedContent = snapshot;
       dirty = false;
       setSavingIndicator("saved", "Saved");
+      // Clear any stale-conflict banner that might have been shown earlier
+      // (shouldn't happen since staleConflict halts saves, but be defensive).
+      showConflictBanner(false);
     } catch (err) {
-      console.error("[composer-v5] autosave failed:", err);
-      setSavingIndicator("error", "Save failed");
+      // Phase 2: detect a soft-lock 409 — another editor's write won the CAS.
+      const isStale =
+        err?.status === 409 &&
+        (err.payload?.code === "stale_live_content" ||
+          err.payload?.detail?.code === "stale_live_content");
+      if (isStale) {
+        staleConflict = true;
+        // Derive peer name from the Phase-1 peers map (exactly one peer → use
+        // their name/email; multiple or zero → generic label).
+        const peerList = Array.from(peers.values());
+        const peerName =
+          peerList.length === 1
+            ? peerList[0].name || peerList[0].email || "Someone else"
+            : "Someone else";
+        showConflictBanner(true, peerName);
+        setSavingIndicator("error", "Not saved");
+      } else {
+        console.error("[composer-v5] autosave failed:", err);
+        setSavingIndicator("error", "Save failed");
+      }
     } finally {
       inflight = null;
-      if (pendingContent !== null && !destroyed) {
+      if (pendingContent !== null && !destroyed && !staleConflict) {
         // Re-run with the queued snapshot so the very latest typing lands.
         pendingContent = null;
         void runAutosave();
@@ -4348,6 +4416,11 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
         <span class="cv5-hdr-saving" data-cv5="saving" aria-live="polite"></span>
         <button type="button" class="cv5-btn-primary" data-cv5="save-version">Save version</button>
       </header>
+
+      <div class="cv5-conflict-banner" data-cv5="conflict-banner" role="alert" aria-live="assertive" hidden>
+        <span class="cv5-conflict-banner-msg" data-cv5="conflict-banner-msg"></span>
+        <button type="button" class="cv5-conflict-banner-reload" data-cv5="conflict-banner-reload">Reload</button>
+      </div>
 
       <div class="cv5-panes">
         <section class="cv5-chat-col" aria-label="Writing chat">

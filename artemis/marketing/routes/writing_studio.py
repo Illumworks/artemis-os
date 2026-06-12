@@ -29,7 +29,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -486,7 +486,7 @@ async def update_draft(
       changeNote  — attach a note to the appended version row
       source      — attach a source label to the appended version row
     """
-    deliverable = await session.get(CampaignDeliverable, draft_id)
+    deliverable = await session.get(CampaignDeliverable, draft_id, with_for_update=True)
     if deliverable is None:
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
 
@@ -570,22 +570,50 @@ async def update_draft(
         # transient autosave buffer so it doesn't shadow the saved version.
         meta.pop("live_content", None)
         meta.pop("live_content_updated_at", None)
+        # Bump the version counter so any in-flight autosave built on the old
+        # base is rejected (the live_content is gone — stale writes would
+        # re-introduce it over the newly-saved version).
+        meta["live_content_version"] = int(meta.get("live_content_version", 0)) + 1
 
     # Composer Stage 1: lossless autosave. liveContent persists the current
     # editor body WITHOUT minting a new version row. The serializer +
     # compose engine prefer live_content over versions[0].content when set,
     # so the user always sees their latest typing, but version history stays
     # clean (only Save-version creates rows).
+    #
+    # Phase 2 soft-lock: compare-and-set on live_content_version.  If the
+    # client sends baseVersion and it doesn't match the current counter, the
+    # write is rejected with 409 so the late writer is warned instead of
+    # silently clobbering the other editor's content.
     if "liveContent" in body:
+        current_version = int(meta.get("live_content_version", 0))
+        base_version = body.get("baseVersion")
+        if (
+            base_version is not None
+            and isinstance(base_version, int)
+            and base_version != current_version
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "Draft changed since you last loaded it — your latest edit was not saved.",
+                    "code": "stale_live_content",
+                    "currentVersion": current_version,
+                    "liveContent": meta.get("live_content"),
+                    "liveContentUpdatedAt": meta.get("live_content_updated_at"),
+                },
+            )
         live_val = body["liveContent"]
         if live_val is None:
             meta.pop("live_content", None)
             meta.pop("live_content_updated_at", None)
+            meta["live_content_version"] = current_version + 1
         else:
             if not isinstance(live_val, str):
                 raise bad_request("liveContent must be a string or null", "invalid_live_content")
             meta["live_content"] = live_val
             meta["live_content_updated_at"] = datetime.now(UTC).isoformat()
+            meta["live_content_version"] = current_version + 1
 
     deliverable.deliverable_metadata = meta
     deliverable.updated_at = datetime.now(UTC)
@@ -1988,6 +2016,7 @@ def _serialize_deliverable_detail(
     base["content"] = content
     base["liveContent"] = live if isinstance(live, str) else None
     base["liveContentUpdatedAt"] = meta.get("live_content_updated_at")
+    base["liveContentVersion"] = int(meta.get("live_content_version", 0))
     base["threadMessages"] = [_serialize_thread_message(m) for m in (thread_messages or [])]
     return base
 

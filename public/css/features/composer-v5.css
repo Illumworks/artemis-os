@@ -2279,3 +2279,50 @@
   -webkit-box-decoration-break: clone;
   pointer-events: none;
 }
+
+/* ── Phase 2 soft-lock: stale-conflict banner ────────────────────────────────
+   Amber/warning bar shown below the header when a concurrent edit was rejected.
+   Uses --cv5-warn (the same warm orange used for unregistered claim flags) so
+   the warning register matches the rest of the editor palette.
+   The banner must not cover or block the editor — it sits above .cv5-panes.
+   Hidden by default; toggled via the `hidden` attribute.                      */
+
+.cv5-conflict-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  background: #fff8ee;
+  border-bottom: 1px solid #e0b87a;
+  color: #7a4c10;
+  font-size: 12.5px;
+  line-height: 1.4;
+  /* Sits between header and panes — no z-index needed; stacking is natural. */
+}
+
+.cv5-conflict-banner[hidden] {
+  display: none;
+}
+
+.cv5-conflict-banner-msg {
+  flex: 1;
+  min-width: 0;
+}
+
+.cv5-conflict-banner-reload {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #c8892f;
+  background: #fff3dd;
+  color: #7a4c10;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.cv5-conflict-banner-reload:hover {
+  background: #ffe8b5;
+  border-color: #a06020;
+}

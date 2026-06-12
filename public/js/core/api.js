@@ -137,7 +137,10 @@ function _buildQueryString(params = {}) {
 async function _readJsonOrThrow(res, fallbackMessage) {
   if (res.ok) return res.json();
   const payload = await res.json().catch(() => ({}));
-  throw new Error(payload.error || fallbackMessage || `Request failed with ${res.status}`);
+  const err = new Error(payload.error || payload.detail?.error || fallbackMessage || `Request failed with ${res.status}`);
+  err.status = res.status;
+  err.payload = payload;
+  throw err;
 }
 
 export async function fetchMemoryList(projectPath, category = null) {
