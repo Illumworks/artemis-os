@@ -503,7 +503,12 @@ async def delete_rule(session: AsyncSession, rule_id: int) -> bool:
     rule = await session.get(WritingRule, rule_id)
     if rule is None:
         return False
-    await session.delete(rule)
+    # Soft-delete: archive the row instead of destroying it (lossless — matches the
+    # drafts' archive pattern and the model's "(profile_id, rule_type, title) where
+    # status != 'archived'" natural key). The list/resolve queries already exclude
+    # status == "archived", so the rule disappears from the UI but stays recoverable.
+    rule.status = "archived"
+    rule.updated_at = datetime.now(UTC)
     await session.flush()
     return True
 
