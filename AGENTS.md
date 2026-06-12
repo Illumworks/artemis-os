@@ -55,6 +55,15 @@ Read these before doing anything substantive.
 
 5. **Tests are not optional.** Same discipline as the Node reference: >85% backend coverage, 100% on keystone-class modules. Run `./scripts/check.sh` before opening any branch for review.
 
+6. **Isolated worktree — NEVER edit the main checkout directly.** `/Users/artemis/Artemis/artemis-os` is shared, live state: it serves the running app, it's where Lead merges, and other agents work in it. Before making ANY change, create your own worktree on a worker branch and do ALL work there:
+
+   ```bash
+   git worktree add ../artemis-os-wt-<scope> -b worker/<scope>-<desc>
+   cd ../artemis-os-wt-<scope>      # work, commit, test here — never in the main checkout
+   ```
+
+   Do NOT edit, stage, or commit files in the main checkout. When done, **do-not-merge-report** (hand the branch to Lead; Lead verifies + merges). Working directly in the main tree has repeatedly tangled uncommitted work with the live tree and risks clobbering — there are no exceptions to this rule.
+
 ## Local dev quickstart
 
 **Prerequisites (one-time, brew-native).** This Mac mini is set up with Postgres running natively, not in Docker:
