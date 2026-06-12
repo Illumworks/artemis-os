@@ -64,3 +64,39 @@ composer-v5 selection-toolbar / ProseMirror code — do NOT touch `updateSelecti
 In composer-v5: AI-proposed rules surface for approve/reject, a user can manually propose a rule, and the
 "memory files" (rules/sources/examples) can be opened and edited — all wired to the existing backend, no
 backend rebuild. Lead verifies live with Jon in the browser.
+
+---
+
+## REVISION 1 (Jon's Creative-Director review of the live preview, 2026-06-12)
+The functionality works but the presentation needs changes. Same branch
+(`worker/ws2-rules-memory-ui`). Five items:
+
+1. **No emojis.** Remove the 📌 / 🧠 (and any other emoji) from the Rules/Memory buttons and labels — the app
+   has a strict no-emoji rule. Use clean text labels (or an existing SVG/glyph icon from the design system if
+   one fits), never emoji.
+
+2. **Move the buttons to the TOP BAR, not under the composer.** Put "Rules" and "Memory" in the top action bar.
+   Primary placement: to the LEFT of the "Comments" button (grouped with History / Comments / Google Doc /
+   Save version). Acceptable alternative: just to the right of the draft-name. Remove them from the chat
+   composer tool row.
+
+3. **Rename drafts AND folders (NEW capability).** The user must be able to rename a draft (e.g. click the
+   draft name "New draft" in the top bar → inline edit → persists) and rename folders in the drafts picker.
+   Verify the backend: a draft update/rename endpoint and a folder rename endpoint (folder CRUD reportedly
+   exists — `writing-studio-folder-crud`). Wire the FE rename affordance to them. If a rename endpoint is
+   genuinely missing, STOP and flag to Lead (don't build backend silently). Persisted rename must survive
+   reload.
+
+4. **Memory must be a FULL-PAGE view or a LIGHTBOX, not a dropdown/small popover.** It carries a lot of
+   information (Rules / Sources / Examples, each editable), so a small popover doesn't work. Make it either a
+   full-page takeover with a clear "back to draft" control, or a full-screen lightbox/modal overlay (preferred
+   if straightforward) that can be dismissed back to the draft. Roomy, scannable, room to edit. (The Rules
+   surface — proposed rules + propose form — is smaller and can stay a normal panel; this full-page/lightbox
+   requirement is specifically for Memory.)
+
+5. **BUG — Approve fails.** Clicking Approve pops "status must be 'approved' or 'rejected'". The decision call
+   is sending the wrong value. Fix the FE so the decision endpoint receives exactly the status string it
+   validates (`approved` / `rejected`), not `approve`/`reject` or a wrong field name. Verify approve AND reject
+   both succeed end-to-end against the live endpoint.
+
+Re-verify in a real browser after the changes. Lead + Jon will do another live preview pass before merge.
