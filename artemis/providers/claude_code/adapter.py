@@ -210,7 +210,30 @@ class ClaudeCodeAdapter:
         except json.JSONDecodeError as exc:
             raise ProviderAPIError(0, f"Non-JSON from claude CLI: {raw[:300]}") from exc
 
-        result_text = data.get("result") or data.get("output") or data.get("message") or ""
+        # Surface real completion status from the CLI JSON payload.
+        # The claude -p --output-format json schema includes:
+        #   is_error   : bool   — true when the CLI itself errored (e.g. context limit,
+        #                         rate-limit, internal fault). The "result" field then
+        #                         contains the error message, not the assistant reply.
+        #   subtype    : str    — present on error payloads; values include
+        #                         "error_during_execution" and others.
+        #   result     : str    — the assistant's reply on success; error text on failure.
+        #   num_turns  : int    — number of internal turns (informational).
+        #   duration_ms: int    — wall-clock time in ms (informational).
+        if data.get("is_error"):
+            error_msg = str(data.get("result") or data.get("subtype") or "unknown error")
+            raise ProviderAPIError(
+                0,
+                f"claude CLI reported is_error=true: {error_msg[:300]}",
+            )
+
+        result_text: str = data.get("result") or data.get("output") or data.get("message") or ""
+        if not result_text.strip():
+            raise ProviderAPIError(
+                0,
+                "claude CLI returned an empty result (no text produced)",
+            )
+
         usage_data = data.get("usage") or {}
         usage = Usage(
             input_tokens=int(usage_data.get("input_tokens", 0)),
@@ -220,7 +243,7 @@ class ClaudeCodeAdapter:
         )
 
         return CompletionResponse(
-            message=Message(role="assistant", content=[TextBlock(text=str(result_text))]),
+            message=Message(role="assistant", content=[TextBlock(text=result_text)]),
             stop_reason="end_turn",
             usage=usage,
         )
@@ -424,7 +447,21 @@ class ClaudeCodeAdapter:
         except json.JSONDecodeError as exc:
             raise ProviderAPIError(0, f"Non-JSON from claude CLI: {raw[:300]}") from exc
 
-        result_text = data.get("result") or data.get("output") or data.get("message") or ""
+        # Surface real completion status — same logic as complete().
+        if data.get("is_error"):
+            error_msg = str(data.get("result") or data.get("subtype") or "unknown error")
+            raise ProviderAPIError(
+                0,
+                f"claude CLI (tool run) reported is_error=true: {error_msg[:300]}",
+            )
+
+        result_text: str = data.get("result") or data.get("output") or data.get("message") or ""
+        if not result_text.strip():
+            raise ProviderAPIError(
+                0,
+                "claude CLI (tool run) returned an empty result (no text produced)",
+            )
+
         usage_data = data.get("usage") or {}
         usage = Usage(
             input_tokens=int(usage_data.get("input_tokens", 0)),
@@ -433,7 +470,7 @@ class ClaudeCodeAdapter:
             cache_read_input_tokens=0,
         )
         return CompletionResponse(
-            message=Message(role="assistant", content=[TextBlock(text=str(result_text))]),
+            message=Message(role="assistant", content=[TextBlock(text=result_text)]),
             stop_reason="end_turn",
             usage=usage,
         )
