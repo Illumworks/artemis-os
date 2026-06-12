@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 from artemis.agent.client import AnthropicAdapter, ModelAdapter
 from artemis.agent.hooks import HookRegistry
@@ -1148,33 +1149,70 @@ def _build_intercepting_tool_registry(
     return plain
 
 
+_STAGED_TOOL_MESSAGE = (
+    "STAGED — not yet applied. This action needs the operator's confirmation. "
+    "Tell them plainly what will change and ask them to reply 'go' to apply, "
+    "or 'no' to cancel."
+)
+
+
 def _build_auto_invoke_tool_registry(
     auth_registry: AuthorizedToolRegistry,
     session_id: str,
 ) -> ToolRegistry:
-    """Wrap only layer-1/2 tools for provider paths that cannot yield mid-turn."""
+    """Build a ToolRegistry for provider paths that cannot yield mid-turn.
+
+    Layer-1/2 tools run immediately.  Layer-3/4 tools get a staging wrapper
+    that creates a PendingConfirmation and returns a tool-result string asking
+    the model to relay the proposal to the operator — no write ever happens
+    inside this wrapper (approval-first guarantee).  The turn ends normally;
+    the operator's 'go' / 'no' is resolved by resume_after_confirm.
+    """
     plain = ToolRegistry()
     for entry in auth_registry.all_entries():
-        if entry.layer > 2:
-            continue
-        if entry.tool.name == "query_memory":
-            _orig_impl = entry.impl
+        if entry.layer <= 2:
+            if entry.tool.name == "query_memory":
+                _orig_impl = entry.impl
 
-            async def _query_memory_with_emit(
-                inp: dict[str, Any],
-                _impl: Any = _orig_impl,
-                _sid: str = session_id,
-            ) -> str:
-                result_str: str = await _impl(inp)
-                try:
-                    await _emit_memory_read_event(_sid, inp)
-                except Exception:
-                    logger.debug("MemoryReadEvent emit failed", exc_info=True)
-                return result_str
+                async def _query_memory_with_emit(
+                    inp: dict[str, Any],
+                    _impl: Any = _orig_impl,
+                    _sid: str = session_id,
+                ) -> str:
+                    result_str: str = await _impl(inp)
+                    try:
+                        await _emit_memory_read_event(_sid, inp)
+                    except Exception:
+                        logger.debug("MemoryReadEvent emit failed", exc_info=True)
+                    return result_str
 
-            plain.register(entry.tool, _query_memory_with_emit)
+                plain.register(entry.tool, _query_memory_with_emit)
+            else:
+                plain.register(entry.tool, entry.impl)
         else:
-            plain.register(entry.tool, entry.impl)
+            # Layer-3/4: staging wrapper — store a PendingConfirmation and
+            # return a message instructing the model to ask the operator to
+            # confirm.  Does NOT call entry.impl.
+            _layer = entry.layer
+            _name = entry.tool.name
+
+            async def _staging_wrapper(
+                inp: dict[str, Any],
+                _tool_name: str = _name,
+                _layer_n: int = _layer,
+            ) -> str:
+                tool_use_id = floating_tool_use_id_var.get() or uuid4().hex
+                pending = PendingConfirmation(
+                    session_id=session_id,
+                    tool_use_id=tool_use_id,
+                    tool_name=_tool_name,
+                    tool_input=inp,
+                    layer=_layer_n,
+                )
+                confirmation_store.add(pending)
+                return _STAGED_TOOL_MESSAGE
+
+            plain.register(entry.tool, _staging_wrapper)
     return plain
 
 
