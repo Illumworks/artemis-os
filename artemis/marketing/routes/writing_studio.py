@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.db import get_session
 from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
 from artemis.marketing.routes._auth import require_token
-from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.routes._errors import bad_request, internal, not_found
 from artemis.marketing.state_machine import LEGACY_STATUS_MAP, DeliverableState, transition
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio import invoke as ws_invoke
@@ -727,15 +727,64 @@ async def compose_draft(
 
     model_id: str | None = getattr(profile, "default_model_id", None) or None
 
+    # ── Model call with one automatic retry on transient failure ──────────────
+    # compose_draft uses run_turn (single-shot, max_iterations=1).  The adapter
+    # raises ProviderAPIError / ClaudeCodeTimeoutError when the CLI signals
+    # is_error=true, returns an empty result, or times out.  We attempt one
+    # retry before surfacing the failure to the caller.  A truncated/errored
+    # compose MUST NOT persist — we guard below before any DB writes.
+    from artemis.providers.errors import ClaudeCodeTimeoutError, ProviderAPIError
+
+    _run_error: Exception | None = None
+    result = None
     t0 = datetime.now(UTC)
-    result = await run_turn(
-        adapter=adapter,
-        messages=messages,
-        system=prompt["systemPrompt"],
-        model=model_id,
-        max_iterations=1,  # writing turns are single-shot
-    )
+
+    for _attempt in range(2):  # up to 2 attempts (initial + one retry)
+        _run_error = None
+        try:
+            t0 = datetime.now(UTC)
+            result = await run_turn(
+                adapter=adapter,
+                messages=messages,
+                system=prompt["systemPrompt"],
+                model=model_id,
+                max_iterations=1,  # writing turns are single-shot
+            )
+            break  # success — exit retry loop
+        except (ProviderAPIError, ClaudeCodeTimeoutError) as exc:
+            _run_error = exc
+            _logger.warning(
+                "compose_draft: model call failed on attempt %d for draft_id=%s: %s",
+                _attempt + 1,
+                draft_id,
+                exc,
+            )
+            # continue to retry (or exhaust attempts)
+
+    if _run_error is not None:
+        # Both attempts failed — surface 503 so the FE can retry.  Do NOT persist.
+        raise internal(
+            f"Compose failed: {_run_error}",
+            "compose_provider_error",
+        )
+
+    assert result is not None  # mypy: unreachable if _run_error is set
+
     duration_ms = int((datetime.now(UTC) - t0).total_seconds() * 1000)
+
+    # ── Completeness guard — do NOT persist a truncated/abnormal result ────────
+    # stop_reason != "end_turn" means the model loop ended for reasons other than
+    # a clean finish (e.g. max_iterations, max_tokens).  Treat as incomplete.
+    if result.stop_reason != "end_turn":
+        _logger.warning(
+            "compose_draft: abnormal stop_reason=%r for draft_id=%s — not persisting",
+            result.stop_reason,
+            draft_id,
+        )
+        raise internal(
+            f"Compose ended abnormally (stop_reason={result.stop_reason!r}); please retry.",
+            "compose_incomplete",
+        )
 
     # Record cost — campaign-tied (writing_studio_compose). Phase 1 missed this
     # site; content drafting bypasses run_agent and calls run_turn directly, so
@@ -780,8 +829,11 @@ async def compose_draft(
                     response_text += block.text
             break
 
+    # Guard against suspiciously empty text even after a clean stop_reason.
+    # The adapter now raises before returning empty, but this is a belt-and-
+    # suspenders check in case the text path somehow produces whitespace-only.
     if not response_text.strip():
-        raise bad_request("Model returned no text", "compose_empty_response")
+        raise internal("Compose returned empty text; please retry.", "compose_empty_response")
 
     cleaned_response_text = strip_proposed_learning_lines(response_text)
 

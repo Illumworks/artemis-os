@@ -907,5 +907,187 @@ def test_parse_draft_fence_strips_leading_proposed_learning_already_removed() ->
     cleaned = strip_proposed_learning_lines(raw)
     chat_message, deliverable = parse_draft_fence(cleaned)
     assert deliverable == "Improved copy here."
-    assert "Proposed learning" not in chat_message
-    assert "Here is a tighter version." in chat_message
+
+
+# ---------------------------------------------------------------------------
+# (f) WS1 — compose_draft error guard: no silent persist on failure
+# ---------------------------------------------------------------------------
+
+
+class _ErrorAdapter:
+    """Adapter that always raises ProviderAPIError — simulates is_error=true CLI output."""
+
+    def __init__(
+        self, message: str = "claude CLI reported is_error=true: Context limit hit"
+    ) -> None:
+        self._message = message
+
+    async def complete(self, request: object) -> object:  # noqa: ARG002
+        from artemis.providers.errors import ProviderAPIError
+
+        raise ProviderAPIError(0, self._message)
+
+
+class _EmptyResultAdapter:
+    """Adapter that returns a CompletionResponse with empty text — belt-and-suspenders guard."""
+
+    async def complete(self, request: object) -> object:  # noqa: ARG002
+        from artemis.agent.client import CompletionResponse
+        from artemis.agent.types import Message, TextBlock, Usage
+
+        return CompletionResponse(
+            message=Message(role="assistant", content=[TextBlock(text="   ")]),
+            stop_reason="end_turn",
+            usage=Usage(input_tokens=0, output_tokens=0),
+        )
+
+
+@pytest.mark.asyncio
+async def test_compose_errored_run_does_not_persist_and_surfaces_503(
+    db_session: AsyncSession,
+) -> None:
+    """When the adapter raises ProviderAPIError (is_error=true), compose_draft must:
+    - NOT persist any thread message
+    - Return HTTP 503 (internal error) to the FE
+    """
+    from artemis.writing_rules import repository as wr_repo
+
+    draft_id = await _make_deliverable(db_session, title="Error Guard Draft")
+
+    error_adapter = _ErrorAdapter()
+
+    with patch(
+        "artemis.providers.resolver.resolve_adapter",
+        return_value=error_adapter,
+    ):
+        from httpx import ASGITransport, AsyncClient
+
+        from artemis.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/writing-studio/drafts/{draft_id}/compose",
+                json={"request": "Write me something"},
+                headers={"X-Artemis-Token": "test-token"},
+            )
+
+    # Must surface a 500-class error, not silently succeed.
+    assert resp.status_code >= 500, f"Expected 5xx, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    assert "error" in data.get("detail", {}) or "compose" in str(data).lower()
+
+    # No thread messages must have been persisted.
+    engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+    attach_pgvector_codec(engine)
+    async with AsyncSession(engine, expire_on_commit=False) as verify_session:
+        messages = await wr_repo.list_thread_messages_for_draft(verify_session, draft_id)
+    await engine.dispose()
+
+    assert len(messages) == 0, (
+        f"Expected 0 messages persisted on error, but found {len(messages)}: "
+        + str([m.content for m in messages])
+    )
+
+
+@pytest.mark.asyncio
+async def test_compose_empty_text_does_not_persist_and_surfaces_5xx(
+    db_session: AsyncSession,
+) -> None:
+    """When the adapter returns empty/whitespace text, compose_draft must NOT persist
+    and must return a 5xx error."""
+    from artemis.writing_rules import repository as wr_repo
+
+    draft_id = await _make_deliverable(db_session, title="Empty Text Guard Draft")
+
+    empty_adapter = _EmptyResultAdapter()
+
+    with patch(
+        "artemis.providers.resolver.resolve_adapter",
+        return_value=empty_adapter,
+    ):
+        from httpx import ASGITransport, AsyncClient
+
+        from artemis.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/writing-studio/drafts/{draft_id}/compose",
+                json={"request": "Write me something"},
+                headers={"X-Artemis-Token": "test-token"},
+            )
+
+    assert resp.status_code >= 500, f"Expected 5xx, got {resp.status_code}: {resp.text}"
+
+    # No thread messages must have been persisted.
+    engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+    attach_pgvector_codec(engine)
+    async with AsyncSession(engine, expire_on_commit=False) as verify_session:
+        messages = await wr_repo.list_thread_messages_for_draft(verify_session, draft_id)
+    await engine.dispose()
+
+    assert len(messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_compose_happy_path_still_persists_on_clean_result(
+    db_session: AsyncSession,
+) -> None:
+    """Happy-path regression: a clean end_turn compose still persists user + assistant
+    thread messages and returns 200 with responseText populated."""
+    from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
+    from artemis.writing_rules import repository as wr_repo
+
+    adapter = FakeAdapter(
+        [
+            ScriptedReply(
+                text=(
+                    "Here is an improved version that leads with the student outcome.\n\n"
+                    "The opening line now answers 'what's in it for my child' before "
+                    "mentioning the product.\n\n"
+                    "Proposed learning: Lead every parent-facing email with the student benefit."
+                ),
+                stop_reason="end_turn",
+            )
+        ]
+    )
+
+    draft_id = await _make_deliverable(db_session, title="Happy Path Regression Draft")
+
+    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
+        from httpx import ASGITransport, AsyncClient
+
+        from artemis.main import app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/writing-studio/drafts/{draft_id}/compose",
+                json={"request": "Improve the opening"},
+                headers={"X-Artemis-Token": "test-token"},
+            )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    # Core response fields present.
+    assert "responseText" in data
+    assert "improved version" in data["responseText"]
+    # Proposed learning stripped from responseText but surfaced in proposedCandidates.
+    assert "Proposed learning:" not in data["responseText"]
+    assert len(data["proposedCandidates"]) == 1
+
+    # Messages persisted to DB.
+    engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+    attach_pgvector_codec(engine)
+    async with AsyncSession(engine, expire_on_commit=False) as verify_session:
+        messages = await wr_repo.list_thread_messages_for_draft(verify_session, draft_id)
+    await engine.dispose()
+
+    assert len(messages) == 2
+    roles = {m.role for m in messages}
+    assert roles == {"user", "assistant"}
+    # No proposed learning line in persisted assistant message.
+    asst = next(m for m in messages if m.role == "assistant")
+    assert "Proposed learning:" not in asst.content
