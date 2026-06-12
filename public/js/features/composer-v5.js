@@ -59,6 +59,7 @@ import {
   updateWritingExampleApi,
   updateWritingSourceApi,
   updateWritingFolderApi,
+  deleteWritingRuleApi,
 } from "../core/api.js";
 
 // Schema: paragraphs, headings, lists, bold/italic — the prototype's basic set.
@@ -3453,6 +3454,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
           <button type="button" class="cv5-memory-edit-btn" data-cv5-memory-edit="${esc(String(itemId))}" title="Edit">Edit</button>
           <button type="button" class="cv5-memory-save-btn" data-cv5-memory-save="${esc(String(itemId))}" style="display:none" title="Save changes">Save</button>
           <button type="button" class="cv5-memory-cancel-btn" data-cv5-memory-cancel="${esc(String(itemId))}" style="display:none" title="Cancel">Cancel</button>
+          ${type === "rules" ? `<button type="button" class="cv5-memory-delete-btn" data-cv5-memory-delete="${esc(String(itemId))}" title="Delete this rule permanently">Delete</button>` : ""}
         </div>
       </div>
     `;
@@ -3634,6 +3636,30 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         console.error("[composer-v5] update memory item failed:", err);
         callbacks.onError?.(err.message || "Failed to save.");
         saveBtn.disabled = false;
+      }
+      return;
+    }
+
+    // ── Delete button (rules only; PERMANENT hard delete) ──────────────────────
+    const deleteBtn = e.target.closest("[data-cv5-memory-delete]");
+    if (deleteBtn) {
+      const itemId = Number(deleteBtn.dataset.cv5MemoryDelete);
+      const rule = memoryRules.find((r) => r.id === itemId);
+      const label = String(rule?.title || rule?.body || "this rule").slice(0, 80);
+      // Irreversible (unlike drafts, which are soft-deleted), so confirm first.
+      if (!window.confirm(`Delete this rule permanently?\n\n"${label}"\n\nThis cannot be undone.`)) return;
+      deleteBtn.disabled = true;
+      try {
+        await deleteWritingRuleApi(itemId);
+        const idx = memoryRules.findIndex((r) => r.id === itemId);
+        if (idx >= 0) memoryRules.splice(idx, 1);
+        _renderMemoryPanel();
+        _wireMemoryPanelHandlers();
+        callbacks.onStatus?.("Rule deleted.");
+      } catch (err) {
+        console.error("[composer-v5] delete rule failed:", err);
+        callbacks.onError?.(err.message || "Failed to delete rule.");
+        deleteBtn.disabled = false;
       }
       return;
     }

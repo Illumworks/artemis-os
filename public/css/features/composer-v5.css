@@ -2138,7 +2138,8 @@
 }
 .cv5-memory-edit-btn,
 .cv5-memory-save-btn,
-.cv5-memory-cancel-btn {
+.cv5-memory-cancel-btn,
+.cv5-memory-delete-btn {
   border: 1px solid var(--cv5-rule);
   border-radius: 6px;
   background: var(--cv5-card);
@@ -2161,3 +2162,6 @@
 .cv5-memory-save-btn:hover { filter: brightness(0.96); }
 .cv5-memory-save-btn[disabled] { opacity: 0.45; cursor: default; }
 .cv5-memory-cancel-btn:hover { background: #fef2f2; border-color: #fcc; color: #b33; }
+.cv5-memory-delete-btn { color: #b33; border-color: #f1c9c9; }
+.cv5-memory-delete-btn:hover { background: #fef2f2; border-color: #e89a9a; }
+.cv5-memory-delete-btn[disabled] { opacity: 0.45; cursor: default; }

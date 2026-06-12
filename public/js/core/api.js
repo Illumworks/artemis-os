@@ -1153,6 +1153,18 @@ export async function updateWritingRuleApi(id, payload = {}) {
   return _readJsonOrThrow(res, "Failed to update writing rule");
 }
 
+// Permanent (hard) delete — the route returns 204 No Content, so don't parse JSON.
+export async function deleteWritingRuleApi(id) {
+  const res = await fetch(`/api/writing-rules/rules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Failed to delete writing rule (${res.status})`);
+  }
+  return true;
+}
+
 // CORRECTED: was PUT /api/writing-studio/examples/{id} — real route is PATCH /api/writing-rules/examples/{id}
 export async function updateWritingExampleApi(id, payload = {}) {
   const res = await fetch(`/api/writing-rules/examples/${encodeURIComponent(id)}`, {
