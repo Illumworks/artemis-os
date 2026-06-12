@@ -1569,6 +1569,7 @@ async def ready_for_review(
         {
             "ready_for_review": True,
             "review_status": "ready_for_review",
+            "ready_for_review_at": now_iso,
             "reviewer_email": reviewer_email,
             "review_requested_at": now_iso,
             "review_requested_by_email": current_user.email,
@@ -1585,6 +1586,7 @@ async def ready_for_review(
         title=metadata.get("title") or metadata.get("externalTitle") or f"Draft {draft_id}",
         author_name=author_name,
         reviewer_email=reviewer_email,
+        mode="channel_mention",
     )
 
     deliverable = await session.get(CampaignDeliverable, draft_id)
@@ -1841,8 +1843,19 @@ def _serialize_deliverable_as_draft(d: CampaignDeliverable) -> dict[str, Any]:
         "title": title,
         "status": d.status,
         "readyForReview": ready_for_review,
+        "readyForReviewAt": (
+            meta.get("ready_for_review_at")
+            or meta.get("readyForReviewAt")
+            or meta.get("review_requested_at")
+            or meta.get("reviewRequestedAt")
+        ),
         "reviewerEmail": meta.get("reviewer_email") or meta.get("reviewerEmail"),
-        "reviewRequestedAt": meta.get("review_requested_at") or meta.get("reviewRequestedAt"),
+        "reviewRequestedAt": (
+            meta.get("ready_for_review_at")
+            or meta.get("readyForReviewAt")
+            or meta.get("review_requested_at")
+            or meta.get("reviewRequestedAt")
+        ),
         "asset_type": meta.get("asset_type") or meta.get("assetType"),
         "campaign_id": d.campaign_id,
         "folder_id": meta.get("folder_id"),

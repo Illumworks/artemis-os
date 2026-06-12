@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from artemis.marketing.models import Approval, CampaignDeliverable
 
 _CALLIE_CAMPAIGN_SIGNALS_CHANNEL = "C0B9CHVC7KQ"
 DEFAULT_REVIEWER_EMAIL = "angela@amiralearning.com"
+ReviewPingMode = Literal["channel_mention", "dm"]
 
 
 @dataclass(frozen=True)
@@ -86,13 +88,17 @@ async def resolve_reviewer_email(
         )
         approvals = list(result.scalars().all())
         for approval in approvals:
-            pipe4_context = approval.pipe4_context if isinstance(approval.pipe4_context, dict) else {}
+            pipe4_context = (
+                approval.pipe4_context if isinstance(approval.pipe4_context, dict) else {}
+            )
             context = pipe4_context.get("context")
             if not isinstance(context, dict):
                 continue
             if context.get("candidate_id") != candidate_id:
                 continue
-            payload = approval.decision_payload if isinstance(approval.decision_payload, dict) else {}
+            payload = (
+                approval.decision_payload if isinstance(approval.decision_payload, dict) else {}
+            )
             approvers = payload.get("approvers")
             if not isinstance(approvers, list):
                 continue
@@ -111,17 +117,22 @@ async def send_callie_ready_for_review_ping(
     title: str,
     author_name: str,
     reviewer_email: str,
+    mode: ReviewPingMode = "channel_mention",
 ) -> ReviewPingResult:
     """Post the deterministic review ping as Callie.
 
-    Preferred target is a DM resolved by ``users.lookupByEmail``. When the
-    reviewer cannot be resolved in Slack, the ping falls back to the marketing
-    review channel if one is configured for Callie.
+    ``channel_mention`` posts publicly in Marketing Campaigns and @mentions the
+    reviewer when Slack can resolve the email. ``dm`` preserves the direct
+    message path for later escalation flows.
     """
 
     integrations = await integrations_repo.list_active(session, provider="slack")
     callie_row = next(
-        (row for row in integrations if str(getattr(row, "agent_id", "")).strip().lower() == "callie"),
+        (
+            row
+            for row in integrations
+            if str(getattr(row, "agent_id", "")).strip().lower() == "callie"
+        ),
         None,
     )
     if callie_row is None:
@@ -158,34 +169,43 @@ async def send_callie_ready_for_review_ping(
     draft_url = f"{base_url}/#writing-studio?draft={draft_id}"
     safe_title = " ".join((title or f"Draft {draft_id}").split())
     safe_author = " ".join((author_name or "The author").split())
-    text = (
-        f'"{safe_title}" by {safe_author} is ready for review. '
-        f"Open it in Writing Studio: <{draft_url}|Open draft>."
-    )
+    fallback_reviewer_label = reviewer_email.strip() or "The reviewer"
 
     client = SlackClient(token)
     try:
         slack_user_id = await client.lookup_user_by_email(reviewer_email)
-        if slack_user_id:
-            await client.post_dm(slack_user_id, text)
+        if mode == "dm":
+            text = f'"{safe_title}" by {safe_author} is ready for review. <{draft_url}|Open draft>'
+            if slack_user_id:
+                await client.post_dm(slack_user_id, text)
+                return ReviewPingResult(
+                    ok=True,
+                    reviewer_email=reviewer_email,
+                    target="dm",
+                    slack_user_id=slack_user_id,
+                )
             return ReviewPingResult(
-                ok=True,
+                ok=False,
                 reviewer_email=reviewer_email,
-                target="dm",
-                slack_user_id=slack_user_id,
+                error="Reviewer could not be resolved in Slack for a direct message.",
             )
-        if channel_id:
-            await client.post_message(channel=channel_id, text=text)
+
+        if not channel_id:
             return ReviewPingResult(
-                ok=True,
+                ok=False,
                 reviewer_email=reviewer_email,
-                target="channel",
-                channel_id=channel_id,
+                error="Marketing Campaigns channel is not configured for Callie.",
             )
+
+        reviewer_label = f"<@{slack_user_id}>" if slack_user_id else fallback_reviewer_label
+        text = f'{reviewer_label} - "{safe_title}" by {safe_author} is ready for review. <{draft_url}|Open draft>'
+        await client.post_message(channel=channel_id, text=text)
         return ReviewPingResult(
-            ok=False,
+            ok=True,
             reviewer_email=reviewer_email,
-            error="Reviewer could not be resolved in Slack and no marketing channel is configured.",
+            target="channel_mention",
+            slack_user_id=slack_user_id,
+            channel_id=channel_id,
         )
     except Exception as exc:  # noqa: BLE001
         return ReviewPingResult(

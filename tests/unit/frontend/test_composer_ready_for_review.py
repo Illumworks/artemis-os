@@ -17,7 +17,7 @@ def test_composer_ready_for_review_picker_uses_campaign_approver_fallback() -> N
     src = COMPOSER_JS.read_text()
     assert "Use campaign approver (fallback Angela)" in src
     assert "markDraftReadyForReviewApi(draft.id" in src
-    assert "Sent to ${result.reviewerEmail || \"the reviewer\"} for review." in src
+    assert 'Posted in Marketing Campaigns for ${result.reviewerEmail || "the reviewer"}.' in src
 
 
 def test_ready_for_review_api_calls_new_endpoint() -> None:

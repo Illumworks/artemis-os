@@ -1882,7 +1882,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
             `Marked ready for review, but Callie could not send the ping${result?.delivery?.error ? `: ${result.delivery.error}` : "."}`
           );
         } else {
-          callbacks.onStatus?.(`Sent to ${result.reviewerEmail || "the reviewer"} for review.`);
+          callbacks.onStatus?.(`Posted in Marketing Campaigns for ${result.reviewerEmail || "the reviewer"}.`);
         }
         callbacks.onDraftReloaded?.(draft.id);
       } catch (err) {
