@@ -19,6 +19,7 @@ if str(_REPO_ROOT) not in sys.path:
 import artemis.brief.models  # noqa: F401
 import artemis.db
 import artemis.integrations.models  # noqa: F401
+import artemis.okr.models  # noqa: F401
 import artemis.proactivity.models  # noqa: F401
 from artemis.db import attach_pgvector_codec
 
@@ -41,7 +42,8 @@ artemis.db.SessionLocal = __import__(
 )
 
 _TRUNCATE_SQL = text(
-    "TRUNCATE morning_brief_deliveries, brief_snapshots, integrations, integration_configs "
+    "TRUNCATE morning_brief_deliveries, okr_checkin_breadcrumbs, brief_snapshots, "
+    "integrations, integration_configs "
     "RESTART IDENTITY CASCADE"
 )
 

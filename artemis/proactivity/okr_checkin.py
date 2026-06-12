@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "gather_checkin_sources",
     "build_okr_checkin_proposal",
+    "build_kr_snapshot",
     "format_checkin_for_slack",
 ]
 
@@ -305,6 +306,33 @@ def build_okr_checkin_proposal(sources: dict[str, Any]) -> list[dict[str, Any]]:
     return proposals
 
 
+# ── KR snapshot builder ───────────────────────────────────────────────────────
+
+
+def build_kr_snapshot(objectives: list[Any]) -> list[dict[str, Any]]:
+    """Return a flat list of active KR state dicts for the breadcrumb + Part C display.
+
+    Each entry: {kr_id, kr_title, objective_title, prog, target_text}
+    Archived KRs are excluded.
+    """
+    snapshot: list[dict[str, Any]] = []
+    for obj in objectives:
+        krs = getattr(obj, "key_results", []) or []
+        for kr in krs:
+            if getattr(kr, "archived_at", None) is not None:
+                continue
+            snapshot.append(
+                {
+                    "kr_id": int(kr.id),
+                    "kr_title": str(kr.title),
+                    "objective_title": str(obj.title),
+                    "prog": int(kr.prog),
+                    "target_text": str(kr.target_text or ""),
+                }
+            )
+    return snapshot
+
+
 # ── Slack formatter ───────────────────────────────────────────────────────────
 
 
@@ -312,11 +340,16 @@ def format_checkin_for_slack(
     proposals: list[dict[str, Any]],
     *,
     delivery_date: date,
+    objectives: list[Any] | None = None,
 ) -> str:
     """Format the OKR check-in proposal for Slack delivery.
 
+    Part C: Leads with a tight list of ALL active KR current values so the
+    opener "where your KRs stand" is backed by actual numbers, not an empty
+    promise. The proposals (grounded evidence) follow as context.
+
     Reframed (P2 grounding fix):
-    - LEADS with where KRs currently stand.
+    - LEADS with where KRs currently stand (all active KRs, with prog).
     - ASKS what Jon moved this week — his answer is the source of truth.
     - Jira/meeting evidence is presented as optional context, not claimed
       accomplishments.
@@ -333,39 +366,55 @@ def format_checkin_for_slack(
     lines: list[str] = [
         f"*Friday check-in — {day_label}*",
         "",
-        "Here is where your KRs stand. Tell me what you actually moved this week "
-        "and I'll map it to the right KRs. Nothing updates until you say go.",
-        "",
     ]
 
-    if not proposals:
-        lines.append(
-            "I don't have any grounded evidence to show you — no OKR activity logged, "
-            "no Jira tickets assigned to you closed this week, no relevant meeting items."
-        )
-        lines.append("What did you get done? Send me a word-dump and I'll map it to KRs.")
-    else:
+    # Part C: Show KR state snapshot for all active KRs.
+    kr_snapshot = build_kr_snapshot(objectives or [])
+    if kr_snapshot:
+        lines.append("Where your KRs stand:")
+        for entry in kr_snapshot:
+            prog = entry["prog"]
+            target = entry.get("target_text") or ""
+            target_str = f" (target: {target})" if target else ""
+            lines.append(
+                f"  *{entry['objective_title']}* > *{entry['kr_title']}* — {prog}%{target_str}"
+            )
+        lines.append("")
+
+    lines.append(
+        "Tell me what you actually moved this week and I'll map it to the right KRs. "
+        "Nothing updates until you say go."
+    )
+    lines.append("")
+
+    if proposals:
+        lines.append("Context I found this week:")
         for p in proposals:
             lines.append(
-                f"*{p['objective_title']}* > *{p['kr_title']}* — currently at {p['current_prog']}%"
+                f"  *{p['objective_title']}* > *{p['kr_title']}* — currently at {p['current_prog']}%"
             )
             for b in p["basis"]:
                 b_str = str(b)
                 # OKR activity = Jon logged it himself (ground truth).
                 if b_str.startswith("OKR activity:"):
-                    lines.append(f"  - {b_str}")
+                    lines.append(f"    - {b_str}")
                 # Jira ticket or meeting item = context, not claimed accomplishment.
                 elif b_str.startswith("Your Jira ticket") or b_str.startswith(
                     "Meeting action item:"
                 ):
-                    lines.append(f"  - Context: {b_str}")
+                    lines.append(f"    - Context: {b_str}")
                 else:
-                    lines.append(f"  - {b_str}")
-            lines.append("")
+                    lines.append(f"    - {b_str}")
+        lines.append("")
+
+    if not kr_snapshot and not proposals:
+        lines.append(
+            "I don't have KR state on file — no objectives loaded yet. "
+            "What did you get done? Send me a word-dump and I'll map it."
+        )
 
     lines.append(
-        "_What did you actually move this week? Reply with a word-dump. "
-        "Nothing changes until you explicitly say go._"
+        "_Reply with a word-dump of what you actually moved. Nothing changes until you say go._"
     )
 
     try:

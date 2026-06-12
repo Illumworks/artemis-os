@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -22,6 +22,7 @@ from artemis.integrations.models import Integration
 from artemis.integrations.slack.client import SlackClient
 from artemis.proactivity import repository as repo
 from artemis.proactivity.okr_checkin import (
+    build_kr_snapshot,
     build_okr_checkin_proposal,
     format_checkin_for_slack,
     gather_checkin_sources,
@@ -103,11 +104,15 @@ def _register_okr_checkin_job(scheduler: AsyncIOScheduler) -> None:
 
 
 async def _fire_okr_checkin() -> None:
-    """Gather OKR evidence, build a cited proposal, and DM Jon.
+    """Gather OKR evidence, build a cited proposal, DM Jon, and leave a breadcrumb.
 
     SAFETY: This function NEVER writes any OKR.  It only gathers evidence and
     posts an informational proposal to Jon's Slack DM.  OKR writes happen only
     when Jon explicitly approves via the DM agent loop (update_okr_kr layer 3).
+
+    Part A: After posting, a breadcrumb row is persisted keyed to the recipient
+    with a KR snapshot and TTL (expires end of following Monday). handle_turn
+    reads this breadcrumb to inject OKR-reconcile context into the next DM turn.
     """
     async with _db.SessionLocal() as session:
         delivery_id: int | None = None
@@ -135,17 +140,26 @@ async def _fire_okr_checkin() -> None:
             # Gather evidence — this opens its own sessions internally.
             sources = await gather_checkin_sources(session)
             proposals = build_okr_checkin_proposal(sources)
+            objectives = sources.get("objectives") or []
+
+            # Build KR snapshot for breadcrumb + voice prompt (Part C).
+            kr_snapshot = build_kr_snapshot(objectives)
 
             # Attempt voice rendering pass first; fall back to plain rendering on failure.
             voice_text = await render_checkin_with_voice(
                 proposals,
                 delivery_date,
                 session_id=f"checkin-{delivery_date.isoformat()}",
+                kr_snapshot=kr_snapshot,
             )
             if voice_text:
                 slack_text = voice_text
             else:
-                slack_text = format_checkin_for_slack(proposals, delivery_date=delivery_date)
+                slack_text = format_checkin_for_slack(
+                    proposals,
+                    delivery_date=delivery_date,
+                    objectives=objectives,
+                )
 
             token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
             if not token:
@@ -158,12 +172,37 @@ async def _fire_okr_checkin() -> None:
                 session,
                 delivery_id=delivery_id,
             )
+
+            # Part A: leave a breadcrumb so handle_turn can inject OKR-reconcile context.
+            # TTL: expires end of the following Monday (survives the weekend).
+            now_utc = datetime.now(UTC)
+            # delivery_date is a Friday; following Monday = + 3 days.
+            following_monday = delivery_date + timedelta(days=3)
+            expires_at = datetime(
+                following_monday.year,
+                following_monday.month,
+                following_monday.day,
+                23,
+                59,
+                59,
+                tzinfo=UTC,
+            )
+            await repo.create_okr_checkin_breadcrumb(
+                session,
+                recipient_id=recipient_id,
+                kr_snapshot=kr_snapshot,
+                proposal_text=slack_text,
+                expires_at=expires_at,
+            )
+            _ = now_utc  # used for reference only; SQLAlchemy server_default handles created_at
+
             await session.commit()
             logger.info(
-                "OKR check-in proposal delivered to Slack user %s for %s (%d KR proposals)",
+                "OKR check-in proposal delivered to Slack user %s for %s (%d KR proposals, %d KRs snapped)",
                 recipient_id,
                 delivery_date.isoformat(),
                 len(proposals),
+                len(kr_snapshot),
             )
         except Exception as exc:
             logger.exception("OKR check-in delivery failed")
