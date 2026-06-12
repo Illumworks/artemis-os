@@ -55,6 +55,7 @@ import {
   listWritingRulesApi,
   listWritingExamplesApi,
   listWritingSourcesApi,
+  markDraftReadyForReviewApi,
   updateWritingRuleApi,
   updateWritingExampleApi,
   updateWritingSourceApi,
@@ -71,6 +72,19 @@ const composerSchema = new Schema({
 const AUTOSAVE_DELAY_MS = 1200;
 
 const esc = (v) => escapeHtml(v ?? "");
+
+function isDraftReadyForReview(draft) {
+  return Boolean(
+    draft?.readyForReview
+    || draft?.metadata?.ready_for_review
+    || draft?.metadata?.review_status === "ready_for_review"
+  );
+}
+
+function displayDraftStatus(draft) {
+  if (isDraftReadyForReview(draft)) return "ready for review";
+  return String(draft?.status || "draft").replace(/_/g, " ");
+}
 
 // Per-mount runtime state. The writing-studio shell may re-render the surface
 // many times; we destroy and recreate per mount but cache the editor instance
@@ -1733,6 +1747,15 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         approveBtn.setAttribute("hidden", "");
       }
     }
+
+    const readyBtn = actionsMenuEl?.querySelector('[data-cv5-action="ready-for-review"]');
+    if (readyBtn) {
+      if (isDraftReadyForReview(draft)) {
+        readyBtn.setAttribute("hidden", "");
+      } else {
+        readyBtn.removeAttribute("hidden");
+      }
+    }
   }
 
   // Refresh campaign action state on mount.
@@ -1754,6 +1777,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         callbacks.onStatus?.("Brand + readability check — coming soon.");
       } else if (action === "approve-for-campaign") {
         await handleApproveForCampaign();
+      } else if (action === "ready-for-review") {
+        await handleReadyForReview();
       } else if (action === "attach-to-campaign") {
         await handleAttachToCampaign();
       }
@@ -1796,9 +1821,81 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     _showCampaignAttachPicker(campaigns);
   }
 
+  async function handleReadyForReview() {
+    let teammates = [];
+    try {
+      teammates = await fetchTeammatesApi();
+    } catch {
+      teammates = [];
+    }
+    _showReadyForReviewPicker(teammates);
+  }
+
+  function _showReadyForReviewPicker(teammates) {
+    rootEl.querySelector(".cv5-ready-review-picker")?.remove();
+    rootEl.querySelector(".cv5-campaign-attach-picker")?.remove();
+
+    const people = Array.isArray(teammates) ? teammates.slice() : [];
+    const hasAngela = people.some((person) => String(person?.email || "").toLowerCase() === "angela@amiralearning.com");
+    if (!hasAngela) {
+      people.unshift({ id: "angela", name: "Angela", email: "angela@amiralearning.com" });
+    }
+
+    const picker = document.createElement("div");
+    picker.className = "cv5-picker-menu cv5-ready-review-picker is-open";
+    picker.style.cssText = "position:absolute;right:0;top:100%;z-index:200;min-width:300px;padding:10px 12px;";
+    picker.innerHTML = `
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Ready for review</div>
+      <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:6px;">Reviewer</label>
+      <select data-cv5-reviewer-select style="width:100%;margin-bottom:10px;">
+        <option value="">Use campaign approver (fallback Angela)</option>
+        ${people.map((person) => {
+          const email = esc(String(person?.email || ""));
+          const name = esc(String(person?.name || person?.email || ""));
+          return `<option value="${email}">${name} · ${email}</option>`;
+        }).join("")}
+      </select>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button type="button" data-cv5-review-cancel>Cancel</button>
+        <button type="button" data-cv5-review-submit>Send to review</button>
+      </div>
+    `;
+
+    const actionsWrap = rootEl.querySelector('[data-cv5="actions-wrap"]');
+    if (!actionsWrap) return;
+    actionsWrap.style.position = "relative";
+    actionsWrap.appendChild(picker);
+
+    picker.querySelector("[data-cv5-review-cancel]")?.addEventListener("click", () => {
+      picker.remove();
+    });
+
+    picker.querySelector("[data-cv5-review-submit]")?.addEventListener("click", async () => {
+      const reviewerEmail = picker.querySelector("[data-cv5-reviewer-select]")?.value || "";
+      try {
+        const result = await markDraftReadyForReviewApi(draft.id, { reviewerEmail });
+        picker.remove();
+        const readyBtn = actionsMenuEl?.querySelector('[data-cv5-action="ready-for-review"]');
+        readyBtn?.setAttribute("hidden", "");
+        if (result?.ok === false) {
+          callbacks.onError?.(
+            `Marked ready for review, but Callie could not send the ping${result?.delivery?.error ? `: ${result.delivery.error}` : "."}`
+          );
+        } else {
+          callbacks.onStatus?.(`Sent to ${result.reviewerEmail || "the reviewer"} for review.`);
+        }
+        callbacks.onDraftReloaded?.(draft.id);
+      } catch (err) {
+        console.error("[composer-v5] ready-for-review failed:", err);
+        callbacks.onError?.(err.message || "Failed to send draft for review.");
+      }
+    });
+  }
+
   function _showCampaignAttachPicker(campaigns) {
     // Remove existing picker if any.
     rootEl.querySelector(".cv5-campaign-attach-picker")?.remove();
+    rootEl.querySelector(".cv5-ready-review-picker")?.remove();
 
     const picker = document.createElement("div");
     picker.className = "cv5-picker-menu cv5-campaign-attach-picker is-open";
@@ -3746,7 +3843,7 @@ function renderEmptyState() {
 
 function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
   const titleText = draft.title || `Draft ${draft.id}`;
-  const status = (draft.status || "draft").replace(/_/g, " ");
+  const status = displayDraftStatus(draft);
 
   return `
     <div class="cv5-root">
@@ -3808,6 +3905,10 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
             <button type="button" class="cv5-picker-menu-row" data-cv5-action="approve-for-campaign" role="menuitem" hidden>
               <span aria-hidden="true">✅</span>
               <span>Approve for campaign</span>
+            </button>
+            <button type="button" class="cv5-picker-menu-row" data-cv5-action="ready-for-review" role="menuitem">
+              <span aria-hidden="true">↗</span>
+              <span>Ready for review</span>
             </button>
             <button type="button" class="cv5-picker-menu-row" data-cv5-action="attach-to-campaign" role="menuitem">
               <span aria-hidden="true">🔗</span>

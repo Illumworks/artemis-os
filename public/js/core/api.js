@@ -943,6 +943,20 @@ export async function submitDraftForReviewApi(draftId) {
   return body;
 }
 
+export async function markDraftReadyForReviewApi(draftId, { reviewerEmail } = {}) {
+  const payload = {};
+  if (reviewerEmail) payload.reviewerEmail = reviewerEmail;
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(draftId)}/ready-for-review`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  return _readJsonOrThrow(res, "Failed to mark draft ready for review");
+}
+
 export async function listCampaignDeliverablesApi(campaignId) {
   const res = await fetch(`/api/campaign-deliverables?campaignId=${encodeURIComponent(campaignId)}`);
   return _readJsonOrThrow(res, "Failed to fetch campaign deliverables");

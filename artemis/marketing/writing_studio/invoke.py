@@ -619,11 +619,12 @@ async def submit_draft_for_review(
     Port of Node's submit_draft_for_review path in writing-studio.js.
 
     1. Fetch the campaign_deliverables row.
-    2. Call ExternalWritingStudio.submit_for_review().
-    3. Create approvals row with kind='writing_gate_2'.
-    4. Update deliverable status to 'ready_for_review'.
-    5. Emit draft.approved event.
-    6. Return ApprovalRecord.
+    2. Reuse an existing pending Gate-2 approval when present.
+    3. Otherwise call ExternalWritingStudio.submit_for_review().
+    4. Create approvals row with kind='writing_gate_2'.
+    5. Update deliverable status to 'ready_for_review' when needed.
+    6. Emit draft.approved event for a newly-opened review.
+    7. Return ApprovalRecord.
     """
     from sqlalchemy import select
 
@@ -633,6 +634,34 @@ async def submit_draft_for_review(
     deliverable = result.scalar_one_or_none()
     if deliverable is None:
         raise ValueError(f"campaign_deliverables id={deliverable_id} not found")
+
+    existing_approval_result = await session.execute(
+        select(Approval)
+        .where(
+            Approval.kind == "writing_gate_2",
+            Approval.subject_id == str(deliverable_id),
+            Approval.status == "pending",
+        )
+        .order_by(Approval.created_at.desc())
+        .limit(1)
+    )
+    existing_approval = existing_approval_result.scalar_one_or_none()
+    if existing_approval is not None:
+        payload = (
+            dict(existing_approval.decision_payload)
+            if isinstance(existing_approval.decision_payload, dict)
+            else {}
+        )
+        return ApprovalRecord(
+            id=existing_approval.id,
+            kind="writing_gate_2",
+            subject_id=str(deliverable_id),
+            status=existing_approval.status,
+            external_approval_id=payload.get("externalApprovalId")
+            if isinstance(payload.get("externalApprovalId"), str)
+            else None,
+            created_at=existing_approval.created_at,
+        )
 
     external = ws if ws is not None else get_writing_studio()
     external_id = deliverable.deliverable_id or str(deliverable_id)
@@ -657,8 +686,9 @@ async def submit_draft_for_review(
     )
     session.add(approval)
 
-    # Update deliverable status via state machine
-    await transition(session, "deliverable", deliverable_id, DeliverableState.draft_ready)
+    # Manual/template drafts are already draft_ready before review is requested.
+    if deliverable.status != DeliverableState.draft_ready.value:
+        await transition(session, "deliverable", deliverable_id, DeliverableState.draft_ready)
 
     await session.flush()
     await session.refresh(approval)

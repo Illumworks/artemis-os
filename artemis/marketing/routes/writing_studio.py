@@ -30,16 +30,20 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
+from artemis.identity.dependencies import get_current_user
+from artemis.identity.models import User
 from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, internal, not_found
 from artemis.marketing.state_machine import LEGACY_STATUS_MAP, DeliverableState, transition
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio import invoke as ws_invoke
+from artemis.marketing.writing_studio import review_notifications
 from artemis.marketing.writing_studio.compose_engine import (
     _latest_draft_content,
     build_writing_memory_prompt,
@@ -74,6 +78,13 @@ _EVENT_KIND_MAP: dict[str, str] = {
 # left at its current value so the existing state machine is not disturbed.
 _META_ARCHIVED_KEY = "archived"
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL | re.IGNORECASE)
+
+
+class ReadyForReviewRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    reviewer_email_camel: str | None = Field(default=None, alias="reviewerEmail")
+    reviewer_email: str | None = None
 
 
 def _build_tag_registry_options(
@@ -1520,6 +1531,100 @@ async def submit_review(
     return _serialize_approval(record)
 
 
+@router.post("/drafts/{draft_id}/ready-for-review", status_code=200)
+async def ready_for_review(
+    body: ReadyForReviewRequest,
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> dict[str, Any]:
+    """Mark a draft ready for review and send a deterministic Callie ping."""
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+
+    reviewer_email = await review_notifications.resolve_reviewer_email(
+        session,
+        deliverable,
+        requested_email=body.reviewer_email_camel or body.reviewer_email,
+    )
+
+    try:
+        approval = await ws_invoke.submit_draft_for_review(session, deliverable_id=draft_id)
+    except ValueError as exc:
+        raise bad_request(str(exc), "ready_for_review_failed") from exc
+
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+
+    now_iso = datetime.now(UTC).isoformat()
+    author_name = (current_user.name or current_user.email or "The author").strip()
+    metadata = (
+        dict(deliverable.deliverable_metadata)
+        if isinstance(deliverable.deliverable_metadata, dict)
+        else {}
+    )
+    metadata.update(
+        {
+            "ready_for_review": True,
+            "review_status": "ready_for_review",
+            "reviewer_email": reviewer_email,
+            "review_requested_at": now_iso,
+            "review_requested_by_email": current_user.email,
+            "review_requested_by_name": current_user.name,
+        }
+    )
+    deliverable.deliverable_metadata = metadata
+    await session.flush()
+    await session.commit()
+
+    ping = await review_notifications.send_callie_ready_for_review_ping(
+        session,
+        draft_id=draft_id,
+        title=metadata.get("title") or metadata.get("externalTitle") or f"Draft {draft_id}",
+        author_name=author_name,
+        reviewer_email=reviewer_email,
+    )
+
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+    metadata = (
+        dict(deliverable.deliverable_metadata)
+        if isinstance(deliverable.deliverable_metadata, dict)
+        else {}
+    )
+    metadata.update(
+        {
+            "review_notification_sent_at": datetime.now(UTC).isoformat() if ping.ok else None,
+            "review_notification_target": ping.target,
+            "review_notification_slack_user_id": ping.slack_user_id,
+            "review_notification_channel_id": ping.channel_id,
+            "review_notification_error": ping.error,
+        }
+    )
+    deliverable.deliverable_metadata = metadata
+    await session.flush()
+    thread_messages = await wr_repo.list_thread_messages_for_draft(session, draft_id)
+    await session.commit()
+    await session.refresh(deliverable)
+
+    return {
+        "ok": ping.ok,
+        "draft": _serialize_deliverable_detail(deliverable, thread_messages),
+        "approval": _serialize_approval(approval),
+        "reviewerEmail": reviewer_email,
+        "delivery": {
+            "ok": ping.ok,
+            "target": ping.target,
+            "slackUserId": ping.slack_user_id,
+            "channelId": ping.channel_id,
+            "error": ping.error,
+        },
+    }
+
+
 @router.post("/drafts/{draft_id}/events/{event_kind}", status_code=200)
 async def post_draft_event(
     draft_id: str = Path(...),
@@ -1728,10 +1833,16 @@ def _serialize_deliverable_as_draft(d: CampaignDeliverable) -> dict[str, Any]:
     """
     meta = d.deliverable_metadata if isinstance(d.deliverable_metadata, dict) else {}
     title: str = meta.get("title") or meta.get("externalTitle") or f"Draft {d.id}"
+    ready_for_review = bool(meta.get("ready_for_review")) or (
+        meta.get("review_status") == "ready_for_review"
+    )
     return {
         "id": d.id,
         "title": title,
         "status": d.status,
+        "readyForReview": ready_for_review,
+        "reviewerEmail": meta.get("reviewer_email") or meta.get("reviewerEmail"),
+        "reviewRequestedAt": meta.get("review_requested_at") or meta.get("reviewRequestedAt"),
         "asset_type": meta.get("asset_type") or meta.get("assetType"),
         "campaign_id": d.campaign_id,
         "folder_id": meta.get("folder_id"),
