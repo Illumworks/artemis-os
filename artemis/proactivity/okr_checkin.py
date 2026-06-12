@@ -16,10 +16,18 @@ Design constraints:
     If a Jira ticket is not assigned to Jon, it is presented as clearly-labeled
     team context ("I noticed the team closed X"), never as his accomplishment.
   - One Jira ticket maps to AT MOST one KR (no fan-out).
-  - The check-in leads with KR state and asks Jon what he moved — his word-dump
-    is the source of truth for his accomplishments.
+  - The check-in leads with a minimal, activity-grounded digest, then asks Jon
+    what he moved — his word-dump is the source of truth for his accomplishments.
   - Reuses the morning-brief reservation pattern (delivery_kind='okr_checkin',
     once-per-Friday idempotency keyed on ISO week number).
+
+Opener design (brief p2-okr-checkin-opener-digest):
+  The opener is a tight ~2-4 KR mention digest, NOT a 20-KR recitation.
+  Two signals feed it:
+    - "In motion": KRs with OKR activity in the last ~21 days.
+    - "Slipping / needs eyes": KRs that are low-progress AND stalled (no recent
+      activity) — deadline-pressure heuristic until activity history accrues.
+  Every named KR is real with its real %; nothing fabricated.
 """
 
 from __future__ import annotations
@@ -35,11 +43,22 @@ from artemis.okr import repository as okr_repo
 
 logger = logging.getLogger(__name__)
 
+# Activity lookback window for the "in motion" signal.
+_ACTIVITY_LOOKBACK_DAYS = 21
+
+# Low-progress threshold for the "slipping" heuristic.
+_SLIPPING_PROG_THRESHOLD = 40
+
+# Max KRs to surface in each digest bucket.
+_DIGEST_IN_MOTION_MAX = 3
+_DIGEST_SLIPPING_MAX = 2
+
 # Re-export so callers don't need to know the internal split.
 __all__ = [
     "gather_checkin_sources",
     "build_okr_checkin_proposal",
     "build_kr_snapshot",
+    "build_checkin_digest",
     "format_checkin_for_slack",
 ]
 
@@ -142,6 +161,10 @@ async def gather_checkin_sources(session: AsyncSession) -> dict[str, Any]:
 
     Each source is gathered with its own session to avoid concurrent-session
     collisions (same pattern as brief/sources.py).
+
+    Activity is fetched over the last 21 days (``_ACTIVITY_LOOKBACK_DAYS``)
+    to give the digest enough history.  The proposal builder still trims to
+    this-week entries; the digest builder uses the full 21-day window.
     """
     import asyncio
 
@@ -154,7 +177,7 @@ async def gather_checkin_sources(session: AsyncSession) -> dict[str, Any]:
     results: list[Any] = list(
         await asyncio.gather(
             _own(lambda s: okr_repo.list_objectives(s, include_archived=False)),
-            _own(lambda s: okr_repo.list_activity(s, limit=100)),
+            _own(lambda s: okr_repo.list_activity(s, limit=200)),
             _own(_safe_jira_done_this_week),
             _own(_safe_meeting_action_items),
             return_exceptions=True,
@@ -333,6 +356,126 @@ def build_kr_snapshot(objectives: list[Any]) -> list[dict[str, Any]]:
     return snapshot
 
 
+# ── Digest builder ───────────────────────────────────────────────────────────
+
+
+def build_checkin_digest(
+    sources: dict[str, Any],
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Derive a minimal, activity-grounded digest for the check-in opener.
+
+    Returns a dict with:
+        {
+            "in_motion": [
+                {"kr_id": int, "kr_title": str, "objective_title": str, "prog": int},
+                ...
+            ],
+            "slipping": [
+                {"kr_id": int, "kr_title": str, "objective_title": str, "prog": int},
+                ...
+            ],
+        }
+
+    "In motion" — KRs with OKR activity in the last ``_ACTIVITY_LOOKBACK_DAYS``
+    days.  Ordered by most-recent activity first.  Capped at
+    ``_DIGEST_IN_MOTION_MAX`` entries.
+
+    "Slipping / needs eyes" — KRs that are:
+      - NOT already surfaced as "in motion" (they have no recent activity, i.e.,
+        stalled)
+      - AND have low progress (prog <= ``_SLIPPING_PROG_THRESHOLD``)
+    Ordered by lowest progress first.  Capped at ``_DIGEST_SLIPPING_MAX``.
+
+    If there is no activity history at all (early weeks), "in_motion" is empty
+    and only the slipping heuristic applies — no crash, no dump.
+
+    Every KR in the returned lists is real with its real current %; nothing
+    is fabricated.
+    """
+    _today = today or datetime.now(UTC).date()
+    lookback_cutoff = datetime.now(UTC) - timedelta(days=_ACTIVITY_LOOKBACK_DAYS)
+
+    objectives = sources.get("objectives") or []
+    activity_rows = sources.get("activity") or []
+
+    # Index activity by kr_id, keeping track of the most-recent timestamp per KR.
+    # We only keep rows within the lookback window.
+    recent_kr_ids: dict[int, datetime] = {}
+    for act in activity_rows:
+        if not hasattr(act, "created_at"):
+            continue
+        created_at: datetime | None = act.created_at
+        if created_at is None:
+            continue
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        if created_at < lookback_cutoff:
+            continue
+        kr_id_val = act.kr_id
+        if kr_id_val is None:
+            continue
+        kr_id_int = int(kr_id_val)
+        existing = recent_kr_ids.get(kr_id_int)
+        if existing is None or created_at > existing:
+            recent_kr_ids[kr_id_int] = created_at
+
+    # Build a flat map of active KRs: kr_id -> (kr, objective)
+    active_krs: dict[int, tuple[Any, Any]] = {}
+    for obj in objectives:
+        for kr in getattr(obj, "key_results", []) or []:
+            if getattr(kr, "archived_at", None) is not None:
+                continue
+            active_krs[int(kr.id)] = (kr, obj)
+
+    # "In motion": active KRs that appear in recent_kr_ids, ordered by most-recent activity.
+    in_motion_raw: list[tuple[datetime, dict[str, Any]]] = []
+    for kr_id_int, last_active in recent_kr_ids.items():
+        if kr_id_int not in active_krs:
+            continue
+        kr, obj = active_krs[kr_id_int]
+        in_motion_raw.append(
+            (
+                last_active,
+                {
+                    "kr_id": kr_id_int,
+                    "kr_title": str(kr.title),
+                    "objective_title": str(obj.title),
+                    "prog": int(kr.prog),
+                },
+            )
+        )
+    # Sort most-recent first, cap.
+    in_motion_raw.sort(key=lambda t: t[0], reverse=True)
+    in_motion = [entry for _, entry in in_motion_raw[:_DIGEST_IN_MOTION_MAX]]
+    in_motion_ids = {e["kr_id"] for e in in_motion}
+
+    # "Slipping": active KRs NOT in "in motion" + low progress.
+    slipping_raw: list[tuple[int, dict[str, Any]]] = []
+    for kr_id_int, (kr, obj) in active_krs.items():
+        if kr_id_int in in_motion_ids:
+            continue
+        prog = int(kr.prog)
+        if prog <= _SLIPPING_PROG_THRESHOLD:
+            slipping_raw.append(
+                (
+                    prog,
+                    {
+                        "kr_id": kr_id_int,
+                        "kr_title": str(kr.title),
+                        "objective_title": str(obj.title),
+                        "prog": prog,
+                    },
+                )
+            )
+    # Sort lowest-progress first (most at risk), cap.
+    slipping_raw.sort(key=lambda t: t[0])
+    slipping = [entry for _, entry in slipping_raw[:_DIGEST_SLIPPING_MAX]]
+
+    return {"in_motion": in_motion, "slipping": slipping}
+
+
 # ── Slack formatter ───────────────────────────────────────────────────────────
 
 
@@ -341,80 +484,83 @@ def format_checkin_for_slack(
     *,
     delivery_date: date,
     objectives: list[Any] | None = None,
+    digest: dict[str, Any] | None = None,
 ) -> str:
     """Format the OKR check-in proposal for Slack delivery.
 
-    Part C: Leads with a tight list of ALL active KR current values so the
-    opener "where your KRs stand" is backed by actual numbers, not an empty
-    promise. The proposals (grounded evidence) follow as context.
+    Plain-text fallback for when the voice rendering pass fails.
 
-    Reframed (P2 grounding fix):
-    - LEADS with where KRs currently stand (all active KRs, with prog).
-    - ASKS what Jon moved this week — his answer is the source of truth.
-    - Jira/meeting evidence is presented as optional context, not claimed
-      accomplishments.
-    - Nothing is asserted as Jon's work unless it came from OKR activity
-      entries that Jon recorded himself.
+    The opener is a MINIMAL, activity-grounded digest (2-4 KR mentions) built
+    from ``digest`` (see ``build_checkin_digest``).  It replaces the previous
+    full-20-KR recitation.  Full KR detail still surfaces during the reconcile
+    pass (when Jon sends his word-dump).
+
+    Opener structure:
+      - Date-aware header: "Friday check-in" on Fridays, "OKR check-in" otherwise.
+      - "In motion": KRs with recent activity (what Jon's been pushing on).
+      - "Slipping / needs eyes": 1-2 low-progress / stalled KRs.
+      - Ask: "What did you move this week? I'll map it. Nothing updates until
+        you say go."
+
+    If ``digest`` is None (e.g. called from tests that pre-date the digest),
+    falls back to deriving a digest from ``objectives`` so old tests keep
+    passing.
 
     This is informational — no OKR writes happen here.
-    Jon's reply (approve + word-dump) flows through the DM agent loop,
-    which calls update_okr_kr (layer 3) only on his explicit confirm.
+    Jon's reply flows through the DM agent loop, which calls update_okr_kr
+    (layer 3) only on his explicit confirm.
     """
-    day_label = (
-        f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
-    )
+    # Date-aware header: "Friday check-in" only on an actual Friday.
+    is_friday = delivery_date.weekday() == 4  # Monday=0, Friday=4
+    if is_friday:
+        day_label = f"Friday check-in, {delivery_date.strftime('%B')} {delivery_date.day}"
+    else:
+        day_label = f"OKR check-in, {delivery_date.strftime('%A')} {delivery_date.strftime('%B')} {delivery_date.day}"
+
     lines: list[str] = [
-        f"*Friday check-in — {day_label}*",
+        f"*{day_label}*",
         "",
     ]
 
-    # Part C: Show KR state snapshot for all active KRs.
-    kr_snapshot = build_kr_snapshot(objectives or [])
-    if kr_snapshot:
-        lines.append("Where your KRs stand:")
-        for entry in kr_snapshot:
-            prog = entry["prog"]
-            target = entry.get("target_text") or ""
-            target_str = f" (target: {target})" if target else ""
-            lines.append(
-                f"  *{entry['objective_title']}* > *{entry['kr_title']}* — {prog}%{target_str}"
-            )
-        lines.append("")
-
-    lines.append(
-        "Tell me what you actually moved this week and I'll map it to the right KRs. "
-        "Nothing updates until you say go."
-    )
-    lines.append("")
-
-    if proposals:
-        lines.append("Context I found this week:")
-        for p in proposals:
-            lines.append(
-                f"  *{p['objective_title']}* > *{p['kr_title']}* — currently at {p['current_prog']}%"
-            )
-            for b in p["basis"]:
-                b_str = str(b)
-                # OKR activity = Jon logged it himself (ground truth).
-                if b_str.startswith("OKR activity:"):
-                    lines.append(f"    - {b_str}")
-                # Jira ticket or meeting item = context, not claimed accomplishment.
-                elif b_str.startswith("Your Jira ticket") or b_str.startswith(
-                    "Meeting action item:"
-                ):
-                    lines.append(f"    - Context: {b_str}")
-                else:
-                    lines.append(f"    - {b_str}")
-        lines.append("")
-
-    if not kr_snapshot and not proposals:
-        lines.append(
-            "I don't have KR state on file — no objectives loaded yet. "
-            "What did you get done? Send me a word-dump and I'll map it."
+    # Derive the digest if not provided.
+    if digest is None:
+        # No live activity data — fall back to a deadline-pressure-only digest
+        # built from objectives alone (slipping heuristic, no "in motion").
+        effective_digest = build_checkin_digest(
+            {"objectives": objectives or [], "activity": []},
+            today=delivery_date,
         )
+    else:
+        effective_digest = digest
 
+    in_motion = effective_digest.get("in_motion") or []
+    slipping = effective_digest.get("slipping") or []
+
+    # "In motion" block.
+    if in_motion:
+        motion_parts = [f"*{e['kr_title']}* ({e['prog']}%)" for e in in_motion]
+        if len(motion_parts) == 1:
+            lines.append(f"You've been pushing on {motion_parts[0]} lately.")
+        else:
+            last = motion_parts[-1]
+            rest = ", ".join(motion_parts[:-1])
+            lines.append(f"You've been pushing on {rest} and {last} lately.")
+        lines.append("")
+
+    # "Slipping / needs eyes" block.
+    if slipping:
+        for s in slipping:
+            lines.append(f"*{s['kr_title']}* is at {s['prog']}% and hasn't moved recently.")
+        lines.append("")
+
+    # No grounded data at all (fresh install, no KRs).
+    if not in_motion and not slipping:
+        lines.append("No KR activity on file yet — tell me what you worked on and I'll map it.")
+        lines.append("")
+
+    # The ask.
     lines.append(
-        "_Reply with a word-dump of what you actually moved. Nothing changes until you say go._"
+        "What did you move this week? Send me a word-dump and I'll map it. Nothing updates until you say go."
     )
 
     try:

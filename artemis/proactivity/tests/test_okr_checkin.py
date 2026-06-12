@@ -158,7 +158,7 @@ async def test_fire_okr_checkin_delivers_proposal_once(db_session: AsyncSession)
 
 
 async def test_fire_okr_checkin_proposal_includes_cited_krs(db_session: AsyncSession) -> None:
-    """When sources have evidence for a KR the proposal text contains a citation."""
+    """When sources have activity for a KR the opener's digest includes that KR."""
     await _seed_slack_context(db_session)
 
     # Build a mock KR ORM object.
@@ -186,8 +186,6 @@ async def test_fire_okr_checkin_proposal_includes_cited_krs(db_session: AsyncSes
         "action_items": [],
     }
 
-    slack_text = ""
-
     with (
         patch(
             "artemis.proactivity.scheduler.gather_checkin_sources",
@@ -204,8 +202,11 @@ async def test_fire_okr_checkin_proposal_includes_cited_krs(db_session: AsyncSes
 
     assert mock_post_dm.await_count == 1
     slack_text = str(mock_post_dm.await_args.kwargs["text"])
+    # Digest-based opener: the in-motion KR should appear by name and progress.
     assert "Increase pipeline coverage" in slack_text
-    assert "OKR activity" in slack_text
+    assert "45%" in slack_text
+    # The ask must be present.
+    assert "move" in slack_text.lower() or "map" in slack_text.lower()
 
 
 # ── 3. Proposal generator: no source → no proposal ───────────────────────────
@@ -298,17 +299,29 @@ def test_build_proposal_archived_kr_excluded() -> None:
 
 
 def test_format_checkin_empty_proposals() -> None:
-    """Empty proposals produce a message asking Jon to send a word-dump."""
-    text = format_checkin_for_slack([], delivery_date=date(2026, 6, 13))
-    # P2 reframe: header is now "Friday check-in" (no "OKR" in the plain header).
-    assert "Friday" in text
-    assert "check-in" in text or "check in" in text or "KR" in text
-    assert "word-dump" in text
-    assert "go" in text
+    """Empty proposals produce a minimal digest message asking Jon to share what moved."""
+    # June 12, 2026 is a Friday — header should say "Friday check-in".
+    friday = date(2026, 6, 12)
+    text_friday = format_checkin_for_slack([], delivery_date=friday)
+    assert "Friday" in text_friday
+    assert "check-in" in text_friday.lower()
+    assert "go" in text_friday
+
+    # A non-Friday date — header should NOT say "Friday check-in".
+    thursday = date(2026, 6, 11)
+    text_thursday = format_checkin_for_slack([], delivery_date=thursday)
+    # Must NOT start with "Friday check-in" header.
+    assert text_thursday.startswith("*Friday") is False
+    assert "OKR check-in" in text_thursday or "check-in" in text_thursday.lower()
+    assert "go" in text_thursday
 
 
-def test_format_checkin_with_proposals() -> None:
-    """Proposals are formatted with objective + KR + basis in the Slack message."""
+def test_format_checkin_with_proposals_still_asks_and_gates() -> None:
+    """format_checkin_for_slack always produces an ask + safety gate regardless of proposals.
+
+    The opener no longer echoes the proposal list — the digest drives the opener.
+    This test verifies the structure: header, ask, and safety gate are present.
+    """
     proposals = [
         {
             "kr_id": 1,
@@ -318,12 +331,15 @@ def test_format_checkin_with_proposals() -> None:
             "basis": ["OKR activity: Merged pipeline fix"],
         }
     ]
-    text = format_checkin_for_slack(proposals, delivery_date=date(2026, 6, 13))
-    assert "Improve pipeline" in text
-    assert "Scale ops" in text
-    assert "OKR activity" in text
-    # Safety reminder must be present.
-    assert "approve" in text.lower() or "confirm" in text.lower() or "go" in text.lower()
+    # Use a Friday date so header is predictable.
+    text = format_checkin_for_slack(proposals, delivery_date=date(2026, 6, 12))
+    # Header must be date-aware.
+    assert "Friday" in text
+    assert "check-in" in text.lower()
+    # Must ask what Jon moved.
+    assert "move" in text.lower() or "map" in text.lower()
+    # Safety gate must be present.
+    assert "go" in text.lower()
 
 
 # ── 4. Scheduler registration ─────────────────────────────────────────────────

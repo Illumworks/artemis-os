@@ -355,8 +355,8 @@ def test_kr_with_no_basis_gets_no_proposal() -> None:
     assert proposals == [], f"Expected no proposals for ungrounded KR, got {proposals}"
 
 
-def test_format_checkin_leads_with_kr_state_not_accomplishment_assertion() -> None:
-    """format_checkin_for_slack must not assert 'you did X' — must ask what Jon moved."""
+def test_format_checkin_leads_with_ask_not_accomplishment_assertion() -> None:
+    """format_checkin_for_slack must ask what Jon moved — NOT assert 'you did X'."""
     proposals = [
         {
             "kr_id": 1,
@@ -368,21 +368,24 @@ def test_format_checkin_leads_with_kr_state_not_accomplishment_assertion() -> No
     ]
     text = format_checkin_for_slack(proposals, delivery_date=_DELIVERY_DATE)
 
-    # Must lead with KR state.
-    assert "55%" in text or "currently" in text.lower(), "Must show current KR progress"
     # Must ask what Jon moved (not assert he did X).
-    assert "what" in text.lower() and ("moved" in text.lower() or "word-dump" in text.lower()), (
+    text_lower = text.lower()
+    assert "what" in text_lower and ("moved" in text_lower or "word-dump" in text_lower), (
         "Must ask what Jon moved, not assert his accomplishments"
     )
     # Must NOT assert "you did X" for the Jira evidence.
-    text_lower = text.lower()
     assert "you completed" not in text_lower
     assert "you closed" not in text_lower
     assert "you finished" not in text_lower
 
 
-def test_format_checkin_labels_jira_as_context() -> None:
-    """Jira evidence in format_checkin_for_slack is labeled as 'Context:' not bare assertion."""
+def test_format_checkin_does_not_assert_accomplishments_in_opener() -> None:
+    """The opener (digest-based) presents the ask, not claims about what Jon did.
+
+    Jira and OKR activity evidence are NOT echoed in the plain-text opener;
+    the voice pass is the channel for surfacing contextual evidence.
+    The plain-text fallback focuses on: what's moving, what's slipping, the ask.
+    """
     proposals = [
         {
             "kr_id": 2,
@@ -393,14 +396,18 @@ def test_format_checkin_labels_jira_as_context() -> None:
         }
     ]
     text = format_checkin_for_slack(proposals, delivery_date=_DELIVERY_DATE)
-    # Jira evidence must be wrapped in context label.
-    assert "Context:" in text or "context" in text.lower(), (
-        "Jira evidence must be presented as context, not bare assertion"
-    )
+    # Plain-text opener no longer echoes raw Jira evidence — those are voice-pass-only.
+    # But must still not assert accomplishments.
+    text_lower = text.lower()
+    assert "you completed" not in text_lower
+    assert "you closed" not in text_lower
 
 
-def test_format_checkin_okr_activity_is_not_labeled_context() -> None:
-    """OKR activity (Jon logged it himself) is presented directly, not labeled as context."""
+def test_format_checkin_opener_does_not_dump_raw_basis_strings() -> None:
+    """Plain-text opener must not include raw 'OKR activity:' or 'Context:' lines
+    from the proposals list — those were the old format; the digest is now the opener.
+    The safety gate must still be present.
+    """
     proposals = [
         {
             "kr_id": 3,
@@ -411,8 +418,10 @@ def test_format_checkin_okr_activity_is_not_labeled_context() -> None:
         }
     ]
     text = format_checkin_for_slack(proposals, delivery_date=_DELIVERY_DATE)
-    # OKR activity is ground truth — should be shown directly.
-    assert "OKR activity: Jon logged 5 new deals" in text
+    # Opener no longer echoes raw basis strings — digest drives opener.
+    # But safety gate and ask must still be present.
+    assert "go" in text.lower()
+    assert "move" in text.lower() or "word-dump" in text.lower()
 
 
 def test_format_checkin_empty_proposals_asks_for_word_dump() -> None:
