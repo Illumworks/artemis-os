@@ -49,6 +49,17 @@ import {
   listApprovalsApi,
   attachDeliverableApi,
   fetchMarketingCampaignsApi,
+  listWritingTrainingCandidatesApi,
+  createWritingTrainingCandidateApi,
+  decideWritingTrainingCandidateApi,
+  listWritingRulesApi,
+  listWritingExamplesApi,
+  listWritingSourcesApi,
+  updateWritingRuleApi,
+  updateWritingExampleApi,
+  updateWritingSourceApi,
+  updateWritingFolderApi,
+  deleteWritingRuleApi,
 } from "../core/api.js";
 
 // Schema: paragraphs, headings, lists, bold/italic — the prototype's basic set.
@@ -112,6 +123,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   const draftsWrapEl = rootEl.querySelector('[data-cv5="drafts-wrap"]');
   const pickerEl = rootEl.querySelector('[data-cv5="drafts-picker"]');
   const historyBtnEl = rootEl.querySelector('[data-cv5="open-history"]');
+  const draftTitleEl = rootEl.querySelector('[data-cv5="draft-title"]');
 
   // ── Stage 4: Claim-flags plugin ────────────────────────────────────────────
   //
@@ -1275,6 +1287,17 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         return;
       }
 
+      // ── Rename-folder button ────────────────────────────────────────────
+      const renameBtn = e.target.closest("[data-cv5-rename-folder]");
+      if (renameBtn) {
+        e.stopPropagation();
+        const folderId = Number(renameBtn.dataset.cv5RenameFolder);
+        const currentName = renameBtn.dataset.cv5FolderName || "";
+        if (!folderId) return;
+        await handleRenameFolder(folderId, currentName, renameBtn);
+        return;
+      }
+
       // ── Delete-folder button ────────────────────────────────────────────
       const delBtn = e.target.closest("[data-cv5-delete-folder]");
       if (delBtn) {
@@ -1417,8 +1440,131 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
+  async function handleRenameFolder(folderId, currentName, triggerEl) {
+    // Inline rename: replace the folder-name span in the picker row with an
+    // <input> that commits on Enter/blur and cancels on Escape.
+    const folderWrap = triggerEl?.closest(".cv5-picker-folder-wrap");
+    const nameSpan = folderWrap?.querySelector(".cv5-picker-folder-name");
+    if (!nameSpan) {
+      // Fallback: prompt if the picker row can't be found in DOM.
+      const newName = window.prompt("Rename folder:", currentName);
+      if (!newName?.trim() || newName.trim() === currentName) return;
+      await _commitFolderRename(folderId, currentName, newName.trim());
+      return;
+    }
+
+    // Hide the span and insert an input in its place.
+    nameSpan.style.display = "none";
+    triggerEl.style.display = "none";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "cv5-picker-folder-rename-input";
+    input.value = currentName;
+    input.setAttribute("aria-label", "Rename folder");
+    nameSpan.parentNode.insertBefore(input, nameSpan.nextSibling);
+    input.focus();
+    input.select();
+
+    let committed = false;
+    async function commit() {
+      if (committed) return;
+      committed = true;
+      input.remove();
+      nameSpan.style.display = "";
+      triggerEl.style.display = "";
+      const newName = input.value.trim();
+      if (!newName || newName === currentName) return;
+      await _commitFolderRename(folderId, currentName, newName);
+    }
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); void commit(); }
+      if (e.key === "Escape") {
+        committed = true;
+        input.remove();
+        nameSpan.style.display = "";
+        triggerEl.style.display = "";
+      }
+    });
+    input.addEventListener("blur", () => void commit());
+  }
+
+  async function _commitFolderRename(folderId, oldName, newName) {
+    try {
+      await updateWritingFolderApi(folderId, { name: newName });
+      // Update local folder cache.
+      const local = currentFolders.find((f) => f.id === folderId);
+      if (local) local.name = newName;
+      rerenderPickerOnly();
+      callbacks.onStatus?.(`Folder renamed to "${newName}".`);
+    } catch (err) {
+      console.error("[composer-v5] rename folder failed:", err);
+      callbacks.onError?.(err.message || "Failed to rename folder.");
+    }
+  }
+
   if (historyBtnEl) {
     historyBtnEl.addEventListener("click", () => callbacks.onOpenVersionHistory?.());
+  }
+
+  // ── Draft title inline rename ──────────────────────────────────────────────
+  //
+  // Clicking the draft name in the top bar replaces it with an <input> for
+  // inline editing. On Enter or blur, PUT /api/writing-studio/drafts/{id}
+  // with { title } — persists through reload.
+
+  function _startDraftRename() {
+    if (!draftTitleEl || draftTitleEl.dataset.cv5Renaming === "1") return;
+    draftTitleEl.dataset.cv5Renaming = "1";
+    const currentTitle = draftTitleEl.textContent.trim();
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "cv5-hdr-title-input";
+    input.value = currentTitle;
+    input.setAttribute("aria-label", "Rename draft");
+    draftTitleEl.style.display = "none";
+    draftTitleEl.parentNode.insertBefore(input, draftTitleEl.nextSibling);
+    input.focus();
+    input.select();
+
+    async function _commitRename() {
+      const newTitle = input.value.trim();
+      input.remove();
+      draftTitleEl.style.display = "";
+      delete draftTitleEl.dataset.cv5Renaming;
+      if (!newTitle || newTitle === currentTitle) return;
+      draftTitleEl.textContent = newTitle;
+      draftTitleEl.title = newTitle;
+      try {
+        await updateWritingDraftApi(currentDraftId, { title: newTitle });
+        // Update local draft cache so the picker reflects the new name.
+        const local = currentDrafts.find((d) => d.id === currentDraftId);
+        if (local) local.title = newTitle;
+        rerenderPickerOnly();
+      } catch (err) {
+        console.error("[composer-v5] rename draft failed:", err);
+        callbacks.onError?.(err.message || "Failed to rename draft.");
+        // Revert display.
+        draftTitleEl.textContent = currentTitle;
+        draftTitleEl.title = currentTitle;
+      }
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); void _commitRename(); }
+      if (e.key === "Escape") {
+        input.remove();
+        draftTitleEl.style.display = "";
+        delete draftTitleEl.dataset.cv5Renaming;
+      }
+    });
+    input.addEventListener("blur", () => void _commitRename());
+  }
+
+  if (draftTitleEl) {
+    draftTitleEl.addEventListener("click", _startDraftRename);
+    draftTitleEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _startDraftRename(); }
+    });
   }
 
   // ── Stage 5: format-aware pagination ──────────────────────────────────────
@@ -3025,6 +3171,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         // non-fatal — chat still landed
       }
       callbacks.onStatus?.("Drafted with profile, rules, and draft context.");
+      // Refresh proposed-rules badge/panel so any AI-proposed candidates from
+      // this compose turn surface immediately without requiring panel reopen.
+      void _refreshProposedCandidates();
     } catch (err) {
       console.error("[composer-v5] compose failed:", err);
       const idxA = chatHistory.findIndex((e) => e.id === pendingAsstId);
@@ -3046,6 +3195,491 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     // Re-render comment cards after the doc is replaced.
     scheduleCommentsReflow();
   }
+
+  // ── Rules panel (proposed rules + manual propose) ─────────────────────────
+  //
+  // Opened by clicking the "Rules" button in the top action bar.
+  // Shows:
+  //   1. Proposed candidates (status="proposed") with Approve / Reject per item.
+  //   2. A manual "+ Propose a rule" textarea form (min 10 chars).
+  //
+  // The panel is a popover div anchored to the chat column, above the composer.
+  // It refreshes its candidate list every time it opens AND after compose returns.
+
+  const rulesBtnEl = rootEl.querySelector('[data-cv5="rules-btn"]');
+  const rulesBadgeEl = rootEl.querySelector('[data-cv5="rules-badge"]');
+
+  // Floating rules panel — appended to document.body (fixed position, same
+  // pattern as selToolbar / rewritePopover).
+  const rulesPanel = document.createElement("div");
+  rulesPanel.className = "cv5-rules-panel";
+  rulesPanel.setAttribute("role", "dialog");
+  rulesPanel.setAttribute("aria-label", "Proposed rules");
+  rulesPanel.style.display = "none";
+  document.body.appendChild(rulesPanel);
+
+  let rulesPanelOpen = false;
+  let rulesProposedCache = [];
+
+  function _positionRulesPanel() {
+    if (!rulesBtnEl) return;
+    const rect = rulesBtnEl.getBoundingClientRect();
+    const panelW = 420;
+    let left = rect.left;
+    left = Math.max(8, Math.min(left, window.innerWidth - panelW - 8));
+    // Position above the button; if no room, position below.
+    const gap = 6;
+    const panelH = rulesPanel.offsetHeight || 300;
+    let top = rect.top - panelH - gap;
+    if (top < 8) top = rect.bottom + gap;
+    rulesPanel.style.left = `${left}px`;
+    rulesPanel.style.top = `${top}px`;
+  }
+
+  function _renderRulesPanel() {
+    const proposed = rulesProposedCache;
+    const candidateRows = proposed.length > 0
+      ? proposed.map((c) => `
+          <div class="cv5-rules-candidate" data-cv5-candidate-id="${esc(String(c.id ?? ""))}">
+            <div class="cv5-rules-candidate-text">${esc(c.proposed_text || c.proposedText || "")}</div>
+            ${c.rationale ? `<div class="cv5-rules-candidate-rationale">${esc(c.rationale)}</div>` : ""}
+            <div class="cv5-rules-candidate-actions">
+              <button type="button" class="cv5-rules-approve-btn" data-cv5-decide="approved" data-cv5-candidate-id="${esc(String(c.id ?? ""))}" ${c.id == null ? "disabled" : ""}>Approve</button>
+              <button type="button" class="cv5-rules-reject-btn" data-cv5-decide="rejected" data-cv5-candidate-id="${esc(String(c.id ?? ""))}" ${c.id == null ? "disabled" : ""}>Reject</button>
+            </div>
+          </div>
+        `).join("")
+      : `<div class="cv5-rules-empty">No proposed rules yet. Run a compose turn and Amira may propose rules, or add one manually below.</div>`;
+
+    rulesPanel.innerHTML = `
+      <div class="cv5-rules-panel-hdr">
+        <span class="cv5-rules-panel-title">Proposed Rules</span>
+        <button type="button" class="cv5-rules-panel-close" aria-label="Close">✕</button>
+      </div>
+      <div class="cv5-rules-candidates-list">
+        ${candidateRows}
+      </div>
+      <div class="cv5-rules-propose-section">
+        <div class="cv5-rules-propose-label">+ Propose a rule manually</div>
+        <textarea
+          class="cv5-rules-propose-input"
+          data-cv5="rules-propose-input"
+          rows="2"
+          placeholder="Describe a writing rule (min 10 characters)…"
+          aria-label="Propose a writing rule"
+        ></textarea>
+        <button type="button" class="cv5-rules-propose-submit" data-cv5="rules-propose-submit">Propose</button>
+      </div>
+    `;
+  }
+
+  function openRulesPanel() {
+    if (rulesPanelOpen) { closeRulesPanel(); return; }
+    rulesPanelOpen = true;
+    rulesPanel.style.display = "block";
+    _renderRulesPanel();
+    _positionRulesPanel();
+    // Wire close button (re-rendered on each open).
+    rulesPanel.querySelector(".cv5-rules-panel-close")?.addEventListener("click", closeRulesPanel);
+    // Refresh candidates from server (non-blocking).
+    void _refreshProposedCandidates();
+  }
+
+  function closeRulesPanel() {
+    rulesPanelOpen = false;
+    rulesPanel.style.display = "none";
+  }
+
+  async function _refreshProposedCandidates() {
+    try {
+      const data = await listWritingTrainingCandidatesApi("proposed");
+      // The endpoint returns { training_candidates: [...] }
+      rulesProposedCache = Array.isArray(data?.training_candidates)
+        ? data.training_candidates
+        : Array.isArray(data) ? data : [];
+    } catch (err) {
+      console.warn("[composer-v5] failed to load proposed candidates:", err);
+    }
+    // Update badge.
+    const count = rulesProposedCache.length;
+    if (rulesBadgeEl) {
+      if (count > 0) {
+        rulesBadgeEl.textContent = String(count);
+        rulesBadgeEl.removeAttribute("hidden");
+      } else {
+        rulesBadgeEl.setAttribute("hidden", "");
+      }
+    }
+    // Re-render panel if open.
+    if (rulesPanelOpen) {
+      _renderRulesPanel();
+      rulesPanel.querySelector(".cv5-rules-panel-close")?.addEventListener("click", closeRulesPanel);
+    }
+  }
+
+  // Delegated click handler for the rules panel (approve/reject + propose).
+  rulesPanel.addEventListener("click", async (e) => {
+    const decideBtn = e.target.closest("[data-cv5-decide]");
+    if (decideBtn) {
+      const decision = decideBtn.dataset.cv5Decide;    // "approved" | "rejected"
+      const candidateId = Number(decideBtn.dataset.cv5CandidateId);
+      if (!candidateId || !decision) return;
+      decideBtn.disabled = true;
+      try {
+        await decideWritingTrainingCandidateApi(candidateId, decision);
+        // Remove from local cache and re-render.
+        rulesProposedCache = rulesProposedCache.filter((c) => c.id !== candidateId);
+        _renderRulesPanel();
+        rulesPanel.querySelector(".cv5-rules-panel-close")?.addEventListener("click", closeRulesPanel);
+        callbacks.onStatus?.(decision === "approved" ? "Rule approved and added to your voice profile." : "Rule rejected.");
+        // Refresh the badge count.
+        if (rulesBadgeEl) {
+          const n = rulesProposedCache.length;
+          if (n > 0) { rulesBadgeEl.textContent = String(n); rulesBadgeEl.removeAttribute("hidden"); }
+          else rulesBadgeEl.setAttribute("hidden", "");
+        }
+      } catch (err) {
+        console.error("[composer-v5] decide training candidate failed:", err);
+        callbacks.onError?.(err.message || "Failed to record decision.");
+        decideBtn.disabled = false;
+      }
+      return;
+    }
+
+    const submitBtn = e.target.closest('[data-cv5="rules-propose-submit"]');
+    if (submitBtn) {
+      const input = rulesPanel.querySelector('[data-cv5="rules-propose-input"]');
+      const text = (input?.value || "").trim();
+      if (text.length < 10) {
+        callbacks.onError?.("Proposed rule must be at least 10 characters.");
+        return;
+      }
+      submitBtn.disabled = true;
+      try {
+        await createWritingTrainingCandidateApi({
+          proposedText: text,
+          candidateType: "rule",
+          draftId: currentDraftId || undefined,
+        });
+        if (input) input.value = "";
+        callbacks.onStatus?.("Rule proposed. It will appear in the list above.");
+        // Refresh from server to pick up the new candidate.
+        await _refreshProposedCandidates();
+      } catch (err) {
+        console.error("[composer-v5] create training candidate failed:", err);
+        callbacks.onError?.(err.message || "Failed to propose rule.");
+      } finally {
+        submitBtn.disabled = false;
+      }
+      return;
+    }
+  });
+
+  if (rulesBtnEl) {
+    rulesBtnEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRulesPanel();
+    });
+  }
+
+  // Close rules panel on outside click.
+  function handleRulesPanelOutsideClick(e) {
+    if (!rulesPanelOpen) return;
+    if (!rulesPanel.contains(e.target) && e.target !== rulesBtnEl && !rulesBtnEl?.contains(e.target)) {
+      closeRulesPanel();
+    }
+  }
+  document.addEventListener("click", handleRulesPanelOutsideClick);
+
+  // Close rules panel on Escape.
+  function handleRulesPanelEscape(e) {
+    if (e.key === "Escape" && rulesPanelOpen) closeRulesPanel();
+  }
+  document.addEventListener("keydown", handleRulesPanelEscape);
+
+  // Fetch initial badge count non-blocking on mount.
+  void _refreshProposedCandidates();
+
+  // ── Memory lightbox (view + edit rules / sources / examples) ──────────────
+  //
+  // Opened by clicking the "Memory" button in the top action bar.
+  // Full-screen modal overlay with tabbed view: Rules | Sources | Examples.
+  // Each item shows its text/content with an Edit button that reveals an
+  // inline textarea + Save button, wired to the correct PATCH endpoint.
+
+  const memoryBtnEl = rootEl.querySelector('[data-cv5="memory-btn"]');
+
+  // Full-screen lightbox: outer = backdrop overlay, inner card = .cv5-memory-lightbox-card
+  const memoryPanel = document.createElement("div");
+  memoryPanel.className = "cv5-memory-overlay";
+  memoryPanel.setAttribute("role", "dialog");
+  memoryPanel.setAttribute("aria-modal", "true");
+  memoryPanel.setAttribute("aria-label", "Voice memory");
+  memoryPanel.style.display = "none";
+  document.body.appendChild(memoryPanel);
+
+  let memoryPanelOpen = false;
+  let memoryActiveTab = "rules"; // "rules" | "sources" | "examples"
+  let memoryRules = [];
+  let memorySources = [];
+  let memoryExamples = [];
+  let memoryLoaded = false;
+
+  function _renderMemoryItem(item, type) {
+    // item has fields that differ per type:
+    //   rules:   body, title, ruleType (camelCase from backend)
+    //   sources: normalizedContent (compose engine uses this), title, sourceType
+    //   examples: body, title, exampleType
+    const itemId = item.id;
+    const rawBody = type === "sources"
+      ? (item.normalizedContent || item.normalized_content || item.originalContent || item.original_content || "")
+      : (item.body || item.content || "");
+    const title = item.title || item.name || item.label || "";
+    const ruleType = item.ruleType || item.rule_type || item.exampleType || item.example_type || item.sourceType || item.source_type || item.type || "";
+    const metaLabel = [ruleType, title].filter(Boolean).join(" · ");
+    return `
+      <div class="cv5-memory-item" data-cv5-memory-id="${esc(String(itemId))}" data-cv5-memory-type="${esc(type)}">
+        <div class="cv5-memory-item-body-wrap">
+          ${metaLabel ? `<div class="cv5-memory-item-meta">${esc(metaLabel)}</div>` : ""}
+          <div class="cv5-memory-item-body" data-cv5-memory-display="${esc(String(itemId))}">${esc(rawBody)}</div>
+          <textarea
+            class="cv5-memory-item-edit-input"
+            data-cv5-memory-edit-input="${esc(String(itemId))}"
+            rows="3"
+            style="display:none"
+            aria-label="Edit ${esc(type)} text"
+          >${esc(rawBody)}</textarea>
+        </div>
+        <div class="cv5-memory-item-actions">
+          <button type="button" class="cv5-memory-edit-btn" data-cv5-memory-edit="${esc(String(itemId))}" title="Edit">Edit</button>
+          <button type="button" class="cv5-memory-save-btn" data-cv5-memory-save="${esc(String(itemId))}" style="display:none" title="Save changes">Save</button>
+          <button type="button" class="cv5-memory-cancel-btn" data-cv5-memory-cancel="${esc(String(itemId))}" style="display:none" title="Cancel">Cancel</button>
+          ${type === "rules" ? `<button type="button" class="cv5-memory-delete-btn" data-cv5-memory-delete="${esc(String(itemId))}" title="Delete this rule permanently">Delete</button>` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  function _renderMemoryPanel() {
+    const tabs = ["rules", "sources", "examples"];
+    const tabHtml = tabs.map((t) => `
+      <button type="button" class="cv5-memory-tab ${memoryActiveTab === t ? "is-active" : ""}" data-cv5-memory-tab="${t}">
+        ${t.charAt(0).toUpperCase() + t.slice(1)}
+      </button>
+    `).join("");
+
+    let bodyHtml = "";
+    if (!memoryLoaded) {
+      bodyHtml = `<div class="cv5-memory-loading">Loading…</div>`;
+    } else {
+      const items = memoryActiveTab === "rules" ? memoryRules
+        : memoryActiveTab === "sources" ? memorySources
+        : memoryExamples;
+      if (items.length === 0) {
+        bodyHtml = `<div class="cv5-memory-empty">No ${memoryActiveTab} yet.</div>`;
+      } else {
+        bodyHtml = items.map((item) => _renderMemoryItem(item, memoryActiveTab)).join("");
+      }
+    }
+
+    memoryPanel.innerHTML = `
+      <div class="cv5-memory-lightbox-card">
+        <div class="cv5-memory-panel-hdr">
+          <span class="cv5-memory-panel-title">Voice Memory</span>
+          <button type="button" class="cv5-memory-panel-close" aria-label="Back to draft">&#8592; Back to draft</button>
+        </div>
+        <div class="cv5-memory-tabs">${tabHtml}</div>
+        <div class="cv5-memory-body">${bodyHtml}</div>
+      </div>
+    `;
+  }
+
+  async function _loadMemoryData() {
+    memoryLoaded = false;
+    _renderMemoryPanel();
+    try {
+      const [rules, sources, examples] = await Promise.all([
+        listWritingRulesApi(),
+        listWritingSourcesApi(),
+        listWritingExamplesApi(),
+      ]);
+      memoryRules = Array.isArray(rules) ? rules : [];
+      memorySources = Array.isArray(sources) ? sources : [];
+      memoryExamples = Array.isArray(examples) ? examples : [];
+      memoryLoaded = true;
+    } catch (err) {
+      console.error("[composer-v5] load memory data failed:", err);
+      callbacks.onError?.("Failed to load voice memory.");
+      memoryLoaded = true; // render empty state
+    }
+    if (memoryPanelOpen) {
+      _renderMemoryPanel();
+      _wireMemoryPanelHandlers();
+    }
+  }
+
+  function _wireMemoryPanelHandlers() {
+    memoryPanel.querySelector(".cv5-memory-panel-close")?.addEventListener("click", closeMemoryPanel);
+  }
+
+  function openMemoryPanel() {
+    if (memoryPanelOpen) { closeMemoryPanel(); return; }
+    memoryPanelOpen = true;
+    memoryPanel.style.display = "flex";
+    _renderMemoryPanel();
+    _wireMemoryPanelHandlers();
+    // Load data from server (non-blocking).
+    void _loadMemoryData();
+  }
+
+  function closeMemoryPanel() {
+    memoryPanelOpen = false;
+    memoryPanel.style.display = "none";
+  }
+
+  // Delegated click handler for the memory panel (tabs + edit/save/cancel).
+  memoryPanel.addEventListener("click", async (e) => {
+    // ── Backdrop click: clicking the overlay itself (not the card) dismisses ─
+    if (e.target === memoryPanel) { closeMemoryPanel(); return; }
+
+    // ── Tab switch ───────────────────────────────────────────────────────────
+    const tabBtn = e.target.closest("[data-cv5-memory-tab]");
+    if (tabBtn) {
+      memoryActiveTab = tabBtn.dataset.cv5MemoryTab;
+      _renderMemoryPanel();
+      _wireMemoryPanelHandlers();
+      return;
+    }
+
+    // ── Edit button ──────────────────────────────────────────────────────────
+    const editBtn = e.target.closest("[data-cv5-memory-edit]");
+    if (editBtn) {
+      const itemId = editBtn.dataset.cv5MemoryEdit;
+      const displayEl = memoryPanel.querySelector(`[data-cv5-memory-display="${CSS.escape(itemId)}"]`);
+      const inputEl   = memoryPanel.querySelector(`[data-cv5-memory-edit-input="${CSS.escape(itemId)}"]`);
+      const saveBtn   = memoryPanel.querySelector(`[data-cv5-memory-save="${CSS.escape(itemId)}"]`);
+      const cancelBtn = memoryPanel.querySelector(`[data-cv5-memory-cancel="${CSS.escape(itemId)}"]`);
+      if (displayEl && inputEl) {
+        displayEl.style.display = "none";
+        inputEl.style.display = "block";
+        inputEl.focus();
+      }
+      editBtn.style.display = "none";
+      if (saveBtn)   saveBtn.style.display = "inline-flex";
+      if (cancelBtn) cancelBtn.style.display = "inline-flex";
+      return;
+    }
+
+    // ── Cancel button ────────────────────────────────────────────────────────
+    const cancelBtn = e.target.closest("[data-cv5-memory-cancel]");
+    if (cancelBtn) {
+      const itemId = cancelBtn.dataset.cv5MemoryCancel;
+      const displayEl = memoryPanel.querySelector(`[data-cv5-memory-display="${CSS.escape(itemId)}"]`);
+      const inputEl   = memoryPanel.querySelector(`[data-cv5-memory-edit-input="${CSS.escape(itemId)}"]`);
+      const editBtn_  = memoryPanel.querySelector(`[data-cv5-memory-edit="${CSS.escape(itemId)}"]`);
+      const saveBtn   = memoryPanel.querySelector(`[data-cv5-memory-save="${CSS.escape(itemId)}"]`);
+      if (displayEl && inputEl) {
+        // Restore original text.
+        const items = memoryActiveTab === "rules" ? memoryRules
+          : memoryActiveTab === "sources" ? memorySources
+          : memoryExamples;
+        const original = items.find((it) => String(it.id) === itemId);
+        if (original && inputEl) {
+          inputEl.value = memoryActiveTab === "sources"
+            ? (original.normalizedContent || original.normalized_content || original.originalContent || original.original_content || "")
+            : (original.body || original.content || "");
+        }
+        displayEl.style.display = "block";
+        inputEl.style.display = "none";
+      }
+      if (editBtn_)  editBtn_.style.display = "inline-flex";
+      cancelBtn.style.display = "none";
+      if (saveBtn) saveBtn.style.display = "none";
+      return;
+    }
+
+    // ── Save button ──────────────────────────────────────────────────────────
+    const saveBtn = e.target.closest("[data-cv5-memory-save]");
+    if (saveBtn) {
+      const itemId = Number(saveBtn.dataset.cv5MemorySave);
+      const inputEl = memoryPanel.querySelector(`[data-cv5-memory-edit-input="${CSS.escape(String(itemId))}"]`);
+      const newText = (inputEl?.value || "").trim();
+      if (!newText) {
+        callbacks.onError?.("Text cannot be empty.");
+        return;
+      }
+      saveBtn.disabled = true;
+      try {
+        if (memoryActiveTab === "rules") {
+          const updated = await updateWritingRuleApi(itemId, { body: newText });
+          // Update local cache.
+          const idx = memoryRules.findIndex((r) => r.id === itemId);
+          if (idx >= 0) memoryRules[idx] = updated;
+        } else if (memoryActiveTab === "sources") {
+          // Sources have normalizedContent (used by the compose engine) and
+          // originalContent (immutable provenance).  Update normalizedContent
+          // so Amira sees the edits; leave originalContent as-is.
+          const updated = await updateWritingSourceApi(itemId, { normalizedContent: newText, originalContent: newText });
+          const idx = memorySources.findIndex((s) => s.id === itemId);
+          if (idx >= 0) memorySources[idx] = updated;
+        } else {
+          // Examples: WritingExampleUpdate.body (not .content)
+          const updated = await updateWritingExampleApi(itemId, { body: newText });
+          const idx = memoryExamples.findIndex((ex) => ex.id === itemId);
+          if (idx >= 0) memoryExamples[idx] = updated;
+        }
+        // Re-render the panel so the saved value shows in display mode.
+        _renderMemoryPanel();
+        _wireMemoryPanelHandlers();
+        callbacks.onStatus?.("Memory updated.");
+      } catch (err) {
+        console.error("[composer-v5] update memory item failed:", err);
+        callbacks.onError?.(err.message || "Failed to save.");
+        saveBtn.disabled = false;
+      }
+      return;
+    }
+
+    // ── Delete button (rules only; PERMANENT hard delete) ──────────────────────
+    const deleteBtn = e.target.closest("[data-cv5-memory-delete]");
+    if (deleteBtn) {
+      const itemId = Number(deleteBtn.dataset.cv5MemoryDelete);
+      const rule = memoryRules.find((r) => r.id === itemId);
+      const label = String(rule?.title || rule?.body || "this rule").slice(0, 80);
+      // Irreversible (unlike drafts, which are soft-deleted), so confirm first.
+      if (!window.confirm(`Delete this rule permanently?\n\n"${label}"\n\nThis cannot be undone.`)) return;
+      deleteBtn.disabled = true;
+      try {
+        await deleteWritingRuleApi(itemId);
+        const idx = memoryRules.findIndex((r) => r.id === itemId);
+        if (idx >= 0) memoryRules.splice(idx, 1);
+        _renderMemoryPanel();
+        _wireMemoryPanelHandlers();
+        callbacks.onStatus?.("Rule deleted.");
+      } catch (err) {
+        console.error("[composer-v5] delete rule failed:", err);
+        callbacks.onError?.(err.message || "Failed to delete rule.");
+        deleteBtn.disabled = false;
+      }
+      return;
+    }
+  });
+
+  if (memoryBtnEl) {
+    memoryBtnEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMemoryPanel();
+    });
+  }
+
+  // Note: backdrop click is handled inside the delegated click handler above
+  // (e.target === memoryPanel → closeMemoryPanel).
+
+  // Close memory panel on Escape.
+  function handleMemoryPanelEscape(e) {
+    if (e.key === "Escape" && memoryPanelOpen) closeMemoryPanel();
+  }
+  document.addEventListener("keydown", handleMemoryPanelEscape);
 
   // ── Public handle ──────────────────────────────────────────────────────────
   return {
@@ -3084,6 +3718,13 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (chatThreadEl) chatThreadEl.removeEventListener("click", handleChatThreadClick);
       document.removeEventListener("click", handleDeliverablePreviewOutsideClick, true);
       try { document.body.removeChild(deliverablePreviewPopover); } catch (_) { /* noop */ }
+      // Rules panel cleanup.
+      document.removeEventListener("click", handleRulesPanelOutsideClick);
+      document.removeEventListener("keydown", handleRulesPanelEscape);
+      try { document.body.removeChild(rulesPanel); } catch (_) { /* noop */ }
+      // Memory lightbox cleanup.
+      document.removeEventListener("keydown", handleMemoryPanelEscape);
+      try { document.body.removeChild(memoryPanel); } catch (_) { /* noop */ }
     },
     flush: flushPendingAutosave,
     getEditorView: () => view,
@@ -3138,9 +3779,11 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
             ${renderPickerBody({ allDrafts, allFolders, activeId: draft.id, expandedFolders })}
           </div>
         </div>
-        <span class="cv5-hdr-title" title="${esc(titleText)}">${esc(titleText)}</span>
+        <span class="cv5-hdr-title" data-cv5="draft-title" title="Click to rename" tabindex="0" role="button" aria-label="Draft name: ${esc(titleText)} — click to rename">${esc(titleText)}</span>
         <span class="cv5-hdr-status">${esc(status)}</span>
         <div class="cv5-hdr-spacer"></div>
+        <button type="button" class="cv5-hdr-ind" data-cv5="rules-btn" title="Proposed rules &amp; manual propose">Rules<span class="cv5-rules-badge" data-cv5="rules-badge" hidden></span></button>
+        <button type="button" class="cv5-hdr-ind" data-cv5="memory-btn" title="View &amp; edit voice memory (rules, sources, examples)">Memory</button>
         <button type="button" class="cv5-hdr-ind" data-cv5="comments-toggle" title="Show / hide comments rail">💬 Comments</button>
         <button type="button" class="cv5-hdr-ind" data-cv5="open-history" title="Version history">⟲ History</button>
         <div class="cv5-gdoc-wrap" data-cv5="gdoc-wrap">
@@ -3185,6 +3828,7 @@ function renderShell({ draft, allDrafts, allFolders, expandedFolders }) {
               <textarea class="cv5-chat-input" data-cv5="chat-input" rows="1" placeholder="Ask Amira to draft, rewrite, or refine…" aria-label="Message Amira"></textarea>
               <button type="button" class="cv5-chat-send" data-cv5="chat-send" aria-label="Send">↑</button>
             </div>
+            <div class="cv5-chat-tools-row" style="display:none" aria-hidden="true"></div>
           </div>
         </section>
 
@@ -3258,6 +3902,7 @@ function renderPickerBody({ allDrafts, allFolders, activeId, expandedFolders }) 
             <span class="cv5-picker-folder-name">${esc(f.name || "Untitled folder")}</span>
             <span class="cv5-picker-row-meta">${count > 0 ? count : ""}</span>
           </button>
+          <button type="button" class="cv5-picker-folder-rename" data-cv5-rename-folder="${f.id}" data-cv5-folder-name="${esc(f.name || "")}" title="Rename folder" aria-label="Rename folder ${esc(f.name || "Untitled folder")}">Rename</button>
           <button type="button" class="cv5-picker-folder-del" data-cv5-delete-folder="${f.id}" title="Delete folder" aria-label="Delete folder ${esc(f.name || "Untitled folder")}">🗑</button>
         </div>
         ${insideRows}
