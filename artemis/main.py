@@ -52,6 +52,7 @@ from artemis.marketing.routes import (
 from artemis.marketing.scout_scheduler import start_scout_scheduler, stop_scout_scheduler
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
+from artemis.marketing.writing_studio.collab.routes import router as ws_collab_router
 from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
 from artemis.memory.scheduler import start_memory_scheduler, stop_memory_scheduler
 from artemis.pipelines.routes import router as pipelines_router
@@ -228,6 +229,7 @@ app.include_router(claims.router)
 app.include_router(comments.router)
 app.include_router(templates.router)
 app.include_router(writing_studio.router)
+app.include_router(ws_collab_router)
 app.include_router(intel_prioritization.router)
 
 # Phase F2a — Builders backend CRUD (agents, skills, workflows, chains, DAGs)

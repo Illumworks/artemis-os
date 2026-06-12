@@ -18,6 +18,7 @@ import { schema as basicSchema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
 import { exampleSetup } from "prosemirror-example-setup";
 
+import { openCollabSocket } from "../core/collab-socket.js";
 import { escapeHtml } from "../core/utils.js";
 import {
   applyWritingTemplateApi,
@@ -1083,6 +1084,21 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   let lastSavedContent = serializeDocToText(view.state.doc);
   let destroyed = false;
   let currentDraftId = draft.id;
+
+  // Phase 0 collab plumbing — identity-aware WebSocket, no editor UI yet.
+  let collabSocket = null;
+  {
+    // dev-only: ?collab_as=alice@example.com lets two local windows be distinct users.
+    const _collabAs = new URLSearchParams(location.search).get('collab_as');
+    collabSocket = openCollabSocket({
+      draftId: currentDraftId,
+      asEmail: _collabAs || null,
+      asName: _collabAs || null,
+      onEvent: (evt) => {
+        if (evt?.type === 'collab.presence') console.debug('[collab] room count', evt.count);
+      },
+    });
+  }
 
   function setSavingIndicator(state, message) {
     if (!savingEl) return;
@@ -3936,6 +3952,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     destroy() {
       destroyed = true;
       if (autosaveTimer) clearTimeout(autosaveTimer);
+      // Phase 0 collab cleanup — close WebSocket before tearing down the view.
+      try { collabSocket?.close(); } catch (_) { /* noop */ }
+      collabSocket = null;
       try { view.destroy(); } catch (_) { /* noop */ }
       // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
       document.removeEventListener("mousedown", handleOutsidePointerDown, true);
