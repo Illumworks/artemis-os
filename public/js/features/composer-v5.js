@@ -112,16 +112,21 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     return null;
   }
 
-  // Stage-3 picker state — kept in mount closure so expand/collapse persists
-  // across re-renders inside this mount. Keys are stringified folder ids; the
-  // sentinel `"ungrouped"` controls the "Ungrouped" group, and `"all"` is
-  // computed from the others (it's the full list and is always shown expanded).
+  // Stage-3/WS4 picker state — kept in mount closure so expand/collapse and
+  // drag/drop state persist across re-renders inside this mount. Keys are
+  // stringified folder ids; the sentinel `"ungrouped"` controls the
+  // root/"Ungrouped" group, and `"all"` is the flat all-drafts list.
   const pickerExpandedFolders = new Set();
-  // Default: expand the folder that contains the current draft, if any.
-  if (draft.folder_id != null) pickerExpandedFolders.add(String(draft.folder_id));
-
   let currentDrafts = Array.isArray(allDrafts) ? allDrafts.slice() : [];
   let currentFolders = Array.isArray(allFolders) ? allFolders.slice() : [];
+  if (draft.folder_id != null) {
+    collectPickerFolderAncestorKeys(draft.folder_id, currentFolders).forEach((key) => {
+      pickerExpandedFolders.add(key);
+    });
+  }
+
+  let pickerDragPayload = null;
+  let pickerDropTargetEl = null;
 
   rootEl.innerHTML = renderShell({ draft, allDrafts: currentDrafts, allFolders: currentFolders, expandedFolders: pickerExpandedFolders });
 
@@ -1219,6 +1224,61 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
+  function ensureActiveDraftFolderPathExpanded() {
+    const activeDraft = currentDrafts.find((item) => Number(item.id) === Number(draft.id));
+    if (activeDraft?.folder_id == null) return;
+    collectPickerFolderAncestorKeys(activeDraft.folder_id, currentFolders).forEach((key) => {
+      pickerExpandedFolders.add(key);
+    });
+  }
+
+  function clearPickerDropTargets() {
+    if (pickerDropTargetEl) pickerDropTargetEl.classList.remove("cv5-picker-drop-target-active");
+    pickerDropTargetEl = null;
+  }
+
+  function resetPickerDragState() {
+    pickerDragPayload = null;
+    clearPickerDropTargets();
+    pickerEl?.classList.remove("is-dragging");
+  }
+
+  function resolvePickerDropTarget(target) {
+    const dropTargetEl = target?.closest?.("[data-cv5-drop-target]");
+    if (!dropTargetEl) return null;
+    const targetType = dropTargetEl.dataset.cv5DropTarget;
+    const targetFolderId = targetType === "folder"
+      ? normalizePickerFolderId(dropTargetEl.dataset.cv5DropFolderId)
+      : null;
+    return { element: dropTargetEl, type: targetType, folderId: targetFolderId };
+  }
+
+  function isValidPickerDropTarget(payload, targetInfo) {
+    if (!payload || !targetInfo) return false;
+
+    if (payload.type === "draft") {
+      const movedDraft = currentDrafts.find((item) => Number(item.id) === Number(payload.id));
+      if (!movedDraft) return false;
+      const currentFolderId = normalizePickerFolderId(movedDraft.folder_id);
+      return currentFolderId !== targetInfo.folderId;
+    }
+
+    if (payload.type === "folder") {
+      const movedFolder = currentFolders.find((item) => Number(item.id) === Number(payload.id));
+      if (!movedFolder) return false;
+      const currentParentId = normalizePickerFolderId(movedFolder.parent_folder_id);
+      if (currentParentId === targetInfo.folderId) return false;
+      if (targetInfo.folderId == null) return true;
+
+      const foldersByParent = buildPickerFolderChildrenMap(currentFolders);
+      const descendants = new Set();
+      collectPickerFolderDescendants(payload.id, foldersByParent, descendants);
+      return !descendants.has(targetInfo.folderId);
+    }
+
+    return false;
+  }
+
   function openPicker() {
     if (!draftsWrapEl) return;
     draftsWrapEl.classList.add("is-open");
@@ -1231,6 +1291,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     // Also close the +-menu when the picker closes.
     pickerEl?.querySelector('[data-cv5="picker-create-menu"]')?.classList.remove("is-open");
     pickerEl?.querySelector('[data-cv5="picker-templates-menu"]')?.classList.remove("is-open");
+    resetPickerDragState();
   }
 
   if (draftsBtnEl && draftsWrapEl) {
@@ -1340,6 +1401,98 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         if (!id) return;
         closePicker();
         callbacks.onSelectDraft?.(id);
+      }
+    });
+
+    pickerEl.addEventListener("dragstart", (event) => {
+      const draggable = event.target.closest("[data-cv5-drag-type]");
+      if (!draggable) return;
+      const type = draggable.dataset.cv5DragType;
+      const id = Number(draggable.dataset.cv5DragId);
+      if (!type || !id) return;
+      pickerDragPayload = { type, id };
+      pickerEl.classList.add("is-dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", `${type}:${id}`);
+      }
+    });
+
+    pickerEl.addEventListener("dragover", (event) => {
+      const targetInfo = resolvePickerDropTarget(event.target);
+      if (!isValidPickerDropTarget(pickerDragPayload, targetInfo)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      if (pickerDropTargetEl === targetInfo.element) return;
+      clearPickerDropTargets();
+      pickerDropTargetEl = targetInfo.element;
+      pickerDropTargetEl.classList.add("cv5-picker-drop-target-active");
+    });
+
+    pickerEl.addEventListener("dragleave", (event) => {
+      const targetInfo = resolvePickerDropTarget(event.target);
+      if (!targetInfo?.element) return;
+      if (targetInfo.element.contains(event.relatedTarget)) return;
+      if (pickerDropTargetEl === targetInfo.element) clearPickerDropTargets();
+    });
+
+    pickerEl.addEventListener("dragend", () => {
+      resetPickerDragState();
+    });
+
+    pickerEl.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      const targetInfo = resolvePickerDropTarget(event.target);
+      const payload = pickerDragPayload;
+      resetPickerDragState();
+      if (!isValidPickerDropTarget(payload, targetInfo)) return;
+
+      try {
+        if (payload.type === "draft") {
+          const targetFolder = targetInfo.folderId != null
+            ? currentFolders.find((item) => Number(item.id) === Number(targetInfo.folderId))
+            : null;
+          const updatedDraft = await updateWritingDraftApi(payload.id, {
+            folderId: targetInfo.folderId,
+          });
+          currentDrafts = currentDrafts.map((item) => (
+            Number(item.id) === Number(payload.id)
+              ? {
+                ...item,
+                ...updatedDraft,
+                folder_id: updatedDraft.folder_id ?? null,
+                folder_name: targetFolder?.name ?? null,
+              }
+              : item
+          ));
+          if (Number(draft.id) === Number(payload.id)) {
+            draft.folder_id = updatedDraft.folder_id ?? null;
+            draft.folder_name = targetFolder?.name ?? null;
+          }
+          if (targetInfo.folderId == null) pickerExpandedFolders.add("ungrouped");
+          else pickerExpandedFolders.add(String(targetInfo.folderId));
+          callbacks.onStatus?.("Draft moved.");
+        } else {
+          const updatedFolder = await updateWritingFolderApi(payload.id, {
+            parentFolderId: targetInfo.folderId,
+          });
+          currentFolders = currentFolders.map((item) => (
+            Number(item.id) === Number(payload.id)
+              ? {
+                ...item,
+                ...updatedFolder,
+                parent_folder_id: updatedFolder.parent_folder_id ?? null,
+              }
+              : item
+          ));
+          if (targetInfo.folderId != null) pickerExpandedFolders.add(String(targetInfo.folderId));
+          ensureActiveDraftFolderPathExpanded();
+          callbacks.onStatus?.("Folder moved.");
+        }
+        rerenderPickerOnly();
+      } catch (err) {
+        console.error("[composer-v5] picker move failed:", err);
+        callbacks.onError?.(err.message || "Move failed.");
       }
     });
   }
@@ -3793,6 +3946,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
       try { document.body.removeChild(claimPopover); } catch (_) { /* noop */ }
       // Stage-3 cleanup: drafts-picker listeners.
+      resetPickerDragState();
       document.removeEventListener("click", handlePickerOutsideClick);
       document.removeEventListener("keydown", handlePickerEscape);
       // Stage-5 cleanup: pagination overlay + resize observer.
@@ -3958,14 +4112,16 @@ function renderPickerBody({ allDrafts, allFolders, activeId, expandedFolders }) 
     return `<div class="cv5-picker-body" data-cv5="picker-body"><div class="cv5-picker-empty">No drafts yet.</div></div>`;
   }
 
-  // Build folder index + draft groupings.
-  const folderById = new Map(folders.map((f) => [f.id, f]));
+  // Build folder index + nested folder/draft groupings.
+  const folderById = new Map(folders.map((f) => [Number(f.id), f]));
+  const foldersByParent = buildPickerFolderChildrenMap(folders);
   const draftsByFolderId = new Map();
   const ungrouped = [];
   for (const d of drafts) {
-    if (d.folder_id != null && folderById.has(d.folder_id)) {
-      if (!draftsByFolderId.has(d.folder_id)) draftsByFolderId.set(d.folder_id, []);
-      draftsByFolderId.get(d.folder_id).push(d);
+    const folderId = normalizePickerFolderId(d.folder_id);
+    if (folderId != null && folderById.has(folderId)) {
+      if (!draftsByFolderId.has(folderId)) draftsByFolderId.set(folderId, []);
+      draftsByFolderId.get(folderId).push(d);
     } else {
       ungrouped.push(d);
     }
@@ -3980,56 +4136,45 @@ function renderPickerBody({ allDrafts, allFolders, activeId, expandedFolders }) 
     .map((d) => renderTreeFileRow(d, activeId, /*indent=*/1))
     .join("");
 
-  // Per-folder sections — sorted by name.
-  const sortedFolders = folders
-    .slice()
-    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-
-  const folderSections = sortedFolders
-    .map((f) => {
-      const key = String(f.id);
-      const expanded = expandedFolders.has(key);
-      const inside = (draftsByFolderId.get(f.id) || []).slice().sort(_byUpdatedAtDesc);
-      const insideRows = expanded
-        ? inside.map((d) => renderTreeFileRow(d, activeId, /*indent=*/1)).join("")
-        : "";
-      const count = inside.length;
-      const caret = expanded ? "▾" : "▸";
-      return `
-        <div class="cv5-picker-folder-wrap">
-          <button type="button" class="cv5-picker-row cv5-picker-folder" data-cv5-folder-key="${esc(key)}" aria-expanded="${expanded}">
-            <span class="cv5-picker-caret" aria-hidden="true">${caret}</span>
-            <span aria-hidden="true">📁</span>
-            <span class="cv5-picker-folder-name">${esc(f.name || "Untitled folder")}</span>
-            <span class="cv5-picker-row-meta">${count > 0 ? count : ""}</span>
-          </button>
-          <button type="button" class="cv5-picker-folder-rename" data-cv5-rename-folder="${f.id}" data-cv5-folder-name="${esc(f.name || "")}" title="Rename folder" aria-label="Rename folder ${esc(f.name || "Untitled folder")}">Rename</button>
-          <button type="button" class="cv5-picker-folder-del" data-cv5-delete-folder="${f.id}" title="Delete folder" aria-label="Delete folder ${esc(f.name || "Untitled folder")}">🗑</button>
-        </div>
-        ${insideRows}
-      `;
-    })
+  const rootFolders = foldersByParent.get(0) || [];
+  const folderSections = rootFolders
+    .map((folder) => renderPickerFolderBranch({
+      folder,
+      depth: 0,
+      activeId,
+      expandedFolders,
+      draftsByFolderId,
+      foldersByParent,
+    }))
     .join("");
 
-  // "Ungrouped" — drafts without a folder.  Hidden when empty.
+  // "Ungrouped" also acts as the root drop target for drafts + folders.
   const ungroupedKey = "ungrouped";
-  let ungroupedSection = "";
-  if (ungrouped.length > 0) {
-    const expanded = expandedFolders.has(ungroupedKey);
-    const caret = expanded ? "▾" : "▸";
-    const insideRows = expanded
-      ? ungrouped.slice().sort(_byUpdatedAtDesc).map((d) => renderTreeFileRow(d, activeId, /*indent=*/1)).join("")
-      : "";
-    ungroupedSection = `
-      <button type="button" class="cv5-picker-row cv5-picker-folder" data-cv5-folder-key="${ungroupedKey}" aria-expanded="${expanded}">
-        <span class="cv5-picker-caret" aria-hidden="true">${caret}</span>
-        <span aria-hidden="true">📁</span>
-        <span class="cv5-picker-folder-name">Ungrouped</span>
-        <span class="cv5-picker-row-meta">${ungrouped.length}</span>
-      </button>
-      ${insideRows}
-    `;
-  }
+  const ungroupedExpanded = expandedFolders.has(ungroupedKey);
+  const ungroupedCaret = ungroupedExpanded ? "▾" : "▸";
+  const ungroupedRows = ungroupedExpanded
+    ? ungrouped
+      .slice()
+      .sort(_byUpdatedAtDesc)
+      .map((d) => renderTreeFileRow(d, activeId, /*indent=*/1))
+      .join("")
+    : "";
+  const ungroupedSection = `
+    <button
+      type="button"
+      class="cv5-picker-row cv5-picker-folder"
+      data-cv5-folder-key="${ungroupedKey}"
+      data-cv5-drop-target="root"
+      aria-expanded="${ungroupedExpanded}"
+      title="Drop drafts or folders here to move them to the root level"
+    >
+      <span class="cv5-picker-caret" aria-hidden="true">${ungroupedCaret}</span>
+      <span aria-hidden="true">📁</span>
+      <span class="cv5-picker-folder-name">Ungrouped</span>
+      <span class="cv5-picker-row-meta">${ungrouped.length > 0 ? ungrouped.length : ""}</span>
+    </button>
+    ${ungroupedRows}
+  `;
 
   // "All drafts" — collapsible like other folders. Default expanded only if
   // the user previously expanded it (we don't auto-pre-expand to keep the
@@ -4062,12 +4207,138 @@ function renderTreeFileRow(d, activeId, indent) {
   const title = d.title || `Draft ${d.id}`;
   const meta = [d.asset_type, d.status].filter(Boolean).join(" · ");
   return `
-    <button type="button" class="${cls}" data-cv5-draft-id="${d.id}" data-cv5-indent="${indent}">
+    <button
+      type="button"
+      class="${cls}"
+      data-cv5-draft-id="${d.id}"
+      data-cv5-indent="${indent}"
+      data-cv5-drag-type="draft"
+      data-cv5-drag-id="${d.id}"
+      draggable="true"
+      style="--cv5-picker-depth:${indent};"
+    >
       <span class="cv5-picker-row-icon" aria-hidden="true">📄</span>
       <span class="cv5-picker-row-title">${esc(title)}</span>
       ${meta ? `<span class="cv5-picker-row-meta">${esc(meta)}</span>` : ""}
     </button>
   `;
+}
+
+function renderPickerFolderBranch({
+  folder,
+  depth,
+  activeId,
+  expandedFolders,
+  draftsByFolderId,
+  foldersByParent,
+}) {
+  const key = String(folder.id);
+  const expanded = expandedFolders.has(key);
+  const childFolders = foldersByParent.get(Number(folder.id)) || [];
+  const directDrafts = (draftsByFolderId.get(Number(folder.id)) || []).slice().sort(_byUpdatedAtDesc);
+  const nestedBranches = expanded
+    ? childFolders.map((child) => renderPickerFolderBranch({
+      folder: child,
+      depth: depth + 1,
+      activeId,
+      expandedFolders,
+      draftsByFolderId,
+      foldersByParent,
+    })).join("")
+    : "";
+  const nestedDrafts = expanded
+    ? directDrafts.map((draft) => renderTreeFileRow(draft, activeId, depth + 1)).join("")
+    : "";
+  const count = directDrafts.length;
+  const caret = expanded ? "▾" : "▸";
+  const folderName = folder.name || "Untitled folder";
+
+  return `
+    <div
+      class="cv5-picker-folder-wrap"
+      data-cv5-drop-target="folder"
+      data-cv5-drop-folder-id="${folder.id}"
+      style="--cv5-picker-depth:${depth};"
+    >
+      <button
+        type="button"
+        class="cv5-picker-row cv5-picker-folder"
+        data-cv5-folder-key="${esc(key)}"
+        data-cv5-drag-type="folder"
+        data-cv5-drag-id="${folder.id}"
+        draggable="true"
+        aria-expanded="${expanded}"
+      >
+        <span class="cv5-picker-caret" aria-hidden="true">${caret}</span>
+        <span aria-hidden="true">📁</span>
+        <span class="cv5-picker-folder-name">${esc(folderName)}</span>
+        <span class="cv5-picker-row-meta">${count > 0 ? count : ""}</span>
+      </button>
+      <button
+        type="button"
+        class="cv5-picker-folder-rename"
+        data-cv5-rename-folder="${folder.id}"
+        data-cv5-folder-name="${esc(folder.name || "")}"
+        title="Rename folder"
+        aria-label="Rename folder ${esc(folderName)}"
+      >Rename</button>
+      <button
+        type="button"
+        class="cv5-picker-folder-del"
+        data-cv5-delete-folder="${folder.id}"
+        title="Delete folder"
+        aria-label="Delete folder ${esc(folderName)}"
+      >🗑</button>
+    </div>
+    ${nestedBranches}
+    ${nestedDrafts}
+  `;
+}
+
+function normalizePickerFolderId(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function buildPickerFolderChildrenMap(folders) {
+  const folderById = new Map((folders || []).map((folder) => [Number(folder.id), folder]));
+  const parentMap = new Map();
+  for (const folder of folders || []) {
+    const rawParentId = normalizePickerFolderId(folder.parent_folder_id);
+    const parentId = rawParentId != null && folderById.has(rawParentId) ? rawParentId : 0;
+    const current = parentMap.get(parentId) || [];
+    current.push(folder);
+    parentMap.set(parentId, current);
+  }
+  for (const [key, items] of parentMap.entries()) {
+    parentMap.set(
+      key,
+      [...items].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }))
+    );
+  }
+  return parentMap;
+}
+
+function collectPickerFolderDescendants(folderId, foldersByParent, seen) {
+  const numericId = normalizePickerFolderId(folderId);
+  if (numericId == null || seen.has(numericId)) return;
+  seen.add(numericId);
+  const children = foldersByParent.get(numericId) || [];
+  children.forEach((child) => collectPickerFolderDescendants(child.id, foldersByParent, seen));
+}
+
+function collectPickerFolderAncestorKeys(folderId, folders) {
+  const byId = new Map((folders || []).map((folder) => [Number(folder.id), folder]));
+  const keys = [];
+  let currentId = normalizePickerFolderId(folderId);
+  const seen = new Set();
+  while (currentId != null && !seen.has(currentId)) {
+    seen.add(currentId);
+    keys.push(String(currentId));
+    const currentFolder = byId.get(currentId);
+    currentId = normalizePickerFolderId(currentFolder?.parent_folder_id);
+  }
+  return keys;
 }
 
 function _byUpdatedAtDesc(a, b) {

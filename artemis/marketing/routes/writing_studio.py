@@ -73,6 +73,8 @@ _EVENT_KIND_MAP: dict[str, str] = {
     "revised": "draft.revised",
 }
 
+_MISSING = object()
+
 # campaign_deliverables.status CHECK constraint does not include 'archived'.
 # Soft-delete is stored as metadata.archived = true.  The status column is
 # left at its current value so the existing state machine is not disturbed.
@@ -1689,7 +1691,9 @@ async def create_folder(
     """Create a Writing Studio folder.
 
     Body:
-      name — required, non-empty string
+      name              — required, non-empty string
+      parent_folder_id  — optional parent folder id
+      parentFolderId    — camelCase alias for parent_folder_id
 
     Returns the new folder serialized identically to the /overview folders list.
     """
@@ -1697,7 +1701,13 @@ async def create_folder(
     if not isinstance(name, str) or not name.strip():
         raise bad_request("name is required and must be a non-empty string", "invalid_name")
 
-    folder = await wr_repo.create_folder(session, name=name.strip())
+    create_kwargs: dict[str, Any] = {"name": name.strip()}
+    parent_folder_id = _read_optional_folder_parent_id(body)
+    if parent_folder_id is not _MISSING:
+        await _validate_folder_parent_assignment(session, None, parent_folder_id)
+        create_kwargs["parent_folder_id"] = parent_folder_id
+
+    folder = await wr_repo.create_folder(session, **create_kwargs)
     await session.commit()
     await session.refresh(folder)
     return _serialize_folder(folder)
@@ -1712,17 +1722,35 @@ async def update_folder(
     """Rename a Writing Studio folder.
 
     Body:
-      name — required, non-empty string
+      name              — optional non-empty string
+      parent_folder_id  — optional parent folder id
+      parentFolderId    — camelCase alias for parent_folder_id
 
     Returns the updated folder. 404 if not found.
     """
-    name = body.get("name")
-    if not isinstance(name, str) or not name.strip():
-        raise bad_request("name is required and must be a non-empty string", "invalid_name")
-
-    folder = await wr_repo.update_folder(session, folder_id, name=name.strip())
+    folder = await wr_repo.get_folder(session, folder_id)
     if folder is None:
         raise not_found(f"Folder {folder_id} not found", "folder_not_found")
+
+    update_kwargs: dict[str, Any] = {}
+    if "name" in body:
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise bad_request("name must be a non-empty string", "invalid_name")
+        update_kwargs["name"] = name.strip()
+
+    parent_folder_id = _read_optional_folder_parent_id(body)
+    if parent_folder_id is not _MISSING:
+        await _validate_folder_parent_assignment(session, folder_id, parent_folder_id)
+        update_kwargs["parent_folder_id"] = parent_folder_id
+
+    if not update_kwargs:
+        raise bad_request(
+            "Provide name and/or parent_folder_id to update a folder",
+            "invalid_folder_update",
+        )
+
+    folder = await wr_repo.update_folder(session, folder_id, **update_kwargs)
 
     await session.commit()
     await session.refresh(folder)
@@ -1757,6 +1785,71 @@ async def delete_folder(
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _read_optional_folder_parent_id(body: dict[str, Any]) -> object:
+    if "parent_folder_id" not in body and "parentFolderId" not in body:
+        return _MISSING
+    parent_folder_id = (
+        body["parent_folder_id"] if "parent_folder_id" in body else body.get("parentFolderId")
+    )
+    if parent_folder_id is not None and not isinstance(parent_folder_id, int):
+        raise bad_request(
+            "parent_folder_id must be an integer or null",
+            "invalid_parent_folder_id",
+        )
+    return parent_folder_id
+
+
+def _collect_folder_descendants(
+    folder_id: int,
+    children_by_parent: dict[int, list[int]],
+    seen: set[int],
+) -> None:
+    if folder_id in seen:
+        return
+    seen.add(folder_id)
+    for child_id in children_by_parent.get(folder_id, []):
+        _collect_folder_descendants(child_id, children_by_parent, seen)
+
+
+async def _validate_folder_parent_assignment(
+    session: AsyncSession,
+    folder_id: int | None,
+    parent_folder_id: object,
+) -> None:
+    if parent_folder_id is _MISSING or parent_folder_id is None:
+        return
+
+    numeric_parent_id = int(parent_folder_id)
+    parent_folder = await wr_repo.get_folder(session, numeric_parent_id)
+    if parent_folder is None:
+        raise not_found(f"Folder {numeric_parent_id} not found", "folder_not_found")
+
+    if folder_id is None:
+        return
+
+    if numeric_parent_id == folder_id:
+        raise bad_request(
+            "A folder cannot be nested inside itself",
+            "invalid_parent_folder_id",
+        )
+
+    folder_rows = await wr_repo.list_folders(session)
+    children_by_parent: dict[int, list[int]] = {}
+    for row in folder_rows:
+        parent_id = row.parent_folder_id
+        if parent_id is None:
+            continue
+        children_by_parent.setdefault(int(parent_id), []).append(int(row.id))
+
+    descendants: set[int] = set()
+    _collect_folder_descendants(folder_id, children_by_parent, descendants)
+    if numeric_parent_id in descendants:
+        raise bad_request(
+            "A folder cannot be nested inside one of its descendants",
+            "invalid_parent_folder_id",
+        )
 
 
 async def _list_deliverables(

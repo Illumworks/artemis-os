@@ -113,6 +113,21 @@ class TestCreateFolder:
         ids = [f["id"] for f in folders]
         assert folder_id in ids
 
+    async def test_create_folder_accepts_parent_folder_id(self, client: AsyncClient) -> None:
+        parent_resp = await client.post(
+            "/api/writing-studio/folders",
+            json={"name": "Parent Folder"},
+        )
+        assert parent_resp.status_code == 200
+        parent_id = parent_resp.json()["id"]
+
+        child_resp = await client.post(
+            "/api/writing-studio/folders",
+            json={"name": "Child Folder", "parentFolderId": parent_id},
+        )
+        assert child_resp.status_code == 200
+        assert child_resp.json()["parent_folder_id"] == parent_id
+
     async def test_create_folder_missing_name_returns_400(self, client: AsyncClient) -> None:
         """POST /folders without a name returns 400."""
         resp = await client.post("/api/writing-studio/folders", json={})
@@ -151,6 +166,47 @@ class TestUpdateFolder:
             json={"name": "Ghost"},
         )
         assert resp.status_code == 404
+
+    async def test_move_folder_updates_parent_folder_id(self, client: AsyncClient) -> None:
+        parent_resp = await client.post(
+            "/api/writing-studio/folders",
+            json={"name": "Parent Folder"},
+        )
+        child_resp = await client.post(
+            "/api/writing-studio/folders",
+            json={"name": "Child Folder"},
+        )
+        parent_id = parent_resp.json()["id"]
+        child_id = child_resp.json()["id"]
+
+        update_resp = await client.put(
+            f"/api/writing-studio/folders/{child_id}",
+            json={"parentFolderId": parent_id},
+        )
+        assert update_resp.status_code == 200
+        assert update_resp.json()["parent_folder_id"] == parent_id
+
+    async def test_move_folder_rejects_descendant_cycle(self, client: AsyncClient) -> None:
+        parent_resp = await client.post(
+            "/api/writing-studio/folders",
+            json={"name": "Parent Folder"},
+        )
+        assert parent_resp.status_code == 200
+        parent_id = parent_resp.json()["id"]
+
+        child_resp = await client.post(
+            "/api/writing-studio/folders",
+            json={"name": "Child Folder", "parentFolderId": parent_id},
+        )
+        assert child_resp.status_code == 200
+        child_id = child_resp.json()["id"]
+
+        update_resp = await client.put(
+            f"/api/writing-studio/folders/{parent_id}",
+            json={"parentFolderId": child_id},
+        )
+        assert update_resp.status_code == 400
+        assert update_resp.json()["code"] == "invalid_parent_folder_id"
 
     async def test_rename_folder_empty_name_returns_400(self, client: AsyncClient) -> None:
         """PUT /folders/{id} with empty name returns 400."""
