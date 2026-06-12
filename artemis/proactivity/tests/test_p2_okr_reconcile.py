@@ -271,27 +271,33 @@ async def test_completed_breadcrumb_returns_none(db_session: AsyncSession) -> No
     assert live_after is None, "Completed breadcrumb must not be returned as live"
 
 
-# ── 6. Part C: format_checkin shows actual KR values ─────────────────────────
+# ── 6. Digest-based opener: shows slipping KRs grounded in low-progress ──────
 
 
-def test_format_checkin_shows_all_kr_values() -> None:
-    """format_checkin_for_slack with objectives shows all active KR progress %."""
+def test_format_checkin_shows_slipping_krs_in_digest() -> None:
+    """format_checkin_for_slack surfaces low-progress stalled KRs in the digest.
+
+    With no activity history, both KRs at <= 40% appear in the slipping bucket.
+    The opener does NOT recite all KRs or their target-description prose.
+    """
     kr1 = _make_kr(1, "Asset Hub", prog=40, target_text="100%")
     kr2 = _make_kr(2, "Template Library", prog=25)
     obj = _make_obj(1, "Brand Infrastructure", [kr1, kr2])
 
     text = format_checkin_for_slack([], delivery_date=_DELIVERY_DATE, objectives=[obj])
 
+    # Slipping KRs (both prog <= 40) should appear with their percentages.
     assert "Asset Hub" in text
     assert "Template Library" in text
-    assert "Brand Infrastructure" in text
-    # Must show progress percentages.
     assert "40%" in text
     assert "25%" in text
-    # Must still ask for word-dump.
-    assert "word-dump" in text.lower() or "what" in text.lower()
+    # Must still ask what Jon moved.
+    assert "move" in text.lower() or "map" in text.lower()
     # Must mention safety gate.
     assert "go" in text.lower()
+    # Must NOT recite all KR target-description prose (old "Where your KRs stand" dump).
+    assert "Where your KRs stand" not in text
+    assert "target:" not in text
 
 
 def test_format_checkin_no_objectives_still_works() -> None:
@@ -302,16 +308,21 @@ def test_format_checkin_no_objectives_still_works() -> None:
     assert "word-dump" in text.lower() or "what" in text.lower()
 
 
-def test_format_checkin_archived_kr_excluded_from_snapshot() -> None:
-    """Archived KRs are excluded from the Part C KR state display."""
-    kr_live = _make_kr(1, "Active KR", prog=50)
+def test_format_checkin_archived_kr_excluded_from_digest() -> None:
+    """Archived KRs are excluded from the digest (slipping bucket).
+
+    The live KR at low progress surfaces; the archived KR never appears
+    regardless of how it looks on paper.
+    """
+    # Use a low-progress live KR so it appears in the slipping bucket.
+    kr_live = _make_kr(1, "Active KR", prog=20)
     kr_archived = _make_kr(2, "Old KR", prog=100, archived_at=datetime(2025, 1, 1, tzinfo=UTC))
     obj = _make_obj(1, "Objective", [kr_live, kr_archived])
 
     text = format_checkin_for_slack([], delivery_date=_DELIVERY_DATE, objectives=[obj])
 
-    assert "Active KR" in text
-    assert "Old KR" not in text, "Archived KR must not appear in KR state display"
+    assert "Active KR" in text, "Low-progress live KR must appear in the slipping digest"
+    assert "Old KR" not in text, "Archived KR must not appear in the digest"
 
 
 # ── 7. build_kr_snapshot ──────────────────────────────────────────────────────

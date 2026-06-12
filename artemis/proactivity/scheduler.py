@@ -22,6 +22,7 @@ from artemis.integrations.models import Integration
 from artemis.integrations.slack.client import SlackClient
 from artemis.proactivity import repository as repo
 from artemis.proactivity.okr_checkin import (
+    build_checkin_digest,
     build_kr_snapshot,
     build_okr_checkin_proposal,
     format_checkin_for_slack,
@@ -142,8 +143,9 @@ async def _fire_okr_checkin() -> None:
             proposals = build_okr_checkin_proposal(sources)
             objectives = sources.get("objectives") or []
 
-            # Build KR snapshot for breadcrumb + voice prompt (Part C).
+            # Build KR snapshot for breadcrumb + digest for the opener.
             kr_snapshot = build_kr_snapshot(objectives)
+            digest = build_checkin_digest(sources, today=delivery_date)
 
             # Attempt voice rendering pass first; fall back to plain rendering on failure.
             voice_text = await render_checkin_with_voice(
@@ -151,6 +153,7 @@ async def _fire_okr_checkin() -> None:
                 delivery_date,
                 session_id=f"checkin-{delivery_date.isoformat()}",
                 kr_snapshot=kr_snapshot,
+                digest=digest,
             )
             if voice_text:
                 slack_text = voice_text
@@ -159,6 +162,7 @@ async def _fire_okr_checkin() -> None:
                     proposals,
                     delivery_date=delivery_date,
                     objectives=objectives,
+                    digest=digest,
                 )
 
             token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)

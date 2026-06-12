@@ -128,60 +128,127 @@ def _build_checkin_voice_prompt(
     proposals: list[dict[str, Any]],
     delivery_date: date,
     kr_snapshot: list[dict[str, Any]] | None = None,
+    digest: dict[str, Any] | None = None,
 ) -> str:
     """Build the user prompt for the OKR check-in voice pass.
 
-    Part C: kr_snapshot (all active KRs) is included so the opener shows
-    where KRs currently stand, not an empty promise.
+    When ``digest`` is provided (p2-okr-opener-digest), the prompt instructs
+    the LLM to write a MINIMAL opener using only the digest KRs (in_motion +
+    slipping), then ask what Jon moved.  The full kr_snapshot is not dumped
+    into the opener — it is available for reference during the reconcile pass
+    only.
+
+    When ``digest`` is None (backward-compat), the older full-snapshot prompt
+    is used.
     """
-    date_str = f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
+    is_friday = delivery_date.weekday() == 4  # Monday=0, Friday=4
+    if is_friday:
+        date_str = f"Friday {delivery_date.strftime('%B')} {delivery_date.day}"
+        checkin_label = "Friday OKR check-in"
+    else:
+        date_str = (
+            f"{delivery_date.strftime('%A')} {delivery_date.strftime('%B')} {delivery_date.day}"
+        )
+        checkin_label = "OKR check-in"
+
     parts: list[str] = [
-        f"Today is {date_str} (Friday OKR check-in).",
-        "",
-        "Here is the grounded OKR data. Your job:",
-        "1. Lead with where his KRs currently stand (show the numbers from the snapshot below).",
-        "2. For any KR with evidence this week, present it as CONTEXT (not claimed accomplishment).",
-        "3. ASK Jon what HE actually moved this week — his answer is the source of truth.",
-        "4. Close with: nothing updates until he says go.",
+        f"Today is {date_str} ({checkin_label}).",
         "",
     ]
 
-    # Part C: all-KR snapshot
-    if kr_snapshot:
-        parts.append("All active KRs (show these numbers):")
-        for entry in kr_snapshot:
-            obj_title = str(entry.get("objective_title") or "").strip()
-            kr_title = str(entry.get("kr_title") or "").strip()
-            prog = int(entry.get("prog") or 0)
-            target = str(entry.get("target_text") or "").strip()
-            target_str = f" (target: {target})" if target else ""
-            parts.append(f"  *{obj_title}* > *{kr_title}* — {prog}%{target_str}")
-        parts.append("")
+    if digest is not None:
+        # New digest-based prompt: minimal, activity-grounded opener.
+        in_motion = list(digest.get("in_motion") or [])
+        slipping = list(digest.get("slipping") or [])
 
-    parts.append("Evidence found this week (context only, not claimed accomplishments):")
-    if not proposals:
-        parts.append(
-            "  (No grounded evidence this week — no OKR activity, no matching Jira, no meeting items.)"
-        )
+        parts += [
+            "Here is the activity-grounded digest for the check-in opener.",
+            "Your job: write 2-5 SHORT sentences in Artemis's voice. NO reciting all KRs.",
+            "",
+        ]
+
+        if in_motion:
+            parts.append("KRs with recent activity (what Jon's been pushing on):")
+            for e in in_motion:
+                parts.append(f"  *{e['kr_title']}* ({e['prog']}%) — recent OKR activity recorded")
+            parts.append("")
+
+        if slipping:
+            parts.append(
+                "KRs that are low-progress and stalled (no recent activity — needs his attention):"
+            )
+            for s in slipping:
+                parts.append(f"  *{s['kr_title']}* at {s['prog']}% — stalled")
+            parts.append("")
+
+        if not in_motion and not slipping:
+            parts.append(
+                "No grounded activity yet. Keep the opener to one sentence acknowledging "
+                "you haven't seen activity log yet."
+            )
+            parts.append("")
+
+        parts += [
+            "After the digest, close with: 'What did you move this week? I'll map it. "
+            "Nothing updates until you say go.'",
+            "",
+            "Rules:",
+            "- Name ONLY the KRs listed above. Do NOT mention KRs not in this list.",
+            "- Show the real % for each KR you mention.",
+            "- No em-dashes. No emojis. No labeled section headers.",
+            "- Do NOT assert what Jon accomplished — you are grounding from activity logs.",
+            "- Aim 2-5 short sentences total.",
+            "",
+            "Write the Slack message now.",
+        ]
     else:
-        for p in proposals:
-            obj_title = str(p.get("objective_title") or "").strip()
-            kr_title = str(p.get("kr_title") or "").strip()
-            prog = int(p.get("current_prog") or 0)
-            basis = list(p.get("basis") or [])
-            parts.append(f"  KR: *{obj_title}* > *{kr_title}* (currently {prog}%)")
-            for b in basis:
-                b_str = str(b).strip()
-                if b_str:
-                    parts.append(f"    Evidence: {b_str}")
+        # Backward-compat: full-snapshot prompt (used when digest not yet provided).
+        parts += [
+            "Here is the grounded OKR data. Your job:",
+            "1. Lead with where his KRs currently stand (show the numbers from the snapshot below).",
+            "2. For any KR with evidence this week, present it as CONTEXT (not claimed accomplishment).",
+            "3. ASK Jon what HE actually moved this week — his answer is the source of truth.",
+            "4. Close with: nothing updates until he says go.",
+            "",
+        ]
 
-    parts.append("")
-    parts.append(
-        "Now write the Slack message. Conversational, direct, dry-witty chief-of-staff voice. "
-        "No labeled section headers. No tables. No em-dashes. No emojis. "
-        "Show the actual KR numbers from the snapshot. "
-        "Do NOT assert what Jon accomplished — only present evidence as context and ask."
-    )
+        # Part C: all-KR snapshot
+        if kr_snapshot:
+            parts.append("All active KRs (show these numbers):")
+            for entry in kr_snapshot:
+                obj_title = str(entry.get("objective_title") or "").strip()
+                kr_title = str(entry.get("kr_title") or "").strip()
+                prog = int(entry.get("prog") or 0)
+                target = str(entry.get("target_text") or "").strip()
+                target_str = f" (target: {target})" if target else ""
+                parts.append(f"  *{obj_title}* > *{kr_title}* — {prog}%{target_str}")
+            parts.append("")
+
+        parts.append("Evidence found this week (context only, not claimed accomplishments):")
+        if not proposals:
+            parts.append(
+                "  (No grounded evidence this week — no OKR activity, no matching Jira, no meeting items.)"
+            )
+        else:
+            for p in proposals:
+                obj_title = str(p.get("objective_title") or "").strip()
+                kr_title = str(p.get("kr_title") or "").strip()
+                prog = int(p.get("current_prog") or 0)
+                basis = list(p.get("basis") or [])
+                parts.append(f"  KR: *{obj_title}* > *{kr_title}* (currently {prog}%)")
+                for b in basis:
+                    b_str = str(b).strip()
+                    if b_str:
+                        parts.append(f"    Evidence: {b_str}")
+
+        parts.append("")
+        parts.append(
+            "Now write the Slack message. Conversational, direct, dry-witty chief-of-staff voice. "
+            "No labeled section headers. No tables. No em-dashes. No emojis. "
+            "Show the actual KR numbers from the snapshot. "
+            "Do NOT assert what Jon accomplished — only present evidence as context and ask."
+        )
+
     return "\n".join(parts)
 
 
@@ -279,6 +346,7 @@ async def render_checkin_with_voice(
     *,
     session_id: str = "",
     kr_snapshot: list[dict[str, Any]] | None = None,
+    digest: dict[str, Any] | None = None,
 ) -> str | None:
     """Return a voice-rendered Slack string for the Friday OKR check-in.
 
@@ -287,15 +355,20 @@ async def render_checkin_with_voice(
 
     Guarantees:
     - Output is lint-clean.
-    - Output leads with KR state + asks what Jon moved.
+    - When ``digest`` is provided, the opener names ONLY KRs in
+      ``digest["in_motion"]`` and ``digest["slipping"]`` — at most 4-5 KRs.
     - Output does NOT assert Jon did X — presents evidence as context or questions.
 
     Args:
-        proposals: Grounded KR proposals for this week.
-        delivery_date: The Friday delivery date.
+        proposals: Grounded KR proposals for this week (used in reconcile,
+            also available to the voice prompt as context).
+        delivery_date: The delivery date.
         session_id: Used for deterministic voice sample selection.
-        kr_snapshot: All active KR state (Part C). When provided, the voice
-            prompt instructs the LLM to show the actual numbers.
+        kr_snapshot: All active KR state (kept for backward-compat; not dumped
+            into the opener when ``digest`` is provided).
+        digest: Activity-grounded digest from ``build_checkin_digest``.  When
+            provided, the voice prompt instructs the LLM to use ONLY the
+            digest KRs for the opener — no full-KR recitation.
     """
     from artemis.floating_artemis.personality import load_agent_profile, select_voice_samples
 
@@ -304,7 +377,12 @@ async def render_checkin_with_voice(
     voice_samples = select_voice_samples(session_seed, k=4, voice_corpus=profile.voice_corpus)
 
     system = _build_voice_system_prompt(voice_samples)
-    user_prompt = _build_checkin_voice_prompt(proposals, delivery_date, kr_snapshot=kr_snapshot)
+    user_prompt = _build_checkin_voice_prompt(
+        proposals,
+        delivery_date,
+        kr_snapshot=kr_snapshot,
+        digest=digest,
+    )
 
     try:
         raw = await _call_voice_llm(system, user_prompt)
