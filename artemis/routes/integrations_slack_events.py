@@ -710,6 +710,9 @@ async def route_inbound(
                                 # KR.prog is an Integer column; coerce to int.
                                 progress = int(round(float(item["progress"])))
                                 basis = str(item.get("basis") or "").strip()
+                                # bullet: model-authored at stage time; fall back to
+                                # a trimmed basis if no bullet was provided.
+                                bullet = str(item.get("bullet") or "").strip() or basis[:200]
                                 await okr_repo.update_key_result(db_session, kr_id, prog=progress)
                                 activity_text = "updated via Friday check-in, approved by Jon" + (
                                     f" -- basis: {basis}" if basis else ""
@@ -720,6 +723,8 @@ async def route_inbound(
                                     text=activity_text,
                                     raw_text=basis or None,
                                 )
+                                # Append the accomplishment bullet to done_bullets (lossless).
+                                await okr_repo.append_done_bullet(db_session, kr_id, bullet)
                                 applied.append(f"KR {kr_id} -> {progress}")
                             await clear_staged_updates(db_session, crumb.id)
                             await complete_okr_checkin_breadcrumb(db_session, crumb.id)

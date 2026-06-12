@@ -208,7 +208,15 @@ async def _stage_okr_updates(inp: dict[str, Any]) -> str:
                     dropped.append(f"KR {kr_id}: non-numeric progress -- dropped")
                     continue
 
-                validated.append({"kr_id": int(kr_id), "progress": prog_val, "basis": basis})
+                bullet: str = str(item.get("bullet") or "").strip()
+                entry: dict[str, Any] = {
+                    "kr_id": int(kr_id),
+                    "progress": prog_val,
+                    "basis": basis,
+                }
+                if bullet:
+                    entry["bullet"] = bullet
+                validated.append(entry)
 
             if not validated:
                 msg = "No valid updates to stage."
@@ -292,6 +300,15 @@ STAGE_OKR_UPDATES = Tool(
                             "description": (
                                 "Operator's own words justifying this update. "
                                 "REQUIRED -- items with empty basis are dropped."
+                            ),
+                        },
+                        "bullet": {
+                            "type": "string",
+                            "description": (
+                                "OPTIONAL. A SHORT one-line scannable accomplishment summary "
+                                "grounded in the operator's own words (no fabrication). "
+                                "This is what gets appended to the KR's done_bullets on apply. "
+                                "If omitted, a trimmed basis is used as the bullet instead."
                             ),
                         },
                     },
