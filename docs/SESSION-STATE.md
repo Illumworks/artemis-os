@@ -6,11 +6,28 @@ auto-loaded memory index (`MEMORY.md`). Opus Lead = the planning/verify/merge ag
 
 ---
 
-## ⏩ CURRENT STATE — 2026-06-10 (late session checkpoint, read FIRST)
+## ⏩ CURRENT STATE — 2026-06-11 (read FIRST)
 
 **Move:** done. Repo lives at `/Users/artemis/Artemis/artemis-os`, git HEAD intact. App restart =
 `launchctl kickstart -k gui/$(id -u)/me.artemisos.app` (NOT start-app.sh — dual-bind footgun). App serves the
-working-tree `public/` live; backend code changes need a kickstart.
+working-tree `public/` live; backend code changes need a kickstart. NOTE: app binds `127.0.0.1` — health-check
+`http://127.0.0.1:8000/healthz`, NOT `localhost` (resolves to ::1 first → false "down").
+
+**P2 PROACTIVITY — merged + live (2026-06-11), pending Jon's live dry-run:**
+- **Conversational Slack confirm** (no buttons): layer-3 yield posts proposal; reply "go"/"no" (haiku
+  classifier, conservative→NEITHER falls through to normal turn) resolves via `confirmation_store` +
+  `resume_after_confirm`. merged.
+- **Voice:** brief + OKR check-in get an Artemis-voice LLM render pass (persona + voice_render), dry-witty-
+  Jarvis, lint-clean, plain-text fallback so delivery never fails.
+- **OKR attribution fix:** Jira scoped to `assignee = currentUser()` (Jon only); only self-logged OKR activity
+  asserted as his work, everything else labeled `Context:`; no one-ticket→many-KR fan-out.
+- **OKR reconcile loop (migration 0081):** check-in fires → TTL'd breadcrumb (KR snapshot + proposal, Monday
+  TTL) → next personal-DM reply gets reconcile context injected → word-dump maps to specific KRs → proposes
+  `update_okr_kr` (layer-3 → "go" applies). Clear is conversation-driven via `complete_okr_checkin` tool (NOT
+  apply-clearing — multi-KR dumps survive). KR state shown in opener. DB at 0081 head.
+- **PENDING:** live Friday-style dry-run w/ Jon — fire check-in → word-dump brand-hub/AppScript/skill work →
+  expect KR 6/7/8/9/11 proposed → "go" → confirm a KR row changes only then → change topic → next DM clean.
+  (OKR Studio has 4 objectives / 20 KRs; values currently unset.)
 
 **Chapter 2 = personal assistant + Named agents. Build split: Codex=backend, terminal=FE, Opus=architect/
 verify/merge. Workers run on `worker/<scope>` branches; Lead FF-merges to main.** (Hazard seen this session:
