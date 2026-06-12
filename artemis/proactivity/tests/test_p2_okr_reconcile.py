@@ -442,8 +442,16 @@ def test_artemis_persona_core_forbids_bold_section_labels() -> None:
 # ── 11. OKR reconcile context mentions layer-3 guard ─────────────────────────
 
 
-async def test_reconcile_context_cites_layer3_gate(db_session: AsyncSession) -> None:
-    """The reconcile context block must reference update_okr_kr layer-3 gating."""
+async def test_reconcile_context_instructs_staging_with_go_gate(
+    db_session: AsyncSession,
+) -> None:
+    """The reconcile context must instruct stage_okr_updates and convey the 'go' gate.
+
+    On the claude-code subscription surface the layer-3 write tools are stripped, so the
+    reconcile context instructs `stage_okr_updates` (the reachable staging tool); the apply
+    happens server-side after the operator's explicit 'go'. The layer-3 tools are still
+    referenced, only to mark them as not the path here.
+    """
     from artemis.floating_artemis.chat import _get_okr_reconcile_context
 
     await create_okr_checkin_breadcrumb(
@@ -465,12 +473,11 @@ async def test_reconcile_context_cites_layer3_gate(db_session: AsyncSession) -> 
 
     ctx = await _get_okr_reconcile_context("U_JON_GATE", db_session)
     assert ctx is not None
-    # Must mention update_okr_kr and layer-3 gate.
-    assert "update_okr_kr" in ctx
-    assert "layer-3" in ctx
-    # Must NOT say "apply" without "go" — the gate must be mentioned.
+    # Primary instruction is the reachable staging tool.
+    assert "stage_okr_updates" in ctx
+    # Staging pauses for the operator's explicit 'go' (no silent apply).
     ctx_lower = ctx.lower()
-    assert "go" in ctx_lower or "confirm" in ctx_lower
+    assert "go" in ctx_lower
 
 
 # ── 12. build_system_prompt injects reconcile context ────────────────────────

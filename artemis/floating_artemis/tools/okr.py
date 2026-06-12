@@ -1,11 +1,16 @@
 """OKR tools for Floating Artemis.
 
 Authority layers:
-  1: list_okr_objectives, complete_okr_checkin
+  1: list_okr_objectives, complete_okr_checkin, stage_okr_updates
   3: update_okr_kr   — propose→confirm; single KR write, gated.
   3: update_okr_krs  — propose→confirm; batch KR writes, one "go" applies all.
 
 OKR writes MUST NOT happen without Jon's explicit approval.
+
+stage_okr_updates is layer 1 (auto-invoke, no confirmation prompt):
+  it writes ZERO KR rows.  It only stores the validated list into the
+  breadcrumb's staged_updates field.  The actual KR write happens in
+  route_inbound on operator explicit 'go'.
 
 [surface:okr] — gated by okr surface availability.
 """
@@ -132,6 +137,99 @@ async def _update_okr_krs(inp: dict[str, Any]) -> str:
     return " | ".join(parts) if parts else "No updates applied."
 
 
+async def _stage_okr_updates(inp: dict[str, Any]) -> str:
+    """Stage validated KR updates into the live breadcrumb.  Layer-1: writes ZERO KR rows.
+
+    Input: ``{"updates": [{"kr_id": N, "progress": V, "basis": "..."}], "speaker_id": "U..."}``
+
+    Validation rules (defence-in-depth):
+    - speaker_id required; used to locate the live breadcrumb.
+    - Each item must have a real kr_id (EXISTS in okr_key_results), a numeric progress
+      clamped to 0-100, and a non-empty basis.  Items failing any check are dropped.
+    - No live breadcrumb means there is no active check-in -- stages nothing.
+    """
+    speaker_id: str | None = str(inp.get("speaker_id") or "").strip() or None
+    if not speaker_id:
+        return "stage_okr_updates: speaker_id is required"
+
+    raw_updates: list[Any] = inp.get("updates") or []
+    if not raw_updates:
+        return "stage_okr_updates: updates list is required and must not be empty"
+
+    try:
+        import artemis.db as _db
+        from artemis.okr import repository as okr_repo
+        from artemis.proactivity.repository import (
+            get_live_okr_checkin_breadcrumb,
+            set_staged_updates,
+        )
+
+        async with _db.SessionLocal() as session:
+            crumb = await get_live_okr_checkin_breadcrumb(session, speaker_id)
+            if crumb is None:
+                return (
+                    "No live OKR check-in found for this speaker. "
+                    "Nothing staged -- not in an active check-in window."
+                )
+
+            validated: list[dict[str, Any]] = []
+            dropped: list[str] = []
+
+            for item in raw_updates:
+                if not isinstance(item, dict):
+                    dropped.append(f"non-dict item dropped: {item!r}")
+                    continue
+
+                kr_id = item.get("kr_id")
+                progress = item.get("progress")
+                basis: str = str(item.get("basis") or "").strip()
+
+                if not kr_id:
+                    dropped.append("item missing kr_id -- dropped")
+                    continue
+                if progress is None:
+                    dropped.append(f"KR {kr_id}: missing progress -- dropped")
+                    continue
+                if not basis:
+                    dropped.append(f"KR {kr_id}: empty basis -- dropped (no fabricated updates)")
+                    continue
+
+                # Verify the KR actually exists.
+                kr_row = await okr_repo.get_key_result(session, int(kr_id))
+                if kr_row is None:
+                    dropped.append(f"KR {kr_id}: not found -- dropped")
+                    continue
+
+                # Clamp progress to 0-100. KR.prog is an Integer column, so store an
+                # int -- a float like 78.0 is rejected by asyncpg on the apply path.
+                try:
+                    prog_val = int(round(max(0.0, min(100.0, float(progress)))))
+                except (TypeError, ValueError):
+                    dropped.append(f"KR {kr_id}: non-numeric progress -- dropped")
+                    continue
+
+                validated.append({"kr_id": int(kr_id), "progress": prog_val, "basis": basis})
+
+            if not validated:
+                msg = "No valid updates to stage."
+                if dropped:
+                    msg += " Dropped: " + "; ".join(dropped)
+                return msg
+
+            await set_staged_updates(session, crumb.id, validated)
+            await session.commit()
+
+        n = len(validated)
+        parts = [f"Staged {n} KR update{'s' if n != 1 else ''}."]
+        parts.append("Ask the operator to say 'go' to apply, or 'no' to discard.")
+        if dropped:
+            parts.append("Dropped: " + "; ".join(dropped))
+        return " ".join(parts)
+
+    except Exception as exc:
+        return f"stage_okr_updates failed: {exc}"
+
+
 async def _complete_okr_checkin(inp: dict[str, Any]) -> str:
     """Mark the live OKR check-in breadcrumb as completed for the current speaker.
 
@@ -161,6 +259,54 @@ async def _complete_okr_checkin(inp: dict[str, Any]) -> str:
     except Exception as exc:
         return f"complete_okr_checkin failed: {exc}"
 
+
+STAGE_OKR_UPDATES = Tool(
+    name="stage_okr_updates",
+    description=(
+        f"Stage validated KR progress updates into the active OKR check-in breadcrumb "
+        f"for confirmation. {_SURFACE} [layer:1] "
+        "WRITES ZERO KR ROWS -- stores the proposed changes for operator review only. "
+        "The actual KR write happens when the operator says 'go' (handled server-side). "
+        "Use this (not update_okr_kr/update_okr_krs) on the subscription path where "
+        "layer-3 tools are not reachable. Each update MUST cite the operator's own words "
+        "as basis. Empty-basis and unknown-KR items are dropped automatically. "
+        "After staging, relay the summary and ask the operator to say 'go' to apply "
+        "or 'no' to discard."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "updates": {
+                "type": "array",
+                "description": "List of KR updates to stage for confirmation.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kr_id": {"type": "integer", "description": "ID of the key result"},
+                        "progress": {
+                            "type": "number",
+                            "description": "New current progress value (0-100)",
+                        },
+                        "basis": {
+                            "type": "string",
+                            "description": (
+                                "Operator's own words justifying this update. "
+                                "REQUIRED -- items with empty basis are dropped."
+                            ),
+                        },
+                    },
+                    "required": ["kr_id", "progress", "basis"],
+                },
+                "minItems": 1,
+            },
+            "speaker_id": {
+                "type": "string",
+                "description": "Slack user ID of the speaker (e.g. U01ABCDEF)",
+            },
+        },
+        "required": ["updates", "speaker_id"],
+    },
+)
 
 LIST_OKR_OBJECTIVES = Tool(
     name="list_okr_objectives",
@@ -260,6 +406,7 @@ COMPLETE_OKR_CHECKIN = Tool(
 
 def register_okr_tools(registry: AuthorizedToolRegistry) -> None:
     registry.register(LIST_OKR_OBJECTIVES, _list_okr_objectives, layer=1)
+    registry.register(STAGE_OKR_UPDATES, _stage_okr_updates, layer=1)
     registry.register(UPDATE_OKR_KR, _update_okr_kr, layer=3)
     registry.register(UPDATE_OKR_KRS, _update_okr_krs, layer=3)
     registry.register(COMPLETE_OKR_CHECKIN, _complete_okr_checkin, layer=1)

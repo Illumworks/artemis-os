@@ -235,8 +235,11 @@ async def _get_okr_reconcile_context(
     When the Friday check-in fires, it persists a breadcrumb keyed to Jon's
     Slack user ID.  While that breadcrumb is live (not expired, not completed),
     we inject context into the system prompt so the next DM reply gets mapped
-    to specific KRs and update_okr_krs (layer-3 batch tool) is called — calling
-    the tool IS the proposal; it suspends for the operator's explicit 'go'.
+    to specific KRs and `stage_okr_updates` is called.  Staging does NOT apply;
+    it records the proposed updates on the breadcrumb and pauses for the
+    operator's explicit 'go' (applied server-side in route_inbound).  This is
+    the path that works on the claude-code subscription surface, where the
+    layer-3 write tools (update_okr_kr/update_okr_krs) are not reachable.
 
     Returns None when no live breadcrumb exists (normal DM path, no injection).
     Failure-isolated: any DB/import error returns None so chat is never broken.
@@ -281,20 +284,20 @@ async def _get_okr_reconcile_context(
             "1. Engage with the substance of what they describe (be helpful, warm, on-topic).\n"
             "2. ALSO: map concrete accomplishments to SPECIFIC KRs from the snapshot below. "
             "Do NOT invent KRs or fabricate progress. If something doesn't map, say so.\n"
-            "3. **Call `update_okr_krs` with ALL mapped updates in a single batch call** — "
-            "one tool call, one proposal, one operator 'go'. Do NOT make separate "
-            "`update_okr_kr` calls per KR during a check-in word-dump; use the batch tool.\n"
-            "   - CALLING the tool IS the proposal. `update_okr_krs` is layer-3: it "
-            "pauses immediately after you call it and asks the operator for explicit 'go' "
-            "before writing anything. It does NOT apply on its own. The gate is inside "
-            "the tool — there is no separate 'apply' step you must avoid.\n"
-            "   - Do NOT describe the updates only in prose and wait for the operator to "
-            "ask you to apply. Make the tool call so the confirmation can happen.\n"
-            "   - Never claim `update_okr_krs` or `update_okr_kr` is unavailable. Both "
-            "write tools exist and are wired. The layer-3 gate means they pause before "
-            "writing — they are not absent.\n"
-            "4. Each update in the batch MUST cite the operator's own words as `basis`. "
-            "Empty-basis items are dropped automatically.\n"
+            "3. **CALL `stage_okr_updates` with ALL mapped updates in a single call**, "
+            f"passing speaker_id={speaker_id!r} and updates=[{{kr_id, progress, basis}}, ...]. "
+            "Stage everything in one call, not one call per KR.\n"
+            "   - `stage_okr_updates` does NOT apply anything and writes ZERO KR rows. "
+            "It records the proposed updates and pauses for the operator's explicit 'go'. "
+            "After you stage, tell the operator what you staged and ask them to say 'go' "
+            "to apply or 'no' to discard. The apply happens server-side after 'go'.\n"
+            "   - Do NOT describe the updates only in prose and wait. Make the "
+            "`stage_okr_updates` call so the operator can confirm.\n"
+            "   - Never claim `stage_okr_updates` is unavailable — it is wired and is the "
+            "supported check-in path on this surface. (The layer-3 `update_okr_kr` / "
+            "`update_okr_krs` write tools are not reachable here; use `stage_okr_updates`.)\n"
+            "4. Each staged update MUST cite the operator's own words as `basis`. "
+            "Empty-basis and unknown-KR items are dropped automatically.\n"
             "5. Topic-change / done detection: if the operator's message is NOT about "
             "their weekly work / KR reconciliation (they have changed topic), OR they "
             "signal they are done (e.g. 'that\\'s all', 'thanks', 'nothing else', "
@@ -304,8 +307,8 @@ async def _get_okr_reconcile_context(
             "is closed.\n\n"
             f"Current KR snapshot:\n{kr_list}\n\n"
             "Reconcile their word-dump to these KRs, cite their words as basis, "
-            "and CALL `update_okr_krs` to propose the batch — the tool handles the "
-            "confirmation gate; you do not need to ask separately."
+            "and CALL `stage_okr_updates` to stage the batch — then ask the operator "
+            "to say 'go' to apply or 'no' to discard."
         )
     except Exception:
         logger.debug("_get_okr_reconcile_context failed — skipping injection", exc_info=True)
