@@ -20,6 +20,7 @@ from artemis.integrations import repository as integration_repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.models import Integration
 from artemis.integrations.slack.client import SlackClient
+from artemis.marketing.writing_studio.review_escalation import send_stale_review_escalations
 from artemis.proactivity import repository as repo
 from artemis.proactivity.okr_checkin import (
     build_checkin_digest,
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 _MORNING_BRIEF_JOB_ID = "proactivity_morning_brief"
 _OKR_CHECKIN_JOB_ID = "proactivity_okr_checkin"
+_STALE_REVIEW_ESCALATION_JOB_ID = "proactivity_stale_review_escalation"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -52,13 +54,15 @@ def start_proactivity_scheduler() -> None:
     scheduler = get_proactivity_scheduler()
     _register_morning_brief_job(scheduler)
     _register_okr_checkin_job(scheduler)
+    _register_stale_review_escalation_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
-            "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r)",
+            "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, review escalation cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
             settings.okr_checkin_cron,
+            settings.review_escalation_cron,
         )
 
 
@@ -98,6 +102,21 @@ def _register_okr_checkin_job(scheduler: AsyncIOScheduler) -> None:
         _fire_okr_checkin,
         trigger=trigger,
         id=_OKR_CHECKIN_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+def _register_stale_review_escalation_job(scheduler: AsyncIOScheduler) -> None:
+    trigger = CronTrigger.from_crontab(
+        settings.review_escalation_cron,
+        timezone=settings.review_escalation_tz,
+    )
+    scheduler.add_job(
+        _fire_stale_review_escalation,
+        trigger=trigger,
+        id=_STALE_REVIEW_ESCALATION_JOB_ID,
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=3600,
@@ -279,6 +298,22 @@ async def _fire_morning_brief() -> None:
                     error=str(exc),
                 )
                 await session.commit()
+
+
+async def _fire_stale_review_escalation() -> None:
+    """Find stale pending reviews and DM each reviewer once."""
+    async with _db.SessionLocal() as session:
+        summary = await send_stale_review_escalations(
+            session,
+            stale_after=timedelta(hours=settings.review_escalation_age_hours),
+        )
+    logger.info(
+        "Stale review escalation sweep finished (checked=%d eligible=%d sent=%d failed=%d)",
+        summary.checked,
+        summary.eligible,
+        summary.sent,
+        summary.failed,
+    )
 
 
 async def _get_slack_token_for_agent(

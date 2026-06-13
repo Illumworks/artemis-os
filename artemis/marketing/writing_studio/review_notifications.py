@@ -13,10 +13,12 @@ from artemis.integrations import repository as integrations_repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.slack.client import SlackClient
 from artemis.marketing.models import Approval, CampaignDeliverable
+from artemis.writing_rules import lint_agent_text
 
 _CALLIE_CAMPAIGN_SIGNALS_CHANNEL = "C0B9CHVC7KQ"
 DEFAULT_REVIEWER_EMAIL = "angela@amiralearning.com"
 ReviewPingMode = Literal["channel_mention", "dm"]
+ReviewPingKind = Literal["ready_for_review", "stale_review_escalation"]
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,7 @@ async def send_callie_ready_for_review_ping(
     author_name: str,
     reviewer_email: str,
     mode: ReviewPingMode = "channel_mention",
+    kind: ReviewPingKind = "ready_for_review",
 ) -> ReviewPingResult:
     """Post the deterministic review ping as Callie.
 
@@ -175,7 +178,12 @@ async def send_callie_ready_for_review_ping(
     try:
         slack_user_id = await client.lookup_user_by_email(reviewer_email)
         if mode == "dm":
-            text = f'"{safe_title}" by {safe_author} is ready for review. <{draft_url}|Open draft>'
+            text = _build_dm_text(
+                title=safe_title,
+                author_name=safe_author,
+                draft_url=draft_url,
+                kind=kind,
+            )
             if slack_user_id:
                 await client.post_dm(slack_user_id, text)
                 return ReviewPingResult(
@@ -198,7 +206,12 @@ async def send_callie_ready_for_review_ping(
             )
 
         reviewer_label = f"<@{slack_user_id}>" if slack_user_id else fallback_reviewer_label
-        text = f'{reviewer_label} - "{safe_title}" by {safe_author} is ready for review. <{draft_url}|Open draft>'
+        text = _build_channel_text(
+            reviewer_label=reviewer_label,
+            title=safe_title,
+            author_name=safe_author,
+            draft_url=draft_url,
+        )
         await client.post_message(channel=channel_id, text=text)
         return ReviewPingResult(
             ok=True,
@@ -213,3 +226,31 @@ async def send_callie_ready_for_review_ping(
             reviewer_email=reviewer_email,
             error=str(exc),
         )
+
+
+def _build_dm_text(
+    *,
+    title: str,
+    author_name: str,
+    draft_url: str,
+    kind: ReviewPingKind,
+) -> str:
+    if kind == "stale_review_escalation":
+        raw = (
+            f'Follow-up: "{title}" by {author_name} is still waiting for review. '
+            f"<{draft_url}|Open draft>"
+        )
+    else:
+        raw = f'"{title}" by {author_name} is ready for review. <{draft_url}|Open draft>'
+    return str(lint_agent_text(raw))
+
+
+def _build_channel_text(
+    *,
+    reviewer_label: str,
+    title: str,
+    author_name: str,
+    draft_url: str,
+) -> str:
+    raw = f'{reviewer_label} - "{title}" by {author_name} is ready for review. <{draft_url}|Open draft>'
+    return str(lint_agent_text(raw))

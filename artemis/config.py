@@ -123,6 +123,21 @@ class Settings(BaseSettings):
         default="0 16 * * 5",
         description="Cron expression for the Friday 4pm OKR check-in (default: Fri 16:00).",
     )
+    review_escalation_cron: str = Field(
+        default="0 17 * * *",
+        description=(
+            "Cron expression for the daily stale-review escalation sweep "
+            "(default: every day at 17:00)."
+        ),
+    )
+    review_escalation_tz: str = Field(
+        default="America/New_York",
+        description="IANA timezone for the stale-review escalation sweep.",
+    )
+    review_escalation_age_hours: int = Field(
+        default=24,
+        description="Minimum age in hours before a ready-for-review draft is escalated.",
+    )
     uvicorn_workers: int = Field(
         default=1,
         validation_alias=AliasChoices(
