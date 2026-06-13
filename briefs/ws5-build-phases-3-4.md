@@ -56,6 +56,11 @@ Cross-cutting correctness so Phase 3 is safe with the rest of the editor (detail
 - **Multi-worker boundary (R10):** the in-memory room registry clobbers across >1 worker. **Pin collab WS to a
   single worker for v1** (sticky/single-process); document Redis pub/sub or Postgres LISTEN/NOTIFY (one elected
   flusher per draft) as the pre-scale-out follow-up. Verify the deploy's worker count.
+- **Presence roster over-count (found in P3 live test):** with 2 users, the avatar cluster showed **3
+  avatars** — the roster isn't deduping by user and/or sockets aren't torn down on composer
+  unmount/re-render/navigate (a per-connection leak). Dedup the roster by user identity AND ensure the
+  per-mount collab socket is closed in `destroy()` / on every re-mount. (Text sync + data are correct; this is
+  the presence-display layer.) Verify: 2 users → exactly 2 avatars; reload one → still 2, not 3.
 - **Ship gate (Lead, 2 browsers):** with claims, comments, and a Google Docs import exercised live across two
   clients, anchors land on the right spans and no client's edits are lost.
 
