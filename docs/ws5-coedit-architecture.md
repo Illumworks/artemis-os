@@ -4,14 +4,16 @@
 P3 live text sync via prosemirror-collab@1.3.1, P4 coexistence hardening). Verified in real 2-browser tests
 (live bidirectional sync converges; soft-lock rejects stale writes; presence dedupes to 2 avatars).
 
-**v1 residuals / tracked follow-ups (not blocking — edges):**
-- **Collab-aware undo/redo** not done — `Cmd+Z` during *simultaneous* editing may undo a peer's recent edit
-  (ProseMirror history × collab interplay). Recoverable; edge case. Track for v1.1.
-- **Socket teardown on repeated reload** incomplete — presence avatar count inflates if a user reloads the
-  same draft many times in a session (sockets not torn down on navigate); normal single-open = correct 2.
-  Cosmetic; track.
-- **Multi-worker fan-out** not implemented — moot today (prod runs a single uvicorn worker). Do Redis pub/sub
-  or Postgres LISTEN/NOTIFY (one elected flusher per draft) **before** scaling to >1 worker.
+**v1 residuals — ALL CLOSED 2026-06-13 (verified live):**
+- ✅ **Collab-aware undo/redo** — confirmed already correct (vendored collab marks remote steps
+  `addToHistory:false`); locked with regression tests + verified live (one editor's undo leaves the other's
+  text intact).
+- ✅ **Socket teardown on reload** — collab socket now closed on `pagehide`/`beforeunload`/`destroy`; verified
+  live (3 reloads → still exactly 2 avatars, no inflation).
+- ✅ **Multi-worker guard** — startup logs a loud WARNING if configured with >1 uvicorn worker
+  (`warn_if_multiworker_collab`); verified (warns at >1, silent at 1). NOTE: this is the *guard*, not the
+  full fan-out — Redis pub/sub or Postgres LISTEN/NOTIFY (one elected flusher per draft) is still the work to
+  do **before** actually scaling to >1 worker.
 **Date:** 2026-06-12
 **Author:** Lead architect synthesis of four parallel investigations (A approach/library, B composer audit, C sync backend, D presence/UX + phasing).
 **Scope:** composer-v5 (Writing Studio drafts) live multi-writer co-editing, presence, and the backend that backs it.
