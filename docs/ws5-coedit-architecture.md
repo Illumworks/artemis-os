@@ -1,6 +1,17 @@
 # Writing Studio — Real-Time Co-Editing Architecture
 
-**Status:** Design only. No feature code implemented.
+**Status:** ✅ SHIPPED 2026-06-13 — P0–P4 merged + live (P0 collab WS, P1 presence, P2 soft-lock,
+P3 live text sync via prosemirror-collab@1.3.1, P4 coexistence hardening). Verified in real 2-browser tests
+(live bidirectional sync converges; soft-lock rejects stale writes; presence dedupes to 2 avatars).
+
+**v1 residuals / tracked follow-ups (not blocking — edges):**
+- **Collab-aware undo/redo** not done — `Cmd+Z` during *simultaneous* editing may undo a peer's recent edit
+  (ProseMirror history × collab interplay). Recoverable; edge case. Track for v1.1.
+- **Socket teardown on repeated reload** incomplete — presence avatar count inflates if a user reloads the
+  same draft many times in a session (sockets not torn down on navigate); normal single-open = correct 2.
+  Cosmetic; track.
+- **Multi-worker fan-out** not implemented — moot today (prod runs a single uvicorn worker). Do Redis pub/sub
+  or Postgres LISTEN/NOTIFY (one elected flusher per draft) **before** scaling to >1 worker.
 **Date:** 2026-06-12
 **Author:** Lead architect synthesis of four parallel investigations (A approach/library, B composer audit, C sync backend, D presence/UX + phasing).
 **Scope:** composer-v5 (Writing Studio drafts) live multi-writer co-editing, presence, and the backend that backs it.

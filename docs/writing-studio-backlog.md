@@ -1,7 +1,15 @@
 # Writing Studio — Backlog (surfaced while demoing, 2026-06-11)
 
-**Status:** DEFERRED — pivot back here after the current P2 (proactivity) trajectory. Captured so nothing's
-lost. The composer-v5 redesign is solid, but the demo surfaced regressions + gaps. Rough priority order below.
+**Status:** ACTIVE — this is the current near-term chunk (WS backlog → then P2). Progress as of 2026-06-12:
+- **#1 stall bug — ✅ DONE** (ws1, merged).
+- **#2 restore lost features — ✅ DONE** (ws2 rules/memory UI, merged).
+- **#3 ready-for-review → Callie ping — ✅ DONE** (ws3 + ws3.1, merged `44dbc86`, live-verified). Initial
+  notification = channel @mention in Marketing Campaigns; `ready_for_review_at` stamped. The **overdue→DM
+  escalation** half was split out to `briefs/p2-stale-review-escalation.md` as P2's opener.
+- **#4 picker drag-drop + folder nesting — ⬜ NEXT** (`briefs/ws4-picker-dnd-folder-nesting.md`).
+- **#5 cowork / full live co-editing — ✅ DONE + live** (2026-06-13). WS5 P0–P4 shipped: collab WS, presence,
+  soft-lock, live text sync (prosemirror-collab), coexistence hardening. Verified in 2-browser tests. Design +
+  residuals in `docs/ws5-coedit-architecture.md`. **Writing Studio backlog fully cleared.**
 
 ## 1. Writing agent STALLED mid-write (BUG — highest; demo risk)
 In a demo, the writing agent (Artemis composing a 5-min demo-video script) **stopped mid-sentence** ("The key
