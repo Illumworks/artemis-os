@@ -502,9 +502,20 @@ async def slack_user_oauth_start(
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = "slack_user_pending"
 
-    # user_scope requests a *user* token (vs scope for a bot token).
-    # chat:write is pre-requested here for the agency-writes lane.
-    user_scopes = ",".join(["search:read", "users:read", "chat:write"])
+    # user_scope requests a *user* token (vs scope for a bot token). Slack
+    # deprecated the umbrella ``search:read`` in favour of granular scopes, and
+    # search.messages (how the radar finds Jon's mentions) needs a USER token —
+    # so request the granular search scopes across public/private/DM surfaces.
+    # chat:write is pre-requested here for the agency-writes Slack-send lane.
+    user_scopes = ",".join(
+        [
+            "search:read.public",
+            "search:read.private",
+            "search:read.im",
+            "users:read",
+            "chat:write",
+        ]
+    )
     url = (
         f"https://slack.com/oauth/v2/authorize"
         f"?client_id={cfg.client_id}"
