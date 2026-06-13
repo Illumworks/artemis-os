@@ -85,14 +85,22 @@ make it compound. None of that is copyable by a horizontal competitor.
 - **P4 — Orchestration → Callie:** ✅ **DONE.** Callie live (C1–C3); the WS review-ping bridge shipped
   (ws3/ws3.1 — Callie @mentions in-channel, DMs on escalation).
 - **P5 — Learning loop / skill capture:** ⚪ Not started (trace-capture foundations seeded).
-- **P6 — Self-evolution (capstone):** ⚪ Last; foundations laid from P1.
-- **Memory keystone:** 🔵 B-class on an A-/B+ substrate. C1–C6 cleanup + 2 of 5 A/S-class upgrades done
-  (use-feedback loop, decay scheduler). **3 remain:** retrieval eval harness, semantic conflict detection,
-  connect Writing-Studio brand-voice to the keystone. See `docs/memory-system-assessment-2026-06-04.md`.
+- **P6 — Self-evolution (capstone):** ⚪ **After the Memory upgrades (M).** Needs accumulated execution-trace
+  history, which accrues over time — so let traces build *during* M, then P6 optimizes an already-accurate,
+  tuned, access-scoped memory. Foundations laid from P1.
+- **M — Memory upgrades (SEQUENCED BEFORE P6):** 🔵 B-class on an A-/B+ substrate; lossless + multi-scope
+  (architected for the multi-team expansion). 2 of 5 A/S-class upgrades done (use-feedback loop, decay
+  scheduler). **To schedule:** **M1** semantic conflict detection (accuracy at company-wide scale), **M2**
+  retrieval eval/tuning harness (prove recall + speed + token cost hold as volume grows), **M3** scope/role-
+  aware retrieval (multi-team access + token cost — the *same* filter the OS expansion needs), **M4** connect
+  Writing-Studio brand-voice to the keystone. Full plan: `docs/memory-readiness-and-upgrades.md`
+  (+ `docs/memory-system-assessment-2026-06-04.md`).
 - **Parked strategic plans (from the 2026-06-12 CEO/COO meeting):** standalone growth-credibility app
   (`docs/product-data-credibility-app.md`) + OS multi-team expansion (`docs/os-multi-team-expansion.md`).
-- **Near-term:** keep building **P2** (broaden commitments beyond the review escalation), then P3
-  write-extensions; P5 → P6 later. The subscription-path constraint (below) still holds for all agency-writes.
+- **Near-term / sequence:** finish **P2** (broaden commitments) → **P3** write-extensions → **P5** learning
+  loop → **Memory upgrades M1–M3** (gate the OS multi-team expansion + accuracy/token-cost at scale) → **P6**
+  self-evolution. (M4 + the OS multi-team expansion + the growth-credibility app slot per priority.) The
+  subscription-path constraint (below) holds for all agency-writes.
 
 ### Status as of 2026-06-12 (superseded — kept for history)
 The plan was drawn P1→P6 linearly, but build order pulled the hard middle pieces FORWARD — so the remaining

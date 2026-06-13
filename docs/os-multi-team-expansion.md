@@ -48,6 +48,13 @@ ignoring it (Mark's explicit warning), and (b) builds the exact silo he warned a
 "non-maintainable + duplicative" no matter how good. So filtering + MCP-fit are **the gate to adoption**, not
 polish.
 
+## Memory readiness (does the keystone fare?)
+**Yes — the memory is architected for this (multi-scope, built for Salesforce/Gong/Churn-Zero); no rebuild.**
+But company-wide volume makes three memory upgrades the gate to doing it *accurately + cheaply at scale*:
+semantic conflict detection (M1), a retrieval eval/tuning harness (M2), and **scope/role-aware retrieval (M3)
+— which IS the same per-role filter this expansion needs** (one build, two uses). Full analysis +
+sequence: `docs/memory-readiness-and-upgrades.md`. These are sequenced before P6 in the build plan.
+
 ## Rough shape (when sequenced)
 - **Phase A — Targeting layer:** Salesforce integration (territory + pipeline + account ownership) → every
   signal carries "who it's for"; role-scoped Slack routing (AE sees only their territory's hot signals; CSM
