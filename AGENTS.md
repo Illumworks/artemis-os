@@ -62,7 +62,7 @@ Read these before doing anything substantive.
    cd ../artemis-os-wt-<scope>      # work, commit, test here — never in the main checkout
    ```
 
-   Do NOT edit, stage, or commit files in the main checkout. When done, **do-not-merge-report** (hand the branch to Lead; Lead verifies + merges). Working directly in the main tree has repeatedly tangled uncommitted work with the live tree and risks clobbering — there are no exceptions to this rule.
+   Do NOT edit, stage, or commit files in the main checkout. When done, **commit your work on the branch first** (do NOT leave it uncommitted in the worktree — Lead has repeatedly had to commit on your behalf), then **do-not-merge-report** (hand the branch to Lead; Lead verifies + merges). Working directly in the main tree has repeatedly tangled uncommitted work with the live tree and risks clobbering — there are no exceptions to this rule.
 
 ## Local dev quickstart
 
