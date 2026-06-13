@@ -180,6 +180,18 @@ async def sync_personal_google_integrations(
     client_id: str,
     client_secret: str,
 ) -> None:
+    """Mirror a personal Google credential into the gcal Integration row.
+
+    Rules:
+    - If the credential has calendar scope → upsert the gcal integration to
+      ``active`` with the calendar scopes (self-healing: a previously ``revoked``
+      row is flipped back to ``active``).
+    - If the credential does NOT have calendar scope → do nothing.  Leave any
+      existing integration row exactly as-is; never revoke here.
+
+    Revocation belongs exclusively to the explicit disconnect path
+    (``revoke_personal_google_integrations`` / ``google_disconnect``).
+    """
     if not credential.connected_email:
         return
 
@@ -189,15 +201,8 @@ async def sync_personal_google_integrations(
         "https://www.googleapis.com/auth/calendar.events",
     )
     if not has_calendar:
-        await session.execute(
-            update(Integration)
-            .where(
-                Integration.provider == "gcal",
-                Integration.workspace_id == credential.connected_email,
-                Integration.agent_id == "default",
-            )
-            .values(status="revoked")
-        )
+        # No calendar scope on this credential — leave existing integration
+        # untouched.  A future consent that includes calendar will heal it.
         return
 
     encrypted = encrypt_credentials(
