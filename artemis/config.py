@@ -123,6 +123,18 @@ class Settings(BaseSettings):
         default="0 16 * * 5",
         description="Cron expression for the Friday 4pm OKR check-in (default: Fri 16:00).",
     )
+    uvicorn_workers: int = Field(
+        default=1,
+        validation_alias=AliasChoices(
+            "ARTEMIS_UVICORN_WORKERS",
+            "UVICORN_WORKERS",
+            "WEB_CONCURRENCY",
+        ),
+        description=(
+            "Configured uvicorn worker count. Writing Studio collab is single-process in v1 and "
+            "logs a startup warning if this is >1."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

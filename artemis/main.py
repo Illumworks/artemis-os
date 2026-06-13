@@ -25,6 +25,7 @@ from artemis.automations.scheduler import (
 )
 from artemis.builder.routes import agents_subresource_router as builder_agents_router
 from artemis.builder.routes import router as builder_router
+from artemis.config import settings
 from artemis.connectors.routes import agents_router as connectors_agents_router
 from artemis.connectors.routes import router as connectors_router
 from artemis.integrations.token_refresh.scheduler import (
@@ -53,6 +54,9 @@ from artemis.marketing.scout_scheduler import start_scout_scheduler, stop_scout_
 from artemis.marketing.writing_studio import adapter as ws_adapter
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio.collab.routes import router as ws_collab_router
+from artemis.marketing.writing_studio.collab.runtime_guard import (
+    warn_if_multiworker_collab,
+)
 from artemis.meetings.scheduler import start_meeting_scheduler, stop_meeting_scheduler
 from artemis.memory.scheduler import start_memory_scheduler, stop_memory_scheduler
 from artemis.pipelines.routes import router as pipelines_router
@@ -102,6 +106,7 @@ PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    warn_if_multiworker_collab(settings.uvicorn_workers)
     # Subscribe the Writing Studio adapter to draft lifecycle events.
     ws_adapter.init_adapter()
     # Start the meeting auto-summarizer scheduler.

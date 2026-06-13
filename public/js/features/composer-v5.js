@@ -1296,6 +1296,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   let selfClientId = null;
   let selfEmail = null;
   let _selectionBroadcastTimer = null;
+  let collabSocketClosed = false;
   /** @type {Map<string, {email:string, name:string, from?:number, to?:number}>} */
   const peers = new Map();
 
@@ -1481,6 +1482,18 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     return s.slice(0, 2).toUpperCase();
   }
 
+  function closeCollabSocket() {
+    if (collabSocketClosed) return;
+    collabSocketClosed = true;
+    presenceConnected = false;
+    try { collabSocket?.close(); } catch (_) { /* noop */ }
+    collabSocket = null;
+  }
+
+  function handleCollabPageUnload() {
+    closeCollabSocket();
+  }
+
   // dev-only: ?collab_as=alice@example.com lets two local windows be distinct users.
   const _collabAs = new URLSearchParams(location.search).get('collab_as');
   collabSocket = openCollabSocket({
@@ -1493,6 +1506,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       switch (evt.type) {
         case 'collab:connected':
         case 'collab:reconnected': {
+          collabSocketClosed = false;
           const isReconnect = evt.type === 'collab:reconnected';
           presenceConnected = true;
           if (presenceAvatarsEl) presenceAvatarsEl.classList.remove('is-dimmed');
@@ -1596,6 +1610,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       }
     },
   });
+  window.addEventListener("pagehide", handleCollabPageUnload);
+  window.addEventListener("beforeunload", handleCollabPageUnload);
 
   function setSavingIndicator(state, message) {
     if (!savingEl) return;
@@ -4568,9 +4584,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         clearTimeout(_selectionBroadcastTimer);
         _selectionBroadcastTimer = null;
       }
-      presenceConnected = false;
-      try { collabSocket?.close(); } catch (_) { /* noop */ }
-      collabSocket = null;
+      window.removeEventListener("pagehide", handleCollabPageUnload);
+      window.removeEventListener("beforeunload", handleCollabPageUnload);
+      closeCollabSocket();
       try { view.destroy(); } catch (_) { /* noop */ }
       // Stage-2 cleanup: remove floating toolbar + popover and event listeners.
       document.removeEventListener("mousedown", handleOutsidePointerDown, true);
