@@ -13,10 +13,11 @@ faceless. **Theme:** Greek mythology — Artemis (Olympian goddess), Calliope (a
 ---
 
 ## 1. Sales / lead-gen agent  *(AE-facing)*
-- **Name — proposed: `Tyche`** (goddess of fortune, opportunity, prosperity — she surfaces the *right*
-  opportunity and drives the win). **Alts:** `Peitho` (goddess of persuasion — "the closer"); `Hermes`
-  (god of commerce/the dealmaker — thematically perfect **but collides with the competitor "Hermes Agent" we're
-  beating**, so avoid unless you want the irony).
+- **Name — open (pronunciation matters here).** `Tyche` (goddess of fortune/opportunity) is the best *meaning*
+  fit but reads as "TY-kee" — non-obvious — so either **keep it and go by "Ty"**, or switch to a cleaner name.
+  Candidates: **`Nike`** (goddess of *victory* — "winning deals," easy to say, but shares the shoe brand);
+  `Tyche`/"Ty" (fortune/opportunity); `Plutus` (wealth/prosperity); `Peitho` (persuasion — "the closer").
+  Avoid `Hermes` (perfect for commerce **but it's the competitor we're beating**). **Lead options: "Ty" or Nike.**
 - **Audience:** AEs / sales (Josh's lane).
 - **Purpose / directive:** the *sales* read of the signal engine. Surface the few opportunities that matter to
   **this AE's territory + pipeline**, with the so-what and a suggested play — never a raw-signal parrot. Account
@@ -47,14 +48,18 @@ faceless. **Theme:** Greek mythology — Artemis (Olympian goddess), Calliope (a
 - **Owns / reports:** the growth-story/explainer/sourcing domain + the claims register; reports up to Artemis.
 - **Gate:** the data-credibility app (`docs/product-data-credibility-app.md`) + the claims register.
 
-## 4. Personal research / analyst agent  *(Jon's — delegated deep-dives)*
-- **Name — proposed: `Metis`** (Titaness of wisdom, deep thought, prudent counsel — the deep-research analyst
-  who *advises*, not just searches). **Alts:** `Mnemosyne` ("Nemo" — memory/knowledge, ties to the keystone);
-  `Pheme` (report/renown — "delivers the findings").
+## 4. Personal research / analyst agent  *(Jon's — delegated deep-dives)*  ★ Jon's favorite direction
+- **Name — `Ares` (locked).** Greek god of war (on-theme, sits beside Artemis). The **war-god stigma IS the
+  persona**: like the Tron: Ares arc Jon loves, he *defies* the name — not a brute, but the loyal, methodical
+  scout you **dispatch on a mission** who returns with the intel. Reframes "war" as **expeditions / recon**,
+  not combat. **Alts (fallback only):** `Metis` (wisdom/counsel); `Mnemosyne` ("Nemo" — memory, ties to the
+  keystone).
+- **Persona seed:** named for war, defined by restraint. Thorough, dependable, slightly stoic; takes a tasking,
+  goes deep, comes back with a sourced briefing and a clear read — no drama, no padding.
 - **Audience:** Jon (personal).
-- **Purpose / directive:** Artemis's go-to for heavy research. She delegates a deep-dive (a topic, person,
-  market, decision) and gets back a **synthesized, sourced briefing** — keeping Artemis snappy by handing off
-  depth. Wise counsel, not a search box.
+- **Purpose / directive:** Artemis's go-to for heavy research **and projects**. Jon (via Artemis) dispatches a
+  deep-dive — a topic, person, market, decision, or a standing project — and gets back a **synthesized, sourced
+  briefing**. Keeps Artemis snappy by handing off depth. Wise counsel, not a search box.
 - **Owns / reports:** deep-research-on-demand for Jon; **delegated by Artemis** (this is the P4
   "delegate-to-a-named-specialist" pattern — the one named agent that's a *delegate*, not a peer).
 - **Gate:** P4 orchestration (delegate primitive) + a deep-research capability.
@@ -65,6 +70,7 @@ faceless. **Theme:** Greek mythology — Artemis (Olympian goddess), Calliope (a
 Bring each online **as its lane's foundation lands**, not before:
 - **Tyche (Sales)** + **Hestia (Success)** → after the OS multi-team expansion (scope-aware data + MCP fit).
 - **Clio (Research/Credibility)** → after / alongside the data-credibility app.
-- **Metis (Personal analyst)** → after P4's delegate primitive is real.
+- **Ares (Personal research/analyst)** → after P4's delegate primitive is real. *(Jon's favored direction —
+  bump priority when P4 lands.)*
 Order by priority when the time comes. Companion docs: `docs/agent-slack-architecture.md` (the standard),
 `docs/os-multi-team-expansion.md`, `docs/product-data-credibility-app.md`.
