@@ -12,7 +12,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 from artemis.db import Base
 
 _KNOWN_PROVIDERS = frozenset(
-    {"slack", "gcal", "gmail", "jira", "granola", "anthropic", "openai", "gemini"}
+    {
+        "slack",
+        "slack_user",  # user-token OAuth for search:read / chat:write (radar + agency-writes)
+        "gcal",
+        "gmail",
+        "jira",
+        "granola",
+        "anthropic",
+        "openai",
+        "gemini",
+    }
 )
 
 # Status string constants. The `status` column is free-form Text — no enum

@@ -21,6 +21,7 @@ from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.models import Integration
 from artemis.integrations.slack.client import SlackClient
 from artemis.marketing.writing_studio.review_escalation import send_stale_review_escalations
+from artemis.proactivity import radar_repository
 from artemis.proactivity import repository as repo
 from artemis.proactivity.commitments import send_commitment_followups
 from artemis.proactivity.okr_checkin import (
@@ -30,6 +31,7 @@ from artemis.proactivity.okr_checkin import (
     format_checkin_for_slack,
     gather_checkin_sources,
 )
+from artemis.proactivity.radar import format_radar_nudge, gather_radar_items
 from artemis.proactivity.voice_render import render_brief_with_voice, render_checkin_with_voice
 from artemis.writing_rules import lint_agent_text
 
@@ -284,6 +286,36 @@ async def _fire_morning_brief() -> None:
                 return
 
             brief = await generate_brief(session)
+
+            # ── Awaiting-reply radar (Lane R) ─────────────────────────────────
+            # Gather Slack + Gmail items.  Failures are swallowed gracefully so
+            # a missing user-token / Gmail credential never blocks the brief.
+            radar_nudge = ""
+            try:
+                radar_items = await gather_radar_items(session)
+                # Upsert into dedup ledger and filter dismissed / too-recent items.
+                from datetime import UTC
+
+                now_utc = datetime.now(UTC)
+                due_items = []
+                for item in radar_items:
+                    row, _ = await radar_repository.upsert_surfaced(
+                        session,
+                        item_type=item.item_type,
+                        item_key=item.item_key,
+                        label=f"{item.sender} in {item.where}"[:120],
+                        permalink=item.permalink,
+                        now=now_utc,
+                    )
+                    if row.dismissed_at is None:
+                        due_items.append(item)
+                await session.flush()
+                radar_nudge = format_radar_nudge(due_items)
+            except Exception:
+                logger.warning(
+                    "Morning brief: radar gather failed — skipping radar section", exc_info=True
+                )
+
             # Attempt voice rendering pass first; fall back to plain rendering on failure.
             voice_text = await render_brief_with_voice(
                 brief,
@@ -291,6 +323,8 @@ async def _fire_morning_brief() -> None:
                 session_id=f"brief-{delivery_date.isoformat()}",
             )
             slack_text = voice_text or _format_brief_for_slack(brief, delivery_date=delivery_date)
+            if radar_nudge:
+                slack_text = slack_text + "\n\n" + radar_nudge
             token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
             if not token:
                 raise RuntimeError("No active Slack token found for agent_id='artemis'")

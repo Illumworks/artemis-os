@@ -113,6 +113,77 @@ class SlackClient:
             return str(user_id) if user_id else None
         return None
 
+    # ── User-token methods (require user OAuth token, not bot token) ─────────
+
+    async def search_messages(
+        self,
+        query: str,
+        *,
+        count: int = 20,
+        sort: str = "timestamp",
+        sort_dir: str = "desc",
+    ) -> list[dict[str, object]]:
+        """Call ``search.messages`` (requires user token with ``search:read``).
+
+        Returns the list of message hit dicts from the ``messages.matches``
+        field.  Each hit has: ``type``, ``channel``, ``user``, ``username``,
+        ``ts``, ``text``, ``permalink``, ``iid``.
+        """
+        data = await self._post(
+            "search.messages",
+            query=query,
+            count=count,
+            sort=sort,
+            sort_dir=sort_dir,
+        )
+        messages_block = data.get("messages") or {}
+        matches: list[dict[str, object]] = []
+        if isinstance(messages_block, dict):
+            raw = messages_block.get("matches") or []
+            if isinstance(raw, list):
+                matches = raw
+        return matches
+
+    async def get_conversation_replies(
+        self,
+        channel: str,
+        thread_ts: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        """Call ``conversations.replies`` to fetch all messages in a thread.
+
+        Returns the list of message dicts (oldest first).  The first element
+        is the parent message; subsequent elements are replies.
+        """
+        data = await self._post(
+            "conversations.replies",
+            channel=channel,
+            ts=thread_ts,
+            limit=limit,
+        )
+        messages: list[dict[str, object]] = data.get("messages", [])  # type: ignore[assignment]
+        return messages
+
+    async def get_im_history(
+        self,
+        channel: str,
+        *,
+        oldest: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        """Call ``conversations.history`` for a DM channel.
+
+        ``oldest`` is a Slack timestamp string (e.g. "1700000000.000000");
+        only messages AFTER that ts are returned.
+        """
+        kwargs: dict[str, object] = {"channel": channel, "limit": limit}
+        if oldest is not None:
+            kwargs["oldest"] = oldest
+        data = await self._post("conversations.history", **kwargs)
+        messages: list[dict[str, object]] = data.get("messages", [])  # type: ignore[assignment]
+        return messages
+
     async def list_users(
         self, query: str | None = None, limit: int = 200
     ) -> list[dict[str, object]]:

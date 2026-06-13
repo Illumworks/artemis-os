@@ -815,6 +815,40 @@ async def route_inbound(
             slack_user_id,
         )
 
+    # ── Radar dismiss command path (additive, Lane R) ─────────────────────────
+    # "drop radar <id>" or "dismiss radar <id>" dismisses an awaiting-reply item
+    # so it stops nagging.  Runs AFTER the commitment path so both seams coexist.
+    try:
+        import re as _re
+
+        _radar_dismiss_re = _re.compile(r"^(?:drop|dismiss)\s+radar\s+(\d+)\b", _re.IGNORECASE)
+        radar_match = _radar_dismiss_re.match(text.strip())
+        if radar_match:
+            item_id = int(radar_match.group(1))
+            from artemis.proactivity import radar_repository as _radar_repo
+
+            async with _db.SessionLocal() as db_session:
+                dismissed = await _radar_repo.dismiss_by_id(db_session, item_id=item_id)
+                await db_session.commit()
+            if dismissed:
+                radar_reply = f"Dropped radar item #{item_id}. No further nudge."
+            else:
+                radar_reply = f"Radar item #{item_id} not found."
+            await _post_slack_message(
+                session_id=session_id,
+                normalized_agent=normalized_agent,
+                team_id=team_id,
+                channel_id=channel_id,
+                reply_thread_ts=reply_thread_ts,
+                outbound_text=radar_reply,
+            )
+            return
+    except Exception:
+        logger.exception(
+            "route_inbound: radar dismiss path failed for session=%s -- continuing",
+            session_id,
+        )
+
     # ── Normal turn ───────────────────────────────────────────────────────────
     try:
         result = await handle_turn(

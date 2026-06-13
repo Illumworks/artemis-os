@@ -466,6 +466,121 @@ async def gmail_oauth_callback(
     return RedirectResponse(url="/?gmail_connected=1", status_code=302)
 
 
+# ── Slack user-token OAuth (radar + agency-writes) ────────────────────────────
+#
+# A SECOND Slack OAuth flow that requests a *user* token (not bot).
+# Stored as provider="slack_user" in the integrations table — never clobbers
+# the bot-token row.  Scopes: search:read, users:read, chat:write (pre-requested
+# for the agency-writes lane that will use the same token later).
+
+
+def _slack_user_redirect_uri() -> str:
+    return os.environ.get(
+        "SLACK_USER_REDIRECT_URI",
+        "https://app.artemisos.me/api/integrations/slack-user/oauth/callback",
+    )
+
+
+@router.get("/slack-user/oauth/start")
+async def slack_user_oauth_start(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, str]:
+    """Return a Slack OAuth URL that requests a user token (search:read etc.).
+
+    Jon visits this URL in a browser to re-auth the radar user token.
+    The resulting token is stored as provider='slack_user', separate from the
+    bot token so the existing bot flows are unaffected.
+    """
+    try:
+        cfg = await resolve_slack_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Slack credentials incomplete: {', '.join(exc.missing_fields)} not configured.",
+        ) from exc
+
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = "slack_user_pending"
+
+    # user_scope requests a *user* token (vs scope for a bot token).
+    # chat:write is pre-requested here for the agency-writes lane.
+    user_scopes = ",".join(["search:read", "users:read", "chat:write"])
+    url = (
+        f"https://slack.com/oauth/v2/authorize"
+        f"?client_id={cfg.client_id}"
+        f"&user_scope={user_scopes}"
+        f"&redirect_uri={_slack_user_redirect_uri()}"
+        f"&state={state}"
+    )
+    return {"url": url}
+
+
+@router.get("/slack-user/oauth/callback")
+async def slack_user_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> RedirectResponse:
+    """Exchange the user-token OAuth code and store as provider='slack_user'."""
+    if state not in _oauth_states or _oauth_states[state] != "slack_user_pending":
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
+    del _oauth_states[state]
+
+    try:
+        cfg = await resolve_slack_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Slack credentials incomplete: {', '.join(exc.missing_fields)} not configured.",
+        ) from exc
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            "https://slack.com/api/oauth.v2.access",
+            data={
+                "code": code,
+                "client_id": cfg.client_id,
+                "client_secret": cfg.client_secret,
+                "redirect_uri": _slack_user_redirect_uri(),
+            },
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slack OAuth error: {data.get('error', 'unknown')}",
+        )
+
+    # oauth.v2.access with user_scope returns the user token under authed_user.
+    authed_user: dict[str, object] = data.get("authed_user") or {}
+    user_token = str(authed_user.get("access_token") or "")
+    if not user_token:
+        raise HTTPException(status_code=400, detail="Slack did not return a user access token.")
+
+    user_scopes_granted = str(authed_user.get("scope") or "").split(",")
+    team_id = str((data.get("team") or {}).get("id") or "")  # type: ignore[union-attr]
+    team_name = str((data.get("team") or {}).get("name") or team_id)  # type: ignore[union-attr]
+
+    from artemis.integrations.crypto import encrypt_credentials
+
+    encrypted = encrypt_credentials({"access_token": user_token, "token_type": "user"})
+
+    await repo.upsert_integration(
+        session,
+        provider="slack_user",
+        workspace_id=team_id,
+        agent_id="artemis",
+        encrypted_credentials=encrypted,
+        display_name=f"{team_name} (user token)",
+        bot_user_id=None,
+        scopes=user_scopes_granted,
+    )
+    await session.commit()
+
+    return RedirectResponse(url="/?slack_user_connected=1", status_code=302)
+
+
 # ── Provider credential config (J1b) ─────────────────────────────────────────
 
 

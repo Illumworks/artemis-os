@@ -20,6 +20,43 @@ from sqlalchemy.orm import Mapped, mapped_column
 from artemis.db import Base
 
 
+class RadarSurfacedItem(Base):
+    """Dedup + dismiss ledger for awaiting-reply radar items.
+
+    Each row = one Slack mention or Gmail thread Artemis has surfaced to Jon.
+    Rows are never deleted (lossless); dismissed_at != NULL stops re-nagging.
+    """
+
+    __tablename__ = "radar_surfaced_items"
+    __table_args__ = (
+        UniqueConstraint("item_type", "item_key", name="uq_radar_surfaced_item_type_key"),
+        Index("idx_radar_surfaced_items_active", "item_type", "dismissed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # "slack_mention" | "gmail_thread"
+    item_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # Stable opaque dedup key.
+    # Slack: "<channel_id>:<thread_ts>"   Gmail: "<threadId>"
+    item_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Short human-readable label for audit (never drives logic).
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    # Permalink / web link surfaced in nudge text.
+    permalink: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_surfaced_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+    last_surfaced_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+    # NULL = active (keep nagging on cadence).  Set = Jon said "drop it".
+    dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
 class MorningBriefDelivery(Base):
     """Once-per-day delivery reservation + outcome for the morning brief."""
 
