@@ -32,6 +32,7 @@ import {
   createWritingDraftApi,
   createWritingFolderApi,
   createWritingTemplateApi,
+  deleteWritingDraftApi,
   deleteWritingFolderApi,
   dismissClaimApi,
   exportWritingDraftToGoogleDocApi,
@@ -1994,6 +1995,15 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         return;
       }
 
+      // ── Delete-draft button ─────────────────────────────────────────────
+      const delDraftBtn = e.target.closest("[data-cv5-delete-draft]");
+      if (delDraftBtn) {
+        e.stopPropagation();
+        const id = Number(delDraftBtn.dataset.cv5DeleteDraft);
+        if (id) await handleDeleteDraft(id, delDraftBtn.dataset.cv5DraftTitle || "");
+        return;
+      }
+
       // ── Select a draft (file row) ──────────────────────────────────────
       const draftRow = e.target.closest("[data-cv5-draft-id]");
       if (draftRow) {
@@ -2205,6 +2215,31 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     } catch (err) {
       console.error("[composer-v5] delete folder failed:", err);
       callbacks.onError?.(err.message || "Failed to delete folder.");
+    }
+  }
+
+  async function handleDeleteDraft(draftId, title) {
+    if (!window.confirm("Archive this draft?")) return;
+    try {
+      await deleteWritingDraftApi(draftId);
+      // Remove from local state immediately.
+      currentDrafts = currentDrafts.filter((d) => d.id !== draftId);
+      rerenderPickerOnly();
+      callbacks.onStatus?.("Draft archived.");
+      // If the archived draft was the one currently open, navigate away.
+      if (draftId === draft.id) {
+        closePicker();
+        const next = currentDrafts[0];
+        if (next) {
+          callbacks.onSelectDraft?.(next.id);
+        } else {
+          // No drafts left — let the host show the empty state.
+          callbacks.onSelectDraft?.(null);
+        }
+      }
+    } catch (err) {
+      console.error("[composer-v5] delete draft failed:", err);
+      callbacks.onError?.(err.message || "Failed to archive draft.");
     }
   }
 
@@ -4864,20 +4899,30 @@ function renderTreeFileRow(d, activeId, indent) {
   const title = d.title || `Draft ${d.id}`;
   const meta = [d.asset_type, d.status].filter(Boolean).join(" · ");
   return `
-    <button
-      type="button"
-      class="${cls}"
-      data-cv5-draft-id="${d.id}"
-      data-cv5-indent="${indent}"
-      data-cv5-drag-type="draft"
-      data-cv5-drag-id="${d.id}"
-      draggable="true"
-      style="--cv5-picker-depth:${indent};"
-    >
-      <span class="cv5-picker-row-icon" aria-hidden="true">📄</span>
-      <span class="cv5-picker-row-title">${esc(title)}</span>
-      ${meta ? `<span class="cv5-picker-row-meta">${esc(meta)}</span>` : ""}
-    </button>
+    <div class="cv5-picker-file-wrap" style="--cv5-picker-depth:${indent};">
+      <button
+        type="button"
+        class="${cls}"
+        data-cv5-draft-id="${d.id}"
+        data-cv5-indent="${indent}"
+        data-cv5-drag-type="draft"
+        data-cv5-drag-id="${d.id}"
+        draggable="true"
+        style="--cv5-picker-depth:${indent};"
+      >
+        <span class="cv5-picker-row-icon" aria-hidden="true">📄</span>
+        <span class="cv5-picker-row-title">${esc(title)}</span>
+        ${meta ? `<span class="cv5-picker-row-meta">${esc(meta)}</span>` : ""}
+      </button>
+      <button
+        type="button"
+        class="cv5-picker-file-del"
+        data-cv5-delete-draft="${d.id}"
+        data-cv5-draft-title="${esc(title)}"
+        title="Archive draft"
+        aria-label="Archive draft ${esc(title)}"
+      >🗑</button>
+    </div>
   `;
 }
 
