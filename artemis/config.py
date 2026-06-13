@@ -138,6 +138,26 @@ class Settings(BaseSettings):
         default=24,
         description="Minimum age in hours before a ready-for-review draft is escalated.",
     )
+    commitments_followup_cron: str = Field(
+        default="30 9 * * *",
+        description="Cron expression for the commitments follow-up sweep.",
+    )
+    commitments_followup_tz: str = Field(
+        default="America/New_York",
+        description="IANA timezone for the commitments follow-up sweep.",
+    )
+    commitments_due_soon_hours: int = Field(
+        default=48,
+        description="How far ahead the follow-up sweep treats commitments as due soon.",
+    )
+    commitments_renotify_hours: int = Field(
+        default=24,
+        description="Minimum hours between repeat follow-ups for the same commitment.",
+    )
+    commitments_default_snooze_hours: int = Field(
+        default=48,
+        description="Default snooze duration when a follow-up reply omits an explicit window.",
+    )
     uvicorn_workers: int = Field(
         default=1,
         validation_alias=AliasChoices(

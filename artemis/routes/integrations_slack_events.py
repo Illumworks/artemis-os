@@ -786,6 +786,35 @@ async def route_inbound(
                 slack_user_id,
             )
 
+    # ── Deterministic commitment command path (DB-backed, no session state) ──
+    # Follow-up messages include explicit `done <id>` / `snooze <id> ...`
+    # commands so commitment lifecycle updates can execute in the main process
+    # without relying on the reactive in-memory confirmation store.
+    try:
+        from artemis.proactivity.commitments import try_apply_commitment_reply
+
+        async with _db.SessionLocal() as db_session:
+            commitment_result = await try_apply_commitment_reply(
+                db_session,
+                text=text,
+            )
+        if commitment_result:
+            await _post_slack_message(
+                session_id=session_id,
+                normalized_agent=normalized_agent,
+                team_id=team_id,
+                channel_id=channel_id,
+                reply_thread_ts=reply_thread_ts,
+                outbound_text=commitment_result,
+            )
+            return
+    except Exception:
+        logger.exception(
+            "route_inbound: commitment command path failed for session=%s speaker=%s -- continuing",
+            session_id,
+            slack_user_id,
+        )
+
     # ── Normal turn ───────────────────────────────────────────────────────────
     try:
         result = await handle_turn(

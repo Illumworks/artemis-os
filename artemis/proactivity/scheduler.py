@@ -22,6 +22,7 @@ from artemis.integrations.models import Integration
 from artemis.integrations.slack.client import SlackClient
 from artemis.marketing.writing_studio.review_escalation import send_stale_review_escalations
 from artemis.proactivity import repository as repo
+from artemis.proactivity.commitments import send_commitment_followups
 from artemis.proactivity.okr_checkin import (
     build_checkin_digest,
     build_kr_snapshot,
@@ -38,6 +39,7 @@ _scheduler: AsyncIOScheduler | None = None
 _MORNING_BRIEF_JOB_ID = "proactivity_morning_brief"
 _OKR_CHECKIN_JOB_ID = "proactivity_okr_checkin"
 _STALE_REVIEW_ESCALATION_JOB_ID = "proactivity_stale_review_escalation"
+_COMMITMENTS_FOLLOWUP_JOB_ID = "proactivity_commitments_followup"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -55,14 +57,16 @@ def start_proactivity_scheduler() -> None:
     _register_morning_brief_job(scheduler)
     _register_okr_checkin_job(scheduler)
     _register_stale_review_escalation_job(scheduler)
+    _register_commitments_followup_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
-            "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, review escalation cron=%r)",
+            "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, review escalation cron=%r, commitments cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
             settings.okr_checkin_cron,
             settings.review_escalation_cron,
+            settings.commitments_followup_cron,
         )
 
 
@@ -117,6 +121,21 @@ def _register_stale_review_escalation_job(scheduler: AsyncIOScheduler) -> None:
         _fire_stale_review_escalation,
         trigger=trigger,
         id=_STALE_REVIEW_ESCALATION_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+def _register_commitments_followup_job(scheduler: AsyncIOScheduler) -> None:
+    trigger = CronTrigger.from_crontab(
+        settings.commitments_followup_cron,
+        timezone=settings.commitments_followup_tz,
+    )
+    scheduler.add_job(
+        _fire_commitments_followup,
+        trigger=trigger,
+        id=_COMMITMENTS_FOLLOWUP_JOB_ID,
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=3600,
@@ -309,6 +328,19 @@ async def _fire_stale_review_escalation() -> None:
         )
     logger.info(
         "Stale review escalation sweep finished (checked=%d eligible=%d sent=%d failed=%d)",
+        summary.checked,
+        summary.eligible,
+        summary.sent,
+        summary.failed,
+    )
+
+
+async def _fire_commitments_followup() -> None:
+    """Find due/open commitments and route deterministic follow-ups."""
+    async with _db.SessionLocal() as session:
+        summary = await send_commitment_followups(session)
+    logger.info(
+        "Commitments follow-up sweep finished (checked=%d eligible=%d sent=%d failed=%d)",
         summary.checked,
         summary.eligible,
         summary.sent,

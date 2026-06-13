@@ -1,15 +1,15 @@
-"""Repository helpers for proactive scheduled delivery state."""
+"""Repository helpers for proactive scheduled delivery state and commitments."""
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.proactivity.models import MorningBriefDelivery, OkrCheckinBreadcrumb
+from artemis.proactivity.models import Commitment, MorningBriefDelivery, OkrCheckinBreadcrumb
 
 _DELIVERY_KIND = "morning_brief"
 _OKR_CHECKIN_KIND = "okr_checkin"
@@ -272,3 +272,165 @@ async def clear_staged_updates(
         .where(OkrCheckinBreadcrumb.id == breadcrumb_id)
         .values(staged_updates=None)
     )
+
+
+async def upsert_commitment(
+    session: AsyncSession,
+    *,
+    source_type: str,
+    source_id: str,
+    text: str,
+    owner_user_id: int | None,
+    due: datetime | None,
+    sensitivity: str,
+) -> tuple[Commitment, bool]:
+    """Insert or refresh a commitment keyed by (source_type, source_id, text)."""
+    now = datetime.now(UTC)
+    stmt = (
+        pg_insert(Commitment)
+        .values(
+            source_type=source_type,
+            source_id=source_id,
+            text=text,
+            owner_user_id=owner_user_id,
+            due=due,
+            sensitivity=sensitivity,
+            updated_at=now,
+        )
+        .on_conflict_do_nothing(
+            constraint="uq_commitments_source_text",
+        )
+        .returning(Commitment.id)
+    )
+    inserted_id = (await session.execute(stmt)).scalar_one_or_none()
+    if inserted_id is not None:
+        row = await session.get(Commitment, inserted_id)
+        assert row is not None
+        return row, True
+
+    await session.execute(
+        update(Commitment)
+        .where(
+            Commitment.source_type == source_type,
+            Commitment.source_id == source_id,
+            Commitment.text == text,
+        )
+        .values(
+            owner_user_id=owner_user_id,
+            due=due,
+            sensitivity=sensitivity,
+            updated_at=now,
+        )
+    )
+    result = await session.execute(
+        select(Commitment).where(
+            Commitment.source_type == source_type,
+            Commitment.source_id == source_id,
+            Commitment.text == text,
+        )
+    )
+    row = result.scalar_one()
+    return row, False
+
+
+async def reactivate_expired_snoozes(
+    session: AsyncSession,
+    *,
+    now: datetime,
+) -> None:
+    """Move expired snoozes back to active so the sweep can see them again."""
+    await session.execute(
+        update(Commitment)
+        .where(
+            Commitment.status == "snoozed",
+            Commitment.snoozed_until.is_not(None),
+            Commitment.snoozed_until <= now,
+        )
+        .values(
+            status="active",
+            updated_at=now,
+        )
+    )
+
+
+async def list_commitment_followup_candidates(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    due_soon_cutoff: datetime,
+    renotify_cutoff: datetime,
+) -> list[Commitment]:
+    """Return commitments eligible for a proactive follow-up sweep."""
+    result = await session.execute(
+        select(Commitment)
+        .where(
+            Commitment.status == "active",
+            or_(Commitment.snoozed_until.is_(None), Commitment.snoozed_until <= now),
+            or_(
+                Commitment.last_notified_at.is_(None),
+                Commitment.last_notified_at <= renotify_cutoff,
+            ),
+            or_(
+                Commitment.due.is_not(None) & (Commitment.due <= due_soon_cutoff),
+                Commitment.last_notified_at.is_(None),
+            ),
+        )
+        .order_by(
+            Commitment.due.asc().nulls_last(), Commitment.created_at.asc(), Commitment.id.asc()
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def mark_commitment_notified(
+    session: AsyncSession,
+    *,
+    commitment_id: int,
+    notified_at: datetime,
+) -> None:
+    await session.execute(
+        update(Commitment)
+        .where(Commitment.id == commitment_id)
+        .values(last_notified_at=notified_at, updated_at=notified_at)
+    )
+
+
+async def get_commitment(session: AsyncSession, commitment_id: int) -> Commitment | None:
+    return await session.get(Commitment, commitment_id)
+
+
+async def mark_commitment_done(
+    session: AsyncSession,
+    *,
+    commitment_id: int,
+    now: datetime,
+) -> Commitment | None:
+    await session.execute(
+        update(Commitment)
+        .where(Commitment.id == commitment_id)
+        .values(
+            status="done",
+            snoozed_until=None,
+            updated_at=now,
+        )
+    )
+    return await session.get(Commitment, commitment_id)
+
+
+async def snooze_commitment(
+    session: AsyncSession,
+    *,
+    commitment_id: int,
+    snoozed_until: datetime,
+    now: datetime,
+) -> Commitment | None:
+    await session.execute(
+        update(Commitment)
+        .where(Commitment.id == commitment_id)
+        .values(
+            status="snoozed",
+            snoozed_until=snoozed_until,
+            updated_at=now,
+        )
+    )
+    return await session.get(Commitment, commitment_id)

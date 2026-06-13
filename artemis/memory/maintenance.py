@@ -33,6 +33,7 @@ _DECAY_FACTORS: dict[str, float] = {
     "convention": 0.99,
     "decision": 0.97,
     "discovery": 0.93,
+    "commitment": 1.00,
 }
 _DEFAULT_DECAY = 0.95
 

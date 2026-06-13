@@ -34,6 +34,7 @@ from artemis.integrations.granola.client import GranolaClient, Meeting
 from artemis.meetings.models import MeetingMatchLog, MeetingSummary
 from artemis.meetings.summary_schemas import MeetingSummary as MeetingSummarySchema
 from artemis.memory.raw_inputs import insert_raw_input
+from artemis.proactivity.commitments import ingest_meeting_commitments
 
 logger = logging.getLogger(__name__)
 
@@ -557,6 +558,13 @@ async def _process_event(
             .on_conflict_do_nothing(index_elements=["granola_id"])
         )
         await session.execute(stmt)
+
+        await ingest_meeting_commitments(
+            session,
+            granola_id=granola_id,
+            title=gcal_title,
+            action_items=action_items,
+        )
 
     await _log_match(
         session,

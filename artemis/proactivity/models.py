@@ -1,11 +1,19 @@
-"""ORM models for proactive scheduled deliveries."""
+"""ORM models for proactive scheduled deliveries and commitments."""
 
 from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Index,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -84,6 +92,59 @@ class OkrCheckinBreadcrumb(Base):
     # Set when reconcile completes (layer-3 applied or declined), superseding the crumb.
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+
+
+class Commitment(Base):
+    """Lifecycle table for proactive follow-up commitments.
+
+    Commitments are not pure memory observations because they need explicit
+    state transitions (active -> snoozed -> done), dedupe, and notification
+    timestamps. A mirrored memory observation is written separately so named
+    agents can still recall commitments conversationally.
+    """
+
+    __tablename__ = "commitments"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type",
+            "source_id",
+            "text",
+            name="uq_commitments_source_text",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'snoozed', 'done')",
+            name="ck_commitments_status",
+        ),
+        Index("idx_commitments_status_due", "status", "due"),
+        Index("idx_commitments_owner", "owner_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    due: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    sensitivity: Mapped[str] = mapped_column(Text, nullable=False, server_default="personal_ops")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    snoozed_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    last_notified_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default="now()",
