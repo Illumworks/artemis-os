@@ -117,12 +117,24 @@ async def _resolve_slack_user_token(session: AsyncSession) -> str | None:
 
 
 async def _resolve_personal_gmail_client(session: AsyncSession) -> Any:
+    from sqlalchemy import select
+
     from artemis.google_docs.client import GoogleReauthRequiredError, refresh_access_token
-    from artemis.google_docs.repository import get_google_credential
+    from artemis.google_docs.models import GoogleCredential
     from artemis.google_integration import google_has_any_scope, resolve_google_oauth_client_config
     from artemis.integrations.gmail.client import GmailClient
 
-    credential = await get_google_credential(session, user_id=1, purpose="personal")
+    # Resolve the personal Google account by purpose (one personal account today),
+    # not a hardcoded user_id — mirrors how the slack_user token is resolved
+    # globally. (Was hardcoded user_id=1, which never matches the real personal
+    # account.) When multi-user lands, map the proposal's target_user → user_id.
+    result = await session.execute(
+        select(GoogleCredential)
+        .where(GoogleCredential.purpose == "personal")
+        .order_by(GoogleCredential.updated_at.desc())
+        .limit(1)
+    )
+    credential = result.scalar_one_or_none()
     if credential is None:
         raise RuntimeError("No personal Google credential connected")
     if not google_has_any_scope(credential.scope, "https://www.googleapis.com/auth/gmail.send"):
