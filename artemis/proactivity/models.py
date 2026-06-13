@@ -116,7 +116,7 @@ class Commitment(Base):
             name="uq_commitments_source_text",
         ),
         CheckConstraint(
-            "status IN ('active', 'snoozed', 'done')",
+            "status IN ('active', 'snoozed', 'done', 'dismissed')",
             name="ck_commitments_status",
         ),
         Index("idx_commitments_status_due", "status", "due"),

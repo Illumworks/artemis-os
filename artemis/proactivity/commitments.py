@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from artemis.integrations import repository as integrations_repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.models import Integration
 from artemis.integrations.slack.client import SlackClient
+from artemis.meetings.models import MeetingActionItemDismissal
 from artemis.memory.schemas import Scope, SourceQualityHint
 from artemis.memory.store import write_observation
 from artemis.proactivity import repository as repo
@@ -44,6 +46,10 @@ _SNOOZE_RE = re.compile(
     r"^snooze\s+(?:c)?(\d+)(?:\s+(\d+)\s*([dhw]))?\b",
     re.IGNORECASE,
 )
+_DISMISS_RE = re.compile(
+    r"^(?:dismiss|drop|irrelevant|not relevant|skip)\s+(?:c)?(\d+)\b",
+    re.IGNORECASE,
+)
 _CALLIE_DEFAULT_CHANNEL = "C0B9CHVC7KQ"
 
 
@@ -64,6 +70,17 @@ class CommitmentFollowupSummary:
 
 def _normalize_text(value: object) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def action_item_key(text: str) -> str:
+    """Return a stable SHA-256 hex key for a normalised action-item text.
+
+    This is the content hash used as the stable identifier in
+    meeting_action_item_dismissals.  Callers normalise the text first via
+    _normalize_text so the hash is insensitive to whitespace variation.
+    """
+    normalized = _normalize_text(text).lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
 def _classify_sensitivity(*, title: str, text: str) -> str:
@@ -161,6 +178,22 @@ async def ingest_meeting_commitments(
             continue
         text = _normalize_text(item.get("text"))
         if not text:
+            continue
+
+        # KEY GATE: skip items that Jon has already dismissed — durable across re-ingest.
+        item_key = action_item_key(text)
+        dismissed_check = await session.execute(
+            select(MeetingActionItemDismissal).where(
+                MeetingActionItemDismissal.granola_id == granola_id,
+                MeetingActionItemDismissal.action_item_key == item_key,
+            )
+        )
+        if dismissed_check.scalar_one_or_none() is not None:
+            logger.debug(
+                "ingest_meeting_commitments: skipping dismissed item key=%s granola_id=%s",
+                item_key[:12],
+                granola_id,
+            )
             continue
 
         seen += 1
@@ -278,7 +311,9 @@ def _render_followup_text(commitment: Commitment) -> str:
     if commitment.due is not None:
         lines.append(f"Due: {commitment.due.astimezone(UTC).date().isoformat()}.")
     lines.append(
-        f"Reply 'done {commitment.id}' to close it or 'snooze {commitment.id} 2d' to snooze it."
+        f"Reply 'done {commitment.id}' to close it, "
+        f"'snooze {commitment.id} 2d' to snooze it, "
+        f"or 'dismiss {commitment.id}' to drop it as not relevant."
     )
     return str(lint_agent_text("\n".join(lines)))
 
@@ -397,5 +432,18 @@ async def try_apply_commitment_reply(
         return (
             f"Snoozed commitment C{commitment_id} until {until.astimezone(UTC).date().isoformat()}."
         )
+
+    dismiss_match = _DISMISS_RE.match(normalized)
+    if dismiss_match:
+        commitment_id = int(dismiss_match.group(1))
+        commitment = await repo.dismiss_commitment(
+            session,
+            commitment_id=commitment_id,
+            now=current_time,
+        )
+        if commitment is None:
+            return f"Commitment C{commitment_id} was not found."
+        await session.commit()
+        return f"Dismissed commitment C{commitment_id}. No further follow-up."
 
     return None

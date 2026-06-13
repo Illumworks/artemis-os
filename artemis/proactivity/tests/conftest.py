@@ -25,6 +25,7 @@ import artemis.memory.models  # noqa: F401
 import artemis.okr.models  # noqa: F401
 import artemis.proactivity.models  # noqa: F401
 from artemis.db import attach_pgvector_codec
+from artemis.meetings.models import MeetingActionItemDismissal  # noqa: F401 — register table
 
 _db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
 if "artemis_test" not in _db_url:
@@ -49,6 +50,7 @@ _TRUNCATE_SQL = text(
     "okr_checkin_breadcrumbs, "
     "brief_snapshots, "
     "commitments, "
+    "meeting_action_item_dismissals, "
     "meeting_summaries, "
     "memory_conflicts, "
     "memory_relation_rejections, "

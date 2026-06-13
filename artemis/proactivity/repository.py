@@ -434,3 +434,45 @@ async def snooze_commitment(
         )
     )
     return await session.get(Commitment, commitment_id)
+
+
+async def dismiss_commitment(
+    session: AsyncSession,
+    *,
+    commitment_id: int,
+    now: datetime,
+) -> Commitment | None:
+    """Move a commitment to the terminal 'dismissed' state.
+
+    Distinct from 'done': dismissed means irrelevant/never-happened, not
+    completed.  No further follow-up nags are ever sent for dismissed
+    commitments; they are also excluded from re-ingest via the dismissals table.
+    """
+    await session.execute(
+        update(Commitment)
+        .where(Commitment.id == commitment_id)
+        .values(
+            status="dismissed",
+            snoozed_until=None,
+            updated_at=now,
+        )
+    )
+    return await session.get(Commitment, commitment_id)
+
+
+async def find_commitment_by_source_and_text(
+    session: AsyncSession,
+    *,
+    source_type: str,
+    source_id: str,
+    text: str,
+) -> Commitment | None:
+    """Look up a commitment by its natural key (source_type, source_id, text)."""
+    result = await session.execute(
+        select(Commitment).where(
+            Commitment.source_type == source_type,
+            Commitment.source_id == source_id,
+            Commitment.text == text,
+        )
+    )
+    return result.scalar_one_or_none()

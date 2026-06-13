@@ -1,11 +1,11 @@
-"""ORM models for meeting_summaries and meeting_match_log."""
+"""ORM models for meeting_summaries, meeting_match_log, and action-item dismissals."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Integer, Text
+from sqlalchemy import BigInteger, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +30,45 @@ class MeetingSummary(Base):
     transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_input_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+
+class MeetingActionItemDismissal(Base):
+    """Lossless record that Jon dismissed a meeting action item as irrelevant.
+
+    Keyed by (meeting_summary_id, action_item_key) where action_item_key is
+    a SHA-256 hex hash of the normalised action-item text.  A present row
+    means "skip this item forever — do NOT resurrect it on re-ingest or
+    re-summarise."
+
+    Rows are NEVER deleted (lossless invariant).
+    """
+
+    __tablename__ = "meeting_action_item_dismissals"
+    __table_args__ = (
+        UniqueConstraint(
+            "meeting_summary_id",
+            "action_item_key",
+            name="uq_meeting_action_item_dismissals",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    meeting_summary_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("meeting_summaries.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    # Stable content hash (SHA-256 hex) of the normalised text.
+    action_item_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Granola meeting ID — denormalised for fast ingest-time lookup.
+    granola_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # Human-readable text (for audit trail).
+    action_item_text: Mapped[str] = mapped_column(Text, nullable=False)
+    dismissed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
 
 
 class MeetingMatchLog(Base):
