@@ -8,6 +8,7 @@ Endpoints:
   POST /api/meetings/{id}/actions/okr             — route action item to OKR activity
   POST /api/meetings/{id}/actions/slack           — route action item to Slack reminder
   POST /api/meetings/{id}/actions/todo            — save action item as personal todo
+  POST /api/meetings/{id}/actions/dismiss         — lossless dismiss ("drop it / not relevant")
   POST /api/meetings/{id}/ask                     — AI Q&A over transcript
   GET  /api/meetings/{id}/routings                — list persisted action routings
 
@@ -584,6 +585,101 @@ async def route_action_to_todo(
     )
 
     return {"ok": True, "already_routed": False, "id": todo_id}
+
+
+# ── P3 — POST /api/meetings/{meeting_id}/actions/dismiss ─────────────────────
+
+
+@router.post("/{meeting_id}/actions/dismiss")
+async def dismiss_action_item(
+    meeting_id: str,
+    body: dict[str, Any],
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Losslessly dismiss a meeting action item as irrelevant ("drop it").
+
+    Records a permanent dismissal row keyed by content hash so the item never
+    reappears on re-ingest or re-summarisation.  Also closes the linked
+    commitment (if any) with a 'dismissed' terminal state — distinct from
+    'done' — so no further DM nags are sent.
+
+    Body JSON:
+      action_text  (str, required) — exact text of the action item to dismiss.
+
+    Returns:
+      ok                (bool)  — true on success
+      already_dismissed (bool)  — true if already recorded (idempotent)
+      commitment_id     (int|null) — id of the closed commitment, if one existed
+    """
+    from sqlalchemy import select as sa_select
+
+    from artemis.meetings.models import MeetingActionItemDismissal, MeetingSummary
+    from artemis.proactivity import repository as prepo
+    from artemis.proactivity.commitments import _normalize_text, action_item_key
+
+    action_text_raw = str(body.get("action_text", "")).strip()
+    if not action_text_raw:
+        raise HTTPException(status_code=422, detail={"error": "action_text required"})
+
+    normalized = _normalize_text(action_text_raw)
+    item_key = action_item_key(normalized)
+
+    # Resolve the meeting_summaries row so we have a FK target.
+    summary_result = await session.execute(
+        sa_select(MeetingSummary).where(MeetingSummary.granola_id == meeting_id)
+    )
+    summary = summary_result.scalar_one_or_none()
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "meeting_summary_not_found", "granola_id": meeting_id},
+        )
+
+    # Idempotency check.
+    existing = await session.execute(
+        sa_select(MeetingActionItemDismissal).where(
+            MeetingActionItemDismissal.meeting_summary_id == summary.id,
+            MeetingActionItemDismissal.action_item_key == item_key,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return {"ok": True, "already_dismissed": True, "commitment_id": None}
+
+    # Write the dismissal record.
+    from datetime import UTC, datetime
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    now = datetime.now(UTC)
+    dismissal_stmt = (
+        pg_insert(MeetingActionItemDismissal.__table__)  # type: ignore[arg-type]
+        .values(
+            meeting_summary_id=summary.id,
+            action_item_key=item_key,
+            granola_id=meeting_id,
+            action_item_text=normalized,
+            dismissed_at=now,
+        )
+        .on_conflict_do_nothing(
+            constraint="uq_meeting_action_item_dismissals",
+        )
+    )
+    await session.execute(dismissal_stmt)
+
+    # Close the linked commitment (source_type="granola_meeting", source_id=granola_id, text=text).
+    commitment = await prepo.find_commitment_by_source_and_text(
+        session,
+        source_type="granola_meeting",
+        source_id=meeting_id,
+        text=normalized,
+    )
+    commitment_id: int | None = None
+    if commitment is not None:
+        await prepo.dismiss_commitment(session, commitment_id=commitment.id, now=now)
+        commitment_id = commitment.id
+
+    await session.commit()
+    return {"ok": True, "already_dismissed": False, "commitment_id": commitment_id}
 
 
 # ── J6c — POST /api/meetings/{meeting_id}/ask ────────────────────────────────
