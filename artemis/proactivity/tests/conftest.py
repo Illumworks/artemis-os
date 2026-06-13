@@ -26,7 +26,10 @@ import artemis.okr.models  # noqa: F401
 import artemis.proactivity.models  # noqa: F401
 from artemis.db import attach_pgvector_codec
 from artemis.meetings.models import MeetingActionItemDismissal  # noqa: F401 — register table
-from artemis.proactivity.models import RadarSurfacedItem  # noqa: F401 — register table
+from artemis.proactivity.models import (
+    ProposedAction,  # noqa: F401 — register table
+    RadarSurfacedItem,  # noqa: F401 — register table
+)
 
 _db_url = os.environ.get("ARTEMIS_TEST_DB_URL") or os.environ.get("ARTEMIS_DB_URL", "")
 if "artemis_test" not in _db_url:
@@ -47,7 +50,8 @@ artemis.db.SessionLocal = __import__(
 )
 
 _TRUNCATE_SQL = text(
-    "TRUNCATE morning_brief_deliveries, "
+    "TRUNCATE proposed_actions, "
+    "morning_brief_deliveries, "
     "okr_checkin_breadcrumbs, "
     "brief_snapshots, "
     "commitments, "

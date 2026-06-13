@@ -849,6 +849,38 @@ async def route_inbound(
             session_id,
         )
 
+    # ── Proposed-action approval/rejection path (DB-backed, no session state) ──
+    # Jon replies "yes A<id>" / "no A<id>" (or bare "yes"/"no" when exactly one
+    # proposal is pending) to approve or reject a staged agency-writes proposal.
+    # CRITICAL: returns None (falls through) when no proposal is pending for this
+    # user — a bare "yes"/"no" is NEVER swallowed unless matched.
+    if slack_user_id:
+        try:
+            from artemis.proactivity.agency_gate import try_apply_proposed_action_reply
+
+            async with _db.SessionLocal() as db_session:
+                action_reply = await try_apply_proposed_action_reply(
+                    db_session,
+                    text=text,
+                    slack_user_id=slack_user_id,
+                )
+            if action_reply:
+                await _post_slack_message(
+                    session_id=session_id,
+                    normalized_agent=normalized_agent,
+                    team_id=team_id,
+                    channel_id=channel_id,
+                    reply_thread_ts=reply_thread_ts,
+                    outbound_text=action_reply,
+                )
+                return
+        except Exception:
+            logger.exception(
+                "route_inbound: proposed-action reply path failed for session=%s speaker=%s -- continuing",
+                session_id,
+                slack_user_id,
+            )
+
     # ── Normal turn ───────────────────────────────────────────────────────────
     try:
         result = await handle_turn(
