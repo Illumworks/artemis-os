@@ -19,7 +19,6 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
@@ -543,15 +542,12 @@ async def route_inbound(
       - NO   -> resume_after_confirm("cancel") -> post brief ack.
       - NEITHER -> fall through to normal handle_turn (pending stays intact).
 
-    **DB-backed staged-updates confirm flow (subscription/claude-code path):**
-    When the speaker has a live breadcrumb with non-empty staged_updates (set by
-    stage_okr_updates layer-1 tool), the inbound text is classified BEFORE running
-    a new turn:
-      - YES ("go") -> apply each staged update server-side (KR row + activity log),
-        clear staged_updates, complete the breadcrumb, post result.
-      - NO -> clear staged_updates, post brief ack.
-      - NEITHER -> fall through to normal handle_turn (staged_updates remain).
-    This path works regardless of adapter (main process, reads the DB directly).
+    **Unified natural pending-context router:**
+    DB-backed pending proposals and staged OKR updates are interpreted against a
+    single structured context before a new turn runs. This prevents one flow
+    from mis-reading a reply meant for another. Actioning decisions still route
+    through the existing safe backend handlers; ambiguity becomes a natural
+    clarifying question.
 
     Args:
         event_data: Slack event fields (team_id, channel, user, text, ts, thread_ts).
@@ -668,123 +664,6 @@ async def route_inbound(
             "route_inbound: confirm classifier=NEITHER -- treating as new turn, pending stays for session=%s",
             session_id,
         )
-
-    # ── DB-backed staged-updates gate (subscription/claude-code path) ────────
-    # Check whether the speaker has a live breadcrumb with staged_updates.
-    # This path runs regardless of adapter since it is in the main process.
-    if slack_user_id:
-        try:
-            from artemis.proactivity.repository import (
-                clear_staged_updates,
-                complete_okr_checkin_breadcrumb,
-                get_live_okr_checkin_breadcrumb,
-            )
-
-            async with _db.SessionLocal() as db_session:
-                crumb = await get_live_okr_checkin_breadcrumb(db_session, slack_user_id)
-
-            if crumb is not None and crumb.staged_updates:
-                staged: list[dict[str, Any]] = list(crumb.staged_updates)
-                _classifier = (
-                    confirm_classifier
-                    if confirm_classifier is not None
-                    else _default_confirm_classifier
-                )
-                verdict = await _classifier(text)
-                logger.debug(
-                    "route_inbound: staged-updates classifier verdict=%r for session=%s speaker=%s",
-                    verdict,
-                    session_id,
-                    slack_user_id,
-                )
-
-                if verdict == "YES":
-                    # Apply staged updates server-side.
-                    applied: list[str] = []
-                    try:
-                        from artemis.okr import repository as okr_repo
-
-                        async with _db.SessionLocal() as db_session:
-                            for item in staged:
-                                kr_id = int(item["kr_id"])
-                                # KR.prog is an Integer column; coerce to int.
-                                progress = int(round(float(item["progress"])))
-                                basis = str(item.get("basis") or "").strip()
-                                # bullet: model-authored at stage time; fall back to
-                                # a trimmed basis if no bullet was provided.
-                                bullet = str(item.get("bullet") or "").strip() or basis[:200]
-                                await okr_repo.update_key_result(db_session, kr_id, prog=progress)
-                                activity_text = "updated via Friday check-in, approved by Jon" + (
-                                    f" -- basis: {basis}" if basis else ""
-                                )
-                                await okr_repo.create_activity(
-                                    db_session,
-                                    kr_id=kr_id,
-                                    text=activity_text,
-                                    raw_text=basis or None,
-                                )
-                                # Append the accomplishment bullet to done_bullets (lossless).
-                                await okr_repo.append_done_bullet(db_session, kr_id, bullet)
-                                applied.append(f"KR {kr_id} -> {progress}")
-                            await clear_staged_updates(db_session, crumb.id)
-                            await complete_okr_checkin_breadcrumb(db_session, crumb.id)
-                            await db_session.commit()
-
-                        kr_summary = ", ".join(applied) if applied else "no changes"
-                        outbound_text = f"Done. {kr_summary}."
-                    except Exception:
-                        logger.exception(
-                            "route_inbound: staged-updates apply failed for session=%s speaker=%s",
-                            session_id,
-                            slack_user_id,
-                        )
-                        outbound_text = "Something went wrong applying the staged updates."
-
-                    await _post_slack_message(
-                        session_id=session_id,
-                        normalized_agent=normalized_agent,
-                        team_id=team_id,
-                        channel_id=channel_id,
-                        reply_thread_ts=reply_thread_ts,
-                        outbound_text=outbound_text,
-                    )
-                    return
-
-                elif verdict == "NO":
-                    # Clear staged updates, nothing written.
-                    try:
-                        async with _db.SessionLocal() as db_session:
-                            await clear_staged_updates(db_session, crumb.id)
-                            await db_session.commit()
-                    except Exception:
-                        logger.exception(
-                            "route_inbound: staged-updates clear failed for session=%s speaker=%s",
-                            session_id,
-                            slack_user_id,
-                        )
-
-                    await _post_slack_message(
-                        session_id=session_id,
-                        normalized_agent=normalized_agent,
-                        team_id=team_id,
-                        channel_id=channel_id,
-                        reply_thread_ts=reply_thread_ts,
-                        outbound_text="Cleared, nothing changed.",
-                    )
-                    return
-
-                # NEITHER -- fall through to normal turn; staged_updates remain.
-                logger.debug(
-                    "route_inbound: staged-updates classifier=NEITHER -- "
-                    "treating as new turn, staged intact for session=%s",
-                    session_id,
-                )
-        except Exception:
-            logger.exception(
-                "route_inbound: staged-updates gate failed for session=%s speaker=%s -- continuing",
-                session_id,
-                slack_user_id,
-            )
 
     # ── Deterministic commitment command path (DB-backed, no session state) ──
     # Follow-up messages include explicit `done <id>` / `snooze <id> ...`
@@ -903,34 +782,32 @@ async def route_inbound(
                 slack_user_id,
             )
 
-    # ── Proposed-action approval/rejection path (DB-backed, no session state) ──
-    # Jon replies "yes A<id>" / "no A<id>" (or bare "yes"/"no" when exactly one
-    # proposal is pending) to approve or reject a staged agency-writes proposal.
-    # CRITICAL: returns None (falls through) when no proposal is pending for this
-    # user — a bare "yes"/"no" is NEVER swallowed unless matched.
+    # ── Unified pending-context router (proposals + staged OKR) ──────────────
     if slack_user_id:
         try:
-            from artemis.proactivity.agency_gate import try_apply_proposed_action_reply
+            from artemis.proactivity.natural_conversation import route_pending_reply
 
             async with _db.SessionLocal() as db_session:
-                action_reply = await try_apply_proposed_action_reply(
+                pending_reply = await route_pending_reply(
                     db_session,
-                    text=text,
+                    session_id=session_id,
                     slack_user_id=slack_user_id,
+                    text=text,
+                    confirm_classifier=confirm_classifier,
                 )
-            if action_reply:
+            if pending_reply.handled and pending_reply.outbound_text:
                 await _post_slack_message(
                     session_id=session_id,
                     normalized_agent=normalized_agent,
                     team_id=team_id,
                     channel_id=channel_id,
                     reply_thread_ts=reply_thread_ts,
-                    outbound_text=action_reply,
+                    outbound_text=lint_agent_text(pending_reply.outbound_text),
                 )
                 return
         except Exception:
             logger.exception(
-                "route_inbound: proposed-action reply path failed for session=%s speaker=%s -- continuing",
+                "route_inbound: natural pending router failed for session=%s speaker=%s -- continuing",
                 session_id,
                 slack_user_id,
             )
