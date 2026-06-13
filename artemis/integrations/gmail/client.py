@@ -1,13 +1,18 @@
-"""Minimal Gmail read-only REST client."""
+"""Minimal Gmail REST client."""
 
 from __future__ import annotations
 
+import base64
+from email.message import EmailMessage
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
 
 _GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
+_ParamScalar = str | int | float | bool | None
+_QueryParams = Mapping[str, _ParamScalar | Sequence[_ParamScalar]]
 
 
 class GmailAPIError(Exception):
@@ -49,7 +54,7 @@ class GmailClient:
         self,
         path: str,
         *,
-        params: dict[str, object] | None = None,
+        params: _QueryParams | None = None,
     ) -> dict[str, Any]:
         url = f"{_GMAIL_BASE}{path}"
         headers = {"Authorization": f"Bearer {self._access_token}"}
@@ -59,6 +64,25 @@ class GmailClient:
                 await self._refresh()
                 headers = {"Authorization": f"Bearer {self._access_token}"}
                 resp = await http.get(url, headers=headers, params=params)
+        if not resp.is_success:
+            raise GmailAPIError(resp.status_code, resp.text)
+        payload: dict[str, Any] = resp.json()
+        return payload
+
+    async def _post(
+        self,
+        path: str,
+        *,
+        json: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        url = f"{_GMAIL_BASE}{path}"
+        headers = {"Authorization": f"Bearer {self._access_token}"}
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(url, headers=headers, json=json)
+            if resp.status_code == 401 and self._refresh_token:
+                await self._refresh()
+                headers = {"Authorization": f"Bearer {self._access_token}"}
+                resp = await http.post(url, headers=headers, json=json)
         if not resp.is_success:
             raise GmailAPIError(resp.status_code, resp.text)
         payload: dict[str, Any] = resp.json()
@@ -111,6 +135,36 @@ class GmailClient:
             "threadId": str(payload.get("id") or thread_id),
             "historyId": payload.get("historyId"),
             "messages": messages,
+        }
+
+    async def send_message(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        thread_id: str | None = None,
+        in_reply_to: str | None = None,
+    ) -> dict[str, Any]:
+        message = EmailMessage()
+        message["To"] = to
+        message["Subject"] = subject
+        if in_reply_to:
+            message["In-Reply-To"] = in_reply_to
+            message["References"] = in_reply_to
+        message.set_content(body)
+
+        payload: dict[str, object] = {
+            "raw": base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+        }
+        if thread_id:
+            payload["threadId"] = thread_id
+
+        resp = await self._post("/messages/send", json=payload)
+        return {
+            "id": str(resp.get("id") or ""),
+            "threadId": str(resp.get("threadId") or thread_id or ""),
+            "labelIds": resp.get("labelIds") or [],
         }
 
 

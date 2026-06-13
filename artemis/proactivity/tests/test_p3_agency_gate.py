@@ -21,9 +21,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.proactivity import radar_repository
 from artemis.proactivity.agency_gate import (
     execute_proposed_action,
     propose_action,
+    propose_radar_slack_reply,
     try_apply_proposed_action_reply,
 )
 from artemis.proactivity.models import ProposedAction
@@ -80,6 +82,48 @@ async def _make_jira_proposal(
             "description": "Drafted by Artemis",
         },
         preview="Jira task: Follow up on Q3 OKRs in TEST",
+        requested_by="artemis",
+        target_user_id=_JON,
+        ttl_hours=ttl_hours,
+    )
+
+
+async def _make_slack_proposal(
+    session: AsyncSession,
+    *,
+    ttl_hours: int = 24,
+) -> ProposedAction:
+    return await create_proposed_action(
+        session,
+        action_type="slack.send",
+        payload={
+            "channel": "C123",
+            "thread_ts": "1710000000.000100",
+            "text": "Thanks, I will take a look today.",
+        },
+        preview='reply in #general: "Thanks, I will take a look today."',
+        requested_by="artemis",
+        target_user_id=_JON,
+        ttl_hours=ttl_hours,
+    )
+
+
+async def _make_gmail_proposal(
+    session: AsyncSession,
+    *,
+    ttl_hours: int = 24,
+) -> ProposedAction:
+    return await create_proposed_action(
+        session,
+        action_type="gmail.send",
+        payload={
+            "to": "jon.fila@amiralearning.com",
+            "subject": "Re: Agency test",
+            "body": "Looks good. Sending the reply through the gate.",
+            "thread_id": "thread-123",
+            "in_reply_to": "<msg-123@example.com>",
+        },
+        preview="email Jon back about Agency test",
         requested_by="artemis",
         target_user_id=_JON,
         ttl_hours=ttl_hours,
@@ -516,7 +560,120 @@ async def test_bare_no_with_single_pending_rejects(db_session: AsyncSession) -> 
     assert action.status == "rejected"
 
 
-# ── 7. propose_action public API ─────────────────────────────────────────────
+# ── 7. Slack/Gmail executors through the gate ────────────────────────────────
+
+
+async def test_slack_send_yes_executes_thread_reply(
+    db_session: AsyncSession,
+) -> None:
+    action = await _make_slack_proposal(db_session)
+    await db_session.commit()
+
+    mock_slack = MagicMock()
+    mock_slack.post_message = AsyncMock(return_value={"ts": "1710000123.000200"})
+
+    with (
+        patch(
+            "artemis.proactivity.agency_gate._resolve_slack_user_token",
+            new=AsyncMock(return_value="xoxp-user"),
+        ),
+        patch(
+            "artemis.integrations.slack.client.SlackClient",
+            return_value=mock_slack,
+        ),
+    ):
+        result = await try_apply_proposed_action_reply(
+            db_session,
+            text=f"yes A{action.id}",
+            slack_user_id=_JON,
+            now=_NOW,
+        )
+
+    assert result is not None
+    assert "Slack message posted" in result
+
+    await db_session.refresh(action)
+    assert action.status == "executed"
+    assert action.executed_result["message_ts"] == "1710000123.000200"
+    mock_slack.post_message.assert_awaited_once_with(
+        channel="C123",
+        text="Thanks, I will take a look today.",
+        thread_ts="1710000000.000100",
+    )
+
+
+async def test_gmail_send_yes_executes_reply(
+    db_session: AsyncSession,
+) -> None:
+    action = await _make_gmail_proposal(db_session)
+    await db_session.commit()
+
+    mock_gmail = MagicMock()
+    mock_gmail.send_message = AsyncMock(return_value={"id": "msg-999", "threadId": "thread-123"})
+
+    with patch(
+        "artemis.proactivity.agency_gate._resolve_personal_gmail_client",
+        new=AsyncMock(return_value=mock_gmail),
+    ):
+        result = await try_apply_proposed_action_reply(
+            db_session,
+            text=f"yes A{action.id}",
+            slack_user_id=_JON,
+            now=_NOW,
+        )
+
+    assert result is not None
+    assert "jon.fila@amiralearning.com" in result
+
+    await db_session.refresh(action)
+    assert action.status == "executed"
+    assert action.executed_result["message_id"] == "msg-999"
+    mock_gmail.send_message.assert_awaited_once_with(
+        to="jon.fila@amiralearning.com",
+        subject="Re: Agency test",
+        body="Looks good. Sending the reply through the gate.",
+        thread_id="thread-123",
+        in_reply_to="<msg-123@example.com>",
+    )
+
+
+async def test_propose_radar_slack_reply_creates_threaded_action(
+    db_session: AsyncSession,
+) -> None:
+    radar_item, _ = await radar_repository.upsert_surfaced(
+        db_session,
+        item_type="slack_mention",
+        item_key="C777:1710000000.000100",
+        label="#eng thread",
+        permalink="https://slack.example/thread",
+        now=_NOW,
+    )
+    await db_session.commit()
+
+    with patch(
+        "artemis.proactivity.agency_gate.send_proposal_dm",
+        new=AsyncMock(),
+    ) as mock_dm:
+        action, surfaced = await propose_radar_slack_reply(
+            db_session,
+            radar_item_id=radar_item.id,
+            reply_text="On it. I will circle back today.",
+            requested_by="artemis",
+            target_user_id=_JON,
+        )
+
+    assert surfaced.id == radar_item.id
+    assert action.action_type == "slack.send"
+    assert action.payload == {
+        "channel": "C777",
+        "thread_ts": "1710000000.000100",
+        "text": "On it. I will circle back today.",
+    }
+    assert "#eng thread" in action.preview
+    mock_dm.assert_awaited_once_with(db_session, action)
+
+
+# ── 8. propose_action public API ─────────────────────────────────────────────
 
 
 async def test_propose_action_public_api(db_session: AsyncSession) -> None:
@@ -546,7 +703,7 @@ async def test_propose_action_public_api(db_session: AsyncSession) -> None:
     assert action.expires_at < now + timedelta(hours=13)
 
 
-# ── 8. list_pending_for_user scoping ─────────────────────────────────────────
+# ── 9. list_pending_for_user scoping ─────────────────────────────────────────
 
 
 async def test_pending_scoped_to_target_user(db_session: AsyncSession) -> None:

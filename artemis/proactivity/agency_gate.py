@@ -25,8 +25,8 @@ Executors
                       executor raises NotImplementedError.  Wire it in when the
                       calendar scope includes RSVP.
 - jira.create       — JiraClient.create_issue
-- slack.send        — DEFERRED (Lane R owns Slack user-token; slot in post-merge)
-- gmail.send        — DEFERRED (needs gmail.send re-consent)
+- slack.send        — Slack user-token chat.postMessage (as Jon)
+- gmail.send        — personal Google credential Gmail messages.send
 
 Reply syntax
 ------------
@@ -43,12 +43,12 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.proactivity.models import ProposedAction
+from artemis.proactivity.models import ProposedAction, RadarSurfacedItem
 from artemis.proactivity.proposed_actions_repository import (
     approve_proposed_action,
     create_proposed_action,
@@ -108,6 +108,52 @@ async def _resolve_jira_client() -> Any:
         except MissingProviderConfigError:
             return None
     return JiraClient(site_url=cfg.site_url, email=cfg.email, api_token=cfg.api_token)
+
+
+async def _resolve_slack_user_token(session: AsyncSession) -> str | None:
+    from artemis.proactivity.radar import _resolve_slack_user_token as _resolve_radar_token
+
+    return await _resolve_radar_token(session)
+
+
+async def _resolve_personal_gmail_client(session: AsyncSession) -> Any:
+    from artemis.google_docs.client import GoogleReauthRequiredError, refresh_access_token
+    from artemis.google_docs.repository import get_google_credential
+    from artemis.google_integration import google_has_any_scope, resolve_google_oauth_client_config
+    from artemis.integrations.gmail.client import GmailClient
+
+    credential = await get_google_credential(session, user_id=1, purpose="personal")
+    if credential is None:
+        raise RuntimeError("No personal Google credential connected")
+    if not google_has_any_scope(credential.scope, "https://www.googleapis.com/auth/gmail.send"):
+        raise RuntimeError("Reconnect Google personal account to grant gmail.send access")
+
+    config = await resolve_google_oauth_client_config(session)
+    now = datetime.now(UTC)
+    if credential.expiry <= now + timedelta(seconds=60):
+        if not credential.refresh_token:
+            raise RuntimeError("Reconnect Google personal account to refresh Gmail access")
+        try:
+            refreshed = await refresh_access_token(
+                refresh_token=credential.refresh_token,
+                client_id=config.client_id,
+                client_secret=config.client_secret,
+            )
+        except GoogleReauthRequiredError as exc:
+            raise RuntimeError("Reconnect Google personal account to refresh Gmail access") from exc
+        credential.access_token = refreshed.access_token
+        credential.refresh_token = refreshed.refresh_token
+        credential.expiry = refreshed.expiry
+        if refreshed.scope:
+            credential.scope = refreshed.scope
+        credential.updated_at = now
+
+    return GmailClient(
+        access_token=credential.access_token,
+        refresh_token=credential.refresh_token or "",
+        client_id=config.client_id,
+        client_secret=config.client_secret,
+    )
 
 
 # ── Executors (one per action_type) ──────────────────────────────────────────
@@ -227,19 +273,66 @@ async def _execute_calendar_respond(
 
 
 async def _execute_slack_send(session: AsyncSession, action: ProposedAction) -> dict[str, Any]:
-    # DEFERRED — Lane R owns the Slack user-token; slot in after merge.
-    raise NotImplementedError(
-        "slack.send executor not yet implemented — "
-        "depends on Lane R's Slack user-token storage; wire in post-merge"
+    from artemis.integrations.slack.client import SlackClient
+
+    p = action.payload
+    token = await _resolve_slack_user_token(session)
+    if not token:
+        raise RuntimeError("No active Slack user token")
+
+    channel = str(p.get("channel") or "").strip()
+    text = str(p.get("text") or "").strip()
+    thread_ts_raw = p.get("thread_ts")
+    thread_ts = str(thread_ts_raw).strip() if thread_ts_raw else None
+
+    if not channel:
+        raise ValueError("slack.send payload must include channel")
+    if not text:
+        raise ValueError("slack.send payload must include text")
+
+    posted = await SlackClient(token=token).post_message(
+        channel=channel,
+        text=text,
+        thread_ts=thread_ts,
     )
+    return {
+        "channel": channel,
+        "text": text,
+        "thread_ts": thread_ts or "",
+        "message_ts": str(posted.get("ts") or ""),
+    }
 
 
 async def _execute_gmail_send(session: AsyncSession, action: ProposedAction) -> dict[str, Any]:
-    # DEFERRED — needs gmail.send re-consent flow.
-    raise NotImplementedError(
-        "gmail.send executor not yet implemented — "
-        "needs gmail.send OAuth re-consent; wire in when consent is granted"
+    p = action.payload
+    client = await _resolve_personal_gmail_client(session)
+
+    to = str(p.get("to") or "").strip()
+    subject = str(p.get("subject") or "")
+    body = str(p.get("body") or "").strip()
+    thread_id_raw = p.get("thread_id")
+    in_reply_to_raw = p.get("in_reply_to")
+    thread_id = str(thread_id_raw).strip() if thread_id_raw else None
+    in_reply_to = str(in_reply_to_raw).strip() if in_reply_to_raw else None
+
+    if not to:
+        raise ValueError("gmail.send payload must include to")
+    if not body:
+        raise ValueError("gmail.send payload must include body")
+
+    sent = await client.send_message(
+        to=to,
+        subject=subject,
+        body=body,
+        thread_id=thread_id,
+        in_reply_to=in_reply_to,
     )
+    return {
+        "message_id": str(sent.get("id") or ""),
+        "thread_id": str(sent.get("threadId") or thread_id or ""),
+        "to": to,
+        "subject": subject,
+    }
 
 
 # ── Generic executor dispatch ─────────────────────────────────────────────────
@@ -298,6 +391,51 @@ async def propose_action(
         target_user_id=target_user_id,
         ttl_hours=ttl_hours,
     )
+
+
+async def propose_radar_slack_reply(
+    session: AsyncSession,
+    *,
+    radar_item_id: int,
+    reply_text: str,
+    requested_by: str,
+    target_user_id: str,
+) -> tuple[ProposedAction, RadarSurfacedItem]:
+    from sqlalchemy import select
+
+    reply_text = reply_text.strip()
+    if not reply_text:
+        raise ValueError("reply_text is required")
+
+    result = await session.execute(
+        select(RadarSurfacedItem).where(RadarSurfacedItem.id == radar_item_id)
+    )
+    radar_item = result.scalar_one_or_none()
+    if radar_item is None:
+        raise LookupError(f"Radar item #{radar_item_id} not found")
+    if radar_item.item_type != "slack_mention":
+        raise ValueError(f"Radar item #{radar_item_id} is not a Slack mention")
+
+    try:
+        channel, thread_ts = radar_item.item_key.split(":", 1)
+    except ValueError as exc:
+        raise ValueError(f"Radar item #{radar_item_id} has an invalid Slack key") from exc
+
+    preview = f'reply in {radar_item.label}: "{reply_text}"'
+    action = await propose_action(
+        session,
+        action_type="slack.send",
+        payload={
+            "channel": channel,
+            "thread_ts": thread_ts,
+            "text": reply_text,
+        },
+        preview=preview,
+        requested_by=requested_by,
+        target_user_id=target_user_id,
+    )
+    await send_proposal_dm(session, action)
+    return action, radar_item
 
 
 async def send_proposal_dm(
@@ -449,6 +587,13 @@ async def _run_approved_action(
         if action.action_type == "jira.create":
             key = result.get("key", "")
             return f"Done — Jira issue {key} created."
+        if action.action_type == "slack.send":
+            return "Done — Slack message posted."
+        if action.action_type == "gmail.send":
+            to = str(result.get("to", "")).strip()
+            subject = str(result.get("subject", "")).strip()
+            subject_part = f" re: {subject}" if subject else ""
+            return f"Done — email sent to {to}{subject_part}."
         return f"Done — {action.action_type} executed."
     except NotImplementedError as exc:
         # Deferred executors (slack.send, gmail.send, calendar.respond).

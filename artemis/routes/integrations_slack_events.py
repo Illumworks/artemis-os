@@ -849,6 +849,60 @@ async def route_inbound(
             session_id,
         )
 
+    # ── Radar reply proposal path (Lane R -> agency gate) ────────────────────
+    # "reply radar <id> <text>" stages a thread reply via the agency gate,
+    # DMs Jon the preview, and only posts after a later yes/no approval.
+    if slack_user_id:
+        try:
+            import re as _re
+
+            _radar_reply_re = _re.compile(
+                r"^reply\s+radar\s+(\d+)\s+(.+?)\s*$",
+                _re.IGNORECASE | _re.DOTALL,
+            )
+            radar_match = _radar_reply_re.match(text.strip())
+            if radar_match:
+                item_id = int(radar_match.group(1))
+                reply_text = radar_match.group(2).strip()
+                from artemis.proactivity.agency_gate import propose_radar_slack_reply
+
+                async with _db.SessionLocal() as db_session:
+                    try:
+                        action, radar_item = await propose_radar_slack_reply(
+                            db_session,
+                            radar_item_id=item_id,
+                            reply_text=reply_text,
+                            requested_by=normalized_agent,
+                            target_user_id=slack_user_id,
+                        )
+                    except LookupError:
+                        await db_session.rollback()
+                        radar_reply = f"Radar item #{item_id} not found."
+                    except ValueError as exc:
+                        await db_session.rollback()
+                        radar_reply = str(exc)
+                    else:
+                        await db_session.commit()
+                        radar_reply = (
+                            f"Proposed reply to radar item #{item_id} ({radar_item.label}). "
+                            f"Check your DM and reply yes A{action.id} to send it."
+                        )
+                await _post_slack_message(
+                    session_id=session_id,
+                    normalized_agent=normalized_agent,
+                    team_id=team_id,
+                    channel_id=channel_id,
+                    reply_thread_ts=reply_thread_ts,
+                    outbound_text=radar_reply,
+                )
+                return
+        except Exception:
+            logger.exception(
+                "route_inbound: radar reply proposal path failed for session=%s speaker=%s -- continuing",
+                session_id,
+                slack_user_id,
+            )
+
     # ── Proposed-action approval/rejection path (DB-backed, no session state) ──
     # Jon replies "yes A<id>" / "no A<id>" (or bare "yes"/"no" when exactly one
     # proposal is pending) to approve or reject a staged agency-writes proposal.

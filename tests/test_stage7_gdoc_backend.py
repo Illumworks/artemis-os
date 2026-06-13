@@ -411,6 +411,7 @@ async def test_google_oauth_connect_stores_credential_and_status(
         "docsExportReady": True,
         "hasCalendarScope": False,
         "hasGmailReadScope": False,
+        "hasGmailSendScope": False,
     }
 
     stored = (

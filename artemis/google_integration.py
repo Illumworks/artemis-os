@@ -35,6 +35,7 @@ GOOGLE_PERSONAL_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
 )
 
 _KNOWN_PURPOSES = frozenset({"personal", "marketing"})
@@ -113,6 +114,7 @@ def google_status_payload(credential: GoogleCredential | None) -> dict[str, obje
             "docsExportReady": False,
             "hasCalendarScope": False,
             "hasGmailReadScope": False,
+            "hasGmailSendScope": False,
         }
 
     return {
@@ -145,6 +147,10 @@ def google_status_payload(credential: GoogleCredential | None) -> dict[str, obje
         "hasGmailReadScope": google_has_any_scope(
             credential.scope,
             "https://www.googleapis.com/auth/gmail.readonly",
+        ),
+        "hasGmailSendScope": google_has_any_scope(
+            credential.scope,
+            "https://www.googleapis.com/auth/gmail.send",
         ),
     }
 
