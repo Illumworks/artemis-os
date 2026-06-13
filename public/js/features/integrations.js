@@ -91,6 +91,10 @@ function _checkConnectionToast() {
     _showToast('Google Calendar connected successfully.');
     window.history.replaceState({}, '', window.location.pathname);
   }
+  if (params.get('gmail_connected') === '1') {
+    _showToast('Gmail connected successfully.');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
   if (params.get('granola_connected') === '1') {
     _showToast('Granola connected successfully.');
     window.history.replaceState({}, '', window.location.pathname);

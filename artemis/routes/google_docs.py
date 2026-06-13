@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -21,7 +20,6 @@ from artemis.google_docs.client import (
     InvalidGoogleDocumentReferenceError,
     build_google_oauth_start_url,
     compact_preview_text,
-    exchange_code_for_tokens,
     export_google_document,
     extract_document_id,
     import_google_document,
@@ -32,7 +30,17 @@ from artemis.google_docs.models import GoogleCredential
 from artemis.google_docs.repository import (
     delete_google_credential,
     get_google_credential,
-    upsert_google_credential,
+    list_google_credentials,
+)
+from artemis.google_integration import (
+    GooglePurpose,
+    complete_google_oauth,
+    google_status_payload,
+    normalize_google_purpose,
+    register_google_oauth_state,
+    resolve_google_oauth_client_config,
+    revoke_personal_google_integrations,
+    scopes_for_google_purpose,
 )
 from artemis.identity.dependencies import get_current_user
 from artemis.identity.models import User
@@ -43,33 +51,23 @@ from artemis.marketing.writing_studio.compose_engine import _latest_draft_conten
 
 router = APIRouter(tags=["google"], dependencies=[Depends(require_token)])
 
-_oauth_states: dict[str, int] = {}
-
 
 def _http_error(status_code: int, error: str, code: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error": error, "code": code})
 
 
-def _google_config_or_503() -> tuple[str, str, str]:
-    if not settings.google_client_id or not settings.google_client_secret:
-        raise _http_error(
-            503,
-            "Google credentials are not configured",
-            "google_not_configured",
-        )
-    return (
-        settings.google_client_id,
-        settings.google_client_secret,
-        settings.google_redirect_uri,
-    )
+async def _google_config_or_503(session: AsyncSession) -> tuple[str, str, str]:
+    config = await resolve_google_oauth_client_config(session)
+    return (config.client_id, config.client_secret, settings.google_redirect_uri)
 
 
 async def _require_google_credential(
     session: AsyncSession,
     *,
     current_user: User,
+    purpose: GooglePurpose = "personal",
 ) -> GoogleCredential:
-    credential = await get_google_credential(session, user_id=current_user.id)
+    credential = await get_google_credential(session, user_id=current_user.id, purpose=purpose)
     if credential is None:
         raise _http_error(409, "Connect Google first", "google_not_connected")
     return credential
@@ -86,7 +84,7 @@ async def _valid_access_token(
     if not credential.refresh_token:
         raise _http_error(409, "Reconnect Google to refresh access", "google_reconnect_required")
 
-    client_id, client_secret, _redirect_uri = _google_config_or_503()
+    client_id, client_secret, _redirect_uri = await _google_config_or_503(session)
     try:
         refreshed = await refresh_access_token(
             refresh_token=credential.refresh_token,
@@ -128,14 +126,23 @@ def _draft_title(draft: CampaignDeliverable) -> str:
 
 
 @router.get("/api/google/oauth/start")
-async def google_oauth_start(current_user: User = Depends(get_current_user)) -> RedirectResponse:  # noqa: B008
-    client_id, _client_secret, redirect_uri = _google_config_or_503()
-    state = secrets.token_urlsafe(32)
-    _oauth_states[state] = current_user.id
+async def google_oauth_start(
+    purpose: str = Query(default="personal"),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> RedirectResponse:
+    resolved_purpose = normalize_google_purpose(purpose)
+    client_id, _client_secret, redirect_uri = await _google_config_or_503(session)
+    state = register_google_oauth_state(
+        user_id=current_user.id,
+        purpose=resolved_purpose,
+        source="google",
+    )
     url = build_google_oauth_start_url(
         client_id=client_id,
         redirect_uri=redirect_uri,
         state=state,
+        scopes=scopes_for_google_purpose(resolved_purpose),
     )
     return RedirectResponse(url=url, status_code=302)
 
@@ -147,64 +154,95 @@ async def google_oauth_callback(
     session: AsyncSession = Depends(get_session),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> RedirectResponse:
-    expected_user_id = _oauth_states.pop(state, None)
-    if expected_user_id is None or expected_user_id != current_user.id:
-        raise _http_error(400, "Invalid or expired OAuth state", "invalid_google_oauth_state")
-
-    client_id, client_secret, redirect_uri = _google_config_or_503()
-    existing = await get_google_credential(session, user_id=current_user.id)
-    try:
-        tokens = await exchange_code_for_tokens(
-            code=code,
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-        )
-    except httpx.HTTPError as exc:
-        raise _http_error(
-            502, f"Google OAuth exchange failed: {exc}", "google_oauth_failed"
-        ) from exc
-
-    refresh_token = tokens.refresh_token or (existing.refresh_token if existing else None)
-    await upsert_google_credential(
-        session,
-        user_id=current_user.id,
-        access_token=tokens.access_token,
-        refresh_token=refresh_token,
-        expiry=tokens.expiry,
-        scope=tokens.scope,
-        connected_email=tokens.connected_email,
+    expected_state = await complete_google_oauth(
+        session=session,
+        current_user_id=current_user.id,
+        code=code,
+        state=state,
+        redirect_uri=settings.google_redirect_uri,
     )
     await session.commit()
-    return RedirectResponse(url="/?google_connected=1", status_code=302)
+    success_param = {
+        "google": "google_connected=1",
+        "gcal": "gcal_connected=1",
+        "gmail": "gmail_connected=1",
+    }[expected_state.source]
+    return RedirectResponse(url=f"/?{success_param}", status_code=302)
 
 
 @router.get("/api/google/status")
 async def google_status(
+    purpose: str = Query(default="personal"),
     session: AsyncSession = Depends(get_session),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, Any]:
-    credential = await get_google_credential(session, user_id=current_user.id)
-    if credential is None:
-        return {"connected": False}
-    response: dict[str, Any] = {"connected": True}
-    if credential.connected_email:
-        response["email"] = credential.connected_email
+    resolved_purpose = normalize_google_purpose(purpose)
+    credential = await get_google_credential(
+        session,
+        user_id=current_user.id,
+        purpose=resolved_purpose,
+    )
+    response = google_status_payload(credential)
+    response["purpose"] = resolved_purpose
+    return response
+
+
+@router.get("/api/google/accounts")
+async def google_accounts_status(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> dict[str, Any]:
+    rows = await list_google_credentials(session, user_id=current_user.id)
+    accounts: list[dict[str, object]] = []
+    for row in rows:
+        payload = google_status_payload(row)
+        payload["purpose"] = row.purpose
+        accounts.append(payload)
+    return {"accounts": accounts}
+
+
+@router.get("/api/google/overview")
+async def google_overview(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> dict[str, Any]:
+    credential = await get_google_credential(
+        session,
+        user_id=current_user.id,
+        purpose="marketing",
+    )
+    response = google_status_payload(credential)
+    response["purpose"] = "marketing"
     return response
 
 
 @router.post("/api/google/disconnect")
 async def google_disconnect(
+    purpose: str = Query(default="personal"),
     session: AsyncSession = Depends(get_session),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, Any]:
-    credential = await get_google_credential(session, user_id=current_user.id)
+    resolved_purpose = normalize_google_purpose(purpose)
+    credential = await get_google_credential(
+        session,
+        user_id=current_user.id,
+        purpose=resolved_purpose,
+    )
     if credential is not None:
         with suppress(httpx.HTTPError):
             await revoke_token(token=credential.access_token)
-        await delete_google_credential(session, user_id=current_user.id)
+        await delete_google_credential(
+            session,
+            user_id=current_user.id,
+            purpose=resolved_purpose,
+        )
+        if resolved_purpose == "personal":
+            await revoke_personal_google_integrations(
+                session,
+                connected_email=credential.connected_email,
+            )
         await session.commit()
-    return {"ok": True, "connected": False}
+    return {"ok": True, "connected": False, "purpose": resolved_purpose}
 
 
 @router.post("/api/writing-studio/drafts/{draft_id}/google-doc/import")
@@ -218,7 +256,11 @@ async def import_draft_from_google_doc(
     if draft is None:
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
 
-    credential = await _require_google_credential(session, current_user=current_user)
+    credential = await _require_google_credential(
+        session,
+        current_user=current_user,
+        purpose="marketing",
+    )
     existing_google_doc = _draft_google_doc_metadata(draft)
     requested_doc = (
         body.get("docUrl")
@@ -276,7 +318,11 @@ async def export_draft_to_google_doc(
     if draft is None:
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
 
-    credential = await _require_google_credential(session, current_user=current_user)
+    credential = await _require_google_credential(
+        session,
+        current_user=current_user,
+        purpose="marketing",
+    )
     access_token = await _valid_access_token(session, credential=credential)
 
     existing_google_doc = _draft_google_doc_metadata(draft)

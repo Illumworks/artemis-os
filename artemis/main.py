@@ -73,6 +73,7 @@ from artemis.routes import costs as costs_routes
 from artemis.routes import costs_routing as costs_routing_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
+from artemis.routes import gmail as gmail_routes
 from artemis.routes import google_docs as google_docs_routes
 from artemis.routes import health, okr, parallel, status, writing_rules, writing_studio_tags
 from artemis.routes import jira as jira_routes
@@ -280,6 +281,7 @@ app.include_router(slack_router)
 
 # Phase J3b — Calendar + Meetings overview endpoints
 app.include_router(calendar_routes.router)
+app.include_router(gmail_routes.router)
 app.include_router(meetings_routes.router)
 app.include_router(meetings_routes.granola_compat_router)
 # J6c — personal todos

@@ -29,6 +29,7 @@ from artemis.costs.events import record_cost_event
 from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.gcal.client import GCalClient
+from artemis.integrations.gcal.sync import sync_recent_gcal_events_cache
 from artemis.integrations.gcal.types import Event
 from artemis.integrations.granola.client import GranolaClient, Meeting
 from artemis.meetings.models import MeetingMatchLog, MeetingSummary
@@ -407,6 +408,7 @@ async def run_summarizer_tick() -> None:
 
 
 async def _run_tick_in_session(session: AsyncSession) -> None:
+    await sync_recent_gcal_events_cache(session)
     ended_events = await find_recently_ended_meetings(session)
     if not ended_events:
         logger.debug("Summarizer tick: no recently ended meetings, skipping")

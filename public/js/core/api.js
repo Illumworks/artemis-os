@@ -2955,8 +2955,9 @@ export async function updateCommentApi(commentId, payload = {}) {
  * Get the current user's Google connection status.
  * GET /api/google/status → { connected: bool, email?: string }
  */
-export async function googleStatusApi() {
-  const res = await fetch("/api/google/status");
+export async function googleStatusApi(purpose = "personal") {
+  const qs = purpose ? `?purpose=${encodeURIComponent(purpose)}` : "";
+  const res = await fetch(`/api/google/status${qs}`);
   return _readJsonOrThrow(res, "Failed to fetch Google connection status");
 }
 
@@ -2964,7 +2965,8 @@ export async function googleStatusApi() {
  * Disconnect the current user's Google account.
  * POST /api/google/disconnect → { ok: true, connected: false }
  */
-export async function googleDisconnectApi() {
-  const res = await fetch("/api/google/disconnect", { method: "POST" });
+export async function googleDisconnectApi(purpose = "personal") {
+  const qs = purpose ? `?purpose=${encodeURIComponent(purpose)}` : "";
+  const res = await fetch(`/api/google/disconnect${qs}`, { method: "POST" });
   return _readJsonOrThrow(res, "Failed to disconnect Google account");
 }
