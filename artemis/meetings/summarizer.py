@@ -3,7 +3,7 @@
 Core logic:
   - find_recently_ended_meetings(): query GCal for events ending in the past
     window_minutes whose summaries don't already exist.
-  - find_granola_match(): title-match a GCal event against Granola's last_7_days
+  - find_granola_match(): title-match a GCal event against Granola's last_30_days
     list using exact → fuzzy → proximity tiebreak.
   - run_summarizer_tick(): called by the scheduler every 2 minutes. For each
     unmatched recently-ended meeting: find granola match → fetch transcript →
@@ -422,8 +422,13 @@ async def _run_tick_in_session(session: AsyncSession) -> None:
         return
 
     # Fetch Granola meetings list once; reuse for all events in this tick.
+    # NOTE: Granola's "last_7_days" range returns an empty list even when recent
+    # meetings exist (observed 2026-06-13: last_7_days=0 while last_30_days=40,
+    # incl. 9 meetings inside the past week). Use last_30_days — find_granola_match
+    # narrows by exact/fuzzy title + time-proximity to the specific ended event, so
+    # the wider candidate pool is safe and just ensures recent meetings are present.
     try:
-        granola_meetings = await granola.list_meetings(time_range="last_7_days")
+        granola_meetings = await granola.list_meetings(time_range="last_30_days")
     except Exception:
         logger.warning("Summarizer tick: Granola list_meetings failed", exc_info=True)
         return
