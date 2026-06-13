@@ -10,11 +10,29 @@ All tests are hermetic — no real CF Access calls, no DB access.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi import FastAPI, WebSocketDisconnect
+from sqlalchemy import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
 
+import artemis.db as _db_module
+from artemis.db import attach_pgvector_codec
 from artemis.marketing.writing_studio.collab.routes import router
+
+# Phase 3 added a DB hydration read on WS connect. Sync TestClient WS tests use
+# ephemeral event loops, so swap in a NullPool factory (no connection outlives a
+# loop). The collab route late-binds to db.SessionLocal, so this takes effect.
+_db_url = os.environ.get(
+    "ARTEMIS_TEST_DB_URL", "postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_test"
+)
+_np_engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+attach_pgvector_codec(_np_engine)
+_db_module.SessionLocal = async_sessionmaker(
+    bind=_np_engine, expire_on_commit=False, class_=AsyncSession
+)
 
 # ---------------------------------------------------------------------------
 # Minimal app fixture — just the collab router, no other middleware

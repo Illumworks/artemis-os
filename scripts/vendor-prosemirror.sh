@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-OUT_DIR="/Users/artemis/Desktop/Artemis/artemis-os/.claude/worktrees/composer-foundation/public/vendor/prosemirror"
+# Resolve relative to this script so re-vendoring works from any checkout/worktree.
+OUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/public/vendor/prosemirror"
 mkdir -p "$OUT_DIR"
 
 # Pinned versions — all mature/stable (released well over 7 days ago, per org dep rule)
@@ -20,12 +21,13 @@ PKGS=(
   "prosemirror-dropcursor:1.8.1"
   "prosemirror-gapcursor:1.3.2"
   "prosemirror-menu:1.2.4"
+  "prosemirror-collab:1.3.1"
 )
 
 # All PM package names — these become "externals" so each bundle's PM imports
 # stay as bare specifiers, resolved by import-map to the local vendored files
 # (keeps a single class identity across packages).
-EXTERNAL_PM="prosemirror-state,prosemirror-view,prosemirror-model,prosemirror-transform,prosemirror-schema-basic,prosemirror-schema-list,prosemirror-example-setup,prosemirror-keymap,prosemirror-history,prosemirror-commands,prosemirror-inputrules,prosemirror-dropcursor,prosemirror-gapcursor,prosemirror-menu"
+EXTERNAL_PM="prosemirror-state,prosemirror-view,prosemirror-model,prosemirror-transform,prosemirror-schema-basic,prosemirror-schema-list,prosemirror-example-setup,prosemirror-keymap,prosemirror-history,prosemirror-commands,prosemirror-inputrules,prosemirror-dropcursor,prosemirror-gapcursor,prosemirror-menu,prosemirror-collab"
 
 for entry in "${PKGS[@]}"; do
   PKG="${entry%%:*}"

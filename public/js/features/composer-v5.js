@@ -14,9 +14,11 @@
 import { EditorState, Plugin, PluginKey } from "prosemirror-state";
 import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
 import { DOMParser as PMDOMParser, DOMSerializer, Schema } from "prosemirror-model";
+import { Step } from "prosemirror-transform";
 import { schema as basicSchema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
 import { exampleSetup } from "prosemirror-example-setup";
+import { collab, receiveTransaction, sendableSteps, getVersion } from "prosemirror-collab";
 
 import { openCollabSocket } from "../core/collab-socket.js";
 import { presenceColor } from "../core/presence-color.js";
@@ -348,18 +350,43 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     },
   });
 
+  // ── Phase 3 collab: stable per-mount client id + shared plugin builder ──────
+  //
+  // collabClientId identifies this editor instance to prosemirror-collab so the
+  // server can echo our own steps back and receiveTransaction CONFIRMS them
+  // (rather than re-applying). buildPlugins() centralises the plugin stack so
+  // the editor, replaceEditorContent, and the server-snap rebuild all include
+  // collab() at the right version (R5 — a rebuild that drops collab() destroys
+  // shared history and overwrites peers).
+  const collabClientId = Math.floor(Math.random() * 0xffffffff);
+  function buildPlugins(collabVersion) {
+    return [
+      ...exampleSetup({ schema: composerSchema, menuBar: false }),
+      collab({ version: collabVersion, clientID: collabClientId }),
+      claimFlagsPlugin,
+      commentsPlugin,
+      presencePlugin,
+    ];
+  }
+
   // ── ProseMirror editor ─────────────────────────────────────────────────────
   const initialDoc = textToProseMirrorDoc(draft.content || "", composerSchema);
   const state = EditorState.create({
     doc: initialDoc,
     schema: composerSchema,
-    plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin, presencePlugin],
+    // Start at version 0; the server's collab baseline (presence.init.collab)
+    // snaps us to the authoritative version on connect.
+    plugins: buildPlugins(0),
   });
   const view = new EditorView(editorHost, {
     state,
     dispatchTransaction(tr) {
       const next = view.state.apply(tr);
       view.updateState(next);
+      // Phase 3: ship any locally-authored steps to the room. Runs through this
+      // SAME dispatch path for both local edits and applied remote steps, so the
+      // selection toolbar + decoration mapping always run normally (R6).
+      if (presenceConnected) trySendSteps();
       if (tr.docChanged) {
         scheduleAutosave();
         scheduleScan();
@@ -1242,6 +1269,101 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   /** @type {Map<string, {email:string, name:string, from?:number, to?:number}>} */
   const peers = new Map();
 
+  // ── Phase 3 collab: step send / receive / snap / materialize ────────────────
+  //
+  // awaitingAck gates concurrent step sends: we hold one batch in flight at a
+  // time. It clears when the room echoes our steps back (confirming them) or
+  // rejects a stale submission — either way we then flush whatever is queued.
+
+  let awaitingAck = false;
+
+  /** Ship any unconfirmed locally-authored steps to the room (one batch in flight). */
+  function trySendSteps() {
+    if (!presenceConnected || awaitingAck || !collabSocket) return;
+    const sendable = sendableSteps(view.state);
+    if (!sendable) return;
+    awaitingAck = true;
+    collabSocket.send(
+      JSON.stringify({
+        type: "steps",
+        version: sendable.version,
+        steps: sendable.steps.map((s) => s.toJSON()),
+        clientID: collabClientId,
+      })
+    );
+  }
+
+  /** Apply a batch of remote (or our own echoed) steps from the room. */
+  function applyRemoteSteps(evt) {
+    const wire = Array.isArray(evt.steps) ? evt.steps : [];
+    try {
+      const steps = wire.map((s) => Step.fromJSON(composerSchema, s.step));
+      const clientIDs = wire.map((s) => s.clientID);
+      const tr = receiveTransaction(view.state, steps, clientIDs, {
+        mapSelectionBackward: true,
+      });
+      // Dispatch through the normal path so the toolbar + decorations remap (R6).
+      view.dispatch(tr);
+    } catch (err) {
+      console.error("[collab] failed to apply remote steps:", err);
+    }
+    // Our in-flight batch (if any) is now confirmed or rebased — release the
+    // gate and flush whatever is queued next.
+    awaitingAck = false;
+    trySendSteps();
+  }
+
+  /** Rebuild the editor onto the room's authoritative doc + version (init / rebase). */
+  function snapToCollabBaseline(baseline) {
+    if (!baseline || typeof baseline.doc !== "string") return;
+    const baseVersion = baseline.version ?? 0;
+    const newDoc = textToProseMirrorDoc(baseline.doc, composerSchema);
+    view.updateState(
+      EditorState.create({
+        doc: newDoc,
+        schema: composerSchema,
+        plugins: buildPlugins(baseVersion),
+      })
+    );
+    // Replay any steps committed after the baseline doc to reach currentVersion.
+    const wire = Array.isArray(baseline.steps) ? baseline.steps : [];
+    if (wire.length) {
+      try {
+        const steps = wire.map((s) => Step.fromJSON(composerSchema, s.step));
+        const clientIDs = wire.map((s) => s.clientID);
+        view.dispatch(receiveTransaction(view.state, steps, clientIDs));
+      } catch (err) {
+        console.error("[collab] failed to replay baseline steps:", err);
+      }
+    }
+    // The editor now matches the room; reset autosave + ack bookkeeping.
+    lastSavedContent = serializeDocToText(view.state.doc);
+    dirty = false;
+    awaitingAck = false;
+    staleConflict = false;
+    showConflictBanner(false);
+    scheduleCommentsReflow();
+  }
+
+  /** While connected, persist the converged text via the room (not HTTP). */
+  function runMaterialize() {
+    if (destroyed || !presenceConnected || !collabSocket) return;
+    // Only flush when our doc exactly equals a server-confirmed version — never
+    // persist text that includes not-yet-acknowledged local steps.
+    if (sendableSteps(view.state)) return;
+    const snapshot = serializeDocToText(view.state.doc);
+    if (snapshot === lastSavedContent) {
+      dirty = false;
+      return;
+    }
+    collabSocket.send(
+      JSON.stringify({ type: "materialize", version: getVersion(view.state), text: snapshot })
+    );
+    lastSavedContent = snapshot;
+    dirty = false;
+    setSavingIndicator("saved", "Saved");
+  }
+
   /**
    * Render the presence avatar cluster from the current `peers` map.
    * Avatars are 24px circles with initials, capped at 5 with a +N chip.
@@ -1315,6 +1437,8 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
             peers.set(p.clientId, { email: p.email, name: p.name });
           }
           renderPresenceAvatars();
+          // Phase 3: adopt the room's authoritative doc + collab version.
+          if (evt.collab) snapToCollabBaseline(evt.collab);
           break;
         }
 
@@ -1348,6 +1472,35 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
               name:     peer.name || peer.email,
             })
           );
+          break;
+        }
+
+        case 'collab.steps': {
+          // Newly-committed steps from the room (incl. our own echoed back).
+          applyRemoteSteps(evt);
+          break;
+        }
+
+        case 'collab.reject': {
+          // Our submission was stale; we'll have caught up from the broadcasts.
+          // Release the gate and retry against the now-current version.
+          awaitingAck = false;
+          trySendSteps();
+          break;
+        }
+
+        case 'collab.rebase': {
+          // A Save-version committed; snap everyone to the saved doc + version.
+          snapToCollabBaseline(evt);
+          break;
+        }
+
+        case 'collab.flushed': {
+          // The room persisted converged text; keep our HTTP-fallback CAS counter
+          // current so a later socket-down autosave isn't spuriously rejected.
+          if (typeof evt.liveContentVersion === 'number') {
+            liveContentVersion = evt.liveContentVersion;
+          }
           break;
         }
 
@@ -1413,7 +1566,11 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     if (autosaveTimer) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
       autosaveTimer = null;
-      void runAutosave();
+      // Phase 3: while connected the room is the single writer — persist via a
+      // debounced materialize. Socket-down falls back to HTTP autosave (P2
+      // soft-lock semantics), so the feature degrades to today's behaviour.
+      if (presenceConnected) runMaterialize();
+      else void runAutosave();
     }, AUTOSAVE_DELAY_MS);
   }
 
@@ -1480,6 +1637,14 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     if (autosaveTimer) {
       clearTimeout(autosaveTimer);
       autosaveTimer = null;
+    }
+    // Phase 3: while connected the room is the single writer — flush via a
+    // materialize (best effort) rather than an HTTP liveContent PUT. Save-version
+    // captures the live doc text directly anyway, so this only keeps the live
+    // buffer current; no inflight bookkeeping needed for a WS send.
+    if (presenceConnected) {
+      runMaterialize();
+      return;
     }
     if (dirty || inflight) {
       await runAutosave();
@@ -3769,11 +3934,31 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   function replaceEditorContent(newText) {
     const newDoc = textToProseMirrorDoc(newText, composerSchema);
+    // Phase 3 (R5): under live collab a full state-swap destroys shared history
+    // and silently overwrites peers. Replace the body as a COLLABORATIVE
+    // transaction so it ships as steps and peers converge. (Google Docs import,
+    // AI apply-to-document, chat refresh, undo-apply all route here.)
+    if (presenceConnected) {
+      try {
+        const tr = view.state.tr.replaceWith(
+          0,
+          view.state.doc.content.size,
+          newDoc.content
+        );
+        view.dispatch(tr); // → dispatchTransaction → trySendSteps; peers converge
+        scheduleCommentsReflow();
+        return;
+      } catch (err) {
+        console.error("[collab] collaborative replace failed, rebuilding state:", err);
+        // fall through to the rebuild path
+      }
+    }
+    // Offline / fallback: rebuild state. MUST re-include collab() (via
+    // buildPlugins) so a later reconnect can still snap and sync.
     const newState = EditorState.create({
       doc: newDoc,
       schema: composerSchema,
-      // Include claim-flags + comments + presence plugins so decorations survive a content refresh.
-      plugins: [...exampleSetup({ schema: composerSchema, menuBar: false }), claimFlagsPlugin, commentsPlugin, presencePlugin],
+      plugins: buildPlugins(getVersion(view.state)),
     });
     view.updateState(newState);
     // Re-render comment cards after the doc is replaced.

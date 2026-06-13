@@ -44,6 +44,7 @@ from artemis.marketing.state_machine import LEGACY_STATUS_MAP, DeliverableState,
 from artemis.marketing.writing_studio import events as ws_events
 from artemis.marketing.writing_studio import invoke as ws_invoke
 from artemis.marketing.writing_studio import review_notifications
+from artemis.marketing.writing_studio.collab.routes import broadcast_version_rebase
 from artemis.marketing.writing_studio.compose_engine import (
     _latest_draft_content,
     build_writing_memory_prompt,
@@ -51,6 +52,7 @@ from artemis.marketing.writing_studio.compose_engine import (
     parse_draft_fence,
     strip_proposed_learning_lines,
 )
+from artemis.marketing.writing_studio.live_content import apply_live_content
 from artemis.writing_rules import repository as wr_repo
 from artemis.writing_rules import tag_registry_repository as tag_repo
 from artemis.writing_rules.seed_corpus import import_writing_seed_corpus
@@ -491,6 +493,7 @@ async def update_draft(
         raise not_found(f"Draft {draft_id} not found", "draft_not_found")
 
     meta: dict[str, Any] = dict(deliverable.deliverable_metadata or {})
+    committed_content: str | None = None  # set when an explicit version is minted
     metadata_patch = body.get("metadata")
     if metadata_patch is not None:
         if not isinstance(metadata_patch, dict):
@@ -566,6 +569,7 @@ async def update_draft(
             new_version["metadata"] = metadata_patch
         versions.insert(0, new_version)
         meta["versions"] = versions
+        committed_content = content_val
         # An explicit version is now the authoritative latest body — clear any
         # transient autosave buffer so it doesn't shadow the saved version.
         meta.pop("live_content", None)
@@ -611,13 +615,19 @@ async def update_draft(
         else:
             if not isinstance(live_val, str):
                 raise bad_request("liveContent must be a string or null", "invalid_live_content")
-            meta["live_content"] = live_val
-            meta["live_content_updated_at"] = datetime.now(UTC).isoformat()
-            meta["live_content_version"] = current_version + 1
+            # Single mutation site shared with the collab room flush.
+            apply_live_content(meta, live_val)
 
     deliverable.deliverable_metadata = meta
     deliverable.updated_at = datetime.now(UTC)
     await session.commit()
+
+    # Phase 3 collab coexistence: when an explicit version is committed (which
+    # clears live_content), snap any live co-editors to the saved version so the
+    # room doesn't re-flush stale steps over it (R12). No-op if no room is live.
+    if committed_content is not None:
+        await broadcast_version_rebase(draft_id, committed_content)
+
     await session.refresh(deliverable)
     return _serialize_deliverable_detail(deliverable)
 

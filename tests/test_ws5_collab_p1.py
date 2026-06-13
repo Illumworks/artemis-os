@@ -12,8 +12,26 @@ All tests are hermetic — no real CF Access calls, no DB access.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
+from sqlalchemy import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
+
+import artemis.db as _db_module
+from artemis.db import attach_pgvector_codec
+
+# Phase 3 added a DB hydration read on WS connect; use a NullPool factory so no
+# connection outlives the sync TestClient's ephemeral event loop.
+_db_url = os.environ.get(
+    "ARTEMIS_TEST_DB_URL", "postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_test"
+)
+_np_engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
+attach_pgvector_codec(_np_engine)
+_db_module.SessionLocal = async_sessionmaker(
+    bind=_np_engine, expire_on_commit=False, class_=AsyncSession
+)
 
 
 def _make_app() -> FastAPI:
