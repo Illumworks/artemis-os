@@ -337,6 +337,24 @@ async def route_pending_reply(
             confidence=decision.confidence,
         )
 
+    # Defense-in-depth (Lead hardening): intents that SEND / CREATE / CHANGE must
+    # clear a confidence floor enforced in CODE, not just asked of the LLM prompt.
+    # Below it we ASK rather than act — never assume-yes. Reject/converse/clarify
+    # are safe (they cancel or do nothing) and are exempt. Clean single-item yes/no
+    # comes through the confirm-classifier at confidence 1.0, so it is unaffected.
+    if decision.intent in ("approve_proposals", "apply_okr_updates") and decision.confidence < 0.7:
+        logger.info(
+            "natural_pending_router: downgrading %s (confidence=%.2f < floor) to clarify",
+            decision.intent,
+            decision.confidence,
+        )
+        return PendingReplyOutcome(
+            handled=True,
+            intent="clarify",
+            outbound_text=decision.reply_text or _default_clarification(context),
+            confidence=decision.confidence,
+        )
+
     if decision.intent == "approve_proposals":
         results = await _approve_proposals(
             session,
