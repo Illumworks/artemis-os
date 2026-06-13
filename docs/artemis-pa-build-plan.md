@@ -76,10 +76,12 @@ make it compound. None of that is copyable by a horizontal competitor.
   **live co-editing** (WS5 P0–P4 shipped + verified live: presence, soft-lock, prosemirror-collab text sync,
   coexistence hardening; all residuals closed). See `docs/ws5-coedit-architecture.md`.
 - **P1 — Slack two-way:** ✅ DONE + live.
-- **P2 — Proactivity engine:** 🔵 **IN PROGRESS.** Morning brief ✅ + OKR Friday check-in ✅ live. **First
-  commitments/follow-up job SHIPPED 2026-06-13: stale-review escalation** — Callie DMs the reviewer when a
-  ready-for-review draft sits >1 day unapproved (verified live: detects, DMs the right user, dedupes). Remaining
-  = generalize commitments (extract promises/open-loops from chat/meetings/email + in-window follow-ups).
+- **P2 — Proactivity engine:** ✅ **DONE 2026-06-13.** Morning brief ✅, OKR Friday check-in ✅, stale-review
+  escalation ✅, **and the commitments engine** (migration 0083): extract meeting action-items → `commitments`
+  table + mirrored `category='commitment'` memory → proactive follow-up sweep routing to **Artemis (DM)** /
+  **Callie**, with dedupe (`last_notified_at`), snooze, expired-snooze reactivation, and `done`/`snooze` Slack
+  replies. All live + verified (Artemis DMs Jon on a due commitment; dedupes). *Optional later extension:*
+  commitment extraction from **chat/email** (not just meetings).
 - **P3 — Agency-writes:** 🟡 SUBSTRATE DONE (OKR KR write on the gated-staging substrate). Remaining =
   Gmail / Calendar / Jira / doc writes on that same substrate.
 - **P4 — Orchestration → Callie:** ✅ **DONE.** Callie live (C1–C3); the WS review-ping bridge shipped
@@ -97,10 +99,11 @@ make it compound. None of that is copyable by a horizontal competitor.
   (+ `docs/memory-system-assessment-2026-06-04.md`).
 - **Parked strategic plans (from the 2026-06-12 CEO/COO meeting):** standalone growth-credibility app
   (`docs/product-data-credibility-app.md`) + OS multi-team expansion (`docs/os-multi-team-expansion.md`).
-- **Near-term / sequence:** finish **P2** (broaden commitments) → **P3** write-extensions → **P5** learning
-  loop → **Memory upgrades M1–M3** (gate the OS multi-team expansion + accuracy/token-cost at scale) → **P6**
-  self-evolution. (M4 + the OS multi-team expansion + the growth-credibility app slot per priority.) The
-  subscription-path constraint (below) holds for all agency-writes.
+- **Near-term / sequence:** **P2 ✅ closed.** Next: **P3** write-extensions (Gmail/Calendar/Jira/doc on the
+  gated substrate) → **P5** learning loop → **Memory upgrades M1–M3** (gate the OS multi-team expansion +
+  accuracy/token-cost at scale) → **P6** self-evolution. (M4 + the OS multi-team expansion + the
+  growth-credibility app slot per priority.) The subscription-path constraint (below) holds for all
+  agency-writes.
 
 ### Status as of 2026-06-12 (superseded — kept for history)
 The plan was drawn P1→P6 linearly, but build order pulled the hard middle pieces FORWARD — so the remaining
