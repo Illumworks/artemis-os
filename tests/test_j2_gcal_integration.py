@@ -115,6 +115,8 @@ async def test_gcal_oauth_start_scope_present(
     assert r.status_code == 200
     url = r.json()["url"]
     assert "calendar" in url
+    assert "gmail.readonly" in url
+    assert "documents" in url
 
 
 async def test_gcal_oauth_start_state_token(client: AsyncClient, db_session: AsyncSession) -> None:

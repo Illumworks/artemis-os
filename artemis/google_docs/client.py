@@ -17,16 +17,6 @@ _GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 _GOOGLE_DOCS_BASE_URL = "https://docs.googleapis.com/v1"
 _GOOGLE_DRIVE_BASE_URL = "https://www.googleapis.com/drive/v3"
 
-GOOGLE_DOCS_SCOPES: tuple[str, ...] = (
-    "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/documents",
-    # email/openid so the post-exchange userinfo fetch (for the connected-account
-    # display) is authorized — without these the token can't read userinfo and the
-    # connect 502s.
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-)
-
 _DOCUMENT_URL_RE = re.compile(r"/document/d/([a-zA-Z0-9_-]+)")
 _PLAIN_DOCUMENT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{10,}$")
 
@@ -70,8 +60,9 @@ def build_google_oauth_start_url(
     client_id: str,
     redirect_uri: str,
     state: str,
+    scopes: tuple[str, ...],
 ) -> str:
-    scope = quote_plus(" ".join(GOOGLE_DOCS_SCOPES))
+    scope = quote_plus(" ".join(scopes))
     return (
         f"{_GOOGLE_AUTH_URL}"
         f"?client_id={quote_plus(client_id)}"

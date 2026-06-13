@@ -1,4 +1,4 @@
-"""ORM models for per-user Google Docs credentials."""
+"""ORM models for per-user Google credentials."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from artemis.db import Base
 
 
 class GoogleCredential(Base):
-    """OAuth credential row for one Artemis user's Google Docs access."""
+    """OAuth credential row for one Artemis user + account purpose."""
 
     __tablename__ = "google_credentials"
     __table_args__ = (
-        UniqueConstraint("user_id", name="uq_google_credentials_user_id"),
+        UniqueConstraint("user_id", "purpose", name="uq_google_credentials_user_purpose"),
         Index("idx_google_credentials_connected_email", "connected_email"),
     )
 
@@ -26,6 +26,7 @@ class GoogleCredential(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
+    purpose: Mapped[str] = mapped_column(Text, nullable=False, server_default="personal")
     access_token: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     expiry: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)

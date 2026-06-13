@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import NullPool, text
+from sqlalchemy import NullPool, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import artemis.db as db_module
@@ -252,11 +252,11 @@ def _configure_google_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_router_state() -> AsyncIterator[None]:
-    from artemis.routes import google_docs as google_docs_routes
+    from artemis.google_integration import clear_google_oauth_states
 
-    google_docs_routes._oauth_states.clear()
+    clear_google_oauth_states()
     yield
-    google_docs_routes._oauth_states.clear()
+    clear_google_oauth_states()
 
 
 @pytest.fixture
@@ -330,8 +330,12 @@ async def _make_deliverable(db: AsyncSession, *, title: str, content: str) -> Ca
     return deliverable
 
 
-async def _connect_google(client: AsyncClient) -> str:
-    start = await client.get("/api/google/oauth/start", follow_redirects=False)
+async def _connect_google(client: AsyncClient, *, purpose: str = "personal") -> str:
+    start = await client.get(
+        "/api/google/oauth/start",
+        params={"purpose": purpose},
+        follow_redirects=False,
+    )
     assert start.status_code == 302
     location = start.headers["location"]
     parsed = urlparse(location)
@@ -349,7 +353,35 @@ async def test_google_status_initially_disconnected(client: AsyncClient) -> None
     response = await client.get("/api/google/status")
 
     assert response.status_code == 200
-    assert response.json() == {"connected": False}
+    assert response.json()["connected"] is False
+    assert response.json()["purpose"] == "personal"
+
+
+async def test_google_marketing_oauth_uses_separate_purpose_and_overview(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_google: FakeGoogleApis,
+) -> None:
+    await _connect_google(client, purpose="marketing")
+
+    status = await client.get("/api/google/status", params={"purpose": "marketing"})
+    assert status.status_code == 200
+    assert status.json()["connected"] is True
+    assert status.json()["purpose"] == "marketing"
+    overview = await client.get("/api/google/overview")
+    assert overview.status_code == 200
+    assert overview.json()["connected"] is True
+    assert overview.json()["purpose"] == "marketing"
+
+    stored = (
+        await db_session.execute(
+            select(GoogleCredential).where(
+                GoogleCredential.user_id == 1,
+                GoogleCredential.purpose == "marketing",
+            )
+        )
+    ).scalar_one_or_none()
+    assert stored is not None
 
 
 async def test_google_oauth_connect_stores_credential_and_status(
@@ -373,11 +405,25 @@ async def test_google_oauth_connect_stores_credential_and_status(
     assert status.json() == {
         "connected": True,
         "email": fake_google.connected_email,
+        "purpose": "personal",
+        "hasDriveScope": True,
+        "docsImportReady": True,
+        "docsExportReady": True,
+        "hasCalendarScope": False,
+        "hasGmailReadScope": False,
     }
 
-    stored = await db_session.get(GoogleCredential, 1)
+    stored = (
+        await db_session.execute(
+            select(GoogleCredential).where(
+                GoogleCredential.user_id == 1,
+                GoogleCredential.purpose == "personal",
+            )
+        )
+    ).scalar_one_or_none()
     assert stored is not None
     assert stored.user_id == 1
+    assert stored.purpose == "personal"
     assert stored.access_token == fake_google.authorization_code_access_token
     assert stored.refresh_token == fake_google.refresh_token
     assert stored.connected_email == fake_google.connected_email
@@ -411,7 +457,8 @@ async def test_google_status_and_import_are_per_user(
     try:
         status = await client.get("/api/google/status")
         assert status.status_code == 200
-        assert status.json() == {"connected": False}
+        assert status.json()["connected"] is False
+        assert status.json()["purpose"] == "personal"
 
         response = await client.post(
             f"/api/writing-studio/drafts/{draft.id}/google-doc/import",
@@ -431,7 +478,7 @@ async def test_google_import_updates_draft_content_and_links_doc(
     fake_google: FakeGoogleApis,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    await _connect_google(client)
+    await _connect_google(client, purpose="marketing")
     draft = await _make_deliverable(
         db_session,
         title="Imported draft",
@@ -478,7 +525,7 @@ async def test_google_export_creates_new_doc_and_links_metadata(
     fake_google: FakeGoogleApis,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    await _connect_google(client)
+    await _connect_google(client, purpose="marketing")
     draft = await _make_deliverable(
         db_session,
         title="Michigan email",
@@ -534,6 +581,7 @@ async def test_google_import_refreshes_expired_access_token(
     await db_session.merge(
         GoogleCredential(
             user_id=1,
+            purpose="marketing",
             access_token="expired-access-token",
             refresh_token=fake_google.refresh_token,
             expiry=datetime.now(UTC) - timedelta(minutes=5),
@@ -559,7 +607,14 @@ async def test_google_import_refreshes_expired_access_token(
     assert fake_google.refresh_calls == 1
     assert fake_google.last_docs_auth_header == f"Bearer {fake_google.refresh_access_token}"
 
-    stored = await db_session.get(GoogleCredential, 1)
+    stored = (
+        await db_session.execute(
+            select(GoogleCredential).where(
+                GoogleCredential.user_id == 1,
+                GoogleCredential.purpose == "marketing",
+            )
+        )
+    ).scalar_one_or_none()
     assert stored is not None
     assert stored.access_token == fake_google.refresh_access_token
     assert stored.refresh_token == fake_google.refresh_token
@@ -574,8 +629,15 @@ async def test_google_disconnect_revokes_and_clears_current_user_token(
 
     response = await client.post("/api/google/disconnect")
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "connected": False}
+    assert response.json() == {"ok": True, "connected": False, "purpose": "personal"}
     assert fake_google.revoked_tokens == [fake_google.authorization_code_access_token]
 
-    stored = await db_session.get(GoogleCredential, 1)
+    stored = (
+        await db_session.execute(
+            select(GoogleCredential).where(
+                GoogleCredential.user_id == 1,
+                GoogleCredential.purpose == "personal",
+            )
+        )
+    ).scalar_one_or_none()
     assert stored is None

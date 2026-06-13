@@ -251,6 +251,11 @@ async def test_summarizer_tick_no_events_is_noop() -> None:
             new_callable=AsyncMock,
             return_value=[],
         ),
+        patch(
+            "artemis.meetings.summarizer.sync_recent_gcal_events_cache",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
         patch("artemis.db.SessionLocal") as mock_sl,
     ):
         # Provide an async context manager for SessionLocal()
@@ -327,6 +332,11 @@ async def test_summarizer_tick_skips_already_summarized_granola_id() -> None:
             "artemis.meetings.summarizer.find_recently_ended_meetings",
             new_callable=AsyncMock,
             return_value=[event],
+        ),
+        patch(
+            "artemis.meetings.summarizer.sync_recent_gcal_events_cache",
+            new_callable=AsyncMock,
+            return_value=0,
         ),
         patch(
             "artemis.meetings.summarizer._build_granola_client",
@@ -431,6 +441,11 @@ async def test_summarizer_writes_raw_input_and_summary() -> None:
             "artemis.meetings.summarizer._llm_summarize",
             new_callable=AsyncMock,
             return_value=("- Goal: ship J6d\n- Action: write tests", [{"text": "ship J6d"}]),
+        ),
+        patch(
+            "artemis.meetings.summarizer.ingest_meeting_commitments",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
     ):
         from artemis.meetings.summarizer import _process_event
@@ -836,6 +851,11 @@ async def test_run_tick_granola_not_connected() -> None:
             return_value=[event],
         ),
         patch(
+            "artemis.meetings.summarizer.sync_recent_gcal_events_cache",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
             "artemis.meetings.summarizer._build_granola_client",
             new_callable=AsyncMock,
             return_value=None,
@@ -859,6 +879,11 @@ async def test_run_tick_granola_list_meetings_fails() -> None:
             "artemis.meetings.summarizer.find_recently_ended_meetings",
             new_callable=AsyncMock,
             return_value=[event],
+        ),
+        patch(
+            "artemis.meetings.summarizer.sync_recent_gcal_events_cache",
+            new_callable=AsyncMock,
+            return_value=0,
         ),
         patch(
             "artemis.meetings.summarizer._build_granola_client",

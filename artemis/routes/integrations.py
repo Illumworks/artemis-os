@@ -23,6 +23,15 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
+from artemis.google_docs.client import build_google_oauth_start_url
+from artemis.google_integration import (
+    complete_google_oauth,
+    register_google_oauth_state,
+    resolve_google_oauth_client_config,
+    scopes_for_google_purpose,
+)
+from artemis.identity.dependencies import get_current_user
+from artemis.identity.models import User
 from artemis.integrations import repository as repo
 from artemis.integrations.config_resolver import (
     MissingProviderConfigError,
@@ -37,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
-# In-memory state store for OAuth (single-process; sufficient for V1).
+# In-memory state store for non-Google OAuth (single-process; sufficient for V1).
 _oauth_states: dict[str, str] = {}
 
 
@@ -272,6 +281,13 @@ def _gcal_redirect_uri() -> str:
     )
 
 
+def _gmail_redirect_uri() -> str:
+    return os.environ.get(
+        "GMAIL_REDIRECT_URI",
+        "https://app.artemisos.me/api/integrations/gmail/oauth/callback",
+    )
+
+
 async def _gcal_provider_from_session(session: AsyncSession) -> GCalProvider:
     try:
         cfg = await resolve_gcal_config(session)
@@ -290,6 +306,7 @@ async def _gcal_provider_from_session(session: AsyncSession) -> GCalProvider:
 @router.get("/gcal/oauth/start")
 async def gcal_oauth_start(
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, str]:
     try:
         cfg = await resolve_gcal_config(session)
@@ -299,18 +316,16 @@ async def gcal_oauth_start(
             detail=f"GCal credentials incomplete: {', '.join(exc.missing_fields)} not configured.",
         ) from exc
 
-    state = secrets.token_urlsafe(32)
-    _oauth_states[state] = "pending"
-
-    url = (
-        "https://accounts.google.com/o/oauth2/v2/auth"
-        f"?client_id={cfg.client_id}"
-        f"&redirect_uri={_gcal_redirect_uri()}"
-        f"&response_type=code"
-        f"&scope={_GCAL_SCOPE}"
-        f"&access_type=offline"
-        f"&prompt=consent"
-        f"&state={state}"
+    state = register_google_oauth_state(
+        user_id=current_user.id,
+        purpose="personal",
+        source="gcal",
+    )
+    url = build_google_oauth_start_url(
+        client_id=cfg.client_id,
+        redirect_uri=_gcal_redirect_uri(),
+        state=state,
+        scopes=scopes_for_google_purpose("personal"),
     )
     return {"url": url}
 
@@ -377,23 +392,14 @@ async def gcal_oauth_callback(
     code: str = Query(...),
     state: str = Query(...),
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> RedirectResponse:
-    if state not in _oauth_states:
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
-    del _oauth_states[state]
-
-    provider = await _gcal_provider_from_session(session)
-    try:
-        integration_row = await provider.connect(code)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await repo.upsert_integration(
-        session,
-        provider=integration_row.provider,
-        workspace_id=integration_row.workspace_id,
-        encrypted_credentials=integration_row.encrypted_credentials,
-        display_name=integration_row.display_name,
+    await complete_google_oauth(
+        session=session,
+        current_user_id=current_user.id,
+        code=code,
+        state=state,
+        redirect_uri=_gcal_redirect_uri(),
     )
     await session.commit()
 
@@ -420,6 +426,44 @@ async def gcal_verify(
         await repo.mark_verified(session, integration.id)
         await session.commit()
     return {"ok": ok, "account": integration.display_name or integration.workspace_id}
+
+
+@router.get("/gmail/oauth/start")
+async def gmail_oauth_start(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> dict[str, str]:
+    config = await resolve_google_oauth_client_config(session)
+    state = register_google_oauth_state(
+        user_id=current_user.id,
+        purpose="personal",
+        source="gmail",
+    )
+    url = build_google_oauth_start_url(
+        client_id=config.client_id,
+        redirect_uri=_gmail_redirect_uri(),
+        state=state,
+        scopes=scopes_for_google_purpose("personal"),
+    )
+    return {"url": url}
+
+
+@router.get("/gmail/oauth/callback")
+async def gmail_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> RedirectResponse:
+    await complete_google_oauth(
+        session=session,
+        current_user_id=current_user.id,
+        code=code,
+        state=state,
+        redirect_uri=_gmail_redirect_uri(),
+    )
+    await session.commit()
+    return RedirectResponse(url="/?gmail_connected=1", status_code=302)
 
 
 # ── Provider credential config (J1b) ─────────────────────────────────────────

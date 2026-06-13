@@ -2798,6 +2798,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   const gdocWrapEl = rootEl.querySelector('[data-cv5="gdoc-wrap"]');
   const gdocBtnEl  = rootEl.querySelector('[data-cv5="gdoc-btn"]');
   const gdocMenuEl = rootEl.querySelector('[data-cv5="gdoc-menu"]');
+  const GDOC_PURPOSE = "marketing";
 
   // Current Google connection state (populated by refreshGdocStatus).
   let gdocStatus = null; // { connected: bool, email?: string } | null
@@ -2853,7 +2854,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   async function refreshGdocStatus() {
     try {
-      gdocStatus = await googleStatusApi();
+      gdocStatus = await googleStatusApi(GDOC_PURPOSE);
     } catch (err) {
       console.warn("[composer-v5] google status fetch failed:", err);
       gdocStatus = { connected: false };
@@ -2925,7 +2926,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       if (action === "connect") {
         // Same-tab redirect to Google OAuth consent flow.
         // The backend redirects back to /?google_connected=1 after completion.
-        window.location.href = "/api/google/oauth/start";
+        window.location.href = `/api/google/oauth/start?purpose=${encodeURIComponent(GDOC_PURPOSE)}`;
 
       } else if (action === "import") {
         await handleGdocImport();
@@ -2965,7 +2966,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         const doConnect = window.confirm(
           "Your Google account isn't connected. Connect now?"
         );
-        if (doConnect) window.location.href = "/api/google/oauth/start";
+        if (doConnect) window.location.href = `/api/google/oauth/start?purpose=${encodeURIComponent(GDOC_PURPOSE)}`;
       } else {
         callbacks.onError?.(err.message || "Import from Google Doc failed.");
       }
@@ -2989,7 +2990,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         const doConnect = window.confirm(
           "Your Google account isn't connected. Connect now?"
         );
-        if (doConnect) window.location.href = "/api/google/oauth/start";
+        if (doConnect) window.location.href = `/api/google/oauth/start?purpose=${encodeURIComponent(GDOC_PURPOSE)}`;
       } else {
         callbacks.onError?.(err.message || "Export to Google Doc failed.");
       }
@@ -3008,7 +3009,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     const confirmed = window.confirm("Disconnect your Google account?");
     if (!confirmed) return;
     try {
-      await googleDisconnectApi();
+      await googleDisconnectApi(GDOC_PURPOSE);
       gdocStatus = { connected: false };
       renderGdocMenu();
       gdocBtnEl?.classList.remove("is-connected");

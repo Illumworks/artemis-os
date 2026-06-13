@@ -17,6 +17,7 @@ from artemis.floating_artemis.tools.okr import register_okr_tools
 from artemis.floating_artemis.tools.system import register_system_tools
 from artemis.floating_artemis.tools.writing_rules import register_writing_rules_tools
 from artemis.integrations.gcal.tools import register_gcal_tools
+from artemis.integrations.gmail.tools import register_gmail_tools
 from artemis.integrations.slack.tools import register_slack_tools
 
 
@@ -34,6 +35,7 @@ def build_authorized_tool_registry(available_surfaces: set[str]) -> AuthorizedTo
         register_marketing_tools(registry)
     register_slack_tools(registry)
     register_gcal_tools(registry)
+    register_gmail_tools(registry)
     if "jira-board" in available_surfaces:
         register_jira_tools(registry)
     if "meetings" in available_surfaces:

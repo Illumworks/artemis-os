@@ -1,0 +1,304 @@
+"""Shared Google OAuth/account helpers across Docs, Calendar, and Gmail."""
+
+from __future__ import annotations
+
+import secrets
+from dataclasses import dataclass
+from typing import Literal
+
+import httpx
+from fastapi import HTTPException
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from artemis.config import settings
+from artemis.google_docs.client import exchange_code_for_tokens
+from artemis.google_docs.models import GoogleCredential
+from artemis.google_docs.repository import get_google_credential, upsert_google_credential
+from artemis.integrations import repository as integrations_repo
+from artemis.integrations.config_resolver import MissingProviderConfigError, resolve_gcal_config
+from artemis.integrations.crypto import encrypt_credentials
+from artemis.integrations.models import Integration
+
+GooglePurpose = Literal["personal", "marketing"]
+GoogleOAuthSource = Literal["google", "gcal", "gmail"]
+
+GOOGLE_MARKETING_SCOPES: tuple[str, ...] = (
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/documents",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+)
+
+GOOGLE_PERSONAL_SCOPES: tuple[str, ...] = (
+    *GOOGLE_MARKETING_SCOPES,
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.readonly",
+)
+
+_KNOWN_PURPOSES = frozenset({"personal", "marketing"})
+
+
+@dataclass(frozen=True)
+class GoogleOAuthState:
+    user_id: int
+    purpose: GooglePurpose
+    source: GoogleOAuthSource
+
+
+@dataclass(frozen=True)
+class GoogleOAuthClientConfig:
+    client_id: str
+    client_secret: str
+
+
+_oauth_states: dict[str, GoogleOAuthState] = {}
+
+
+def clear_google_oauth_states() -> None:
+    _oauth_states.clear()
+
+
+def register_google_oauth_state(
+    *,
+    user_id: int,
+    purpose: GooglePurpose,
+    source: GoogleOAuthSource,
+) -> str:
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = GoogleOAuthState(user_id=user_id, purpose=purpose, source=source)
+    return state
+
+
+def pop_google_oauth_state(state: str) -> GoogleOAuthState | None:
+    return _oauth_states.pop(state, None)
+
+
+def normalize_google_purpose(raw: str | None) -> GooglePurpose:
+    purpose = (raw or "personal").strip().lower()
+    if purpose not in _KNOWN_PURPOSES:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": f"Unsupported Google purpose: {raw!r}",
+                "code": "invalid_google_purpose",
+            },
+        )
+    return purpose  # type: ignore[return-value]
+
+
+def scopes_for_google_purpose(purpose: GooglePurpose) -> tuple[str, ...]:
+    if purpose == "marketing":
+        return GOOGLE_MARKETING_SCOPES
+    return GOOGLE_PERSONAL_SCOPES
+
+
+def google_scope_set(scope_value: str | None) -> set[str]:
+    return {part.strip() for part in (scope_value or "").split() if part.strip()}
+
+
+def google_has_any_scope(scope_value: str | None, *expected: str) -> bool:
+    granted = google_scope_set(scope_value)
+    return any(scope in granted for scope in expected)
+
+
+def google_status_payload(credential: GoogleCredential | None) -> dict[str, object]:
+    if credential is None:
+        return {
+            "connected": False,
+            "purpose": "personal",
+            "hasDriveScope": False,
+            "docsImportReady": False,
+            "docsExportReady": False,
+            "hasCalendarScope": False,
+            "hasGmailReadScope": False,
+        }
+
+    return {
+        "connected": True,
+        "purpose": credential.purpose,
+        "email": credential.connected_email,
+        "hasDriveScope": google_has_any_scope(
+            credential.scope,
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/drive",
+        ),
+        "docsImportReady": google_has_any_scope(
+            credential.scope,
+            "https://www.googleapis.com/auth/documents",
+        ),
+        "docsExportReady": google_has_any_scope(
+            credential.scope,
+            "https://www.googleapis.com/auth/documents",
+        )
+        and google_has_any_scope(
+            credential.scope,
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/drive",
+        ),
+        "hasCalendarScope": google_has_any_scope(
+            credential.scope,
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/calendar.events",
+        ),
+        "hasGmailReadScope": google_has_any_scope(
+            credential.scope,
+            "https://www.googleapis.com/auth/gmail.readonly",
+        ),
+    }
+
+
+async def resolve_google_oauth_client_config(
+    session: AsyncSession,
+) -> GoogleOAuthClientConfig:
+    if settings.google_client_id and settings.google_client_secret:
+        return GoogleOAuthClientConfig(
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+        )
+    try:
+        gcal_cfg = await resolve_gcal_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Google OAuth credentials are not configured",
+                "code": "google_not_configured",
+                "details": {"missing_fields": exc.missing_fields},
+            },
+        ) from exc
+    return GoogleOAuthClientConfig(
+        client_id=gcal_cfg.client_id, client_secret=gcal_cfg.client_secret
+    )
+
+
+async def sync_personal_google_integrations(
+    session: AsyncSession,
+    *,
+    credential: GoogleCredential,
+    client_id: str,
+    client_secret: str,
+) -> None:
+    if not credential.connected_email:
+        return
+
+    has_calendar = google_has_any_scope(
+        credential.scope,
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events",
+    )
+    if not has_calendar:
+        await session.execute(
+            update(Integration)
+            .where(
+                Integration.provider == "gcal",
+                Integration.workspace_id == credential.connected_email,
+                Integration.agent_id == "default",
+            )
+            .values(status="revoked")
+        )
+        return
+
+    encrypted = encrypt_credentials(
+        {
+            "access_token": credential.access_token,
+            "refresh_token": credential.refresh_token or "",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+    )
+    await integrations_repo.upsert_integration(
+        session,
+        provider="gcal",
+        workspace_id=credential.connected_email,
+        encrypted_credentials=encrypted,
+        display_name=credential.connected_email,
+        scopes=[
+            scope
+            for scope in (
+                "https://www.googleapis.com/auth/calendar",
+                "https://www.googleapis.com/auth/calendar.events",
+            )
+            if google_has_any_scope(credential.scope, scope)
+        ],
+    )
+
+
+async def revoke_personal_google_integrations(
+    session: AsyncSession,
+    *,
+    connected_email: str | None,
+) -> None:
+    if not connected_email:
+        return
+    await session.execute(
+        update(Integration)
+        .where(
+            Integration.provider == "gcal",
+            Integration.workspace_id == connected_email,
+            Integration.agent_id == "default",
+        )
+        .values(status="revoked")
+    )
+
+
+async def complete_google_oauth(
+    *,
+    session: AsyncSession,
+    current_user_id: int,
+    code: str,
+    state: str,
+    redirect_uri: str,
+) -> GoogleOAuthState:
+    expected_state = pop_google_oauth_state(state)
+    if expected_state is None or expected_state.user_id != current_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid or expired OAuth state",
+                "code": "invalid_google_oauth_state",
+            },
+        )
+
+    config = await resolve_google_oauth_client_config(session)
+    existing = await get_google_credential(
+        session,
+        user_id=current_user_id,
+        purpose=expected_state.purpose,
+    )
+    try:
+        tokens = await exchange_code_for_tokens(
+            code=code,
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+            redirect_uri=redirect_uri,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": f"Google OAuth exchange failed: {exc}",
+                "code": "google_oauth_failed",
+            },
+        ) from exc
+
+    refresh_token = tokens.refresh_token or (existing.refresh_token if existing else None)
+    stored = await upsert_google_credential(
+        session,
+        user_id=current_user_id,
+        purpose=expected_state.purpose,
+        access_token=tokens.access_token,
+        refresh_token=refresh_token,
+        expiry=tokens.expiry,
+        scope=tokens.scope,
+        connected_email=tokens.connected_email,
+    )
+    if expected_state.purpose == "personal":
+        await sync_personal_google_integrations(
+            session,
+            credential=stored,
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+        )
+    return expected_state
