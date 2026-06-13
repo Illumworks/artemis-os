@@ -65,12 +65,15 @@ async def upsert_integration(
     )
     result = await session.execute(stmt)
     row_id: int = result.scalar_one()
-    # Expire any cached ORM object for this row so the re-fetch below reflects
-    # the ON CONFLICT DO UPDATE result (e.g. status='active' after healing a
-    # previously-revoked row).
-    session.expire_all()
     # Re-fetch as ORM object so callers receive a fully-mapped Integration.
-    orm_result = await session.execute(select(Integration).where(Integration.id == row_id))
+    # populate_existing=True refreshes an identity-map-cached row so the
+    # ON CONFLICT DO UPDATE result (e.g. status='active' after healing a
+    # previously-revoked row) is reflected — without the blunt session.expire_all().
+    orm_result = await session.execute(
+        select(Integration)
+        .where(Integration.id == row_id)
+        .execution_options(populate_existing=True)
+    )
     return orm_result.scalar_one()
 
 
