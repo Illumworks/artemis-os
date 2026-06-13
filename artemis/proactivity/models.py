@@ -16,6 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import text
 
 from artemis.db import Base
 
@@ -139,6 +140,65 @@ class Commitment(Base):
     last_notified_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+
+
+class ProposedAction(Base):
+    """Lifecycle table for the propose→confirm agency-writes gate.
+
+    Every side-effecting action Artemis wants to take on Jon's behalf is
+    inserted here in ``proposed`` state.  Jon's reply (yes/no) in the DM
+    transitions it to ``approved``/``rejected``; only an ``approved`` row can
+    reach ``executed`` or ``failed``.  Rows are never deleted (lossless /
+    audit invariant).
+
+    Safety invariants enforced in application code:
+    - No execution path exists without a prior approved transition.
+    - A proposal executes at most once (double-yes is a no-op).
+    - The payload approved is the payload executed (immutable after insert).
+    - Every state transition is appended to the JSONB ``audit`` list.
+    """
+
+    __tablename__ = "proposed_actions"
+    __table_args__ = (
+        CheckConstraint(
+            "action_type IN ("
+            "'calendar.create',"
+            "'calendar.update',"
+            "'calendar.respond',"
+            "'slack.send',"
+            "'jira.create',"
+            "'gmail.send'"
+            ")",
+            name="ck_proposed_actions_action_type",
+        ),
+        CheckConstraint(
+            "status IN ('proposed','approved','rejected','executed','failed','expired')",
+            name="ck_proposed_actions_status",
+        ),
+        Index("idx_proposed_actions_target_status", "target_user_id", "status"),
+        Index("idx_proposed_actions_expires", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    action_type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    preview: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="proposed")
+    requested_by: Mapped[str] = mapped_column(Text, nullable=False)
+    target_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    executed_result: Mapped[Any] = mapped_column(JSONB, nullable=True)
+    audit: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
