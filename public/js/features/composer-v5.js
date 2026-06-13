@@ -175,15 +175,21 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         if (meta && meta.flags !== undefined) {
           // Rebuild decorations from the new flags array.
           const decos = meta.flags.map((f) =>
-            Decoration.inline(f.pmFrom, f.pmTo, {
-              class: "cv5-claim-flag cv5-claim-flag--glow",
-              "data-claim-reason": f.reason,
-              "data-claim-text": f.text,
-              "data-claim-nearest": JSON.stringify(f.nearestApproved || []),
-              "data-claim-from": String(f.pmFrom),
-              "data-claim-to": String(f.pmTo),
-              title: "Claim not in Register — click to resolve",
-            })
+            Decoration.inline(
+              f.pmFrom,
+              f.pmTo,
+              {
+                class: "cv5-claim-flag cv5-claim-flag--glow",
+                "data-claim-id": f.claimId,
+                "data-claim-reason": f.reason,
+                "data-claim-text": f.text,
+                "data-claim-nearest": JSON.stringify(f.nearestApproved || []),
+                "data-claim-from": String(f.pmFrom),
+                "data-claim-to": String(f.pmTo),
+                title: "Claim not in Register — click to resolve",
+              },
+              { claimId: f.claimId }
+            )
           );
           return { decoSet: DecorationSet.create(newState.doc, decos) };
         }
@@ -383,6 +389,10 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     dispatchTransaction(tr) {
       const next = view.state.apply(tr);
       view.updateState(next);
+      if (tr.docChanged) {
+        docEpoch += 1;
+        remapTransientCollabState(tr.mapping, next.doc.content.size);
+      }
       // Phase 3: ship any locally-authored steps to the room. Runs through this
       // SAME dispatch path for both local edits and applied remote steps, so the
       // selection toolbar + decoration mapping always run normally (R6).
@@ -645,6 +655,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
   async function runClaimScan() {
     if (destroyed) return;
+    const requestEpoch = docEpoch;
     const { text: fullText, posMap } = serializeDocToTextWithMap(view.state.doc);
     if (!fullText.trim()) return;
 
@@ -656,10 +667,10 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       console.warn("[composer-v5] claim-scan failed:", err);
       return;
     }
-    if (destroyed) return;
+    if (destroyed || requestEpoch !== docEpoch) return;
 
     const docSize = view.state.doc.content.size;
-    const flags = (result.flags || []).map((f) => {
+    const flags = (result.flags || []).map((f, idx) => {
       // posMap[i]             = PM pos of text char i (inclusive start)
       // posMap[text.length]   = PM pos one past the last char (exclusive end)
       // f.start / f.end are Python-slice offsets (exclusive end) into fullText.
@@ -667,7 +678,12 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       const clampEnd   = Math.max(0, Math.min(f.end,   posMap.length - 1));
       const pmFrom = posMap[clampStart] ?? 0;
       const pmTo   = posMap[clampEnd]   ?? docSize;
-      return { ...f, pmFrom, pmTo };
+      return {
+        ...f,
+        claimId: `claim-${clampStart}-${clampEnd}-${idx}`,
+        pmFrom,
+        pmTo,
+      };
     }).filter((f) => f.pmFrom < f.pmTo);
 
     // Dispatch a transaction carrying the new flags for the plugin to pick up.
@@ -730,6 +746,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     activeClaimFlag = flagEl;
     const reason    = flagEl.dataset.claimReason || "quantified";
     const claimText = flagEl.dataset.claimText   || flagEl.textContent || "";
+    const claimId   = flagEl.dataset.claimId || "";
     // Read the PM range that was stamped on the decoration element.
     const flagPmFrom = flagEl.dataset.claimFrom ? Number(flagEl.dataset.claimFrom) : null;
     const flagPmTo   = flagEl.dataset.claimTo   ? Number(flagEl.dataset.claimTo)   : null;
@@ -800,7 +817,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
         e.stopPropagation();
         const phrasing = btn.dataset.phrasing || "";
         if (!phrasing) return;
-        handleClaimReplace(phrasing, flagPmFrom, flagPmTo);
+        handleClaimReplace(phrasing, claimId, flagPmFrom, flagPmTo);
       });
     });
   }
@@ -860,13 +877,25 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     }
   }
 
-  function handleClaimReplace(approvedPhrasing, pmFrom, pmTo) {
+  function resolveClaimDecorationRange(claimId) {
+    if (!claimId) return null;
+    const pluginState = claimFlagsKey.getState(view.state);
+    const decoSet = pluginState?.decoSet;
+    if (!decoSet?.find) return null;
+    const match = decoSet.find(0, view.state.doc.content.size, (spec) => spec?.claimId === claimId)[0];
+    if (!match) return null;
+    return { from: match.from, to: match.to };
+  }
+
+  function handleClaimReplace(approvedPhrasing, claimId, pmFrom, pmTo) {
     // Replace the flagged claim's text span with the approved phrasing.
     // Single-span replace: tr.replaceWith(from, to, schema.text(...)) — same
     // pattern as the rewrite-span Accept handler (lossless, undoable).
-    // Falls back to a best-effort text search if PM positions are stale.
-    let from = pmFrom != null ? pmFrom : null;
-    let to   = pmTo   != null ? pmTo   : null;
+    // Resolve the CURRENT decoration positions from plugin state rather than
+    // relying on the stale DOM-stamped from/to captured when the flag first rendered.
+    const liveRange = resolveClaimDecorationRange(claimId);
+    let from = liveRange?.from ?? (pmFrom != null ? pmFrom : null);
+    let to   = liveRange?.to   ?? (pmTo   != null ? pmTo   : null);
 
     // If positions are missing or stale (0/0), skip — we can't replace blindly.
     if (from === null || to === null || from >= to) {
@@ -1252,6 +1281,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // further autosaves until the user reloads.
   let liveContentVersion = draft.liveContentVersion ?? 0;
   let staleConflict = false;
+  let docEpoch = 0;
 
   // ── Phase 1 collab presence ───────────────────────────────────────────────
   //
@@ -1276,6 +1306,48 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   // rejects a stale submission — either way we then flush whatever is queued.
 
   let awaitingAck = false;
+
+  function _mapStoredRange(range, mapping, docSize) {
+    if (!range || range.from == null || range.to == null) return null;
+    const mappedFrom = mapping.map(range.from, -1);
+    const mappedTo = mapping.map(range.to, 1);
+    const from = Math.max(0, Math.min(mappedFrom, docSize));
+    const to = Math.max(0, Math.min(mappedTo, docSize));
+    if (from >= to) return null;
+    return { ...range, from, to };
+  }
+
+  function remapTransientCollabState(mapping, docSize) {
+    selectionRange = _mapStoredRange(selectionRange, mapping, docSize);
+    pendingRewrite = _mapStoredRange(pendingRewrite, mapping, docSize);
+    commentAnchorRange = _mapStoredRange(commentAnchorRange, mapping, docSize);
+
+    for (const [commentId, anchor] of commentAnchorState) {
+      if (!anchor || anchor.lost || anchor.pmFrom == null || anchor.pmTo == null) continue;
+      const mapped = _mapStoredRange({ from: anchor.pmFrom, to: anchor.pmTo }, mapping, docSize);
+      if (!mapped) {
+        commentAnchorState.set(commentId, { ...anchor, pmFrom: 0, pmTo: 0, lost: true });
+        continue;
+      }
+      commentAnchorState.set(commentId, {
+        ...anchor,
+        pmFrom: mapped.from,
+        pmTo: mapped.to,
+      });
+    }
+
+    requestAnimationFrame(() => {
+      if (selectionRange && selToolbar.classList.contains("is-visible")) {
+        positionNearSelection(selToolbar);
+      }
+      if (selectionRange && rewritePopover.style.display !== "none") {
+        positionNearSelection(rewritePopover);
+      }
+      if (selectionRange && commentComposerEl.style.display !== "none") {
+        positionNearSelection(commentComposerEl);
+      }
+    });
+  }
 
   /** Ship any unconfirmed locally-authored steps to the room (one batch in flight). */
   function trySendSteps() {
@@ -1318,6 +1390,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     if (!baseline || typeof baseline.doc !== "string") return;
     const baseVersion = baseline.version ?? 0;
     const newDoc = textToProseMirrorDoc(baseline.doc, composerSchema);
+    docEpoch += 1;
     view.updateState(
       EditorState.create({
         doc: newDoc,
@@ -1337,11 +1410,18 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
       }
     }
     // The editor now matches the room; reset autosave + ack bookkeeping.
+    selectionRange = null;
+    selectionText = "";
+    hideSelToolbar();
+    hideRewritePopover();
+    closeClaimPopover();
+    closeCommentComposer();
     lastSavedContent = serializeDocToText(view.state.doc);
     dirty = false;
     awaitingAck = false;
     staleConflict = false;
     showConflictBanner(false);
+    _rebuildCommentAnchorState();
     scheduleCommentsReflow();
   }
 
@@ -1371,7 +1451,13 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
    */
   function renderPresenceAvatars() {
     if (!presenceAvatarsEl) return;
-    const list = Array.from(peers.values());
+    const deduped = new Map();
+    for (const peer of peers.values()) {
+      const emailKey = String(peer.email || "").trim().toLowerCase();
+      if (!emailKey || deduped.has(emailKey)) continue;
+      deduped.set(emailKey, peer);
+    }
+    const list = Array.from(deduped.values());
     const shown = list.slice(0, 5);
     const overflow = list.length - shown.length;
 
@@ -2912,6 +2998,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   let commentsData = [];            // top-level CommentRead objects (with .replies)
   let commentsRefreshTimer = null;
   const COMMENTS_REFLOW_DEBOUNCE_MS = 300;
+  const commentAnchorState = new Map();
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -2955,6 +3042,24 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     return esc(body).replace(/@([^\s@,;:!?'"()\[\]]+)/g,
       (_, tok) => `<span class="cv5-comment-mention">@${esc(tok)}</span>`
     );
+  }
+
+  function _pmRangeToOffsets(from, to) {
+    const { text: fullText, posMap } = serializeDocToTextWithMap(view.state.doc);
+    let anchorStart = null;
+    let anchorEnd   = null;
+    for (let i = 0; i < posMap.length; i++) {
+      const pmPos = posMap[i];
+      if (pmPos >= from && anchorStart === null) anchorStart = i;
+      if (pmPos < to) anchorEnd = i + 1;
+    }
+    if (anchorStart === null) anchorStart = 0;
+    if (anchorEnd   === null) anchorEnd   = 0;
+    return {
+      anchorStart,
+      anchorEnd,
+      anchoredText: fullText.slice(anchorStart, anchorEnd),
+    };
   }
 
   // Resolve anchorStart/anchorEnd → {pmFrom, pmTo, lost}.
@@ -3012,6 +3117,13 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     return { pmFrom, pmTo, lost };
   }
 
+  function _rebuildCommentAnchorState() {
+    commentAnchorState.clear();
+    commentsData.forEach((comment) => {
+      commentAnchorState.set(String(comment.id), _resolveAnchor(comment));
+    });
+  }
+
   // ── Main render pipeline ──────────────────────────────────────────────────
 
   // commentExpandedSet: set of comment IDs (as strings) that are in expanded state.
@@ -3023,6 +3135,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     try {
       const all = await listDraftCommentsApi(currentDraftId);
       commentsData = Array.isArray(all) ? all : [];
+      _rebuildCommentAnchorState();
     } catch (err) {
       console.warn("[composer-v5] comments fetch failed:", err);
       return;
@@ -3036,8 +3149,10 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
 
     // 1. Resolve anchors for all top-level comments (only top-level get cards).
     const resolved = commentsData.map((c) => {
-      const { pmFrom, pmTo, lost } = _resolveAnchor(c);
-      return { comment: c, pmFrom, pmTo, lost };
+      const commentId = String(c.id);
+      const cached = commentAnchorState.get(commentId) || _resolveAnchor(c);
+      commentAnchorState.set(commentId, cached);
+      return { comment: c, pmFrom: cached.pmFrom, pmTo: cached.pmTo, lost: cached.lost };
     });
 
     // 2. Update the comments plugin highlight decorations.
@@ -3344,7 +3459,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   commentComposerEl.style.display = "none";
   document.body.appendChild(commentComposerEl);
 
-  let commentAnchorRange = null;  // { from, to, anchorStart, anchorEnd, anchoredText }
+  let commentAnchorRange = null;  // { from, to, anchoredText }
   // Tracked at mount level so closeCommentComposer can remove any orphaned mention dropdown.
   let _activeMentionDropdownEl = null;
 
@@ -3358,23 +3473,9 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
   function openCommentComposer() {
     if (!selectionRange) return;
     const { from, to } = selectionRange;
+    const { anchoredText } = _pmRangeToOffsets(from, to);
 
-    // Convert PM positions to char offsets using serializeDocToTextWithMap.
-    // posMap[charIdx] = pmPos.  We need the inverse: for pmPos in [from,to],
-    // find the range of char indices that map into that PM span.
-    const { text: fullText, posMap } = serializeDocToTextWithMap(view.state.doc);
-    let anchorStart = null;
-    let anchorEnd   = null;
-    for (let i = 0; i < posMap.length; i++) {
-      const pmPos = posMap[i];
-      if (pmPos >= from && anchorStart === null) anchorStart = i;
-      if (pmPos < to) anchorEnd = i + 1;
-    }
-    if (anchorStart === null) anchorStart = 0;
-    if (anchorEnd   === null) anchorEnd   = 0;
-    const anchoredText = fullText.slice(anchorStart, anchorEnd);
-
-    commentAnchorRange = { from, to, anchorStart, anchorEnd, anchoredText };
+    commentAnchorRange = { from, to, anchoredText };
 
     // Show "commenting as" user.
     const me = currentUser;
@@ -3614,7 +3715,14 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     if (!body) return;
     if (!commentAnchorRange) return;
 
-    const { anchorStart, anchorEnd, anchoredText } = commentAnchorRange;
+    const { anchorStart, anchorEnd, anchoredText } = _pmRangeToOffsets(
+      commentAnchorRange.from,
+      commentAnchorRange.to
+    );
+    if (anchorStart >= anchorEnd) {
+      callbacks.onError?.("Could not locate the current comment span. Re-select the text and try again.");
+      return;
+    }
     const mentions = _parseMentions(body);
 
     const submitBtn = commentComposerEl.querySelector(".cv5-cc-submit");
