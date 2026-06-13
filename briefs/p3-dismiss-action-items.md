@@ -1,6 +1,6 @@
 # Worker Brief — Dismiss action-items ("never mind, drop it")
 
-**Owner:** Codex (backend-heavy; FE control can be delegated to a Sonnet sub-worker).
+**Owner:** terminal sub-agent B (Codex rate-limited) — see `briefs/p3-terminal-parallel-orchestration.md`.
 **Lead:** Artemis (Opus) verifies live + merges.
 **Isolation (AGENTS.md rule 6):** isolated worktree, branch `worker/p3-dismiss-action-items`; **commit before
 reporting**, do-NOT-merge-report.

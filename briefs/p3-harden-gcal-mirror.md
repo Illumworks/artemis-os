@@ -1,6 +1,7 @@
 # Worker Brief — Harden the personal→gcal integration mirror (no false revoke)
 
-**Owner:** Codex (backend). **Lead:** Artemis (Opus) verifies live + merges.
+**Owner:** terminal sub-agent A (Codex rate-limited) — see `briefs/p3-terminal-parallel-orchestration.md`.
+**Lead:** Artemis (Opus) verifies live + merges.
 **Isolation (AGENTS.md rule 6):** isolated worktree, branch `worker/p3-harden-gcal-mirror`; **commit your work
 on the branch before reporting**, then do-NOT-merge-report.
 **Status:** READY. Small, focused robustness fix in `artemis/google_integration.py`.
