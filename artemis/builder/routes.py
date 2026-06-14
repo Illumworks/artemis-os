@@ -41,7 +41,7 @@ from artemis.builder.schemas import (
     TrajectorySummaryRead,
 )
 from artemis.db import get_session
-from artemis.marketing.routes._auth import require_token
+from artemis.marketing.routes._auth import require_owner, require_token
 from artemis.marketing.routes._errors import bad_request, not_found
 
 logger = logging.getLogger(__name__)
@@ -71,17 +71,22 @@ def _resolve_builder_adapter() -> Any:
     )
 
 
+# M3/D8: the agent builder is an owner-only admin surface. Marketing teammates
+# authenticate (require_token) but must NOT reach the builder — its handle_turn /
+# _search_memory path can read any agent scope. require_owner fails closed.
 router = APIRouter(
     prefix="/api/builder",
     tags=["builder"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
-# Separate router for the agents subresource (no /api/builder prefix)
+# Separate router for the agents subresource (no /api/builder prefix).
+# Only the builder's admin endpoints (mark-reviewed, builder-context) live here;
+# general /api/agents reads are served by a different router and are unaffected.
 agents_subresource_router = APIRouter(
     prefix="/api/agents",
     tags=["agents", "builder"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 
