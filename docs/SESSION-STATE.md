@@ -95,6 +95,32 @@ the *right* memory when asked. Order this session: M1c (done) → **M1 (done)** 
 
 ---
 
+## ⏭️ NEXT UP — fire order for terminal (queued 2026-06-14)
+
+Terminal's CURRENT task = `briefs/proactivity-verify-and-triage.md`. **After it finishes**, these are READY to
+fire (Opus verifies + merges each). Grounded against code 2026-06-14 — only genuine gaps; reuse, don't rebuild.
+
+**Agency-writes (P3) — accurate state:** the propose→confirm gate (`agency_gate.py`) + OKR writes + **Jira
+writes** (`jira_tools.py`: add_comment/transition/assign/create) + **Calendar** are DONE/live. The ONLY gaps:
+Gmail-send + Slack-send-as-Jon (two `NotImplementedError` executors), and they need Gmail/Calendar scopes
+actually connected first.
+
+**Fire order:**
+1. **`briefs/p3-floating-callie-frontend.md`** (NEW, independent) — make the floating WIDGET show Callie to
+   marketing users / Artemis to owner (backend already enforces this via server-resolved `metadata.agent_id`;
+   this is the UI half of D11). Can go first/parallel; small; real-browser verify.
+2. **`briefs/p3-google-multiaccount-and-reads.md`** (EXISTING, READY) — connect Calendar + Gmail scopes /
+   multi-account (today only Docs/Drive on one account → gcal cache empty, no Gmail). FOUNDATION; adds a
+   migration (Lead runs `alembic upgrade head` post-merge). Prereq for Gmail send/read.
+3. **`briefs/p3-agency-messaging-sends.md`** (EXISTING, READY) — implement the Gmail-send + Slack-send-as-Jon
+   executors on the proven gate. DEPENDS on #2 for Gmail. Lead audits + live-tests (sends *as Jon*).
+
+**Then the bigger Chapter-2 arc (not yet briefed; heavier R&D — do when ready to invest):** P5 learning loop /
+skill capture (⚪ not started; the competitive standout) → P6 self-evolution (⚪ capstone; now UNBLOCKED by the
+memory upgrades — let execution traces accumulate first). Writing Studio backlog = ✅ all 5 done.
+
+---
+
 ## ⏩ CURRENT STATE — 2026-06-11
 
 **Move:** done. Repo lives at `/Users/artemis/Artemis/artemis-os`, git HEAD intact. App restart =
