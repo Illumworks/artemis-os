@@ -290,9 +290,23 @@ Personal (Jon's Artemis) and marketing (the team + Callie) run as **ONE applicat
 
 **Worst case (accepted):** a permission bug leaks personal→team. Mitigation: enforce at retrieval + the memory API (defense in depth), with tests; never rely on UI hiding alone.
 
-**Implementation = M3** (identity-aware scope enforcement for BOTH named agents and human users). The live exposure is closed as the first step.
+**Implementation = M3** (identity-aware scope enforcement for BOTH named agents and human users). Access matrix
++ build plan: `briefs/memory-m3-identity-scope-enforcement.md`. Marketing teammates SHARE the marketing
+workspace (no teammate-vs-teammate isolation in v1); each keeps a private `personal:<user_id>`. Built one-shot
+(no interim slice) per Jon. FAIL-CLOSED: any uncertainty → deny, never fall back to all-scopes.
 
 **Build the scope boundaries clean enough that a future split stays cheap** — see the parked capability at the end of this doc (Jon's requirement).
+
+---
+
+### D11 — In-app floating assistant routed by identity — locked 2026-06-14
+
+Floating Artemis is context-aware across the whole app, so serving it to a marketing user leaks personal
+context. Therefore: **owner (Jon) → Floating Artemis** (full app, admin, all scopes); **every other authed
+(marketing) user → Floating Callie** (Callie persona, marketing surfaces + `agent:callie`/marketing scopes
+only, NO personal/agent:artemis). The agent_id is resolved SERVER-SIDE from identity (never client-trusted) and
+the assistant's memory/tools/page-context are constrained by the M3 `allowed_scopes_for` allow-list. Reuses the
+existing FA agent_id parameterization (Callie C1). Part of M3.
 
 ---
 
