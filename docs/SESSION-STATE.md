@@ -57,19 +57,32 @@ the *right* memory when asked. Order this session: M1c (done) → **M1 (done)** 
     **DEFERRED** — worker correctly left prod fusion weights untouched; don't change them on a 24-query set for
     ~+0.02 MRR. Revisit only with an expanded QA set. (3) Hard pair #514/#515 left open (n=2, not worth
     over-engineering).
-- **MEMORY PHASE — what's left:** just **M3 — now reframed + URGENT.** M3 = identity-aware scope enforcement
-  for BOTH named agents AND human users. **ARCHITECTURE DECISION D8 (2026-06-14, Jon):** personal + marketing
-  run as ONE app with role-based access at the data layer (not two apps); preserve future personal-split (F1).
-  See `docs/ARTEMIS-OS-MASTER-PLAN.md` D8 + F1 and [[project-single-app-rbac-decision]].
-  - **LIVE EXPOSURE (confirmed):** marketing teammates log in via Google/Cloudflare and **can currently see the
-    personal tabs** (OKRs/calendar/personal memory). Root cause: memory API + surfaces AUTHENTICATE (identity
-    resolved) but do NOT AUTHORIZE by scope — `/api/memory/observations` etc. return ALL scopes to any
-    authenticated caller (`routes/memory.py`, `marketing/routes/_auth.py: require_token`). **M3 slice 1 = close
-    this** (gate personal surfaces + scope-enforce the memory API to the caller's identity). Slice 2 = full
-    identity→allowed-scopes enforcement at retrieval (agents + humans). NO brief written yet — design first;
-    build split-friendly per F1. Conflict-detection (M1) DONE (above).
-  - After M3, memory phase wraps → **resume the proactivity engine** (P2b commitments → P2c follow-ups + Callie
-    nudges) per [[roadmap-sequencing-ws-then-proactivity]].
+- **M3 — identity-aware scope enforcement: MERGED `f4b09f1` + LIVE 2026-06-14.** The live personal-data
+  exposure (marketing teammates could see the owner's personal tabs/memory) is CLOSED. **D8** (one app + RBAC,
+  not two apps) + **D11** (floating Artemis for owner / floating Callie for marketing) + **F1** (future split,
+  parked). See `docs/ARTEMIS-OS-MASTER-PLAN.md` D8/D11/F1, `briefs/memory-m3-identity-scope-enforcement.md`,
+  [[project-single-app-rbac-decision]]. What shipped:
+  - `artemis/identity/scope_policy.py` — single-source `allowed_scopes_for_email/_agent` + `ScopeAllowance`
+    (FAIL-CLOSED: unknown/unresolved → deny, never all). Owner=`amiracentral@amiralearning.com`→all; marketing
+    human→marketing-shared + own `personal:<uid>`; callie→marketing + agent:callie (NO personal/agent:artemis);
+    artemis→all. Marketing teammates SHARE the marketing workspace (no teammate isolation v1).
+  - Enforced at ALL read paths: HTTP memory API (`routes/memory.py`+`repository.py`, SQL-level), agent retrieval
+    (`floating_artemis/memory.py:_enforce_agent_scope_set`), the `query_memory` TOOL + chat provenance
+    (`tools/core.py`, `chat.py`), MCP paths. **Turn-boundary identity binding:** web turn entrypoints resolve
+    the LIVE identity → trusted_agent_id (owner→artemis else→callie), overriding persisted/stale session
+    metadata; default flipped from fail-OPEN "artemis" to fail-CLOSED "callie". D11 floating agent resolved
+    SERVER-SIDE. **Agent builder owner-only** (`require_owner`, `marketing/routes/_auth.py`) — last vector.
+  - **Verification (Lead, hard):** each worker pass caught a deeper hole — found the build wired into the right
+    HTTP layer but NOT the agent tool path, then NOT the turn-identity binding, then the builder vector. Final:
+    382 floating+M3 tests green; my own adversarial access-engine check passed; marketing-on-stale-artemis-
+    session DENIED personal proven via the real path. **Lesson reinforced:** [[verify-actual-call-path]] +
+    [[live-smokes-catch-real-bugs]] — test the door a real user uses, not the convenient one.
+  - **Follow-up (defense-in-depth, non-urgent):** the builder's internal `_search_memory` doesn't scope-limit
+    which agent_id the LLM queries — now MOOT for the leak (builder is owner-only) but a nice hardening later.
+
+- **MEMORY UPGRADE PHASE — COMPLETE** (M1b dedup, M1c ranking/recall, M1 conflicts, M3 access — all merged +
+  live). **NEXT: resume the proactivity engine** (P2b commitments → P2c follow-ups + Callie nudges) per
+  [[roadmap-sequencing-ws-then-proactivity]].
 
 ---
 
