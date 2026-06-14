@@ -423,6 +423,10 @@ async def write_observation_with_conflict_check(
     conflicts = detect_conflicts(new_obs_with_m2, candidates)
     now = datetime.now(UTC)
 
+    # Track which existing obs ids are already handled by rule-based detectors
+    # so we don't double-write a memory_conflicts row.
+    rule_conflict_ids: set[int] = {c.existing_id for c in conflicts}
+
     for conflict_candidate in conflicts:
         existing_id = conflict_candidate.existing_id
         existing_row = next((r for r in candidates_rows if r.id == existing_id), None)
@@ -469,6 +473,53 @@ async def write_observation_with_conflict_check(
             resolved_by="auto" if auto_resolvable else None,
         )
         session.add(conflict_row)
+
+    # M1 semantic conflict detection — runs AFTER rule-based detectors.
+    # FAIL SAFE: any error here must not crash the transaction.
+    try:
+        from artemis.memory.semantic_conflict_detector import detect_semantic_conflicts
+
+        semantic_candidates = await detect_semantic_conflicts(
+            new_obs_with_m2, candidates, session
+        )
+        for sem_cand in semantic_candidates:
+            if sem_cand.existing_id in rule_conflict_ids:
+                # Already handled by a rule-based detector; skip to avoid duplicate rows.
+                continue
+
+            existing_row = next(
+                (r for r in candidates_rows if r.id == sem_cand.existing_id), None
+            )
+            if existing_row is None:
+                continue
+
+            if sem_cand.auto_resolve:
+                # High-confidence semantic contradiction → supersede the existing obs.
+                await supersede_observation(session, sem_cand.existing_id, new_obs.id)
+                sem_resolution = "auto"
+            else:
+                # Borderline → write review row; leave both observations active.
+                sem_resolution = None
+
+            obs_a = min(new_obs.id, sem_cand.existing_id)
+            obs_b = max(new_obs.id, sem_cand.existing_id)
+            sem_conflict_row = MemoryConflict(
+                scope_id=scope.scope_id,
+                observation_a_id=obs_a,
+                observation_b_id=obs_b,
+                conflict_type=sem_cand.conflict_type,
+                detected_at=now,
+                resolution=sem_resolution,
+                resolution_reason=sem_cand.reason or None,
+                resolved_at=now if sem_cand.auto_resolve else None,
+                resolved_by="auto" if sem_cand.auto_resolve else None,
+            )
+            session.add(sem_conflict_row)
+    except Exception:
+        _logger.error(
+            "M1 semantic conflict detection failed (non-fatal); observation still written",
+            exc_info=True,
+        )
 
     await session.flush()
 
