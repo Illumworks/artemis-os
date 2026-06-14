@@ -95,6 +95,10 @@ class Settings(BaseSettings):
         default=Path.home() / ".artemis" / "archive",
         description="Root directory for cold-tier raw_inputs archives.",
     )
+    memory_eval_dir: Path = Field(
+        default=Path.home() / ".artemis" / "memory-eval",
+        description="Directory for persisted retrieval-eval QA sets and reports.",
+    )
     backup_dir: Path = Field(
         default=Path.home() / ".artemis" / "backups",
         description="Directory for nightly pg_dump backups.",

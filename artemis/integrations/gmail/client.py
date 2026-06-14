@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import base64
-from email.message import EmailMessage
 from collections.abc import Mapping, Sequence
+from email.message import EmailMessage
 from typing import Any
 
 import httpx

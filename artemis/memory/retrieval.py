@@ -295,6 +295,8 @@ async def search_observations(
     modes: list[Literal["fts", "semantic", "recency", "score", "graph_expand"]] | None = None,
     cfg: RetrievalConfig | None = None,
     provider: EmbeddingProvider | None = None,
+    *,
+    record_usage: bool = True,
 ) -> list[ScoredObservation]:
     """Fusion search across active (non-superseded) observations in scope_set.
 
@@ -310,6 +312,7 @@ async def search_observations(
         modes: which retrieval channels to use; defaults to all four
         cfg: retrieval weights config; defaults to config/memory-retrieval.yaml
         provider: embedding provider; defaults to get_default_provider()
+        record_usage: when False, skip the async hit_count/accessed_at side-effect.
     """
     if not scope_set:
         return []
@@ -506,9 +509,10 @@ async def search_observations(
             expire_on_commit=False,
             class_=AsyncSession,
         )
-    _schedule_observation_usage_update(
-        [obs.id for obs in results],
-        _as_of,
-        session_factory=session_factory,
-    )
+    if record_usage:
+        _schedule_observation_usage_update(
+            [obs.id for obs in results],
+            _as_of,
+            session_factory=session_factory,
+        )
     return results
