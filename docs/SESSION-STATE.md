@@ -81,8 +81,17 @@ the *right* memory when asked. Order this session: M1c (done) → **M1 (done)** 
     which agent_id the LLM queries — now MOOT for the leak (builder is owner-only) but a nice hardening later.
 
 - **MEMORY UPGRADE PHASE — COMPLETE** (M1b dedup, M1c ranking/recall, M1 conflicts, M3 access — all merged +
-  live). **NEXT: resume the proactivity engine** (P2b commitments → P2c follow-ups + Callie nudges) per
-  [[roadmap-sequencing-ws-then-proactivity]].
+  live).
+- **PROACTIVITY ENGINE — ALREADY BUILT + WIRED + RUNNING (corrected 2026-06-14).** The roadmap memory said
+  "next: proactivity" but it's done: `artemis/proactivity/commitments.py:send_commitment_followups` (real:
+  due-soon/un-followed → routed Artemis-DM / Callie-channel Slack post) is registered on the scheduler
+  (`scheduler.py`) which `main.py:126` starts at boot. Morning brief, OKR check-in, stale-review escalation,
+  commitments follow-up, radar all wired. Migrations 0083/0086 applied; `p3-agency-writes` + radar merged.
+  **NOT a build task.** Remaining = (1) prove it FIRES end-to-end live (a real commitment → real Slack
+  follow-up; "wired ≠ firing" — the memory-phase lesson), (2) triage two UNMERGED refinement branches
+  `worker/p2-proactivity-voice` + `worker/p3-tool-implementations` (merge if good / delete if stale). Lean
+  brief for terminal: `briefs/proactivity-verify-and-triage.md`. Design ref (already implemented):
+  `briefs/p2bc-commitments-engine.md` + `docs/p2-proactivity-build-plan.md`.
 
 ---
 
