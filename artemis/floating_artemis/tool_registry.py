@@ -21,10 +21,18 @@ from artemis.integrations.gmail.tools import register_gmail_tools
 from artemis.integrations.slack.tools import register_slack_tools
 
 
-def build_authorized_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry:
-    """Build the full Floating Artemis tool catalog for the given surfaces."""
+def build_authorized_tool_registry(
+    available_surfaces: set[str],
+    agent_id: str | None = None,
+) -> AuthorizedToolRegistry:
+    """Build the full Floating Artemis tool catalog for the given surfaces.
+
+    ``agent_id`` is threaded into ``register_core_tools`` so that ``query_memory``
+    is gated to the calling agent's scope allowance (M3).  Must be supplied for
+    any live session; None → fail-closed (empty results for every query).
+    """
     registry = AuthorizedToolRegistry()
-    register_core_tools(registry)
+    register_core_tools(registry, agent_id=agent_id)
     register_builders_tools(registry)
     register_system_tools(registry)
     if "okr" in available_surfaces:

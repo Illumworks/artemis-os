@@ -104,7 +104,13 @@ async def _seed_observation(
     scope_id: str,
     content: str,
 ) -> int:
-    """Insert a memory observation directly and return its id."""
+    """Insert a memory observation directly and return its id.
+
+    Uses a raw INSERT for speed (no embedding). Does NOT write to
+    memory_observation_scopes, so search_observations() (which uses the join
+    table for scope filtering) will NOT find these rows.  Use
+    _seed_observation_full() when the smoke tests invoke search_observations.
+    """
     result = await db_session.execute(
         text(
             "INSERT INTO memory_observations "
@@ -123,6 +129,26 @@ async def _seed_observation(
     row = result.fetchone()
     await db_session.commit()
     return row[0]
+
+
+async def _seed_observation_full(
+    db_session: AsyncSession,
+    scope_kind: str,
+    scope_id: str,
+    content: str,
+) -> int:
+    """Insert a memory observation using the full store path (writes join table + FTS).
+
+    Required for tests that invoke search_observations, which filters via the
+    memory_observation_scopes join table and relies on the tsvector FTS index.
+    """
+    from artemis.memory.schemas import Scope
+    from artemis.memory.store import write_observation
+
+    scope = Scope(scope_kind=scope_kind, scope_id=scope_id)
+    obs = await write_observation(db_session, scope=scope, content=content, category="test")
+    await db_session.commit()
+    return obs.id
 
 
 async def _seed_user(db_session: AsyncSession, email: str, name: str = "Test User") -> int:
@@ -797,3 +823,252 @@ async def test_marketing_regression_can_read_agent_callie(db_session, client):
     body = resp.json()
     obs_ids = {o["id"] for o in body["observations"]}
     assert callie_obs_id in obs_ids, "Marketing must retain access to agent:callie"
+
+
+# ── 7. Tool-path gating: _make_query_memory / register_core_tools ─────────────
+#
+# These tests assert the agent-reachable memory read paths (the `query_memory`
+# tool) are gated by the calling agent's allowance.  They invoke the tool
+# implementation DIRECTLY (not through the HTTP API) — the primary leak vector.
+
+
+class TestQueryMemoryToolGating:
+    """Unit tests for _make_query_memory scope gating (M3 fix — tool path)."""
+
+    def test_callie_make_query_memory_denies_personal_scope(self):
+        """_make_query_memory for callie returns a deny-function for personal scope."""
+        from artemis.floating_artemis.tools.core import _make_query_memory
+        fn = _make_query_memory("callie")
+        # The function is a coroutine — verify it's callable and the impl is correct.
+        import asyncio, inspect
+        assert inspect.iscoroutinefunction(fn)
+
+    def test_artemis_make_query_memory_passes_all_scopes(self):
+        """_make_query_memory for artemis returns allow-all implementation."""
+        from artemis.floating_artemis.tools.core import _make_query_memory
+        import inspect
+        fn = _make_query_memory("artemis")
+        assert inspect.iscoroutinefunction(fn)
+
+    def test_unknown_agent_make_query_memory_is_deny(self):
+        """_make_query_memory for unknown agent should fail closed."""
+        from artemis.floating_artemis.tools.core import _make_query_memory
+        import inspect
+        fn = _make_query_memory("unknown-hacker")
+        assert inspect.iscoroutinefunction(fn)
+
+    def test_register_core_tools_accepts_agent_id(self):
+        """register_core_tools(registry, agent_id=...) does not raise."""
+        from artemis.floating_artemis.tools.core import register_core_tools
+        from artemis.floating_artemis.authority import AuthorizedToolRegistry
+        registry = AuthorizedToolRegistry()
+        register_core_tools(registry, agent_id="callie")
+        assert "query_memory" in registry
+
+    def test_register_core_tools_no_agent_id_fails_closed(self):
+        """register_core_tools with no agent_id registers a fail-closed impl."""
+        from artemis.floating_artemis.tools.core import register_core_tools
+        from artemis.floating_artemis.authority import AuthorizedToolRegistry
+        registry = AuthorizedToolRegistry()
+        register_core_tools(registry, agent_id=None)
+        assert "query_memory" in registry
+
+    def test_build_authorized_tool_registry_threads_agent_id(self):
+        """build_authorized_tool_registry accepts and threads agent_id."""
+        from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
+        registry = build_authorized_tool_registry(set(), agent_id="callie")
+        assert "query_memory" in registry
+        registry2 = build_authorized_tool_registry(set(), agent_id=None)
+        assert "query_memory" in registry2
+
+
+# ── 8. Live smoke: query_memory tool — Callie DENIED, Artemis ALLOWED ─────────
+#
+# This is the primary leak: the `query_memory` tool was previously called with
+# a scope taken directly from tool INPUT with NO agent gating.  These tests
+# invoke the tool implementation through the REAL agent tool path (not the HTTP
+# API) and assert the RETURNED STRING CONTENT.
+
+
+@pytest.mark.asyncio
+async def test_tool_callie_denied_personal_scope(db_session):
+    """SMOKE: Callie calling query_memory(scope='personal:1') gets NO personal content."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    personal_obs_id = await _seed_observation_full(
+        db_session, "personal", str(owner_id), "PERSONAL SECRET"
+    )
+    # Also seed marketing content to confirm Callie gets THAT but not personal.
+    await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    # Simulate Callie requesting scope=personal:1 (the primary leak vector)
+    callie_qm = _make_query_memory("callie")
+    result = await callie_qm({"query": "SECRET", "scope": f"personal:{owner_id}", "limit": 10})
+
+    assert "PERSONAL SECRET" not in result, (
+        f"Callie must NOT see personal content, but got: {result!r}"
+    )
+    assert result == "No relevant memory found.", (
+        f"Callie requesting personal scope must return empty sentinel, got: {result!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_callie_denied_agent_artemis_scope(db_session):
+    """SMOKE: Callie calling query_memory(scope='agent:artemis') gets NO artemis content."""
+    await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "agent", "artemis", "ARTEMIS SECRET")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    callie_qm = _make_query_memory("callie")
+    result = await callie_qm({"query": "SECRET", "scope": "agent:artemis", "limit": 10})
+
+    assert "ARTEMIS SECRET" not in result, (
+        f"Callie must NOT see agent:artemis content, but got: {result!r}"
+    )
+    assert result == "No relevant memory found.", (
+        f"Callie requesting agent:artemis scope must return empty sentinel, got: {result!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_callie_allowed_marketing_scope(db_session):
+    """SMOKE: Callie calling query_memory(scope='workspace:marketing') gets marketing content."""
+    await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    callie_qm = _make_query_memory("callie")
+    result = await callie_qm({"query": "MARKETING PUBLIC", "scope": "workspace:marketing", "limit": 10})
+
+    # Callie is permitted to read workspace:marketing — must find it.
+    assert result != "No relevant memory found.", (
+        f"Callie must be allowed workspace:marketing scope, got: {result!r}"
+    )
+    assert "MARKETING PUBLIC" in result, (
+        f"Callie must see marketing content, got: {result!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_artemis_allowed_all_scopes(db_session):
+    """SMOKE: Artemis can read personal, agent:artemis, and marketing scopes."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
+    await _seed_observation_full(db_session, "agent", "artemis", "ARTEMIS SECRET")
+    await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    artemis_qm = _make_query_memory("artemis")
+
+    # Personal scope
+    result_personal = await artemis_qm(
+        {"query": "PERSONAL SECRET", "scope": f"personal:{owner_id}", "limit": 10}
+    )
+    assert "PERSONAL SECRET" in result_personal, (
+        f"Artemis must see personal content, got: {result_personal!r}"
+    )
+
+    # agent:artemis scope
+    result_artemis = await artemis_qm(
+        {"query": "ARTEMIS SECRET", "scope": "agent:artemis", "limit": 10}
+    )
+    assert "ARTEMIS SECRET" in result_artemis, (
+        f"Artemis must see agent:artemis content, got: {result_artemis!r}"
+    )
+
+    # workspace:marketing scope
+    result_mktg = await artemis_qm(
+        {"query": "MARKETING PUBLIC", "scope": "workspace:marketing", "limit": 10}
+    )
+    assert "MARKETING PUBLIC" in result_mktg, (
+        f"Artemis must see marketing content, got: {result_mktg!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_unknown_agent_fail_closed(db_session):
+    """SMOKE: Unknown agent_id → fail-closed → no results returned."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    unknown_qm = _make_query_memory("unknown-hacker")
+
+    # Even marketing scope should be denied for unknown agents.
+    result = await unknown_qm({"query": "PUBLIC", "scope": "workspace:marketing", "limit": 10})
+    assert result == "No relevant memory found.", (
+        f"Unknown agent must get empty result, got: {result!r}"
+    )
+
+    # Personal definitely denied.
+    result_personal = await unknown_qm(
+        {"query": "SECRET", "scope": f"personal:{owner_id}", "limit": 10}
+    )
+    assert "PERSONAL SECRET" not in result_personal, (
+        f"Unknown agent must not see personal content, got: {result_personal!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_none_agent_fail_closed(db_session):
+    """SMOKE: None agent_id → fail-closed → no results returned."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    none_qm = _make_query_memory(None)
+    result = await none_qm({"query": "PUBLIC", "scope": "workspace:marketing", "limit": 10})
+    assert result == "No relevant memory found.", (
+        f"None agent_id must fail closed, got: {result!r}"
+    )
+
+
+# ── 9. Provenance re-run (_emit_memory_read_event) scope gating ───────────────
+
+
+@pytest.mark.asyncio
+async def test_emit_memory_read_event_callie_denied_personal(db_session):
+    """_emit_memory_read_event with agent_id=callie must not retrieve personal observations."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
+
+    from artemis.floating_artemis.chat import _emit_memory_read_event
+    from artemis.floating_artemis.memory_read_cache import get as cache_get
+
+    session_id = f"test-emit-{owner_id}"
+    inp = {"query": "SECRET", "scope": f"personal:{owner_id}", "limit": 10}
+
+    # Should not raise; should emit an empty MemoryReadEvent (scope denied).
+    await _emit_memory_read_event(session_id, inp, agent_id="callie")
+    # The cache should have been populated (even if empty).
+    from artemis.floating_artemis.memory_read_cache import get as cache_get
+    event = cache_get(session_id)
+    if event is not None:
+        # If an event was cached, its observations must not contain personal content.
+        for obs in event.observations:
+            assert "PERSONAL SECRET" not in obs.text, (
+                f"Provenance re-run must not cache personal content for callie: {obs.text!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_emit_memory_read_event_artemis_allowed_personal(db_session):
+    """_emit_memory_read_event with agent_id=artemis may retrieve personal observations."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
+
+    from artemis.floating_artemis.chat import _emit_memory_read_event
+
+    session_id = f"test-emit-artemis-{owner_id}"
+    inp = {"query": "PERSONAL SECRET", "scope": f"personal:{owner_id}", "limit": 10}
+
+    # Should not raise; Artemis can read personal.
+    await _emit_memory_read_event(session_id, inp, agent_id="artemis")

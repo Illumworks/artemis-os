@@ -328,8 +328,8 @@ async def _get_okr_reconcile_context(
 # ── Tool registry factory ─────────────────────────────────────────────────────
 
 
-def _build_tool_registry(available_surfaces: set[str]) -> AuthorizedToolRegistry:
-    return build_authorized_tool_registry(available_surfaces)
+def _build_tool_registry(available_surfaces: set[str], agent_id: str | None = None) -> AuthorizedToolRegistry:
+    return build_authorized_tool_registry(available_surfaces, agent_id=agent_id)
 
 
 # ── WS event helpers ──────────────────────────────────────────────────────────
@@ -340,12 +340,20 @@ async def _broadcast(session_id: str, event: dict[str, Any]) -> None:
     await ws_manager.broadcast(room, event)
 
 
-async def _emit_memory_read_event(session_id: str, inp: dict[str, Any]) -> None:
+async def _emit_memory_read_event(
+    session_id: str,
+    inp: dict[str, Any],
+    agent_id: str | None = None,
+) -> None:
     """Re-run search_observations after query_memory completes to emit the provenance event.
 
     This is a secondary lightweight retrieval — results are used only for the
     inspector, never shown as the tool response. If retrieval fails, we still
     emit a MemoryReadEvent with an empty list so the inspector clears stale state.
+
+    M3: ``agent_id`` is enforced via ``_enforce_agent_scope_set`` — the provenance
+    re-run is subject to the same scope allowance as the primary query so the
+    inspector cannot reveal scopes the agent may not read.
     """
     import datetime
 
@@ -354,19 +362,25 @@ async def _emit_memory_read_event(session_id: str, inp: dict[str, Any]) -> None:
         import artemis.db as _db
         from artemis.memory.retrieval import search_observations
         from artemis.memory.schemas import Scope
+        from artemis.floating_artemis.memory import _enforce_agent_scope_set
 
         query = inp.get("query", "")
         scope = inp.get("scope", "global:global")
         limit = int(inp.get("limit", 10))
         scope_kind, scope_id = scope.split(":") if ":" in scope else (scope, "default")
 
-        async with _db.SessionLocal() as db_session:
-            results = await search_observations(
-                db_session,
-                scope_set=[Scope(scope_kind=scope_kind, scope_id=scope_id)],
-                query=query,
-                limit=limit,
-            )
+        # M3: enforce agent allowance before querying.
+        _agent_id = agent_id or ""
+        enforced = _enforce_agent_scope_set(_agent_id, [Scope(scope_kind=scope_kind, scope_id=scope_id)])
+        results = []
+        if enforced:
+            async with _db.SessionLocal() as db_session:
+                results = await search_observations(
+                    db_session,
+                    scope_set=enforced,
+                    query=query,
+                    limit=limit,
+                )
 
         for r in results:
             text_trunc = r.content[:200] if len(r.content) > 200 else r.content
@@ -711,7 +725,9 @@ async def handle_turn(
         adapter = resolved
 
     # ── 5. Build tool registry ────────────────────────────────────────────────
-    auth_registry = _build_tool_registry(available_surfaces)
+    # M3: pass agent_id into the registry builder so query_memory is gated to
+    # this session's agent allowance.
+    auth_registry = _build_tool_registry(available_surfaces, agent_id=session_ctx.agent_id)
 
     from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 
@@ -721,11 +737,11 @@ async def handle_turn(
     # in-process layer-3/4 confirmation yield, so we only expose auto-invoke
     # tools there. Other providers keep the full intercepting registry.
     if is_claude_code_with_tools:
-        tool_registry = _build_auto_invoke_tool_registry(auth_registry, session_id)
+        tool_registry = _build_auto_invoke_tool_registry(auth_registry, session_id, agent_id=session_ctx.agent_id)
     else:
         # Build a plain ToolRegistry that wraps the authorized one for the loop.
         # Layer 3/4 tools get wrapped so we can intercept before execution.
-        tool_registry = _build_intercepting_tool_registry(auth_registry, session_id)
+        tool_registry = _build_intercepting_tool_registry(auth_registry, session_id, agent_id=session_ctx.agent_id)
 
     # ── 6. Broadcast turn started ─────────────────────────────────────────────
     await _broadcast(
@@ -951,8 +967,22 @@ async def resume_after_confirm(
 
     # Execute or cancel the tool
     if decision == "run":
+        # M3: load session context to get agent_id for scope gating.
+        # query_memory is layer-1 and never reaches resume_after_confirm, but we
+        # gate consistently in case future layer-2+ tools read memory.
+        _resume_agent_id: str | None = None
+        try:
+            _resume_session_ctx = await _load_session_context(
+                session_id=pending.session_id,
+                db_session=db_session,
+                all_surfaces=set(),
+            )
+            _resume_agent_id = _resume_session_ctx.agent_id
+        except Exception:
+            logger.debug("resume_after_confirm: could not load session context for agent_id")
+
         auth_registry = AuthorizedToolRegistry()
-        register_core_tools(auth_registry)
+        register_core_tools(auth_registry, agent_id=_resume_agent_id)
         register_builders_tools(auth_registry)
         register_system_tools(auth_registry)
         register_okr_tools(auth_registry)
@@ -1103,12 +1133,16 @@ class _PendingConfirmationError(BaseException):  # noqa: N818 N818 — intention
 def _build_intercepting_tool_registry(
     auth_registry: AuthorizedToolRegistry,
     session_id: str,
+    agent_id: str | None = None,
 ) -> ToolRegistry:
     """Wrap authorized tools into a plain ToolRegistry.
 
     Layer 3/4 tools get a wrapper impl that raises _PendingConfirmationError
     instead of executing. The loop catches this (via exception), stores pending
     state, and suspends.
+
+    ``agent_id`` is threaded into the ``query_memory`` wrapper so the provenance
+    re-run in ``_emit_memory_read_event`` is subject to the same M3 scope gating.
     """
     plain = ToolRegistry()
     for entry in auth_registry.all_entries():
@@ -1121,10 +1155,11 @@ def _build_intercepting_tool_registry(
                     inp: dict[str, Any],
                     _impl: Any = _orig_impl,
                     _sid: str = session_id,
+                    _aid: str | None = agent_id,
                 ) -> str:
                     result_str: str = await _impl(inp)
                     try:
-                        await _emit_memory_read_event(_sid, inp)
+                        await _emit_memory_read_event(_sid, inp, agent_id=_aid)
                     except Exception:
                         logger.debug("MemoryReadEvent emit failed", exc_info=True)
                     return result_str
@@ -1172,6 +1207,7 @@ _STAGED_TOOL_MESSAGE = (
 def _build_auto_invoke_tool_registry(
     auth_registry: AuthorizedToolRegistry,
     session_id: str,
+    agent_id: str | None = None,
 ) -> ToolRegistry:
     """Build a ToolRegistry for provider paths that cannot yield mid-turn.
 
@@ -1180,6 +1216,9 @@ def _build_auto_invoke_tool_registry(
     the model to relay the proposal to the operator — no write ever happens
     inside this wrapper (approval-first guarantee).  The turn ends normally;
     the operator's 'go' / 'no' is resolved by resume_after_confirm.
+
+    ``agent_id`` is threaded into the ``query_memory`` wrapper so the provenance
+    re-run in ``_emit_memory_read_event`` is subject to the same M3 scope gating.
     """
     plain = ToolRegistry()
     for entry in auth_registry.all_entries():
@@ -1191,10 +1230,11 @@ def _build_auto_invoke_tool_registry(
                     inp: dict[str, Any],
                     _impl: Any = _orig_impl,
                     _sid: str = session_id,
+                    _aid: str | None = agent_id,
                 ) -> str:
                     result_str: str = await _impl(inp)
                     try:
-                        await _emit_memory_read_event(_sid, inp)
+                        await _emit_memory_read_event(_sid, inp, agent_id=_aid)
                     except Exception:
                         logger.debug("MemoryReadEvent emit failed", exc_info=True)
                     return result_str

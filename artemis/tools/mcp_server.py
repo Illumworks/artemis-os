@@ -321,6 +321,7 @@ def _build_server(
 
 async def build_floating_artemis_tool_set(
     tool_names: set[str] | None = None,
+    agent_id: str | None = None,
 ) -> dict[str, tuple[Tool, ToolImpl]]:
     """Build the Floating Artemis auto-invoke tool set for MCP serving.
 
@@ -329,6 +330,10 @@ async def build_floating_artemis_tool_set(
     handler. Only layer-1/2 tools are exposed on this path because claude-code's
     subprocess loop cannot yield back into Floating Artemis's in-process
     confirmation flow for layer-3/4 tools.
+
+    M3: ``agent_id`` is threaded into ``build_authorized_tool_registry`` so
+    ``query_memory`` is gated to the calling agent's scope allowance.  When
+    ``agent_id`` is None the tool fails closed (empty results) for every request.
     """
     try:
         status = await get_status()
@@ -338,7 +343,7 @@ async def build_floating_artemis_tool_set(
         logger.debug("floating MCP could not load status surfaces; falling back to empty set")
         available_surfaces = set()
 
-    registry = build_authorized_tool_registry(available_surfaces)
+    registry = build_authorized_tool_registry(available_surfaces, agent_id=agent_id)
     wanted = tool_names or set()
 
     tool_set: dict[str, tuple[Tool, ToolImpl]] = {}
@@ -1046,12 +1051,35 @@ async def _serve_floating_artemis(
     floating_session_id: str,
     tool_names: list[str] | None,
 ) -> int:
-    """Open a session and serve Floating Artemis auto-invoke tools over stdio."""
+    """Open a session and serve Floating Artemis auto-invoke tools over stdio.
+
+    M3: loads the session's agent_id from the DB so that query_memory is gated
+    to the correct agent allowance.  If the session cannot be loaded (e.g. unknown
+    session_id), agent_id is treated as None and every memory query returns empty
+    (fail-closed).
+    """
     async with SessionLocal() as session:
-        tool_set = await build_floating_artemis_tool_set(set(tool_names or []))
+        # M3: resolve agent_id for scope enforcement.
+        _fa_agent_id: str | None = None
+        try:
+            from artemis.floating_artemis.chat import _load_session_context
+            _fa_ctx = await _load_session_context(
+                session_id=floating_session_id,
+                db_session=session,
+                all_surfaces=set(),
+            )
+            _fa_agent_id = _fa_ctx.agent_id
+        except Exception:
+            logger.debug(
+                "floating MCP: could not resolve agent_id for session=%s — failing closed",
+                floating_session_id,
+            )
+
+        tool_set = await build_floating_artemis_tool_set(set(tool_names or []), agent_id=_fa_agent_id)
         logger.info(
-            "artemis MCP server (floating_artemis) bound to session=%s tools=%s",
+            "artemis MCP server (floating_artemis) bound to session=%s agent_id=%s tools=%s",
             floating_session_id,
+            _fa_agent_id,
             sorted(tool_set),
         )
         server = _build_floating_artemis_server(session, tool_set)

@@ -37,34 +37,75 @@ def _safe_repo_path(relative_path: str) -> Path | None:
 # ── Tool implementations ──────────────────────────────────────────────────────
 
 
-async def _query_memory(inp: dict[str, Any]) -> str:
-    """Query the Artemis memory store for relevant observations."""
-    query = inp.get("query", "")
-    scope = inp.get("scope", "global:global")
-    limit = int(inp.get("limit", 10))
-    if scope == "all":
-        scope = "global:global"
+def _make_query_memory(agent_id: str | None) -> Any:
+    """Return a ``_query_memory`` implementation gated to ``agent_id``'s allowance.
 
-    try:
-        import artemis.db as _db
-        from artemis.memory.retrieval import search_observations
-        from artemis.memory.schemas import Scope
+    M3 FAIL-CLOSED: the agent's allowance is resolved once at registration time
+    from ``agent_id``.  The requested ``scope`` from tool input is validated
+    against that allowance before any DB query.  Scopes outside the allowance are
+    DROPPED; if nothing remains, the function returns "No relevant memory found."
+    without ever touching the database.
 
-        async with _db.SessionLocal() as session:
+    If ``agent_id`` is None/empty/unknown, ``allowed_scopes_for_agent`` returns a
+    denied allowance and every scope request returns empty (fail-closed default).
+    """
+    from artemis.floating_artemis.memory import _enforce_agent_scope_set
+    from artemis.identity.scope_policy import allowed_scopes_for_agent
+
+    # Resolve the allowance once — fail-closed for None/unknown agent_id.
+    _agent_id: str = agent_id or ""
+    _allowance = allowed_scopes_for_agent(_agent_id) if _agent_id else None
+
+    async def _query_memory_impl(inp: dict[str, Any]) -> str:
+        """Query the Artemis memory store — scope-gated to the calling agent."""
+        query = inp.get("query", "")
+        scope = inp.get("scope", "global:global")
+        limit = int(inp.get("limit", 10))
+        if scope == "all":
+            scope = "global:global"
+
+        try:
+            import artemis.db as _db
+            from artemis.memory.retrieval import search_observations
+            from artemis.memory.schemas import Scope
+
             scope_kind, scope_id = scope.split(":") if ":" in scope else (scope, "default")
-            scope_obj = Scope(scope_kind=scope_kind, scope_id=scope_id)
-            results = await search_observations(
-                session,
-                scope_set=[scope_obj],
-                query=query,
-                limit=limit,
-            )
-        if not results:
-            return "No relevant memory found."
-        lines = [f"[{r.scope_kind}:{r.scope_id}] {r.content}" for r in results]
-        return "\n".join(lines)
-    except Exception as exc:
-        return f"Memory query failed: {exc}"
+            requested_scope = Scope(scope_kind=scope_kind, scope_id=scope_id)
+
+            # M3: enforce agent allowance — drop any scope not permitted.
+            enforced = _enforce_agent_scope_set(_agent_id, [requested_scope])
+            if not enforced:
+                logger.info(
+                    "query_memory: scope %s:%s denied for agent_id=%r — returning empty",
+                    scope_kind,
+                    scope_id,
+                    _agent_id,
+                )
+                return "No relevant memory found."
+
+            async with _db.SessionLocal() as session:
+                results = await search_observations(
+                    session,
+                    scope_set=enforced,
+                    query=query,
+                    limit=limit,
+                )
+            if not results:
+                return "No relevant memory found."
+            lines = [f"[{r.scope_kind}:{r.scope_id}] {r.content}" for r in results]
+            return "\n".join(lines)
+        except Exception as exc:
+            return f"Memory query failed: {exc}"
+
+    return _query_memory_impl
+
+
+# Keep a bare (ungated) reference so callers that genuinely need no gating
+# (e.g. tests of the raw function shape) still work, but it is NOT registered
+# in any live tool registry — only _make_query_memory(agent_id) is.
+async def _query_memory(inp: dict[str, Any]) -> str:
+    """Ungated fallback — DO NOT register in production; use _make_query_memory."""
+    return await _make_query_memory(None)(inp)
 
 
 async def _write_memory(inp: dict[str, Any]) -> str:
@@ -459,9 +500,16 @@ SPAWN_SUBAGENT = Tool(
 )
 
 
-def register_core_tools(registry: AuthorizedToolRegistry) -> None:
-    """Register all core tools into the provided registry."""
-    registry.register(QUERY_MEMORY, _query_memory, layer=1)
+def register_core_tools(registry: AuthorizedToolRegistry, agent_id: str | None = None) -> None:
+    """Register all core tools into the provided registry.
+
+    ``agent_id`` MUST be supplied for any live session so that ``query_memory``
+    is gated to that agent's scope allowance (M3).  When ``agent_id`` is None
+    or unknown the tool returns empty for every request (fail-closed).
+    """
+    # M3: gate query_memory to the calling agent's allowance.
+    gated_query_memory = _make_query_memory(agent_id)
+    registry.register(QUERY_MEMORY, gated_query_memory, layer=1)
     registry.register(WRITE_MEMORY, _write_memory, layer=2)
     registry.register(LIST_SCOPES, _list_scopes, layer=1)
     registry.register(SURFACE_STATUS, _surface_status, layer=1)
