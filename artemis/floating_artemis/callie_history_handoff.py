@@ -83,16 +83,16 @@ def _build_observation_content(
 ) -> str:
     """Format a single message as an observation string.
 
-    Format: ``[ROLE] <text>`` (optionally prefixed with an ISO timestamp).
+    Format: ``[ROLE] <text>``.  The timestamp is intentionally NOT embedded
+    in the content so that content-hash dedup in ``write_observation`` can
+    collapse byte-identical messages sent at different times.  The original
+    ``created_at`` is preserved in the ``raw_payload`` dict passed to
+    ``write_observation`` (key ``"created_at"``).
+
+    ``msg_id`` and ``created_at`` are accepted but unused here; they exist
+    only for call-site compatibility.
     """
-    role_tag = role.upper()
-    lines: list[str] = []
-    if created_at is not None:
-        ts = created_at.isoformat()
-        lines.append(f"[{ts}] [{role_tag}] {text}")
-    else:
-        lines.append(f"[{role_tag}] {text}")
-    return "\n".join(lines)
+    return f"[{role.upper()}] {text}"
 
 
 async def ingest_session_messages(
@@ -148,7 +148,7 @@ async def ingest_session_messages(
             msg_id=msg.id,
             created_at=getattr(msg, "created_at", None),
         )
-
+        msg_created_at = getattr(msg, "created_at", None)
         await write_observation(
             session,
             scope=_CALLIE_SCOPE,
@@ -160,6 +160,7 @@ async def ingest_session_messages(
                 "msg_id": msg.id,
                 "role": msg.role,
                 "text": text,
+                "created_at": msg_created_at.isoformat() if msg_created_at is not None else None,
             },
             raw_source_kind=_HANDOFF_SOURCE_KIND,
             raw_source_id=str(msg.id),
@@ -192,9 +193,7 @@ async def mark_handoff_complete(
     now = timestamp or datetime.now(UTC)
 
     result = await session.execute(
-        select(FloatingArtemisSession).where(
-            FloatingArtemisSession.session_id == fa_session_id
-        )
+        select(FloatingArtemisSession).where(FloatingArtemisSession.session_id == fa_session_id)
     )
     row = result.scalar_one_or_none()
 

@@ -203,11 +203,14 @@ def test_build_observation_content_assistant_role() -> None:
     assert "proof-backed" in result
 
 
-def test_build_observation_content_with_timestamp() -> None:
+def test_build_observation_content_with_timestamp_not_in_content() -> None:
+    """Timestamp is NO LONGER embedded in content — content stays role+text only."""
     ts = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
     result = _build_observation_content(role="user", text="Test.", created_at=ts)
-    assert "2026-06-01" in result
+    # Timestamp must NOT appear in content (it goes in raw_payload instead)
+    assert "2026-06-01" not in result
     assert "[USER]" in result
+    assert "Test." in result
 
 
 # ── DB-backed tests ────────────────────────────────────────────────────────────
@@ -272,6 +275,91 @@ async def test_ingest_session_messages_skips_tool_only_messages(
     assert written == 1  # only the user message
 
 
+async def test_ingest_session_messages_timestamp_in_raw_payload(
+    db_session: AsyncSession,
+) -> None:
+    """Timestamp is carried in raw_inputs.payload["created_at"], not in observation content."""
+    from sqlalchemy import select as sa_select
+
+    from artemis.memory.models import MemoryObservation
+    from artemis.memory.raw_inputs import RawInput
+
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Timestamp payload check."}],
+        },
+    ]
+    async with db_session.begin():
+        await _seed_retired_session(db_session, messages=messages)
+
+    async with db_session.begin():
+        await ingest_session_messages(db_session, fa_session_id=RETIRED_SESSION_ID)
+
+    # Fetch the written observation
+    obs_rows = list(
+        (
+            await db_session.execute(
+                sa_select(MemoryObservation).where(
+                    MemoryObservation.scope_kind == "agent",
+                    MemoryObservation.scope_id == "callie",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(obs_rows) == 1
+    obs = obs_rows[0]
+
+    # Content must NOT contain a timestamp bracket
+    assert obs.content.startswith("[USER]")
+    assert "2026" not in obs.content  # no year from an embedded ISO timestamp
+
+    # raw_inputs row must carry created_at (possibly None if msg has no created_at attr)
+    if obs.raw_input_id is not None:
+        raw_row = (
+            await db_session.execute(sa_select(RawInput).where(RawInput.id == obs.raw_input_id))
+        ).scalar_one()
+        assert "created_at" in (raw_row.payload or {})
+
+
+async def test_ingest_session_messages_identical_texts_dedup(
+    db_session: AsyncSession,
+) -> None:
+    """Two messages with identical text (same role) collapse to one observation after fix."""
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "Still an echo."}]},
+        {"role": "user", "content": [{"type": "text", "text": "Still an echo."}]},
+    ]
+    async with db_session.begin():
+        await _seed_retired_session(db_session, messages=messages)
+
+    written = await ingest_session_messages(db_session, fa_session_id=RETIRED_SESSION_ID)
+
+    # write_observation deduplicates by content hash — both messages produce
+    # "[USER] Still an echo." which is identical, so only 1 observation is written.
+    assert written == 2  # ingest_session_messages counts attempts
+    from sqlalchemy import select as sa_select
+
+    from artemis.memory.models import MemoryObservation
+
+    obs_rows = list(
+        (
+            await db_session.execute(
+                sa_select(MemoryObservation).where(
+                    MemoryObservation.scope_kind == "agent",
+                    MemoryObservation.scope_id == "callie",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Both writes hit the same content_hash — only 1 DB row
+    assert len(obs_rows) == 1
+
+
 async def test_ingest_session_messages_empty_session_returns_zero(
     db_session: AsyncSession,
 ) -> None:
@@ -287,9 +375,7 @@ async def test_ingest_session_messages_nonexistent_session_returns_zero(
     db_session: AsyncSession,
 ) -> None:
     """Session not found → 0 written, no exception."""
-    written = await ingest_session_messages(
-        db_session, fa_session_id="slack-nonexistent-session-_"
-    )
+    written = await ingest_session_messages(db_session, fa_session_id="slack-nonexistent-session-_")
     assert written == 0
 
 
@@ -299,9 +385,7 @@ async def test_mark_handoff_complete_sets_flag(db_session: AsyncSession) -> None
         await _seed_retired_session(db_session, handoff_pending=True)
 
     ts = datetime(2026, 6, 10, 9, 0, 0, tzinfo=UTC)
-    result = await mark_handoff_complete(
-        db_session, fa_session_id=RETIRED_SESSION_ID, timestamp=ts
-    )
+    result = await mark_handoff_complete(db_session, fa_session_id=RETIRED_SESSION_ID, timestamp=ts)
     assert result is True
 
     from sqlalchemy import select
@@ -325,9 +409,7 @@ async def test_mark_handoff_complete_missing_session_returns_false(
     db_session: AsyncSession,
 ) -> None:
     """Missing session → returns False, no exception."""
-    result = await mark_handoff_complete(
-        db_session, fa_session_id="slack-does-not-exist-_"
-    )
+    result = await mark_handoff_complete(db_session, fa_session_id="slack-does-not-exist-_")
     assert result is False
 
 
@@ -366,7 +448,9 @@ async def test_original_session_messages_still_exist_after_handoff(
                     FloatingArtemisMessage.session_id == RETIRED_SESSION_ID
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     assert len(msgs) == 2
 
