@@ -9,7 +9,33 @@ auto-loaded memory index (`MEMORY.md`). Opus Lead = the planning/verify/merge ag
 ## ⏩ CURRENT STATE — 2026-06-14 (read FIRST)
 
 **MEMORY UPGRADE PHASE (current active track — postdates WS backlog + proactivity).** Goal: Artemis recalls
-the *right* memory when asked.
+the *right* memory when asked. Order this session: M1c (done) → **M1 (done)** → M3 (next, per Jon).
+- **M1 (semantic conflict detection): MERGED `aa2043c` + LIVE 2026-06-14** (migration 0088 applied to live DB;
+  kickstart, `healthz` 200). Embedding-shortlist (cos≥0.60, top-5) → LLM contradiction judge via the
+  `resolve_adapter_async` cascade (claude-code CLI, no API key needed) → CONTRADICT≥0.85 auto-supersede,
+  borderline → `memory_conflicts` row `resolution=NULL` for review. **MAJOR FINDING:** conflict detection was
+  wired into `write_observation_with_conflict_check`, which has ZERO non-test callers — so BOTH the new semantic
+  detector AND the pre-existing rule-based `detect_conflicts` were **dead code, never running in prod.** Fix
+  (`aa2043c`): `_run_conflict_checks` (consolidator.py:298) now runs both detectors inside `apply_consolidation`
+  (:499) — the function the live sweep actually calls. So contradiction-catching runs in prod for the FIRST
+  time. See [[verify-actual-call-path]] (the trap that almost shipped twice — the worker re-wired into the same
+  dead function on attempt 1; Lead caught it by re-tracing non-test callers).
+  - **Verified before merge (didn't trust the report):** 5 live-path smoke tests drive the real sweep and assert
+    the DB EFFECT (stale obs `superseded_by` set + `memory_conflicts` row + retrieval flip), plus precision
+    (additive fact / temporal refinement → supersede nothing) and no-provider fail-safe (no supersede, no
+    crash). 43 conflict/detector tests green. Real judge verified live (CMO-vs-sales → CONTRADICT 0.93).
+    Migration 0088 chains 0087→0088 cleanly. 3 suite failures confirmed PRE-EXISTING on main (stale
+    `test_c3_no_provider_path` patches a nonexistent sync `resolve_adapter`; 2 asyncpg timeout flakes).
+  - **Precision-first holds:** auto-supersede only on high confidence; fail-safe to review queue on uncertainty/
+    no-provider; lossless (supersession only). FP rate ~0 on labeled set.
+  - **Harness honesty:** conflict detection only affects FUTURE writes, so a static-corpus R@1 before/after does
+    NOT move — proof is the live smoke, not an R@1 delta. Miss-category breakdown (post-M1c corpus): 2 genuine
+    recall gaps (trend_snapshot JSON payloads vs NL queries) + 2 near-dup ranking (the same #514/#515 Slack
+    pair). M1 doesn't target those (they're ranking/representation, not conflicts) — a NL-summary embedding for
+    trend_snapshot JSON is a candidate next lever.
+  - **`confirmed_bias` weight tuning — STILL DEFERRED (Lead).** Worker re-validated on a 36-query set and
+    recommends adopt (R@1 0.556→0.611, MRR 0.693→0.739, p95 down). Holding: measurement used a regenerated QA
+    set; fold in as a small separate, independently-verified change (good to pair with M3).
 - **M1b (dedup):** merged — near-duplicate consolidation, lossless (no deletes; supersession only).
 - **M1c (ranking + recall): MERGED `cb7b04c` + LIVE 2026-06-14** (kickstart, `healthz` 200). Merged by Opus
   Lead in *this* session because the other Lead session was wedged ("can't connect" while this one was fine —
@@ -31,10 +57,11 @@ the *right* memory when asked.
     **DEFERRED** — worker correctly left prod fusion weights untouched; don't change them on a 24-query set for
     ~+0.02 MRR. Revisit only with an expanded QA set. (3) Hard pair #514/#515 left open (n=2, not worth
     over-engineering).
-- **MEMORY PHASE — what's left:** **M3** (scope-aware retrieval for the multi-team/multi-agent expansion) +
-  the **parked conflict-detection insurance** (`briefs/memory-m1-semantic-conflict.md`). Then the memory phase
-  wraps → **resume the proactivity engine** (P2b commitments → P2c follow-ups + Callie nudges) per
-  [[roadmap-sequencing-ws-then-proactivity]].
+- **MEMORY PHASE — what's left:** just **M3** (scope/role-aware retrieval — *enforce who-can-see-what* for the
+  multi-team/multi-agent expansion; NO brief written yet, design it first). Conflict-detection (M1) is now DONE
+  (above). After M3, memory phase wraps → **resume the proactivity engine** (P2b commitments → P2c follow-ups +
+  Callie nudges) per [[roadmap-sequencing-ws-then-proactivity]]. M3 value only lands once multiple people/teams
+  use the system, so it's the natural pause point if priorities shift.
 
 ---
 
