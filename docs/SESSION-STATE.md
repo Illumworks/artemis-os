@@ -57,11 +57,19 @@ the *right* memory when asked. Order this session: M1c (done) → **M1 (done)** 
     **DEFERRED** — worker correctly left prod fusion weights untouched; don't change them on a 24-query set for
     ~+0.02 MRR. Revisit only with an expanded QA set. (3) Hard pair #514/#515 left open (n=2, not worth
     over-engineering).
-- **MEMORY PHASE — what's left:** just **M3** (scope/role-aware retrieval — *enforce who-can-see-what* for the
-  multi-team/multi-agent expansion; NO brief written yet, design it first). Conflict-detection (M1) is now DONE
-  (above). After M3, memory phase wraps → **resume the proactivity engine** (P2b commitments → P2c follow-ups +
-  Callie nudges) per [[roadmap-sequencing-ws-then-proactivity]]. M3 value only lands once multiple people/teams
-  use the system, so it's the natural pause point if priorities shift.
+- **MEMORY PHASE — what's left:** just **M3 — now reframed + URGENT.** M3 = identity-aware scope enforcement
+  for BOTH named agents AND human users. **ARCHITECTURE DECISION D8 (2026-06-14, Jon):** personal + marketing
+  run as ONE app with role-based access at the data layer (not two apps); preserve future personal-split (F1).
+  See `docs/ARTEMIS-OS-MASTER-PLAN.md` D8 + F1 and [[project-single-app-rbac-decision]].
+  - **LIVE EXPOSURE (confirmed):** marketing teammates log in via Google/Cloudflare and **can currently see the
+    personal tabs** (OKRs/calendar/personal memory). Root cause: memory API + surfaces AUTHENTICATE (identity
+    resolved) but do NOT AUTHORIZE by scope — `/api/memory/observations` etc. return ALL scopes to any
+    authenticated caller (`routes/memory.py`, `marketing/routes/_auth.py: require_token`). **M3 slice 1 = close
+    this** (gate personal surfaces + scope-enforce the memory API to the caller's identity). Slice 2 = full
+    identity→allowed-scopes enforcement at retrieval (agents + humans). NO brief written yet — design first;
+    build split-friendly per F1. Conflict-detection (M1) DONE (above).
+  - After M3, memory phase wraps → **resume the proactivity engine** (P2b commitments → P2c follow-ups + Callie
+    nudges) per [[roadmap-sequencing-ws-then-proactivity]].
 
 ---
 
