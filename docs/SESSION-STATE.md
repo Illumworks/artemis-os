@@ -106,14 +106,25 @@ Gmail-send + Slack-send-as-Jon (two `NotImplementedError` executors), and they n
 actually connected first.
 
 **Fire order:**
-1. **`briefs/p3-floating-callie-frontend.md`** (NEW, independent) — make the floating WIDGET show Callie to
-   marketing users / Artemis to owner (backend already enforces this via server-resolved `metadata.agent_id`;
-   this is the UI half of D11). Can go first/parallel; small; real-browser verify.
+1. **`briefs/fa-polish-confirm-path-badge-avatars.md`** (NEW — supersedes `p3-floating-callie-frontend.md`).
+   Three FA items: (Task 1) FIX the confirm-path tool registry — `resume_after_confirm` (chat.py:1029-1036)
+   omits integration tools, so confirming a gcal/slack/jira/gmail write returns "Tool not found" → **this GATES
+   #3**; (Task 2) clear the stuck FAB "2" badge (orphaned `running`/`queued` runs in
+   `v_floating_artemis_active_runs`); (Task 3) profile-image avatars on the FAB by identity (Artemis vs Callie)
+   — Jon-requested; **dependency: no Callie image asset yet, Jon to provide.**
 2. **`briefs/p3-google-multiaccount-and-reads.md`** (EXISTING, READY) — connect Calendar + Gmail scopes /
    multi-account (today only Docs/Drive on one account → gcal cache empty, no Gmail). FOUNDATION; adds a
    migration (Lead runs `alembic upgrade head` post-merge). Prereq for Gmail send/read.
-3. **`briefs/p3-agency-messaging-sends.md`** (EXISTING, READY) — implement the Gmail-send + Slack-send-as-Jon
-   executors on the proven gate. DEPENDS on #2 for Gmail. Lead audits + live-tests (sends *as Jon*).
+3. **`briefs/p3-agency-messaging-sends.md`** (EXISTING, READY) — Gmail-send + Slack-send-as-Jon executors on the
+   proven gate. DEPENDS on #2 (Gmail scope) AND on #1 Task 1 (confirm-path fix, or sends fail on "go"). Lead
+   audits + live-tests (sends *as Jon*).
+
+**Proactivity = verified LIVE (2026-06-14):** terminal's dry-run delivered a real follow-up DM to Jon
+(checked=1/sent=1, routed personal_ops → Artemis token), synthetic seed cleaned up. Stale branches
+`p2-proactivity-voice` + `p3-tool-implementations` deleted. Marketing→Callie channel path proven mocked; a live
+one-shot is optional/available. **FA audit done** (read-only): engine healthy; notifications backend is a STUB
+(5 endpoints 404; `background-sessions.js` fires create on every completion → silent fail) — "build or delete"
+decision parked; `propose_edit` is a stub.
 
 **Then the bigger Chapter-2 arc (not yet briefed; heavier R&D — do when ready to invest):** P5 learning loop /
 skill capture (⚪ not started; the competitive standout) → P6 self-evolution (⚪ capstone; now UNBLOCKED by the
