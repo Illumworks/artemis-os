@@ -162,6 +162,16 @@ async def send_message(
 
     adapter = _resolve_builder_adapter()
 
+    # M3 identity note: this calls artemis.builder.agent_builder.handle_turn — a SEPARATE
+    # handle_turn from artemis.floating_artemis.chat.handle_turn.  The builder does NOT go
+    # through the floating-artemis memory gating (trusted_agent_id / _load_session_context).
+    # Its memory retrieval uses a dedicated _search_memory tool scoped to agent:<agent_id>
+    # where agent_id is the TARGET automation agent being edited (e.g. "marketing.signal_processor"),
+    # not the floating assistant scope.  The M3 floating-gating concern is NOT applicable here.
+    #
+    # Remaining gap (tracked separately): _search_memory in agent_builder.py does not restrict
+    # which agent_id values the LLM can query — a marketing user could pass agent_id="floating-artemis"
+    # to read Artemis's agent-memory scope.  That is a separate M3 follow-up, not blocking this PR.
     result = await handle_turn(
         builder_session_id=session_id,
         user_text=body.content,

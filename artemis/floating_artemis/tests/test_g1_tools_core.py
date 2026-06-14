@@ -126,9 +126,15 @@ async def test_surface_status_handles_error() -> None:
 
 
 async def test_query_memory_returns_no_results() -> None:
-    # _db is imported lazily inside _query_memory; trigger a graceful error via SessionLocal
+    # M3: _query_memory (ungated, agent_id=None) now returns "No relevant memory found." via
+    # the fail-closed denied allowance path — it never reaches SessionLocal at all.
+    # To exercise the DB-error path, build a gated tool with a valid agent_id so the scope
+    # passes allowance and the SessionLocal failure propagates as a graceful error string.
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    gated_query = _make_query_memory("artemis")
     with patch("artemis.db.SessionLocal", side_effect=Exception("no mem")):
-        result = await _query_memory({"query": "test"})
+        result = await gated_query({"query": "test", "scope": "agent:floating-artemis"})
     # Should handle error gracefully (returns error string, not raise)
     assert isinstance(result, str)
     assert "failed" in result.lower() or "Memory" in result

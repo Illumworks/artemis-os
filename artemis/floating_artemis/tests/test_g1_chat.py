@@ -99,12 +99,19 @@ def test_build_tool_registry_marketing_when_marketing_os_available() -> None:
 
 
 def test_build_auto_invoke_tool_registry_excludes_confirmation_tools() -> None:
+    # M3: _build_auto_invoke_tool_registry now wraps layer-3/4 tools as staging wrappers
+    # (they appear in the registry but create a PendingConfirmation instead of executing).
+    # The old behavior was to skip layer-3 tools entirely; the new behavior stages them so
+    # ClaudeCode can relay proposals to the operator without a mid-turn yield.
     auth = _build_tool_registry(available_surfaces={"okr"})
     reg = _build_auto_invoke_tool_registry(auth, "fa-auto-1")
 
     assert "query_memory" in reg
     assert "write_memory" in reg
-    assert "propose_agent" not in reg
+    # propose_agent IS now registered — as a staging wrapper, not the direct impl.
+    # The staging wrapper stores a PendingConfirmation and returns a human-facing message
+    # asking for operator approval; the tool never executes directly.
+    assert "propose_agent" in reg
 
 
 # ── handle_turn with FakeAdapter ──────────────────────────────────────────────
@@ -404,7 +411,10 @@ async def test_handle_turn_claude_code_tool_turn_sets_session_context() -> None:
     assert seen["session_id"] == "fa-session-tools"
     assert "query_memory" in seen["tool_names"]
     assert "write_memory" in seen["tool_names"]
-    assert "propose_agent" not in seen["tool_names"]
+    # M3: propose_agent IS now in the auto-invoke registry as a staging wrapper.
+    # The staging wrapper stores a PendingConfirmation instead of executing — it never
+    # performs the side-effect directly.  This is the correct new ClaudeCode path behavior.
+    assert "propose_agent" in seen["tool_names"]
 
 
 async def test_handle_turn_resume_after_confirm_run() -> None:

@@ -134,8 +134,14 @@ async def test_emit_memory_read_event_broadcasts_digested_observations() -> None
         mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        # M3: _emit_memory_read_event now requires agent_id; without it (or with an
+        # unknown/None agent_id) the scope allowance is DENIED and observations return
+        # empty (fail-closed).  Pass agent_id="artemis" so global:global is permitted
+        # and the digest/score assertions exercise the actual path.
         await _emit_memory_read_event(
-            "sess-emit-1", {"query": "preferences", "scope": "global:global", "limit": 10}
+            "sess-emit-1",
+            {"query": "preferences", "scope": "global:global", "limit": 10},
+            agent_id="artemis",
         )
 
     assert len(broadcast_calls) == 1
@@ -172,8 +178,13 @@ async def test_emit_memory_read_event_truncates_text_to_200_chars() -> None:
         mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        # M3: pass agent_id="artemis" so global:global is permitted and the
+        # truncation logic is exercised.  Without agent_id the scope is denied
+        # (fail-closed) and observations would be empty, masking the truncation test.
         await _emit_memory_read_event(
-            "sess-trunc", {"query": "q", "scope": "global:global", "limit": 5}
+            "sess-trunc",
+            {"query": "q", "scope": "global:global", "limit": 5},
+            agent_id="artemis",
         )
 
     assert len(broadcast_calls) == 1
