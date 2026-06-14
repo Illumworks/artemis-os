@@ -65,12 +65,19 @@ async def _run(db_url: str, scope_kind: str | None, scope_id: str | None, apply:
             before_total = (
                 await session.execute(text("SELECT count(*) FROM memory_observations"))
             ).scalar_one()
-            async with session.begin():
-                stats = await apply_clone_consolidation(session, clusters)
+            # The session already auto-began a transaction from the SELECTs above, so
+            # do the writes in it directly (no session.begin()), VERIFY the lossless
+            # invariant while still uncommitted, and roll back if it's violated —
+            # only commit a clean result.
+            stats = await apply_clone_consolidation(session, clusters)
             after_total = (
                 await session.execute(text("SELECT count(*) FROM memory_observations"))
             ).scalar_one()
             chain = await verify_chain(session)
+            if after_total != before_total or not chain.ok:
+                await session.rollback()
+                raise SystemExit("LOSSLESS INVARIANT VIOLATED — rolled back, nothing committed.")
+            await session.commit()
 
             print(f"\nAPPLIED: {stats}")
             print(
@@ -78,8 +85,6 @@ async def _run(db_url: str, scope_kind: str | None, scope_id: str | None, apply:
                 f"(delta {after_total - before_total}; must be 0 — lossless)"
             )
             print(f"hashchain ok: {chain.ok} ({chain.row_count} rows)")
-            if after_total != before_total or not chain.ok:
-                raise SystemExit("LOSSLESS INVARIANT VIOLATED — investigate before trusting.")
     finally:
         await engine.dispose()
 
