@@ -6,7 +6,39 @@ auto-loaded memory index (`MEMORY.md`). Opus Lead = the planning/verify/merge ag
 
 ---
 
-## ⏩ CURRENT STATE — 2026-06-11 (read FIRST)
+## ⏩ CURRENT STATE — 2026-06-14 (read FIRST)
+
+**MEMORY UPGRADE PHASE (current active track — postdates WS backlog + proactivity).** Goal: Artemis recalls
+the *right* memory when asked.
+- **M1b (dedup):** merged — near-duplicate consolidation, lossless (no deletes; supersession only).
+- **M1c (ranking + recall): MERGED `cb7b04c` + LIVE 2026-06-14** (kickstart, `healthz` 200). Merged by Opus
+  Lead in *this* session because the other Lead session was wedged ("can't connect" while this one was fine —
+  stale worktree/process, not a real outage). What shipped:
+  - `top_k` 50→150 (rescues genuine recall miss #715; latency flat — payload still limit-10).
+  - **series-collapse** (`config/memory-retrieval.yaml: series_collapse: true`): at RANK time only, when the
+    pool has multiple snapshots of one known time-series (`Momentum snapshot for <id>`), keep the LATEST and
+    let distinct results fill freed slots. **Precision-safe by construction:** only recognized momentum-series
+    are ever grouped; conversations/signals/arbitrary facts → `_series_key` None → never touched. `False`
+    restores byte-identical pre-M1c behavior. **Zero storage mutations** (retrieval-only).
+  - Harness `series_aware_credit`: a "current X" query now counts a hit if the result shares the target's
+    series key — stops the QA from penalizing Artemis for correctly returning the *newest* snapshot. This is
+    why the famous "R@1 = 0.375" was mostly a measurement artifact.
+  - **Verified this session (didn't trust the report):** 49 retrieval tests green vs real `artemis_test`;
+    storage-write grep clean; precision logic re-proven (distinct never dropped, non-series never grouped,
+    off=byte-identical). Metrics: **R@1 0.375→0.542, R@10 0.833→0.917, MRR 0.479→0.630.**
+  - **Lead decisions:** (1) KEPT series-collapse — it was already built+tested+safe, so ripping it out to match
+    an earlier "skip the polish" guess would just discard good work. (2) `confirmed_bias` weight tuning
+    **DEFERRED** — worker correctly left prod fusion weights untouched; don't change them on a 24-query set for
+    ~+0.02 MRR. Revisit only with an expanded QA set. (3) Hard pair #514/#515 left open (n=2, not worth
+    over-engineering).
+- **MEMORY PHASE — what's left:** **M3** (scope-aware retrieval for the multi-team/multi-agent expansion) +
+  the **parked conflict-detection insurance** (`briefs/memory-m1-semantic-conflict.md`). Then the memory phase
+  wraps → **resume the proactivity engine** (P2b commitments → P2c follow-ups + Callie nudges) per
+  [[roadmap-sequencing-ws-then-proactivity]].
+
+---
+
+## ⏩ CURRENT STATE — 2026-06-11
 
 **Move:** done. Repo lives at `/Users/artemis/Artemis/artemis-os`, git HEAD intact. App restart =
 `launchctl kickstart -k gui/$(id -u)/me.artemisos.app` (NOT start-app.sh — dual-bind footgun). App serves the
