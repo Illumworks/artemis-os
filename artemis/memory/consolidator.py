@@ -8,6 +8,16 @@ proposals via the store write API (lossless: new obs → supersede old → link 
 LOSSLESS CONTRACT: consolidation never DELETEs rows. It creates new observations that
 supersede the old via superseded_by, then links evidence back to every source row.
 
+M1 — Conflict detection on the live path:
+  apply_consolidation now calls _run_conflict_checks(session, scope, new_obs,
+  candidates) after each consolidated observation is written.  This fires BOTH the
+  rule-based detect_conflicts() and the semantic detect_semantic_conflicts() on every
+  consolidated write.  Precision-first routing:
+    - CONTRADICT + HIGH confidence  → supersede_observation + memory_conflicts(auto)
+    - CONTRADICT + borderline       → memory_conflicts(resolution=NULL) for review
+  FAIL SAFE: any error in the conflict check is caught and logged; the underlying
+  write/consolidation is never rolled back.
+
 M2 — Confidence semantics (set at write time by the writer):
   ┌──────────────────────────────────────────────────────────────────┐
   │ Source                                          │ confidence     │
@@ -277,6 +287,147 @@ async def consolidate_observations(
 
 # ── Apply proposals (lossless) ────────────────────────────────────────────────
 
+# Rule-based auto-resolution thresholds (also used in write_observation_with_conflict_check)
+_AUTO_RESOLVE_CONFIDENCE_DELTA = 0.3
+_AUTO_RESOLVE_EVIDENCE_RATIO = 2.0
+
+# Precision-first: only auto-supersede when semantic confidence is this high.
+_SEMANTIC_AUTO_SUPERSEDE_THRESHOLD = 0.85
+
+
+async def _run_conflict_checks(
+    session: AsyncSession,
+    scope: Scope,
+    new_obs: Observation,
+    superseded_ids: set[int],
+) -> None:
+    """Run rule-based and semantic conflict detection for new_obs against active scope peers.
+
+    Called from apply_consolidation after each consolidated observation is written.
+    superseded_ids: ids that were just superseded by new_obs in this proposal batch —
+    exclude them from the candidate pool (they are no longer active).
+
+    FAIL SAFE: any internal error is caught and logged.  The caller's transaction is
+    never aborted by this function.
+    """
+    now = datetime.now(UTC)
+
+    try:
+        # Fetch active candidate observations in scope — exclude new_obs itself
+        # and any observations that were just superseded by this consolidation sweep.
+        result = await session.execute(
+            select(MemoryObservation).where(
+                MemoryObservation.scope_kind == scope.scope_kind,
+                MemoryObservation.scope_id == scope.scope_id,
+                MemoryObservation.superseded_by.is_(None),
+                MemoryObservation.id != new_obs.id,
+            )
+        )
+        candidate_rows = list(result.scalars())
+        # Additional guard: skip ids we just superseded (the DB update may not yet
+        # be visible within this savepoint depending on isolation level).
+        candidate_rows = [r for r in candidate_rows if r.id not in superseded_ids]
+        candidates = [Observation.model_validate(row) for row in candidate_rows]
+
+        if not candidates:
+            return
+
+        # ── Rule-based conflict detection ──────────────────────────────────────
+        rule_conflicts = detect_conflicts(new_obs, candidates)
+        rule_conflict_ids: set[int] = set()
+
+        for rule_cand in rule_conflicts:
+            existing_id = rule_cand.existing_id
+            existing_row = next((r for r in candidate_rows if r.id == existing_id), None)
+            if existing_row is None:
+                continue
+            rule_conflict_ids.add(existing_id)
+
+            existing_confidence: float = getattr(existing_row, "confidence", 0.5) or 0.5
+            existing_evidence: int = getattr(existing_row, "evidence_count", 1) or 1
+            new_confidence: float = getattr(new_obs, "confidence", 0.5) or 0.5
+            new_evidence: int = getattr(new_obs, "evidence_count", 1) or 1
+
+            confidence_delta = new_confidence - existing_confidence
+            evidence_ratio = new_evidence / max(existing_evidence, 1)
+
+            auto_resolvable = (
+                confidence_delta > _AUTO_RESOLVE_CONFIDENCE_DELTA
+                and evidence_ratio > _AUTO_RESOLVE_EVIDENCE_RATIO
+            )
+
+            if auto_resolvable:
+                await supersede_observation(session, existing_id, new_obs.id)
+                resolution = "auto"
+            else:
+                resolution = None
+
+            obs_a = min(new_obs.id, existing_id)
+            obs_b = max(new_obs.id, existing_id)
+            conflict_row = MemoryConflict(
+                scope_id=scope.scope_id,
+                observation_a_id=obs_a,
+                observation_b_id=obs_b,
+                conflict_type=rule_cand.conflict_type,
+                detected_at=now,
+                resolution=resolution,
+                resolved_at=now if auto_resolvable else None,
+                resolved_by="auto" if auto_resolvable else None,
+            )
+            session.add(conflict_row)
+
+        # ── Semantic (M1) conflict detection ───────────────────────────────────
+        # FAIL SAFE: wrap in a nested try so a semantic detector failure never
+        # crashes the consolidation.
+        try:
+            from artemis.memory.semantic_conflict_detector import detect_semantic_conflicts
+
+            semantic_candidates = await detect_semantic_conflicts(new_obs, candidates, session)
+            for sem_cand in semantic_candidates:
+                if sem_cand.existing_id in rule_conflict_ids:
+                    # Already handled by rule-based; skip to avoid duplicate row.
+                    continue
+
+                existing_row = next(
+                    (r for r in candidate_rows if r.id == sem_cand.existing_id), None
+                )
+                if existing_row is None:
+                    continue
+
+                if sem_cand.auto_resolve:
+                    await supersede_observation(session, sem_cand.existing_id, new_obs.id)
+                    sem_resolution = "auto"
+                else:
+                    sem_resolution = None
+
+                obs_a = min(new_obs.id, sem_cand.existing_id)
+                obs_b = max(new_obs.id, sem_cand.existing_id)
+                sem_conflict_row = MemoryConflict(
+                    scope_id=scope.scope_id,
+                    observation_a_id=obs_a,
+                    observation_b_id=obs_b,
+                    conflict_type=sem_cand.conflict_type,
+                    detected_at=now,
+                    resolution=sem_resolution,
+                    resolution_reason=sem_cand.reason or None,
+                    resolved_at=now if sem_cand.auto_resolve else None,
+                    resolved_by="auto" if sem_cand.auto_resolve else None,
+                )
+                session.add(sem_conflict_row)
+        except Exception:
+            _logger.error(
+                "M1 semantic conflict detection failed in apply_consolidation (non-fatal)",
+                exc_info=True,
+            )
+
+    except Exception:
+        _logger.error(
+            "Conflict checks failed in apply_consolidation (non-fatal); "
+            "new_obs id=%s still written",
+            new_obs.id,
+            exc_info=True,
+        )
+
 
 async def apply_consolidation(
     session: AsyncSession,
@@ -291,6 +442,8 @@ async def apply_consolidation(
     2. Supersede each evidence_from_id with the new observation's id.
     3. Link each evidence_from_id as Evidence on the new observation.
     4. Forward any drawer evidence from superseded observations at 0.9× weight.
+    5. [M1/M2 live path] Run rule-based + semantic conflict checks against
+       remaining active observations in scope (see _run_conflict_checks).
 
     All writes happen inside the caller-managed transaction.
     Returns the list of newly created observations.
@@ -308,6 +461,9 @@ async def apply_consolidation(
             source_quality=proposal.source_quality,
         )
         created.append(new_obs)
+
+        # Track all ids being superseded by this proposal (for conflict-check exclusion)
+        superseded_ids_for_proposal: set[int] = set(proposal.evidence_from_ids)
 
         for src_id in proposal.evidence_from_ids:
             # Link the source observation as evidence
@@ -337,6 +493,11 @@ async def apply_consolidation(
                             weight=round(ev.weight * 0.9, 4),
                         )
 
+        # ── M1/M2 live conflict detection ──────────────────────────────────────
+        # Run after all evidence/supersede writes for this proposal so the DB
+        # state is consistent for the candidate query.
+        await _run_conflict_checks(session, scope, new_obs, superseded_ids_for_proposal)
+
     return created
 
 
@@ -355,9 +516,8 @@ def corroborate_confidence(current: float, current_count: int) -> tuple[float, i
 
 
 # ── M2: conflict-aware observation writer ────────────────────────────────────
-
-_AUTO_RESOLVE_CONFIDENCE_DELTA = 0.3
-_AUTO_RESOLVE_EVIDENCE_RATIO = 2.0
+# NOTE: _AUTO_RESOLVE_CONFIDENCE_DELTA and _AUTO_RESOLVE_EVIDENCE_RATIO are now
+# defined near the top of the Apply-proposals section (above _run_conflict_checks).
 
 
 async def write_observation_with_conflict_check(
