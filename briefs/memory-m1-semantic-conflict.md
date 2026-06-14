@@ -1,9 +1,10 @@
 # Worker Brief — Memory M1: semantic conflict detection (accuracy) + harness validation
 
-**Owner:** Codex (backend/memory). **Lead:** Artemis (Opus) reviews + **merges (accuracy-sensitive —
-wrong supersession silently loses the right answer).** **Isolation:** own worktree
-(`worker/memory-m1-semantic-conflict`), own test DB (name contains `artemis_test`); commit before reporting;
-do-NOT-merge.
+**Owner:** terminal (Codex out of tokens) — run it directly or as one focused Sonnet sub-agent in an isolated
+worktree. **Lead:** Artemis (Opus) reviews + **merges (accuracy-sensitive — wrong supersession silently loses
+the right answer; do NOT self-merge).** **Isolation:** own worktree (`worker/memory-m1-semantic-conflict`),
+own test DB (name contains `artemis_test`, NOT the shared one); commit on the branch before reporting;
+do-NOT-merge — report the branch + the harness R@1 delta + the precision/false-positive numbers to Lead.
 **Status:** READY. Second Memory upgrade (M2 ✅ → M1 → M3). Every change is **measured against the M2 harness.**
 
 ## Why
