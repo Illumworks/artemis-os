@@ -25,12 +25,14 @@ import contextlib
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
 from artemis.floating_artemis import repository as repo
 from artemis.floating_artemis.authority import confirmation_store
+from artemis.identity.dependencies import resolve_request_identity
+from artemis.identity.scope_policy import resolve_agent_id_from_email
 from artemis.floating_artemis.chat import handle_turn, resume_after_confirm
 from artemis.floating_artemis.memory_read_cache import get as memory_cache_get
 from artemis.floating_artemis.schemas import (
@@ -70,20 +72,47 @@ ws_router = APIRouter(tags=["floating-artemis-ws"])
 
 @router.post("/sessions", status_code=201)
 async def create_session(
+    request: Request,
     body: SessionCreate,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
+    """Create a floating-assistant session.
+
+    D11 (server-side agent resolution): the ``agent_id`` stored in session
+    metadata is determined server-side from the caller's verified identity.
+    Owner → ``artemis``; any other authed user → ``callie``.  A client-supplied
+    ``agent_id`` in the metadata body is OVERRIDDEN by this server decision.
+    Marketing callers NEVER receive the Artemis agent, regardless of what the
+    client requests.
+    """
     try:
         await repo.get_session_by_id(session, body.session_id)
         raise conflict(f"Session '{body.session_id}' already exists", "session_exists")
     except ValueError:
         pass
+
+    # D11: resolve agent_id from server-side identity — override any client-supplied value.
+    try:
+        identity = await resolve_request_identity(request)
+        server_agent_id = resolve_agent_id_from_email(identity.email)
+    except Exception:
+        # Fail-closed: unknown identity → callie (never artemis).
+        logger.warning(
+            "create_session: could not resolve identity for D11 agent routing — defaulting to callie",
+            exc_info=True,
+        )
+        server_agent_id = "callie"
+
+    # Override metadata.agent_id with the server-resolved value.
+    metadata = dict(body.metadata) if body.metadata else {}
+    metadata["agent_id"] = server_agent_id
+
     row = await repo.create_session(
         session,
         session_id=body.session_id,
         owner_user_id=body.owner_user_id,
         title=body.title,
-        metadata=body.metadata,
+        metadata=metadata,
     )
     await session.commit()
     return SessionRead.from_orm_row(row).model_dump()

@@ -1,8 +1,13 @@
 """M3+M4 memory helpers for Floating Artemis.
 
-M3: write_turn_drawer — auto-write a memory drawer after every turn.
+M3 (original): write_turn_drawer — auto-write a memory drawer after every turn.
 M4: inject_memory_context — auto-read observations into the system prompt.
 Cache: 5-second per-session retrieval cache to avoid hot-loop DB calls.
+
+M3 (access-control): agent READ paths are constrained to the agent's allowed
+scopes via ``allowed_scopes_for_agent``.  Callie may NEVER retrieve
+``agent:artemis`` or any ``personal:*`` observations, even if a scope_set
+is passed by a caller.  Fail-closed: unknown agent → deny.
 
 Failure isolation is the load-bearing constraint: every public function is
 wrapped in try/except. Memory failures NEVER break chat.
@@ -19,6 +24,7 @@ import logging
 import time
 from typing import Any
 
+from artemis.identity.scope_policy import allowed_scopes_for_agent
 from artemis.memory.retrieval import search_observations
 from artemis.memory.schemas import Scope, Source
 from artemis.memory.store import write_drawer
@@ -27,6 +33,24 @@ logger = logging.getLogger(__name__)
 
 # Default scope for Artemis (backward compat)
 _FA_SCOPE = Scope(scope_kind="agent", scope_id="floating-artemis")
+
+
+def _enforce_agent_scope_set(agent_id: str, scope_set: list[Scope]) -> list[Scope]:
+    """Filter scope_set to only scopes permitted by the agent's allowance.
+
+    M3 fail-closed: if the allowance is denied or any scope in the set is
+    outside the allowance, that scope is silently dropped.  If all scopes are
+    dropped the caller gets an empty list → no results (correct for deny path).
+
+    This is the critical gate that prevents Callie from reading agent:artemis
+    or personal:* even if a caller passes them in scope_set.
+    """
+    allowance = allowed_scopes_for_agent(agent_id)
+    if allowance.denied:
+        return []
+    if allowance.allow_all:
+        return scope_set
+    return [s for s in scope_set if allowance.permits(s.scope_kind, s.scope_id)]
 
 
 def _scope_for_agent(agent_id: str) -> Scope:
@@ -196,13 +220,20 @@ async def inject_memory_context(
             results = cached
         else:
             scope = _scope_for_agent(agent_id)
-            async with _db.SessionLocal() as session:
-                results = await search_observations(
-                    session,
-                    scope_set=[scope],
-                    query=query,
-                    limit=5,
-                )
+            # M3: enforce agent scope allowance — filter the scope_set to only
+            # scopes this agent is permitted to read.  Callie will never see
+            # agent:artemis or personal:* even if scope_set were expanded.
+            enforced_scope_set = _enforce_agent_scope_set(agent_id, [scope])
+            if not enforced_scope_set:
+                results = []
+            else:
+                async with _db.SessionLocal() as session:
+                    results = await search_observations(
+                        session,
+                        scope_set=enforced_scope_set,
+                        query=query,
+                        limit=5,
+                    )
             _put_cache(session_id, query, results)
 
         # Per-person recall digest — cheap extra lookup keyed on speaker name.
@@ -215,13 +246,18 @@ async def inject_memory_context(
             else:
                 try:
                     scope = _scope_for_agent(agent_id)
-                    async with _db.SessionLocal() as session:
-                        person_results = await search_observations(
-                            session,
-                            scope_set=[scope],
-                            query=speaker_name,
-                            limit=3,
-                        )
+                    # M3: enforce scope allowance for per-person digest too.
+                    enforced_person_scope_set = _enforce_agent_scope_set(agent_id, [scope])
+                    if not enforced_person_scope_set:
+                        person_results = []
+                    else:
+                        async with _db.SessionLocal() as session:
+                            person_results = await search_observations(
+                                session,
+                                scope_set=enforced_person_scope_set,
+                                query=speaker_name,
+                                limit=3,
+                            )
                     _put_cache(person_cache_key, speaker_name, person_results)
                 except Exception:
                     logger.warning(

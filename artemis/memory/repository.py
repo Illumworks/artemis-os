@@ -20,9 +20,9 @@ M6 shell read API:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.memory.models import (
@@ -32,6 +32,9 @@ from artemis.memory.models import (
     MemoryObservation,
 )
 from artemis.memory.schemas import Conflict, Observation
+
+if TYPE_CHECKING:
+    from artemis.identity.scope_policy import ScopeAllowance
 
 _VALID_RESOLUTIONS = frozenset(
     {"a_wins", "b_wins", "both_valid_different_scope", "manual_review_needed", "auto"}
@@ -160,6 +163,58 @@ async def get_observation_history(
 _PREVIEW_LEN = 200
 
 
+def _allowance_clauses(allowance: "ScopeAllowance | None", model: Any) -> list[Any]:
+    """Return SQLAlchemy WHERE expressions that enforce *allowance* on *model*.
+
+    Returns an empty list when allowance is None (no enforcement — internal paths).
+    Returns [False] (always-false) when allowance.denied is True.
+    Returns a list of OR-able clauses otherwise.
+
+    Callers must wrap the result with ``or_(*clauses)`` and add it to the query.
+
+    This is imported lazily to avoid a circular-import at module load time; the
+    identity.scope_policy module imports from memory.schemas only (safe).
+    """
+    if allowance is None:
+        return []  # no enforcement for internal callers
+
+    from sqlalchemy import false as sa_false
+
+    sk = model.scope_kind
+    sid = model.scope_id
+
+    if allowance.denied:
+        return [sa_false()]
+
+    if allowance.allow_all:
+        return []  # unrestricted
+
+    clauses: list[Any] = []
+
+    # personal:<user_id> — only their own
+    if allowance.personal_user_id is not None:
+        from sqlalchemy import and_
+        clauses.append(
+            and_(sk == "personal", sid == str(allowance.personal_user_id))
+        )
+
+    # agent:<id> for each permitted agent
+    for agent_id in sorted(allowance.allowed_agent_ids):
+        from sqlalchemy import and_
+        clauses.append(and_(sk == "agent", sid == agent_id))
+
+    # blanket scope-kind access
+    for scope_kind_val in sorted(allowance.allowed_scope_kinds):
+        clauses.append(sk == scope_kind_val)
+
+    if not clauses:
+        # allowance is non-deny, non-all, but has no permitted scopes — deny
+        from sqlalchemy import false as sa_false
+        return [sa_false()]
+
+    return clauses
+
+
 async def list_drawers(
     session: AsyncSession,
     *,
@@ -167,13 +222,39 @@ async def list_drawers(
     scope_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    allowance: "ScopeAllowance | None" = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Paginated list of drawers with content_preview.
 
     Returns (rows, total_count).
+
+    When *allowance* is provided, only drawers in permitted scopes are returned.
+    Caller-supplied scope_kind/scope_id filters are intersected with the
+    allowance — they can never widen beyond what the allowance permits.
     """
+    # M3: validate caller-supplied filter against allowance BEFORE applying it.
+    # If the requested scope is outside the allowance, silently drop the filter
+    # (return the caller's permitted scopes only — don't widen, don't error).
+    if allowance is not None and not allowance.allow_all and not allowance.denied:
+        if scope_kind is not None and scope_id is not None:
+            if not allowance.permits(scope_kind, scope_id):
+                scope_kind = None
+                scope_id = None
+        elif scope_kind is not None and scope_id is None:
+            # Can't trivially validate kind-only without knowing all ids;
+            # apply the SQL allowance filter which will restrict naturally.
+            pass
+
     base = select(MemoryDrawer)
     count_base = select(func.count()).select_from(MemoryDrawer)
+
+    # Apply allowance SQL enforcement FIRST (broadest constraint).
+    acl_clauses = _allowance_clauses(allowance, MemoryDrawer)
+    if acl_clauses:
+        acl_filter = or_(*acl_clauses)
+        base = base.where(acl_filter)
+        count_base = count_base.where(acl_filter)
+
     if scope_kind is not None:
         base = base.where(MemoryDrawer.scope_kind == scope_kind)
         count_base = count_base.where(MemoryDrawer.scope_kind == scope_kind)
@@ -207,13 +288,32 @@ async def list_observations(
     scope_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    allowance: "ScopeAllowance | None" = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Paginated list of observations with content_preview.
 
     Returns (rows, total_count).
+
+    When *allowance* is provided, only observations in permitted scopes are
+    returned.  Caller-supplied filters are intersected with the allowance.
     """
+    # M3: validate caller-supplied filter against allowance.
+    if allowance is not None and not allowance.allow_all and not allowance.denied:
+        if scope_kind is not None and scope_id is not None:
+            if not allowance.permits(scope_kind, scope_id):
+                scope_kind = None
+                scope_id = None
+
     base = select(MemoryObservation)
     count_base = select(func.count()).select_from(MemoryObservation)
+
+    # Apply allowance SQL enforcement FIRST.
+    acl_clauses = _allowance_clauses(allowance, MemoryObservation)
+    if acl_clauses:
+        acl_filter = or_(*acl_clauses)
+        base = base.where(acl_filter)
+        count_base = count_base.where(acl_filter)
+
     if scope_kind is not None:
         base = base.where(MemoryObservation.scope_kind == scope_kind)
         count_base = count_base.where(MemoryObservation.scope_kind == scope_kind)
@@ -243,13 +343,24 @@ async def list_observations(
 async def get_observation_detail(
     session: AsyncSession,
     observation_id: int,
+    *,
+    allowance: "ScopeAllowance | None" = None,
 ) -> dict[str, Any] | None:
-    """Full observation row plus evidence chain with source previews."""
+    """Full observation row plus evidence chain with source previews.
+
+    M3: When *allowance* is provided, returns None if the observation is outside
+    the caller's permitted scopes.  The caller should translate None → 404
+    (not 403; we do NOT reveal existence of out-of-scope observations).
+    """
     obs_result = await session.execute(
         select(MemoryObservation).where(MemoryObservation.id == observation_id)
     )
     obs = obs_result.scalar_one_or_none()
     if obs is None:
+        return None
+
+    # M3 access check — 404 if outside allowance (don't reveal existence).
+    if allowance is not None and not allowance.permits(obs.scope_kind, obs.scope_id):
         return None
 
     # Fetch evidence rows
@@ -311,14 +422,25 @@ async def get_observation_detail(
 
 async def list_scopes(
     session: AsyncSession,
+    *,
+    allowance: "ScopeAllowance | None" = None,
 ) -> list[dict[str, Any]]:
-    """Distinct scopes with drawer_count and observation_count."""
+    """Distinct scopes with drawer_count and observation_count.
+
+    M3: When *allowance* is provided, only scopes the caller is permitted to
+    see are returned.  Denied callers receive an empty list.
+    """
     # Get drawer counts per (scope_kind, scope_id)
     dr_stmt = select(
         MemoryDrawer.scope_kind,
         MemoryDrawer.scope_id,
         func.count().label("drawer_count"),
-    ).group_by(MemoryDrawer.scope_kind, MemoryDrawer.scope_id)
+    )
+    # Apply allowance filter at SQL level for drawers
+    acl_clauses_dr = _allowance_clauses(allowance, MemoryDrawer)
+    if acl_clauses_dr:
+        dr_stmt = dr_stmt.where(or_(*acl_clauses_dr))
+    dr_stmt = dr_stmt.group_by(MemoryDrawer.scope_kind, MemoryDrawer.scope_id)
     dr_result = await session.execute(dr_stmt)
     drawer_counts: dict[tuple[str, str], int] = {
         (r.scope_kind, r.scope_id): r.drawer_count for r in dr_result
@@ -329,7 +451,12 @@ async def list_scopes(
         MemoryObservation.scope_kind,
         MemoryObservation.scope_id,
         func.count().label("observation_count"),
-    ).group_by(MemoryObservation.scope_kind, MemoryObservation.scope_id)
+    )
+    # Apply allowance filter at SQL level for observations
+    acl_clauses_obs = _allowance_clauses(allowance, MemoryObservation)
+    if acl_clauses_obs:
+        obs_stmt = obs_stmt.where(or_(*acl_clauses_obs))
+    obs_stmt = obs_stmt.group_by(MemoryObservation.scope_kind, MemoryObservation.scope_id)
     obs_result = await session.execute(obs_stmt)
     obs_counts: dict[tuple[str, str], int] = {
         (r.scope_kind, r.scope_id): r.observation_count for r in obs_result
