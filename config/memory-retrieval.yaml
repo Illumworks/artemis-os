@@ -7,8 +7,14 @@ weights:
   recency: 0.15    # exponential decay from created_at
   score: 0.15      # stored score field (decayed by maintenance in B3)
 
-# Candidate pool per modality before fusion
-top_k: 50
+# Candidate pool per modality before fusion.
+# Raised from 50→150 in M1c: lifts genuine recall miss #715 into the pool.
+top_k: 150
+
+# Series-aware collapse: when multiple snapshots of the same time-series appear
+# in the scored pool, keep only the LATEST one and let distinct results fill the
+# freed slot.  Set to false to restore the pre-M1c byte-identical behaviour.
+series_collapse: true
 
 # Recency half-life in days — score halves after this many days
 recency_decay_days: 30.0

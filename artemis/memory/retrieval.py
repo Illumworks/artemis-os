@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -63,8 +64,9 @@ class ScoreFeatureWeights(BaseModel):
 class RetrievalConfig(BaseModel):
     weights: RetrievalWeights = RetrievalWeights()
     score_features: ScoreFeatureWeights = ScoreFeatureWeights()
-    top_k: int = 50
+    top_k: int = 150
     recency_decay_days: float = 30.0
+    series_collapse: bool = True
 
 
 def load_retrieval_config() -> RetrievalConfig:
@@ -179,6 +181,97 @@ def _compute_final_score(
     clamped_confidence = max(0.0, min(1.0, confidence))
     evidence_boost = 1.0 + math.log10(max(1, evidence_count))
     return base * clamped_confidence * evidence_boost
+
+
+# ── Series-key helpers ────────────────────────────────────────────────────────
+
+# Known time-series content patterns.  Each pattern must have exactly one
+# named capture group, "series_id", that identifies the series within its
+# category.  A match returns a tuple key (category, series_id); no match
+# returns None.  Only add patterns here — never change how non-matching
+# content is handled (it always returns None and is NEVER grouped).
+_SERIES_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # "Momentum snapshot for <series-id>" (series-id ends at whitespace or colon)
+    # e.g. "Momentum snapshot for general_growth/MI" → key ("momentum", "general_growth/MI")
+    # e.g. "Momentum snapshot for acquisition/email: score=…" → key ("momentum", "acquisition/email")
+    ("momentum", re.compile(r"^\s*Momentum snapshot for (?P<series_id>[^\s:]+)", re.IGNORECASE)),
+]
+
+
+def _series_key(content: str) -> tuple[str, str] | None:
+    """Return a stable series key for known time-series observations, else None.
+
+    Recognised patterns (extensible — add to _SERIES_PATTERNS):
+    - ``Momentum snapshot for <series-id>`` → ``("momentum", series-id)``
+
+    Critical contract: only observations matching a known time-series
+    signature are ever grouped.  Two snapshots of DIFFERENT series, or any
+    non-time-series observation (conversation message, signal, etc.), always
+    receive None and are NEVER collapsed.
+    """
+    for category, pattern in _SERIES_PATTERNS:
+        m = pattern.match(content)
+        if m is not None:
+            return (category, m.group("series_id"))
+    return None
+
+
+def _apply_series_collapse(
+    scored: list[ScoredObservation],
+    limit: int,
+) -> list[ScoredObservation]:
+    """Walk ``scored`` (already sorted by final_score desc) and, for each
+    known time-series key, keep only the single LATEST-dated member (by
+    ``valid_from`` falling back to ``created_at``).  Other series members are
+    skipped so that distinct results fill the freed slots.
+
+    Non-time-series results (``_series_key`` returns None) pass through
+    untouched in their original rank order.  The result is truncated to
+    ``limit`` after collapse.
+
+    Implementation detail: we pre-compute, for each series key present in
+    *scored*, the id of its latest-dated member; then iterate once in
+    descending-score order, admitting a series member only if it is that
+    latest-dated representative.
+    """
+
+    # Phase 1: find the id of the latest-dated member per series key
+    def _anchor(obs: ScoredObservation) -> datetime:
+        ts = obs.valid_from if obs.valid_from is not None else obs.created_at
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=UTC)
+        return ts
+
+    series_latest_id: dict[tuple[str, str], int] = {}
+    for obs in scored:
+        key = _series_key(obs.content)
+        if key is None:
+            continue
+        existing_id = series_latest_id.get(key)
+        if existing_id is None:
+            series_latest_id[key] = obs.id
+        else:
+            # find existing obs by id to compare timestamps
+            for candidate in scored:
+                if candidate.id == existing_id:
+                    if _anchor(obs) > _anchor(candidate):
+                        series_latest_id[key] = obs.id
+                    break
+
+    # Phase 2: iterate in score order; skip series duplicates
+    seen_series: set[tuple[str, str]] = set()
+    result: list[ScoredObservation] = []
+    for obs in scored:
+        if len(result) >= limit:
+            break
+        key = _series_key(obs.content)
+        if key is None:
+            result.append(obs)
+        elif obs.id == series_latest_id.get(key) and key not in seen_series:
+            seen_series.add(key)
+            result.append(obs)
+        # else: it's an older snapshot of a known series — skip it
+    return result
 
 
 # ── SQL helpers ───────────────────────────────────────────────────────────────
@@ -501,7 +594,7 @@ async def search_observations(
         )
 
     scored.sort(key=lambda x: x.final_score, reverse=True)
-    results = scored[:limit]
+    results = _apply_series_collapse(scored, limit) if cfg.series_collapse else scored[:limit]
     session_factory: async_sessionmaker[AsyncSession] | None = None
     if session.bind is not None:
         session_factory = async_sessionmaker(

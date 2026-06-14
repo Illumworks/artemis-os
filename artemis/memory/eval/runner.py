@@ -56,6 +56,7 @@ from artemis.memory.retrieval import (
     RetrievalConfig,
     RetrievalWeights,
     ScoreFeatureWeights,
+    _series_key,
     get_retrieval_config,
     search_observations,
 )
@@ -772,11 +773,31 @@ async def evaluate_qa_set(
     cfg: RetrievalConfig,
     label: str,
     report_type: Literal["baseline", "tuned", "scale"],
+    series_aware_credit: bool = True,
 ) -> EvalRunReport:
+    """Evaluate ``qa_set`` against ``search_observations`` with ``cfg``.
+
+    Args:
+        series_aware_credit: when True (default), a query is considered a hit
+            when the returned result is the exact target observation OR any
+            returned result shares the target's ``_series_key`` — so the harness
+            doesn't penalise the live time-series queries when the QA was frozen
+            against an older snapshot.  When False, only an exact id match counts
+            (pre-M1c strict behaviour).
+    """
     db_name = _database_name(db_url)
     fingerprint_before = await _capture_fingerprint(session, db_name)
     base_provider = get_default_provider()
     results: list[QueryRunResult] = []
+
+    # Pre-load target snippets for series-key lookup (avoid re-querying)
+    target_content_cache: dict[int, str | None] = {}
+
+    async def _get_target_content(obs_id: int) -> str | None:
+        if obs_id not in target_content_cache:
+            row = await session.get(MemoryObservation, obs_id)
+            target_content_cache[obs_id] = row.content if row is not None else None
+        return target_content_cache[obs_id]
 
     for query in qa_set.queries:
         counting_provider = CountingEmbeddingProvider(base_provider)
@@ -793,10 +814,22 @@ async def evaluate_qa_set(
         latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
         hit_rank: int | None = None
         top_ids = [item.id for item in hits]
+
+        target_series_key: tuple[str, str] | None = None
+        if series_aware_credit:
+            target_content = await _get_target_content(query.observation_id)
+            if target_content is not None:
+                target_series_key = _series_key(target_content)
+
         for index, item in enumerate(hits, start=1):
             if item.id == query.observation_id:
                 hit_rank = index
                 break
+            if series_aware_credit and target_series_key is not None:
+                result_key = _series_key(item.content)
+                if result_key == target_series_key:
+                    hit_rank = index
+                    break
         miss_snippets: list[str] = []
         if hit_rank is None:
             miss_snippets = [_snippet(item.content, max_chars=96) for item in hits[:3]]

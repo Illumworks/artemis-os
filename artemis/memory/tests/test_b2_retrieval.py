@@ -58,8 +58,9 @@ def test_retrieval_config_defaults() -> None:
     assert cfg.weights.semantic == pytest.approx(0.40)
     assert cfg.weights.recency == pytest.approx(0.15)
     assert cfg.weights.score == pytest.approx(0.15)
-    assert cfg.top_k == 50
+    assert cfg.top_k == 150  # M1c: raised from 50 → 150
     assert cfg.recency_decay_days == pytest.approx(30.0)
+    assert cfg.series_collapse is True  # M1c: enabled by default
 
 
 def test_retrieval_config_weights_sum_to_one() -> None:
