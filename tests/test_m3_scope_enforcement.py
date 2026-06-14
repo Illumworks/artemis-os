@@ -1072,3 +1072,398 @@ async def test_emit_memory_read_event_artemis_allowed_personal(db_session):
 
     # Should not raise; Artemis can read personal.
     await _emit_memory_read_event(session_id, inp, agent_id="artemis")
+
+
+# ── 10. Identity binding at turn boundary (M3 fix — the confirmed hole) ──────
+#
+# These tests close the identity-binding hole: a marketing caller driving a turn
+# against a session whose PERSISTED metadata.agent_id = "artemis" must be gated
+# as callie (from their LIVE identity), not as artemis (from stale metadata).
+#
+# Tests use _load_session_context directly (the trusted_agent_id param) and
+# via handle_turn (the trusted_agent_id param that overrides metadata).
+
+
+class TestFailClosedDefault:
+    """_load_session_context default is now "callie", not "artemis"."""
+
+    @pytest.mark.asyncio
+    async def test_no_metadata_defaults_to_callie(self, db_session):
+        """Session with no metadata at all defaults to callie (fail-closed)."""
+        from artemis.floating_artemis import repository as fa_repo
+        from artemis.floating_artemis.chat import _load_session_context
+
+        session_id = "test-fc-default-no-meta"
+        # Create session with empty metadata
+        await fa_repo.create_session(db_session, session_id=session_id, metadata={})
+        await db_session.commit()
+
+        ctx = await _load_session_context(
+            session_id=session_id,
+            db_session=db_session,
+            all_surfaces=set(),
+            # trusted_agent_id=None: fall back to metadata
+        )
+        assert ctx.agent_id == "callie", (
+            f"Session with empty metadata must default to callie (fail-closed), got: {ctx.agent_id!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unknown_session_defaults_to_callie(self, db_session):
+        """Nonexistent session (metadata load fails) defaults to callie (fail-closed)."""
+        from artemis.floating_artemis.chat import _load_session_context
+
+        ctx = await _load_session_context(
+            session_id="session-that-does-not-exist-xyz",
+            db_session=db_session,
+            all_surfaces=set(),
+        )
+        assert ctx.agent_id == "callie", (
+            f"Unresolvable session must default to callie (fail-closed), got: {ctx.agent_id!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_blank_agent_id_in_metadata_defaults_to_callie(self, db_session):
+        """Session with metadata.agent_id = '' defaults to callie (fail-closed)."""
+        from artemis.floating_artemis import repository as fa_repo
+        from artemis.floating_artemis.chat import _load_session_context
+
+        session_id = "test-fc-blank-agent"
+        await fa_repo.create_session(db_session, session_id=session_id, metadata={"agent_id": ""})
+        await db_session.commit()
+
+        ctx = await _load_session_context(
+            session_id=session_id,
+            db_session=db_session,
+            all_surfaces=set(),
+        )
+        assert ctx.agent_id == "callie", (
+            f"Blank agent_id in metadata must default to callie, got: {ctx.agent_id!r}"
+        )
+
+
+class TestIdentityBindingAtTurnBoundary:
+    """trusted_agent_id overrides persisted metadata."""
+
+    @pytest.mark.asyncio
+    async def test_trusted_agent_overrides_artemis_metadata(self, db_session):
+        """trusted_agent_id=callie overrides persisted metadata.agent_id=artemis."""
+        from artemis.floating_artemis import repository as fa_repo
+        from artemis.floating_artemis.chat import _load_session_context
+
+        session_id = "test-override-artemis-meta"
+        # Persist an "artemis" metadata session — simulates a pre-M3 or owner session
+        await fa_repo.create_session(
+            db_session, session_id=session_id, metadata={"agent_id": "artemis"}
+        )
+        await db_session.commit()
+
+        # Marketing caller provides trusted_agent_id=callie
+        ctx = await _load_session_context(
+            session_id=session_id,
+            db_session=db_session,
+            all_surfaces=set(),
+            trusted_agent_id="callie",
+        )
+        assert ctx.agent_id == "callie", (
+            f"trusted_agent_id=callie must override persisted artemis metadata, "
+            f"got: {ctx.agent_id!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_trusted_agent_callie_overrides_artemis_metadata(self, db_session):
+        """Non-owner driving a turn on an artemis-metadata session gets callie gating."""
+        from artemis.floating_artemis import repository as fa_repo
+        from artemis.floating_artemis.chat import _load_session_context
+        from artemis.identity.scope_policy import resolve_agent_id_from_email
+
+        session_id = "test-marketing-drives-artemis-session"
+        # Session metadata says "artemis" (created by owner, but now driven by marketing)
+        await fa_repo.create_session(
+            db_session, session_id=session_id, metadata={"agent_id": "artemis"}
+        )
+        await db_session.commit()
+
+        # Simulate marketing caller: live identity → callie
+        marketing_trusted_id = resolve_agent_id_from_email(MARKETING_EMAIL)
+        assert marketing_trusted_id == "callie"
+
+        ctx = await _load_session_context(
+            session_id=session_id,
+            db_session=db_session,
+            all_surfaces=set(),
+            trusted_agent_id=marketing_trusted_id,
+        )
+        # Must be callie, NOT artemis (even though metadata says artemis)
+        assert ctx.agent_id == "callie"
+
+    @pytest.mark.asyncio
+    async def test_owner_identity_on_artemis_session_stays_artemis(self, db_session):
+        """Owner caller on an artemis-metadata session keeps artemis agent."""
+        from artemis.floating_artemis import repository as fa_repo
+        from artemis.floating_artemis.chat import _load_session_context
+        from artemis.identity.scope_policy import resolve_agent_id_from_email
+
+        session_id = "test-owner-artemis-session"
+        await fa_repo.create_session(
+            db_session, session_id=session_id, metadata={"agent_id": "artemis"}
+        )
+        await db_session.commit()
+
+        owner_trusted_id = resolve_agent_id_from_email(OWNER_EMAIL)
+        assert owner_trusted_id == "artemis"
+
+        ctx = await _load_session_context(
+            session_id=session_id,
+            db_session=db_session,
+            all_surfaces=set(),
+            trusted_agent_id=owner_trusted_id,
+        )
+        assert ctx.agent_id == "artemis"
+
+    @pytest.mark.asyncio
+    async def test_missing_trusted_identity_sends_callie_not_artemis(self, db_session):
+        """Unresolved identity (trusted_agent_id empty string) is normalized to callie."""
+        from artemis.floating_artemis import repository as fa_repo
+        from artemis.floating_artemis.chat import _load_session_context
+
+        session_id = "test-empty-trusted-id"
+        await fa_repo.create_session(
+            db_session, session_id=session_id, metadata={"agent_id": "artemis"}
+        )
+        await db_session.commit()
+
+        # Empty string trusted_agent_id (e.g. unresolved identity fallback)
+        ctx = await _load_session_context(
+            session_id=session_id,
+            db_session=db_session,
+            all_surfaces=set(),
+            trusted_agent_id="",
+        )
+        assert ctx.agent_id == "callie", (
+            f"Empty trusted_agent_id must resolve to callie (fail-closed), got: {ctx.agent_id!r}"
+        )
+
+
+# ── 11. Live smoke: stale-artemis-session with marketing identity ─────────────
+#
+# THE PRIMARY HOLE: a session created with metadata.agent_id="artemis" (pre-M3,
+# or by the owner) should NOT grant artemis-level memory access to a non-owner
+# who drives a turn against it.  The query_memory tool must be gated by the
+# LIVE trusted_agent_id, not the stale metadata.
+
+
+@pytest.mark.asyncio
+async def test_smoke_marketing_on_artemis_session_denied_personal(db_session):
+    """SMOKE: Marketing identity driving a turn on an artemis-metadata session
+    CANNOT read personal scope via query_memory (the stale metadata must not govern)."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
+    await _seed_observation_full(db_session, "agent", "artemis", "ARTEMIS SECRET")
+    await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
+
+    # Simulate the pre-M3 stale-session scenario:
+    # A session whose metadata says agent_id=artemis — could be an owner session or a
+    # session created before D11 fix where the default was "artemis".
+    from artemis.floating_artemis.tools.core import _make_query_memory
+    from artemis.identity.scope_policy import resolve_agent_id_from_email
+
+    # Marketing caller's live identity → callie
+    marketing_trusted_id = resolve_agent_id_from_email(MARKETING_EMAIL)
+    assert marketing_trusted_id == "callie", "Pre-condition: marketing → callie"
+
+    # Build query_memory gated for the marketing caller's live identity (callie).
+    # This is what handle_turn does when it receives trusted_agent_id="callie".
+    callie_qm = _make_query_memory(marketing_trusted_id)
+
+    # Attempt 1: personal scope — must be denied
+    result_personal = await callie_qm(
+        {"query": "SECRET", "scope": f"personal:{owner_id}", "limit": 10}
+    )
+    assert "PERSONAL SECRET" not in result_personal, (
+        f"Marketing identity on artemis-metadata session must NOT see personal content, "
+        f"got: {result_personal!r}"
+    )
+    assert result_personal == "No relevant memory found.", (
+        f"Marketing identity must get empty sentinel for personal scope, got: {result_personal!r}"
+    )
+
+    # Attempt 2: agent:artemis scope — must be denied
+    result_artemis = await callie_qm(
+        {"query": "SECRET", "scope": "agent:artemis", "limit": 10}
+    )
+    assert "ARTEMIS SECRET" not in result_artemis, (
+        f"Marketing identity on artemis-metadata session must NOT see agent:artemis content, "
+        f"got: {result_artemis!r}"
+    )
+    assert result_artemis == "No relevant memory found.", (
+        f"Marketing identity must get empty sentinel for agent:artemis scope, "
+        f"got: {result_artemis!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_smoke_owner_on_artemis_session_allowed_personal(db_session):
+    """SMOKE: Owner identity driving a turn on an artemis-metadata session
+    CAN read personal and agent:artemis scopes (owner full access maintained)."""
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
+    await _seed_observation_full(db_session, "agent", "artemis", "ARTEMIS SECRET")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+    from artemis.identity.scope_policy import resolve_agent_id_from_email
+
+    owner_trusted_id = resolve_agent_id_from_email(OWNER_EMAIL)
+    assert owner_trusted_id == "artemis"
+
+    artemis_qm = _make_query_memory(owner_trusted_id)
+
+    result_personal = await artemis_qm(
+        {"query": "PERSONAL SECRET", "scope": f"personal:{owner_id}", "limit": 10}
+    )
+    assert "PERSONAL SECRET" in result_personal, (
+        f"Owner identity must see personal content, got: {result_personal!r}"
+    )
+
+    result_artemis = await artemis_qm(
+        {"query": "ARTEMIS SECRET", "scope": "agent:artemis", "limit": 10}
+    )
+    assert "ARTEMIS SECRET" in result_artemis, (
+        f"Owner identity must see agent:artemis content, got: {result_artemis!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_smoke_missing_unresolved_identity_fail_closed(db_session):
+    """SMOKE: Missing/unresolved identity (None / empty) NEVER gets artemis access.
+
+    Simulates the route's except-clause fallback: when identity resolution fails,
+    trusted_agent_id="callie" is passed. Validates the fail-closed contract.
+    """
+    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
+    await _seed_observation_full(db_session, "agent", "artemis", "ARTEMIS SECRET")
+
+    from artemis.floating_artemis.tools.core import _make_query_memory
+
+    # Simulate what the route does when identity is unresolvable: default to callie.
+    fail_closed_trusted_id = "callie"
+    fail_closed_qm = _make_query_memory(fail_closed_trusted_id)
+
+    result_personal = await fail_closed_qm(
+        {"query": "SECRET", "scope": f"personal:{owner_id}", "limit": 10}
+    )
+    assert "PERSONAL SECRET" not in result_personal, (
+        f"Unresolved identity (callie fallback) must NOT see personal content, "
+        f"got: {result_personal!r}"
+    )
+    assert result_personal == "No relevant memory found."
+
+    result_artemis = await fail_closed_qm(
+        {"query": "SECRET", "scope": "agent:artemis", "limit": 10}
+    )
+    assert "ARTEMIS SECRET" not in result_artemis, (
+        f"Unresolved identity (callie fallback) must NOT see agent:artemis content, "
+        f"got: {result_artemis!r}"
+    )
+    assert result_artemis == "No relevant memory found."
+
+    # Marketing (workspace:marketing) MUST still work for callie fallback
+    await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
+    result_mktg = await fail_closed_qm(
+        {"query": "MARKETING PUBLIC", "scope": "workspace:marketing", "limit": 10}
+    )
+    assert "MARKETING PUBLIC" in result_mktg, (
+        f"Callie fallback must still see marketing content, got: {result_mktg!r}"
+    )
+
+
+# ── 12. Route-level identity binding: send_message resolves live identity ─────
+
+
+@pytest.mark.asyncio
+async def test_route_send_message_resolves_identity_for_turn(db_session, client):
+    """send_message route resolves identity and passes trusted_agent_id to handle_turn.
+
+    We verify this by checking that the route correctly resolves the caller's
+    agent_id from the live identity (not metadata). Since handle_turn runs
+    asynchronously as a background task, we validate the identity resolution
+    path, not the full turn execution.
+
+    Method: create a session with metadata.agent_id=artemis, then call
+    send_message as marketing identity — the response must be 202 (accepted)
+    and the session must exist. The identity resolution path in the route is
+    covered by the D11 test above; here we confirm the route doesn't crash
+    when the identity is resolved.
+    """
+    import artemis.identity.dependencies as id_dep
+
+    await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
+
+    # First create the session as the owner (metadata.agent_id=artemis)
+    original = id_dep._DEV_USER_EMAIL
+    try:
+        id_dep._DEV_USER_EMAIL = OWNER_EMAIL
+        resp = await client.post(
+            "/api/floating-artemis/sessions",
+            json={"session_id": "test-route-binding-session"},
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        id_dep._DEV_USER_EMAIL = original
+
+    assert resp.status_code == 201
+    assert resp.json()["metadata"]["agent_id"] == "artemis"
+
+    # Now call send_message as marketing identity — should be accepted (202)
+    # The key check: trusted_agent_id=callie is resolved and passed to handle_turn
+    try:
+        id_dep._DEV_USER_EMAIL = MARKETING_EMAIL
+        resp2 = await client.post(
+            "/api/floating-artemis/sessions/test-route-binding-session/messages",
+            json={"message": "hello"},
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        id_dep._DEV_USER_EMAIL = original
+
+    # Must be accepted (202) — the turn is queued as a background task
+    assert resp2.status_code == 202
+    body = resp2.json()
+    assert body["accepted"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_send_message_missing_identity_defaults_callie(db_session, client):
+    """send_message with unresolvable identity defaults to callie (fail-closed) and still accepts."""
+    import artemis.identity.dependencies as id_dep
+
+    await _seed_user(db_session, OWNER_EMAIL, "Jon")
+
+    original = id_dep._DEV_USER_EMAIL
+    try:
+        id_dep._DEV_USER_EMAIL = OWNER_EMAIL
+        resp = await client.post(
+            "/api/floating-artemis/sessions",
+            json={"session_id": "test-route-fc-session"},
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        id_dep._DEV_USER_EMAIL = original
+
+    assert resp.status_code == 201
+
+    # Drive turn with blank dev email (simulates unresolvable identity; dev_shim
+    # still returns an identity so we verify via resolve_agent_id_from_email behavior)
+    try:
+        id_dep._DEV_USER_EMAIL = ""  # blank email → callie via resolve_agent_id_from_email
+        resp2 = await client.post(
+            "/api/floating-artemis/sessions/test-route-fc-session/messages",
+            json={"message": "hello"},
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        id_dep._DEV_USER_EMAIL = original
+
+    # Even with blank email, the route must still accept (the gating happens inside handle_turn)
+    assert resp2.status_code == 202

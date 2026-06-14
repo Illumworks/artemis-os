@@ -511,7 +511,19 @@ async def _load_session_context(
     session_id: str,
     db_session: Any | None,
     all_surfaces: set[str],
+    trusted_agent_id: str | None = None,
 ) -> _SessionContext:
+    """Load session context.
+
+    Parameters
+    ----------
+    trusted_agent_id:
+        When provided (web-turn path), this value GOVERNS tool/memory gating — it
+        overrides the persisted session metadata.  Derived server-side from the
+        live caller's verified identity, so it cannot be spoofed via stale metadata.
+        When None (Slack path, tests, resume path), falls back to persisted metadata
+        with a FAIL-CLOSED default of "callie" (not "artemis").
+    """
     metadata: dict[str, Any] = {}
     try:
         import artemis.db as _db
@@ -528,12 +540,23 @@ async def _load_session_context(
     except Exception:
         logger.debug("Could not load session metadata for session %s", session_id, exc_info=True)
 
-    raw_agent_id = metadata.get("agent_id", "artemis") if isinstance(metadata, dict) else "artemis"
-    agent_id = (
-        raw_agent_id.strip().lower()
-        if isinstance(raw_agent_id, str) and raw_agent_id.strip()
-        else "artemis"
-    )
+    if trusted_agent_id is not None:
+        # Live-identity-derived: use directly, normalise only.
+        agent_id = trusted_agent_id.strip().lower() if isinstance(trusted_agent_id, str) and trusted_agent_id.strip() else "callie"
+        logger.debug(
+            "_load_session_context: using trusted_agent_id=%r for session %s (overrides metadata)",
+            agent_id,
+            session_id,
+        )
+    else:
+        # Slack path / tests / resume: read from persisted metadata.
+        # FAIL-CLOSED: default to "callie" (marketing-only), never "artemis".
+        raw_agent_id = metadata.get("agent_id", "callie") if isinstance(metadata, dict) else "callie"
+        agent_id = (
+            raw_agent_id.strip().lower()
+            if isinstance(raw_agent_id, str) and raw_agent_id.strip()
+            else "callie"
+        )
     scoped_surfaces = resolve_surface_scope(
         all_surfaces=all_surfaces,
         session_id=session_id,
@@ -561,6 +584,7 @@ async def handle_turn(
     speaker_name: str | None = None,
     speaker_id: str | None = None,
     db_session: Any | None = None,
+    trusted_agent_id: str | None = None,
 ) -> TurnResult:
     """Run one user turn for the given Floating Artemis session.
 
@@ -585,6 +609,15 @@ async def handle_turn(
     db_session:
         Optional SQLAlchemy AsyncSession (for tests). If None, a new session is
         opened from SessionLocal per DB operation.
+    trusted_agent_id:
+        M3 identity binding: when set, this value GOVERNS scope gating for the
+        entire turn, overriding whatever agent_id is persisted in session metadata.
+        Must be derived server-side from the live caller's verified identity (see
+        resolve_agent_id_from_email).  When None the session metadata is used with
+        a fail-closed default of "callie" (not "artemis").
+        - Web-turn path: always set by the route handler from the CF-Access identity.
+        - Slack path: None (session metadata is server-authored by route_inbound).
+        - Tests: set explicitly to the identity under test.
     """
     # ── 1. Intent shortcut ────────────────────────────────────────────────────
     intent = classify_intent(user_text)
@@ -650,6 +683,7 @@ async def handle_turn(
         session_id=session_id,
         db_session=db_session,
         all_surfaces=all_surfaces,
+        trusted_agent_id=trusted_agent_id,
     )
     available_surfaces = session_ctx.available_surfaces
 
@@ -955,11 +989,20 @@ async def resume_after_confirm(
     decision: str,
     adapter: ModelAdapter | None = None,
     db_session: Any | None = None,
+    trusted_agent_id: str | None = None,
 ) -> TurnResult:
     """Resume a suspended turn after operator confirms or cancels a layer-3/4 tool.
 
     Retrieves pending confirmation, executes (or cancels) the tool, then
     reattaches the conversation and runs to completion.
+
+    Parameters
+    ----------
+    trusted_agent_id:
+        M3 identity binding: when set (web-turn path), this value overrides the
+        persisted session metadata for scope gating. Must be derived from the
+        live caller's verified identity.  When None (Slack / tests), session
+        metadata is used with a fail-closed default of "callie".
     """
     pending = confirmation_store.get(tool_use_id)
     if pending is None:
@@ -968,6 +1011,7 @@ async def resume_after_confirm(
     # Execute or cancel the tool
     if decision == "run":
         # M3: load session context to get agent_id for scope gating.
+        # trusted_agent_id (from the live caller's identity) overrides persisted metadata.
         # query_memory is layer-1 and never reaches resume_after_confirm, but we
         # gate consistently in case future layer-2+ tools read memory.
         _resume_agent_id: str | None = None
@@ -976,6 +1020,7 @@ async def resume_after_confirm(
                 session_id=pending.session_id,
                 db_session=db_session,
                 all_surfaces=set(),
+                trusted_agent_id=trusted_agent_id,
             )
             _resume_agent_id = _resume_session_ctx.agent_id
         except Exception:
@@ -1026,10 +1071,12 @@ async def resume_after_confirm(
     ]
 
     # Load current history and append the tool_result
+    # M3: pass trusted_agent_id so scope gating uses live identity, not stale metadata.
     session_ctx = await _load_session_context(
         session_id=session_id,
         db_session=db_session,
         all_surfaces=set(),
+        trusted_agent_id=trusted_agent_id,
     )
     history = await _load_message_history(
         session_id=session_id,

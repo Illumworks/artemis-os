@@ -205,15 +205,34 @@ async def archive_session(
 @router.post("/sessions/{session_id}/messages", status_code=202)
 async def send_message(
     session_id: str,
+    request: Request,
     body: TurnRequest,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Queue a user turn. Runs handle_turn as a background task; returns immediately."""
+    """Queue a user turn. Runs handle_turn as a background task; returns immediately.
+
+    M3 identity binding: resolve the caller's live identity here at the turn
+    boundary and pass the server-derived trusted_agent_id into handle_turn.
+    This ensures scope gating is governed by the LIVE authenticated caller, not
+    whatever agent_id is stored in session metadata (which may be stale/wrong).
+    Fail-closed: unresolvable identity → trusted_agent_id="callie" (never "artemis").
+    """
     # Verify session exists
     try:
         await repo.get_session_by_id(session, session_id)
     except ValueError:
         raise not_found(f"Session '{session_id}' not found", "session_not_found")  # noqa: B904
+
+    # M3: resolve live caller identity → trusted_agent_id (fail-closed: callie).
+    try:
+        identity = await resolve_request_identity(request)
+        trusted_agent_id = resolve_agent_id_from_email(identity.email)
+    except Exception:
+        logger.warning(
+            "send_message: could not resolve identity for M3 scope gating — defaulting to callie",
+            exc_info=True,
+        )
+        trusted_agent_id = "callie"
 
     # Fire and forget — client receives events over WebSocket
     asyncio.create_task(
@@ -222,6 +241,7 @@ async def send_message(
             user_text=body.message,
             reasoning_effort=body.reasoning_effort,
             speed_tier=body.speed_tier,
+            trusted_agent_id=trusted_agent_id,
         ),
         name=f"fa_turn_{session_id}",
     )
@@ -265,10 +285,16 @@ async def set_page_context(
 @router.post("/sessions/{session_id}/tool-confirm")
 async def tool_confirm(
     session_id: str,
+    request: Request,
     body: ToolConfirmRequest,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> ToolConfirmResponse:
-    """Operator confirms or cancels a pending layer-3/4 tool call."""
+    """Operator confirms or cancels a pending layer-3/4 tool call.
+
+    M3 identity binding: resolve the caller's live identity at the resume
+    boundary so scope gating uses the live authenticated caller, not stale
+    session metadata.  Fail-closed: unresolvable identity → callie.
+    """
     pending = confirmation_store.get(body.tool_use_id)
     if pending is None or pending.session_id != session_id:
         raise not_found(
@@ -276,12 +302,24 @@ async def tool_confirm(
             "confirmation_not_found",
         )
 
+    # M3: resolve live caller identity → trusted_agent_id (fail-closed: callie).
+    try:
+        identity = await resolve_request_identity(request)
+        trusted_agent_id = resolve_agent_id_from_email(identity.email)
+    except Exception:
+        logger.warning(
+            "tool_confirm: could not resolve identity for M3 scope gating — defaulting to callie",
+            exc_info=True,
+        )
+        trusted_agent_id = "callie"
+
     # Resume the suspended turn
     asyncio.create_task(
         resume_after_confirm(
             session_id=session_id,
             tool_use_id=body.tool_use_id,
             decision=body.decision,
+            trusted_agent_id=trusted_agent_id,
         ),
         name=f"fa_confirm_{body.tool_use_id}",
     )
