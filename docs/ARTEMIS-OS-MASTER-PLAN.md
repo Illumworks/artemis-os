@@ -276,6 +276,26 @@ A "View Marketing Pipeline" tile on the Marketing Dashboard click-throughs to th
 
 ---
 
+### D8 — Single app with role-based access (NOT two separate apps) — locked 2026-06-14
+
+Personal (Jon's Artemis) and marketing (the team + Callie) run as **ONE application**, with who-sees-what enforced by **identity/role at the data (retrieval) layer** — not as two separately-hosted copies.
+
+**Context:** the original plan was "develop personal + marketing together, then host a separate copy" (two apps). Reversed here. As of 2026-06-14 multiple marketing teammates log in via Google/Cloudflare auth (Writing Studio + signal approval), and **they can currently see the personal tabs** — a live exposure of Jon's personal scope (OKRs, calendar, personal memory).
+
+**Why one app:**
+- The memory system was already built multi-scope / multi-team-ready (MW1 join table, `agent:<id>` scopes, `owner_user_id`); two apps would abandon that investment. See `docs/memory-readiness-and-upgrades.md`.
+- Two apps = a permanent maintenance tax (every feature/fix/migration done twice; the copies drift).
+- Planned orchestration (Artemis oversees Callie, escalations, delegation) is natural in-process, painful across two apps.
+- The hard-isolation benefit of two apps is ~95% recoverable in one app by enforcing scope at the data layer (marketing identities physically cannot retrieve personal-scoped rows) — UI tab-hiding is NOT sufficient (it's what exists now and it already leaks).
+
+**Worst case (accepted):** a permission bug leaks personal→team. Mitigation: enforce at retrieval + the memory API (defense in depth), with tests; never rely on UI hiding alone.
+
+**Implementation = M3** (identity-aware scope enforcement for BOTH named agents and human users). The live exposure is closed as the first step.
+
+**Build the scope boundaries clean enough that a future split stays cheap** — see the parked capability at the end of this doc (Jon's requirement).
+
+---
+
 ## Open architectural decisions (need Jon's input)
 
 These are blocking specific work. Each gets resolved when surfaced; documented here so future sessions know what's outstanding.
@@ -408,3 +428,15 @@ For any future Claude session that boots cold on this project:
 This doc is updated whenever a strategic decision lands. The Lead instance (this Claude conversation) maintains it. When the conversation closes, the Handoff doc gets refreshed and points new sessions back here.
 
 **To update:** add a new entry under "Five committed architectural decisions" (D6, D7, …), update "Where we are" sections, mark open questions as resolved with the resolution.
+
+---
+
+## PARKED — future capability (do not lose)
+
+### F1 — Ability to split Jon's personal Artemis into its own standalone app — Jon's requirement, 2026-06-14
+
+We committed to ONE app with role-based access (D8). **Jon's explicit requirement: preserve the option to "go out on my own" later** — i.e. cleanly extract the personal scope into a separately-hosted personal Artemis instance at a future date, without a rewrite.
+
+This is a constraint on how D8 / M3 is built, not separate work: keep personal-scoped data and surfaces **cleanly separable** (well-labelled scopes, personal vs shared/marketing boundary enforced at the data layer, no hard entanglement of personal data into marketing-shared tables). If scopes are clean, a future split becomes "export the personal scope + stand up a personal-only deployment," not a refactor.
+
+**When this becomes active:** if/when Jon decides to separate. Until then it stays parked here so the team builds in a split-friendly way and the requirement isn't forgotten. Sits at the very end of the roadmap intentionally — lowest priority, highest "don't lose it."
