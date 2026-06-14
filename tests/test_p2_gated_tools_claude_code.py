@@ -812,3 +812,244 @@ async def test_route_inbound_unrelated_leaves_pending_intact() -> None:
     mock_resume.assert_not_awaited()
     assert len(remaining) == 1, f"Pending must survive NEITHER reply; got {len(remaining)}"
     assert remaining[0].tool_use_id == "tuid-route-unrelated-001"
+
+
+# ---------------------------------------------------------------------------
+# Test: resume_after_confirm registry includes integration tools (regression)
+# ---------------------------------------------------------------------------
+# Guards against the bug where resume_after_confirm rebuilt the tool registry
+# by hand, omitting gcal/gmail/slack/jira/granola.  The fix uses
+# build_authorized_tool_registry (same as main turn path) so the sets stay in
+# sync automatically.
+# ---------------------------------------------------------------------------
+
+_INTEGRATION_TOOL_NAMES = [
+    # GCal — unconditionally registered
+    "create_event",
+    "update_event",
+    "delete_event",
+    "list_calendars",
+    "list_events",
+    # Slack — unconditionally registered
+    "send_slack_message",
+    "send_slack_dm",
+    "read_slack_channel",
+    "list_slack_channels",
+    # Gmail — unconditionally registered
+    "list_recent_gmail_messages",
+    "get_gmail_thread",
+]
+
+_INTEGRATION_SESSION = "test-integration-resume-session"
+
+
+async def test_resume_registry_resolves_gcal_create_event() -> None:
+    """Approving a pending create_event via resume_after_confirm must NOT return
+    'Tool <x> not found.' — the registry must include gcal tools.
+
+    We stage a fake PendingConfirmation for create_event, then call
+    resume_after_confirm('run') with all heavy I/O mocked.  The test asserts that
+    the tool impl is invoked (not "not found") and the result is the mocked value.
+    """
+    from artemis.floating_artemis.authority import PendingConfirmation, confirmation_store
+    from artemis.floating_artemis.chat import resume_after_confirm
+
+    tool_use_id = "tuid-gcal-resume-001"
+    # Stage a fake PendingConfirmation for create_event
+    pending = PendingConfirmation(
+        tool_use_id=tool_use_id,
+        tool_name="create_event",
+        tool_input={
+            "summary": "Sprint review",
+            "start": "2026-06-20T10:00:00",
+            "end": "2026-06-20T11:00:00",
+        },
+        session_id=_INTEGRATION_SESSION,
+        layer=3,
+        prior_tool_results=[],
+    )
+    confirmation_store._pending[tool_use_id] = pending
+
+    mock_run_result = MagicMock()
+    mock_run_result.messages = []
+    mock_run_result.stop_reason = "end_turn"
+    mock_run_result.usage = MagicMock(
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+
+    gcal_result = "Event created: Sprint review"
+    # Track what the tool resolved to
+    resolved_result: list[str] = []
+
+    async def _fake_create_event(inp: dict) -> str:  # type: ignore[type-arg]
+        resolved_result.append(gcal_result)
+        return gcal_result
+
+    with (
+        patch(
+            "artemis.floating_artemis.chat.get_status",
+            new_callable=AsyncMock,
+            return_value={"available_surfaces": ["okr", "writing-rules", "marketing-os"]},
+        ),
+        patch(
+            "artemis.floating_artemis.chat._load_session_context",
+            new_callable=AsyncMock,
+            return_value=MagicMock(
+                metadata={},
+                available_surfaces={"okr", "writing-rules", "marketing-os"},
+                is_personal_slack_dm=False,
+                agent_id="artemis",
+            ),
+        ),
+        patch(
+            "artemis.integrations.gcal.tools._create_event",
+            new=_fake_create_event,
+        ),
+        patch(
+            "artemis.floating_artemis.chat.run_turn",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ),
+        patch(
+            "artemis.floating_artemis.chat._load_message_history",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "artemis.floating_artemis.chat._persist_messages",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "artemis.floating_artemis.chat.ws_manager",
+            broadcast=AsyncMock(return_value=None),
+        ),
+        patch(
+            "artemis.floating_artemis.chat._resolve_adapter",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ),
+    ):
+        await resume_after_confirm(
+            session_id=_INTEGRATION_SESSION,
+            tool_use_id=tool_use_id,
+            decision="run",
+        )
+
+    assert len(resolved_result) == 1, (
+        "create_event impl must have been called — not 'Tool not found'"
+    )
+    assert resolved_result[0] == gcal_result
+
+
+async def test_resume_registry_resolves_send_slack_dm() -> None:
+    """Approving send_slack_dm via resume_after_confirm resolves the tool (not 'not found')."""
+    from artemis.floating_artemis.authority import PendingConfirmation, confirmation_store
+    from artemis.floating_artemis.chat import resume_after_confirm
+
+    tool_use_id = "tuid-slack-dm-resume-001"
+    pending = PendingConfirmation(
+        tool_use_id=tool_use_id,
+        tool_name="send_slack_dm",
+        tool_input={"user_id": "U123", "text": "Hey there"},
+        session_id=_INTEGRATION_SESSION,
+        layer=3,
+        prior_tool_results=[],
+    )
+    confirmation_store._pending[tool_use_id] = pending
+
+    mock_run_result = MagicMock()
+    mock_run_result.messages = []
+    mock_run_result.stop_reason = "end_turn"
+    mock_run_result.usage = MagicMock(
+        input_tokens=0, output_tokens=0, cache_creation_input_tokens=0, cache_read_input_tokens=0
+    )
+
+    slack_result = "DM sent"
+    resolved_result: list[str] = []
+
+    async def _fake_send_dm(inp: dict) -> str:  # type: ignore[type-arg]
+        resolved_result.append(slack_result)
+        return slack_result
+
+    with (
+        patch(
+            "artemis.floating_artemis.chat.get_status",
+            new_callable=AsyncMock,
+            return_value={"available_surfaces": []},
+        ),
+        patch(
+            "artemis.floating_artemis.chat._load_session_context",
+            new_callable=AsyncMock,
+            return_value=MagicMock(
+                metadata={},
+                available_surfaces=set(),
+                is_personal_slack_dm=False,
+                agent_id="artemis",
+            ),
+        ),
+        patch(
+            "artemis.integrations.slack.tools._send_slack_dm",
+            new=_fake_send_dm,
+        ),
+        patch(
+            "artemis.floating_artemis.chat.run_turn",
+            new_callable=AsyncMock,
+            return_value=mock_run_result,
+        ),
+        patch(
+            "artemis.floating_artemis.chat._load_message_history",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "artemis.floating_artemis.chat._persist_messages",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "artemis.floating_artemis.chat.ws_manager",
+            broadcast=AsyncMock(return_value=None),
+        ),
+        patch(
+            "artemis.floating_artemis.chat._resolve_adapter",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ),
+    ):
+        await resume_after_confirm(
+            session_id=_INTEGRATION_SESSION,
+            tool_use_id=tool_use_id,
+            decision="run",
+        )
+
+    assert len(resolved_result) == 1, (
+        "send_slack_dm impl must have been called — not 'Tool not found'"
+    )
+    assert resolved_result[0] == slack_result
+
+
+async def test_resume_registry_includes_all_integration_tools() -> None:
+    """Assert that all integration tool names registered by build_authorized_tool_registry
+    are resolvable in a resume-path registry — guards against future drift.
+    """
+    from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
+
+    # Build the registry with all surfaces enabled (worst-case: maximum tools)
+    all_surfaces = {
+        "okr",
+        "writing-rules",
+        "marketing-os",
+        "signal-queue",
+        "jira-board",
+        "meetings",
+    }
+    registry = build_authorized_tool_registry(all_surfaces, agent_id="artemis")
+
+    missing = [name for name in _INTEGRATION_TOOL_NAMES if registry.get(name) is None]
+    assert not missing, (
+        f"Integration tools missing from build_authorized_tool_registry (resume registry): {missing}"
+    )

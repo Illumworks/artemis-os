@@ -4,13 +4,15 @@
 // CustomEvents on this element). Sends messages directly via floating-artemis-api.js.
 //
 // Event contract (received from floating_artemis.js):
-//   fa:event         — { detail: WS event object }
-//   fa:history       — { detail: { messages: [...] } }
-//   fa:page-changed  — { detail: { page, ref_id } }
-//   fa:calibrating   — { detail: { step } }
-//   fa:fresh-start   — clear state, load new history
-//   fa:opened        — panel was opened
-//   fa:closed        — panel was closed
+//   fa:event          — { detail: WS event object }
+//   fa:history        — { detail: { messages: [...] } }
+//   fa:page-changed   — { detail: { page, ref_id } }
+//   fa:calibrating    — { detail: { step } }
+//   fa:fresh-start    — clear state, load new history
+//   fa:opened         — panel was opened
+//   fa:closed         — panel was closed
+//   fa:agent-identity — { detail: { agentId, label, src, isCallie } }
+//                       Update the header icon/name to match the server-resolved agent.
 //
 // Events dispatched upward:
 //   fa:request-fresh — user clicked "Start fresh"
@@ -215,6 +217,7 @@ class FloatingArtemisPanel extends HTMLElement {
     this.addEventListener('fa:event', (e) => this._handleFAEvent(e.detail));
     this.addEventListener('fa:history', (e) => this._renderHistory(e.detail.messages));
     this.addEventListener('fa:session-ready', (e) => this._onSessionReady(e.detail));
+    this.addEventListener('fa:agent-identity', (e) => this._onAgentIdentity(e.detail));
     this.addEventListener('fa:page-changed', (e) => this._updatePage(e.detail.page));
     this.addEventListener('fa:calibrating', (e) => this._stream.showCalibrating(e.detail.step));
     this.addEventListener('fa:fresh-start', () => { this._stream.clear(); this._stream.showEmpty(); });
@@ -339,6 +342,41 @@ class FloatingArtemisPanel extends HTMLElement {
     if (this._modelPicker && sessionId) {
       this._modelPicker.setSession(sessionId, { provider: provider ?? null, model: model ?? null });
     }
+  }
+
+  // ── Agent identity (avatar + name in panel header) ────────────────────────
+  //
+  // Triggered by the fa:agent-identity event dispatched from floating_artemis.js
+  // after session setup, using the server-resolved metadata.agent_id value.
+  // The client NEVER picks the persona itself — it trusts the server value.
+
+  _onAgentIdentity({ agentId, label, src, isCallie } = {}) {
+    // Update panel header name
+    const nameEl = this.querySelector('.fa-header-name');
+    if (nameEl && label) nameEl.textContent = label;
+
+    // Update panel header icon
+    const iconEl = this.querySelector('.fa-header-icon');
+    if (!iconEl || !src) return;
+
+    iconEl.alt = label ?? '';
+
+    if (!isCallie) {
+      // Artemis: reliable path, set directly
+      iconEl.src = src;
+      return;
+    }
+
+    // Callie: try the image; fall back to CSS monogram if the asset is missing
+    const onError = () => {
+      const mono = document.createElement('span');
+      mono.className = 'fa-header-callie-monogram';
+      mono.textContent = 'C';
+      mono.setAttribute('aria-hidden', 'true');
+      iconEl.parentNode?.replaceChild(mono, iconEl);
+    };
+    iconEl.addEventListener('error', onError, { once: true });
+    iconEl.src = src;
   }
 
   // ── Page context chip ─────────────────────────────────────────────────────

@@ -44,12 +44,6 @@ from artemis.floating_artemis.session_scope import (
     resolve_surface_scope,
 )
 from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
-from artemis.floating_artemis.tools.builders import register_builders_tools
-from artemis.floating_artemis.tools.core import register_core_tools
-from artemis.floating_artemis.tools.marketing import register_marketing_tools
-from artemis.floating_artemis.tools.okr import register_okr_tools
-from artemis.floating_artemis.tools.system import register_system_tools
-from artemis.floating_artemis.tools.writing_rules import register_writing_rules_tools
 from artemis.providers import get_adapter
 from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 from artemis.routes.status import get_status
@@ -328,7 +322,9 @@ async def _get_okr_reconcile_context(
 # ── Tool registry factory ─────────────────────────────────────────────────────
 
 
-def _build_tool_registry(available_surfaces: set[str], agent_id: str | None = None) -> AuthorizedToolRegistry:
+def _build_tool_registry(
+    available_surfaces: set[str], agent_id: str | None = None
+) -> AuthorizedToolRegistry:
     return build_authorized_tool_registry(available_surfaces, agent_id=agent_id)
 
 
@@ -360,9 +356,9 @@ async def _emit_memory_read_event(
     digests: list[MemoryObservationDigest] = []
     try:
         import artemis.db as _db
+        from artemis.floating_artemis.memory import _enforce_agent_scope_set
         from artemis.memory.retrieval import search_observations
         from artemis.memory.schemas import Scope
-        from artemis.floating_artemis.memory import _enforce_agent_scope_set
 
         query = inp.get("query", "")
         scope = inp.get("scope", "global:global")
@@ -371,7 +367,9 @@ async def _emit_memory_read_event(
 
         # M3: enforce agent allowance before querying.
         _agent_id = agent_id or ""
-        enforced = _enforce_agent_scope_set(_agent_id, [Scope(scope_kind=scope_kind, scope_id=scope_id)])
+        enforced = _enforce_agent_scope_set(
+            _agent_id, [Scope(scope_kind=scope_kind, scope_id=scope_id)]
+        )
         results = []
         if enforced:
             async with _db.SessionLocal() as db_session:
@@ -542,7 +540,11 @@ async def _load_session_context(
 
     if trusted_agent_id is not None:
         # Live-identity-derived: use directly, normalise only.
-        agent_id = trusted_agent_id.strip().lower() if isinstance(trusted_agent_id, str) and trusted_agent_id.strip() else "callie"
+        agent_id = (
+            trusted_agent_id.strip().lower()
+            if isinstance(trusted_agent_id, str) and trusted_agent_id.strip()
+            else "callie"
+        )
         logger.debug(
             "_load_session_context: using trusted_agent_id=%r for session %s (overrides metadata)",
             agent_id,
@@ -551,7 +553,9 @@ async def _load_session_context(
     else:
         # Slack path / tests / resume: read from persisted metadata.
         # FAIL-CLOSED: default to "callie" (marketing-only), never "artemis".
-        raw_agent_id = metadata.get("agent_id", "callie") if isinstance(metadata, dict) else "callie"
+        raw_agent_id = (
+            metadata.get("agent_id", "callie") if isinstance(metadata, dict) else "callie"
+        )
         agent_id = (
             raw_agent_id.strip().lower()
             if isinstance(raw_agent_id, str) and raw_agent_id.strip()
@@ -771,11 +775,15 @@ async def handle_turn(
     # in-process layer-3/4 confirmation yield, so we only expose auto-invoke
     # tools there. Other providers keep the full intercepting registry.
     if is_claude_code_with_tools:
-        tool_registry = _build_auto_invoke_tool_registry(auth_registry, session_id, agent_id=session_ctx.agent_id)
+        tool_registry = _build_auto_invoke_tool_registry(
+            auth_registry, session_id, agent_id=session_ctx.agent_id
+        )
     else:
         # Build a plain ToolRegistry that wraps the authorized one for the loop.
         # Layer 3/4 tools get wrapped so we can intercept before execution.
-        tool_registry = _build_intercepting_tool_registry(auth_registry, session_id, agent_id=session_ctx.agent_id)
+        tool_registry = _build_intercepting_tool_registry(
+            auth_registry, session_id, agent_id=session_ctx.agent_id
+        )
 
     # ── 6. Broadcast turn started ─────────────────────────────────────────────
     await _broadcast(
@@ -1010,29 +1018,47 @@ async def resume_after_confirm(
 
     # Execute or cancel the tool
     if decision == "run":
-        # M3: load session context to get agent_id for scope gating.
+        # M3: load session context to get agent_id + surfaces for scope gating.
         # trusted_agent_id (from the live caller's identity) overrides persisted metadata.
         # query_memory is layer-1 and never reaches resume_after_confirm, but we
         # gate consistently in case future layer-2+ tools read memory.
         _resume_agent_id: str | None = None
+        _resume_surfaces: set[str] = set()
         try:
+            # Mirror the main turn path: load real surfaces first so that
+            # surface-gated tools (okr, writing-rules, marketing, jira, granola)
+            # are included in the registry — and integration tools (gcal, gmail,
+            # slack) are always registered unconditionally via
+            # build_authorized_tool_registry.
+            try:
+                _status = await get_status()
+                _surfaces_list = (
+                    _status.get("available_surfaces", []) if isinstance(_status, dict) else []
+                )
+                _resume_surfaces = set(_surfaces_list if isinstance(_surfaces_list, list) else [])
+            except Exception:
+                _resume_surfaces = set()
+
             _resume_session_ctx = await _load_session_context(
                 session_id=pending.session_id,
                 db_session=db_session,
-                all_surfaces=set(),
+                all_surfaces=_resume_surfaces,
                 trusted_agent_id=trusted_agent_id,
             )
             _resume_agent_id = _resume_session_ctx.agent_id
+            # Use the surfaces resolved by the session context (may differ from
+            # the raw status list after per-session filtering).
+            _resume_surfaces = _resume_session_ctx.available_surfaces
         except Exception:
             logger.debug("resume_after_confirm: could not load session context for agent_id")
 
-        auth_registry = AuthorizedToolRegistry()
-        register_core_tools(auth_registry, agent_id=_resume_agent_id)
-        register_builders_tools(auth_registry)
-        register_system_tools(auth_registry)
-        register_okr_tools(auth_registry)
-        register_writing_rules_tools(auth_registry)
-        register_marketing_tools(auth_registry)
+        # Build the registry from the single canonical source so it is always
+        # in sync with the main turn path (includes gcal, gmail, slack, jira,
+        # granola — not just the core/okr/writing/marketing subset).
+        auth_registry = build_authorized_tool_registry(
+            _resume_surfaces,
+            agent_id=_resume_agent_id,
+        )
 
         entry = auth_registry.get(pending.tool_name)
         if entry is None:

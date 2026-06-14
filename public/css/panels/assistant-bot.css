@@ -1099,3 +1099,33 @@
   font-style: italic;
   padding: 4px 0;
 }
+
+/* ── Callie monogram placeholder (used until callie.png is provided) ─── */
+/* Displayed when /icons/callie.png 404s on the FAB or panel header.
+   Intentionally DISTINCT from the Artemis avatar so there is zero
+   chance of visual confusion between agents. */
+.assistant-fab-callie-monogram,
+.fa-header-callie-monogram {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--indigo, #4f6ef7);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  position: relative;
+  z-index: 1;
+  user-select: none;
+}
+.assistant-fab-callie-monogram {
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+}
+.fa-header-callie-monogram {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}

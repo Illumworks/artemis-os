@@ -18,6 +18,7 @@ import { isSurfaceAvailable } from '../core/status.js';
 import { on as storeOn, getState } from '../core/store.js';
 import {
   ensureSession as apiEnsureSession,
+  getSession as apiGetSession,
   archiveSession,
   setPageContext,
   sendMessage,
@@ -117,6 +118,93 @@ function _startBadgePoll() {
   _badgePollTimer = setInterval(_refreshBadge, 15_000);
 }
 
+// ── Agent avatar ─────────────────────────────────────────────────────────────
+//
+// Avatar selection is driven ENTIRELY by the server-resolved metadata.agent_id.
+// The client NEVER picks the persona itself — it trusts what the server stored.
+//
+// owner / "artemis" → /icons/artemis.png  (exists)
+// any other value   → /icons/callie.png  (expected path; falls back to CSS
+//                     monogram if the file is not yet present)
+//
+// When Callie's image asset is ready, drop it at: public/icons/callie.png
+// and the code below will pick it up automatically on next page load.
+
+const _ARTEMIS_AVATAR = '/icons/artemis.png';
+const _CALLIE_AVATAR  = '/icons/callie.png';   // OPEN: asset not yet provided by Jon
+
+/**
+ * Resolve the avatar URL for the given server-assigned agent_id.
+ * Returns { src: string|null, label: string } where src=null signals "use
+ * the CSS monogram placeholder instead".
+ *
+ * @param {string|null|undefined} agentId - value from session metadata.agent_id
+ * @returns {{ src: string|null, label: string, isCallie: boolean }}
+ */
+function _agentAvatarInfo(agentId) {
+  if (!agentId || agentId === 'artemis') {
+    return { src: _ARTEMIS_AVATAR, label: 'Artemis', isCallie: false };
+  }
+  return { src: _CALLIE_AVATAR, label: 'Callie', isCallie: true };
+}
+
+/**
+ * Apply an avatar image to an <img> element.
+ * If the image fails to load (404 / asset not ready) AND this is a Callie
+ * session, swaps in the CSS monogram placeholder instead.
+ *
+ * @param {HTMLImageElement} imgEl
+ * @param {string} src
+ * @param {string} alt
+ * @param {boolean} isCallie
+ */
+function _applyAvatarImg(imgEl, src, alt, isCallie) {
+  if (!imgEl) return;
+  imgEl.alt = alt;
+  if (!isCallie) {
+    // Artemis path: always valid, no fallback needed
+    imgEl.src = src;
+    imgEl.removeAttribute('data-avatar-callie');
+    return;
+  }
+  // Callie path: try to load; fall back to CSS monogram on error
+  imgEl.setAttribute('data-avatar-callie', '1');
+  const onError = () => {
+    // Replace the img with a CSS monogram span so nothing looks like Artemis
+    const mono = document.createElement('span');
+    mono.className = 'assistant-fab-callie-monogram';
+    mono.textContent = 'C';
+    mono.setAttribute('aria-hidden', 'true');
+    imgEl.parentNode?.replaceChild(mono, imgEl);
+  };
+  imgEl.addEventListener('error', onError, { once: true });
+  imgEl.src = src;
+}
+
+/**
+ * Update the FAB button and panel header to reflect the server-resolved agent.
+ * Called once after session setup with the metadata.agent_id value.
+ *
+ * @param {string|null|undefined} agentId
+ */
+function _applyAgentAvatar(agentId) {
+  const { src, label, isCallie } = _agentAvatarInfo(agentId);
+
+  // ── FAB button ─────────────────────────────────────────────────────────────
+  const fab = document.getElementById('assistant-fab');
+  if (fab) {
+    fab.title = label;
+    fab.setAttribute('aria-label', `Open ${label} assistant`);
+    const fabImg = fab.querySelector('.assistant-fab-icon');
+    if (fabImg) {
+      _applyAvatarImg(fabImg, src, '', isCallie);
+    }
+  }
+
+  // ── Panel (floating-panel.js handles fa:agent-identity) ───────────────────
+  _panelDispatch('fa:agent-identity', { agentId, label, src, isCallie });
+}
+
 // ── Page context ──────────────────────────────────────────────────────────────
 
 function _syncPageContext(view) {
@@ -179,6 +267,21 @@ async function _setupSession() {
     provider: sessionData?.provider ?? null,
     model: sessionData?.model ?? null,
   });
+
+  // ── Avatar: resolve agent identity from server metadata ──────────────────
+  // metadata.agent_id is set server-side (D11) — the client must never pick
+  // the persona itself.  ensureSession returns the full SessionRead which
+  // includes metadata.  We use that directly; if it's missing (race/error)
+  // we re-fetch once to get the authoritative value.
+  const agentId = sessionData?.metadata?.agent_id ?? null;
+  if (agentId) {
+    _applyAgentAvatar(agentId);
+  } else {
+    // Re-fetch in case ensureSession returned a stale/minimal shape
+    apiGetSession(_sessionId)
+      .then((s) => _applyAgentAvatar(s?.metadata?.agent_id ?? null))
+      .catch(() => _applyAgentAvatar(null)); // fail-safe: show Artemis
+  }
 
   // Relay WS events to panel
   onFAEvent((event) => {
