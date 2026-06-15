@@ -445,6 +445,43 @@ async def approve_proposal(
 
     await session.commit()
 
+    # P5 learning-loop closure: a self-improvement skill proposal carries the
+    # originating agent in citations.agent_id. Approving it IS the human gate, so
+    # make the skill usable now — mark it approved and assign it to that agent so
+    # the executor injects it into the agent's future runs. Without this the loop
+    # stays open (skill committed as "proposed" + unassigned → never injected).
+    # Other skill flows keep the proposed→approve 2-stage path unchanged.
+    # Fail-safe: a closure failure must not break the approve response (the human
+    # can assign manually as a fallback).
+    if _kind == "skill" and _proposed_by == "self-improvement" and _citations:
+        _loop_agent_id = _citations.get("agent_id")
+        _skill_slug = result.get("slug") or _proposed_definition.get("slug")
+        if _loop_agent_id and _skill_slug:
+            try:
+                from sqlalchemy import select as _sa_select
+
+                from artemis.builders.models import Agent as _Agent
+                from artemis.builders.repository import (
+                    assign_skill_to_agent,
+                    set_skill_status,
+                )
+
+                await set_skill_status(session, _skill_slug, "approved")
+                _ar = await session.execute(
+                    _sa_select(_Agent.id).where(_Agent.agent_id == _loop_agent_id).limit(1)
+                )
+                _agent_db_id = _ar.scalar_one_or_none()
+                if _agent_db_id is not None:
+                    await assign_skill_to_agent(session, _agent_db_id, _skill_slug)
+                await session.commit()
+            except Exception:
+                logger.warning(
+                    "p5 loop-closure (approve+assign) failed for skill %r agent %r",
+                    _skill_slug,
+                    _loop_agent_id,
+                    exc_info=True,
+                )
+
     # Resolve target slug (agent_id string or skill slug) for the memory scope id.
     # For agent: look up agent_id string from agents.id; for skill: look up slug.
     target_slug: str = (

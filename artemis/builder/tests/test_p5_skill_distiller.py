@@ -25,8 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.builder.skill_distiller import distill_skill_candidates
 from artemis.builders import repository as repo
-from artemis.builders.models import Agent, AgentRun, AgentRunTrajectorySummary, DefinitionProposal, Skill
-
+from artemis.builders.models import (
+    Agent,
+    AgentRun,
+    AgentRunTrajectorySummary,
+    DefinitionProposal,
+    Skill,
+)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -300,6 +305,85 @@ async def test_skill_injection_and_usage_tracking(db_session: AsyncSession) -> N
 
 
 @pytest.mark.asyncio
+async def test_learning_loop_closes_end_to_end(db_session: AsyncSession) -> None:
+    """THE closure test: distill → REAL approve route → skill is approved AND
+    assigned to the originating agent → injection picks it up → usage tracked.
+    Proves the approve→inject seam is actually wired (not hand-set state)."""
+    from sqlalchemy import select
+
+    from artemis.builder.routes import approve_proposal
+    from artemis.builders.executor import _inject_skills_into_prompt
+
+    async with db_session.begin():
+        await _make_agent(db_session, "loop-close-agent")  # tools incl. memory.search
+        # Seed the precondition: ≥2 trajectory summaries (the distiller gates on
+        # having run history; the fake adapter supplies the distilled candidate).
+        for _ in range(2):
+            run = await _make_run(db_session, "loop-close-agent")
+            await _make_summary(
+                db_session,
+                run.id,
+                what_worked="Searched memory, then summarized the findings — worked well.",
+            )
+
+    candidate = {
+        "slug": "loop-close-skill",
+        "name": "Loop Close Skill",
+        "description": "Captured from repeated success.",
+        "instructions": "Step 1: search memory for prior context.",
+        "tools": ["memory.search"],  # overlaps the agent's tools
+        "rationale": "Appeared in what_worked 2+ times.",
+    }
+    async with db_session.begin():
+        result = await distill_skill_candidates(
+            db_session, "loop-close-agent", adapter=_fake_adapter_returning([candidate])
+        )
+    proposal_id = result["proposal_ids"][0]
+
+    # Approve via the REAL route (carries the loop-closure: approve + assign).
+    # Patch only the memory-observation side effect to keep this test focused.
+    with patch(
+        "artemis.builder.memory_carryover.write_proposal_approval_observation",
+        new=AsyncMock(),
+    ):
+        await approve_proposal(proposal_id, session=db_session)
+
+    # Skill must now be APPROVED and ASSIGNED to the originating agent.
+    async with db_session.begin():
+        skill = await repo.get_skill(db_session, "loop-close-skill")
+        assert skill is not None and skill.status == "approved", (
+            f"expected approved, got {skill.status if skill else None}"
+        )
+        agent_row = (
+            await db_session.execute(
+                select(Agent).where(Agent.agent_id == "loop-close-agent")
+            )
+        ).scalar_one()
+        assigned = await repo.list_skills_for_agent(db_session, agent_row.id)
+    assert any(s.slug == "loop-close-skill" for s in assigned), (
+        "skill was NOT assigned to the originating agent — loop is open"
+    )
+
+    # Injection now picks it up at runtime → instructions in prompt + usage++.
+    async with db_session.begin():
+        agent_row = (
+            await db_session.execute(
+                select(Agent).where(Agent.agent_id == "loop-close-agent")
+            )
+        ).scalar_one()
+        updated_prompt, injected = await _inject_skills_into_prompt(
+            db_session, agent_row, "base prompt"
+        )
+    assert any(s.slug == "loop-close-skill" for s in injected)
+    assert "Step 1: search memory" in updated_prompt
+
+    async with db_session.begin():
+        refreshed = await repo.get_skill(db_session, "loop-close-skill")
+    assert refreshed.usage_count == 1
+    assert refreshed.last_used_at is not None
+
+
+@pytest.mark.asyncio
 async def test_injection_tool_overlap_filter(db_session: AsyncSession) -> None:
     """Skill with tools that do NOT overlap agent's tools → not injected."""
     from artemis.builders.executor import _inject_skills_into_prompt
@@ -389,7 +473,7 @@ async def test_no_qualifying_skills_prompt_unchanged(db_session: AsyncSession) -
     from artemis.builders.executor import _inject_skills_into_prompt
 
     async with db_session.begin():
-        agent = await _make_agent(db_session, "test-agent-no-skills")
+        await _make_agent(db_session, "test-agent-no-skills")
 
     async with db_session.begin():
         from sqlalchemy import select
@@ -526,7 +610,7 @@ async def test_distill_skills_route_returns_summary(
     """POST /api/agents/{agent_id}/distill-skills → returns summary dict (no-provider path)."""
     # No trajectories seeded → distiller returns early with n_summaries=0 without LLM call.
     async with db_session.begin():
-        agent = await _make_agent(db_session, "test-agent-route-p5")
+        await _make_agent(db_session, "test-agent-route-p5")
 
     response = await client.post("/api/agents/test-agent-route-p5/distill-skills")
     assert response.status_code == 200
