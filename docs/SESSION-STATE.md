@@ -135,9 +135,25 @@ one-shot is optional/available. **FA audit done** (read-only): engine healthy; n
 (5 endpoints 404; `background-sessions.js` fires create on every completion → silent fail) — "build or delete"
 decision parked; `propose_edit` is a stub.
 
-**Then the bigger Chapter-2 arc (not yet briefed; heavier R&D — do when ready to invest):** P5 learning loop /
-skill capture (⚪ not started; the competitive standout) → P6 self-evolution (⚪ capstone; now UNBLOCKED by the
-memory upgrades — let execution traces accumulate first). Writing Studio backlog = ✅ all 5 done.
+**P5 — Learning loop / skill capture: BACKEND DONE + LIVE 2026-06-14** (merged `ca3da2a`; migration 0091;
+restarted). Brief `briefs/p5-learning-loop-skill-capture.md`. The loop: agent run → trajectory summary (was
+live) → **skill distiller** (`artemis/builder/skill_distiller.py`, on-demand `POST /api/builder/agents/{id}/
+distill-skills`, LLM via resolver, threshold ≥2-of-10 in `what_worked`, dedups) → human approves proposal →
+**skill marked approved + assigned to the originating agent** → **injected into that agent's future runs**
+(`executor.py:_inject_skills_into_prompt`, approved + tool-overlap + cap 3×~200tok) → **usage tracked**
+(`usage_count`/`last_used_at`). Human-gated (only proposes), fail-closed, scoped to builder agents (not FA prompt) in v1.
+  - **Lead caught the open seam:** the worker built all components but `_commit_skill` creates skills as
+    `status=proposed` + UNASSIGNED, while injection needs approved + agent-assigned — so the loop didn't close.
+    Fixed in `approve_proposal` (self-improvement proposals → set approved + assign from `citations.agent_id`)
+    + added a true end-to-end closure test (the worker's tests hand-set state and masked the gap). Verified:
+    15/15 P5 tests pass in isolation (1 recurring DB-contention timeout flake), loop proven closing through the
+    real approve route. See [[verify-actual-call-path]].
+  - **Frontend "Distill skills" button — DONE** (Haiku, merged `864e59e`): a per-agent button in the Proposals
+    Inbox "New Summaries" section calls the distill endpoint and refreshes; new skill proposals appear under
+    "skills with pending proposals." **P5 is now feature-complete end-to-end.** (Frontend served live — refresh
+    the browser.)
+- **P6 — self-evolution** (⚪ capstone; now UNBLOCKED by the memory upgrades — let execution traces accumulate
+  first). Writing Studio backlog = ✅ all 5 done.
 
 ---
 
