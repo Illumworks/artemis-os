@@ -106,12 +106,13 @@ Gmail-send + Slack-send-as-Jon (two `NotImplementedError` executors), and they n
 actually connected first.
 
 **Fire order:**
-1. **`briefs/fa-polish-confirm-path-badge-avatars.md`** (NEW — supersedes `p3-floating-callie-frontend.md`).
-   Three FA items: (Task 1) FIX the confirm-path tool registry — `resume_after_confirm` (chat.py:1029-1036)
-   omits integration tools, so confirming a gcal/slack/jira/gmail write returns "Tool not found" → **this GATES
-   #3**; (Task 2) clear the stuck FAB "2" badge (orphaned `running`/`queued` runs in
-   `v_floating_artemis_active_runs`); (Task 3) profile-image avatars on the FAB by identity (Artemis vs Callie)
-   — Jon-requested; **dependency: no Callie image asset yet, Jon to provide.**
+1. ✅ **`briefs/fa-polish-confirm-path-badge-avatars.md`** — DONE + LIVE (`efe2ed6` + avatar repoint `a36c559`;
+   migration 0089 applied; app restarted). Task 1 confirm-path registry FIXED (resume now builds from canonical
+   `build_authorized_tool_registry` — gcal/gmail/slack/jira/granola present on confirm; un-gates #3). Task 2
+   stuck FAB "2" badge FIXED (0089 adds `started_at > now()-interval '2h'` to the active-runs view; the 2 stale
+   runs now excluded → badge clears). Task 3 avatars by server-resolved `metadata.agent_id`, now pointing at
+   Jon's profile photos `/icons/Artemisprofile.jpg` (owner) + `/icons/callieprofile.jpg` (Callie) — both serve
+   200; the app-logo `artemis.png` stays the brand mark. Callie-image dependency RESOLVED.
 2. **`briefs/p3-google-multiaccount-and-reads.md`** (EXISTING, READY) — connect Calendar + Gmail scopes /
    multi-account (today only Docs/Drive on one account → gcal cache empty, no Gmail). FOUNDATION; adds a
    migration (Lead runs `alembic upgrade head` post-merge). Prereq for Gmail send/read.
