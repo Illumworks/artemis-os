@@ -122,7 +122,7 @@ def _timeout_seconds() -> float:
         return 900.0
 
 
-def _mcp_eager_env() -> dict[str, str]:
+def _mcp_eager_env(*, claude_config_dir: str | None = None) -> dict[str, str]:
     """Build the subprocess environment that forces MCP tools to load eagerly.
 
     Sets ``MCP_CONNECTION_NONBLOCKING=false`` so claude-code's
@@ -134,10 +134,71 @@ def _mcp_eager_env() -> dict[str, str]:
 
     Inherits the full parent ``os.environ`` so PATH, DB credentials, and all
     other config the subprocess needs are preserved.
+
+    When ``claude_config_dir`` is provided, sets ``CLAUDE_CONFIG_DIR`` in the
+    subprocess env so the ``claude`` CLI authenticates as the account whose
+    config lives at that path.  When ``None``, the key is not set and the
+    subprocess inherits the ambient login (identical to previous behaviour).
     """
     env = os.environ.copy()
     env["MCP_CONNECTION_NONBLOCKING"] = "false"
+    if claude_config_dir is not None:
+        env["CLAUDE_CONFIG_DIR"] = claude_config_dir
     return env
+
+
+def resolve_claude_config_dir(agent_id: str) -> str | None:
+    """Return the CLAUDE_CONFIG_DIR for *agent_id*, or None if unconfigured.
+
+    Resolution order:
+    1. Exact match of *agent_id* in ``settings.claude_agent_accounts``.
+    2. Longest prefix match (e.g. ``"marketing."`` covers all marketing agents).
+    3. No match → ``None`` (inherit ambient login; zero behavior change).
+
+    The matched account name is then looked up in
+    ``settings.claude_account_config_dirs``.  If the account name is not in
+    that map (mis-configuration), ``None`` is returned and a warning is logged.
+    """
+    # Late import avoids circular imports; reading the live settings object
+    # ensures test monkeypatching of ARTEMIS_* env vars is respected.
+    import artemis.config as _config
+
+    _settings = _config.settings
+    agent_accounts = _settings.claude_agent_accounts
+    account_dirs = _settings.claude_account_config_dirs
+
+    if not agent_accounts or not account_dirs:
+        return None
+
+    # 1. Exact match.
+    account_name = agent_accounts.get(agent_id)
+
+    # 2. Longest prefix match.
+    if account_name is None:
+        best_prefix: str | None = None
+        for prefix, name in agent_accounts.items():
+            if agent_id.startswith(prefix) and (
+                best_prefix is None or len(prefix) > len(best_prefix)
+            ):
+                best_prefix = prefix
+                account_name = name
+
+    if account_name is None:
+        return None
+
+    config_dir = account_dirs.get(account_name)
+    if config_dir is None:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "resolve_claude_config_dir: agent %r mapped to account %r "
+            "but that account has no entry in claude_account_config_dirs",
+            agent_id,
+            account_name,
+        )
+        return None
+
+    return config_dir
 
 
 class ClaudeCodeAdapter:
@@ -337,6 +398,7 @@ class ClaudeCodeAdapter:
         agent_tools: list[str],
         timeout_seconds: float | None = None,
         max_turns: int | None = None,
+        claude_config_dir: str | None = None,
     ) -> CompletionResponse:
         """Run a tool-using agent via claude-code's own agent loop (CC2).
 
@@ -354,6 +416,11 @@ class ClaudeCodeAdapter:
             max_turns: When set, passes ``--max-turns <n>`` to claude-code so its
                 internal agent loop is bounded. Guards against tool-use loops where
                 the LLM keeps calling tools without producing a final response.
+            claude_config_dir: When set, passes ``CLAUDE_CONFIG_DIR=<dir>`` in the
+                subprocess env so the ``claude`` CLI authenticates as the account
+                whose config lives at that path.  When ``None`` (default), the key
+                is not set and the subprocess inherits the ambient login (no change
+                in behaviour when the maps are empty).
         """
         model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
@@ -379,7 +446,11 @@ class ClaudeCodeAdapter:
                 max_turns=max_turns,
             )
             return await self._run_subprocess(
-                cmd, prompt, tool_run=True, timeout_seconds=timeout_seconds
+                cmd,
+                prompt,
+                tool_run=True,
+                timeout_seconds=timeout_seconds,
+                claude_config_dir=claude_config_dir,
             )
         finally:
             Path(tmp.name).unlink(missing_ok=True)
@@ -391,6 +462,7 @@ class ClaudeCodeAdapter:
         *,
         tool_run: bool = False,
         timeout_seconds: float | None = None,
+        claude_config_dir: str | None = None,
     ) -> CompletionResponse:
         """Launch the claude CLI, enforce the wall-clock timeout, parse the result.
 
@@ -405,9 +477,15 @@ class ClaudeCodeAdapter:
         ``timeout_seconds``: when provided, overrides the global
         ``ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS`` env var for this call. Callers
         can pass a tighter bound for fast-path agents (e.g., content nodes).
+
+        ``claude_config_dir``: when provided, adds ``CLAUDE_CONFIG_DIR=<dir>``
+        to the subprocess env so the ``claude`` CLI authenticates as the account
+        at that path.  When ``None``, the key is absent (inherit ambient login).
+        Only honoured on the tool-run path (``tool_run=True``) because the
+        text-only path does not set an env at all; passing it there is a no-op.
         """
         timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
-        env = _mcp_eager_env() if tool_run else None
+        env = _mcp_eager_env(claude_config_dir=claude_config_dir) if tool_run else None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

@@ -416,3 +416,225 @@ async def test_timeout_seconds_env_override(monkeypatch: pytest.MonkeyPatch) -> 
     assert _timeout_seconds() == 42.0
     monkeypatch.setenv("ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS", "not-a-number")
     assert _timeout_seconds() == 900.0
+
+
+# ── Multi-account CLAUDE_CONFIG_DIR support ───────────────────────────────────────
+
+
+# ---------------------------------------------------------------------------
+# resolve_claude_config_dir — unit tests (no subprocess)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_config_dir_exact_match() -> None:
+    """Exact agent_id match returns the mapped CLAUDE_CONFIG_DIR."""
+    from artemis.providers.claude_code.adapter import resolve_claude_config_dir
+
+    fake_settings = MagicMock()
+    fake_settings.claude_agent_accounts = {"marketing.scout.news": "marketing"}
+    fake_settings.claude_account_config_dirs = {"marketing": "/Users/artemis/.claude-marketing"}
+
+    with patch("artemis.config.settings", fake_settings):
+        result = resolve_claude_config_dir("marketing.scout.news")
+
+    assert result == "/Users/artemis/.claude-marketing"
+
+
+def test_resolve_config_dir_prefix_match() -> None:
+    """Prefix match (e.g. 'marketing.') covers all marketing.* agents."""
+    from artemis.providers.claude_code.adapter import resolve_claude_config_dir
+
+    fake_settings = MagicMock()
+    fake_settings.claude_agent_accounts = {"marketing.": "marketing"}
+    fake_settings.claude_account_config_dirs = {"marketing": "/Users/artemis/.claude-marketing"}
+
+    with patch("artemis.config.settings", fake_settings):
+        result = resolve_claude_config_dir("marketing.qualifier.signal_scorer")
+
+    assert result == "/Users/artemis/.claude-marketing"
+
+
+def test_resolve_config_dir_exact_wins_over_prefix() -> None:
+    """When both an exact match and a prefix match exist, exact wins."""
+    from artemis.providers.claude_code.adapter import resolve_claude_config_dir
+
+    fake_settings = MagicMock()
+    fake_settings.claude_agent_accounts = {
+        "marketing.": "marketing",
+        "marketing.scout.news": "personal",
+    }
+    fake_settings.claude_account_config_dirs = {
+        "marketing": "/Users/artemis/.claude-marketing",
+        "personal": "/Users/artemis/.claude-personal",
+    }
+
+    with patch("artemis.config.settings", fake_settings):
+        result = resolve_claude_config_dir("marketing.scout.news")
+
+    assert result == "/Users/artemis/.claude-personal"
+
+
+def test_resolve_config_dir_longest_prefix_wins() -> None:
+    """When multiple prefixes match, the longest one wins."""
+    from artemis.providers.claude_code.adapter import resolve_claude_config_dir
+
+    fake_settings = MagicMock()
+    fake_settings.claude_agent_accounts = {
+        "marketing.": "marketing",
+        "marketing.scout.": "scout_account",
+    }
+    fake_settings.claude_account_config_dirs = {
+        "marketing": "/Users/artemis/.claude-marketing",
+        "scout_account": "/Users/artemis/.claude-scout",
+    }
+
+    with patch("artemis.config.settings", fake_settings):
+        result = resolve_claude_config_dir("marketing.scout.news")
+
+    assert result == "/Users/artemis/.claude-scout"
+
+
+def test_resolve_config_dir_unmapped_agent_returns_none() -> None:
+    """An agent with no matching entry returns None (ambient login unchanged)."""
+    from artemis.providers.claude_code.adapter import resolve_claude_config_dir
+
+    fake_settings = MagicMock()
+    fake_settings.claude_agent_accounts = {"marketing.": "marketing"}
+    fake_settings.claude_account_config_dirs = {"marketing": "/Users/artemis/.claude-marketing"}
+
+    with patch("artemis.config.settings", fake_settings):
+        result = resolve_claude_config_dir("personal.artemis")
+
+    assert result is None
+
+
+def test_resolve_config_dir_empty_maps_return_none() -> None:
+    """Empty config maps → None for any agent (default/safe state)."""
+    from artemis.providers.claude_code.adapter import resolve_claude_config_dir
+
+    fake_settings = MagicMock()
+    fake_settings.claude_agent_accounts = {}
+    fake_settings.claude_account_config_dirs = {}
+
+    with patch("artemis.config.settings", fake_settings):
+        result = resolve_claude_config_dir("marketing.scout.news")
+
+    assert result is None
+
+
+def test_resolve_config_dir_account_missing_from_dirs_returns_none() -> None:
+    """Account name mapped but absent from claude_account_config_dirs → None (mis-config guard)."""
+    from artemis.providers.claude_code.adapter import resolve_claude_config_dir
+
+    fake_settings = MagicMock()
+    fake_settings.claude_agent_accounts = {"marketing.scout.news": "marketing"}
+    fake_settings.claude_account_config_dirs = {}  # no entry for "marketing"
+
+    with patch("artemis.config.settings", fake_settings):
+        result = resolve_claude_config_dir("marketing.scout.news")
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _mcp_eager_env — CLAUDE_CONFIG_DIR injection
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_eager_env_sets_claude_config_dir_when_provided() -> None:
+    """_mcp_eager_env(claude_config_dir=...) must add CLAUDE_CONFIG_DIR to env."""
+    from artemis.providers.claude_code.adapter import _mcp_eager_env
+
+    env = _mcp_eager_env(claude_config_dir="/Users/artemis/.claude-marketing")
+    assert env["CLAUDE_CONFIG_DIR"] == "/Users/artemis/.claude-marketing"
+    assert env["MCP_CONNECTION_NONBLOCKING"] == "false"
+
+
+def test_mcp_eager_env_no_claude_config_dir_when_none() -> None:
+    """_mcp_eager_env() with claude_config_dir=None must NOT set CLAUDE_CONFIG_DIR."""
+    from artemis.providers.claude_code.adapter import _mcp_eager_env
+
+    env = _mcp_eager_env(claude_config_dir=None)
+    assert "CLAUDE_CONFIG_DIR" not in env
+    assert env["MCP_CONNECTION_NONBLOCKING"] == "false"
+
+
+def test_mcp_eager_env_default_has_no_claude_config_dir() -> None:
+    """_mcp_eager_env() with no args must NOT set CLAUDE_CONFIG_DIR (backward compat)."""
+    from artemis.providers.claude_code.adapter import _mcp_eager_env
+
+    env = _mcp_eager_env()
+    assert "CLAUDE_CONFIG_DIR" not in env
+
+
+# ---------------------------------------------------------------------------
+# run_with_tools — subprocess env contains CLAUDE_CONFIG_DIR when mapped
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools_sets_claude_config_dir_for_mapped_agent(tmp_path: Path) -> None:
+    """When claude_config_dir is passed to run_with_tools, the subprocess env
+    must contain CLAUDE_CONFIG_DIR=<dir>.
+    """
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    proc = _mock_proc(payload)
+
+    captured_env: dict[str, str] = {}
+
+    async def _capture_exec(*args: object, **kwargs: object) -> object:
+        env_arg = kwargs.get("env") or {}
+        if isinstance(env_arg, dict):
+            captured_env.update(env_arg)
+        return proc
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=_capture_exec)):
+        await adapter.run_with_tools(
+            _request(),
+            agent_id="marketing.scout.regional_news",
+            run_id="RUN-ACCT-1",
+            pipeline_run_id=None,
+            agent_tools=_REGIONAL_NEWS_TOOLS,
+            claude_config_dir="/Users/artemis/.claude-marketing",
+        )
+
+    assert captured_env.get("CLAUDE_CONFIG_DIR") == "/Users/artemis/.claude-marketing", (
+        "CLAUDE_CONFIG_DIR must be present in subprocess env when claude_config_dir is passed"
+    )
+    # MCP_CONNECTION_NONBLOCKING must still be set (not regressed)
+    assert captured_env.get("MCP_CONNECTION_NONBLOCKING") == "false"
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools_no_claude_config_dir_by_default(tmp_path: Path) -> None:
+    """When claude_config_dir is not passed (default None), CLAUDE_CONFIG_DIR must be
+    absent from the subprocess env — identical behavior to before this feature.
+    """
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    proc = _mock_proc(payload)
+
+    captured_env: dict[str, str] = {}
+
+    async def _capture_exec(*args: object, **kwargs: object) -> object:
+        env_arg = kwargs.get("env") or {}
+        if isinstance(env_arg, dict):
+            captured_env.update(env_arg)
+        return proc
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=_capture_exec)):
+        await adapter.run_with_tools(
+            _request(),
+            agent_id="marketing.scout.regional_news",
+            run_id="RUN-ACCT-2",
+            pipeline_run_id=None,
+            agent_tools=_REGIONAL_NEWS_TOOLS,
+            # claude_config_dir omitted intentionally
+        )
+
+    assert "CLAUDE_CONFIG_DIR" not in captured_env, (
+        "CLAUDE_CONFIG_DIR must NOT appear in subprocess env when claude_config_dir is None"
+    )

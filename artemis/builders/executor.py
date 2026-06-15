@@ -502,7 +502,10 @@ async def run_agent(
 
             from artemis.agent.client import CompletionRequest
             from artemis.agent.types import RunResult, StopReason
-            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
+            from artemis.providers.claude_code.adapter import (
+                ClaudeCodeAdapter,
+                resolve_claude_config_dir,
+            )
 
             cc_adapter = cast(ClaudeCodeAdapter, adapter)
             _cc_timeout, _cc_max_turns = _content_node_timeout_and_turns(agent_id)
@@ -518,6 +521,7 @@ async def run_agent(
                 agent_tools=[t.name for t in tool_registry.specs()],
                 timeout_seconds=_cc_timeout,
                 max_turns=_cc_max_turns,
+                claude_config_dir=resolve_claude_config_dir(agent_id),
             )
             # Normalise the single CompletionResponse into the RunResult shape the
             # downstream text/usage/finalize code expects (one assistant message).

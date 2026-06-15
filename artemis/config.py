@@ -206,6 +206,33 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Multi-account Claude Code support.
+    # Maps an account name (e.g. "marketing", "personal") to a CLAUDE_CONFIG_DIR path.
+    # Parsed from ARTEMIS_CLAUDE_ACCOUNT_CONFIG_DIRS as a JSON object.
+    # Empty default means no per-account isolation (single ambient login).
+    claude_account_config_dirs: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Maps a Claude account name to the CLAUDE_CONFIG_DIR path for that account. "
+            'Example JSON: {"marketing": "/Users/artemis/.claude-marketing", '
+            '"personal": "/Users/artemis/.claude-personal"}. '
+            "Set via ARTEMIS_CLAUDE_ACCOUNT_CONFIG_DIRS env var. Empty = single ambient login."
+        ),
+    )
+    # Maps agent_id (exact) or agent_id prefix (e.g. "marketing.") to an account name.
+    # Parsed from ARTEMIS_CLAUDE_AGENT_ACCOUNTS as a JSON object.
+    # Exact match wins over prefix match; longest prefix wins among prefix matches.
+    # Empty default means all agents use the ambient login (unchanged behavior).
+    claude_agent_accounts: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Maps agent_id or agent_id prefix to an account name in claude_account_config_dirs. "
+            'Example JSON: {"marketing.": "marketing", "personal": "personal"}. '
+            "Exact match wins; longest prefix wins otherwise. "
+            "Set via ARTEMIS_CLAUDE_AGENT_ACCOUNTS env var. Empty = all agents use ambient login."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
