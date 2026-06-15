@@ -49,7 +49,7 @@ _TRUNCATE = text(
     "floating_artemis_page_context, users RESTART IDENTITY CASCADE"
 )
 
-OWNER_EMAIL = "amiracentral@amiralearning.com"
+from artemis.identity.scope_policy import OWNER_EMAIL
 MARKETING_EMAIL = "marketer@amiralearning.com"
 
 

@@ -11,7 +11,7 @@ return NOTHING / deny.  NEVER fall back to "all scopes."  A bug that hides
 data is acceptable; a bug that leaks data is a security failure.
 
 Access matrix (Lead-confirmed 2026-06-14):
-  Owner (amiracentral@amiralearning.com)  → ALL scopes
+  Owner (jon.fila@amiralearning.com)  → ALL scopes
   Marketing human (any other authed user) → marketing-shared + own personal:<user_id>
   Agent callie                            → marketing scopes, no personal:*, no agent:artemis
   Agent artemis                           → ALL
@@ -29,7 +29,7 @@ from artemis.memory.schemas import Scope, ScopeKind
 _logger = logging.getLogger(__name__)
 
 # Owner email — single source of truth.  Lowercase.
-OWNER_EMAIL = "amiracentral@amiralearning.com"
+OWNER_EMAIL = "jon.fila@amiralearning.com"
 
 # Marketing-shared scopes that any authed marketing human (and Callie) may read.
 # ScopeKind literals that are marketing-shared without a specific scope_id constraint.
