@@ -67,6 +67,12 @@ engine = create_async_engine(
     max_overflow=settings.db_max_overflow,
     pool_timeout=settings.db_pool_timeout,
     pool_recycle=settings.db_pool_recycle,
+    # Bound asyncpg connection ESTABLISHMENT. asyncpg's default is 60s, so a single
+    # stuck connect (the instability-bug failure mode) hangs a request for a full
+    # minute before pool_pre_ping/retry can recover. 10s fails fast and lets the
+    # pool fall back to a healthy connection. See
+    # briefs/instability-asyncpg-connect-timeout.md.
+    connect_args={"timeout": 10},
 )
 attach_pgvector_codec(engine)
 

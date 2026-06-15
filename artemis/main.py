@@ -108,6 +108,12 @@ PUBLIC_DIR = Path(__file__).parent.parent / "public"
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     warn_if_multiworker_collab(settings.uvicorn_workers)
+    # --- TEMP DIAG: event-loop freeze capture for the asyncpg/instability bug.
+    # Remove with artemis/loop_diag.py once the bug is closed. ---
+    from artemis.loop_diag import install as _install_loop_diag
+
+    _install_loop_diag()
+    # --- END TEMP DIAG ---
     # Subscribe the Writing Studio adapter to draft lifecycle events.
     ws_adapter.init_adapter()
     # Start the meeting auto-summarizer scheduler.
