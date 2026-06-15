@@ -15,8 +15,15 @@ credential is encrypted (`integrations/models.py`: `encrypted_credentials`/`encr
 anyone with DB access — or a DB dump (e.g. `artemis-os-share.zip`) — has live access to Jon's Gmail/Calendar.
 
 ## Fix — reuse the EXISTING encryption helper (no new dependency)
-Use `artemis/connectors/encryption.py` (Fernet via `cryptography`, key from `ARTEMIS_CONNECTOR_KEY`) — already
-in the codebase. Do NOT add a new crypto lib or a second key mechanism.
+**CORRECTION (2026-06-14, Lead-confirmed):** use `artemis/integrations/crypto.py`
+(`encrypt_credentials(dict)->bytes` / `decrypt_credentials(bytes)->dict`, Fernet, key `ARTEMIS_CREDENTIALS_KEY`)
+— NOT `connectors/encryption.py`. Reason: `ARTEMIS_CONNECTOR_KEY` is unprovisioned in this environment (would
+fail the migration + break the live accounts), whereas `ARTEMIS_CREDENTIALS_KEY` is set in `~/.artemis/.env`
+and `integrations/crypto.py` is the helper already encrypting gcal/granola/slack creds AND the Google OAuth
+path (`google_integration.py` already imports `encrypt_credentials`). The plaintext `google_docs` token store
+is the lone holdout — encrypting it with this helper makes it consistent. Do NOT add a new crypto lib or a
+second key mechanism. (Store the Fernet ciphertext as BYTEA, matching `integrations/models.py`
+`encrypted_credentials`.)
 1. **Storage:** encrypt `access_token` + `refresh_token` at rest (store the Fernet blob; column can stay `Text`
    holding base64 ciphertext, or move to BYTEA — match whichever is cleanest and consistent with the connectors
    pattern). Encrypt on write, decrypt on read.
@@ -31,8 +38,8 @@ in the codebase. Do NOT add a new crypto lib or a second key mechanism.
 ## Constraints / safety
 - Do NOT break the two already-connected accounts. After the migration, the live Gmail read + Calendar sync
   must still work (Lead will re-verify live).
-- Fail safe: if `ARTEMIS_CONNECTOR_KEY` is missing, fail loudly at startup/first-use (do NOT silently fall back
-  to plaintext). Confirm the key is set in the prod `.env` before merge (Lead checks).
+- Fail safe: if `ARTEMIS_CREDENTIALS_KEY` is missing, fail loudly (do NOT silently fall back to plaintext). It
+  IS already set in `~/.artemis/.env` (confirmed) — reuse it; do not generate a new key.
 - Lossless: don't drop/regenerate tokens; encrypt the existing values.
 
 ## Ship gate (Lead verifies)
