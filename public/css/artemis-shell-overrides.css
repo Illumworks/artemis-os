@@ -405,9 +405,13 @@
   z-index: 1;
 }
 .assistant-fab-icon {
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
+  /* Profile photo fills the circular FAB and is clipped to a circle (cover, not
+     contain) so a non-square photo crops to the circle instead of letterboxing
+     as a square inside the ring. */
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
   display: block;
   position: relative;
   z-index: 1;
