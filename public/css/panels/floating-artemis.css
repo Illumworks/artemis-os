@@ -74,7 +74,11 @@ floating-artemis-panel[open] {
 }
 
 .fa-header-icon {
-  border-radius: 5px;
+  /* Circular profile photo to match the FAB avatar (cover-crop, not distort). */
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 
