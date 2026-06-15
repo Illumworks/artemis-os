@@ -67,6 +67,25 @@ CANONICAL_SIGNAL_STATES: tuple[str, ...] = (
     "archived",  # terminal — manually archived
 )
 
+# ---------------------------------------------------------------------------
+# Canonical routing statuses — source of truth for signal_queue.routing_status
+#
+# routing_status is a SEPARATE dimension from signal_status. An un-routable
+# signal still participates in the full qualification lifecycle (urgency tier,
+# reason codes, Gate 1) — it is just flagged so the UI can expose a
+# "Unrouted / Watch-list" filter for trend mining without ever dropping signals.
+#
+# routable              — resolved_district_id is set AND an active
+#                         district_contacts row exists for that district.
+# unrouted_no_contact   — no routable contact could be resolved at write time
+#                         (state-level signals, unknown districts, districts
+#                         with no active contact in district_contacts).
+# ---------------------------------------------------------------------------
+CANONICAL_ROUTING_STATUSES: tuple[str, ...] = (
+    "routable",
+    "unrouted_no_contact",
+)
+
 
 class SignalReasonCode(Base):
     """Registry of canonical signal reason codes (Josh spec v1).
@@ -111,6 +130,7 @@ class SignalQueue(Base):
         Index("idx_signal_queue_district", "district_id"),
         Index("idx_signal_queue_resolved_district", "resolved_district_id"),
         Index("idx_signal_queue_pipeline_run", "pipeline_run_id"),
+        Index("idx_signal_queue_routing_status", "routing_status"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -143,6 +163,12 @@ class SignalQueue(Base):
         nullable=False,
         default="pending_qualification",
         server_default="pending_qualification",
+    )
+    routing_status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="routable",
+        server_default="routable",
     )
     snoozed_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     rejected_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -16,6 +16,7 @@ export const SIGNAL_STATUSES = [
   "in_inbox",
 ];
 export const SIGNAL_URGENCIES = ["hot", "standard", "enrichment"];
+export const SIGNAL_ROUTING_STATUSES = ["routable", "unrouted_no_contact"];
 
 const STATUS_LABELS = {
   pending_qualification: "Pending qualification",
@@ -150,6 +151,10 @@ export function normalizeSignal(signal = {}) {
     approval: signal.approval || signal.gateApproval || null,
     // DIST4: district context from qualification_json.districtContext
     districtContext: signal.districtContext || (signal.qualificationJson && signal.qualificationJson.districtContext) || null,
+    // Routing dimension — separate from signalStatus lifecycle.
+    // 'routable' | 'unrouted_no_contact'. Defaults to 'routable' for signals
+    // that predate the column (they are not classified and not penalised).
+    routingStatus: signal.routingStatus || signal.routing_status || "routable",
   };
 }
 
@@ -162,6 +167,7 @@ export function makeSignalSearchText(signal) {
     signal.stateCode,
     signal.sourceType,
     signal.signalStatus,
+    signal.routingStatus,
     signal.pipelineRun?.pipelineName,
     signal.pipelineRun?.id,
     ...signal.reasonCodeLabels,
@@ -179,6 +185,8 @@ export function filterSignals(signals, options = {}) {
     if (filters.statuses?.length && !filters.statuses.includes(signal.signalStatus)) return false;
     if (filters.reasons?.length && !signal.reasonCodeLabels.some((c) => filters.reasons.includes(c))) return false;
     if (filters.geographies?.length && !filters.geographies.includes(signal.stateCode)) return false;
+    // Routing filter — "Unrouted / Watch-list": show only unrouted_no_contact signals.
+    if (filters.routingStatuses?.length && !filters.routingStatuses.includes(signal.routingStatus)) return false;
     // DIST4: when toggle is on, hide signals whose districtContext.tierFlag === "unsupported_tier"
     if (hideUnsupported && signal.districtContext?.tierFlag === "unsupported_tier") return false;
     return true;
@@ -309,6 +317,9 @@ function rowHtml(signal, selectedId, selectedSignalIds = []) {
   const campaignBadge = signal.signalStatus === "approved" && signal.campaignCandidateId
     ? `<span class="mkt-signal-row-pipeline">→ ${esc(signal.campaignCandidateName || "Campaign workspace")}</span>`
     : "";
+  const unroutedBadge = signal.routingStatus === "unrouted_no_contact"
+    ? `<span class="mkt-signal-row-unrouted" title="No routable contact — watch-list signal">no contact</span>`
+    : "";
   return `
     <div class="mkt-signal-row-wrap${checked ? " is-checked" : ""}">
       ${selectable ? `
@@ -325,6 +336,7 @@ function rowHtml(signal, selectedId, selectedSignalIds = []) {
           <span class="mkt-signal-row-sub">${esc(signal.headline)}</span>
           ${pipelineBadge}
           ${campaignBadge}
+          ${unroutedBadge}
         </span>
         <span class="mkt-signal-row-side">
           <span class="mkt-signal-row-urgency mkt-signal-row-urgency--${esc(signal.urgencyTier)}">${esc(signal.urgencyTier)}</span>
@@ -547,6 +559,7 @@ export function renderSignalInboxTree(rawSignals = [], options = {}) {
     ...filterOptions.statuses.map((s) => filterChip(`State: ${STATUS_LABELS[s] || s}`, s, "statuses", filters.statuses?.includes(s))),
     ...filterOptions.reasons.slice(0, 8).map((r) => filterChip(`Reason: ${r}`, r, "reasons", filters.reasons?.includes(r))),
     ...filterOptions.geographies.map((g) => filterChip(`Geo: ${g}`, g, "geographies", filters.geographies?.includes(g))),
+    filterChip("Unrouted / Watch-list", "unrouted_no_contact", "routingStatuses", filters.routingStatuses?.includes("unrouted_no_contact")),
   ].join("");
   const groupsHtml = mode === "flat"
     ? filtered.map((signal) => rowHtml(signal, selected?.id, selectedSignalIds)).join("")

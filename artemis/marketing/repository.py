@@ -110,6 +110,7 @@ async def list_signals(
     *,
     status: str | None = None,
     campaign_family: str | None = None,
+    routing_status: str | None = None,
     limit: int = 50,
     cursor: int | None = None,
 ) -> list[SignalQueue]:
@@ -119,6 +120,8 @@ async def list_signals(
         q = q.where(SignalQueue.signal_status == status)
     if campaign_family:
         q = q.where(SignalQueue.campaign_family == campaign_family)
+    if routing_status:
+        q = q.where(SignalQueue.routing_status == routing_status)
     if cursor is not None:
         q = q.where(SignalQueue.id < cursor)
     q = q.order_by(SignalQueue.id.desc()).limit(limit)

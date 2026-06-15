@@ -243,22 +243,28 @@ async def intake_compat(
 # ── List ──────────────────────────────────────────────────────────────────────
 
 
+_VALID_ROUTING_STATUSES = {"routable", "unrouted_no_contact"}
+
+
 @router.get("")
 @router.get("/")
 async def list_queue(
     status: str | None = Query(default=None),
     campaign_family: str | None = Query(default=None, alias="campaignFamily"),
     urgency_tier: str | None = Query(default=None, alias="urgencyTier"),
+    routing_status: str | None = Query(default=None, alias="routingStatus"),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = Query(default=None),
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
     """List signals with optional filters (cursor-paginated)."""
     safe_status = status if status in _VALID_STATUSES else None
+    safe_routing_status = routing_status if routing_status in _VALID_ROUTING_STATUSES else None
     signals = await list_signals(
         session,
         status=safe_status,
         campaign_family=campaign_family,
+        routing_status=safe_routing_status,
         limit=limit,
         cursor=cursor,
     )
@@ -767,6 +773,7 @@ def _serialize_signal(signal: SignalQueue, context: dict[str, Any] | None = None
         "provenance": signal.provenance,
         "qualificationJson": signal.qualification_json,
         "signalStatus": signal.signal_status,
+        "routingStatus": signal.routing_status,
         "campaignCandidateId": context.get("campaign", {}).get("candidateId"),
         "campaignCandidateName": context.get("campaign", {}).get("name"),
         "campaignWorkspaceState": context.get("campaign", {}).get("workspaceState"),

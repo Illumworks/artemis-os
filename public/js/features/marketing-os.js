@@ -67,7 +67,7 @@ const MKT_SIGNAL_TREE_STATE = {
   mode: 'state',
   sort: 'newest',
   query: '',
-  filters: { urgencies: [], statuses: [], reasons: [], geographies: [] },
+  filters: { urgencies: [], statuses: [], reasons: [], geographies: [], routingStatuses: [] },
   selectedId: null,
   selectedSignalIds: [],
   hideUnsupported: readHideUnsupported(),

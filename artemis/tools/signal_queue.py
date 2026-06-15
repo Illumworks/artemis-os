@@ -15,7 +15,7 @@ from sqlalchemy import select, text
 
 from artemis.agent.types import Tool, ToolImpl
 from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
-from artemis.marketing.models import SignalQueue
+from artemis.marketing.models import DistrictContact, SignalQueue
 from artemis.marketing.qualification import run_and_store_qualification
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.tools.context import ToolContext
@@ -216,10 +216,37 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
                     resolve_result.message,
                 )
 
+        # ROUTING — deterministically classify routing_status based on whether
+        # an active district_contacts row exists for the resolved district.
+        # This is system-controlled (never LLM-controlled) and runs after district
+        # resolution so resolved_district_id is already set.
+        # A signal is routable iff:
+        #   1. resolved_district_id is not NULL (i.e. a canonical district was found), AND
+        #   2. at least one active DistrictContact row exists for that district.
+        # Everything else (state-level ids, unresolved districts, districts with no
+        # active contact) is marked unrouted_no_contact.  The signal is ALWAYS written
+        # — routing_status is purely a classification label, not a gate.
+        routing_status = "unrouted_no_contact"
+        if row.resolved_district_id is not None:
+            contact_stmt = (
+                select(DistrictContact.id)
+                .where(
+                    DistrictContact.district_id == row.resolved_district_id,
+                    DistrictContact.active.is_(True),
+                )
+                .limit(1)
+            )
+            contact_result = await ctx.session.execute(contact_stmt)
+            if contact_result.scalar_one_or_none() is not None:
+                routing_status = "routable"
+        row.routing_status = routing_status
+        await ctx.session.flush()
+
         logger.info(
-            "signal_queue.write: agent=%s signal_id=%s status=pending_qualification",
+            "signal_queue.write: agent=%s signal_id=%s status=pending_qualification routing=%s",
             ctx.agent_id,
             row.id,
+            routing_status,
         )
 
         # Best-effort, non-fatal auto-qualification (mirrors intake route semantics).
