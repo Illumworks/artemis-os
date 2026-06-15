@@ -3562,6 +3562,16 @@ export function buildOperationsViewMarkup(view = getState("view")) {
 }
 
 export function renderOperationsView(view = getState("view")) {
+  // Guard: if the requested view no longer matches the current app state, this render is stale
+  // (e.g. a slow fetch resolved via .then(() => renderOperationsView("skills")) after the user
+  // already navigated away). Navigation always calls setState("view", X) BEFORE calling any
+  // load*Shell helper (confirmed in home.js onState("view") handler), so by the time any async
+  // continuation fires, getState("view") already reflects the user's current destination.
+  // scheduleRender() uses the same pattern (reads getState("view") and bails via
+  // isOperationsSurfaceView). Placing the guard here is safe: synchronous callers that run
+  // immediately after setState always match; only stale async .then() continuations are rejected.
+  if (normalizeAppView(view) !== normalizeAppView(getState("view"))) return "";
+
   // Kick the roster fetch on first mount of the agents view. renderAgentsPage() only renders the
   // loading skeleton — it does NOT fetch — so on a direct boot/navigation into this view (no
   // nav-click handler firing refreshAgentsFromApi) the page hung on "Loading the worker roster…"

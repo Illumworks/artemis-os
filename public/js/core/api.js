@@ -1852,6 +1852,10 @@ export async function fetchSkills({ status, category, kind } = {}) {
   if (category) params.set("kind", category); // category param not supported by Python; best-effort
   const qs = params.toString();
   const res = await fetch(`/api/skills${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `fetchSkills failed: ${res.status}`);
+  }
   const body = await res.json();
   // Python returns { skills: [...] }; Node expected a flat array
   const raw = Array.isArray(body) ? body : (body.skills ?? []);
@@ -2803,7 +2807,7 @@ export async function builderMarkAgentReviewed(agentId) {
 }
 
 export async function distillSkills(agentId) {
-  const res = await fetch(`/api/builder/agents/${encodeURIComponent(agentId)}/distill-skills`, { method: "POST" });
+  const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/distill-skills`, { method: "POST" });
   if (!res.ok) throw new Error(`distillSkills failed: ${res.status}`);
   return res.json();
 }
