@@ -373,6 +373,7 @@ async function renderInboxPanel() {
         <span class="inbox-agent-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
         <span class="inbox-pill inbox-pill-summaries">${item.new_summary_count} new</span>
         <div class="inbox-actions">
+          <button class="inbox-btn" data-action="inbox-distill-skills" data-agent-id="${escapeHtml(item.agent_id)}">Distill skills</button>
           <button class="inbox-btn" data-action="inbox-review-builder" data-agent-id="${escapeHtml(item.agent_id)}">Review</button>
         </div>
       `;
@@ -428,6 +429,22 @@ async function renderInboxPanel() {
       api.builderMarkAgentReviewed(agentId).catch(() => {});
       invalidateInboxCache();
       _openBuilderForAgent(agentId);
+    } else if (action === "inbox-distill-skills") {
+      const agentId = btn.dataset.agentId;
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = "…";
+      try {
+        const result = await api.distillSkills(agentId);
+        btn.textContent = `Proposed ${result.n_proposed}`;
+        invalidateInboxCache();
+        await renderInboxPanel();
+      } catch (err) {
+        console.error("Distill skills failed:", err);
+        alert(`Distill skills failed: ${err.message}`);
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     }
   });
 

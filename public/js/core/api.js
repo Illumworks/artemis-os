@@ -2802,6 +2802,12 @@ export async function builderMarkAgentReviewed(agentId) {
   return body;
 }
 
+export async function distillSkills(agentId) {
+  const res = await fetch(`/api/builder/agents/${encodeURIComponent(agentId)}/distill-skills`, { method: "POST" });
+  if (!res.ok) throw new Error(`distillSkills failed: ${res.status}`);
+  return res.json();
+}
+
 // ── Claims Register (Stage 4 — claim-flags) ────────────────────────────────
 
 /**
