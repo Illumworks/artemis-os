@@ -478,43 +478,62 @@ async def list_scopes(
 
 async def get_memory_stats(
     session: AsyncSession,
+    allowance: "ScopeAllowance | None" = None,
 ) -> dict[str, Any]:
-    """Overall memory counts for the dashboard header."""
-    total_drawers: int = (
-        await session.execute(select(func.count()).select_from(MemoryDrawer))
-    ).scalar_one()
-    total_observations: int = (
-        await session.execute(select(func.count()).select_from(MemoryObservation))
-    ).scalar_one()
+    """Overall memory counts for the dashboard header, optionally scoped.
+
+    When *allowance* is provided, all aggregates are filtered to the scopes
+    the caller may read (M3).  This prevents non-owner users from inferring
+    the existence of personal:* or agent:artemis data via count leakage.
+    """
+    drawer_base = select(func.count()).select_from(MemoryDrawer)
+    obs_base = select(func.count()).select_from(MemoryObservation)
+
+    # Apply allowance filtering
+    drawer_acl = _allowance_clauses(allowance, MemoryDrawer)
+    obs_acl = _allowance_clauses(allowance, MemoryObservation)
+    if drawer_acl:
+        from sqlalchemy import or_ as _or_
+        drawer_base = drawer_base.where(_or_(*drawer_acl) if len(drawer_acl) > 1 else drawer_acl[0])
+    if obs_acl:
+        from sqlalchemy import or_ as _or_
+        obs_base = obs_base.where(_or_(*obs_acl) if len(obs_acl) > 1 else obs_acl[0])
+
+    total_drawers: int = (await session.execute(drawer_base)).scalar_one()
+    total_observations: int = (await session.execute(obs_base)).scalar_one()
     total_evidence: int = (
         await session.execute(select(func.count()).select_from(MemoryEvidence))
     ).scalar_one()
 
-    # Distinct scope count
+    # Distinct scope count — apply allowance on both sub-selects
+    obs_scope_q = select(
+        MemoryObservation.scope_kind,
+        MemoryObservation.scope_id,
+    )
+    drawer_scope_q = select(
+        MemoryDrawer.scope_kind,
+        MemoryDrawer.scope_id,
+    )
+    if obs_acl:
+        from sqlalchemy import or_ as _or_
+        obs_scope_q = obs_scope_q.where(_or_(*obs_acl) if len(obs_acl) > 1 else obs_acl[0])
+    if drawer_acl:
+        from sqlalchemy import or_ as _or_
+        drawer_scope_q = drawer_scope_q.where(_or_(*drawer_acl) if len(drawer_acl) > 1 else drawer_acl[0])
     scope_count_result = await session.execute(
-        select(func.count()).select_from(
-            select(
-                MemoryObservation.scope_kind,
-                MemoryObservation.scope_id,
-            )
-            .union(
-                select(
-                    MemoryDrawer.scope_kind,
-                    MemoryDrawer.scope_id,
-                )
-            )
-            .subquery()
-        )
+        select(func.count()).select_from(obs_scope_q.union(drawer_scope_q).subquery())
     )
     scope_count: int = scope_count_result.scalar_one()
 
     # Breakdown by scope_kind (observations only — more meaningful than drawers)
-    by_kind_result = await session.execute(
-        select(
-            MemoryObservation.scope_kind,
-            func.count().label("cnt"),
-        ).group_by(MemoryObservation.scope_kind)
-    )
+    by_kind_q = select(
+        MemoryObservation.scope_kind,
+        func.count().label("cnt"),
+    ).group_by(MemoryObservation.scope_kind)
+    if obs_acl:
+        from sqlalchemy import or_ as _or_
+        by_kind_q = by_kind_q.where(_or_(*obs_acl) if len(obs_acl) > 1 else obs_acl[0])
+    by_kind_result = await session.execute(by_kind_q)
     by_scope_kind: dict[str, int] = {r.scope_kind: r.cnt for r in by_kind_result}
 
     return {

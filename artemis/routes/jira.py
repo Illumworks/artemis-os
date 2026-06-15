@@ -20,11 +20,18 @@ from artemis.db import get_session
 from artemis.integrations import repository as repo
 from artemis.integrations.config_resolver import MissingProviderConfigError, resolve_jira_config
 from artemis.integrations.jira.client import JiraAPIError, JiraClient
-from artemis.marketing.routes._auth import require_token
+from artemis.marketing.routes._auth import require_owner, require_token
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/jira", tags=["jira"])
+# Router-level require_owner gates every Jira endpoint (owner-only surface).
+# Individual route stubs still carry require_token (kept for explicitness; the
+# router-level dep runs first but both must pass).
+router = APIRouter(
+    prefix="/api/jira",
+    tags=["jira"],
+    dependencies=[Depends(require_token), Depends(require_owner)],
+)
 
 # camelCase keys the frontend sends → snake_case keys stored in DB
 _CONFIG_FIELD_MAP: dict[str, str] = {

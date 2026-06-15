@@ -787,6 +787,52 @@ function initRailNavHighlight() {
   storeOn('view', (v) => syncRailActiveFromView(v));
 }
 
+// ── Owner-only nav visibility (defense-in-depth UX layer) ─────────────────────
+//
+// Resolves is_owner from /api/me (server-side, fail-closed = false).
+// Hides the Personal Workspace and Dev Projects rail sections for non-owners.
+// The backend data-layer gates (require_owner) are the real protection;
+// this function is a UX complement only.
+//
+// Fail-closed contract:
+//   - If /api/me fails, times out, or returns is_owner !== true → hide sections.
+//   - Sections are initially HIDDEN via CSS class 'owner-only-section'; the
+//     class is removed only when is_owner === true is confirmed.
+async function initOwnerNavVisibility() {
+  // Owner-only data-section values from index.html
+  const OWNER_SECTIONS = ['workspace', 'devprojects'];
+
+  // Apply fail-closed hidden state immediately (sections start visible in HTML;
+  // we hide them until identity is confirmed, then show for owner).
+  const sectionEls = OWNER_SECTIONS.map((s) =>
+    document.querySelector(`.rail-section[data-section="${s}"]`)
+  ).filter(Boolean);
+
+  // Hide immediately while we resolve identity
+  sectionEls.forEach((el) => { el.style.display = 'none'; });
+
+  let isOwner = false;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000); // 5 s timeout
+    const res = await fetch('/api/me', { signal: controller.signal });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const data = await res.json();
+      isOwner = data.is_owner === true;
+    }
+  } catch {
+    // Network error, timeout, or parse failure → fail-closed (isOwner stays false)
+    isOwner = false;
+  }
+
+  if (isOwner) {
+    // Restore visibility for owner
+    sectionEls.forEach((el) => { el.style.display = ''; });
+  }
+  // Non-owner: sections remain hidden (display:none set above)
+}
+
 // Boot — run after DOM is ready
 function boot() {
   initRailSectionToggles();
@@ -799,6 +845,8 @@ function boot() {
   initEmptyStateProximity();
   initProfilePopover();
   initSessionConfigTray();
+  // Async: hide/show owner-only nav sections. Does not block boot.
+  initOwnerNavVisibility();
 }
 
 if (document.readyState === 'loading') {

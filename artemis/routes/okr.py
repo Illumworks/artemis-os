@@ -35,7 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.db import get_session
-from artemis.marketing.routes._auth import require_token
+from artemis.marketing.routes._auth import require_owner, require_token
 from artemis.okr import repository as repo
 from artemis.okr.models import OkrActivity
 from artemis.okr.schemas import (
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/okr",
     tags=["okr"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 

@@ -16,12 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import artemis.db as db
 from artemis.brief import repository
 from artemis.brief.generator import BriefGenerationError, generate_brief
-from artemis.marketing.routes._auth import require_token
+from artemis.marketing.routes._auth import require_owner, require_token
 
 router = APIRouter(
     prefix="/api/daily-brief",
     tags=["daily-brief"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 

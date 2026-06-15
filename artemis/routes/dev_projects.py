@@ -31,7 +31,10 @@ from artemis.dev_projects.schemas import (
     PermissionDecision,
 )
 from artemis.dev_projects.service import list_project_files
-from artemis.marketing.routes._auth import require_token
+from artemis.config import settings
+from artemis.identity.dependencies import resolve_request_identity
+from artemis.identity.scope_policy import OWNER_EMAIL
+from artemis.marketing.routes._auth import require_owner, require_token
 from artemis.marketing.routes._errors import bad_request, not_found
 from artemis.providers import list_providers
 from artemis.ws.manager import ws_manager
@@ -39,7 +42,8 @@ from artemis.ws.manager import ws_manager
 router = APIRouter(
     prefix="/api/dev-projects",
     tags=["dev-projects"],
-    dependencies=[Depends(require_token)],
+    # require_token gates unauthenticated; require_owner gates non-owner.
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 ws_router = APIRouter(tags=["dev-projects-ws"])
@@ -474,6 +478,23 @@ async def search_project_files(
 
 @ws_router.websocket("/ws/dev-projects/{session_id}")
 async def dev_projects_ws(session_id: int, websocket: WebSocket) -> None:
+    """Owner-only WebSocket.
+
+    HTTP dependencies cannot be injected into WebSocket handlers, so we gate
+    inline.  In dev mode (CF Access disabled) the sole local user is the owner.
+    With CF Access enabled, the verified identity email must be OWNER_EMAIL.
+    Non-owner or unresolved identity → close immediately with code 4403.
+    """
+    if settings.cf_access_enabled:
+        try:
+            identity = await resolve_request_identity(websocket)  # type: ignore[arg-type]
+            if identity.email.strip().lower() != OWNER_EMAIL:
+                await websocket.close(code=4403)
+                return
+        except Exception:
+            await websocket.close(code=4403)
+            return
+
     room = f"dev-projects:{session_id}"
     await ws_manager.connect(room, websocket)
     try:

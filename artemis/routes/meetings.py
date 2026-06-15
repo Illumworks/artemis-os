@@ -31,14 +31,14 @@ import artemis.db as db
 from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.granola.client import GranolaAPIError, GranolaClient
-from artemis.marketing.routes._auth import require_token
+from artemis.marketing.routes._auth import require_owner, require_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/meetings",
     tags=["meetings"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 _NOT_CONNECTED: dict[str, Any] = {"status": "not_connected", "provider": "granola"}
@@ -800,7 +800,7 @@ async def get_meeting_routings(
 todos_router = APIRouter(
     prefix="/api/todos",
     tags=["todos"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 
@@ -855,7 +855,7 @@ async def mark_todo_done(
 granola_compat_router = APIRouter(
     prefix="/api/granola",
     tags=["granola-compat"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 

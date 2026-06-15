@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.db import get_session
 from artemis.identity.dependencies import resolve_request_identity
 from artemis.identity.scope_policy import allowed_scopes_for_email
-from artemis.marketing.routes._auth import require_token
+from artemis.marketing.routes._auth import require_owner, require_token
 from artemis.memory.maintenance import run_maintenance
 from artemis.memory.repository import (
     get_memory_stats,
@@ -92,13 +92,13 @@ async def _get_user_for_identity(session: AsyncSession, email: str, name: str | 
 # ── GET /api/memory/conflicts ─────────────────────────────────────────────────
 
 
-@router.get("/conflicts", response_model=list[Conflict])
+@router.get("/conflicts", response_model=list[Conflict], dependencies=[Depends(require_token), Depends(require_owner)])
 async def list_conflicts(
     scope_id: Annotated[str | None, Query(description="Filter by scope_id")] = None,
     status: Annotated[str | None, Query(description="'unresolved' (default) or 'all'")] = None,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> list[Conflict]:
-    """List memory conflicts.
+    """List memory conflicts. Owner-only — conflicts may span personal/agent scopes.
 
     status=unresolved (default) returns only rows with resolution=NULL.
     status=all is not yet implemented (returns unresolved for now).
@@ -109,7 +109,7 @@ async def list_conflicts(
 # ── POST /api/memory/conflicts/{id}/resolve ───────────────────────────────────
 
 
-@router.post("/conflicts/{conflict_id}/resolve", response_model=Conflict)
+@router.post("/conflicts/{conflict_id}/resolve", response_model=Conflict, dependencies=[Depends(require_token), Depends(require_owner)])
 async def resolve_conflict_endpoint(
     conflict_id: int,
     body: ConflictResolveRequest,
@@ -152,7 +152,7 @@ async def resolve_conflict_endpoint(
 # ── GET /api/memory/observations/{id}/history ─────────────────────────────────
 
 
-@router.get("/observations/{observation_id}/history", response_model=list[Observation])
+@router.get("/observations/{observation_id}/history", response_model=list[Observation], dependencies=[Depends(require_token), Depends(require_owner)])
 async def observation_history(
     observation_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
@@ -177,11 +177,11 @@ async def embeddings_status() -> dict[str, object]:
     return {"queued": 0, "processing": 0, "completed_today": 0, "last_error": None}
 
 
-@router.post("/maintain")
+@router.post("/maintain", dependencies=[Depends(require_token), Depends(require_owner)])
 async def maintain_memory_endpoint(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, int]:
-    """Run one maintenance pass and return updated row counts per category."""
+    """Run one maintenance pass and return updated row counts per category. Owner-only."""
     async with session.begin():
         return await run_maintenance(session)
 
@@ -293,11 +293,16 @@ async def list_scopes_endpoint(
 
 @router.get("/stats", dependencies=[Depends(require_token)])
 async def memory_stats_endpoint(
+    request: Request,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Overall memory counts for the dashboard header.
+    """Overall memory counts for the dashboard header, scoped to caller's allowance.
 
     Returns total_drawers, total_observations, total_evidence_links,
     scope_count, and a by_scope_kind breakdown.
+
+    M3: aggregates are constrained to the scopes the caller may read, so
+    non-owner users cannot infer the existence of personal/agent:artemis scopes.
     """
-    return await get_memory_stats(session)
+    allowance = await _get_allowance(request, session)
+    return await get_memory_stats(session, allowance=allowance)

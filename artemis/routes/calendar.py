@@ -24,14 +24,14 @@ from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.gcal.client import GCalAPIError, GCalClient
 from artemis.integrations.gcal.types import EventDateTime
-from artemis.marketing.routes._auth import require_token
+from artemis.marketing.routes._auth import require_owner, require_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/calendar",
     tags=["calendar"],
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(require_owner)],
 )
 
 
