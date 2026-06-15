@@ -330,6 +330,11 @@ async def _write_trajectory_observation(
 
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 
+# ── P5 auto-trigger constants ─────────────────────────────────────────────────
+# After this many successful runs (with trajectory summaries) since the last
+# skill distillation, automatically fire the distiller for the agent.
+_DISTILL_AFTER_N_RUNS: int = 5
+
 # ── Prompt ────────────────────────────────────────────────────────────────────
 
 _TRAJECTORY_PROMPT = """\
@@ -364,6 +369,131 @@ Respond with valid JSON only, no prose:
 Run data:
 {run_data}
 """
+
+
+async def _count_runs_since_last_distill(session: Any, agent_id: str) -> int:
+    """Count successful runs with trajectory summaries created after the most
+    recent self-improvement skill proposal for this agent.
+
+    If no prior distillation exists for the agent, counts all successful
+    summarized runs.  Returns 0 on any DB error (fail-safe).
+
+    A "successful run" for counting purposes is one where status == 'completed'.
+    We only count runs that already have a trajectory summary, because those are
+    the ones the distiller would examine.
+    """
+    try:
+        from sqlalchemy import text as sa_text
+
+        # Find the created_at of the most recent self-improvement skill proposal
+        # that cites this agent (via citations->>'agent_id').
+        # If none exist, we count from the beginning of time.
+        last_distill_q = sa_text(
+            """
+            SELECT MAX(created_at) AS last_distill_at
+            FROM definition_proposals
+            WHERE kind = 'skill'
+              AND proposed_by = 'self-improvement'
+              AND citations->>'agent_id' = :agent_id
+              AND status IN ('pending', 'approved')
+            """
+        )
+        result = await session.execute(last_distill_q, {"agent_id": agent_id})
+        row = result.fetchone()
+        last_distill_at = row.last_distill_at if row and row.last_distill_at else None
+
+        # Count completed runs with trajectory summaries since last_distill_at.
+        # Use CAST to avoid asyncpg type-ambiguity for the nullable timestamp param.
+        count_q = sa_text(
+            """
+            SELECT COUNT(DISTINCT ar.id) AS run_count
+            FROM agent_runs ar
+            JOIN agent_run_trajectory_summaries ats ON ats.run_id = ar.id
+            WHERE ar.agent_id = :agent_id
+              AND ar.status = 'completed'
+              AND (
+                CAST(:last_distill_at AS timestamptz) IS NULL
+                OR ats.generated_at > CAST(:last_distill_at AS timestamptz)
+              )
+            """
+        )
+        count_result = await session.execute(
+            count_q,
+            {"agent_id": agent_id, "last_distill_at": last_distill_at},
+        )
+        count_row = count_result.fetchone()
+        return int(count_row.run_count) if count_row else 0
+    except Exception:
+        logger.warning(
+            "trajectory_summarizer: _count_runs_since_last_distill failed for agent=%r",
+            agent_id,
+            exc_info=True,
+        )
+        return 0
+
+
+async def _safe_auto_distill(agent_id: str) -> None:
+    """Fire-and-forget skill distillation for agent_id.
+
+    Fail-safe: any exception is caught and logged; the summarizer is not affected.
+    Human-gated: only creates proposals, never auto-approves.
+    """
+    try:
+        import artemis.db as _db
+        from artemis.builder.skill_distiller import distill_skill_candidates
+
+        async with _db.SessionLocal() as session:
+            result = await distill_skill_candidates(session, agent_id)
+        logger.info(
+            "trajectory_summarizer: auto-distill for agent=%r → proposed=%d skipped=%d",
+            agent_id,
+            result.get("n_proposed", 0),
+            result.get("n_skipped", 0),
+        )
+    except Exception:
+        logger.warning(
+            "trajectory_summarizer: auto-distill failed for agent=%r (non-fatal)",
+            agent_id,
+            exc_info=True,
+        )
+
+
+async def _safe_maybe_auto_distill(agent_id: str, run_id: str) -> None:
+    """Check run count and conditionally fire the distiller.
+
+    Opens its own DB session (isolated from the summarizer session) so that
+    it never touches the session that was used to write the trajectory summary.
+    This keeps the cc13 spy-session test clean.
+
+    Fail-safe: any exception is caught and logged.
+    """
+    try:
+        import artemis.db as _db
+
+        async with _db.SessionLocal() as session:
+            run_count = await _count_runs_since_last_distill(session, agent_id)
+
+        logger.debug(
+            "trajectory_summarizer: agent=%r has %d successful run(s) since last distill (threshold=%d)",
+            agent_id,
+            run_count,
+            _DISTILL_AFTER_N_RUNS,
+        )
+        if run_count >= _DISTILL_AFTER_N_RUNS and run_count % _DISTILL_AFTER_N_RUNS == 0:
+            # Only fire at exact multiples: 5, 10, 15, …
+            logger.info(
+                "trajectory_summarizer: auto-trigger distiller for agent=%r (run_count=%d)",
+                agent_id,
+                run_count,
+            )
+            await _safe_auto_distill(agent_id)
+    except Exception:
+        logger.warning(
+            "trajectory_summarizer: auto-trigger check failed for agent=%r run=%r (non-fatal)",
+            agent_id,
+            run_id,
+            exc_info=True,
+        )
 
 
 async def summarize_async(snapshot: AgentRunSnapshot) -> None:
@@ -502,3 +632,16 @@ async def summarize(
     else:
         async with _db.SessionLocal() as session:
             await _do_summarize(session)
+
+    # P5 — auto-trigger: after N=5 successful summarized runs since last
+    # distillation, fire the distiller fire-and-forget (own session, isolated
+    # from the summarizer session so it never affects the spy in tests or the
+    # main session's transaction visibility).
+    # Only fires for completed runs; fail-safe (never crashes the summarizer).
+    if snapshot.agent_id is not None and snapshot.status == "completed":
+        task = asyncio.create_task(
+            _safe_maybe_auto_distill(snapshot.agent_id, snapshot.run_id),
+            name=f"auto_distill_check_{snapshot.agent_id}_{snapshot.run_id}",
+        )
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)

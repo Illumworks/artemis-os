@@ -48,6 +48,11 @@ const WRITING_STUDIO_HANDOFF_KEY = "artemis-writing-studio-handoff";
 let _approvedSkills = [];
 let _proposedSkills = [];
 let _skillCategories = []; // [{ category, count }]
+// P5: pending DefinitionProposal rows (kind="skill", proposed_by="self-improvement")
+// from /api/builder/proposals — separate from _proposedSkills which are skill records.
+let _pendingSkillProposals = []; // DefinitionProposalRead objects
+// P5: selected builder proposal id in the Proposed tab (string or "")
+let _selectedBuilderProposalId = "";
 let _skillsLoaded = false;
 let _skillsError = null;
 let _campaignOpsOverview = null;
@@ -2421,6 +2426,13 @@ function renderSkillsPage() {
   const visibleSkills = tab === "proposed" ? pendingSkills : filteredApproved;
   const selectedSkill = ensureSkillSelection(visibleSkills);
   const summary = getSkillOverviewStats(approvedSkills, pendingSkills);
+  // P5: count of pending builder proposals (skill DefinitionProposals) from the distiller.
+  const distillerProposalCount = _pendingSkillProposals.length;
+  const totalProposedCount = pendingSkills.length + distillerProposalCount;
+  // P5: selected builder proposal (for detail pane when in proposed tab)
+  const selectedBuilderProposal = _selectedBuilderProposalId
+    ? _pendingSkillProposals.find((p) => String(p.id) === String(_selectedBuilderProposalId)) || null
+    : null;
 
   return `
     ${renderOperationsHero(
@@ -2429,7 +2441,7 @@ function renderSkillsPage() {
       "Approved skills stay in the library. Proposed skills live in the review queue until they are promoted through Memory > Skills / Rules.",
       [
         renderSummaryChip("Approved", `${summary.approved}`),
-        renderSummaryChip("Proposed", `${summary.pending}`),
+        renderSummaryChip("Proposed", `${totalProposedCount}`),
         renderSummaryChip("Uses", `${summary.totalUses}`),
         renderSummaryChip("Avg success", formatPercent(summary.avgSuccess)),
       ],
@@ -2438,8 +2450,9 @@ function renderSkillsPage() {
     ${renderSkillsGuideHTML()}
     <section class="ops-skills-tabs">
       <button class="ops-tab${tab === "library" ? " active" : ""}" type="button" data-ops-action="switch-skill-tab" data-skill-tab="library">Library <span>${escapeHtml(String(approvedSkills.length))}</span></button>
-      <button class="ops-tab${tab === "proposed" ? " active" : ""}" type="button" data-ops-action="switch-skill-tab" data-skill-tab="proposed">Proposed by agents <span>${escapeHtml(String(pendingSkills.length))}</span></button>
+      <button class="ops-tab${tab === "proposed" ? " active" : ""}" type="button" data-ops-action="switch-skill-tab" data-skill-tab="proposed">Proposed by agents <span>${escapeHtml(String(totalProposedCount))}</span></button>
       <div style="flex: 1"></div>
+      ${renderOpsSecondaryButton("Discover skills from recent runs", "discover-skills")}
       ${renderOpsSecondaryButton("New skill", "new-skill")}
       ${renderOpsSecondaryButton("Back to Operations", "open-shell-view", { "shell-view": "operations" })}
     </section>
@@ -2490,7 +2503,7 @@ function renderSkillsPage() {
           </div>
           <div class="ops-table-body">
             ${visibleSkills.map((skill) => {
-              const active = skill.id === selectedSkill?.id;
+              const active = skill.id === selectedSkill?.id && !selectedBuilderProposal;
               const originLabel = skill.origin === "policy" ? "Policy" : skill.origin === "agent" ? "Agent" : skill.origin === "memory" ? "Memory" : "You";
               return `
                 <button
@@ -2510,11 +2523,35 @@ function renderSkillsPage() {
                 </button>
               `;
             }).join("")}
+            ${tab === "proposed" ? _pendingSkillProposals.map((proposal) => {
+              const defn = proposal.proposed_definition || {};
+              const activeProposal = String(proposal.id) === String(_selectedBuilderProposalId);
+              const agentId = proposal.citations?.agent_id || "";
+              return `
+                <button
+                  type="button"
+                  class="ops-row ops-skill-row ops-skill-row-proposal${activeProposal ? " active" : ""}"
+                  data-ops-action="select-builder-proposal"
+                  data-proposal-id="${escapeAttr(String(proposal.id))}"
+                >
+                  <span class="ops-row-main">
+                    <span class="ops-row-title">${escapeHtml(defn.name || defn.slug || `Proposal #${proposal.id}`)}</span>
+                    <span class="ops-row-sub">${escapeHtml(defn.description || "")}</span>
+                  </span>
+                  <span class="ops-row-value">${escapeHtml(agentId || "—")}</span>
+                  <span class="ops-row-value">—</span>
+                  <span class="ops-row-value">—</span>
+                  <span class="ops-row-value"><span class="ops-pill ops-pill-accent" title="Proposed by self-improvement">Auto</span></span>
+                </button>
+              `;
+            }).join("") : ""}
           </div>
         </div>
       </article>
       <article class="ops-panel ops-detail-panel">
-        ${renderSkillDetail(selectedSkill, tab, summary)}
+        ${selectedBuilderProposal
+          ? renderBuilderProposalDetail(selectedBuilderProposal)
+          : renderSkillDetail(selectedSkill, tab, summary)}
       </article>
     </section>
   `;
@@ -2632,6 +2669,79 @@ function renderSkillDetail(skill, tab, summary) {
         </div>
       </section>
       ${detailFooter}
+    </div>
+  `;
+}
+
+// P5: Detail pane for a pending DefinitionProposal (kind="skill", proposed_by="self-improvement").
+// These come from the distiller and are approved/rejected via the builder proposals API.
+function renderBuilderProposalDetail(proposal) {
+  if (!proposal) {
+    return `
+      <div class="ops-empty-state">
+        <strong>No proposal selected</strong>
+        <span>Pick a proposal from the list to review it.</span>
+      </div>
+    `;
+  }
+  const defn = proposal.proposed_definition || {};
+  const citations = proposal.citations || {};
+  const agentId = citations.agent_id || "—";
+  const rationale = citations.rationale || defn.rationale || "No rationale provided.";
+  const tools = Array.isArray(defn.tools) ? defn.tools : [];
+  const instructions = defn.instructions || "";
+  const runIds = Array.isArray(citations.run_ids) ? citations.run_ids : [];
+  const createdAt = proposal.created_at
+    ? formatRelativeTime(proposal.created_at)
+    : "—";
+
+  return `
+    <div class="ops-panel-head ops-detail-head">
+      <div>
+        <div class="ops-panel-eyebrow">Self-improvement proposal</div>
+        <h3>${escapeHtml(defn.name || defn.slug || `Proposal #${proposal.id}`)}</h3>
+        <p>${escapeHtml(defn.description || "")}</p>
+      </div>
+      <div class="ops-detail-head-actions">
+        <span class="ops-pill ops-pill-warn">Pending</span>
+        <span class="ops-pill ops-pill-accent">Auto-discovered</span>
+      </div>
+    </div>
+
+    <div class="ops-detail-stack">
+      <section class="ops-mini-card">
+        <div class="ops-mini-card-label">Why this skill was proposed</div>
+        <p>${escapeHtml(rationale)}</p>
+      </section>
+
+      <section class="ops-mini-card">
+        <div class="ops-mini-card-label">Instructions</div>
+        <p style="white-space: pre-wrap; font-size: 0.85em;">${escapeHtml(instructions || "—")}</p>
+      </section>
+
+      <section class="ops-mini-card">
+        <div class="ops-mini-card-label">Tools this skill uses</div>
+        <div class="ops-chip-row">
+          ${tools.length
+            ? tools.map((t) => renderOpsPill(t, "accent")).join("")
+            : '<span class="ops-muted-copy">None specified</span>'}
+        </div>
+      </section>
+
+      <section class="ops-mini-card">
+        <div class="ops-mini-card-label">Evidence (runs)</div>
+        <div class="ops-chip-row">
+          ${runIds.length
+            ? runIds.map((id) => renderOpsPill(`run #${id}`, "neutral")).join("")
+            : '<span class="ops-muted-copy">No run citations</span>'}
+        </div>
+        <p class="ops-muted-copy" style="margin-top:0.5em;">Discovered from agent: ${escapeHtml(agentId)} · ${escapeHtml(createdAt)}</p>
+      </section>
+
+      <div class="ops-detail-actions">
+        ${renderOpsButton("Approve skill", "approve-builder-proposal", { "proposal-id": String(proposal.id) })}
+        ${renderOpsSecondaryButton("Reject", "reject-builder-proposal", { "proposal-id": String(proposal.id) })}
+      </div>
     </div>
   `;
 }
@@ -3556,14 +3666,21 @@ async function refreshLatestWorkflowRun(workflowId) {
 async function refreshSkillsFromApi() {
   _skillsError = null;
   try {
-    const [all, proposed, cats] = await Promise.all([
+    const [all, proposed, cats, builderProposals] = await Promise.all([
       api.fetchSkills({ status: "approved" }),
       api.fetchSkills({ status: "proposed" }),
       api.fetchSkillCategories(),
+      // P5: fetch pending skill DefinitionProposals from the builder API.
+      // Fail-safe: if builder API is unavailable, degrade gracefully.
+      api.builderFetchProposals({ status: "pending", kind: "skill" }).catch(() => null),
     ]);
     _approvedSkills = Array.isArray(all) ? all : [];
     _proposedSkills = Array.isArray(proposed) ? proposed : [];
     _skillCategories = Array.isArray(cats) ? cats : [];
+    // builderFetchProposals returns { proposals: [...] }
+    _pendingSkillProposals = Array.isArray(builderProposals?.proposals)
+      ? builderProposals.proposals
+      : [];
     _skillsLoaded = true;
   } catch (err) {
     _skillsError = err?.message || "Failed to load skills";
@@ -4270,8 +4387,10 @@ function handleOperationsClick(event) {
     writeStorage(OPS_SKILL_TAB_KEY, selectedSkillTab);
     if (selectedSkillTab === "library") {
       selectedSkillId = String(_approvedSkills[0]?.id || "");
+      _selectedBuilderProposalId = "";
     } else {
       selectedSkillId = String(_proposedSkills[0]?.id || "");
+      _selectedBuilderProposalId = "";
     }
     writeStorage(OPS_SKILL_SELECTION_KEY, selectedSkillId);
     renderOperationsView("skills");
@@ -4295,6 +4414,99 @@ function handleOperationsClick(event) {
   }
   if (action === "reject-skill") {
     rejectSkill(button.dataset.skillId || selectedSkillId);
+    return;
+  }
+  // P5 — select a DefinitionProposal row in the Proposed sub-tab
+  if (action === "select-builder-proposal") {
+    _selectedBuilderProposalId = button.dataset.proposalId || "";
+    // deselect skill row
+    selectedSkillId = "";
+    writeStorage(OPS_SKILL_SELECTION_KEY, "");
+    renderOperationsView("skills");
+    return;
+  }
+  // P5 — approve a skill DefinitionProposal via the builder proposals API
+  if (action === "approve-builder-proposal") {
+    const proposalId = button.dataset.proposalId || _selectedBuilderProposalId;
+    if (!proposalId) return;
+    void (async () => {
+      try {
+        await api.builderApproveProposal(Number(proposalId));
+        _selectedBuilderProposalId = "";
+        selectedSkillTab = "library";
+        writeStorage(OPS_SKILL_TAB_KEY, selectedSkillTab);
+        await refreshSkillsFromApi();
+        renderOperationsView("skills");
+        showToast("Approved", "Skill added to the library.");
+      } catch (err) {
+        showToast("Approve failed", err?.message || String(err), { isError: true });
+      }
+    })();
+    return;
+  }
+  // P5 — reject a skill DefinitionProposal
+  if (action === "reject-builder-proposal") {
+    const proposalId = button.dataset.proposalId || _selectedBuilderProposalId;
+    if (!proposalId) return;
+    void (async () => {
+      try {
+        await api.builderRejectProposal(Number(proposalId));
+        _selectedBuilderProposalId = "";
+        await refreshSkillsFromApi();
+        renderOperationsView("skills");
+        showToast("Rejected", "Proposal removed from the queue.");
+      } catch (err) {
+        showToast("Reject failed", err?.message || String(err), { isError: true });
+      }
+    })();
+    return;
+  }
+  // P5 — "Discover skills from recent runs" button
+  if (action === "discover-skills") {
+    void (async () => {
+      let discoverBtn = null;
+      try {
+        // Find and disable the button to prevent double-clicks.
+        discoverBtn = getShellContent()?.querySelector("[data-ops-action='discover-skills']");
+        if (discoverBtn) {
+          discoverBtn.disabled = true;
+          discoverBtn.textContent = "Discovering…";
+        }
+        const inbox = await api.builderFetchInbox();
+        const agentsToDistill = inbox.agents_with_new_summaries || [];
+        if (agentsToDistill.length === 0) {
+          showToast("Nothing new", "No agents have unreviewed runs to distill from.");
+          return;
+        }
+        let totalProposed = 0;
+        let distilledAgents = 0;
+        for (const agent of agentsToDistill) {
+          try {
+            const result = await api.distillSkills(agent.agent_id);
+            totalProposed += result.n_proposed || 0;
+            distilledAgents += 1;
+          } catch {
+            // Fail-safe: one agent failing doesn't stop the others.
+          }
+        }
+        const msg = totalProposed > 0
+          ? `Proposed ${totalProposed} skill${totalProposed !== 1 ? "s" : ""} across ${distilledAgents} agent${distilledAgents !== 1 ? "s" : ""}.`
+          : `Reviewed ${distilledAgents} agent${distilledAgents !== 1 ? "s" : ""}. No new skills surfaced.`;
+        showToast("Distillation complete", msg);
+        // Switch to Proposed tab so results are visible.
+        selectedSkillTab = "proposed";
+        writeStorage(OPS_SKILL_TAB_KEY, selectedSkillTab);
+        await refreshSkillsFromApi();
+        renderOperationsView("skills");
+      } catch (err) {
+        showToast("Discover failed", err?.message || String(err), { isError: true });
+      } finally {
+        if (discoverBtn) {
+          discoverBtn.disabled = false;
+          discoverBtn.textContent = "Discover skills from recent runs";
+        }
+      }
+    })();
     return;
   }
   if (action === "new-skill") {
