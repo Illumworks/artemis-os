@@ -557,7 +557,10 @@ export async function fetchLatestBriefApi() {
 }
 
 export async function generateBriefApi() {
-  const res = await fetch("/api/daily-brief/generate", { method: "POST" });
+  const res = await fetch("/api/daily-brief/generate", {
+    method: "POST",
+    signal: AbortSignal.timeout(120_000),
+  });
   return _readJsonOrThrow(res, "Failed to generate daily brief");
 }
 

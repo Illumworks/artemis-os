@@ -305,7 +305,7 @@ async def _llm_summarize(
         transcript_text = str(transcript_data["notes"])
     else:
         # Fall back to full JSON if no obvious transcript key.
-        transcript_text = json.dumps(transcript_data, indent=2)[:8000]
+        transcript_text = json.dumps(transcript_data, indent=2)[:60000]
 
     # Resolve best available provider (same chain as floating_artemis).
     adapter = None
@@ -323,7 +323,7 @@ async def _llm_summarize(
 
     last_error: str | None = None
     for attempt in range(_MAX_VALIDATION_RETRIES + 1):
-        prompt = _SUMMARY_PROMPT.format(title=title, transcript=transcript_text[:6000])
+        prompt = _SUMMARY_PROMPT.format(title=title, transcript=transcript_text[:60000])
         if last_error is not None:
             prompt += (
                 f"\n\nYour previous response failed Pydantic validation: {last_error}\n"

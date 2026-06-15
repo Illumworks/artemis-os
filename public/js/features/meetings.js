@@ -452,7 +452,10 @@ function _wirePanel(panelEl, meetingId) {
 export async function handleMeetingsRowClick(meetingId, meetingTitle, appShellContent) {
   if (!meetingId || !appShellContent) return;
 
-  const panel = appShellContent.querySelector('[data-meetings-transcript-panel]');
+  const panels = appShellContent.querySelectorAll('[data-meetings-transcript-panel]');
+  const panel = Array.from(panels).find(
+    (p) => !p.closest('[data-meetings-canvas]')?.classList.contains('hidden')
+  ) ?? panels[0];
   if (!panel) return;
 
   await loadMeetingDetail(meetingId, meetingTitle, panel);
@@ -569,8 +572,8 @@ export function renderMeetingsPastList(meetings, appShellContent) {
   }
 
   listEl.innerHTML = meetings.map((m) => {
-    const dateStr = m.dateMs
-      ? new Date(m.dateMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    const dateStr = (m.date_ms ?? m.dateMs)
+      ? new Date(m.date_ms ?? m.dateMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
       : '';
     const participants = (m.participants || []).slice(0, 3).join(', ');
     return `

@@ -34,16 +34,17 @@ class ActionItem(BaseModel):
     def validate_due_format(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        if v.lower() in _LOOSE_DUE_TOKENS:
-            return v
+        stripped = v.strip()
+        if not stripped:
+            return None
+        if stripped.lower() in _LOOSE_DUE_TOKENS:
+            return stripped
         try:
-            datetime.fromisoformat(v)
-            return v
-        except ValueError as exc:
-            raise ValueError(
-                f"Invalid due date format: {v!r}. Use ISO 8601 (YYYY-MM-DD) or one of: "
-                "today, tomorrow, this week, next week, TBD."
-            ) from exc
+            datetime.fromisoformat(stripped)
+            return stripped
+        except ValueError:
+            # Pass through any other non-empty string unchanged — due is informational.
+            return stripped
 
 
 class MeetingSummary(BaseModel):

@@ -1934,12 +1934,12 @@ function renderDailyBriefCard(brief) {
     .map((s) => `<span class="dashboard-brief-source-pill">${escapeHtml(s)}</span>`)
     .join('');
 
-  const priorityItems = (brief.priorities ?? []).map((p) => `
+  const priorityItems = (brief.priorities ?? []).map((p, i) => `
     <div class="dashboard-brief-priority">
-      <span class="dashboard-brief-priority-rank">${p.rank}</span>
+      <span class="dashboard-brief-priority-rank">${i + 1}</span>
       <div class="dashboard-brief-priority-body">
-        <strong>${escapeHtml(p.title)}${p.ticket ? ` <span class="dashboard-brief-ticket">${escapeHtml(p.ticket)}</span>` : ''}</strong>
-        <p>${escapeHtml(p.why)}</p>
+        <strong>${escapeHtml(p.item ?? '')}</strong>
+        <p>${escapeHtml(p.rationale ?? '')}</p>
       </div>
     </div>
   `).join('');
@@ -1949,7 +1949,7 @@ function renderDailyBriefCard(brief) {
       <div class="dashboard-brief-header">
         <div>
           <div class="shell-eyebrow">Daily Brief</div>
-          <h3>${escapeHtml(brief.headline ?? 'Today\'s brief')}</h3>
+          <h3>${escapeHtml(brief.highlights?.[0]?.title ?? brief.summary ?? "Today's brief")}</h3>
         </div>
         <div class="dashboard-brief-meta">
           ${ageLabel ? `<span class="dashboard-brief-age">${escapeHtml(ageLabel)}</span>` : ''}
@@ -1960,10 +1960,10 @@ function renderDailyBriefCard(brief) {
         </div>
       </div>
 
-      ${brief.continuity ? `
+      ${brief.okr_status ? `
         <div class="dashboard-brief-continuity">
           <span class="dashboard-brief-continuity-label">↻ Continuity</span>
-          ${escapeHtml(brief.continuity)}
+          ${escapeHtml(brief.okr_status)}
         </div>
       ` : ''}
 
@@ -1972,17 +1972,17 @@ function renderDailyBriefCard(brief) {
         ${priorityItems}
       </div>
 
-      ${brief.context ? `
+      ${brief.summary ? `
         <div class="dashboard-brief-context">
           <span class="dashboard-brief-context-label">Context</span>
-          ${escapeHtml(brief.context)}
+          ${escapeHtml(brief.summary)}
         </div>
       ` : ''}
 
-      ${brief.defer ? `
+      ${(brief.risks ?? []).length ? `
         <div class="dashboard-brief-defer">
           <span class="dashboard-brief-defer-label">Defer</span>
-          ${escapeHtml(brief.defer)}
+          ${escapeHtml((brief.risks ?? []).join(' · '))}
         </div>
       ` : ''}
 
