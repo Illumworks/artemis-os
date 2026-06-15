@@ -60,6 +60,26 @@ class Settings(BaseSettings):
         "localhost: localhost resolves to ::1 first and IPv6 loopback to "
         "Postgres hangs on this machine (4s+ connect stall before IPv4 fallback).",
     )
+    db_pool_size: int = Field(
+        default=5,
+        description="SQLAlchemy pool_size (number of persistent connections). "
+        "Keep lean in dev/worktrees; production overrides via ARTEMIS_DB_POOL_SIZE.",
+    )
+    db_max_overflow: int = Field(
+        default=10,
+        description="SQLAlchemy max_overflow (burst connections above pool_size). "
+        "Keep lean in dev/worktrees; production overrides via ARTEMIS_DB_MAX_OVERFLOW.",
+    )
+    db_pool_timeout: int = Field(
+        default=10,
+        description="Seconds to wait for a connection from the pool before raising. "
+        "10s is a safe improvement over SQLAlchemy's 30s default.",
+    )
+    db_pool_recycle: int = Field(
+        default=1800,
+        description="Seconds after which a connection is recycled to avoid stale "
+        "server-side timeouts (30 min is a safe default).",
+    )
 
     token: str | None = Field(default=None, description="Shared-account auth token; None disables.")
     cf_access_enabled: bool = Field(
