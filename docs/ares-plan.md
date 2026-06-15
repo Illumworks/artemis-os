@@ -125,17 +125,16 @@ Claude so the Max quota is reserved for planning, validation, and customer-facin
 | Slack channel-reply classifier (YES/NO gate) | anthropic (no key → silent) | **local Qwen / Gemini-flash** | T3 |
 | `dev_projects_loop` (Ares' builds) | claude-code (critical) | **tiered**: plan=Claude/Opus, codegen volume=Codex/local | mixed |
 
-**Enablement prerequisites — verified status (2026-06-15):**
-1. **Codex CLI** — ✅ **DONE.** Installed (`~/.local/bin/codex`, v0.126.0-alpha.8) and
-   authed via ChatGPT account (`~/.codex/auth.json`). T2 leg is ready.
-2. **Gemini** — ❌ **NOT set.** The gemini adapter reads `GEMINI_API_KEY` / `GOOGLE_API_KEY`;
-   neither is in `.env` or the server env. **Add `GEMINI_API_KEY`** to `.env` to enable the
-   T3 cloud leg. (Jon believed this was done — it is not, where the app reads it.)
-2. **Local LLM** — currently `LM_STUDIO_BASE_URL` is **hardcoded `http://127.0.0.1:1234`**
-   in `artemis/providers/health.py` (the local model on the Mac mini). To use the Mac
-   Studio instead: serve LM Studio/Ollama on `0.0.0.0:1234` there, make the base URL
-   **env-configurable**, and point it at the Studio's LAN IP or Tailscale hostname (use an
-   explicit address, not `localhost` — see the ::1 lesson). See §9.
+**Enablement prerequisites — verified status (updated 2026-06-15, all GREEN):**
+1. **Codex CLI** — ✅ **DONE.** Installed (`~/.local/bin/codex`) and authed via ChatGPT account
+   (`~/.codex/auth.json`). T2 leg is ready.
+2. **Gemini** — ✅ **DONE.** `GEMINI_API_KEY` now in `.env`; gemini health = "key configured".
+3. **Local LLM** — ✅ **DONE.** `LM_STUDIO_BASE_URL` is now env-configurable (R2, `7e5fe97`) and
+   pointed at the Mac Studio's Tailscale IP; lm-studio health passes (20ms over Tailscale). The Mac
+   mini's local LLM was unloaded to free RAM for the app/PG. (Use an explicit address, not
+   `localhost` — the ::1 lesson.)
+
+**→ Only R3 (apply the flips + Gemini-429 fallthrough) remains. See the RESUME block in §10.**
 3. Flip `feature_routing_overrides` / per-agent `provider` rows to the targets above.
 
 **Biggest immediate savings (do first):** the background/high-volume T3 features
@@ -221,14 +220,68 @@ projects, while Artemis (all-scopes) can. No new mechanism needed; just assign t
 Each item is sized for a worker brief. Format: **goal · key mechanism/files · acceptance.**
 Tracks R (rebalancing) and C (Claude accounts) are **independent of Ares** and can start now.
 
+> ### ⏩ RESUME — Provider rebalancing (paused 2026-06-15, R3 is next)
+>
+> Paused to chase the asyncpg connect-timeout instability bug
+> (`briefs/instability-asyncpg-connect-timeout.md`). Resume here when that's done. This block is
+> the **settled state** from the working session — read it before re-opening R3.
+>
+> **Done + committed:**
+> - **R2** (`7e5fe97`) — LM Studio base URL is env-configurable (`ARTEMIS_LM_STUDIO_BASE_URL`);
+>   worker also fixed the old `localhost`→`127.0.0.1` IPv6-hang default.
+> - **C1** (`4d1db1a`) — per-agent Claude account via `CLAUDE_CONFIG_DIR`. **Scope gap:** covers the
+>   `run_with_tools` (scout/agent) path only, **not** the Floating-Artemis/Builder `complete()` chat
+>   path — so "personal Artemis → personal account" needs a small follow-up (see C-followup below).
+> - **Prereqs Jon completed live:** `GEMINI_API_KEY` in `.env`; `ARTEMIS_LM_STUDIO_BASE_URL` pointed at
+>   the Mac Studio's Tailscale IP; the Mac mini's local LLM **unloaded** (it competed with the app/PG
+>   for RAM and was likely contributing to the stalls).
+> - **All 4 providers verified live from the app on the mini (2026-06-15 ~20:22Z):** claude-code
+>   v2.1.170 ✅ · codex v0.129 ✅ · gemini "key configured" ✅ · lm-studio 20ms, models loaded ✅ (so the
+>   mini reaches the Studio over Tailscale, not just a local curl). This means R1 + R2 prereqs are
+>   satisfied — only the R3 flips remain.
+>
+> **Local models on the Studio (M3 Ultra, 96GB) — settled 2-resident set:**
+> - Coder (keep loaded): **`qwen/qwen3-coder-next`** → Ares codegen + code-shaped tasks.
+> - General (load this): **`qwen3.5-35b-a3b`** (8-bit) → signal qualifier, Slack channel YES/NO gate,
+>   and the $0/private fallback when Gemini throttles.
+> - Leave `Qwen3-Coder-30B-A3B-Instruct` unloaded (backup coder). The `nomic-embed` model can be
+>   unloaded — the app embeds locally with minilm. **3 loaded = too much; 2 is the ceiling.**
+>
+> **Settled allocation (supersedes the §6 table where they differ; Jon-confirmed):**
+> - **Claude (account split, quality-critical):** Floating Artemis → *personal*; Callie + marketing
+>   agent runs + campaign briefs + Writing Studio compose → *marketing*; judgment scouts (legislative,
+>   federal_funding) → *marketing*; Builder proposals + Ares planning/validation → *personal*.
+> - **Gemini 2.5 Flash (cloud, free tier):** strict-JSON background + long-context summaries + public
+>   classification scouts (board_minutes, regional_news, state_doe, linkedin, procurement,
+>   leadership) + OKR activity extraction + memory consolidation/graph-extraction + trajectory/meeting
+>   summaries. Jon confirmed: public-facing scout data + OKR extraction to cloud is fine.
+> - **Local Qwen (Studio):** signal qualifier + channel gate (general model) + Ares codegen (coder
+>   model) + $0/private fallback for Gemini. Caveat: single-stream per model on decode — concurrency
+>   queues; that's why bursty work goes to Gemini first.
+> - **Codex:** codegen volume + the overflow lane when Gemini is throttled or local is queued (no
+>   free-tier cap, not single-stream). Jon OK'd Codex for coding + other tasks.
+>
+> **R3 build (the actual next step), two parts:**
+> 1. Apply the §6/allocation flips via `feature_routing_overrides` / per-agent `provider`, using the
+>    real model IDs above (`qwen3.5-35b-a3b` general, `qwen/qwen3-coder-next` coder,
+>    `gemini-2.5-flash` cloud).
+> 2. **Add Gemini-429 → cascade-fallthrough.** The cascade currently falls through only on
+>    missing-key/timeout; a 429 must also drop to the next provider (local → Claude) instead of failing.
+>    Verify each moved feature actually lands on its new provider (Cost→Routing UI + a live run) and
+>    that judgment/customer-facing paths are unchanged.
+>
+> **C-followup:** route Floating Artemis (personal Artemis chat) → personal account — the `complete()`
+> path C1 didn't cover.
+>
+> **Rate-limit note:** start on Gemini free tier with 429-fallthrough; a paid key is pennies/mo at this
+> volume and lifts the limit ~100× if we ever see real throttling.
+
 ### Track R — provider/cost rebalancing (independent quick win)
-- **R1 · Enable Gemini.** Add `GEMINI_API_KEY` to `.env`; confirm via `artemis/providers/health.py`.
-  *Accept:* gemini health check passes; a T3 feature routes to gemini.
-- **R2 · Local LLM endpoint configurable + on Studio.** Replace hardcoded `LM_STUDIO_BASE_URL`
-  (`health.py`, adapter) with an env setting; serve LM Studio/Ollama on the Mac Studio
-  `0.0.0.0:1234`; point the URL at the Studio's Tailscale/LAN address (explicit IP, not
-  `localhost`). *Accept:* `lm-studio` health passes against the Studio; a T3 feature runs on it.
-- **R3 · Apply the rebalancing flips.** Set `feature_routing_overrides` / per-agent `provider`
+- **R1 · Enable Gemini.** ✅ **DONE 2026-06-15.** `GEMINI_API_KEY` in `.env`; health = "key configured".
+- **R2 · Local LLM endpoint configurable + on Studio.** ✅ **DONE 2026-06-15** (`7e5fe97`).
+  `ARTEMIS_LM_STUDIO_BASE_URL` env setting, pointed at the Studio's Tailscale IP; lm-studio health
+  passes (20ms). Mini's local LLM unloaded.
+- **R3 · Apply the rebalancing flips. ← NEXT (paused for the instability bug; see RESUME block above).** Set `feature_routing_overrides` / per-agent `provider`
   for the §6 targets: classification scouts (board_minutes, regional_news, state_doe, linkedin,
   procurement, leadership_transition) → Gemini/local; `memory_consolidation`,
   `memory_graph_extraction`, `trajectory_summary`, `meeting_summary`, `signal_qualifier`,
@@ -240,10 +293,10 @@ Tracks R (rebalancing) and C (Claude accounts) are **independent of Ares** and c
   *Accept:* channel-reply gate works (not silent-default) once a T3 provider is live.
 
 ### Track C — multi-account Claude routing
-- **C1 · Per-agent account in the adapter.** Teach `ClaudeCodeAdapter` to set
-  `CLAUDE_CONFIG_DIR` per call from an agent "account" field; carry the account through the
-  resolver/feature layer (routing key → provider, account, model). *Accept:* a unit test proves
-  the subprocess env carries the chosen config dir.
+- **C1 · Per-agent account in the adapter.** ✅ **DONE 2026-06-15** (`4d1db1a`). `CLAUDE_CONFIG_DIR`
+  set per call. **Scope gap:** covers the `run_with_tools` (scout/agent) path only — the
+  Floating-Artemis/Builder `complete()` chat path still needs the C-followup (route personal Artemis →
+  personal account).
 - **C2 · Provision accounts + map.** Log marketing + personal into separate `CLAUDE_CONFIG_DIR`s;
   seed the per-agent account map (§9 allocation). *Accept:* a marketing agent consumes the
   marketing account; an Ares/personal agent consumes the personal account (verify via

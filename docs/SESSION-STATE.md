@@ -51,9 +51,13 @@ reports up; durable project memory (no re-briefing); evolution of `artemis/dev_p
 Two independent quick-wins startable NOW (don't need Ares): **Track R** provider/cost rebalancing (move
 background/high-volume work off Claude Max → Gemini/local; framework already exists in `feature_catalog.py`)
 and **Track C** per-agent Claude-account routing (`CLAUDE_CONFIG_DIR` per agent: marketing acct = Callie +
-Writing Studio + marketing agents; personal acct = Artemis + Ares + Jon's projects). Verified prereq status:
-Codex CLI ✅ authed; **Gemini key ❌ NOT set (add `GEMINI_API_KEY`)**; local LLM URL hardcoded → make
-env-configurable for the Mac Studio. Ares Phase 2 (auto-delegate) gates on **P4 orchestration**.
+Writing Studio + marketing agents; personal acct = Artemis + Ares + Jon's projects). Ares Phase 2
+(auto-delegate) gates on **P4 orchestration**.
+**STATUS 2026-06-15: R2 (`7e5fe97`) + C1 (`4d1db1a`) shipped; R1 prereq done (Gemini key in `.env`,
+Studio reachable over Tailscale, mini LLM unloaded); all 4 providers verified live.** Only **R3** (apply
+the flips + add Gemini-429 fallthrough) + a **C-followup** (Floating-Artemis chat → personal account)
+remain — **PAUSED to chase the instability bug; settled allocation + model IDs + R3 step are captured in
+the `⏩ RESUME` block of [`docs/ares-plan.md`](ares-plan.md) §10.**
 
 **Open threads:**
 - **Monday/this week:** confirm the 6/15–6/16 meetings auto-created commitments (last unproven link in the
@@ -63,6 +67,13 @@ env-configurable for the Mac Studio. Ares Phase 2 (auto-delegate) gates on **P4 
   box; the DB URL used `localhost` → intermittent connect stalls. Fixed to `127.0.0.1` everywhere (commit
   `4fa6181` + live `.env`); also fixed the same IPv6 issue in the cloudflared tunnel (the 502s). See
   [[project-dev-server-launchd-tunnel-stack]].
+  **⚠ NOT fully resolved — a SECOND, distinct asyncpg connect-timeout remains (ACTIVE, terminal-Lead's
+  current focus).** The `localhost→127.0.0.1` fix above closed the IPv6/502 layer, but `/healthz` still
+  flaps (~40-50% of fresh asyncpg connects time out, even from standalone processes; psql is always ~10ms).
+  Postgres is healthy (~20 conns); leading hypothesis = the 7 schedulers' concurrent `_load_and_register`
+  connect-storm at boot. Full evidence + hypotheses in `briefs/instability-asyncpg-connect-timeout.md`
+  (filed by the app session, handed to terminal-Lead). **Don't restart to "fix" it — restarts re-trigger
+  the storm.**
 - **Stale MERGED worktrees** to prune (harmless): `worker/fa-polish`, `worker/memory-near-dup-consolidation`,
   `worker/memory-ranking-recall` (+ check `ws-picker-polish`).
 
