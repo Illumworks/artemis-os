@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -9,6 +10,8 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -31,6 +34,33 @@ class InvalidGoogleDocumentReferenceError(GoogleDocsError):
 
 class GoogleReauthRequiredError(GoogleDocsError):
     """Raised when the stored refresh token can no longer mint access tokens."""
+
+
+class GoogleTokenExchangeError(GoogleDocsError):
+    """Raised when Google rejects the token exchange with a 4xx response.
+
+    This is a *Google rejection* (Google was reachable but said no), not a
+    network/gateway error.  Carries the structured error fields from Google's
+    ``{"error": ..., "error_description": ...}`` JSON body so callers can
+    surface the real reason to the user rather than an opaque 502.
+    """
+
+    def __init__(
+        self,
+        *,
+        status: int,
+        error_code: str | None,
+        error_description: str | None,
+        body: str,
+    ) -> None:
+        super().__init__(
+            f"Google token exchange rejected: HTTP {status} "
+            f"error={error_code!r} description={error_description!r}"
+        )
+        self.status = status
+        self.error_code = error_code
+        self.error_description = error_description
+        self.body = body
 
 
 @dataclass(frozen=True)
@@ -106,7 +136,29 @@ async def exchange_code_for_tokens(
                 "grant_type": "authorization_code",
             },
         )
-        token_resp.raise_for_status()
+        if token_resp.status_code >= 400:
+            raw_body = token_resp.text
+            error_code: str | None = None
+            error_description: str | None = None
+            try:
+                err_json = token_resp.json()
+                error_code = str(err_json.get("error") or "") or None
+                error_description = str(err_json.get("error_description") or "") or None
+            except Exception:
+                pass
+            logger.error(
+                "Google token exchange rejected: status=%d error=%r description=%r body=%r",
+                token_resp.status_code,
+                error_code,
+                error_description,
+                raw_body[:500],
+            )
+            raise GoogleTokenExchangeError(
+                status=token_resp.status_code,
+                error_code=error_code,
+                error_description=error_description,
+                body=raw_body,
+            )
         token_payload = token_resp.json()
 
         access_token = str(token_payload.get("access_token") or "")

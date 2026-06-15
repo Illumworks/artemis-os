@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from dataclasses import dataclass
 from typing import Literal
@@ -12,7 +13,9 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.config import settings
-from artemis.google_docs.client import exchange_code_for_tokens
+from artemis.google_docs.client import GoogleTokenExchangeError, exchange_code_for_tokens
+
+logger = logging.getLogger(__name__)
 from artemis.google_docs.models import GoogleCredential
 from artemis.google_docs.repository import get_google_credential, upsert_google_credential
 from artemis.integrations import repository as integrations_repo
@@ -285,7 +288,28 @@ async def complete_google_oauth(
             client_secret=config.client_secret,
             redirect_uri=redirect_uri,
         )
+    except GoogleTokenExchangeError as exc:
+        # Google was reachable but rejected the exchange (e.g. invalid_grant,
+        # redirect_uri_mismatch, invalid_client).  This is a 4xx/config issue,
+        # not a gateway error — surface Google's real reason to the caller.
+        logger.error(
+            "Google token exchange rejected: status=%d error=%r description=%r",
+            exc.status,
+            exc.error_code,
+            exc.error_description,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "google_rejected_token_exchange",
+                "google_error": exc.error_code,
+                "google_error_description": exc.error_description,
+                "google_status": exc.status,
+            },
+        ) from exc
     except httpx.HTTPError as exc:
+        # Google was unreachable (connect error / timeout) — genuine gateway failure.
+        logger.error("Google OAuth exchange network error: %s", exc)
         raise HTTPException(
             status_code=502,
             detail={
