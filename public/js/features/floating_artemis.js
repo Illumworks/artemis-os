@@ -123,15 +123,13 @@ function _startBadgePoll() {
 // Avatar selection is driven ENTIRELY by the server-resolved metadata.agent_id.
 // The client NEVER picks the persona itself — it trusts what the server stored.
 //
-// owner / "artemis" → /icons/artemis.png  (exists)
-// any other value   → /icons/callie.png  (expected path; falls back to CSS
-//                     monogram if the file is not yet present)
-//
-// When Callie's image asset is ready, drop it at: public/icons/callie.png
-// and the code below will pick it up automatically on next page load.
+// owner / "artemis" → /icons/Artemisprofile.jpg  (Jon's profile photo, NOT the
+//                     app logo artemis.png/artemis-mark.png which stay the brand mark)
+// any other value   → /icons/callieprofile.jpg   (Callie's profile photo)
+// Both provided 2026-06-14. Falls back to the CSS monogram if an image 404s.
 
-const _ARTEMIS_AVATAR = '/icons/artemis.png';
-const _CALLIE_AVATAR  = '/icons/callie.png';   // OPEN: asset not yet provided by Jon
+const _ARTEMIS_AVATAR = '/icons/Artemisprofile.jpg';
+const _CALLIE_AVATAR  = '/icons/callieprofile.jpg';
 
 /**
  * Resolve the avatar URL for the given server-assigned agent_id.
