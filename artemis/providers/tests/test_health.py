@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from artemis.config import settings
 from artemis.providers import health as health_module
 from artemis.providers.health import (
     _ALL_PROVIDERS,
@@ -65,9 +66,10 @@ async def test_probe_lm_studio_when_running() -> None:
     """Probe LM Studio; skip if not reachable (CI environment)."""
     import httpx
 
+    probe_url = f"{settings.lm_studio_base_url}/v1/models"
     try:
         async with httpx.AsyncClient(timeout=1.5) as client:
-            resp = await client.get("http://127.0.0.1:1234/v1/models")
+            resp = await client.get(probe_url)
         if resp.status_code != 200:
             pytest.skip("LM Studio returned non-200, skipping")
     except (httpx.TimeoutException, httpx.ConnectError):
@@ -100,6 +102,48 @@ async def test_probe_lm_studio_unavailable() -> None:
     assert result["provider"] == "lm-studio"
     assert result["available"] is False
     assert "unreachable" in (result["error"] or "")
+
+
+async def test_probe_lm_studio_uses_config_base_url() -> None:
+    """Health probe reads lm_studio_base_url from settings, not a hardcoded constant.
+
+    Validates both ARTEMIS_LM_STUDIO_BASE_URL and LM_STUDIO_BASE_URL aliases work,
+    and that the probed URL reflects the configured value (not http://127.0.0.1:1234).
+    """
+    import httpx
+
+    import artemis.config as config_module
+
+    custom_base = "http://100.64.0.99:1234"
+    # Use model_validate so the aliased field is accepted without reading env/file.
+    new_settings = config_module.Settings.model_validate(
+        {"ARTEMIS_LM_STUDIO_BASE_URL": custom_base}
+    )
+
+    captured_urls: list[str] = []
+
+    async def _fake_get(url: str, **_kw: object) -> AsyncMock:  # type: ignore[return]
+        captured_urls.append(url)
+        raise httpx.ConnectError("not running (test)")
+
+    mock_client = AsyncMock(
+        __aenter__=AsyncMock(return_value=AsyncMock(get=AsyncMock(side_effect=_fake_get))),
+        __aexit__=AsyncMock(return_value=False),
+    )
+
+    with (
+        patch.object(health_module, "settings", new_settings),
+        patch("artemis.providers.health.httpx.AsyncClient", return_value=mock_client),
+    ):
+        clear_health_cache()
+        result = await probe_provider_health("lm-studio")
+
+    assert result["provider"] == "lm-studio"
+    assert result["available"] is False
+    assert len(captured_urls) == 1, f"Expected exactly one GET, got: {captured_urls}"
+    assert captured_urls[0] == f"{custom_base}/v1/models", (
+        f"Probe hit {captured_urls[0]!r}; expected URL derived from config base {custom_base!r}"
+    )
 
 
 # ── Test 4: anthropic key missing ─────────────────────────────────────────────

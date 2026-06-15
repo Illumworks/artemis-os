@@ -1,6 +1,6 @@
 """LM Studio adapter — OpenAI-compatible local server, no API key required.
 
-LM Studio exposes an OpenAI-compatible API at ``http://localhost:1234/v1`` by
+LM Studio exposes an OpenAI-compatible API at ``http://127.0.0.1:1234/v1`` by
 default.  This adapter is a thin subclass of ``OpenAIAdapter`` that:
 
   - overrides the base URL to point at the local server
@@ -11,7 +11,8 @@ Design language: fluidity, simplicity, purposefulness, naturalness, spacious, op
 
 Notes
 -----
-- ``base_url`` defaults to ``LM_STUDIO_BASE_URL`` env var or ``http://localhost:1234/v1``.
+- ``base_url`` defaults to ``settings.lm_studio_base_url + "/v1"`` (set via
+  ``ARTEMIS_LM_STUDIO_BASE_URL`` or ``LM_STUDIO_BASE_URL`` env vars).
 - The adapter passes ``"not-needed"`` as the bearer token — LM Studio ignores it.
 - ``default_model`` defaults to ``""`` (empty) so the server picks its loaded model.
   The caller may supply an explicit model ID from ``/v1/models``.
@@ -23,12 +24,17 @@ import logging
 import os
 
 from artemis.agent.client import CompletionRequest, CompletionResponse
+from artemis.config import settings
 from artemis.providers.openai.adapter import OpenAIAdapter
 
 logger = logging.getLogger(__name__)
 
-_LM_STUDIO_DEFAULT_BASE = "http://localhost:1234/v1"
 _LM_STUDIO_PLACEHOLDER_MODEL = "local-model"
+
+
+def _default_base_url() -> str:
+    """Return the adapter base URL (with /v1 suffix) from config."""
+    return f"{settings.lm_studio_base_url}/v1"
 
 
 class LMStudioAdapter(OpenAIAdapter):
@@ -40,7 +46,7 @@ class LMStudioAdapter(OpenAIAdapter):
         base_url: str | None = None,
         default_model: str | None = None,
     ) -> None:
-        resolved_base = base_url or os.environ.get("LM_STUDIO_BASE_URL", _LM_STUDIO_DEFAULT_BASE)
+        resolved_base = base_url or _default_base_url()
         resolved_model = default_model or os.environ.get(
             "LM_STUDIO_DEFAULT_MODEL", _LM_STUDIO_PLACEHOLDER_MODEL
         )

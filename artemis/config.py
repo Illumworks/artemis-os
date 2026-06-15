@@ -196,6 +196,15 @@ class Settings(BaseSettings):
             "logs a startup warning if this is >1."
         ),
     )
+    lm_studio_base_url: str = Field(
+        default="http://127.0.0.1:1234",
+        validation_alias=AliasChoices("ARTEMIS_LM_STUDIO_BASE_URL", "LM_STUDIO_BASE_URL"),
+        description=(
+            "Base URL for the OpenAI-compatible local LLM server (LM Studio/Ollama). "
+            "Point at the Mac Studio's Tailscale IP/hostname to use it as the LLM box. Use an "
+            "explicit address, never 'localhost' (localhost resolves to ::1 first → IPv6 hang)."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 
+from artemis.config import settings
+
 logger = logging.getLogger(__name__)
 
 # TTL in seconds for the per-provider health cache
@@ -38,8 +40,6 @@ _ALL_PROVIDERS = (
     "gemini",
     "openrouter",
 )
-
-LM_STUDIO_BASE_URL = "http://127.0.0.1:1234"
 
 
 def clear_health_cache() -> None:
@@ -162,7 +162,7 @@ async def _probe_cli(provider: str, binary: str, base: dict[str, Any]) -> dict[s
 async def _probe_lm_studio(base: dict[str, Any]) -> dict[str, Any]:
     """GET /v1/models from LM Studio with 2s timeout."""
     t0 = time.monotonic()
-    url = f"{LM_STUDIO_BASE_URL}/v1/models"
+    url = f"{settings.lm_studio_base_url}/v1/models"
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
             resp = await client.get(url)
