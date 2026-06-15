@@ -208,6 +208,9 @@ class Skill(Base):
     kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="user")
     source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # P5 — learning loop usage tracking (migration 0091)
+    usage_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )

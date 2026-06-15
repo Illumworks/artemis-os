@@ -89,6 +89,12 @@ FEATURES: dict[str, dict[str, object]] = {
         "default_cascade": _T3_LM_FIRST,
         "recommended_tier": 3,
     },
+    "skill_distiller": {
+        "label": "Skill distiller",
+        "description": "Distills repeated procedures from trajectory summaries into skill proposals. Internal; one call per distill invocation. Tier 3 LM-first.",
+        "default_cascade": _T3_LM_FIRST,
+        "recommended_tier": 3,
+    },
     "signal_qualifier": {
         "label": "Signal qualifier",
         "description": "Deterministic signal scoring (no LLM call). Tier 1 placeholder for any non-deterministic qualifier reasoning.",

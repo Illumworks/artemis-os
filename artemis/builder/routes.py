@@ -756,3 +756,49 @@ async def get_agent_builder_context(
         pending_proposals=pending_proposals,
     )
     return ctx.model_dump()
+
+
+# ── P5 — Skill Distiller ──────────────────────────────────────────────────────
+
+
+@agents_subresource_router.post("/{agent_id}/distill-skills")
+async def distill_skills(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """On-demand skill distiller for an agent (P5 learning loop).
+
+    Reads the last 10 trajectory summaries for the agent, calls the LLM once
+    to identify repeated multi-step procedures, and creates ``DefinitionProposal``
+    rows (kind="skill", proposed_by="self-improvement") for any non-duplicate
+    candidates.
+
+    Human-gated: proposals must be approved via the normal approval endpoint
+    before a Skill row is written. This endpoint NEVER auto-approves.
+
+    Owner-gated: inherits ``require_token`` + ``require_owner`` from the
+    ``agents_subresource_router`` (builder is owner-only per M3).
+
+    Returns a summary of the distillation run.
+    """
+    from sqlalchemy import select as sa_select
+
+    from artemis.builder.skill_distiller import distill_skill_candidates
+    from artemis.builders.models import Agent
+
+    # Confirm agent exists.
+    stmt = sa_select(Agent).where(Agent.agent_id == agent_id).limit(1)
+    agent_row = (await session.execute(stmt)).scalar_one_or_none()
+    if agent_row is None:
+        raise not_found(f"Agent '{agent_id}' not found", "agent_not_found")
+
+    summary = await distill_skill_candidates(session, agent_id)
+    await session.commit()
+
+    logger.info(
+        "distill_skills: agent=%r n_proposed=%d n_skipped=%d",
+        agent_id,
+        summary.get("n_proposed", 0),
+        summary.get("n_skipped", 0),
+    )
+    return {"agent_id": agent_id, **summary}

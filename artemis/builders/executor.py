@@ -25,6 +25,7 @@ from artemis.builders.models import AgentRun
 from artemis.builders.repository import (
     create_agent_run,
     get_agent,
+    list_skills_for_agent,
     set_agent_context,
     set_agent_run_completed,
 )
@@ -220,6 +221,109 @@ def _build_agent_hooks(run_id: str) -> HookRegistry:
     return hooks
 
 
+# P5 learning loop — skill injection constants (Decision #3)
+_SKILL_MAX_COUNT = 3
+_SKILL_MAX_TOKENS_APPROX = 200  # ~200 tokens ≈ 800 characters
+_SKILL_MAX_CHARS = _SKILL_MAX_TOKENS_APPROX * 4  # conservative char estimate
+
+
+async def _inject_skills_into_prompt(
+    session: AsyncSession,
+    agent: Any,
+    system_prompt: str | None,
+) -> tuple[str | None, list[Any]]:
+    """Load approved skills assigned to the agent and append a 'Learned skills'
+    block to the system prompt.
+
+    Decision #3 guardrails:
+    - Only approved skills with non-empty instructions
+    - Only skills whose tools[] overlap the agent's tool list
+    - Hard cap: max 3 skills, ~200 tokens of instructions each
+
+    Returns (updated_system_prompt, injected_skills) where injected_skills is
+    the list of Skill rows actually appended (used for usage tracking).
+
+    Fail-safe: any error → return original prompt + empty list (no crash).
+    """
+    from datetime import UTC, datetime
+
+    try:
+        all_skills = await list_skills_for_agent(session, agent.id)
+    except Exception:
+        logger.warning(
+            "skill_injection: failed to load skills for agent=%r — skipping",
+            agent.agent_id,
+            exc_info=True,
+        )
+        return system_prompt, []
+
+    if not all_skills:
+        return system_prompt, []
+
+    # Normalise agent tool names for overlap check.
+    agent_tools: set[str] = set()
+    for raw in agent.tools or []:
+        t = raw if isinstance(raw, str) else raw.get("name", "")
+        if t:
+            agent_tools.add(t.lower())
+
+    qualifying: list[Any] = []
+    for skill in all_skills:
+        if skill.status != "approved":
+            continue
+        if not skill.instructions:
+            continue
+        # Tool-overlap check: skill.tools must share at least one tool with agent.
+        # Exception: if skill.tools is empty, the skill is tool-agnostic → allow.
+        skill_tools = skill.tools or []
+        if skill_tools:
+            skill_tool_names = {
+                (t if isinstance(t, str) else t.get("name", "")).lower()
+                for t in skill_tools
+                if t
+            }
+            if not (skill_tool_names & agent_tools):
+                continue
+        qualifying.append(skill)
+        if len(qualifying) >= _SKILL_MAX_COUNT:
+            break
+
+    if not qualifying:
+        return system_prompt, []
+
+    # Build injection block.
+    skill_lines: list[str] = []
+    injected: list[Any] = []
+    for skill in qualifying:
+        instructions = (skill.instructions or "").strip()
+        # Truncate per-skill to cap.
+        if len(instructions) > _SKILL_MAX_CHARS:
+            instructions = instructions[: _SKILL_MAX_CHARS] + "…"
+        skill_lines.append(f"### {skill.name} ({skill.slug})\n{instructions}")
+        injected.append(skill)
+
+    skills_block = "## Learned skills\n\n" + "\n\n".join(skill_lines)
+
+    updated = (system_prompt + "\n\n" + skills_block) if system_prompt else skills_block
+
+    # Update usage tracking — increment usage_count + last_used_at for each
+    # injected skill.  Fail-safe: never propagate errors.
+    try:
+        now = datetime.now(UTC)
+        for skill in injected:
+            skill.usage_count = (skill.usage_count or 0) + 1
+            skill.last_used_at = now
+        await session.flush()
+    except Exception:
+        logger.warning(
+            "skill_injection: usage tracking update failed for agent=%r — continuing",
+            agent.agent_id,
+            exc_info=True,
+        )
+
+    return updated, injected
+
+
 def default_agent_instruction(agent_id: str, override: str | None = None) -> str:
     """Imperative user message that makes an agent act immediately with its tools.
 
@@ -322,6 +426,12 @@ async def run_agent(
 
     # Build system prompt (rich injection: persona, Josh-spec reason codes, state nuances, etc.)
     system_prompt = _build_system_prompt(agent, shared_context)
+
+    # P5 — Inject approved skills (decision #3: tool-overlap, max 3, ~200 tok each).
+    # Fail-safe: any error inside returns original prompt + no tracking update.
+    system_prompt, _injected_skills = await _inject_skills_into_prompt(
+        session, agent, system_prompt
+    )
 
     # Choose the user message: explicit > agent.goal > generic
     effective_message: str = user_message or agent.goal or "Please proceed."
