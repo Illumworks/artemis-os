@@ -23,3 +23,16 @@ The web app (port 8000) intermittently stops responding for several seconds at a
 - **Stop restarting to "fix" it** — each restart re-triggers the startup storm and makes it look worse. Minimize restarts while diagnosing.
 - The DB pool was tuned this session (prod 50 via `.env`, `pool_pre_ping=True`, `pool_recycle=1800`, `max_connections=300`) — this was NOT the cause (app was snappy right after that change) but `pool_recycle=1800` does force periodic reconnects, which land on the flaky connect path; worth revisiting alongside hypothesis 2.
 - `artemis/db.py` is the safe place for the connect-path tuning (hypothesis 2) and is already Lead-owned this session; the scheduler-startup change (hypothesis 1) is in the scheduler wiring (`main.py` + the per-domain `scheduler.py` files) — your lane.
+
+## Update — 2026-06-15 (terminal-Lead, post-crash session)
+**Shipped (`0289f05`):**
+- **Hardening:** `db.py` now sets `connect_args={"timeout": 10}` — bounds asyncpg's default 60s connect timeout, so a stuck connect fails fast + falls back via `pool_pre_ping` instead of hanging a request for a minute. (Hypothesis 2, partial.)
+- **Freeze trap armed:** `artemis/loop_diag.py` (TEMP — remove when closed), installed from the lifespan. A daemon **stuck-watch thread** dumps all thread stacks via `faulthandler` the instant the event loop freezes >1.5s (a pure-asyncio watchdog can't — it's stuck on the same loop). Plus SIGUSR1 (thread stacks) / SIGUSR2 (pending asyncio tasks). Output → `~/Library/Logs/artemisos/app.err.log`, grep `=== DIAG`.
+
+**Findings this session (2 Sonnet capture runs):**
+- **Could NOT reproduce** the freeze. Steady-state: both TCP (127.0.0.1) and Unix-socket asyncpg connects are 100% reliable at 6–15ms (so the TCP-vs-socket transport theory is NOT confirmed). One controlled restart + 120s provoke: 7727/7727 `/healthz` fast (~1ms), zero `STUCK` dumps, zero asyncpg `TimeoutError`.
+- **Key reframing:** `/healthz` does NOT touch the DB yet reportedly hangs → the *event loop itself* freezes; the asyncpg timeout is a symptom/amplifier, not necessarily root cause. The trap is built to catch exactly that.
+- **Likely materially eased** since the original session: Jon unloaded the mini's local LLM (flagged here as RAM/CPU competition) and the box rebooted.
+- **No connect_args timeout** was the one concrete, certain defect (now fixed). `pool_recycle=1800` forces a full-pool reconnect every 30 min (re-exposes the connect path) — candidate next lever if the freeze recurs; pgvector codec adds 3 round-trips per fresh connect (~minor).
+
+**Recommended next:** don't keep restarting (each restart re-triggers the storm, and `launchctl kickstart -k` SIGKILLs the freshly-spawned child → an unintended double-restart; use plain `kickstart` next time). Leave the trap armed, use the app normally (esp. calendar/heavy tabs); when it freezes, `app.err.log` will hold the `=== DIAG event-loop STUCK ===` block with the exact blocking stack — then we fix the real cause.
