@@ -103,7 +103,6 @@ async def _default_channel_classifier(text: str) -> bool:
     from artemis.agent.client import AnthropicAdapter, CompletionRequest
     from artemis.agent.types import Message, TextBlock
 
-    adapter = AnthropicAdapter()
     req = CompletionRequest(
         messages=[Message(role="user", content=[TextBlock(text=text)])],
         system=_GATE_SYSTEM,
@@ -113,6 +112,11 @@ async def _default_channel_classifier(text: str) -> bool:
         cache_tools=False,
     )
     try:
+        # Construct INSIDE the try: AnthropicAdapter now raises MissingApiKeyError
+        # at construction when ANTHROPIC_API_KEY is unset (the subscription/no-key
+        # case), so the no-key path must be caught here to keep degrading to silent
+        # rather than throwing into the inbound Slack handler.
+        adapter = AnthropicAdapter()
         resp = await adapter.complete(req)
         answer = ""
         for block in resp.message.content:
