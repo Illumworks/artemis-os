@@ -6,7 +6,52 @@ auto-loaded memory index (`MEMORY.md`). Opus Lead = the planning/verify/merge ag
 
 ---
 
-## ⏩ CURRENT STATE — 2026-06-14 (read FIRST)
+## ⏩ RESUME — 2026-06-15 (read FIRST; handoff to a fresh session)
+
+Prior Lead session (claude.ai app) hit connection issues mid-work; continuing fresh. Everything below is
+**merged to main + live** (app restarted, healthy) unless marked otherwise. main HEAD ≈ `49760c5`; alembic at
+**0091**. ~19 pre-existing uncommitted files in main's working tree are NOT this session's — leave them.
+
+**Landed this session (all live):**
+- **Memory upgrade phase COMPLETE:** M1b dedup, M1c ranking/recall (`cb7b04c`), M1 semantic conflict detection
+  (`aa2043c`, mig 0088 — conflict detection runs in prod for the first time), M3 identity-aware access control
+  (`f4b09f1`).
+- **Architecture D8 + D11 + F1** (`docs/ARTEMIS-OS-MASTER-PLAN.md`): ONE app + role-based access at the data
+  layer (not two apps); floating **Artemis for owner / Callie for marketing** by server-resolved identity;
+  future personal-split preserved (F1). Closed a LIVE exposure where marketing teammates could see Jon's
+  personal memory/tabs.
+- **Google OAuth tokens encrypted at rest** (`2cfeea1`, mig 0090; uses `integrations/crypto.py` /
+  `ARTEMIS_CREDENTIALS_KEY` — see [[reference-credential-encryption-helper]]). Verified 0 plaintext tokens.
+- **Floating-assistant polish:** confirm-path tool-registry fix (un-gated integration sends), stuck FAB "2"
+  badge fix (mig 0089), profile-photo avatars (`/icons/Artemisprofile.jpg` + `callieprofile.jpg`) cropped to a
+  circle (FAB + panel header).
+- **P5 learning loop — COMPLETE** (`3889e87`+`ca3da2a`+`864e59e`+`2a7b87e`, mig 0091): skill distiller →
+  human-gated proposal → approve (marks approved + assigns to originating agent — Lead closed an open seam the
+  worker missed) → injected into the agent's future runs (cap 3, tool-overlap) → usage tracked. Surfaced in the
+  **Skills tab** ("Discover skills from recent runs" + Proposed sub-tab Approve/Reject) AND auto-fires
+  fire-and-forget after every **5 successful runs/agent**, still human-gated.
+
+**Terminal's parallel track (separate Lead session, was healthy):**
+- Scout timeout FIXED (was the ::1/IPv6 DB hang; `4fa6181` uses 127.0.0.1) + `routing_status` signal dimension.
+- **Agency-sends (Gmail-send + Slack-send-as-Jon)** built + tested on the gate (`b23dfdb`) — **AWAITING Jon's
+  GO for the LIVE send test** (sends as Jon; Lead audits + live-tests). Gmail needs a re-consent for `gmail.send`.
+- Marketing scout **0 signals** = the known claude-code-adapter-drops-tools + empty-API-keys blocker
+  ([[project-marketing-pipeline-tool-use-blocker]]); **Jon says "figured out" — no action needed from Lead.**
+
+**NEXT (Chapter 2):** only **P6 — self-evolution** remains (the capstone). DEFER: it wants accumulated
+execution-trace history, which builds with use — let everything shipped run first, then do P6.
+
+**Open threads:**
+- **Monday/this week:** confirm the 6/15–6/16 meetings auto-created commitments (last unproven link in the
+  proactivity chain).
+- **DB connection saturation** observed all session (asyncpg `TimeoutError` on test + some live queries) — many
+  idle/leaked connections from app + parallel agents; worth a look (pool size / leaked sessions).
+- **Stale MERGED worktrees** to prune (harmless): `worker/fa-polish`, `worker/memory-near-dup-consolidation`,
+  `worker/memory-ranking-recall` (+ check `ws-picker-polish`).
+
+---
+
+## ⏩ CURRENT STATE — 2026-06-14
 
 **MEMORY UPGRADE PHASE (current active track — postdates WS backlog + proactivity).** Goal: Artemis recalls
 the *right* memory when asked. Order this session: M1c (done) → **M1 (done)** → M3 (next, per Jon).
