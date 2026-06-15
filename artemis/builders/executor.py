@@ -278,9 +278,7 @@ async def _inject_skills_into_prompt(
         skill_tools = skill.tools or []
         if skill_tools:
             skill_tool_names = {
-                (t if isinstance(t, str) else t.get("name", "")).lower()
-                for t in skill_tools
-                if t
+                (t if isinstance(t, str) else t.get("name", "")).lower() for t in skill_tools if t
             }
             if not (skill_tool_names & agent_tools):
                 continue
@@ -298,7 +296,7 @@ async def _inject_skills_into_prompt(
         instructions = (skill.instructions or "").strip()
         # Truncate per-skill to cap.
         if len(instructions) > _SKILL_MAX_CHARS:
-            instructions = instructions[: _SKILL_MAX_CHARS] + "…"
+            instructions = instructions[:_SKILL_MAX_CHARS] + "…"
         skill_lines.append(f"### {skill.name} ({skill.slug})\n{instructions}")
         injected.append(skill)
 
@@ -419,7 +417,9 @@ async def run_agent(
         except NoProviderAvailableError:
             logger.warning(
                 "No provider in cascade resolved for agent %r; "
-                "falling back to AnthropicAdapter (will error if API key absent)",
+                "attempting AnthropicAdapter hard-fallback "
+                "(raises MissingApiKeyError fast if ANTHROPIC_API_KEY is unset — "
+                "caught by the outer exception handler, logged as failed run)",
                 agent_id,
             )
             adapter = AnthropicAdapter()

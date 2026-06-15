@@ -111,7 +111,22 @@ class AnthropicAdapter:
         # import-time if a user only ever needs the FakeAdapter.
         from anthropic import AsyncAnthropic  # noqa: PLC0415
 
-        self._client = AsyncAnthropic()
+        # Fail fast at construction so the provider cascade resolver can fall
+        # through to the next candidate instead of returning a broken adapter
+        # that hangs or raises an opaque TypeError on the first API call.
+        # The SDK accepts api_key=None and only errors later (TypeError at call
+        # time); we surface a MissingApiKeyError eagerly so the resolver can
+        # treat it as a standard fallthrough error.
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or None
+        if not api_key:
+            from artemis.providers.errors import MissingApiKeyError  # noqa: PLC0415
+
+            raise MissingApiKeyError(
+                "ANTHROPIC_API_KEY is not set. "
+                "Add it to .env or pass an explicit api_key to use the Anthropic provider."
+            )
+
+        self._client = AsyncAnthropic(api_key=api_key)
         self._default_model = default_model or os.environ.get("ARTEMIS_AGENT_MODEL", DEFAULT_MODEL)
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
