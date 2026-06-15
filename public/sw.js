@@ -1,6 +1,6 @@
 // Service worker for PWA — offline fallback + push notifications
 
-const CACHE_NAME = 'artemis-v4';
+const CACHE_NAME = 'artemis-v5';
 const OFFLINE_URL = '/offline.html';
 
 // Assets to pre-cache for offline support
