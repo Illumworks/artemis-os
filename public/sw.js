@@ -1,6 +1,6 @@
 // Service worker for PWA — offline fallback + push notifications
 
-const CACHE_NAME = 'artemis-v2';
+const CACHE_NAME = 'artemis-v3';
 const OFFLINE_URL = '/offline.html';
 
 // Assets to pre-cache for offline support
@@ -44,6 +44,14 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       }).catch(() => caches.match(OFFLINE_URL))
+    );
+    return;
+  }
+
+  // Manifest — always network-first so maskable/purpose changes are never masked by cache
+  if (event.request.url.endsWith('/manifest.json')) {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
     );
     return;
   }
