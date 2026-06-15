@@ -4,27 +4,46 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
-from artemis.integrations.gcal.client import GCalClient
+from artemis.integrations.gcal.auth_dead import handle_gcal_auth_dead
+from artemis.integrations.gcal.client import GCalAuthDeadError, GCalClient
 from artemis.integrations.gcal.models import GCalEventCache
 from artemis.integrations.gcal.types import Event
 
 logger = logging.getLogger(__name__)
 
 
-def _client_from_row(row: object) -> GCalClient:
-    encrypted_credentials = row.encrypted_credentials  # type: ignore[attr-defined]
+def _client_from_row(row: Any, session: AsyncSession) -> GCalClient:
+    encrypted_credentials = row.encrypted_credentials
     creds = decrypt_credentials(bytes(encrypted_credentials))
+    integration_id: int = row.id
+
+    async def _on_tokens_refreshed(
+        access_token: str, refresh_token: str, expires_at: float
+    ) -> None:
+        new_creds = dict(creds)
+        new_creds["access_token"] = access_token
+        new_creds["refresh_token"] = refresh_token
+        new_creds["expires_at"] = expires_at
+        await repo.persist_refreshed_credentials(
+            session,
+            integration_id=integration_id,
+            new_creds=new_creds,
+        )
+
     return GCalClient(
         access_token=str(creds.get("access_token", "")),
         refresh_token=str(creds.get("refresh_token", "")),
         client_id=str(creds.get("client_id", "")),
         client_secret=str(creds.get("client_secret", "")),
+        expires_at=float(str(creds.get("expires_at") or 0)),
+        on_tokens_refreshed=_on_tokens_refreshed,
     )
 
 
@@ -56,7 +75,7 @@ async def sync_recent_gcal_events_cache(
     if not rows:
         return 0
 
-    client = _client_from_row(rows[0])
+    client = _client_from_row(rows[0], session)
     now = datetime.now(UTC)
     window_start = now - timedelta(hours=hours_back)
     window_end = now + timedelta(days=days_ahead)
@@ -67,6 +86,13 @@ async def sync_recent_gcal_events_cache(
             time_max=window_end.isoformat(),
             max_results=250,
         )
+    except GCalAuthDeadError:
+        logger.error(
+            "sync_recent_gcal_events_cache: GCal auth dead for integration_id=%d",
+            rows[0].id,
+        )
+        await handle_gcal_auth_dead(session, rows[0].id)
+        return 0
     except Exception:
         logger.warning("Failed to sync gcal_events_cache", exc_info=True)
         return 0

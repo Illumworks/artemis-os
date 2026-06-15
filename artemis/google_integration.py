@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -188,6 +189,7 @@ async def sync_personal_google_integrations(
     credential: GoogleCredential,
     client_id: str,
     client_secret: str,
+    expires_at: float | None = None,
 ) -> None:
     """Mirror a personal Google credential into the gcal Integration row.
 
@@ -214,14 +216,16 @@ async def sync_personal_google_integrations(
         # untouched.  A future consent that includes calendar will heal it.
         return
 
-    encrypted = encrypt_credentials(
-        {
-            "access_token": credential.access_token,
-            "refresh_token": credential.refresh_token or "",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
-    )
+    creds_dict: dict[str, object] = {
+        "access_token": credential.access_token,
+        "refresh_token": credential.refresh_token or "",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+    # Include expires_at so the proactive token-refresh scheduler can pick up
+    # this row.  Fall back to a 1-hour window if the caller didn't provide it.
+    creds_dict["expires_at"] = expires_at if expires_at is not None else time.time() + 3600
+    encrypted = encrypt_credentials(creds_dict)
     await integrations_repo.upsert_integration(
         session,
         provider="gcal",
@@ -330,10 +334,18 @@ async def complete_google_oauth(
         connected_email=tokens.connected_email,
     )
     if expected_state.purpose == "personal":
+        # tokens.expiry is a UTC-aware datetime from the token exchange.
+        token_expires_at: float | None = None
+        if tokens.expiry is not None:
+            try:
+                token_expires_at = tokens.expiry.timestamp()
+            except Exception:
+                token_expires_at = None
         await sync_personal_google_integrations(
             session,
             credential=stored,
             client_id=config.client_id,
             client_secret=config.client_secret,
+            expires_at=token_expires_at,
         )
     return expected_state

@@ -131,7 +131,26 @@ async def _process_integration(session: object, integration: Integration, now: d
             new_creds=result.new_creds,
         )
     elif result.outcome == RefreshOutcome.REFRESH_TOKEN_EXPIRED:
+        # For GCal, capture the pre-mark status so we can decide whether to DM
+        # after marking (avoids a second get_by_id inside handle_gcal_auth_dead
+        # that would see the row already in needs_reauth state).
+        _gcal_was_active = (
+            integration.provider == "gcal" and integration.status != "needs_reauth"
+        )
         await repo.mark_needs_reauth(session, integration.id)  # type: ignore[arg-type]
+        if _gcal_was_active:
+            # First time this integration is marked dead — send the owner DM once.
+            try:
+                from artemis.integrations.gcal.auth_dead import _send_owner_dm
+
+                await _send_owner_dm(
+                    session,  # type: ignore[arg-type]
+                )
+            except Exception:
+                logger.exception(
+                    "token_refresh: gcal_auth_dead DM failed for integration_id=%d",
+                    integration.id,
+                )
     elif result.outcome == RefreshOutcome.TRANSIENT_FAILURE:
         await repo.mark_refresh_attempted(session, integration.id)  # type: ignore[arg-type]
     # NO_REFRESH_TOKEN / STILL_VALID: no-op (skip without bumping the cooldown).

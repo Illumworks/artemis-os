@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
+import time
+from typing import Any
+
 import httpx
 
 from artemis.integrations.gcal.types import Calendar, Event, EventDateTime
+
+logger = logging.getLogger(__name__)
 
 _GCAL_BASE = "https://www.googleapis.com/calendar/v3"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -15,6 +21,14 @@ class GCalAPIError(Exception):
         self.body = body
 
 
+class GCalAuthDeadError(Exception):
+    """Raised when the refresh token has been revoked and reauth is required.
+
+    This is a hard stop — retrying with the same tokens will not help.
+    The integration must be reconnected by the user.
+    """
+
+
 class GCalClient:
     def __init__(
         self,
@@ -22,17 +36,27 @@ class GCalClient:
         refresh_token: str,
         client_id: str,
         client_secret: str,
+        expires_at: float = 0.0,
+        on_tokens_refreshed: Any = None,
     ) -> None:
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._client_id = client_id
         self._client_secret = client_secret
+        self._expires_at = expires_at
+        self._on_tokens_refreshed = on_tokens_refreshed
 
     @property
     def access_token(self) -> str:
         return self._access_token
 
     async def _refresh(self) -> None:
+        """Exchange the refresh token for a new access token.
+
+        Raises:
+            GCalAuthDeadError: if Google returns 400 invalid_grant (revoked token).
+            httpx.HTTPStatusError: for other non-success responses.
+        """
         async with httpx.AsyncClient(timeout=10) as http:
             resp = await http.post(
                 _TOKEN_URL,
@@ -43,8 +67,40 @@ class GCalClient:
                     "client_secret": self._client_secret,
                 },
             )
+
+        if resp.status_code == 400:
+            # Google returns 400 + {"error":"invalid_grant"} when the refresh
+            # token has been revoked or the account password changed.
+            # This is a permanent failure — do not raise_for_status into a
+            # generic error; surface it as GCalAuthDeadError so callers can
+            # distinguish it from transient failures.
+            logger.error(
+                "GCal refresh token rejected (400 invalid_grant) — reauth required. "
+                "body=[REDACTED]"
+            )
+            raise GCalAuthDeadError("Google refresh token revoked; reauth required")
+
         resp.raise_for_status()
-        self._access_token = resp.json()["access_token"]
+
+        body = resp.json()
+        new_access_token: str = body["access_token"]
+        expires_in: int = int(body.get("expires_in", 3600))
+        new_refresh_token: str = body.get("refresh_token") or self._refresh_token
+        new_expires_at: float = time.time() + expires_in
+
+        self._access_token = new_access_token
+        self._refresh_token = new_refresh_token
+        self._expires_at = new_expires_at
+
+        if self._on_tokens_refreshed is not None:
+            try:
+                await self._on_tokens_refreshed(
+                    access_token=self._access_token,
+                    refresh_token=self._refresh_token,
+                    expires_at=new_expires_at,
+                )
+            except Exception:
+                logger.debug("GCal on_tokens_refreshed callback failed", exc_info=True)
 
     async def _get(self, path: str, **params: object) -> dict[str, object]:
         url = f"{_GCAL_BASE}{path}"

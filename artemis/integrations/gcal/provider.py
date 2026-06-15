@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 
@@ -57,6 +58,7 @@ class GCalProvider(IntegrationProvider):
             "access_token": access_token,
             "refresh_token": refresh_token,
             "expires_in": expires_in,
+            "expires_at": time.time() + expires_in,
             "client_id": self._client_id,
             "client_secret": self._client_secret,
         }

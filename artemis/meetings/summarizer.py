@@ -28,7 +28,8 @@ import artemis.db as _db
 from artemis.costs.events import record_cost_event
 from artemis.integrations import repository as repo
 from artemis.integrations.crypto import decrypt_credentials
-from artemis.integrations.gcal.client import GCalClient
+from artemis.integrations.gcal.auth_dead import handle_gcal_auth_dead
+from artemis.integrations.gcal.client import GCalAuthDeadError, GCalClient
 from artemis.integrations.gcal.sync import sync_recent_gcal_events_cache
 from artemis.integrations.gcal.types import Event
 from artemis.integrations.granola.client import GranolaClient, Meeting
@@ -54,12 +55,30 @@ async def _build_gcal_client(session: AsyncSession) -> GCalClient | None:
     rows = await repo.list_active(session, provider="gcal")
     if not rows:
         return None
-    creds = decrypt_credentials(bytes(rows[0].encrypted_credentials))
+    row = rows[0]
+    creds = decrypt_credentials(bytes(row.encrypted_credentials))
+    integration_id: int = row.id
+
+    async def _on_tokens_refreshed(
+        access_token: str, refresh_token: str, expires_at: float
+    ) -> None:
+        new_creds = dict(creds)
+        new_creds["access_token"] = access_token
+        new_creds["refresh_token"] = refresh_token
+        new_creds["expires_at"] = expires_at
+        await repo.persist_refreshed_credentials(
+            session,
+            integration_id=integration_id,
+            new_creds=new_creds,
+        )
+
     return GCalClient(
         access_token=str(creds.get("access_token", "")),
         refresh_token=str(creds.get("refresh_token", "")),
         client_id=str(creds.get("client_id", "")),
         client_secret=str(creds.get("client_secret", "")),
+        expires_at=float(str(creds.get("expires_at") or 0)),
+        on_tokens_refreshed=_on_tokens_refreshed,
     )
 
 
@@ -75,6 +94,14 @@ async def _build_granola_client(session: AsyncSession) -> GranolaClient | None:
         client_secret=str(creds.get("client_secret", "")),
         expires_at=float(str(creds.get("expires_at") or 0)),
     )
+
+
+# ── GCal auth-dead handling ───────────────────────────────────────────────────
+
+
+async def _handle_gcal_auth_dead(session: AsyncSession, integration_id: int) -> None:
+    """Mark GCal integration as needs_reauth and send a rate-limited owner DM."""
+    await handle_gcal_auth_dead(session, integration_id)
 
 
 # ── GCal end-detection ────────────────────────────────────────────────────────
@@ -115,12 +142,19 @@ async def find_recently_ended_meetings(
     )
     summarized_gcal_ids: set[str] = {r for (r,) in existing_result.all()}
 
+    rows = await repo.list_active(session, provider="gcal")
+    gcal_integration_id: int | None = rows[0].id if rows else None
+
     try:
         events = await gcal.list_events(
             calendar_id="primary",
             time_min=since.isoformat(),
             time_max=now.isoformat(),
         )
+    except GCalAuthDeadError:
+        if gcal_integration_id is not None:
+            await _handle_gcal_auth_dead(session, gcal_integration_id)
+        return []
     except Exception:
         logger.warning("GCal list_events failed in find_recently_ended_meetings", exc_info=True)
         return []

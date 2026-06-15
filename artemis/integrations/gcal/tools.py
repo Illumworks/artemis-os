@@ -15,18 +15,48 @@ from artemis.floating_artemis.authority import AuthorizedToolRegistry
 # ── Implementations ───────────────────────────────────────────────────────────
 
 
-def _gcal_client_from_creds(creds: dict[str, object]) -> Any:
+def _gcal_client_from_creds(creds: dict[str, object], integration_id: int | None = None) -> Any:
     from artemis.integrations.gcal.client import GCalClient
+
+    async def _on_tokens_refreshed(
+        access_token: str, refresh_token: str, expires_at: float
+    ) -> None:
+        if integration_id is None:
+            return
+        import artemis.db as _db
+        from artemis.integrations import repository as repo
+
+        new_creds = dict(creds)
+        new_creds["access_token"] = access_token
+        new_creds["refresh_token"] = refresh_token
+        new_creds["expires_at"] = expires_at
+        async with _db.SessionLocal() as session:
+            try:
+                await repo.persist_refreshed_credentials(
+                    session,
+                    integration_id=integration_id,
+                    new_creds=new_creds,
+                )
+                await session.commit()
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "gcal tools: persist_refreshed_credentials failed", exc_info=True
+                )
 
     return GCalClient(
         access_token=str(creds.get("access_token", "")),
         refresh_token=str(creds.get("refresh_token", "")),
         client_id=str(creds.get("client_id", "")),
         client_secret=str(creds.get("client_secret", "")),
+        expires_at=float(str(creds.get("expires_at") or 0)),
+        on_tokens_refreshed=_on_tokens_refreshed if integration_id is not None else None,
     )
 
 
-async def _resolve_gcal_creds() -> dict[str, object] | None:
+async def _resolve_gcal_creds() -> tuple[dict[str, object], int] | None:
+    """Return (creds_dict, integration_id) for the active GCal integration, or None."""
     import artemis.db as _db
     from artemis.integrations import repository as repo
     from artemis.integrations.crypto import decrypt_credentials
@@ -35,15 +65,17 @@ async def _resolve_gcal_creds() -> dict[str, object] | None:
         integrations = await repo.list_active(session, provider="gcal")
     if not integrations:
         return None
-    return decrypt_credentials(bytes(integrations[0].encrypted_credentials))
+    row = integrations[0]
+    return decrypt_credentials(bytes(row.encrypted_credentials)), row.id
 
 
 async def _list_calendars(inp: dict[str, Any]) -> str:
     try:
-        creds = await _resolve_gcal_creds()
-        if creds is None:
+        result = await _resolve_gcal_creds()
+        if result is None:
             return "No active Google Calendar integration found"
-        client = _gcal_client_from_creds(creds)
+        creds, integration_id = result
+        client = _gcal_client_from_creds(creds, integration_id)
         calendars = await client.list_calendars()
         return json.dumps([c.model_dump() for c in calendars])
     except Exception as exc:
@@ -58,10 +90,11 @@ async def _list_events(inp: dict[str, Any]) -> str:
     if not time_min or not time_max:
         return "Error: time_min and time_max are required (RFC 3339)"
     try:
-        creds = await _resolve_gcal_creds()
-        if creds is None:
+        result = await _resolve_gcal_creds()
+        if result is None:
             return "No active Google Calendar integration found"
-        client = _gcal_client_from_creds(creds)
+        creds, integration_id = result
+        client = _gcal_client_from_creds(creds, integration_id)
         events = await client.list_events(calendar_id, time_min, time_max, max_results)
         return json.dumps([e.model_dump() for e in events])
     except Exception as exc:
@@ -80,10 +113,11 @@ async def _create_event(inp: dict[str, Any]) -> str:
     try:
         from artemis.integrations.gcal.types import EventDateTime
 
-        creds = await _resolve_gcal_creds()
-        if creds is None:
+        result = await _resolve_gcal_creds()
+        if result is None:
             return "No active Google Calendar integration found"
-        client = _gcal_client_from_creds(creds)
+        creds, integration_id = result
+        client = _gcal_client_from_creds(creds, integration_id)
         event = await client.create_event(
             calendar_id=calendar_id,
             summary=summary,
@@ -110,10 +144,11 @@ async def _update_event(inp: dict[str, Any]) -> str:
     try:
         from artemis.integrations.gcal.types import EventDateTime
 
-        creds = await _resolve_gcal_creds()
-        if creds is None:
+        result = await _resolve_gcal_creds()
+        if result is None:
             return "No active Google Calendar integration found"
-        client = _gcal_client_from_creds(creds)
+        creds, integration_id = result
+        client = _gcal_client_from_creds(creds, integration_id)
         event = await client.update_event(
             calendar_id=calendar_id,
             event_id=event_id,
@@ -134,10 +169,11 @@ async def _delete_event(inp: dict[str, Any]) -> str:
     if not event_id:
         return "Error: event_id is required"
     try:
-        creds = await _resolve_gcal_creds()
-        if creds is None:
+        result = await _resolve_gcal_creds()
+        if result is None:
             return "No active Google Calendar integration found"
-        client = _gcal_client_from_creds(creds)
+        creds, integration_id = result
+        client = _gcal_client_from_creds(creds, integration_id)
         await client.delete_event(calendar_id, event_id)
         return json.dumps({"ok": True, "deleted": event_id})
     except Exception as exc:
