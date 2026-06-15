@@ -55,8 +55,10 @@ class Settings(BaseSettings):
     )
 
     db_url: str = Field(
-        default="postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os",
-        description="SQLAlchemy async URL for Postgres.",
+        default="postgresql+asyncpg://artemis:artemis@127.0.0.1:5432/artemis_os",
+        description="SQLAlchemy async URL for Postgres. Use 127.0.0.1, not "
+        "localhost: localhost resolves to ::1 first and IPv6 loopback to "
+        "Postgres hangs on this machine (4s+ connect stall before IPv4 fallback).",
     )
 
     token: str | None = Field(default=None, description="Shared-account auth token; None disables.")

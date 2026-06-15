@@ -265,7 +265,7 @@ def run_backup(
     if db_url is None:
         db_url = os.environ.get(
             "ARTEMIS_DB_URL",
-            "postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_os",
+            "postgresql+asyncpg://artemis:artemis@127.0.0.1:5432/artemis_os",
         )
 
     conn_params = _parse_db_url(db_url)

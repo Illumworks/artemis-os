@@ -29,7 +29,7 @@ import sys
 # Force the test database BEFORE anything imports artemis.config or artemis.db.
 _TEST_DB_URL = os.environ.get(
     "ARTEMIS_TEST_DB_URL",
-    "postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_test",
+    "postgresql+asyncpg://artemis:artemis@127.0.0.1:5432/artemis_test",
 )
 os.environ["ARTEMIS_DB_URL"] = _TEST_DB_URL
 
