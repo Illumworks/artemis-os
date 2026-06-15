@@ -35,17 +35,34 @@ Prior Lead session (claude.ai app) hit connection issues mid-work; continuing fr
 - Scout timeout FIXED (was the ::1/IPv6 DB hang; `4fa6181` uses 127.0.0.1) + `routing_status` signal dimension.
 - **Agency-sends (Gmail-send + Slack-send-as-Jon)** built + tested on the gate (`b23dfdb`) — **AWAITING Jon's
   GO for the LIVE send test** (sends as Jon; Lead audits + live-tests). Gmail needs a re-consent for `gmail.send`.
-- Marketing scout **0 signals** = the known claude-code-adapter-drops-tools + empty-API-keys blocker
-  ([[project-marketing-pipeline-tool-use-blocker]]); **Jon says "figured out" — no action needed from Lead.**
+- Marketing scout **0 signals** — ✅ **DIAGNOSED + ADDRESSED 2026-06-15.** NOT the adapter/empty-keys blocker
+  (that's stale — tools work; 874 signals flowing). Legislative emitted 0 because its state-level findings hit
+  a **contact-routing gate** (`contact_db_stub.has_contact` → state ids never resolve to a district contact).
+  Shipped **lossless capture** (commit `49760c5`, migration 0092): scouts now ALWAYS write; un-routable signals
+  get `routing_status='unrouted_no_contact'` + an "Unrouted/Watch-list" funnel filter — nothing dropped.
+  Proven live (4 federal signals captured as unrouted). See [[project-marketing-pipeline-tool-use-blocker]].
 
 **NEXT (Chapter 2):** only **P6 — self-evolution** remains (the capstone). DEFER: it wants accumulated
 execution-trace history, which builds with use — let everything shipped run first, then do P6.
 
+**ARES TRACK (planned 2026-06-15, Jon's favored direction) — full spec in [`docs/ares-plan.md`](ares-plan.md).**
+Ares = orchestrator-maker Jon plans with → auto-delegates to multi-provider sub-agents → validates →
+reports up; durable project memory (no re-briefing); evolution of `artemis/dev_projects/`; owner-private scope.
+Two independent quick-wins startable NOW (don't need Ares): **Track R** provider/cost rebalancing (move
+background/high-volume work off Claude Max → Gemini/local; framework already exists in `feature_catalog.py`)
+and **Track C** per-agent Claude-account routing (`CLAUDE_CONFIG_DIR` per agent: marketing acct = Callie +
+Writing Studio + marketing agents; personal acct = Artemis + Ares + Jon's projects). Verified prereq status:
+Codex CLI ✅ authed; **Gemini key ❌ NOT set (add `GEMINI_API_KEY`)**; local LLM URL hardcoded → make
+env-configurable for the Mac Studio. Ares Phase 2 (auto-delegate) gates on **P4 orchestration**.
+
 **Open threads:**
 - **Monday/this week:** confirm the 6/15–6/16 meetings auto-created commitments (last unproven link in the
   proactivity chain).
-- **DB connection saturation** observed all session (asyncpg `TimeoutError` on test + some live queries) — many
-  idle/leaked connections from app + parallel agents; worth a look (pool size / leaked sessions).
+- **DB connection saturation / asyncpg `TimeoutError`** — ✅ **RESOLVED 2026-06-15.** Root cause was NOT
+  leaked connections: `localhost` resolves to `::1` first and IPv6 loopback to Postgres HANGS (~4s+) on this
+  box; the DB URL used `localhost` → intermittent connect stalls. Fixed to `127.0.0.1` everywhere (commit
+  `4fa6181` + live `.env`); also fixed the same IPv6 issue in the cloudflared tunnel (the 502s). See
+  [[project-dev-server-launchd-tunnel-stack]].
 - **Stale MERGED worktrees** to prune (harmless): `worker/fa-polish`, `worker/memory-near-dup-consolidation`,
   `worker/memory-ranking-recall` (+ check `ws-picker-polish`).
 
