@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
 from artemis.db import Base
+from artemis.google_docs.crypto_types import EncryptedToken
 
 
 class GoogleCredential(Base):
@@ -27,8 +28,8 @@ class GoogleCredential(Base):
         nullable=False,
     )
     purpose: Mapped[str] = mapped_column(Text, nullable=False, server_default="personal")
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str] = mapped_column(EncryptedToken, nullable=False)
+    refresh_token: Mapped[str | None] = mapped_column(EncryptedToken, nullable=True)
     expiry: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     scope: Mapped[str | None] = mapped_column(Text, nullable=True)
     connected_email: Mapped[str | None] = mapped_column(Text, nullable=True)

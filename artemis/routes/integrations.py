@@ -265,15 +265,6 @@ async def slack_verify(
 
 # ── GCal OAuth ────────────────────────────────────────────────────────────────
 
-_GCAL_SCOPE = " ".join(
-    [
-        "https://www.googleapis.com/auth/calendar",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "openid",
-    ]
-)
-
-
 def _gcal_redirect_uri() -> str:
     return os.environ.get(
         "GCAL_REDIRECT_URI",
