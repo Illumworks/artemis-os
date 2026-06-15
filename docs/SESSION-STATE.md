@@ -152,6 +152,12 @@ distill-skills`, LLM via resolver, threshold ≥2-of-10 in `what_worked`, dedups
     Inbox "New Summaries" section calls the distill endpoint and refreshes; new skill proposals appear under
     "skills with pending proposals." **P5 is now feature-complete end-to-end.** (Frontend served live — refresh
     the browser.)
+  - **Skills-tab surfacing + semi-autonomous trigger — DONE + LIVE** (merged `2a7b87e`): the distill flow now
+    lives in the **Skills tab** (Jon's expected home) — a "Discover skills from recent runs" button + pending
+    skill proposals with Approve/Reject in the Proposed sub-tab (the Agents-sidebar inbox stays too). AND the
+    distiller now **auto-fires fire-and-forget after every 5 successful runs per agent** (no migration; counts
+    runs since the last self-improvement proposal), still human-gated. Auto-trigger logic tested (fires at
+    5/10, not before, not on 6, fail-safe). Restarted.
 - **P6 — self-evolution** (⚪ capstone; now UNBLOCKED by the memory upgrades — let execution traces accumulate
   first). Writing Studio backlog = ✅ all 5 done.
 
