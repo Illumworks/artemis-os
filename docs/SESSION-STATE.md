@@ -113,12 +113,20 @@ actually connected first.
    runs now excluded → badge clears). Task 3 avatars by server-resolved `metadata.agent_id`, now pointing at
    Jon's profile photos `/icons/Artemisprofile.jpg` (owner) + `/icons/callieprofile.jpg` (Callie) — both serve
    200; the app-logo `artemis.png` stays the brand mark. Callie-image dependency RESOLVED.
-2. **`briefs/p3-google-multiaccount-and-reads.md`** (EXISTING, READY) — connect Calendar + Gmail scopes /
-   multi-account (today only Docs/Drive on one account → gcal cache empty, no Gmail). FOUNDATION; adds a
-   migration (Lead runs `alembic upgrade head` post-merge). Prereq for Gmail send/read.
-3. **`briefs/p3-agency-messaging-sends.md`** (EXISTING, READY) — Gmail-send + Slack-send-as-Jon executors on the
-   proven gate. DEPENDS on #2 (Gmail scope) AND on #1 Task 1 (confirm-path fix, or sends fail on "go"). Lead
-   audits + live-tests (sends *as Jon*).
+2. ✅ **`briefs/p3-google-multiaccount-and-reads.md`** — DONE + VERIFIED LIVE (merged `fafa334` 6/13; verified
+   2026-06-14). 2 accounts connected (jon.fila@ = Calendar+Gmail+Docs; amiracentral@ = Docs only); 35 gcal
+   events cached; live Gmail read works; Docs export uses marketing cred. 66 tests pass. ⚠️ **OPEN:**
+   meeting→action-items→commitments is wired + unit-tested but NOT yet exercised on real data (no recent meeting
+   had action items). Real test = the 6/15–6/16 meetings; summarizer runs every 2 min → should auto-create
+   commitments. **Check Monday afternoon (2026-06-15/16).**
+3. **`briefs/p3-encrypt-google-tokens.md`** (NEW — SECURITY) — Google `access_token`/`refresh_token` are stored
+   PLAINTEXT (`google_docs/models.py:30-31`, since migration 0076; all other integration creds are encrypted).
+   Encrypt at rest reusing the existing Fernet helper (`connectors/encryption.py`, `ARTEMIS_CONNECTOR_KEY`) +
+   backfill the 2 live accounts; rolls in the `_GCAL_SCOPE` dead-constant cleanup. Adds a migration. Do this
+   before/parallel to #4 — low effort, real exposure (a DB dump leaks live Gmail/Calendar access).
+4. **`briefs/p3-agency-messaging-sends.md`** (EXISTING, READY) — Gmail-send + Slack-send-as-Jon executors on the
+   proven gate. DEPENDS on #2 (Gmail scope, now done) AND on the confirm-path fix (done, item 1). Lead audits +
+   live-tests (sends *as Jon*).
 
 **Proactivity = verified LIVE (2026-06-14):** terminal's dry-run delivered a real follow-up DM to Jon
 (checked=1/sent=1, routed personal_ops → Artemis token), synthetic seed cleaned up. Stale branches
