@@ -77,8 +77,13 @@ class CodexAdapter:
             "exec",
             "--json",
             "--skip-git-repo-check",
-            "--full-auto",
-            "--quiet",
+            # NOTE 2026-06-16: codex CLI (v0.129+) drift — `--quiet` was REMOVED
+            # (errored) and `--full-auto` is DEPRECATED in favor of
+            # `--sandbox workspace-write`. `--json` already restricts stdout to the
+            # JSONL events we parse. codex exec is non-interactive, so no approval
+            # flag is needed.
+            "--sandbox",
+            "workspace-write",
         ]
         # Codex CLI accepts `-m <model>` to pick the model. Empty string means
         # "let Codex use its subscription default" — matches the Node reference
