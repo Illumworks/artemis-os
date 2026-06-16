@@ -134,15 +134,34 @@ class CodexAdapter:
 
 
 def _parse_ndjson_output(raw: str) -> tuple[str, Usage]:
-    """Parse NDJSON output from the codex CLI.
+    """Parse NDJSON output from the codex CLI (v0.129+ event schema).
 
-    Collects all objects with ``type == "result"`` (or the top-level result
-    string) and concatenates their text.  Usage comes from the last usage
-    object seen.
+    The codex CLI emits a stream of NDJSON events.  As of v0.129+:
+
+    - ``{"type": "thread.started", "thread_id": "..."}``
+    - ``{"type": "turn.started"}``
+    - ``{"type": "item.completed", "item": {"type": "agent_message", "text": "<reply>"}}``
+      — one or more of these carry the assistant's output text.
+    - ``{"type": "turn.completed", "usage": {"input_tokens": N, "cached_input_tokens": N,
+        "output_tokens": N, "reasoning_output_tokens": N}}``
+      — carries the authoritative token counts.
+
+    We collect text from all ``item.completed / agent_message`` events and
+    usage from ``turn.completed``.  Keeping both allows multi-part replies to
+    be reassembled correctly.
+
+    Fallback: if no ``agent_message`` items are found, we scan for any event
+    that looks like a legacy ``result``/``message`` object (old schema).  If
+    that also yields nothing, we return an empty string so downstream callers
+    receive an empty string rather than the raw NDJSON (which is never valid
+    application text and was causing "Invalid JSON: trailing characters" errors
+    in JSON-consuming callers).
     """
     text_parts: list[str] = []
+    legacy_parts: list[str] = []
     input_tokens = 0
     output_tokens = 0
+    cache_read_tokens = 0
 
     for line in raw.splitlines():
         line = line.strip()
@@ -154,24 +173,54 @@ def _parse_ndjson_output(raw: str) -> tuple[str, Usage]:
             continue
 
         obj_type = obj.get("type", "")
-        if obj_type in ("result", "message") or "result" in obj:
+
+        # v0.129+ primary path: item.completed carrying an agent_message item.
+        if obj_type == "item.completed":
+            item = obj.get("item") or {}
+            if item.get("type") == "agent_message":
+                text = item.get("text", "")
+                if text:
+                    text_parts.append(str(text))
+
+        # v0.129+ usage comes on turn.completed.
+        elif obj_type == "turn.completed":
+            usage_data = obj.get("usage") or {}
+            if usage_data:
+                input_tokens = int(usage_data.get("input_tokens", input_tokens))
+                output_tokens = int(usage_data.get("output_tokens", output_tokens))
+                # codex names this "cached_input_tokens"; map to our field name.
+                cache_read_tokens = int(
+                    usage_data.get("cached_input_tokens", cache_read_tokens)
+                )
+
+        # Legacy / fallback: older schema used type=="result" or a "result" key.
+        elif obj_type in ("result", "message") or "result" in obj:
             part = obj.get("result") or obj.get("output") or obj.get("message") or ""
             if part:
-                text_parts.append(str(part))
+                legacy_parts.append(str(part))
 
-        usage_data = obj.get("usage") or {}
-        if usage_data:
-            input_tokens = int(usage_data.get("input_tokens", input_tokens))
-            output_tokens = int(usage_data.get("output_tokens", output_tokens))
+            # Some legacy events also embed usage directly.
+            usage_data = obj.get("usage") or {}
+            if usage_data:
+                input_tokens = int(usage_data.get("input_tokens", input_tokens))
+                output_tokens = int(usage_data.get("output_tokens", output_tokens))
 
-    # Fallback: if NDJSON parsing found nothing, treat whole output as text
-    result_text = "\n".join(text_parts) if text_parts else raw
+    # Prefer v0.129+ parts; fall back to legacy parts; never return raw NDJSON.
+    if text_parts:
+        result_text = "\n".join(text_parts)
+    elif legacy_parts:
+        result_text = "\n".join(legacy_parts)
+    else:
+        # Nothing parseable found — return empty string.  Callers that need text
+        # will surface the empty response as an error at a higher level rather
+        # than choking on raw NDJSON.
+        result_text = ""
 
     usage = Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
+        cache_read_input_tokens=cache_read_tokens,
     )
     return result_text, usage
 
