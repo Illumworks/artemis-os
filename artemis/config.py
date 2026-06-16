@@ -138,8 +138,8 @@ class Settings(BaseSettings):
         default=90, description="Archive raw_inputs rows older than this many days."
     )
     morning_brief_cron: str = Field(
-        default="0 8 * * *",
-        description="Cron expression for the scheduled Slack morning brief.",
+        default="0 8 * * 1-5",
+        description="Cron expression for the scheduled Slack morning brief (default: weekdays Mon-Fri at 08:00).",
     )
     morning_brief_tz: str = Field(
         default="America/New_York",
@@ -165,8 +165,8 @@ class Settings(BaseSettings):
         description="Minimum age in hours before a ready-for-review draft is escalated.",
     )
     commitments_followup_cron: str = Field(
-        default="30 9 * * *",
-        description="Cron expression for the commitments follow-up sweep.",
+        default="30 9 * * 1-5",
+        description="Cron expression for the commitments follow-up sweep (default: weekdays Mon-Fri at 09:30).",
     )
     commitments_followup_tz: str = Field(
         default="America/New_York",
@@ -185,10 +185,10 @@ class Settings(BaseSettings):
         description="Default snooze duration when a follow-up reply omits an explicit window.",
     )
     commitments_proposals_digest_cron: str = Field(
-        default="0 9 * * *",
+        default="0 9 * * 1-5",
         description=(
             "Cron expression for the daily proposals digest sweep "
-            "(default: every day at 09:00). Fires only when proposed commitments exist."
+            "(default: weekdays Mon-Fri at 09:00). Fires only when proposed commitments exist."
         ),
     )
     commitments_proposals_digest_tz: str = Field(

@@ -1,13 +1,15 @@
 """H5 — Daily Brief Pydantic + retry tests.
 
 Test plan:
-1. Valid brief passes Pydantic.
-2. Oversized highlight title rejected.
+1. Valid brief passes Pydantic (new trimmed schema).
+2. Oversized priority item rejected.
 3. Extra field rejected.
 4. Invalid urgency rejected.
 5. Empty priority item rejected.
 6. Retry on validation failure — second call succeeds.
 7. Persistent failure produces empty DailyBrief.
+8. _build_prompt references every DailyBrief field name.
+9. _build_context_string carries Jira ticket titles.
 """
 
 from __future__ import annotations
@@ -20,28 +22,24 @@ import pytest
 from pydantic import ValidationError
 
 from artemis.brief.schemas import (
-    BriefHighlight,
-    BriefNextAction,
     BriefPriority,
     DailyBrief,
+    WaitingItem,
 )
 
 # ── Fixture payloads ──────────────────────────────────────────────────────────
 
 _VALID_BRIEF_DICT: dict[str, Any] = {
-    "highlights": [
-        {"title": "Q3 roadmap aligned", "detail": "Team agreed on priorities", "source": "jira"},
-    ],
-    "priorities": [
+    "summary": "Focus day — sprint review then OKR update.",
+    "top_priorities": [
         {"item": "Complete sprint review", "rationale": "Due this week", "urgency": "high"},
-        {"item": "Update OKR progress", "urgency": "medium"},
+        {"item": "Update OKR progress", "rationale": None, "urgency": "medium"},
+        {"item": "Reply to Angela re: pipeline", "rationale": "Blocked downstream", "urgency": "medium"},
     ],
-    "next_actions": [
-        {"action": "Send meeting notes", "owner": "Jon", "due": "2026-06-01"},
+    "waiting_on_you": [
+        {"who": "Angela", "context": "Waiting on pipeline approval"},
     ],
-    "okr_status": "Q2 at 72%, on track",
-    "risks": ["Vendor delivery slipping"],
-    "summary": "Focus day — sprint review + OKR update.",
+    "okr_at_risk": "Q2 Product Adoption KR at 34% — stalled",
     "confidence": "high",
 }
 
@@ -52,35 +50,47 @@ _VALID_BRIEF_DICT: dict[str, Any] = {
 def test_valid_brief_passes_pydantic() -> None:
     """DailyBrief.model_validate accepts a canonical valid brief."""
     brief = DailyBrief.model_validate(_VALID_BRIEF_DICT)
-    assert len(brief.highlights) == 1
-    assert brief.highlights[0].title == "Q3 roadmap aligned"
-    assert len(brief.priorities) == 2
-    assert brief.priorities[0].urgency == "high"
+    assert len(brief.top_priorities) == 3
+    assert brief.top_priorities[0].urgency == "high"
     assert brief.confidence == "high"
-    assert brief.summary == "Focus day — sprint review + OKR update."
+    assert brief.summary == "Focus day — sprint review then OKR update."
 
 
 def test_valid_brief_passes_model_validate_json() -> None:
     """DailyBrief.model_validate_json also accepts a canonical valid brief."""
     raw = json.dumps(_VALID_BRIEF_DICT)
     brief = DailyBrief.model_validate_json(raw)
-    assert len(brief.next_actions) == 1
-    assert brief.next_actions[0].action == "Send meeting notes"
+    assert len(brief.waiting_on_you) == 1
+    assert brief.waiting_on_you[0].who == "Angela"
 
 
-# ── Test 2: Oversized highlight title rejected ────────────────────────────────
+def test_valid_brief_empty_optional_fields() -> None:
+    """DailyBrief accepts empty optional fields (no waiting, no okr_at_risk)."""
+    brief = DailyBrief.model_validate({
+        "summary": "Quiet day.",
+        "top_priorities": [],
+        "waiting_on_you": [],
+        "okr_at_risk": None,
+        "confidence": "low",
+    })
+    assert brief.summary == "Quiet day."
+    assert brief.top_priorities == []
+    assert brief.okr_at_risk is None
 
 
-def test_oversized_highlight_title_rejected() -> None:
-    """BriefHighlight rejects a title longer than 200 chars."""
+# ── Test 2: Oversized priority item rejected ──────────────────────────────────
+
+
+def test_oversized_priority_item_rejected() -> None:
+    """BriefPriority rejects an item string longer than 300 chars."""
     with pytest.raises(ValidationError) as exc_info:
-        BriefHighlight(title="x" * 201, detail=None, source=None)
-    assert "title" in str(exc_info.value).lower() or "200" in str(exc_info.value)
+        BriefPriority(item="x" * 301)
+    assert "item" in str(exc_info.value).lower() or "300" in str(exc_info.value)
 
 
-def test_oversized_highlight_title_rejected_via_model() -> None:
-    """DailyBrief rejects nested highlight with oversized title."""
-    bad = {**_VALID_BRIEF_DICT, "highlights": [{"title": "x" * 201}]}
+def test_oversized_priority_item_rejected_via_model() -> None:
+    """DailyBrief rejects nested priority with oversized item."""
+    bad = {**_VALID_BRIEF_DICT, "top_priorities": [{"item": "x" * 301, "urgency": "high"}]}
     with pytest.raises(ValidationError):
         DailyBrief.model_validate(bad)
 
@@ -99,9 +109,18 @@ def test_extra_field_rejected_at_root() -> None:
 
 
 def test_extra_field_rejected_in_sub_model() -> None:
-    """BriefHighlight rejects extra fields (extra='forbid')."""
+    """BriefPriority rejects extra fields (extra='forbid')."""
     with pytest.raises(ValidationError) as exc_info:
-        BriefHighlight.model_validate({"title": "Valid title", "hallucinated_key": "oops"})
+        BriefPriority.model_validate({"item": "Valid item", "hallucinated_key": "oops"})
+    assert (
+        "hallucinated_key" in str(exc_info.value).lower() or "extra" in str(exc_info.value).lower()
+    )
+
+
+def test_extra_field_rejected_in_waiting_item() -> None:
+    """WaitingItem rejects extra fields (extra='forbid')."""
+    with pytest.raises(ValidationError) as exc_info:
+        WaitingItem.model_validate({"who": "Alice", "hallucinated_key": "oops"})
     assert (
         "hallucinated_key" in str(exc_info.value).lower() or "extra" in str(exc_info.value).lower()
     )
@@ -133,10 +152,10 @@ def test_empty_priority_item_rejected() -> None:
     assert "item" in str(exc_info.value).lower() or "min_length" in str(exc_info.value).lower()
 
 
-def test_empty_action_rejected() -> None:
-    """BriefNextAction rejects an empty action string (min_length=1)."""
+def test_empty_who_rejected() -> None:
+    """WaitingItem rejects an empty who string (min_length=1)."""
     with pytest.raises(ValidationError):
-        BriefNextAction(action="")
+        WaitingItem(who="")
 
 
 # ── Scripted adapter helper ───────────────────────────────────────────────────
@@ -188,7 +207,7 @@ async def test_retry_on_validation_failure(monkeypatch: pytest.MonkeyPatch) -> N
     brief, model_used, _, _ = await _generate_with_retry(_build_prompt("today is test day"))
 
     assert scripted.call_count == 2, f"Expected 2 adapter calls, got {scripted.call_count}"
-    assert len(brief.highlights) == 1
+    assert len(brief.top_priorities) == 3
     assert brief.confidence == "high"
 
 
@@ -219,8 +238,8 @@ async def test_persistent_failure_produces_empty_brief(
     assert scripted.call_count == 2, f"Expected 2 adapter calls, got {scripted.call_count}"
     # Returns empty DailyBrief with defaults
     assert isinstance(brief, DailyBrief)
-    assert brief.highlights == []
-    assert brief.priorities == []
+    assert brief.top_priorities == []
+    assert brief.waiting_on_you == []
     assert brief.summary is None
     # Warning was logged
     assert any(
@@ -230,38 +249,35 @@ async def test_persistent_failure_produces_empty_brief(
     ), f"Expected warning log, got: {[r.message for r in caplog.records]}"
 
 
-# ── Test 8: _build_prompt instructs LLM with the DailyBrief schema ────────────
+# ── Test 8: _build_prompt references new DailyBrief fields ────────────────────
 
 
 def test_build_prompt_references_dailybrief_schema() -> None:
     """The LLM prompt must reference every DailyBrief field name + enum value,
-    and must not reference the legacy Node-shape fields (headline / continuity
-    / defer / slackUrgency / calendarNote / rank / ticket / why)."""
+    and must not reference the legacy fields (highlights, next_actions, risks,
+    okr_status, headline, continuity, defer, slackUrgency, calendarNote)."""
     from artemis.brief.prompt import _build_prompt
 
     prompt = _build_prompt("today is test day")
 
     for field in (
-        '"highlights"',
-        '"priorities"',
-        '"next_actions"',
-        '"okr_status"',
-        '"risks"',
         '"summary"',
+        '"top_priorities"',
+        '"waiting_on_you"',
+        '"okr_at_risk"',
         '"confidence"',
-        '"title"',
-        '"detail"',
-        '"source"',
         '"item"',
         '"rationale"',
         '"urgency"',
-        '"action"',
-        '"owner"',
-        '"due"',
+        '"who"',
+        '"context"',
     ):
         assert field in prompt, f"DailyBrief field {field} missing from prompt"
 
     for legacy in (
+        '"highlights"',
+        '"next_actions"',
+        '"risks"',
         '"headline"',
         '"continuity"',
         '"defer"',
@@ -271,7 +287,7 @@ def test_build_prompt_references_dailybrief_schema() -> None:
         '"ticket"',
         '"why"',
     ):
-        assert legacy not in prompt, f"Legacy Node-shape field {legacy} still in prompt"
+        assert legacy not in prompt, f"Legacy field {legacy} still in prompt"
 
     for enum_value in ('"high"', '"medium"', '"low"'):
         assert enum_value in prompt, f"Enum value {enum_value} missing from prompt"
