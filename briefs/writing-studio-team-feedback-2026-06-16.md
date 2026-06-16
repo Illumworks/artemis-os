@@ -37,8 +37,7 @@ access lane), coordinate with terminal for the realtime-collab pieces.
    notification routing (human_gate / Callie's review-ping path); branch on whether the draft has a campaign
    linkage.
 
-6. **New Google Docs destination.** Writing Studio "create new doc / export" uses the Docs API
-   (`google_docs/client.py:295`) which creates the doc in the **My Drive ROOT of the token account** (the
-   marketing account, amiracentral@, for Callie's docs) — no target folder (the Docs API can't set a parent;
-   needs a Drive API move). Consider creating into a dedicated Drive folder so exports don't clutter root +
-   are shareable to the team.
+6. **New Google Docs destination — DONE (2026-06-16, `30dbe3b`).** Writing Studio export/create now moves the
+   new doc into Drive folder `19Dxp0xTwz_owGorQAc_BwSXmCJO-pPeP` (config `writing_studio_docs_folder_id`,
+   env `ARTEMIS_WRITING_STUDIO_DOCS_FOLDER_ID`; empty = root). Verified live: drive.file scope permits the
+   move (created doc → folder, parents confirmed). Graceful fallback to root if a move ever fails.
