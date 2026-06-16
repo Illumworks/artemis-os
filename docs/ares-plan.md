@@ -43,7 +43,7 @@ agent, two surfaces:
   conversational (plan / ask / research on the go). His persona's structured outputs (Build Report / Research
   Brief / Handoff to Artemis) ARE the Slack message formats. Recommended Slack home = a **1:1 DM with Jon**
   (matches owner-private + candid, like Artemis's personal-PA DM); optionally a private **#forge** channel as a
-  persistent build-log feed. Decision pending.
+  persistent build-log feed. **DECIDED: BOTH (see "Slack home" below).**
 
 **Ares = the superset.** Everything Artemis is — Slack presence, proactivity, conversation, durable memory —
 PLUS his unique build / research / delegate / validate tool layer, durable *project* memory, and the Forge
@@ -57,6 +57,24 @@ owner/personal scope, excluded from marketing-shared) + Forge surface + **Slack 
 (agent_id="ares")** + wire the dev_projects loop as his tools + a **proactive bridge** that pushes his Build
 Reports / blockers / handoffs into his Slack DM. Phases below (§7) unchanged; the proactive-Slack push is a
 small add to Phase 3 (named-agent wrapper).
+
+**Slack home DECIDED (Jon, 2026-06-16): BOTH.** (1) a **1:1 DM** (Jon + Ares) for focused build back-and-forth;
+(2) a private **#forge channel** as the team room + persistent build-log feed.
+
+**Artemis ↔ Ares relationship (Jon, 2026-06-16):** **Add Artemis to #forge** (NOT the DM — a 1:1 DM can't take a
+third without becoming a group DM; keep it clean). The dynamic, already in Ares's persona: **Ares builds and
+reports up; Artemis receives his updates and threads them into the OS** (commitments, calendar, OKRs, nudging
+other agents). She speaks in #forge only when there's an OS-level so-what — orchestrator connecting his build
+to Jon's world, not a second builder.
+- **MUST design in — multi-agent turn-taking guardrail:** an agent speaks ONLY when @mentioned or when it has a
+  concrete so-what; NEVER a reflexive reply to another agent. Prevents two-bots-in-a-room ping-pong/loops (the
+  bigger cousin of the Kai duplicate/robotic bug fixed 2026-06-16). Bake in before any multi-agent channel.
+- **The real link is shared memory, not Slack.** Artemis is all-scope and already sees Ares's project scope, so
+  she knows his state whether or not she posts in #forge. The channel is the *visible* layer; the M3 memory
+  keystone is the *reliable* bridge (the core of this plan). Even silent in #forge, Artemis folds Ares's state
+  into the morning brief / commitments.
+- **Generalizes (future):** same pattern — Artemis as the hub across EVERY agent's channel (Callie's, Kai's) —
+  makes her the connective tissue of the team. Noted, not now.
 
 ---
 
