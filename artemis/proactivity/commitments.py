@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.config import settings
 from artemis.identity.models import User
+from artemis.identity.scope_policy import OWNER_EMAIL
 from artemis.integrations import repository as integrations_repo
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.models import Integration
@@ -159,6 +160,16 @@ def _agent_scope_for(sensitivity: str) -> Scope:
     return Scope(scope_kind="agent", scope_id="floating-artemis")
 
 
+async def _resolve_canonical_owner_user_id(session: AsyncSession) -> int | None:
+    """Return the user.id for the canonical system owner (jon.fila@).
+
+    Uses the same lookup path as _resolve_owner_user_id so the resolution
+    is consistent.  Returns None if the owner user row does not yet exist
+    (e.g. in a fresh test DB).
+    """
+    return await _resolve_owner_user_id(session, OWNER_EMAIL)
+
+
 async def ingest_meeting_commitments(
     session: AsyncSession,
     *,
@@ -167,11 +178,25 @@ async def ingest_meeting_commitments(
     action_items: list[dict[str, Any]],
     now: datetime | None = None,
 ) -> CommitmentIngestSummary:
-    """Upsert meeting action items into commitments + mirrored memory observations."""
+    """Upsert meeting action items into commitments + mirrored memory observations.
+
+    Opt-in gate (Phase 1): a commitment is only created when BOTH conditions hold:
+    1. The item's owner resolves to the system owner (jon.fila@).
+    2. The item has a deadline (due_value is not None).
+
+    Items that fail the gate are still mirrored to memory (lossless invariant) —
+    they just don't produce a commitment row and therefore can never auto-fire.
+
+    When the gate passes, the commitment lands as ``status='proposed'`` so it
+    cannot trigger follow-up notifications until the owner explicitly approves it.
+    """
     current_time = now or datetime.now(UTC)
     seen = 0
     inserted = 0
     deduped = 0
+
+    # Resolve once per ingest call to avoid N DB round-trips.
+    canonical_owner_user_id = await _resolve_canonical_owner_user_id(session)
 
     for item in action_items:
         if not isinstance(item, dict):
@@ -204,25 +229,49 @@ async def ingest_meeting_commitments(
             now=current_time,
         )
         sensitivity = _classify_sensitivity(title=title, text=text)
-        commitment, created = await repo.upsert_commitment(
-            session,
-            source_type="granola_meeting",
-            source_id=granola_id,
-            text=text,
-            owner_user_id=owner_user_id,
-            due=due_value,
-            sensitivity=sensitivity,
-        )
-        if created:
-            inserted += 1
-        else:
-            deduped += 1
 
+        # ── Opt-in gate: only create a commitment when owner IS the system owner
+        # AND the item has a deadline.  Items that miss either condition are
+        # still written to memory below (lossless), but do NOT get a commitment.
+        owner_is_owner = (
+            canonical_owner_user_id is not None
+            and owner_user_id == canonical_owner_user_id
+        )
+        had_due = due_value is not None
+
+        if owner_is_owner and had_due:
+            commitment, created = await repo.upsert_commitment(
+                session,
+                source_type="granola_meeting",
+                source_id=granola_id,
+                text=text,
+                owner_user_id=owner_user_id,
+                due=due_value,
+                sensitivity=sensitivity,
+                status="proposed",
+            )
+            if created:
+                inserted += 1
+            else:
+                deduped += 1
+            commitment_id: int | None = commitment.id
+        else:
+            logger.debug(
+                "ingest_meeting_commitments: skipping commitment creation "
+                "(owner_is_owner=%s, had_due=%s) for item=%r granola_id=%s",
+                owner_is_owner,
+                had_due,
+                text[:60],
+                granola_id,
+            )
+            commitment_id = None
+
+        # Memory observation is ALWAYS written — lossless invariant.
         scope = _agent_scope_for(sensitivity)
         raw_payload = {
             "granola_id": granola_id,
             "meeting_title": title,
-            "commitment_id": commitment.id,
+            "commitment_id": commitment_id,
             "action_item": {
                 "text": text,
                 "owner": owner_label,
@@ -447,3 +496,74 @@ async def try_apply_commitment_reply(
         return f"Dismissed commitment C{commitment_id}. No further follow-up."
 
     return None
+
+
+async def _build_decision_features(
+    session: AsyncSession,
+    commitment: Commitment,
+) -> dict[str, Any]:
+    """Build the feature snapshot for a commitment decision row.
+
+    Features are designed to be sufficient for Phase 2-3 learning:
+    - owner_is_owner: was the item owned by the system owner?
+    - had_due: did the item have a deadline?
+    - sensitivity: personal_ops / marketing
+    - source_type: e.g. granola_meeting
+    - source_id: granola meeting ID
+    """
+    canonical_owner_id = await _resolve_canonical_owner_user_id(session)
+    owner_is_owner = (
+        canonical_owner_id is not None
+        and commitment.owner_user_id == canonical_owner_id
+    )
+    return {
+        "owner_is_owner": owner_is_owner,
+        "had_due": commitment.due is not None,
+        "sensitivity": commitment.sensitivity,
+        "source_type": commitment.source_type,
+        "source_id": commitment.source_id,
+    }
+
+
+async def approve_commitment(
+    session: AsyncSession,
+    commitment_id: int,
+) -> Commitment | None:
+    """Promote a proposed commitment to active and record the approval signal.
+
+    Intended for use by the Slack digest reply handler (Phase 1 follow-on).
+    Returns the updated Commitment row, or None if not found.
+    Caller is responsible for session.commit().
+    """
+    commitment = await repo.get_commitment(session, commitment_id)
+    if commitment is None:
+        return None
+    features = await _build_decision_features(session, commitment)
+    return await repo.approve_commitment(
+        session,
+        commitment_id=commitment_id,
+        features=features,
+    )
+
+
+async def dismiss_commitment(
+    session: AsyncSession,
+    commitment_id: int,
+) -> Commitment | None:
+    """Move a commitment to dismissed and record the dismiss signal.
+
+    Complements ``try_apply_commitment_reply`` which handles text-based dismiss
+    commands.  This function is for programmatic dismiss from the Slack digest
+    handler (Phase 1 follow-on), and captures the learning-signal row.
+    Returns the updated Commitment row, or None if not found.
+    Caller is responsible for session.commit().
+    """
+    commitment = await repo.get_commitment(session, commitment_id)
+    if commitment is None:
+        return None
+    features = await _build_decision_features(session, commitment)
+    return await repo.dismiss_commitment_with_decision(
+        session,
+        commitment_id=commitment_id,
+        features=features,
+    )
