@@ -1,11 +1,11 @@
 """Tool: procurement_portal.fetch
 
-Search SAM.gov contract opportunities via the public Get Opportunities API v2.
+Search SAM.gov contract opportunities via the public Get Opportunities API v2
+AND fetch Bonfire (Euna) RSS opportunities for all registered districts.
 
-Requires ``SAM_API_KEY`` (api.data.gov key) in the environment. When unset,
-returns a stub string explaining how to configure the key. On any HTTP/API/
-JSON error, returns ``[]`` rather than raising so procurement scouts degrade
-gracefully.
+SAM.gov requires ``SAM_API_KEY`` (api.data.gov key) in the environment. When
+unset, the SAM.gov path returns a stub but Bonfire results are still returned.
+On any HTTP/API/JSON error, individual sources return ``[]`` gracefully.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import Any
 
 from artemis.agent.types import Tool, ToolImpl
 from artemis.scouts._http import ScoutHttpClient
+from artemis.scouts.procurement.bonfire import fetch_all_bonfire_opportunities
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import register_tool
 
@@ -206,11 +207,13 @@ def _dedupe_opportunities(items: list[dict[str, str]]) -> list[dict[str, str]]:
 _DEF = Tool(
     name="procurement_portal.fetch",
     description=(
-        "Search SAM.gov contract opportunities (real API, requires "
-        "SAM_API_KEY). Returns JSON "
-        "[{title, solicitation_number, agency, posted_date, "
-        "response_deadline, url, description, naics}]. Returns a stub string "
-        "if no key is configured, [] on any error."
+        "Fetch procurement opportunities from SAM.gov (requires SAM_API_KEY) "
+        "AND from Bonfire (Euna) RSS feeds for all registered districts "
+        "(Dallas ISD, Fort Bend ISD, Chicago PS, U-46, Austin ISD). "
+        "Returns JSON [{title, solicitation_number, agency, posted_date, "
+        "response_deadline, url, description, naics}]. "
+        "SAM.gov returns a stub when no key is configured; Bonfire results "
+        "are always attempted. Returns [] on per-source errors."
     ),
     input_schema={
         "type": "object",
@@ -240,63 +243,120 @@ _DEF = Tool(
 )
 
 
+def _bonfire_posting_to_tool_shape(posting: dict[str, Any]) -> dict[str, str]:
+    """Map a Bonfire posting dict to the tool's standard output shape.
+
+    Bonfire postings carry: portal_id, state, rfp_id, title, agency,
+    posted_date, due_date, source_url, description, scope_text, district_id.
+    The tool output shape is: title, solicitation_number, agency, posted_date,
+    response_deadline, url, description, naics.
+    """
+    return {
+        "title": _clean(posting.get("title", "")),
+        # rfp_id is Bonfire's numeric opportunity ID — use as solicitation_number
+        "solicitation_number": _clean(posting.get("rfp_id", "")),
+        "agency": _clean(posting.get("agency", "")),
+        "posted_date": _clean(posting.get("posted_date", "")),
+        # due_date from Bonfire maps to response_deadline
+        "response_deadline": _clean(posting.get("due_date", "")),
+        "url": _clean(posting.get("source_url", "")),
+        "description": _clean(posting.get("description", "")),
+        # Bonfire RFPs don't carry a NAICS code; use empty string
+        "naics": "",
+    }
+
+
 def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
     async def _impl(arguments: dict[str, Any]) -> str:
-        api_key = os.getenv("SAM_API_KEY", "")
-        if not api_key:
-            return _NEEDS_KEY
-
         keyword = _normalize_keyword(arguments)
         title = _clean(arguments.get("title", ""))
         limit = _coerce_limit(arguments.get("limit"))
-        posted_from, posted_to = _date_window(arguments)
-        ncode = _normalize_naics(arguments)
 
-        params = {
-            "api_key": api_key,
-            "postedFrom": posted_from,
-            "postedTo": posted_to,
-            "limit": limit,
-            "ncode": ncode,
-        }
-        if title:
-            params["title"] = title
-        else:
-            params["keyword"] = keyword
-        ptype = _clean(arguments.get("ptype", ""))
-        if ptype:
-            params["ptype"] = ptype
+        all_results: list[dict[str, str]] = []
 
+        # ------------------------------------------------------------------
+        # Source 1: Bonfire (Euna) RSS — always attempted, no key required.
+        # Uses a shared HTTP client across all district feeds.
+        # ------------------------------------------------------------------
         try:
-            async with ScoutHttpClient(timeout=20.0, rate_limit=1.0) as http:
-                resp = await http.get(_SEARCH_URL, params=params)
-            if resp.status_code != 200:
-                logger.warning(
-                    "procurement_portal.fetch(%r): HTTP %d",
-                    title or keyword,
-                    resp.status_code,
-                )
-                return json.dumps([])
-            payload = resp.json()
-        except Exception as exc:
-            logger.warning("procurement_portal.fetch(%r): error — %s", title or keyword, exc)
-            return json.dumps([])
-
-        if not isinstance(payload, dict):
-            logger.warning("procurement_portal.fetch(%r): non-object payload", title or keyword)
-            return json.dumps([])
-        if payload.get("errorCode") or payload.get("errorMessage"):
-            logger.warning(
-                "procurement_portal.fetch(%r): API error %s %s",
-                title or keyword,
-                payload.get("errorCode"),
-                payload.get("errorMessage"),
+            async with ScoutHttpClient(timeout=30.0, rate_limit=1.0) as http:
+                bonfire_postings = await fetch_all_bonfire_opportunities(http)
+            bonfire_mapped = [_bonfire_posting_to_tool_shape(p) for p in bonfire_postings]
+            logger.info(
+                "procurement_portal.fetch: Bonfire returned %d postings across all districts",
+                len(bonfire_mapped),
             )
-            return json.dumps([])
+            all_results.extend(bonfire_mapped)
+        except Exception as exc:
+            logger.warning("procurement_portal.fetch: Bonfire fetch error — %s", exc)
 
-        projected = _parse_opportunities(payload)
-        relevant = [item for item in projected if _is_education_relevant(item)]
-        return json.dumps(_dedupe_opportunities(relevant)[:limit])
+        # ------------------------------------------------------------------
+        # Source 2: SAM.gov — requires SAM_API_KEY; gracefully skipped when absent.
+        # ------------------------------------------------------------------
+        api_key = os.getenv("SAM_API_KEY", "")
+        if not api_key:
+            logger.info(
+                "procurement_portal.fetch: SAM_API_KEY not set — skipping SAM.gov (%d Bonfire results available)",
+                len(all_results),
+            )
+        else:
+            posted_from, posted_to = _date_window(arguments)
+            ncode = _normalize_naics(arguments)
+
+            params: dict[str, Any] = {
+                "api_key": api_key,
+                "postedFrom": posted_from,
+                "postedTo": posted_to,
+                "limit": limit,
+                "ncode": ncode,
+            }
+            if title:
+                params["title"] = title
+            else:
+                params["keyword"] = keyword
+            ptype = _clean(arguments.get("ptype", ""))
+            if ptype:
+                params["ptype"] = ptype
+
+            try:
+                async with ScoutHttpClient(timeout=20.0, rate_limit=1.0) as http:
+                    resp = await http.get(_SEARCH_URL, params=params)
+                if resp.status_code != 200:
+                    logger.warning(
+                        "procurement_portal.fetch(%r): SAM.gov HTTP %d",
+                        title or keyword,
+                        resp.status_code,
+                    )
+                else:
+                    payload = resp.json()
+                    if not isinstance(payload, dict):
+                        logger.warning(
+                            "procurement_portal.fetch(%r): SAM.gov non-object payload",
+                            title or keyword,
+                        )
+                    elif payload.get("errorCode") or payload.get("errorMessage"):
+                        logger.warning(
+                            "procurement_portal.fetch(%r): SAM.gov API error %s %s",
+                            title or keyword,
+                            payload.get("errorCode"),
+                            payload.get("errorMessage"),
+                        )
+                    else:
+                        projected = _parse_opportunities(payload)
+                        relevant = [item for item in projected if _is_education_relevant(item)]
+                        logger.info(
+                            "procurement_portal.fetch: SAM.gov returned %d relevant postings",
+                            len(relevant),
+                        )
+                        all_results.extend(relevant)
+            except Exception as exc:
+                logger.warning(
+                    "procurement_portal.fetch(%r): SAM.gov error — %s",
+                    title or keyword,
+                    exc,
+                )
+
+        return json.dumps(_dedupe_opportunities(all_results)[:limit])
 
     return (_DEF, _impl)
 

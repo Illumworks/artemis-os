@@ -12,7 +12,6 @@ from artemis.scouts._http import ScoutHttpClient
 from artemis.tools.context import ToolContext
 from artemis.tools.procurement import _factory
 
-_STUB = "STUB: SAM.gov opportunities need an api.data.gov key. Set SAM_API_KEY in the .env file."
 _ORIG_SCOUT_HTTP_INIT = ScoutHttpClient.__init__
 
 
@@ -42,10 +41,25 @@ def _mock_http(
 
 
 @pytest.mark.asyncio
-async def test_procurement_no_key_returns_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_procurement_no_key_skips_sam_returns_bonfire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When SAM_API_KEY is absent, SAM.gov is skipped and Bonfire is still attempted.
+
+    With a mock returning an empty RSS feed, the result is [] (valid JSON),
+    not the old stub string.
+    """
     monkeypatch.delenv("SAM_API_KEY", raising=False)
+    # Return a minimal valid RSS with no items so Bonfire returns [].
+    _mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(
+            200,
+            content=b"<?xml version='1.0'?><rss><channel></channel></rss>",
+            headers={"content-type": "application/rss+xml"},
+        ),
+    )
     _, impl = _factory(_ctx())
-    assert await impl({"query": "literacy"}) == _STUB
+    result = await impl({"query": "literacy"})
+    assert json.loads(result) == []
 
 
 @pytest.mark.asyncio

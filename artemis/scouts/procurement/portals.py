@@ -15,6 +15,10 @@ import logging
 from typing import Any
 
 from artemis.scouts._http import ScoutHttpClient
+from artemis.scouts.procurement.bonfire import (
+    BONFIRE_REGISTRY,
+    fetch_bonfire_opportunities,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -40,7 +44,30 @@ LITERACY_KEYWORDS: list[str] = [
 # Portal registry
 # ---------------------------------------------------------------------------
 
+def _bonfire_portal_entries() -> dict[str, dict[str, Any]]:
+    """Build PORTAL_REGISTRY entries for each Bonfire district in BONFIRE_REGISTRY.
+
+    Key pattern: ``bonfire_<slug>`` (e.g. ``bonfire_dallasisd``).
+    Each entry carries ``type: "rss"`` so ``fetch_portal_postings`` dispatches
+    to the Bonfire adapter rather than the generic HTML scraper.
+    """
+    entries: dict[str, dict[str, Any]] = {}
+    for entry in BONFIRE_REGISTRY:
+        slug = entry["slug"]
+        entries[f"bonfire_{slug}"] = {
+            "state": entry["state"],
+            "name": entry["name"],
+            "url": f"https://{slug}.bonfirehub.com/opportunities/rss",
+            "type": "rss",
+            # Carry the full entry so fetch_portal_postings can pass it to the
+            # Bonfire adapter without an extra lookup.
+            "_bonfire_entry": entry,
+        }
+    return entries
+
+
 PORTAL_REGISTRY: dict[str, dict[str, Any]] = {
+    **_bonfire_portal_entries(),
     "CA_eprocurement": {
         "state": "CA",
         "name": "CA eProcurement",
@@ -244,6 +271,35 @@ async def fetch_portal_postings(
         portal_id, state, rfp_id, title, agency, posted_date, due_date,
         source_url, description, scope_text.
     """
+    portal_type: str = portal.get("type", "html_scrape")
+
+    # ------------------------------------------------------------------
+    # RSS adapters (e.g. Bonfire) — dispatch to the dedicated fetcher.
+    # These adapters return postings that already carry all required fields
+    # including "district_id" for a precise districtId in findings.
+    # ------------------------------------------------------------------
+    if portal_type == "rss":
+        bonfire_entry = portal.get("_bonfire_entry")
+        if bonfire_entry is None:
+            _logger.warning(
+                "Portal %s: type=rss but no _bonfire_entry — skipping.",
+                portal_id,
+            )
+            return []
+        try:
+            postings = await fetch_bonfire_opportunities(bonfire_entry, http)
+        except Exception as exc:
+            _logger.warning(
+                "Portal %s: Bonfire fetch error — skipping: %s",
+                portal_id,
+                exc,
+            )
+            return []
+        return [p for p in postings if _is_literacy_relevant(p["title"], p["description"])]
+
+    # ------------------------------------------------------------------
+    # HTML scrape path (original behaviour — unchanged)
+    # ------------------------------------------------------------------
     url: str = portal.get("url", "")
     state: str = portal.get("state", "")
 

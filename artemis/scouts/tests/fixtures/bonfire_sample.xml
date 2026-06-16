@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+    <channel>
+        <title>Open Public Opportunities</title>
+        <description>The Open Public Opportinities rss feed contains all opportunities for this organization that are visible through the public portal.</description>
+        <link>https://dallasisd.bonfirehub.com/portal/</link>
+        <atom:link href="https://dallasisd.bonfirehub.com/opportunities/rss" rel="self" type="application/rss+xml" />
+
+        <item>
+            <title>Reference #: RFP-LIT-001. Name: K-12 Literacy Curriculum and Assessment Platform</title>
+            <description>Description: Dallas ISD is seeking proposals for a comprehensive K-12 literacy curriculum, phonics intervention, and reading assessment platform for districtwide use. Vendors must demonstrate evidence-based outcomes. Project closes Jul 15, 2026 2:00 PM CDT.</description>
+            <pubDate> Mon, 09 Jun 2026 08:00:00 -0500</pubDate>
+            <link>https://dallasisd.bonfirehub.com/opportunities/111001</link>
+        </item>
+
+        <item>
+            <title>Reference #: RFP-002. Name: Office Furniture and Fixtures</title>
+            <description>Description: Dallas ISD is seeking proposals for office furniture and fixtures for administrative buildings districtwide. Project closes Aug 01, 2026 2:00 PM CDT.</description>
+            <pubDate> Tue, 10 Jun 2026 08:00:00 -0500</pubDate>
+            <link>https://dallasisd.bonfirehub.com/opportunities/111002</link>
+        </item>
+
+        <item>
+            <title>Reference #: RFP-TUT-003. Name: Tutoring Services for Struggling Readers</title>
+            <description>Description: Dallas ISD invites proposals for evidence-based tutoring services targeting students with dyslexia and reading intervention needs. Project closes Jul 20, 2026 2:00 PM CDT.</description>
+            <pubDate> Wed, 11 Jun 2026 08:00:00 -0500</pubDate>
+            <link>https://dallasisd.bonfirehub.com/opportunities/111003</link>
+        </item>
+    </channel>
+</rss>

@@ -102,7 +102,9 @@ def posting_to_finding(posting: dict[str, Any]) -> dict[str, Any]:
         Finding dict ready for the emit_signals payload.
     """
     state = posting.get("state", "").upper()
-    district_id = f"STATE_{state}"
+    # Bonfire (and future platform adapters) supply a precise "district_id" key;
+    # fall back to the generic STATE_<XX> identifier for statewide portals.
+    district_id: str = posting.get("district_id") or f"STATE_{state}"
 
     evidence_title = posting.get("title", "")
     evidence_desc = posting.get("description", "")[:300]

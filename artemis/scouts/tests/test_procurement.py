@@ -208,9 +208,16 @@ def test_days_to_close_returns_int() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_portal_registry_has_9_portals() -> None:
-    """PORTAL_REGISTRY must have exactly 9 entries."""
-    assert len(PORTAL_REGISTRY) == 9
+def test_portal_registry_has_state_and_bonfire_portals() -> None:
+    """PORTAL_REGISTRY must include the 9 statewide portals plus Bonfire entries."""
+    from artemis.scouts.procurement.bonfire import BONFIRE_REGISTRY
+
+    bonfire_keys = {f"bonfire_{e['slug']}" for e in BONFIRE_REGISTRY}
+    state_keys = set(PORTAL_REGISTRY.keys()) - bonfire_keys
+    # 9 original statewide portals must still be present.
+    assert len(state_keys) == 9
+    # All active Bonfire districts must have a portal entry.
+    assert bonfire_keys.issubset(set(PORTAL_REGISTRY.keys()))
 
 
 def test_portal_registry_has_required_states() -> None:
