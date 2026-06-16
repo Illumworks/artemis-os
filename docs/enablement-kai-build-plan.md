@@ -88,14 +88,23 @@ surfacable cross-team. Agent-to-agent: Artemis can route a cross-team question t
   imports into one shared project_id, direct-upload from Drive, export transcript txt). Add `descript`
   provider config (token) like the other connectors. Same token serves Sara's seed (Option B).
 
-## ⚠️ Asset-placement decision (confirmed by inspecting the folder 2026-06-16)
-The Enablement folder currently holds a `Transcripts` subfolder + a **shortcut** ("Success Management
-Organization"), i.e. it's being assembled partly with **shortcuts/links**, not copied files. This matters:
-the indexer + Descript need **actual file bytes**, and the Drive connector exposes the shortcut but not its
-target. **Decision needed before seeding:** assets should be **actual files/copies in the one folder** (v1,
-clean — recommended), OR if they must be **shortcuts to existing folders**, the build needs shortcut
-resolution (`shortcutDetails.targetId` via the Drive API) + recursive traversal of the linked folders + the
-indexer/Sara having access to every target location. Recommend real-files-in-one-folder for v1; shortcuts later.
+## ⚠️ Shortcuts to other Drives (confirmed 2026-06-16 — CONFIRMED REQUIREMENT, not optional)
+Some enablement assets WILL be **shortcuts to Mark's Drive** (Sara flagged this; the folder already shows a
+shortcut "Success Management Organization", likely a folder). Two hard parts:
+1. **Access:** a shortcut does not grant access — the indexing identity must have **read access to Mark's
+   actual files**. **Mark must share the source folder(s)/files (read-only) with the indexing account** (the
+   enablement account, or the app's `612420684593`/amiracentral@ identity that does automated reads). Blocker
+   until done.
+2. **Resolution:** the **Drive MCP shows shortcuts but NOT their targets** (verified) → Sara's Claude-Code
+   seed CANNOT follow shortcuts. The **server automation uses the Drive API**, which CAN read
+   `shortcutDetails.targetId` and fetch the target content.
+
+**Approach:** Sara seeds the real files only (skips shortcuts). The **server automation handles
+shortcut-targets** — resolve via Drive API → read from Mark's Drive (once shared) → summarize → index with the
+team-facing link. Open: (a) will Mark share access + which account; (b) shortcuts to files vs folders, and for
+folder-shortcuts whether to index the whole linked folder or only specific items.
+
+## Seed prerequisites (us — before Sara starts; she does the seed, we unblock it)
 
 ## Seed prerequisites (us — before Sara starts; she does the seed, we unblock it)
 1. **Provision the official Google Drive MCP** (Sara reads the folder cloud-native via Claude; the setup is
