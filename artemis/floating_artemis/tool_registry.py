@@ -21,16 +21,46 @@ from artemis.integrations.gmail.tools import register_gmail_tools
 from artemis.integrations.slack.tools import register_slack_tools
 
 
+def _build_kai_tool_registry() -> AuthorizedToolRegistry:
+    """Build Kai's registry: enablement read-only tools ONLY.
+
+    Kai (Chiron) is enablement-scoped and read-only.  He gets NO personal
+    scopes, NO agent:artemis, NO creation/agency tools, NO marketing tools,
+    NO gcal/gmail/slack/builders/system tools.  Only the two enablement
+    retrieval tools are registered.
+
+    SECURITY: This function is the sole caller of register_enablement_tools.
+    Do NOT add any other tool registrations here.
+    """
+    from artemis.enablement.tools import register_enablement_tools
+
+    registry = AuthorizedToolRegistry()
+    register_enablement_tools(registry)
+    return registry
+
+
 def build_authorized_tool_registry(
     available_surfaces: set[str],
     agent_id: str | None = None,
 ) -> AuthorizedToolRegistry:
-    """Build the full Floating Artemis tool catalog for the given surfaces.
+    """Build the Floating Artemis tool catalog for the given agent and surfaces.
 
     ``agent_id`` is threaded into ``register_core_tools`` so that ``query_memory``
     is gated to the calling agent's scope allowance (M3).  Must be supplied for
     any live session; None → fail-closed (empty results for every query).
+
+    Special case — Kai:
+      Kai's registry contains ONLY search_enablement_assets + get_enablement_asset.
+      He receives none of the unconditional tools (core/builders/system/slack/gcal/gmail).
+      This enforces the security-critical scope_policy: enablement-scoped, read-only.
     """
+    normalized_agent = (agent_id or "").strip().lower()
+
+    # SECURITY: Kai gets only the two read-only enablement retrieval tools.
+    # Early return — no fallthrough to the general tool registrations.
+    if normalized_agent == "kai":
+        return _build_kai_tool_registry()
+
     registry = AuthorizedToolRegistry()
     register_core_tools(registry, agent_id=agent_id)
     register_builders_tools(registry)

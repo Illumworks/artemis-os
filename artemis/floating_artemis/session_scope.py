@@ -26,6 +26,9 @@ _AGENT_SURFACE_ALLOWLIST: dict[str, frozenset[str]] = {
     # Callie is a marketing-only analyst agent — she may only see marketing surfaces.
     # To grant Callie a new surface later (e.g. "jira-board", "calendar"), add it here.
     "callie": _MARKETING_SURFACES,
+    # Kai (Chiron) is an enablement-scoped read-only agent — no surface entitlements.
+    # His retrieval tools register unconditionally (not surface-gated) in tool_registry.py.
+    "kai": frozenset(),
 }
 
 

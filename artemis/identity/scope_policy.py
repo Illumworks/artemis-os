@@ -146,6 +146,20 @@ def allowance_for_agent_callie() -> ScopeAllowance:
     )
 
 
+# Scope kinds Kai may read — enablement scope only.
+_ENABLEMENT_SCOPE_KINDS: frozenset[str] = frozenset({"enablement"})
+
+
+def allowance_for_agent_kai() -> ScopeAllowance:
+    """Kai — enablement-scoped read-only. NO personal:*, NO agent:artemis, NO marketing."""
+    return ScopeAllowance(
+        allow_all=False,
+        allowed_scope_kinds=_ENABLEMENT_SCOPE_KINDS,
+        allowed_agent_ids=frozenset({"kai"}),
+        personal_user_id=None,
+    )
+
+
 def allowance_for_agent_artemis() -> ScopeAllowance:
     """Artemis — ALL scopes (Jon's PA)."""
     return ScopeAllowance(allow_all=True)
@@ -189,6 +203,8 @@ def allowed_scopes_for_agent(agent_id: str) -> ScopeAllowance:
         return allowance_for_agent_artemis()
     if normalized == "callie":
         return allowance_for_agent_callie()
+    if normalized == "kai":
+        return allowance_for_agent_kai()
     _logger.warning("allowed_scopes_for_agent: unknown agent_id=%r — denying", agent_id)
     return allowance_denied()
 
