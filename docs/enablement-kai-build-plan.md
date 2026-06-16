@@ -88,6 +88,15 @@ surfacable cross-team. Agent-to-agent: Artemis can route a cross-team question t
   imports into one shared project_id, direct-upload from Drive, export transcript txt). Add `descript`
   provider config (token) like the other connectors. Same token serves Sara's seed (Option B).
 
+## ⚠️ Asset-placement decision (confirmed by inspecting the folder 2026-06-16)
+The Enablement folder currently holds a `Transcripts` subfolder + a **shortcut** ("Success Management
+Organization"), i.e. it's being assembled partly with **shortcuts/links**, not copied files. This matters:
+the indexer + Descript need **actual file bytes**, and the Drive connector exposes the shortcut but not its
+target. **Decision needed before seeding:** assets should be **actual files/copies in the one folder** (v1,
+clean — recommended), OR if they must be **shortcuts to existing folders**, the build needs shortcut
+resolution (`shortcutDetails.targetId` via the Drive API) + recursive traversal of the linked folders + the
+indexer/Sara having access to every target location. Recommend real-files-in-one-folder for v1; shortcuts later.
+
 ## Seed prerequisites (us — before Sara starts; she does the seed, we unblock it)
 1. **Provision the official Google Drive MCP** (Sara reads the folder cloud-native via Claude; the setup is
    developer-level so we do it, she just connects). In GCP project **612420684593**: enable `drive.googleapis.com`
