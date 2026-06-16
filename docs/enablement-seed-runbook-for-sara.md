@@ -8,6 +8,10 @@ after that, an automation keeps it up to date.
 You'll use your **Claude Code** (Claude's coding tool on your Mac) and your Claude subscription, so this
 **doesn't cost per-use API money**. Take it in batches; it does not have to be done in one sitting.
 
+**Prerequisite — do this first:** the assets need to already be **in the Drive folder** (you're dumping them
+in now). This runbook is the *indexing* step that comes **after** the files are in. Shortcuts to Mark's Drive
+are fine to leave in the folder — skip them here; the automated side handles those separately.
+
 ## What you need (one-time setup)
 1. The **Google Drive connector (MCP)** in Claude. Jon + Artemis set up the connector for you (it needs a
    one-time Google Cloud config that's developer-level); you just **connect it and sign in with your Google
