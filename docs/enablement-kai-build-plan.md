@@ -87,3 +87,14 @@ surfacable cross-team. Agent-to-agent: Artemis can route a cross-team question t
 - Ongoing-video path: DECIDED = **Descript API** (new connector: Bearer token scoped to the Drive, all
   imports into one shared project_id, direct-upload from Drive, export transcript txt). Add `descript`
   provider config (token) like the other connectors. Same token serves Sara's seed (Option B).
+
+## Seed prerequisites (us — before Sara starts; she does the seed, we unblock it)
+1. **Provision the official Google Drive MCP** (Sara reads the folder cloud-native via Claude; the setup is
+   developer-level so we do it, she just connects). In GCP project **612420684593**: enable `drive.googleapis.com`
+   + `drivemcp.googleapis.com`; configure the OAuth consent; create a **Web OAuth client** with redirect
+   `https://claude.ai/api/mcp/auth_callback` and scopes `drive.readonly` + `drive.file`. Give Sara the connect
+   details; she adds the Google Drive connector in Claude and signs in with her Google (she has folder access).
+   (Avoid third-party managed Drive MCPs — they route internal docs through their servers.)
+2. **Descript:** Jon creates an **API token** (Settings → API Tokens, scoped to the Drive) + the single
+   project **"Enablement Library Transcripts"**; shares the token with Sara privately. Same token → the
+   ongoing `descript` connector.

@@ -9,9 +9,9 @@ You'll use your **Claude Code** (Claude's coding tool on your Mac) and your Clau
 **doesn't cost per-use API money**. Take it in batches; it does not have to be done in one sitting.
 
 ## What you need (one-time setup)
-1. **Google Drive for Desktop** installed on your Mac, signed in to the account that can see the Enablement
-   folder. This makes the Drive folder appear as a **normal folder on your Mac** so Claude Code can read it.
-   (Alternative: download the folder as a zip and unzip it — either works.)
+1. The **Google Drive connector (MCP)** in Claude. Jon + Artemis set up the connector for you (it needs a
+   one-time Google Cloud config that's developer-level); you just **connect it and sign in with your Google
+   account**. This lets Claude Code read the Enablement folder straight from the cloud (no downloading).
 2. **Claude Code** open on your Mac.
 3. A **Descript API token from Jon** (he'll send it to you privately — treat it like a password, paste it only into Claude Code, don't put it in the Sheet or share it). You do **not** need your own Descript account.
 4. Links you'll work with:
@@ -36,19 +36,19 @@ You'll use your **Claude Code** (Claude's coding tool on your Mac) and your Clau
 (If the existing `ENABLEMENT_DB` tab already has slightly different column names, just match what's there —
 the important fields are Title, Type, link, Summary, Tags, and Transcript Link for videos.)
 
-## Step 1 — Get the files onto your Mac (this is a CLOUD folder, so make it local first)
-Claude Code reads files from your Mac, not from the cloud directly — so we bring the Drive folder local:
-1. With **Google Drive for Desktop** signed in, the Enablement folder shows up as a folder on your Mac (note
-   its path, e.g. `~/Google Drive/.../Enablement Library`).
-2. **Make it actually download (important):** in Finder, **right-click the Enablement folder → Offline access
-   → Available offline** (or the Drive app's "Make available offline"). By default Drive only *streams* files
-   — it shows the names but doesn't download them until opened, and Claude Code (plus the video upload to
-   Descript) needs the real files on disk. Wait for it to finish syncing down. Make sure you have enough free
-   disk space (videos can be large).
-3. That local folder is what Claude Code reads in the next steps.
+## Step 1 — Connect the Google Drive MCP (cloud, no download)
+Claude Code reads the folder straight from Google Drive using the **Drive connector (MCP)** — nothing to
+download. Jon + Artemis will have set up the connector first (the one-time Cloud config). Then you:
+1. In Claude, open **Connectors** (the plus sign / Customize menu), enable **Google Drive**, and **sign in
+   with your Google account** when the Google/Magic-Link screen appears. (Use the account that can see the
+   Enablement folder.)
+2. That's it — Claude can now reach your Drive. The folder you'll work with is:
+   https://drive.google.com/drive/folders/1oWVo3v9SogD-8XMCFUtekYmhrllTknNU
 
-(Alternative if Drive for Desktop is fussy: from Drive on the web, select the folder → **Download** — it zips
-it — then unzip it locally. Simple, just a big download with the videos.)
+**The skill you're learning:** in Claude Code you just *describe what you want* and it uses the Drive tools
+(`list`/`search_files`, `read_file_content`, `download_file_content`) to go through the folder for you. You
+don't run those commands yourself. If Claude says it can't see the folder, the connector isn't linked — re-do
+the sign-in, or tell Jon.
 
 ## Step 2 — Videos: transcribe with Descript (via Claude Code + Jon's token)
 Claude can't watch video, so we turn each video into text first, using Descript's API. You don't need a
@@ -59,8 +59,9 @@ project per video.
 In Claude Code, paste this (fill in your token + the folder path; use the project id Jon gives you if he
 pre-made the project, otherwise leave it and the first import creates it):
 
-> Use the Descript API (token: `<PASTE TOKEN>`, docs at https://docs.descriptapi.com). Transcribe every video
-> in `<PATH TO ENABLEMENT FOLDER>`. Put them ALL in a single project: if I give you a `project_id`, import
+> Use the Descript API (token: `<PASTE TOKEN>`, docs at https://docs.descriptapi.com). Find every video in
+> the Enablement Drive folder using the Google Drive connector and **download each video's bytes** to
+> transcribe it. Put them ALL in a single Descript project: if I give you a `project_id`, import
 > into it; otherwise on the first video pass `project_name: "Enablement Library Transcripts"` to create the
 > project, then reuse the returned `project_id` for every other video. For each video: do a direct upload
 > (`POST /jobs/import/project_media` with `content_type` + `file_size` to get a signed URL, `PUT` the file
@@ -78,8 +79,8 @@ transcripts into `/Transcripts`, and you just summarize them in Step 3.)
 Open Claude Code, and point it at your local Enablement folder. Then paste it this instruction (edit the
 folder path to yours):
 
-> Read every file in the folder `<PATH TO ENABLEMENT FOLDER>` (including the `Transcripts` subfolder).
-> Skip the raw video files themselves. For each **document** (PDF, Word, text, slides), each **image**, and
+> Using the Google Drive connector, read every file in the Enablement Drive folder (and its `Transcripts`
+> subfolder). Skip the raw video files themselves. For each **document** (PDF, Word, text, slides), each **image**, and
 > each **transcript** file, produce one row of a CSV with these columns: Asset Name, Type, Title, Summary,
 > Topics/Tags, Audience/Use-case, Transcript Link (leave blank, I'll add video transcript links), Status,
 > Date Indexed, Indexed By. Use the summary rules below. For images, "Summary" is a clear description of what
