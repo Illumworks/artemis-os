@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select, text
@@ -264,8 +264,8 @@ async def test_invalid_reason_code_rejected_end_to_end(db_session: AsyncSession)
     }
 
     with patch(
-        "artemis.marketing.scout_runner.get_adapter",
-        return_value=MagicMock(complete=_llm_resp(bad_payload)),
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=_llm_resp(bad_payload),
     ):
         result = await run_scout(
             db_session,
@@ -332,8 +332,8 @@ async def test_valid_signal_after_invalid_uses_batch_learning(db_session: AsyncS
         )
 
     with patch(
-        "artemis.marketing.scout_runner.get_adapter",
-        return_value=MagicMock(complete=AsyncMock(side_effect=_side_effect)),
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=AsyncMock(side_effect=_side_effect),
     ):
         result = await run_scout(
             db_session,
@@ -377,3 +377,54 @@ def test_validate_llm_json_emission_bad_shape() -> None:
 
     with pytest.raises(ValidationError):
         validate_llm_json_emission(ScoutEmittedSignal, '{"urgencyTier": "extreme"}')
+
+
+# ── Layer-C coercion tests (_coerce_reason_codes_entries + districtId) ────────
+
+
+def test_layer_c_bare_string_reason_codes_coerced() -> None:
+    """Bare-string reasonCodes entries are promoted to canonical objects with confidence=0.7."""
+    payload = {**_VALID_PAYLOAD, "reasonCodes": ["POLICY_LIT_MANDATE", "FUNDING_LITERACY_GRANT"]}
+    parsed = ScoutEmittedSignal.model_validate(payload)
+    assert len(parsed.reason_codes) == 2
+    codes = {rc.code for rc in parsed.reason_codes}
+    assert codes == {"POLICY_LIT_MANDATE", "FUNDING_LITERACY_GRANT"}
+    for rc in parsed.reason_codes:
+        assert rc.confidence == 0.7, f"Expected default confidence 0.7, got {rc.confidence}"
+        assert rc.evidence is None
+
+
+def test_layer_c_district_id_accepted() -> None:
+    """districtId is a declared optional field — no longer trips extra='forbid'."""
+    payload = {**_VALID_PAYLOAD, "districtId": "OR-PORTLAND-0001"}
+    parsed = ScoutEmittedSignal.model_validate(payload)
+    assert parsed.district_id == "OR-PORTLAND-0001"
+
+
+def test_layer_c_object_reason_codes_pass_through_untouched() -> None:
+    """Already-object reasonCodes entries are not modified by the coercion validator."""
+    payload = {
+        **_VALID_PAYLOAD,
+        "reasonCodes": [
+            {"code": "POLICY_LIT_MANDATE", "confidence": 0.95, "evidence": "Board resolution"},
+        ],
+    }
+    parsed = ScoutEmittedSignal.model_validate(payload)
+    assert len(parsed.reason_codes) == 1
+    rc = parsed.reason_codes[0]
+    assert rc.code == "POLICY_LIT_MANDATE"
+    assert rc.confidence == 0.95
+    assert rc.evidence == "Board resolution"
+
+
+def test_layer_c_genuinely_unknown_field_still_forbidden() -> None:
+    """extra='forbid' is intact for unknown fields not declared on the model.
+
+    The anti-hallucination guard must not be weakened by the Layer-C tolerance changes.
+    """
+    from pydantic import ValidationError
+
+    payload = {**_VALID_PAYLOAD, "hallucinated_field": "should_be_rejected"}
+    with pytest.raises(ValidationError) as exc_info:
+        ScoutEmittedSignal.model_validate(payload)
+    assert "hallucinated_field" in str(exc_info.value)

@@ -26,6 +26,7 @@ from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.marketing.scout_sources import SCOUT_SOURCE_ADAPTERS
 from artemis.marketing.scout_sources.base import ScoutSourceAdapter
 from artemis.providers.fallback import complete_with_fallback
+from artemis.providers.gemini.adapter import _strip_wrapping_code_fence
 
 logger = logging.getLogger(__name__)
 # Daily. These sources (legislation, board minutes, RFPs, funding notices) update on the order of
@@ -115,9 +116,8 @@ async def _call_llm(
             fallback=fallback_provider,
             serving_provider_out=serving,
         )
-        payload: dict[str, Any] = json.loads(
-            "".join(b.text for b in resp.message.content if hasattr(b, "text"))
-        )
+        raw_text = "".join(b.text for b in resp.message.content if hasattr(b, "text"))
+        payload: dict[str, Any] = json.loads(_strip_wrapping_code_fence(raw_text))
         delta = (
             (resp.usage.input_tokens * 2.5e-7 + resp.usage.output_tokens * 1.25e-6)
             if resp.usage
@@ -244,7 +244,7 @@ async def run_scout(
         prompt_parts.append(
             "Return JSON: headline, sourceType, sourceUrl, campaignFamily, urgencyTier, "
             "reasonCodes, whyFlagged, evidence. sourceType in: "
-            "manual|starbridge|news_article|board_minutes|state_doe|linkedin_post."
+            "manual|starbridge|news_article|board_minutes|state_doe|linkedin_post|legiscan."
         )
         # H2: append last validation error to teach the LLM on this item.
         if _last_validation_error:

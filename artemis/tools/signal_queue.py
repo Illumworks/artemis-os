@@ -52,6 +52,7 @@ _DEF = Tool(
                     "board_minutes",
                     "state_doe",
                     "linkedin_post",
+                    "legiscan",
                 ],
             },
             "headline": {"type": "string"},

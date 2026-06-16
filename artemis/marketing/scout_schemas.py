@@ -10,6 +10,24 @@ camelCase field names are the LLM's native output format; Pydantic aliases map
 them to Python-idiomatic attribute names. ``model_config`` uses
 ``populate_by_name=True`` so tests can use either name.
 
+Layer-C tolerance (provider shape differences)
+----------------------------------------------
+``ScoutEmittedSignal`` contains a ``@model_validator(mode="before")`` that
+coerces provider shape differences WITHOUT loosening semantic validation:
+
+* ``reasonCodes``/``reason_codes`` entries: bare strings are promoted to the
+  canonical ``{code, confidence, evidence}`` object shape.  NOTE: bare-string
+  codes lose per-code confidence (defaulted to 0.7); quality caveat applies —
+  see ``_coerce_reason_codes_entries``.
+* ``districtId`` is declared as an optional field so Gemini's habit of
+  emitting it alongside camelCase fields no longer trips ``extra="forbid"``.
+  The downstream normalizer (``scout_intake.py``) already reads ``districtId``
+  as the canonical key; declaring it here makes the Pydantic strict schema
+  consistent with that contract.
+
+``extra="forbid"`` is retained for all OTHER unknown fields — the
+anti-hallucination guard stands.
+
 Shared helper
 -------------
 ``validate_llm_json_emission(model_cls, raw_text)`` is the reusable seam for
@@ -89,6 +107,50 @@ class ScoutEmittedSignal(BaseModel):
     fit_score: float | None = Field(default=None, ge=0.0, le=1.0)
     state_code: str | None = None
     discovered_by: str = ""  # anti-spoof: overridden to scout_type at intake
+
+    # Layer-C tolerance: ``districtId`` is the canonical key the downstream
+    # normalizer (scout_intake.py ~line 281) already reads.  Declaring it here
+    # prevents ``extra="forbid"`` from rejecting it when a provider (e.g.
+    # Gemini) emits it alongside other camelCase fields.  Snake-case alias
+    # ``district_id`` is accepted via ``populate_by_name=True``.
+    district_id: str | None = Field(default=None, alias="districtId")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_reason_codes_entries(cls, values: Any) -> Any:
+        """Layer-C: promote bare-string reason-code entries to the canonical object shape.
+
+        Gemini (and potentially other non-Claude providers) may emit ``reasonCodes``
+        as a list of plain strings, e.g. ``["DISTRICT_STRATEGIC_LITERACY", ...]``,
+        rather than the expected ``[{"code": "...", "confidence": 0.9, ...}]``.
+        This validator promotes each bare string to the minimal valid object.
+
+        QUALITY CAVEAT: bare-string codes default to confidence=0.7 and evidence=null.
+        Per-code confidence information is lost; callers that care about confidence
+        granularity should use a prompt variant that instructs the model to emit
+        full objects (see the tightened-prompt variant in the A/B test script).
+        Already-valid object entries are passed through untouched.
+
+        The validator runs before ReasonCode sub-model construction, so ``extra="forbid"``
+        on ReasonCode is never bypassed — only the outer list shape is coerced.
+        """
+        if not isinstance(values, dict):
+            return values
+        for key in ("reasonCodes", "reason_codes"):
+            raw = values.get(key)
+            if not isinstance(raw, list):
+                continue
+            coerced: list[Any] = []
+            for entry in raw:
+                if isinstance(entry, str):
+                    # Bare string → minimal canonical object.
+                    # Default confidence=0.7 (mid-range, not max, to avoid inflating
+                    # scores when per-code confidence was never emitted).
+                    coerced.append({"code": entry.strip(), "confidence": 0.7, "evidence": None})
+                else:
+                    coerced.append(entry)
+            values = {**values, key: coerced}
+        return values
 
     @model_validator(mode="before")
     @classmethod

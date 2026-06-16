@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.builders.models  # noqa: F401
-from artemis.marketing.scout_runner import ScoutMode, reason_code_system_suffix, run_scout
+from artemis.marketing.scout_runner import (
+    ScoutMode,
+    _call_llm,
+    reason_code_system_suffix,
+    run_scout,
+)
 from artemis.marketing.scout_sources.base import RawItem, ScoutSourceAdapter
 from artemis.marketing.seeds.marketing_agents import seed_marketing_agents
 
@@ -73,8 +78,8 @@ async def test_three_valid_items(db_session: AsyncSession) -> None:
     await _seed(db_session)
     items = [RawItem(content=f"c{i}", source_url=f"https://ex.com/{i}") for i in range(3)]
     with patch(
-        "artemis.marketing.scout_runner.get_adapter",
-        return_value=MagicMock(complete=_llm(_VALID_PAYLOAD)),
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=_llm(_VALID_PAYLOAD),
     ):
         r = await run_scout(db_session, _SCOUT, ScoutMode.manual, adapter_override=_Mock(items))
     await db_session.commit()
@@ -95,10 +100,10 @@ async def test_three_valid_items(db_session: AsyncSession) -> None:
 
 async def test_reason_code_system_injection(db_session: AsyncSession) -> None:
     await _seed(db_session)
-    complete = _llm(_VALID_PAYLOAD)
+    mock_cwf = _llm(_VALID_PAYLOAD)
     with patch(
-        "artemis.marketing.scout_runner.get_adapter",
-        return_value=MagicMock(complete=complete),
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=mock_cwf,
     ):
         await run_scout(
             db_session,
@@ -106,7 +111,8 @@ async def test_reason_code_system_injection(db_session: AsyncSession) -> None:
             ScoutMode.manual,
             adapter_override=_Mock([RawItem(content="c", source_url="https://ex.com/x")]),
         )
-    request = complete.call_args.args[0]
+    # complete_with_fallback receives the CompletionRequest as its first positional arg.
+    request = mock_cwf.call_args.args[0]
     assert "You may emit ONLY these reason codes: [POLICY_LIT_MANDATE" in request.system
     assert "Any other code will be rejected by intake validation." in request.system
 
@@ -117,12 +123,13 @@ def test_reason_code_system_injection_empty_degrades() -> None:
 
 async def test_invalid_llm_output(db_session: AsyncSession) -> None:
     await _seed(db_session)
-    bad = MagicMock()
-    bad.message.content = [MagicMock(text="NOT JSON")]
-    bad.usage = None
+    # Return a well-formed CompletionResponse whose text content is not valid JSON.
+    # _call_llm will catch the json.JSONDecodeError and return an error string,
+    # causing run_scout to count the item as rejected.
+    bad_resp = _make_completion_response("NOT JSON")
     with patch(
-        "artemis.marketing.scout_runner.get_adapter",
-        return_value=MagicMock(complete=AsyncMock(return_value=bad)),
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=AsyncMock(return_value=bad_resp),
     ):
         r = await run_scout(
             db_session,
@@ -177,3 +184,97 @@ async def test_run_mode_in_metadata(db_session: AsyncSession) -> None:
 
     row = await db_session.get(ScoutRun, r.run_id)
     assert row is not None and (row.dry_run_summary or {}).get("mode") == "backfill"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _call_llm — fence-stripping (no DB needed)
+# ---------------------------------------------------------------------------
+
+
+def _make_completion_response(text: str) -> Any:
+    """Build a CompletionResponse with a single TextBlock."""
+    from artemis.agent.client import CompletionResponse
+    from artemis.agent.types import Message, TextBlock, Usage
+
+    return CompletionResponse(
+        message=Message(role="assistant", content=[TextBlock(text=text)]),
+        stop_reason="end_turn",
+        usage=Usage(input_tokens=10, output_tokens=10),
+    )
+
+
+_FENCED_PAYLOAD = {
+    "headline": "Test signal",
+    "sourceType": "legiscan",
+    "campaignFamily": "obc",
+    "urgencyTier": "standard",
+    "reasonCodes": [],
+    "evidence": "e",
+}
+
+
+async def test_call_llm_strips_json_fence() -> None:
+    """_call_llm must parse a ```json ... ``` fenced response correctly."""
+    fenced = f"```json\n{json.dumps(_FENCED_PAYLOAD)}\n```"
+    mock_resp = _make_completion_response(fenced)
+
+    with patch(
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=AsyncMock(return_value=mock_resp),
+    ):
+        payload, cost, err = await _call_llm(
+            primary_provider="claude-code",
+            fallback_provider="claude-code",
+            user_parts=["Item: test"],
+            system_prompt="You are a scout.",
+            model="claude-haiku-4-5",
+        )
+
+    assert err is None
+    assert payload is not None
+    assert payload["headline"] == "Test signal"
+    assert payload["sourceType"] == "legiscan"
+
+
+async def test_call_llm_strips_bare_fence() -> None:
+    """_call_llm must parse a plain ``` fence (no lang tag) correctly."""
+    fenced = f"```\n{json.dumps(_FENCED_PAYLOAD)}\n```"
+    mock_resp = _make_completion_response(fenced)
+
+    with patch(
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=AsyncMock(return_value=mock_resp),
+    ):
+        payload, cost, err = await _call_llm(
+            primary_provider="claude-code",
+            fallback_provider="claude-code",
+            user_parts=["Item: test"],
+            system_prompt="You are a scout.",
+            model="claude-haiku-4-5",
+        )
+
+    assert err is None
+    assert payload is not None
+    assert payload["headline"] == "Test signal"
+
+
+async def test_call_llm_plain_json_unchanged() -> None:
+    """_call_llm must still parse unfenced JSON correctly after the fence-strip."""
+    plain = json.dumps(_FENCED_PAYLOAD)
+    mock_resp = _make_completion_response(plain)
+
+    with patch(
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=AsyncMock(return_value=mock_resp),
+    ):
+        payload, cost, err = await _call_llm(
+            primary_provider="claude-code",
+            fallback_provider="claude-code",
+            user_parts=["Item: test"],
+            system_prompt="You are a scout.",
+            model="claude-haiku-4-5",
+        )
+
+    assert err is None
+    assert payload is not None
+    assert payload["headline"] == "Test signal"
