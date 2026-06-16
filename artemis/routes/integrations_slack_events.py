@@ -698,6 +698,37 @@ async def route_inbound(
             slack_user_id,
         )
 
+    # ── Proposals digest reply path (DB-backed breadcrumb, deterministic) ───────
+    # "track 1,3" / "track all" / "track none" / "skip" — resolves an active
+    # proposals digest.  Runs AFTER the lifecycle-command path (done/snooze/dismiss)
+    # so those narrower commands are never misread as digest replies.
+    if slack_user_id:
+        try:
+            from artemis.proactivity.commitments import try_apply_proposals_reply
+
+            async with _db.SessionLocal() as db_session:
+                proposals_result = await try_apply_proposals_reply(
+                    db_session,
+                    text=text,
+                    slack_user_id=slack_user_id,
+                )
+            if proposals_result:
+                await _post_slack_message(
+                    session_id=session_id,
+                    normalized_agent=normalized_agent,
+                    team_id=team_id,
+                    channel_id=channel_id,
+                    reply_thread_ts=reply_thread_ts,
+                    outbound_text=proposals_result,
+                )
+                return
+        except Exception:
+            logger.exception(
+                "route_inbound: proposals digest reply path failed for session=%s speaker=%s -- continuing",
+                session_id,
+                slack_user_id,
+            )
+
     # ── Radar dismiss command path (additive, Lane R) ─────────────────────────
     # "drop radar <id>" or "dismiss radar <id>" dismisses an awaiting-reply item
     # so it stops nagging.  Runs AFTER the commitment path so both seams coexist.

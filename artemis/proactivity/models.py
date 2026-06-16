@@ -227,6 +227,37 @@ class CommitmentDecision(Base):
     )
 
 
+class CommitmentProposalsBreadcrumb(Base):
+    """Breadcrumb left when a proposals digest is posted to Jon.
+
+    Stores the number->commitment_id mapping (commitment_map) so the deterministic
+    reply handler can resolve ``track 1,3`` to the right commitment IDs without
+    relying on in-memory state (which cannot cross the Slack subprocess boundary).
+
+    TTL window: expires_at = sent_at + 48h.
+    Lossless invariant: rows are never deleted. Expiry via expires_at + completed_at.
+    """
+
+    __tablename__ = "commitment_proposals_breadcrumbs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # Slack user-ID of the digest recipient (used to scope injection).
+    recipient_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # {"1": 42, "2": 43, ...} — number-as-string -> commitment DB id.
+    commitment_map: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    # The full digest text as delivered (for reference / audit).
+    proposal_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # TTL: expires 48h after posting.
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    # Set when Jon replies and the digest is actioned (or explicitly skipped).
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+
+
 class ProposedAction(Base):
     """Lifecycle table for the propose→confirm agency-writes gate.
 

@@ -23,7 +23,10 @@ from artemis.integrations.slack.client import SlackClient
 from artemis.marketing.writing_studio.review_escalation import send_stale_review_escalations
 from artemis.proactivity import radar_repository
 from artemis.proactivity import repository as repo
-from artemis.proactivity.commitments import send_commitment_followups
+from artemis.proactivity.commitments import (
+    send_commitment_followups,
+    send_commitment_proposals_digest,
+)
 from artemis.proactivity.okr_checkin import (
     build_checkin_digest,
     build_kr_snapshot,
@@ -42,6 +45,7 @@ _MORNING_BRIEF_JOB_ID = "proactivity_morning_brief"
 _OKR_CHECKIN_JOB_ID = "proactivity_okr_checkin"
 _STALE_REVIEW_ESCALATION_JOB_ID = "proactivity_stale_review_escalation"
 _COMMITMENTS_FOLLOWUP_JOB_ID = "proactivity_commitments_followup"
+_COMMITMENTS_PROPOSALS_DIGEST_JOB_ID = "proactivity_commitments_proposals_digest"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -60,15 +64,18 @@ def start_proactivity_scheduler() -> None:
     _register_okr_checkin_job(scheduler)
     _register_stale_review_escalation_job(scheduler)
     _register_commitments_followup_job(scheduler)
+    _register_commitments_proposals_digest_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
-            "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, review escalation cron=%r, commitments cron=%r)",
+            "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, "
+            "review escalation cron=%r, commitments cron=%r, proposals digest cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
             settings.okr_checkin_cron,
             settings.review_escalation_cron,
             settings.commitments_followup_cron,
+            settings.commitments_proposals_digest_cron,
         )
 
 
@@ -138,6 +145,22 @@ def _register_commitments_followup_job(scheduler: AsyncIOScheduler) -> None:
         _fire_commitments_followup,
         trigger=trigger,
         id=_COMMITMENTS_FOLLOWUP_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+def _register_commitments_proposals_digest_job(scheduler: AsyncIOScheduler) -> None:
+    """Register the daily proposals digest job (fires only when proposed items exist)."""
+    trigger = CronTrigger.from_crontab(
+        settings.commitments_proposals_digest_cron,
+        timezone=settings.commitments_proposals_digest_tz,
+    )
+    scheduler.add_job(
+        _fire_commitments_proposals_digest,
+        trigger=trigger,
+        id=_COMMITMENTS_PROPOSALS_DIGEST_JOB_ID,
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=3600,
@@ -380,6 +403,28 @@ async def _fire_commitments_followup() -> None:
         summary.sent,
         summary.failed,
     )
+
+
+async def _fire_commitments_proposals_digest() -> None:
+    """Post the daily proposals digest to Jon's DM if proposed items exist."""
+    async with _db.SessionLocal() as session:
+        try:
+            summary = await send_commitment_proposals_digest(session)
+        except Exception:
+            logger.exception("Commitments proposals digest delivery failed")
+            return
+    if summary.sent:
+        logger.info(
+            "Commitments proposals digest delivered (%d items proposed)",
+            summary.proposed_count,
+        )
+    elif summary.proposed_count == 0:
+        logger.debug("Commitments proposals digest: no proposed items -- skipped")
+    else:
+        logger.info(
+            "Commitments proposals digest skipped (unanswered digest already exists or dry_run=%s)",
+            summary.dry_run,
+        )
 
 
 async def _get_slack_token_for_agent(

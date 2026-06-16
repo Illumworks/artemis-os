@@ -53,6 +53,32 @@ _DISMISS_RE = re.compile(
 )
 _CALLIE_DEFAULT_CHANNEL = "C0B9CHVC7KQ"
 
+# ── Proposals digest reply parsers ────────────────────────────────────────────
+# Deterministic, no LLM.  Patterns:
+#   track 1,3          -> approve items 1 and 3
+#   track 1 3 2        -> approve items 1, 2, 3 (space-separated)
+#   track all          -> approve all
+#   track none / skip  -> leave all as proposed
+_TRACK_NUMS_RE = re.compile(
+    r"^track\s+([0-9][0-9,\s]*)\s*$",
+    re.IGNORECASE,
+)
+_TRACK_ALL_RE = re.compile(r"^track\s+all\s*$", re.IGNORECASE)
+_TRACK_NONE_RE = re.compile(r"^(?:track\s+none|skip)\s*$", re.IGNORECASE)
+
+# How many proposed items to surface in one digest (prevents wall-of-text).
+_PROPOSALS_DIGEST_LIMIT = 10
+# Breadcrumb TTL in hours.
+_PROPOSALS_BREADCRUMB_TTL_HOURS = 48
+
+
+@dataclass(frozen=True)
+class ProposalsDigestSummary:
+    proposed_count: int
+    sent: bool
+    dry_run: bool
+    payload: str  # the digest text (useful for dry_run inspection)
+
 
 @dataclass(frozen=True)
 class CommitmentIngestSummary:
@@ -567,3 +593,234 @@ async def dismiss_commitment(
         commitment_id=commitment_id,
         features=features,
     )
+
+
+def _render_proposals_digest(
+    commitments: list[Commitment],
+    *,
+    now: datetime,
+) -> tuple[str, dict[str, int]]:
+    """Render the numbered digest text and commitment_map {num_str -> commitment_id}.
+
+    Returns (text, commitment_map).
+    commitment_map keys are str (e.g. "1") so they round-trip cleanly through JSONB.
+    """
+    local_tz = ZoneInfo(settings.morning_brief_tz)
+    lines: list[str] = [
+        "Caught these commitments from your recent meetings. "
+        "Reply 'track 1,3', 'track all', or 'track none' to decide which to follow up on."
+    ]
+    commitment_map: dict[str, int] = {}
+    for idx, c in enumerate(commitments, start=1):
+        num = str(idx)
+        commitment_map[num] = c.id
+        due_label = ""
+        if c.due is not None:
+            local_due = c.due.astimezone(local_tz)
+            due_label = f" (due {local_due.date().isoformat()})"
+        lines.append(f"{idx}. {c.text}{due_label}")
+    text = "\n".join(lines)
+    return str(lint_agent_text(text)), commitment_map
+
+
+async def send_commitment_proposals_digest(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    dry_run: bool = False,
+) -> ProposalsDigestSummary:
+    """Gather proposed commitments and DM Jon a numbered roundup digest.
+
+    Idempotency guard: if an unanswered breadcrumb exists from <24h ago, skip
+    (don't re-spam the same list).  Jon's reply handles the breadcrumb; if he
+    never replies the breadcrumb expires in 48h and a fresh digest fires next day.
+
+    If ``dry_run=True``, skip the actual Slack send and breadcrumb write; just
+    return the payload text.  Useful for offline inspection / unit testing.
+
+    Selected -> ``active`` via approve_commitment; unselected stay ``proposed``
+    (never auto-dismissed).  Caller is responsible for session.commit() on the
+    outer transaction if needed — internally this function commits after the
+    breadcrumb is created.
+    """
+    current_time = now or datetime.now(UTC)
+    recipient_id = await _resolve_artemis_dm_recipient(session)
+
+    # ── Idempotency guard: skip if there is already a live unanswered breadcrumb ──
+    existing_crumb = await repo.get_live_proposals_breadcrumb(session, recipient_id)
+    if existing_crumb is not None:
+        # Guard: only skip if the existing breadcrumb was created less than 24h ago.
+        age = current_time - existing_crumb.created_at.replace(tzinfo=UTC) if existing_crumb.created_at.tzinfo is None else current_time - existing_crumb.created_at
+        if age.total_seconds() < 86400:
+            logger.info(
+                "send_commitment_proposals_digest: unanswered digest already exists "
+                "(breadcrumb_id=%d, created=%s, age=%.1fh) -- skipping",
+                existing_crumb.id,
+                existing_crumb.created_at.isoformat(),
+                age.total_seconds() / 3600,
+            )
+            return ProposalsDigestSummary(
+                proposed_count=0,
+                sent=False,
+                dry_run=dry_run,
+                payload="",
+            )
+
+    # ── Gather proposed commitments ───────────────────────────────────────────
+    proposed = await repo.list_proposed_commitments(
+        session,
+        limit=_PROPOSALS_DIGEST_LIMIT,
+    )
+    if not proposed:
+        logger.info(
+            "send_commitment_proposals_digest: no proposed commitments -- nothing to send"
+        )
+        return ProposalsDigestSummary(
+            proposed_count=0,
+            sent=False,
+            dry_run=dry_run,
+            payload="",
+        )
+
+    # ── Render ────────────────────────────────────────────────────────────────
+    digest_text, commitment_map = _render_proposals_digest(proposed, now=current_time)
+
+    if dry_run:
+        return ProposalsDigestSummary(
+            proposed_count=len(proposed),
+            sent=False,
+            dry_run=True,
+            payload=digest_text,
+        )
+
+    # ── Send via Artemis bot ──────────────────────────────────────────────────
+    token = await _get_slack_token_for_agent(session, agent_id="artemis")
+    if not token:
+        raise RuntimeError("No active Slack token found for agent_id='artemis'")
+
+    await SlackClient(token=token).post_dm(user=recipient_id, text=digest_text)
+
+    # ── Leave breadcrumb (DB-backed, TTL 48h) ─────────────────────────────────
+    expires_at = current_time + timedelta(hours=_PROPOSALS_BREADCRUMB_TTL_HOURS)
+    await repo.create_commitment_proposals_breadcrumb(
+        session,
+        recipient_id=recipient_id,
+        commitment_map=commitment_map,
+        proposal_text=digest_text,
+        expires_at=expires_at,
+    )
+    await session.commit()
+
+    logger.info(
+        "send_commitment_proposals_digest: sent digest with %d items to %s "
+        "(commitment_ids=%s)",
+        len(proposed),
+        recipient_id,
+        [c.id for c in proposed],
+    )
+    return ProposalsDigestSummary(
+        proposed_count=len(proposed),
+        sent=True,
+        dry_run=False,
+        payload=digest_text,
+    )
+
+
+async def try_apply_proposals_reply(
+    session: AsyncSession,
+    *,
+    text: str,
+    slack_user_id: str,
+) -> str | None:
+    """Deterministically handle a DM reply to the proposals digest.
+
+    Checks whether *slack_user_id* has a live proposals breadcrumb.  If yes,
+    parses the reply with a keyword classifier (no LLM):
+      - ``track <nums>``  -> approve those items, leave the rest as proposed
+      - ``track all``     -> approve all items in the digest
+      - ``track none`` / ``skip`` -> leave all as proposed (no action)
+
+    Returns a confirmation string if the reply was handled, or ``None`` if
+    there is no live breadcrumb / the message doesn't match.
+
+    Caller is responsible for session.commit() after this returns a non-None
+    value (approvals may be pending in the session).
+    """
+    crumb = await repo.get_live_proposals_breadcrumb(session, slack_user_id)
+    if crumb is None:
+        return None
+
+    normalized = text.strip()
+
+    # ── Classify reply ────────────────────────────────────────────────────────
+    if _TRACK_NONE_RE.match(normalized):
+        # Leave everything as proposed — just complete the breadcrumb.
+        await repo.complete_proposals_breadcrumb(session, crumb.id)
+        await session.commit()
+        logger.info(
+            "try_apply_proposals_reply: track none -- all %d items stay proposed (user=%s)",
+            len(crumb.commitment_map),
+            slack_user_id,
+        )
+        return "Got it. I'll leave those for now — they'll appear in the next digest."
+
+    # Map of valid numbers from the breadcrumb.
+    commitment_map: dict[str, int] = {
+        str(k): int(v)
+        for k, v in (crumb.commitment_map or {}).items()
+        if str(k).isdigit()
+    }
+    all_ids = list(commitment_map.values())
+
+    if _TRACK_ALL_RE.match(normalized):
+        selected_ids = all_ids
+    elif _TRACK_NUMS_RE.match(normalized):
+        # Parse comma-and-space separated numbers.
+        raw = _TRACK_NUMS_RE.match(normalized).group(1)  # type: ignore[union-attr]
+        tokens = re.split(r"[,\s]+", raw.strip())
+        selected_nums: list[str] = [t.strip() for t in tokens if t.strip().isdigit()]
+        selected_ids = [
+            commitment_map[n] for n in selected_nums if n in commitment_map
+        ]
+        if not selected_ids and selected_nums:
+            # Numbers mentioned but none valid — likely a mis-parse.
+            return None
+    else:
+        # Not a digest reply syntax — don't consume the breadcrumb.
+        return None
+
+    # ── Approve selected, leave others as proposed ────────────────────────────
+    approved_ids: list[int] = []
+    for cid in selected_ids:
+        result = await approve_commitment(session, cid)
+        if result is not None:
+            approved_ids.append(cid)
+
+    await repo.complete_proposals_breadcrumb(session, crumb.id)
+    await session.commit()
+
+    left_count = len(all_ids) - len(approved_ids)
+    logger.info(
+        "try_apply_proposals_reply: approved %d commitment(s) %s; %d left as proposed (user=%s)",
+        len(approved_ids),
+        approved_ids,
+        left_count,
+        slack_user_id,
+    )
+
+    if not approved_ids:
+        return "No valid items found. Nothing changed."
+
+    approved_word = "commitment" if len(approved_ids) == 1 else "commitments"
+    if left_count == 0:
+        return f"Tracking {len(approved_ids)} {approved_word}. I'll follow up as they come due."
+    elif left_count == 1:
+        return (
+            f"Tracking {len(approved_ids)} {approved_word}. "
+            f"The other 1 I'll leave for now."
+        )
+    else:
+        return (
+            f"Tracking {len(approved_ids)} {approved_word}. "
+            f"The other {left_count} I'll leave for now."
+        )

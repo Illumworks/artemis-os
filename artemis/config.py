@@ -184,6 +184,17 @@ class Settings(BaseSettings):
         default=48,
         description="Default snooze duration when a follow-up reply omits an explicit window.",
     )
+    commitments_proposals_digest_cron: str = Field(
+        default="0 9 * * *",
+        description=(
+            "Cron expression for the daily proposals digest sweep "
+            "(default: every day at 09:00). Fires only when proposed commitments exist."
+        ),
+    )
+    commitments_proposals_digest_tz: str = Field(
+        default="America/New_York",
+        description="IANA timezone for the commitment proposals digest sweep.",
+    )
     uvicorn_workers: int = Field(
         default=1,
         validation_alias=AliasChoices(

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.proactivity.models import (
     Commitment,
     CommitmentDecision,
+    CommitmentProposalsBreadcrumb,
     MorningBriefDelivery,
     OkrCheckinBreadcrumb,
 )
@@ -588,3 +589,84 @@ async def dismiss_commitment_with_decision(
         features=features,
     )
     return commitment
+
+
+# ── Commitment proposals breadcrumbs ─────────────────────────────────────────
+# A breadcrumb is left when the daily proposals digest is posted.  handle_turn /
+# route_inbound reads it to detect "this DM reply is answering the digest" and
+# routes the reply to try_apply_proposals_reply (deterministic parser).
+# TTL: 48h.  Lossless: rows are never deleted, only superseded by completed_at.
+
+
+async def create_commitment_proposals_breadcrumb(
+    session: AsyncSession,
+    *,
+    recipient_id: str,
+    commitment_map: dict[str, int],
+    proposal_text: str,
+    expires_at: datetime,
+) -> CommitmentProposalsBreadcrumb:
+    """Insert a new proposals digest breadcrumb."""
+    crumb = CommitmentProposalsBreadcrumb(
+        recipient_id=recipient_id,
+        commitment_map=commitment_map,
+        proposal_text=proposal_text,
+        expires_at=expires_at,
+    )
+    session.add(crumb)
+    await session.flush()
+    await session.refresh(crumb)
+    return crumb
+
+
+async def get_live_proposals_breadcrumb(
+    session: AsyncSession,
+    recipient_id: str,
+) -> CommitmentProposalsBreadcrumb | None:
+    """Return the most recent live proposals breadcrumb for a recipient, or None.
+
+    "Live" means: expires_at > now AND completed_at IS NULL.
+    """
+    now = datetime.now(UTC)
+    result = await session.execute(
+        select(CommitmentProposalsBreadcrumb)
+        .where(
+            CommitmentProposalsBreadcrumb.recipient_id == recipient_id,
+            CommitmentProposalsBreadcrumb.expires_at > now,
+            CommitmentProposalsBreadcrumb.completed_at.is_(None),
+        )
+        .order_by(CommitmentProposalsBreadcrumb.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def complete_proposals_breadcrumb(
+    session: AsyncSession,
+    breadcrumb_id: int,
+) -> None:
+    """Mark a proposals breadcrumb as completed so it no longer injects context."""
+    await session.execute(
+        update(CommitmentProposalsBreadcrumb)
+        .where(CommitmentProposalsBreadcrumb.id == breadcrumb_id)
+        .values(completed_at=datetime.now(UTC))
+    )
+
+
+async def list_proposed_commitments(
+    session: AsyncSession,
+    *,
+    limit: int = 10,
+) -> list[Commitment]:
+    """Return up to *limit* proposed commitments ordered oldest/soonest-due first."""
+    result = await session.execute(
+        select(Commitment)
+        .where(Commitment.status == "proposed")
+        .order_by(
+            Commitment.due.asc().nulls_last(),
+            Commitment.created_at.asc(),
+            Commitment.id.asc(),
+        )
+        .limit(limit)
+    )
+    return list(result.scalars().all())
