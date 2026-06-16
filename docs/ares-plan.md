@@ -277,20 +277,29 @@ Tracks R (rebalancing) and C (Claude accounts) are **independent of Ares** and c
 > `okr_extract_activity` not wired to any call site — defer; Slack channel gate is hard-coded Anthropic
 > (needs a code refactor) — optional R4.
 >
-> **R3 build (revised), in safe order:**
-> 1. **Gemini-429 safety net FIRST (in progress, agent build):** runtime fallthrough Gemini→claude-code
->    on 429/503/5xx/connection (the cascade only fell through at *construction* time before). Raise
->    `GeminiRateLimitError`; shared `complete_with_fallback` helper at the 5 moved call sites
->    (scout_runner `_call_llm`, memory consolidator, graph_extractor, meetings summarizer, trajectory
->    summarizer). Non-retryable (400) re-raises. NO lm-studio in the chain.
-> 2. **Flip the 6 classification scouts → Gemini** (agent rows id 12,6,10,7,11,13: provider=gemini,
->    model=`gemini-2.5-flash-lite`, fallback=claude-code). Legislative(8)+Federal Funding(9) STAY Claude.
-> 3. **Override the JSON/summary features → Gemini→Claude** via `feature_routing_overrides`
->    (`memory_consolidation`, `memory_graph_extraction`, `meeting_summary`, `trajectory_summary`),
->    cascade `[{gemini, gemini-2.5-flash},{claude-code}]` — this also removes the dead lm-studio hop from
->    those catalog defaults while local is offline.
-> 4. **Verify via `cost_events`** (`SELECT feature_tag, provider, model, count(*) ... GROUP BY`) that each
->    moved feature actually ran on Gemini; judgment/customer paths unchanged. Reversible: flip rows back.
+> **R3 STATUS (2026-06-15 end of session): infra DONE + committed; live flips ATTEMPTED then REVERTED.**
+> - ✅ **Gemini-429 safety net** (`6c011b7`): runtime fallthrough Gemini→claude-code on
+>   429/503/5xx/connection via `complete_with_fallback`, wired at the 5 call sites (scout `_call_llm`,
+>   memory consolidator, graph_extractor, meetings summarizer, trajectory summarizer). 400 re-raises. No
+>   lm-studio. Each call site defaults primary to claude-code when no active override → inert until flipped.
+> - ✅ **Gemini model-map fix** (`e9011ee`) + **fence-strip** (`206a40b`): Gemini was 404ing (retired
+>   preview) AND wraps JSON in ```json fences. Both fixed; verified Gemini returns clean parseable JSON live.
+> - ⏪ **Scout flips + the 4 feature overrides: APPLIED then REVERTED.** Live test (`run_scout` on Gemini)
+>   surfaced a deeper layer: **the scout output contract is implicitly Claude-tuned.** Gemini parses fine
+>   now, but emits `reasonCodes` as bare strings + an extra `districtId` field, which the scout's
+>   `normalize_intake_payload` / Pydantic validator REJECTS (so every item rejected → would silently
+>   degrade the signal pipeline). Validation failure is NOT a provider error, so the 429 net does not
+>   catch it. Reverted all 6 scout rows to claude-code/claude-haiku-4-5 and deactivated the 4 overrides.
+>   Nothing left on Gemini. cost_events confirmed Gemini DID serve the calls (tokens recorded) before revert.
+>
+> **→ REAL NEXT STEP (the actual R3 completion): per-feature Gemini OUTPUT HARDENING.** The prompts/schemas
+> were tuned to Claude's formatting. To move each feature to Gemini, either (a) make the validator lenient
+> (coerce string `reasonCodes` → expected shape; tolerate/parse extra fields like `districtId`/
+> `campaignFamily`), and/or (b) make the prompt explicit about the exact JSON schema. Do it ONE feature at
+> a time with a live `run_scout`/call + cost_events proof that it (i) lands on Gemini AND (ii) produces a
+> VALID accepted result — not just a 200. Start with one classification scout; the memory/meeting features
+> have the same Claude-tuned-schema risk and need the same per-feature validation before flipping.
+> Caveat reminder: GEMINI + CODEX only; no lm-studio until Ares.
 >
 > **C-followup:** route Floating Artemis (personal Artemis chat) → personal account — the `complete()`
 > path C1 didn't cover.
