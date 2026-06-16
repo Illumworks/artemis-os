@@ -7,6 +7,43 @@ sequenced, not yet started. Companion docs: `docs/named-agents-candidates.md`,
 
 ---
 
+## 0. Persona + Home (planned 2026-06-16) — NEW
+
+**Persona: v0.2 ADOPTED.** Jon authored it; saved to repo root as `ares-personality-profile.md` (curly
+quotes normalized to ASCII so `voice_corpus` parses — the known persona-parse gotcha that emptied Kai's
+corpus). Inert until Ares is registered. Essence: Jon's **private build + research partner** — "controlled
+force," conversational *before* operational, candid (he's owner-private), durable memory, self-correcting,
+protective of the build. Structured outputs (Research Brief / Build Plan / Build Report / Handoff to Artemis).
+Autonomy L0-3 with hard stops at the same three borders this plan already names (production commits, spending
+money, sending as Jon). Reports to Artemis when project state/commitments matter; escalates to Callie
+(messaging) / Kai (assets). Has its own Anti-Repetition Rule — already enforced globally for all agents at
+`artemis/floating_artemis/chat.py:89-91`. **Name kept**, reframed: force under control, not war-god.
+
+**Home: the "Dev Projects" surface, renamed + upgraded.** Ares lives in the current top-level **Dev Projects**
+section (owner-only). The rename is a **user-facing LABEL change only** — keep the `dev-projects` view slug
+(`public/js/core/navigation.js:14,96`) and the `dev_projects/` module internal, so it stays low-risk/cosmetic
+across ~6 files (`navigation.js`, `index.html`, `home.js` section order, `assistant-bot.js`, `dev-docs.js`,
+`shortcuts-modal.js`). The team itself flagged the current name reads "too legacy and developer-specific"
+(`public/js/panels/dev-docs.js:128`). **Chosen name: "Forge"** (Jon, 2026-06-16) — the build surface where
+Ares makes things. Rename the user-facing label only; internal `dev-projects` slug + `dev_projects/` module
+stay as-is.
+
+**Experience goal (Jon's words): a "claude.ai Code experience, upgraded with what we've added."** The familiar
+plan-and-build coding surface, but with Ares's four capabilities layered on (§2): durable project memory (no
+re-briefing), the multi-provider sub-agent fleet, auto-delegate → validate → report-up, and owner-private
+scope. The renamed section is the front door to that experience; Ares is the partner you build in it with.
+
+**Note — no Slack channel needed.** Unlike Callie/Kai (Slack-resident), Ares's home is this **in-app surface**,
+so his Named-Agent wrapper (Phase 3) is persona + scope + the dev_projects loop as his tool layer; the Slack
+app/`integrations` row steps from the playbook are optional/skippable for him.
+
+**Build later (not now, per Jon):** registration follows `docs/named-agent-build-playbook.md` — persona ✅ ready
+→ `_AGENT_DEFAULTS` "ares" + `scope_policy.allowance_for_agent_ares` (owner-private: `agent:ares` + Jon's
+owner/personal scope, excluded from marketing-shared) + surface entry + wire the dev_projects loop as his
+tools. Phases below (§7) unchanged.
+
+---
+
 ## 1. What Ares is
 
 **The orchestrator-maker Jon plans with.** Plan together → Ares runs the build →
