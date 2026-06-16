@@ -941,9 +941,15 @@ async def _handle_mentionable_event(
     ts: str = str(event.get("ts", ""))
     thread_ts: str | None = str(event["thread_ts"]) if "thread_ts" in event else None
     raw_text: str | None = str(event["text"]) if "text" in event else None
-    # Detect channel-join events: arrive as message subtype "channel_join".
-    # The joiner's user_id is already captured in user_id above.
-    is_channel_join: bool = str(event.get("subtype", "")) == "channel_join"
+    # Message subtype handling. channel_join is the one subtype we ACT on (greet the
+    # joiner, below). Edits/deletes/meta subtypes are NOT new user messages and must
+    # never trigger a response — Slack sends message_changed when a user EDITS a
+    # message, which previously made the agent reply again to the edit.
+    _subtype: str = str(event.get("subtype", ""))
+    is_channel_join: bool = _subtype == "channel_join"
+    if _subtype in {"message_changed", "message_deleted", "message_replied"}:
+        logger.debug("Slack message subtype=%s ignored (not a new user message)", _subtype)
+        return
 
     try:
         agent_cfg = await _resolve_agent_slack_config(
