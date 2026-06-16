@@ -45,6 +45,18 @@ class GeminiRateLimitError(ProviderAPIError):
     """
 
 
+class CodexRateLimitError(ProviderAPIError):
+    """Raised when the Codex CLI reports a usage-limit or rate-limit failure.
+
+    Detected from NDJSON events whose message contains "usage limit",
+    "rate limit", or "try again" (case-insensitive).  Subclasses
+    ``ProviderAPIError`` with status_code=429 so the fallback machinery treats
+    it identically to a Gemini 429.  Other ``turn.failed`` reasons (auth errors,
+    task failures, etc.) are NOT mapped to this type — they surface as plain
+    ``ProviderAPIError`` so genuine failures remain visible.
+    """
+
+
 class MissingCliBinaryError(Exception):
     """Raised at adapter construction time when the required CLI binary is absent.
 

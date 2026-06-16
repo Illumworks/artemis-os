@@ -27,7 +27,7 @@ import os
 from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.agent.types import Message, TextBlock, Usage
 from artemis.providers._bin_path import find_cli_binary
-from artemis.providers.errors import MissingCliBinaryError, ProviderAPIError
+from artemis.providers.errors import CodexRateLimitError, MissingCliBinaryError, ProviderAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,7 @@ class CodexAdapter:
         if not raw:
             raise ProviderAPIError(0, "codex CLI produced no output")
 
+        _check_for_rate_limit_failure(raw)
         result_text, usage = _parse_ndjson_output(raw)
 
         return CompletionResponse(
@@ -131,6 +132,64 @@ class CodexAdapter:
             stop_reason="end_turn",
             usage=usage,
         )
+
+
+_RATE_LIMIT_PHRASES = ("usage limit", "rate limit", "try again")
+
+
+def _check_for_rate_limit_failure(raw: str) -> None:
+    """Scan NDJSON output for a usage-limit or rate-limit failure event.
+
+    Raises
+    ------
+    CodexRateLimitError
+        When a ``turn.failed`` or top-level ``error`` event is found whose
+        message contains "usage limit", "rate limit", or "try again"
+        (case-insensitive).  These indicate a transient account cap — safe to
+        fall back.
+    ProviderAPIError
+        When a ``turn.failed`` event is found for *other* reasons (auth errors,
+        task failures, etc.).  These represent genuine failures and must NOT be
+        silently retried.
+
+    Notes
+    -----
+    Only the first failure event is acted on.  If the NDJSON contains no
+    failure events this function returns normally and normal parsing proceeds.
+    """
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        obj_type = obj.get("type", "")
+        message: str = ""
+
+        if obj_type == "turn.failed":
+            # error may be nested {"error": {"message": "..."}} or flat {"error": "..."}
+            err = obj.get("error") or {}
+            message = str(err.get("message", "")) if isinstance(err, dict) else str(err)
+            if not message:
+                # Some events carry the message at the top level.
+                message = str(obj.get("message", ""))
+
+        elif obj_type == "error":
+            # Standalone error event: {"type": "error", "message": "..."}
+            message = str(obj.get("message", ""))
+
+        else:
+            continue  # not a failure event — skip
+
+        # We have a failure message.  Classify it.
+        lower = message.lower()
+        if any(phrase in lower for phrase in _RATE_LIMIT_PHRASES):
+            raise CodexRateLimitError(429, message)
+        # Genuine task failure — raise as plain ProviderAPIError so it is visible.
+        raise ProviderAPIError(1, f"codex turn.failed: {message}")
 
 
 def _parse_ndjson_output(raw: str) -> tuple[str, Usage]:

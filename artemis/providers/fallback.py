@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.providers.errors import (
+    CodexRateLimitError,
     GeminiRateLimitError,
     MissingApiKeyError,
     MissingCliBinaryError,
@@ -60,7 +61,7 @@ _NETWORK_ERRORS: tuple[type[Exception], ...] = (
 
 def _is_retryable(exc: Exception) -> bool:
     """Return True if exc represents a transient error safe to fall through."""
-    if isinstance(exc, GeminiRateLimitError):
+    if isinstance(exc, (GeminiRateLimitError, CodexRateLimitError)):
         return True
     if isinstance(exc, ProviderAPIError):
         return exc.status_code in _RETRYABLE_STATUS_CODES
