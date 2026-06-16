@@ -84,12 +84,12 @@ async def test_ready_for_review_marks_blank_draft_and_reuses_pending_approval(
     assert first.json()["ok"] is True
     assert first.json()["reviewerEmail"] == "angela@amiralearning.com"
     assert first.json()["delivery"]["target"] == "channel_mention"
-    assert first.json()["delivery"]["channelId"] == "C_MARKETING"
+    assert first.json()["delivery"]["channelId"] == "C0BAJV9A2UX"
     assert first.json()["delivery"]["slackUserId"] == "U_ANGELA"
     assert lookup_mock.await_count == 2
     assert post_message_mock.await_count == 2
     post_message_mock.assert_any_await(
-        channel="C_MARKETING",
+        channel="C0BAJV9A2UX",
         text=(
             f'<@U_ANGELA> - "Blank review draft" by Local Dev is ready for review. '
             f"<https://artemis.example/#writing-studio?draft={draft.id}|Open draft>"
@@ -163,9 +163,12 @@ async def test_ready_for_review_falls_back_to_marketing_channel_when_user_missin
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Blank (non-campaign) draft with unresolvable reviewer → posts to content-review channel."""
     await _seed_callie_integration(db_session)
     draft = await ws_invoke.create_blank_draft(db_session, title="Channel fallback draft")
-    monkeypatch.setattr(settings, "marketing_campaigns_slack_channel", "C_MARKETING")
+    # marketing_campaigns_slack_channel is irrelevant here: draft has no real campaign so
+    # _resolve_review_channel returns the content-review channel (C0BAJV9A2UX default).
+    monkeypatch.setattr(settings, "marketing_content_review_channel_id", "C0BAJV9A2UX")
     monkeypatch.setattr(settings, "app_base_url", "https://artemis.example")
 
     with (
@@ -187,14 +190,91 @@ async def test_ready_for_review_falls_back_to_marketing_channel_when_user_missin
     body = response.json()
     assert body["ok"] is True
     assert body["delivery"]["target"] == "channel_mention"
-    assert body["delivery"]["channelId"] == "C_MARKETING"
+    assert body["delivery"]["channelId"] == "C0BAJV9A2UX"
     post_message_mock.assert_awaited_once_with(
-        channel="C_MARKETING",
+        channel="C0BAJV9A2UX",
         text=(
             f'missing@example.com - "Channel fallback draft" by Local Dev is ready for review. '
             f"<https://artemis.example/#writing-studio?draft={draft.id}|Open draft>"
         ),
     )
+
+
+async def test_review_channel_routing_campaign_attached_uses_campaigns_channel(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A draft WITH a real campaign_id posts to the marketing-campaigns channel."""
+    await _seed_callie_integration(db_session)
+    monkeypatch.setattr(settings, "marketing_campaigns_slack_channel", "C_CAMPAIGNS")
+    monkeypatch.setattr(settings, "app_base_url", "https://artemis.example")
+
+    with (
+        patch(
+            "artemis.integrations.slack.client.SlackClient.lookup_user_by_email",
+            new=AsyncMock(return_value="U_ANGELA"),
+        ),
+        patch(
+            "artemis.integrations.slack.client.SlackClient.post_message",
+            new=AsyncMock(return_value={"ok": True}),
+        ) as post_message_mock,
+    ):
+        result = await review_notifications.send_callie_ready_for_review_ping(
+            db_session,
+            draft_id=10,
+            title="Campaign Draft",
+            author_name="Author",
+            reviewer_email="angela@amiralearning.com",
+            campaign_id="outreach_email",  # real campaign family → campaigns channel
+            mode="channel_mention",
+        )
+
+    assert result.ok is True
+    assert result.channel_id == "C_CAMPAIGNS"
+    post_message_mock.assert_awaited_once()
+    call_kwargs = post_message_mock.call_args
+    assert call_kwargs.kwargs["channel"] == "C_CAMPAIGNS"
+
+
+async def test_review_channel_routing_no_campaign_uses_content_review_channel(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A draft WITHOUT a campaign (None or template family) posts to C0BAJV9A2UX."""
+    await _seed_callie_integration(db_session)
+    monkeypatch.setattr(settings, "marketing_campaigns_slack_channel", "C_CAMPAIGNS")
+    monkeypatch.setattr(settings, "marketing_content_review_channel_id", "C0BAJV9A2UX")
+    monkeypatch.setattr(settings, "app_base_url", "https://artemis.example")
+
+    for camp_id in (None, "writing_studio_template"):
+        with (
+            patch(
+                "artemis.integrations.slack.client.SlackClient.lookup_user_by_email",
+                new=AsyncMock(return_value="U_ANGELA"),
+            ),
+            patch(
+                "artemis.integrations.slack.client.SlackClient.post_message",
+                new=AsyncMock(return_value={"ok": True}),
+            ) as post_message_mock,
+        ):
+            result = await review_notifications.send_callie_ready_for_review_ping(
+                db_session,
+                draft_id=20,
+                title="One-off Doc",
+                author_name="Author",
+                reviewer_email="angela@amiralearning.com",
+                campaign_id=camp_id,  # no real campaign → content-review channel
+                mode="channel_mention",
+            )
+
+        assert result.ok is True, f"campaign_id={camp_id!r}: {result.error}"
+        assert result.channel_id == "C0BAJV9A2UX", (
+            f"campaign_id={camp_id!r}: expected C0BAJV9A2UX, got {result.channel_id}"
+        )
+        call_kwargs = post_message_mock.call_args
+        assert call_kwargs.kwargs["channel"] == "C0BAJV9A2UX", (
+            f"campaign_id={camp_id!r}: post_message called with wrong channel"
+        )
 
 
 async def test_send_callie_ready_for_review_ping_dm_mode_still_uses_direct_message(
