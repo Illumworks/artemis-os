@@ -32,9 +32,23 @@ rollout for every remaining feature:
    `extra="forbid"` + typed `reason_codes`). Tackle after the internal features, with a *quality*
    check (not just "validated"), and keep on Claude if Gemini quality dips.
 
-**Still on Claude (reverted / not yet flipped):** all 6 classification scouts, memory
-consolidation, graph extraction, meeting summary. Next internal targets: memory consolidation /
-graph extraction (apply learnings 1+2 first).
+**Proof #2 — `memory_graph_extraction` LIVE on Gemini flash-lite (2026-06-16, commit `1f52827`).**
+Applied learnings 1+2 up front → went fast. Live-verified additive: a sample extracted valid
+entities/relations on Gemini (clean JSON, NO Layer C needed). Lossless preserved (additive upserts;
+no supersession). Confirms the pattern generalizes; the per-feature cost is small once the model
+trap is known.
+
+**Codex status (2026-06-16, commit `92fa85f`):** tried Codex on `trajectory_summary` as a
+provider-agnostic check. The Codex ADAPTER was broken against codex CLI v0.129+ (`--quiet` removed;
+`--full-auto` deprecated → `--sandbox workspace-write`) — fixed; codex exec now launches. But the
+**ChatGPT/Codex account is at its usage limit** (turn.failed "usage limit"), so Codex output is
+UNVERIFIED until the cap resets. Two codex follow-ups: (1) detect the usage-limit/turn.failed event
+and surface it as a rate-limit error so routing falls back (parallel to the Gemini-429 net);
+(2) reconcile exit-code handling. Re-test Codex output after the cap resets.
+
+**Still on Claude (not yet flipped):** all 6 classification scouts, memory consolidation, meeting
+summary. ✅ Done on Gemini: `trajectory_summary`, `memory_graph_extraction`. Next internal target:
+memory consolidation (Lead-hands-on — supersession is lossless-sensitive). Scouts last.
 
 ---
 
