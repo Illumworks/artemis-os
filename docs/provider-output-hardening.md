@@ -38,13 +38,16 @@ entities/relations on Gemini (clean JSON, NO Layer C needed). Lossless preserved
 no supersession). Confirms the pattern generalizes; the per-feature cost is small once the model
 trap is known.
 
-**Codex status (2026-06-16, commit `92fa85f`):** tried Codex on `trajectory_summary` as a
-provider-agnostic check. The Codex ADAPTER was broken against codex CLI v0.129+ (`--quiet` removed;
-`--full-auto` deprecated → `--sandbox workspace-write`) — fixed; codex exec now launches. But the
-**ChatGPT/Codex account is at its usage limit** (turn.failed "usage limit"), so Codex output is
-UNVERIFIED until the cap resets. Two codex follow-ups: (1) detect the usage-limit/turn.failed event
-and surface it as a rate-limit error so routing falls back (parallel to the Gemini-429 net);
-(2) reconcile exit-code handling. Re-test Codex output after the cap resets.
+**Codex — VERIFIED working (2026-06-16, commits `92fa85f` + `0a2489e`).** The Codex adapter was
+fully broken against codex CLI v0.129+ and took THREE fixes: (1) `--quiet` removed; (2) `--full-auto`
+→ `--sandbox workspace-write`; (3) `_parse_ndjson_output` matched the obsolete `result`/`message`
+events and fell back to returning the raw NDJSON stream — rewired to the v0.129 schema (text from
+`item.completed`/`agent_message`/`text`; usage from `turn.completed`). **End-to-end verified:
+`trajectory_summary` produces a valid TrajectorySummary via Codex — and Codex needed NO fence/prose
+tolerance (cleaner structured output than Gemini here).** So the hardening layer is proven
+PROVIDER-AGNOSTIC across Gemini + Codex. **Remaining before routing real work to Codex:** detect the
+usage-limit/`turn.failed` event and surface it as a rate-limit so the cascade falls back (parallel to
+the Gemini-429 net). Nothing routes to Codex yet.
 
 **Still on Claude (not yet flipped):** all 6 classification scouts, memory consolidation, meeting
 summary. ✅ Done on Gemini: `trajectory_summary`, `memory_graph_extraction`. Next internal target:
