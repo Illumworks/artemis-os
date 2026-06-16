@@ -203,21 +203,46 @@ async def _resolve_jon_slack_id(token: str) -> str | None:
 async def fetch_gmail_awaiting_reply(session: AsyncSession) -> list[RadarItem]:
     """Return Gmail threads where Jon is a recipient but has NOT replied last.
 
-    Uses the existing gmail.readonly integration credentials (gcal-style
-    per-user row with provider="gmail").  Falls back to [] on any error.
+    Uses the personal Google credential (purpose="personal") — the same row
+    used by routes/gmail.py and agency_gate.py.  Falls back to [] on any error.
     """
-    creds = await _resolve_gmail_creds(session)
-    if creds is None:
+    resolved = await _resolve_gmail_creds(session)
+    if resolved is None:
         logger.debug("radar: no Gmail credentials found — skipping Gmail half")
         return []
 
-    from artemis.integrations.gmail.client import GmailAPIError, GmailClient
+    creds, expires_at = resolved
+
+    from artemis.integrations.gmail.auth_dead import handle_gmail_auth_dead
+    from artemis.integrations.gmail.client import GmailAPIError, GmailAuthDeadError, GmailClient
+
+    # Persist callback: if GmailClient._refresh() fires during the request,
+    # write the new tokens back to google_credentials so they survive the call.
+    async def _on_tokens_refreshed(
+        new_access_token: str, new_refresh_token: str, new_expires_at: float
+    ) -> None:
+        from sqlalchemy import update as sa_update
+
+        from artemis.google_docs.models import GoogleCredential as GoogleCred
+
+        await session.execute(
+            sa_update(GoogleCred)
+            .where(GoogleCred.purpose == "personal")
+            .values(
+                access_token=new_access_token,
+                refresh_token=new_refresh_token,
+                expiry=datetime.fromtimestamp(new_expires_at, tz=UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
 
     client = GmailClient(
         access_token=creds["access_token"],
         refresh_token=creds["refresh_token"],
         client_id=creds["client_id"],
         client_secret=creds["client_secret"],
+        expires_at=expires_at,
+        on_tokens_refreshed=_on_tokens_refreshed,
     )
 
     cutoff_epoch = int((datetime.now(UTC) - timedelta(days=_WINDOW_DAYS)).timestamp())
@@ -226,6 +251,10 @@ async def fetch_gmail_awaiting_reply(session: AsyncSession) -> list[RadarItem]:
 
     try:
         messages = await client.list_recent_messages(max_results=30, query=query)
+    except GmailAuthDeadError:
+        logger.warning("radar: Gmail auth dead — marking needs_reauth and notifying owner")
+        await handle_gmail_auth_dead(session)
+        return []
     except GmailAPIError as exc:
         logger.warning("radar: Gmail list_recent_messages failed: %s", exc)
         return []
@@ -310,57 +339,54 @@ def _extract_sender_name(from_header: str) -> str:
     return from_header
 
 
-async def _resolve_gmail_creds(session: AsyncSession) -> dict[str, str] | None:
-    """Resolve Gmail OAuth credentials from the Integration table."""
+async def _resolve_gmail_creds(
+    session: AsyncSession,
+) -> tuple[dict[str, str], float] | None:
+    """Resolve Gmail OAuth credentials from the personal google_credentials row.
+
+    Returns (creds_dict, expires_at_float) or None if unavailable.
+    Gmail uses the personal Google credential (purpose="personal") — the same
+    row that backs GCal, Drive, and Docs — NOT a separate gmail integrations row.
+    """
     from sqlalchemy import select
 
-    from artemis.integrations.crypto import decrypt_credentials
-    from artemis.integrations.models import Integration
+    from artemis.google_docs.models import GoogleCredential
+    from artemis.google_integration import (
+        google_has_any_scope,
+        resolve_google_oauth_client_config,
+    )
 
     result = await session.execute(
-        select(Integration)
-        .where(
-            Integration.provider == "gmail",
-            Integration.status == "active",
-        )
-        .order_by(Integration.connected_at.desc())
+        select(GoogleCredential)
+        .where(GoogleCredential.purpose == "personal")
+        .order_by(GoogleCredential.updated_at.desc())
         .limit(1)
     )
-    row = result.scalar_one_or_none()
-    if row is None:
+    credential = result.scalar_one_or_none()
+    if credential is None:
         return None
 
-    creds = decrypt_credentials(bytes(row.encrypted_credentials))
-
-    # Resolve client_id / client_secret — may be in the integration row or
-    # provider config (same pattern as gcal).
-    client_id = str(creds.get("client_id") or "")
-    client_secret = str(creds.get("client_secret") or "")
-
-    if not client_id or not client_secret:
-        # Try provider config table.
-        from artemis.integrations import repository as integration_repo
-
-        cfg = await integration_repo.get_provider_config(session, "gmail") or {}
-        client_id = client_id or str(cfg.get("client_id") or "")
-        client_secret = client_secret or str(cfg.get("client_secret") or "")
-
-    if not client_id or not client_secret:
-        logger.warning("radar: Gmail client_id/client_secret not resolvable — skipping")
+    if not google_has_any_scope(
+        credential.scope,
+        "https://www.googleapis.com/auth/gmail.readonly",
+    ):
+        logger.debug("radar: personal Google credential lacks gmail.readonly scope — skipping")
         return None
 
-    access_token = str(creds.get("access_token") or "")
-    refresh_token = str(creds.get("refresh_token") or "")
+    access_token = str(credential.access_token or "")
     if not access_token:
         logger.warning("radar: Gmail access_token missing — skipping")
         return None
 
+    config = await resolve_google_oauth_client_config(session)
+    expires_at = credential.expiry.timestamp() if credential.expiry else 0.0
+
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
+        "refresh_token": str(credential.refresh_token or ""),
+        "client_id": config.client_id,
+        "client_secret": config.client_secret,
+    }, expires_at
 
 
 # ── Render + surface ──────────────────────────────────────────────────────────

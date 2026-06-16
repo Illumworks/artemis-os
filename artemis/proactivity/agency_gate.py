@@ -122,6 +122,7 @@ async def _resolve_personal_gmail_client(session: AsyncSession) -> Any:
     from artemis.google_docs.client import GoogleReauthRequiredError, refresh_access_token
     from artemis.google_docs.models import GoogleCredential
     from artemis.google_integration import google_has_any_scope, resolve_google_oauth_client_config
+    from artemis.integrations.gmail.auth_dead import handle_gmail_auth_dead
     from artemis.integrations.gmail.client import GmailClient
 
     # Resolve the personal Google account by purpose (one personal account today),
@@ -152,6 +153,8 @@ async def _resolve_personal_gmail_client(session: AsyncSession) -> Any:
                 client_secret=config.client_secret,
             )
         except GoogleReauthRequiredError as exc:
+            # Dead refresh token — mark needs_reauth and notify the owner once.
+            await handle_gmail_auth_dead(session)
             raise RuntimeError("Reconnect Google personal account to refresh Gmail access") from exc
         credential.access_token = refreshed.access_token
         credential.refresh_token = refreshed.refresh_token
@@ -160,11 +163,24 @@ async def _resolve_personal_gmail_client(session: AsyncSession) -> Any:
             credential.scope = refreshed.scope
         credential.updated_at = now
 
+    # Build a persist callback so that any in-request token refresh performed
+    # by GmailClient._refresh() (on 401) is written back to google_credentials.
+    async def _on_tokens_refreshed(
+        new_access_token: str, new_refresh_token: str, new_expires_at: float
+    ) -> None:
+        credential.access_token = new_access_token
+        if new_refresh_token:
+            credential.refresh_token = new_refresh_token
+        credential.expiry = datetime.fromtimestamp(new_expires_at, tz=UTC)
+        credential.updated_at = datetime.now(UTC)
+
     return GmailClient(
         access_token=credential.access_token,
         refresh_token=credential.refresh_token or "",
         client_id=config.client_id,
         client_secret=config.client_secret,
+        expires_at=credential.expiry.timestamp(),
+        on_tokens_refreshed=_on_tokens_refreshed,
     )
 
 

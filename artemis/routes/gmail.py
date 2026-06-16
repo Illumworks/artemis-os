@@ -16,7 +16,8 @@ from artemis.google_docs.repository import get_google_credential
 from artemis.google_integration import google_has_any_scope, resolve_google_oauth_client_config
 from artemis.identity.dependencies import get_current_user
 from artemis.identity.models import User
-from artemis.integrations.gmail.client import GmailAPIError, GmailClient
+from artemis.integrations.gmail.auth_dead import handle_gmail_auth_dead
+from artemis.integrations.gmail.client import GmailAPIError, GmailAuthDeadError, GmailClient
 from artemis.marketing.routes._auth import require_token
 
 router = APIRouter(
@@ -71,6 +72,8 @@ async def _valid_access_token(
             client_secret=config.client_secret,
         )
     except GoogleReauthRequiredError as exc:
+        # Dead refresh token — mark needs_reauth and notify the owner once.
+        await handle_gmail_auth_dead(session)
         raise _gmail_http_error(
             409,
             "Reconnect Google to refresh access",
@@ -98,11 +101,25 @@ async def _gmail_client(
     credential = await _require_personal_gmail_credential(session, current_user=current_user)
     access_token = await _valid_access_token(session, credential=credential)
     config = await resolve_google_oauth_client_config(session)
+
+    # Build a persist callback so that any in-request token refresh performed
+    # by GmailClient._refresh() (on 401) is written back to google_credentials.
+    async def _on_tokens_refreshed(
+        new_access_token: str, new_refresh_token: str, new_expires_at: float
+    ) -> None:
+        credential.access_token = new_access_token
+        if new_refresh_token:
+            credential.refresh_token = new_refresh_token
+        credential.expiry = datetime.fromtimestamp(new_expires_at, tz=UTC)
+        credential.updated_at = datetime.now(UTC)
+
     return GmailClient(
         access_token=access_token,
         refresh_token=credential.refresh_token or "",
         client_id=config.client_id,
         client_secret=config.client_secret,
+        expires_at=credential.expiry.timestamp(),
+        on_tokens_refreshed=_on_tokens_refreshed,
     )
 
 
@@ -116,6 +133,12 @@ async def list_gmail_messages(
     client = await _gmail_client(session, current_user=current_user)
     try:
         messages = await client.list_recent_messages(max_results=limit, query=query)
+    except GmailAuthDeadError as exc:
+        await handle_gmail_auth_dead(session)
+        await session.commit()
+        raise _gmail_http_error(
+            409, "Reconnect Google to restore Gmail access", "google_reconnect_required"
+        ) from exc
     except (httpx.HTTPError, GmailAPIError) as exc:
         raise _gmail_http_error(502, f"Gmail read failed: {exc}", "gmail_read_failed") from exc
     await session.commit()
@@ -131,6 +154,12 @@ async def get_gmail_thread(
     client = await _gmail_client(session, current_user=current_user)
     try:
         thread = await client.get_thread(thread_id)
+    except GmailAuthDeadError as exc:
+        await handle_gmail_auth_dead(session)
+        await session.commit()
+        raise _gmail_http_error(
+            409, "Reconnect Google to restore Gmail access", "google_reconnect_required"
+        ) from exc
     except (httpx.HTTPError, GmailAPIError) as exc:
         raise _gmail_http_error(
             502, f"Gmail thread fetch failed: {exc}", "gmail_read_failed"

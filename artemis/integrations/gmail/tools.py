@@ -10,6 +10,8 @@ from artemis.floating_artemis.authority import AuthorizedToolRegistry
 
 
 async def _resolve_gmail_client() -> Any | None:
+    from datetime import UTC, datetime
+
     import artemis.db as _db
     from artemis.google_docs.repository import get_google_credential
     from artemis.google_integration import (
@@ -28,11 +30,28 @@ async def _resolve_gmail_client() -> Any | None:
         ):
             return None
         config = await resolve_google_oauth_client_config(session)
+
+        # Capture references for the callback closure.
+        _session = session
+        _credential = credential
+
+        async def _on_tokens_refreshed(
+            new_access_token: str, new_refresh_token: str, new_expires_at: float
+        ) -> None:
+            _credential.access_token = new_access_token
+            if new_refresh_token:
+                _credential.refresh_token = new_refresh_token
+            _credential.expiry = datetime.fromtimestamp(new_expires_at, tz=UTC)
+            _credential.updated_at = datetime.now(UTC)
+            await _session.commit()
+
         return GmailClient(
             access_token=credential.access_token,
             refresh_token=credential.refresh_token or "",
             client_id=config.client_id,
             client_secret=config.client_secret,
+            expires_at=credential.expiry.timestamp(),
+            on_tokens_refreshed=_on_tokens_refreshed,
         )
 
 

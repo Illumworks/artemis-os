@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Mapping, Sequence
+import logging
+import time
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from email.message import EmailMessage
 from typing import Any
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
 _GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _ParamScalar = str | int | float | bool | None
 _QueryParams = Mapping[str, _ParamScalar | Sequence[_ParamScalar]]
+_OnTokensRefreshed = Callable[[str, str, float], Coroutine[Any, Any, None]]
 
 
 class GmailAPIError(Exception):
@@ -20,6 +25,14 @@ class GmailAPIError(Exception):
         super().__init__(f"Gmail API error {status}: {body}")
         self.status = status
         self.body = body
+
+
+class GmailAuthDeadError(Exception):
+    """Raised when the Gmail refresh token has been revoked and reauth is required.
+
+    This is a hard stop — retrying with the same tokens will not help.
+    The user must reconnect their Google account.
+    """
 
 
 class GmailClient:
@@ -30,13 +43,27 @@ class GmailClient:
         refresh_token: str,
         client_id: str,
         client_secret: str,
+        expires_at: float = 0.0,
+        on_tokens_refreshed: _OnTokensRefreshed | None = None,
     ) -> None:
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._client_id = client_id
         self._client_secret = client_secret
+        self._expires_at = expires_at
+        self._on_tokens_refreshed = on_tokens_refreshed
+
+    @property
+    def access_token(self) -> str:
+        return self._access_token
 
     async def _refresh(self) -> None:
+        """Exchange the refresh token for a new access token.
+
+        Raises:
+            GmailAuthDeadError: if Google returns 400 invalid_grant (revoked token).
+            httpx.HTTPStatusError: for other non-success responses.
+        """
         async with httpx.AsyncClient(timeout=10) as http:
             resp = await http.post(
                 _TOKEN_URL,
@@ -47,8 +74,40 @@ class GmailClient:
                     "client_secret": self._client_secret,
                 },
             )
+
+        if resp.status_code == 400:
+            # Google returns 400 + {"error":"invalid_grant"} when the refresh
+            # token has been revoked or the account password changed.
+            # This is a permanent failure — do not raise_for_status into a
+            # generic error; surface it as GmailAuthDeadError so callers can
+            # distinguish it from transient failures.
+            logger.error(
+                "Gmail refresh token rejected (400 invalid_grant) — reauth required. "
+                "body=[REDACTED]"
+            )
+            raise GmailAuthDeadError("Google refresh token revoked; reauth required")
+
         resp.raise_for_status()
-        self._access_token = str(resp.json()["access_token"])
+
+        body = resp.json()
+        new_access_token: str = str(body["access_token"])
+        expires_in: int = int(body.get("expires_in", 3600))
+        new_refresh_token: str = str(body.get("refresh_token") or self._refresh_token)
+        new_expires_at: float = time.time() + expires_in
+
+        self._access_token = new_access_token
+        self._refresh_token = new_refresh_token
+        self._expires_at = new_expires_at
+
+        if self._on_tokens_refreshed is not None:
+            try:
+                await self._on_tokens_refreshed(
+                    self._access_token,
+                    self._refresh_token,
+                    new_expires_at,
+                )
+            except Exception:
+                logger.debug("Gmail on_tokens_refreshed callback failed", exc_info=True)
 
     async def _get(
         self,
