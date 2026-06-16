@@ -1,6 +1,6 @@
 // Service worker for PWA — offline fallback + push notifications
 
-const CACHE_NAME = 'artemis-v8';
+const CACHE_NAME = 'artemis-v9';
 const OFFLINE_URL = '/offline.html';
 
 // Assets to pre-cache for offline support
@@ -8,8 +8,8 @@ const LOGIN_URL = '/login';
 const PRECACHE_URLS = [
   OFFLINE_URL,
   '/login.html',
-  '/icons/Aicon-192.png',
-  '/icons/Aicon-512.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
   '/icons/artemis-mark.png',
 ];
 
@@ -84,7 +84,7 @@ self.addEventListener('push', (event) => {
       return self.registration.showNotification(data.title || 'Artemis', {
         body: data.body || '',
         tag: data.tag || 'default',
-        icon: '/icons/Aicon-192.png',
+        icon: '/icons/icon-192.png',
         silent: true, // suppress OS sound — client plays its own
       });
     })
