@@ -14,6 +14,27 @@ _GCAL_BASE = "https://www.googleapis.com/calendar/v3"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
+def _extract_google_error(resp: "httpx.Response") -> str:
+    """Return a short diagnostic string from a Google error response.
+
+    Google token-endpoint errors carry a JSON body like::
+
+        {"error": "invalid_client", "error_description": "The OAuth client was not found."}
+
+    Returns the ``error`` field (and description when present), falling back to
+    the raw text so callers always get something diagnosable in the logs.
+    """
+    try:
+        body = resp.json()
+        code = str(body.get("error") or "")
+        desc = str(body.get("error_description") or "")
+        if code and desc:
+            return f"{code}: {desc}"
+        return code or resp.text[:200]
+    except Exception:
+        return resp.text[:200]
+
+
 class GCalAPIError(Exception):
     def __init__(self, status: int, body: str) -> None:
         super().__init__(f"Google Calendar API error {status}: {body}")
@@ -74,13 +95,27 @@ class GCalClient:
             # This is a permanent failure — do not raise_for_status into a
             # generic error; surface it as GCalAuthDeadError so callers can
             # distinguish it from transient failures.
+            _google_error = _extract_google_error(resp)
             logger.error(
                 "GCal refresh token rejected (400 invalid_grant) — reauth required. "
-                "body=[REDACTED]"
+                "google_error=%r",
+                _google_error,
             )
             raise GCalAuthDeadError("Google refresh token revoked; reauth required")
 
-        resp.raise_for_status()
+        if not resp.is_success:
+            # Capture Google's JSON error body before raising — a 401 means
+            # invalid_client (wrong client_id/secret), a 5xx is transient.
+            # Without this the logs show an opaque httpx.HTTPStatusError with
+            # no indication of *why* Google rejected the request.
+            _google_error = _extract_google_error(resp)
+            logger.error(
+                "GCal token refresh failed: status=%d google_error=%r body=%r",
+                resp.status_code,
+                _google_error,
+                resp.text[:500],
+            )
+            resp.raise_for_status()
 
         body = resp.json()
         new_access_token: str = body["access_token"]

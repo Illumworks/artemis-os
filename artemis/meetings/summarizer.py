@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import artemis.db as _db
 from artemis.costs.events import record_cost_event
 from artemis.integrations import repository as repo
+from artemis.integrations.config_resolver import resolve_gcal_config
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.gcal.auth_dead import handle_gcal_auth_dead
 from artemis.integrations.gcal.client import GCalAuthDeadError, GCalClient
@@ -59,6 +60,13 @@ async def _build_gcal_client(session: AsyncSession) -> GCalClient | None:
     creds = decrypt_credentials(bytes(row.encrypted_credentials))
     integration_id: int = row.id
 
+    # Always use the DB-authoritative client credentials for refresh so the
+    # refresh token exchange uses the same client that issued the tokens
+    # (prevents invalid_client 401s from stale client_id in the blob).
+    gcal_cfg = await resolve_gcal_config(session)
+    live_client_id = gcal_cfg.client_id
+    live_client_secret = gcal_cfg.client_secret
+
     async def _on_tokens_refreshed(
         access_token: str, refresh_token: str, expires_at: float
     ) -> None:
@@ -66,6 +74,8 @@ async def _build_gcal_client(session: AsyncSession) -> GCalClient | None:
         new_creds["access_token"] = access_token
         new_creds["refresh_token"] = refresh_token
         new_creds["expires_at"] = expires_at
+        new_creds["client_id"] = live_client_id
+        new_creds["client_secret"] = live_client_secret
         await repo.persist_refreshed_credentials(
             session,
             integration_id=integration_id,
@@ -75,8 +85,8 @@ async def _build_gcal_client(session: AsyncSession) -> GCalClient | None:
     return GCalClient(
         access_token=str(creds.get("access_token", "")),
         refresh_token=str(creds.get("refresh_token", "")),
-        client_id=str(creds.get("client_id", "")),
-        client_secret=str(creds.get("client_secret", "")),
+        client_id=live_client_id,
+        client_secret=live_client_secret,
         expires_at=float(str(creds.get("expires_at") or 0)),
         on_tokens_refreshed=_on_tokens_refreshed,
     )

@@ -19,10 +19,14 @@ from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import
 
 import artemis.db as _db
 from artemis.integrations import repository as repo
+from artemis.integrations.config_resolver import MissingProviderConfigError, resolve_gcal_config
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.models import Integration
 from artemis.integrations.token_refresh.base import RefreshOutcome
 from artemis.integrations.token_refresh.providers import REFRESHERS
+from artemis.integrations.token_refresh.providers.google_credentials import (
+    refresh_google_credentials_tick,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +124,25 @@ async def _process_integration(session: object, integration: Integration, now: d
     if datetime.fromtimestamp(expires_at, UTC) - now > timedelta(minutes=REFRESH_LEEWAY_MINUTES):
         return
 
+    # For Google/GCal integrations: override the client_id/secret in the creds
+    # blob with the DB-authoritative values before calling the refresher.
+    # The stored blob may have a stale client from a previous env-override
+    # configuration.  Refresh MUST use the same client that issued the tokens
+    # (the DB client) to avoid 401 invalid_client from Google.
+    if integration.provider == "gcal":
+        try:
+            gcal_cfg = await resolve_gcal_config(session)  # type: ignore[arg-type]
+            creds = dict(creds)
+            creds["client_id"] = gcal_cfg.client_id
+            creds["client_secret"] = gcal_cfg.client_secret
+        except MissingProviderConfigError:
+            logger.warning(
+                "token_refresh: could not resolve gcal client config for integration_id=%d"
+                " — skipping refresh",
+                integration.id,
+            )
+            return
+
     result = await refresher.refresh(creds)
 
     new_expires_at: float | None = None
@@ -182,6 +205,15 @@ async def run_refresh_tick() -> None:
                         integration.id,
                         integration.provider,
                     )
+
+            # Also sweep google_credentials rows (personal + marketing).
+            # These have no integrations row and are never covered by the loop above.
+            # Failures inside are per-row and do not abort the commit.
+            try:
+                await refresh_google_credentials_tick(session)
+            except Exception:
+                logger.exception("google_credentials_tick: sweep failed")
+
             await session.commit()
         except Exception:
             logger.exception("Token refresh tick failed")
