@@ -53,8 +53,13 @@ pulls each `Transcript Link` file's text, and upserts into a new enablement-asse
 - **Trigger:** Google Drive `changes`/push watch on the folder (near-real-time) → indexer; plus a **nightly
   reconcile cron** that scans for anything the webhook missed (belt-and-suspenders).
 - **Indexer:** per new file → detect type → summarize: **docs** = Claude/Gemini long-context; **images** =
-  vision; **videos** = Gemini native video (server has the API) OR continue Descript → transcript → summary.
-  Writes the `ENABLEMENT_DB` row + transcript file, then Phase-1 sync picks it up.
+  vision; **videos** = **Descript API** (DECIDED). New video → download from Drive → `POST /jobs/import/
+  project_media` (direct upload: `content_type`+`file_size` → signed URL → `PUT` bytes; **import into the ONE
+  shared project_id** "Enablement Library Transcripts" so Descript stays tidy — filenames unique per project)
+  → poll `GET /jobs/{job_id}` or `callback_url` → `POST /export/transcript` (txt) → summarize the transcript.
+  Auth `Authorization: Bearer <DESCRIPT_TOKEN>` (token scoped to the Drive; reuse the same token Sara used for
+  the seed). Cost draws from the Descript plan's media-minutes (no per-call API fee). Writes the
+  `ENABLEMENT_DB` row + transcript file, then Phase-1 sync picks it up.
 - **Human-in-loop:** full-auto, but stamp `needs_review` on low-confidence/research items for a periodic
   human spot-check (no friction for routine adds). Also backfills any `pending_video` rows from the seed.
 
@@ -79,4 +84,6 @@ surfacable cross-team. Agent-to-agent: Artemis can route a cross-team question t
 - Confirm Kai's Slack app token/registration (Jon duplicated Callie's manifest → install + `integrations` row).
 - Invite Kai's bot to `C0BB17EJLKC`.
 - Cross-team sharing direction (Phase 4) — siloed first per Jon.
-- Decide ongoing-video path: Gemini (server, automated) vs continue Descript (manual but cheap/known).
+- Ongoing-video path: DECIDED = **Descript API** (new connector: Bearer token scoped to the Drive, all
+  imports into one shared project_id, direct-upload from Drive, export transcript txt). Add `descript`
+  provider config (token) like the other connectors. Same token serves Sara's seed (Option B).

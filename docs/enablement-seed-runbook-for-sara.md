@@ -13,7 +13,7 @@ You'll use your **Claude Code** (Claude's coding tool on your Mac) and your Clau
    folder. This makes the Drive folder appear as a **normal folder on your Mac** so Claude Code can read it.
    (Alternative: download the folder as a zip and unzip it — either works.)
 2. **Claude Code** open on your Mac.
-3. **Descript** (for video transcripts — see Step 2).
+3. A **Descript API token from Jon** (he'll send it to you privately — treat it like a password, paste it only into Claude Code, don't put it in the Sheet or share it). You do **not** need your own Descript account.
 4. Links you'll work with:
    - Drive folder: https://drive.google.com/drive/folders/1oWVo3v9SogD-8XMCFUtekYmhrllTknNU
    - Sheet `ENABLEMENT_DB` tab: https://docs.google.com/spreadsheets/d/1kcgf06TslHR3IZ8nv6839UHh5Y3kPqHkJoc9gZprY3M/edit
@@ -40,15 +40,29 @@ the important fields are Title, Type, link, Summary, Tags, and Transcript Link f
 Open the Enablement Drive folder in Google Drive for Desktop so it shows up as a folder on your Mac (note its
 path, e.g. `~/Google Drive/.../Enablement Library`). That folder is what Claude Code will read.
 
-## Step 2 — Videos: make transcripts first (Descript)
-Claude can't watch video, so we turn each video into text first:
-1. In **Descript**, batch-import the videos and let it transcribe them.
-2. **Export each transcript** as a **plain-text (.txt) or Google Doc** file.
-3. Put the transcripts in a subfolder named **`Transcripts`** inside the Enablement folder, and **name each
-   transcript to match its video** (e.g. `onboarding-walkthrough.mp4` → `onboarding-walkthrough.txt`).
-4. Get the shareable **Drive link** for each transcript — that goes in the `Transcript Link` column.
+## Step 2 — Videos: transcribe with Descript (via Claude Code + Jon's token)
+Claude can't watch video, so we turn each video into text first, using Descript's API. You don't need a
+Descript account — Jon gives you an **API token** and a **project name** to use. **Important: all videos go
+into ONE Descript project** ("Enablement Library Transcripts") so Descript doesn't fill up with a separate
+project per video.
 
-After this, a video is just "a transcript text file" as far as the next step is concerned.
+In Claude Code, paste this (fill in your token + the folder path; use the project id Jon gives you if he
+pre-made the project, otherwise leave it and the first import creates it):
+
+> Use the Descript API (token: `<PASTE TOKEN>`, docs at https://docs.descriptapi.com). Transcribe every video
+> in `<PATH TO ENABLEMENT FOLDER>`. Put them ALL in a single project: if I give you a `project_id`, import
+> into it; otherwise on the first video pass `project_name: "Enablement Library Transcripts"` to create the
+> project, then reuse the returned `project_id` for every other video. For each video: do a direct upload
+> (`POST /jobs/import/project_media` with `content_type` + `file_size` to get a signed URL, `PUT` the file
+> bytes, then poll `GET /jobs/{job_id}` until done), then `POST /export/transcript` with format `txt`. Save
+> each transcript as `<video-name>.txt` in a `Transcripts` subfolder. Keep filenames unique (Descript requires
+> it within a project). List any videos that failed so I can retry them.
+
+Then upload the `Transcripts` files to the `/Transcripts` subfolder in Drive, and grab each one's **Drive
+link** for the `Transcript Link` column. After this, a video is just "a transcript text file" for Step 3.
+
+(If the API flow gives you trouble, tell Jon — he can run the transcription himself in Descript and drop the
+transcripts into `/Transcripts`, and you just summarize them in Step 3.)
 
 ## Step 3 — Run Claude Code over the folder
 Open Claude Code, and point it at your local Enablement folder. Then paste it this instruction (edit the
