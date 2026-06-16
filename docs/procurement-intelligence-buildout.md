@@ -48,10 +48,12 @@ state-keyed stubs to real platform entries) and must feed the **live agentic pro
 (`artemis/scouts/procurement/scout.py` + the tool the procurement agent calls — wire into the LIVE
 path like board_minutes did, NOT the dead `marketing/scout_sources/procurement.py` NullAdapter).
 
-- **PHASE 1 — Bonfire RSS** *(in progress).* One public RSS URL pattern covers Dallas ISD,
-  Fort Bend ISD, Austin ISD, Chicago PS, U-46, Katy (partial). No login. ~1–2 days. Needs a
-  district→Bonfire-slug map (`dallasisd`, `fortbendisd`, `cps`, `u-46`, …). Highest leverage, lowest
-  effort — the opening move.
+- **PHASE 1 — Bonfire RSS — ✅ DONE + LIVE (`6bd1024`, 2026-06-16).** Adapter at
+  `artemis/scouts/procurement/bonfire.py`; wired into the LIVE tool `procurement_portal.fetch`
+  (NOT the unscheduled ProcurementScout — caught + fixed that dead-path mis-wire). Verified via
+  tool_invocations: real Bonfire RFPs (Dallas ISD etc.) reach the agentic scout. Slugs live:
+  dallasisd, fortbendisd, cps, u-46, austinisd. `katyisd` slug doesn't resolve — commented out,
+  verify before re-enabling.
 - **PHASE 2 — eMMA (Maryland) + TX ESBD.**
   - eMMA: MD law mandates ALL districts post here → 100% MD coverage in one form-scrape. ~2–3 days.
   - TX ESBD: state-level TX + TEA + co-op postings; predictable URL + 20K-row CSV export. ~2–3 days.
