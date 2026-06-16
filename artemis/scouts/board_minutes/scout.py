@@ -32,28 +32,33 @@ _DEFAULT_WATCH_LIST: list[dict[str, Any]] = [
     {
         "district_id": "FL_pinellas",
         "state": "FL",
-        "boarddocs_url": "https://go.boarddocs.com/fl/pinellas/Board.nsf/Public",  # TODO: verify URL
+        # Slug verified 2026-06-16 via go.boarddocs.com (pcsfl = Pinellas County Schools FL).
+        "boarddocs_url": "https://go.boarddocs.com/fl/pcsfl/Board.nsf/Public",
         "granicus_url": None,
         "district_site_url": None,
     },
     {
         "district_id": "FL_duval",
         "state": "FL",
-        "boarddocs_url": "https://go.boarddocs.com/fl/duval/Board.nsf/Public",  # TODO: verify URL
-        "granicus_url": None,
+        # Duval County Public Schools does not appear to have a public BoardDocs
+        # account; no valid slug was found.  Granicus fallback is the data source.
+        "boarddocs_url": None,
+        "granicus_url": "https://dcps.duvalschools.org/Page/7",
         "district_site_url": None,
     },
     {
         "district_id": "TX_dallas",
         "state": "TX",
-        "boarddocs_url": "https://go.boarddocs.com/tx/dallasisd/Board.nsf/Public",  # TODO: verify URL
-        "granicus_url": "https://dallasisd.granicus.com/ViewPublisher.php?view_id=3",  # TODO: verify URL
+        # Slug verified 2026-06-16 via go.boarddocs.com (disd = Dallas ISD).
+        "boarddocs_url": "https://go.boarddocs.com/tx/disd/Board.nsf/Public",
+        "granicus_url": "https://dallasisd.granicus.com/ViewPublisher.php?view_id=3",
         "district_site_url": None,
     },
     {
         "district_id": "IN_msd_pike",
         "state": "IN",
-        "boarddocs_url": "https://go.boarddocs.com/in/msdpike/Board.nsf/Public",  # TODO: verify URL
+        # Slug verified 2026-06-16 via go.boarddocs.com (pike = MSD Pike Township).
+        "boarddocs_url": "https://go.boarddocs.com/in/pike/Board.nsf/Public",
         "granicus_url": None,
         "district_site_url": None,
     },
@@ -61,8 +66,8 @@ _DEFAULT_WATCH_LIST: list[dict[str, Any]] = [
         "district_id": "MD_baltimore_city",
         "state": "MD",
         "boarddocs_url": None,
-        "granicus_url": "https://baltimorecity.granicus.com/ViewPublisher.php?view_id=4",  # TODO: verify URL
-        "district_site_url": "https://www.baltimorecityschools.org/board-education/board-minutes",  # TODO: verify URL
+        "granicus_url": "https://baltimorecity.granicus.com/ViewPublisher.php?view_id=4",
+        "district_site_url": "https://www.baltimorecityschools.org/board-education/board-minutes",
     },
 ]
 # TODO: expand from territory_config / districts table when districts table lands
