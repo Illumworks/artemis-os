@@ -100,9 +100,15 @@ shortcut "Success Management Organization", likely a folder). Two hard parts:
    `shortcutDetails.targetId` and fetch the target content.
 
 **Approach:** Sara seeds the real files only (skips shortcuts). The **server automation handles
-shortcut-targets** — resolve via Drive API → read from Mark's Drive (once shared) → summarize → index with the
-team-facing link. Open: (a) will Mark share access + which account; (b) shortcuts to files vs folders, and for
-folder-shortcuts whether to index the whole linked folder or only specific items.
+shortcut-targets** — resolve via Drive API (`shortcutDetails.targetId`) → read the target file → summarize →
+index with the team-facing link.
+
+**RESOLVED 2026-06-16 (Jon):** Mark set the targets to **"anyone with the link can edit"** and the shortcuts
+are to **individual files** (not folders). So: (a) access is open — the server reads targets by ID, NO
+per-account share needed; (b) no folder recursion — each shortcut = one file. No blocker; just build the
+server-side shortcut resolution. NOTE (non-blocking security flag for Mark): "anyone with link = editor" is
+broader than required — indexing only reads, so view-only would suffice, and editor-to-anyone is a quiet
+exposure for internal/research docs.
 
 ## Seed prerequisites (us — before Sara starts; she does the seed, we unblock it)
 
