@@ -36,9 +36,19 @@ You'll use your **Claude Code** (Claude's coding tool on your Mac) and your Clau
 (If the existing `ENABLEMENT_DB` tab already has slightly different column names, just match what's there —
 the important fields are Title, Type, link, Summary, Tags, and Transcript Link for videos.)
 
-## Step 1 — Get the files onto your Mac
-Open the Enablement Drive folder in Google Drive for Desktop so it shows up as a folder on your Mac (note its
-path, e.g. `~/Google Drive/.../Enablement Library`). That folder is what Claude Code will read.
+## Step 1 — Get the files onto your Mac (this is a CLOUD folder, so make it local first)
+Claude Code reads files from your Mac, not from the cloud directly — so we bring the Drive folder local:
+1. With **Google Drive for Desktop** signed in, the Enablement folder shows up as a folder on your Mac (note
+   its path, e.g. `~/Google Drive/.../Enablement Library`).
+2. **Make it actually download (important):** in Finder, **right-click the Enablement folder → Offline access
+   → Available offline** (or the Drive app's "Make available offline"). By default Drive only *streams* files
+   — it shows the names but doesn't download them until opened, and Claude Code (plus the video upload to
+   Descript) needs the real files on disk. Wait for it to finish syncing down. Make sure you have enough free
+   disk space (videos can be large).
+3. That local folder is what Claude Code reads in the next steps.
+
+(Alternative if Drive for Desktop is fussy: from Drive on the web, select the folder → **Download** — it zips
+it — then unzip it locally. Simple, just a big download with the videos.)
 
 ## Step 2 — Videos: transcribe with Descript (via Claude Code + Jon's token)
 Claude can't watch video, so we turn each video into text first, using Descript's API. You don't need a
