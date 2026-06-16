@@ -292,7 +292,8 @@ Tracks R (rebalancing) and C (Claude accounts) are **independent of Ares** and c
 >   catch it. Reverted all 6 scout rows to claude-code/claude-haiku-4-5 and deactivated the 4 overrides.
 >   Nothing left on Gemini. cost_events confirmed Gemini DID serve the calls (tokens recorded) before revert.
 >
-> **→ REAL NEXT STEP (the actual R3 completion): per-feature Gemini OUTPUT HARDENING.** The prompts/schemas
+> **→ REAL NEXT STEP (the actual R3 completion): per-feature Gemini OUTPUT HARDENING — full design spec in
+> [`provider-output-hardening.md`](provider-output-hardening.md).** The prompts/schemas
 > were tuned to Claude's formatting. To move each feature to Gemini, either (a) make the validator lenient
 > (coerce string `reasonCodes` → expected shape; tolerate/parse extra fields like `districtId`/
 > `campaignFamily`), and/or (b) make the prompt explicit about the exact JSON schema. Do it ONE feature at
