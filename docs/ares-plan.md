@@ -261,14 +261,36 @@ Tracks R (rebalancing) and C (Claude accounts) are **independent of Ares** and c
 > - **Codex:** codegen volume + the overflow lane when Gemini is throttled or local is queued (no
 >   free-tier cap, not single-stream). Jon OK'd Codex for coding + other tasks.
 >
-> **R3 build (the actual next step), two parts:**
-> 1. Apply the §6/allocation flips via `feature_routing_overrides` / per-agent `provider`, using the
->    real model IDs above (`qwen3.5-35b-a3b` general, `qwen/qwen3-coder-next` coder,
->    `gemini-2.5-flash` cloud).
-> 2. **Add Gemini-429 → cascade-fallthrough.** The cascade currently falls through only on
->    missing-key/timeout; a 429 must also drop to the next provider (local → Claude) instead of failing.
->    Verify each moved feature actually lands on its new provider (Cost→Routing UI + a live run) and
->    that judgment/customer-facing paths are unchanged.
+> **⚠️ R3 SCOPE UPDATE (2026-06-15, Jon's call): GEMINI + CODEX ONLY — NO local/lm-studio.**
+> Jon unloaded the Studio models (can't run two large ones at once); **wire lm-studio only after Ares
+> is live/ready to test.** So all R3 cascades are **Gemini → claude-code** (skip local entirely; don't
+> add a dead hop). The local targets in the allocation (signal qualifier, Slack gate) were already
+> no-ops/deferred anyway. Food-for-thought for the multi-account track: **2 Codex accounts + 2 Claude
+> accounts** (Jon raised this; revisit with Track C).
+>
+> **Findings while starting R3 (2026-06-15):** (a) Gemini was 404ing — the model map pointed at the
+> RETIRED `gemini-2.5-flash-preview-05-20`; **FIXED `e9011ee`** → stable `-latest` channels
+> (`gemini-2.5-flash`→flash-latest, `gemini-2.5-flash-lite`→flash-lite-latest), default flash-lite-latest;
+> verified live. (b) `cost_events` shows **everything still on Claude/anthropic** — the catalog
+> "gemini-first" defaults do NOT translate to real Gemini usage, so moved features need EXPLICIT
+> overrides + live verification, not assumption. (c) `signal_qualifier` is pure Python (no LLM) — drop;
+> `okr_extract_activity` not wired to any call site — defer; Slack channel gate is hard-coded Anthropic
+> (needs a code refactor) — optional R4.
+>
+> **R3 build (revised), in safe order:**
+> 1. **Gemini-429 safety net FIRST (in progress, agent build):** runtime fallthrough Gemini→claude-code
+>    on 429/503/5xx/connection (the cascade only fell through at *construction* time before). Raise
+>    `GeminiRateLimitError`; shared `complete_with_fallback` helper at the 5 moved call sites
+>    (scout_runner `_call_llm`, memory consolidator, graph_extractor, meetings summarizer, trajectory
+>    summarizer). Non-retryable (400) re-raises. NO lm-studio in the chain.
+> 2. **Flip the 6 classification scouts → Gemini** (agent rows id 12,6,10,7,11,13: provider=gemini,
+>    model=`gemini-2.5-flash-lite`, fallback=claude-code). Legislative(8)+Federal Funding(9) STAY Claude.
+> 3. **Override the JSON/summary features → Gemini→Claude** via `feature_routing_overrides`
+>    (`memory_consolidation`, `memory_graph_extraction`, `meeting_summary`, `trajectory_summary`),
+>    cascade `[{gemini, gemini-2.5-flash},{claude-code}]` — this also removes the dead lm-studio hop from
+>    those catalog defaults while local is offline.
+> 4. **Verify via `cost_events`** (`SELECT feature_tag, provider, model, count(*) ... GROUP BY`) that each
+>    moved feature actually ran on Gemini; judgment/customer paths unchanged. Reversible: flip rows back.
 >
 > **C-followup:** route Floating Artemis (personal Artemis chat) → personal account — the `complete()`
 > path C1 didn't cover.
