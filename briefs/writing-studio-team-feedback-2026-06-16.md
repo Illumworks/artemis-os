@@ -29,6 +29,14 @@ access lane), coordinate with terminal for the realtime-collab pieces.
    (`scheduler.py:217`), and re-test confirmed REFRESHED+PERSISTED for both purposes. (An earlier "no-op"
    reading was a test artifact — the standalone test didn't commit the session.) Google client is correct
    (`612420684593`, "Artemis Google Docs Access"). Google credentials thread CLOSED.
+7. **"Ready for review" routing for NON-campaign docs.** When a doc is NOT attached to a marketing campaign
+   (a one-off / general marketing doc) and it's marked "ready for review," Callie should ping **Angela in a
+   different channel**, NOT the `marketing-campaigns` channel (that channel is for campaign-attached work).
+   Campaign-attached docs keep going to `marketing-campaigns`. Need: the target channel for one-off reviews
+   (Angela's DM vs a dedicated review channel — TBD with Jon). Logic lives in the Gate-2 / "ready for review"
+   notification routing (human_gate / Callie's review-ping path); branch on whether the draft has a campaign
+   linkage.
+
 6. **New Google Docs destination.** Writing Studio "create new doc / export" uses the Docs API
    (`google_docs/client.py:295`) which creates the doc in the **My Drive ROOT of the token account** (the
    marketing account, amiracentral@, for Callie's docs) — no target folder (the Docs API can't set a parent;
