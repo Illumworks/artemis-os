@@ -46,6 +46,7 @@ _OKR_CHECKIN_JOB_ID = "proactivity_okr_checkin"
 _STALE_REVIEW_ESCALATION_JOB_ID = "proactivity_stale_review_escalation"
 _COMMITMENTS_FOLLOWUP_JOB_ID = "proactivity_commitments_followup"
 _COMMITMENTS_PROPOSALS_DIGEST_JOB_ID = "proactivity_commitments_proposals_digest"
+_HUB_ESCALATION_JOB_ID = "hub_agent_escalation"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -65,17 +66,20 @@ def start_proactivity_scheduler() -> None:
     _register_stale_review_escalation_job(scheduler)
     _register_commitments_followup_job(scheduler)
     _register_commitments_proposals_digest_job(scheduler)
+    _register_hub_escalation_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
             "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, "
-            "review escalation cron=%r, commitments cron=%r, proposals digest cron=%r)",
+            "review escalation cron=%r, commitments cron=%r, proposals digest cron=%r, "
+            "hub escalation cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
             settings.okr_checkin_cron,
             settings.review_escalation_cron,
             settings.commitments_followup_cron,
             settings.commitments_proposals_digest_cron,
+            settings.hub_escalation_cron,
         )
 
 
@@ -164,6 +168,35 @@ def _register_commitments_proposals_digest_job(scheduler: AsyncIOScheduler) -> N
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=3600,
+    )
+
+
+def _register_hub_escalation_job(scheduler: AsyncIOScheduler) -> None:
+    """Register the hourly hub escalation sweep job."""
+    trigger = CronTrigger.from_crontab(
+        settings.hub_escalation_cron,
+        timezone=settings.morning_brief_tz,
+    )
+    scheduler.add_job(
+        _fire_hub_escalation,
+        trigger=trigger,
+        id=_HUB_ESCALATION_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+async def _fire_hub_escalation() -> None:
+    """Run the hub escalation sweep — escalate overdue agent pending asks."""
+    from artemis.hub.escalation import run_escalation_sweep
+
+    summary = await run_escalation_sweep()
+    logger.info(
+        "Hub escalation sweep finished (checked=%d escalated=%d failed=%d)",
+        summary.checked,
+        summary.escalated,
+        summary.failed,
     )
 
 
@@ -348,6 +381,21 @@ async def _fire_morning_brief() -> None:
             slack_text = voice_text or _format_brief_for_slack(brief, delivery_date=delivery_date)
             if radar_nudge:
                 slack_text = slack_text + "\n\n" + radar_nudge
+
+            # ── Hub: agent pending-asks section (non-Artemis, non-escalated) ──
+            # Non-urgent / non-Artemis agent asks that haven't been escalated yet
+            # are folded into the morning brief (batched, non-interrupting routing).
+            try:
+                from artemis.hub.brief_injection import pending_asks_brief_section
+
+                pending_section = await pending_asks_brief_section(session)
+                if pending_section:
+                    slack_text = slack_text + "\n\n" + pending_section
+            except Exception:
+                logger.warning(
+                    "Morning brief: hub pending-asks section failed — skipping", exc_info=True
+                )
+
             token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
             if not token:
                 raise RuntimeError("No active Slack token found for agent_id='artemis'")
