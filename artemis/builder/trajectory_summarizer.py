@@ -558,8 +558,13 @@ async def summarize(
             UnknownProviderError,
         )
 
-        # Determine primary provider from DB routing override.
+        # Determine primary provider + model from the DB routing override.
         _primary_provider = "claude-code"
+        # Default Gemini model = flash-LITE. The full gemini-2.5-flash "thinks"
+        # and exhausts the tight 512-token budget below -> truncated/empty JSON
+        # (verified 2026-06-16); flash-lite completes cleanly. Honor an explicit
+        # model in the override if set. See docs/provider-output-hardening.md.
+        _gemini_model = "gemini-2.5-flash-lite"
         try:
             async with _db.SessionLocal() as _override_session:
                 from artemis.providers.routing_repository import get_routing_override_for_feature
@@ -569,13 +574,12 @@ async def summarize(
                 )
                 if override and override.cascade:
                     _primary_provider = override.cascade[0].get("provider", "claude-code")
+                    _gemini_model = override.cascade[0].get("model") or _gemini_model
         except Exception:
             pass
 
-        # For Gemini, request the flash model explicitly (reasoning task needs
-        # more capability than flash-lite).
         _adapter_kwargs: dict[str, str] = (
-            {"default_model": "gemini-2.5-flash"} if _primary_provider == "gemini" else {}
+            {"default_model": _gemini_model} if _primary_provider == "gemini" else {}
         )
         try:
             adapter = get_adapter(_primary_provider, **_adapter_kwargs)
