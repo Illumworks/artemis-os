@@ -69,6 +69,10 @@ function _checkConnectionToast() {
     _showToast('Granola connected successfully.');
     window.history.replaceState({}, '', window.location.pathname);
   }
+  if (params.get('google_connected') === '1') {
+    _showToast('Google connected successfully.');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
   if (params.get('granola_error')) {
     _showToast(`Granola connection failed: ${params.get('granola_error')}`, true);
     window.history.replaceState({}, '', window.location.pathname);
@@ -112,6 +116,103 @@ async function _populateGrid(grid) {
 
     renderIntegrationCard(cardContainer, provider, connectedData, configStatus);
   }
+
+  // Marketing Google (Docs) is a separate credential (google_credentials, purpose=marketing),
+  // not a standard /api/integrations provider — render a custom card after the grid.
+  await _appendMarketingGoogleCard(grid);
+}
+
+async function _appendMarketingGoogleCard(grid) {
+  const cardContainer = document.createElement('div');
+  grid.appendChild(cardContainer);
+  let status = null;
+  try {
+    const res = await fetch('/api/google/status?purpose=marketing');
+    if (res.ok) status = await res.json();
+  } catch { /* non-fatal — render as disconnected */ }
+  _renderMarketingGoogleCard(cardContainer, status);
+}
+
+function _renderMarketingGoogleCard(container, status) {
+  container.innerHTML = '';
+  const connected = status?.connected === true;
+  const email = status?.email ?? null;
+
+  const card = document.createElement('div');
+  card.className = `integration-card${connected ? ' integration-card--connected' : ''}`;
+
+  const header = document.createElement('div');
+  header.className = 'integration-card__header';
+  const logo = document.createElement('div');
+  logo.className = 'integration-card__logo';
+  logo.setAttribute('aria-hidden', 'true');
+  logo.textContent = 'G';
+  header.appendChild(logo);
+  const meta = document.createElement('div');
+  meta.className = 'integration-card__meta';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'integration-card__name';
+  nameEl.textContent = 'Marketing Google (Docs)';
+  const tagline = document.createElement('div');
+  tagline.className = 'integration-card__tagline';
+  tagline.textContent = email
+    ? `Connected as ${email}`
+    : "Marketing account for Callie's Docs access.";
+  meta.appendChild(nameEl);
+  meta.appendChild(tagline);
+  header.appendChild(meta);
+  if (connected) {
+    const pill = document.createElement('div');
+    pill.className = 'integration-card__status';
+    pill.innerHTML = '<span class="integration-card__status-dot" aria-hidden="true"></span>Connected';
+    header.appendChild(pill);
+  }
+  card.appendChild(header);
+
+  const actions = document.createElement('div');
+  actions.className = 'integration-card__actions';
+  const startConnect = () => { window.location.href = '/api/google/oauth/start?purpose=marketing'; };
+  if (connected) {
+    const reconnectBtn = document.createElement('button');
+    reconnectBtn.type = 'button';
+    reconnectBtn.className = 'integration-card__connect-btn';
+    reconnectBtn.textContent = 'Reconnect';
+    reconnectBtn.addEventListener('click', startConnect);
+    const disconnectBtn = document.createElement('button');
+    disconnectBtn.type = 'button';
+    disconnectBtn.className = 'integration-card__disconnect-btn';
+    disconnectBtn.textContent = 'Disconnect';
+    disconnectBtn.addEventListener('click', async () => {
+      disconnectBtn.disabled = true;
+      disconnectBtn.textContent = 'Disconnecting…';
+      try {
+        const res = await fetch('/api/google/disconnect?purpose=marketing', { method: 'POST' });
+        if (res.ok) {
+          _showToast('Marketing Google account disconnected.');
+          _renderMarketingGoogleCard(container, null);
+        } else {
+          _showToast('Disconnect failed. Please try again.', true);
+          disconnectBtn.disabled = false;
+          disconnectBtn.textContent = 'Disconnect';
+        }
+      } catch (e) {
+        _showToast(`Disconnect failed: ${e}`, true);
+        disconnectBtn.disabled = false;
+        disconnectBtn.textContent = 'Disconnect';
+      }
+    });
+    actions.appendChild(reconnectBtn);
+    actions.appendChild(disconnectBtn);
+  } else {
+    const connectBtn = document.createElement('button');
+    connectBtn.type = 'button';
+    connectBtn.className = 'integration-card__connect-btn';
+    connectBtn.textContent = 'Connect Marketing Google';
+    connectBtn.addEventListener('click', startConnect);
+    actions.appendChild(connectBtn);
+  }
+  card.appendChild(actions);
+  container.appendChild(card);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
