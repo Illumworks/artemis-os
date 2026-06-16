@@ -168,10 +168,25 @@ async def _default_call_model(content: str, model: str) -> str:
     except Exception:
         _primary = "claude-code"
 
-    # When primary is Gemini, use the Gemini flash model; otherwise use the
-    # caller-supplied model (which defaults to the Claude haiku id).
-    # complete_with_fallback strips the model on fallback to claude-code.
-    _gemini_model = "gemini-2.5-flash"
+    # When primary is Gemini, use flash-LITE (not full flash). Full
+    # gemini-2.5-flash "thinks" and exhausts the tight 512-token budget
+    # before emitting → truncated/empty JSON → parse failure (verified
+    # 2026-06-16; same root cause as trajectory_summary). Honor an explicit
+    # model set in the override's cascade entry. See
+    # docs/provider-output-hardening.md §Progress key learning #1.
+    _gemini_model = "gemini-2.5-flash-lite"
+    try:
+        factory = _get_session_factory()
+        async with factory() as _model_session:
+            from artemis.providers.routing_repository import get_routing_override_for_feature
+
+            _model_override = await get_routing_override_for_feature(
+                _model_session, "memory_graph_extraction"
+            )
+            if _model_override and _model_override.cascade:
+                _gemini_model = _model_override.cascade[0].get("model") or _gemini_model
+    except Exception:
+        pass
     _effective_model = _gemini_model if _primary == "gemini" else model
     request = CompletionRequest(
         messages=[Message(role="user", content=[TextBlock(text=f'Observation: "{content}"')])],
