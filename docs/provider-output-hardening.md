@@ -1,8 +1,40 @@
 # Provider Output Hardening — design spec
 
-**Date:** 2026-06-15  **Status:** Design (not yet built; infra seeds exist)
+**Date:** 2026-06-15 (updated 2026-06-16)  **Status:** IN PROGRESS — first feature proven on Gemini.
 **Author:** Opus Lead, with Jon (planned together)
 **Context:** Came out of Ares R3 (provider rebalancing — see [`ares-plan.md`](ares-plan.md) §10 R3 status).
+
+---
+
+## Progress + key learnings
+
+**Proof #1 — `trajectory_summary` LIVE on Gemini flash-lite (2026-06-16, commit `8e09cda`).**
+First internal/low-stakes feature moved off Claude. Live test surfaced learnings that change the
+rollout for every remaining feature:
+
+1. **MODEL CHOICE IS THE FIRST FAILURE, NOT JSON SHAPE.** Full `gemini-2.5-flash` "thinks" and
+   exhausts a tight output-token budget (512 here) BEFORE emitting → **truncated/empty JSON** →
+   validation fails → all-null safe default. **`gemini-2.5-flash-lite` thinks far less and
+   completes cleanly.** So: **route short structured-output tasks to flash-lite** (alternatives
+   if a task genuinely needs full flash: raise `max_tokens` generously, or disable thinking via
+   Gemini `generationConfig.thinkingConfig.thinkingBudget=0`). **The other Gemini-targeted call
+   sites (consolidator, graph_extractor, meetings summarizer) STILL hardcode full
+   `gemini-2.5-flash` and will hit this same truncation when flipped — fix them the same way.**
+2. **Honor the override's `model` field.** The resolver doesn't forward it; call sites hardcoded
+   the model. `trajectory_summary` now reads `cascade[0].model` (default flash-lite). Replicate
+   this per call site as they're flipped (or fix the resolver to forward `model` centrally).
+3. **Failure layers are distinct, confirmed:** (a) *completeness* — model/thinking/budget
+   (truncation); (b) *shape* — e.g. scout `reasonCodes` as strings + extra `districtId` (Layer C
+   tolerant validators); (c) *format drift on retry* — Gemini's retry returned markdown bullets,
+   not JSON. The shared fence-strip + JSON-extract handles fences/prose; (a) is model config; (b)
+   is per-schema. Keep validation strict on MEANING.
+4. **Scouts remain the hard case** (rich, customer-facing, strict anti-hallucination schema with
+   `extra="forbid"` + typed `reason_codes`). Tackle after the internal features, with a *quality*
+   check (not just "validated"), and keep on Claude if Gemini quality dips.
+
+**Still on Claude (reverted / not yet flipped):** all 6 classification scouts, memory
+consolidation, graph extraction, meeting summary. Next internal targets: memory consolidation /
+graph extraction (apply learnings 1+2 first).
 
 ---
 
