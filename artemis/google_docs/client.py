@@ -11,6 +11,8 @@ from urllib.parse import quote_plus
 
 import httpx
 
+from artemis.config import settings
+
 logger = logging.getLogger(__name__)
 
 _GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -295,6 +297,13 @@ async def export_google_document(
     created_document_id = str(created_payload.get("documentId") or "")
     if not created_document_id:
         raise GoogleDocsError("google create response missing documentId")
+    folder_id = settings.writing_studio_docs_folder_id
+    if folder_id:
+        await _move_document_to_folder(
+            access_token=access_token,
+            document_id=created_document_id,
+            folder_id=folder_id,
+        )
     await _replace_google_document_content(
         access_token=access_token,
         document_id=created_document_id,
@@ -307,6 +316,51 @@ async def export_google_document(
         content=content,
         created=True,
     )
+
+
+async def _move_document_to_folder(
+    *,
+    access_token: str,
+    document_id: str,
+    folder_id: str,
+) -> None:
+    """Move a Drive file into a specific folder (Drive PATCH files.update).
+
+    Uses addParents / removeParents to reparent the file.  If the move is
+    rejected (e.g. ``drive.file`` scope does not cover the target folder) this
+    logs a warning and returns without raising so the caller still gets the doc.
+    """
+    try:
+        async with _make_http_client(timeout=10.0) as http:
+            resp = await http.patch(
+                f"{_GOOGLE_DRIVE_BASE_URL}/files/{document_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={
+                    "addParents": folder_id,
+                    "removeParents": "root",
+                    "supportsAllDrives": "true",
+                    "fields": "id,parents",
+                },
+                json={},
+            )
+        if resp.status_code >= 300:
+            logger.warning(
+                "Writing Studio: failed to move doc %s into folder %s — "
+                "HTTP %s body=%r (doc stays in My Drive root; likely a drive.file scope "
+                "limitation — share the folder with the app or broaden OAuth scopes)",
+                document_id,
+                folder_id,
+                resp.status_code,
+                resp.text[:400],
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Writing Studio: exception moving doc %s into folder %s — %r "
+            "(doc stays in My Drive root)",
+            document_id,
+            folder_id,
+            exc,
+        )
 
 
 async def _rename_google_document(

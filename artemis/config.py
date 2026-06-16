@@ -106,6 +106,19 @@ class Settings(BaseSettings):
         default="https://app.artemisos.me/api/google/oauth/callback",
         description="Google OAuth redirect URI for the Artemis app.",
     )
+    writing_studio_docs_folder_id: str = Field(
+        default="19Dxp0xTwz_owGorQAc_BwSXmCJO-pPeP",
+        validation_alias=AliasChoices(
+            "ARTEMIS_WRITING_STUDIO_DOCS_FOLDER_ID",
+            "WRITING_STUDIO_DOCS_FOLDER_ID",
+        ),
+        description=(
+            "Google Drive folder ID where newly created Writing Studio docs are moved after "
+            "creation. Empty string = leave docs in My Drive root (default behavior). "
+            "Requires drive.file scope; if the move is rejected the doc is still returned "
+            "at the root (graceful fallback)."
+        ),
+    )
 
     embedding_provider: str = Field(
         default="minilm",
