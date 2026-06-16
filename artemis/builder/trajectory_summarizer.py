@@ -143,9 +143,14 @@ async def _summarize_with_retry(
 
     On persistent failure returns an all-null TrajectorySummary (safe default).
     Capped at 1 retry — no infinite loop possible.
+
+    GeminiRateLimitError is re-raised so the caller (_do_summarize) can fall
+    back to claude-code.  All other exceptions are caught and return the safe
+    null default.
     """
     from artemis.agent.loop import run_turn
     from artemis.agent.loop import user_message as _make_user_msg
+    from artemis.providers.errors import GeminiRateLimitError
 
     messages = list(initial_messages)
     for attempt in range(max_retries + 1):
@@ -158,6 +163,9 @@ async def _summarize_with_retry(
                 cache_system=False,
                 cache_tools=False,
             )
+        except GeminiRateLimitError:
+            # Re-raise so the caller can fall through to claude-code.
+            raise
         except Exception:
             logger.exception(
                 "trajectory_summarizer: LLM call failed for run_id=%s (attempt %d)",
@@ -168,12 +176,10 @@ async def _summarize_with_retry(
 
         # Record cost — failure must never propagate.
         try:
+            from artemis.costs.events import adapter_identity
             from artemis.db import SessionLocal
-            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 
-            _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
-            _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
-            _model = getattr(adapter, "_default_model", "claude-sonnet-4-6") or "claude-sonnet-4-6"
+            _provider, _model, _path = adapter_identity(adapter)
             async with SessionLocal() as _cost_session:
                 await record_cost_event(
                     _cost_session,
@@ -541,22 +547,58 @@ async def summarize(
     from artemis.agent.loop import user_message
     from artemis.builder.repository import create_trajectory_summary, get_trajectory_summary
 
-    # Resolve adapter via override-aware async resolver
+    # Resolve adapter via override-aware async resolver.
+    # When routing assigns Gemini as primary, GeminiRateLimitError from run_turn
+    # is caught below and the call is retried on claude-code.
     if adapter is None:
-        from artemis.providers.resolver import resolve_adapter_async
+        from artemis.providers import get_adapter
+        from artemis.providers.errors import (
+            MissingApiKeyError,
+            MissingCliBinaryError,
+            UnknownProviderError,
+        )
 
+        # Determine primary provider from DB routing override.
+        _primary_provider = "claude-code"
         try:
             async with _db.SessionLocal() as _override_session:
-                adapter = await resolve_adapter_async(
-                    provider="claude-code",
-                    feature_tag="trajectory_summary",
-                    session=_override_session,
+                from artemis.providers.routing_repository import get_routing_override_for_feature
+
+                override = await get_routing_override_for_feature(
+                    _override_session, "trajectory_summary"
                 )
+                if override and override.cascade:
+                    _primary_provider = override.cascade[0].get("provider", "claude-code")
+        except Exception:
+            pass
+
+        # For Gemini, request the flash model explicitly (reasoning task needs
+        # more capability than flash-lite).
+        _adapter_kwargs: dict[str, str] = (
+            {"default_model": "gemini-2.5-flash"} if _primary_provider == "gemini" else {}
+        )
+        try:
+            adapter = get_adapter(_primary_provider, **_adapter_kwargs)
+        except (MissingApiKeyError, MissingCliBinaryError, UnknownProviderError):
+            logger.warning(
+                "trajectory_summarizer: primary provider %r unavailable; falling back to claude-code",
+                _primary_provider,
+            )
+            _primary_provider = "claude-code"
+            try:
+                adapter = get_adapter("claude-code")
+            except Exception:
+                logger.warning(
+                    "trajectory_summarizer: adapter resolution failed, falling back to AnthropicAdapter"
+                )
+                adapter = AnthropicAdapter()
+                _primary_provider = "anthropic"
         except Exception:
             logger.warning(
                 "trajectory_summarizer: adapter resolution failed, falling back to AnthropicAdapter"
             )
             adapter = AnthropicAdapter()
+            _primary_provider = "anthropic"
 
     async def _do_summarize(session: Any) -> None:
         # Check idempotency: don't re-summarize.
@@ -590,11 +632,37 @@ async def summarize(
         prompt = _TRAJECTORY_PROMPT.format(run_data=json.dumps(run_data, indent=2))
 
         # H3: use Pydantic-validated retry helper (1 retry max, then null fallback).
-        parsed_summary = await _summarize_with_retry(
-            snapshot=snapshot,
-            adapter=adapter,
-            initial_messages=[user_message(prompt)],
-        )
+        # If the primary provider raises GeminiRateLimitError, fall through to
+        # claude-code and retry the full summarization.
+        from artemis.providers.errors import GeminiRateLimitError
+
+        try:
+            parsed_summary = await _summarize_with_retry(
+                snapshot=snapshot,
+                adapter=adapter,
+                initial_messages=[user_message(prompt)],
+            )
+        except GeminiRateLimitError:
+            logger.warning(
+                "trajectory_summarizer: Gemini rate-limited for run_id=%s; "
+                "falling back to claude-code",
+                snapshot.run_id,
+            )
+            try:
+                from artemis.providers import get_adapter
+
+                _fallback_adapter = get_adapter("claude-code")
+            except Exception:
+                logger.warning(
+                    "trajectory_summarizer: claude-code fallback unavailable for run_id=%s",
+                    snapshot.run_id,
+                )
+                return
+            parsed_summary = await _summarize_with_retry(
+                snapshot=snapshot,
+                adapter=_fallback_adapter,
+                initial_messages=[user_message(prompt)],
+            )
 
         what_worked = parsed_summary.what_worked
         what_stalled = parsed_summary.what_stalled

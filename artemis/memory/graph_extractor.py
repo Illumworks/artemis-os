@@ -41,7 +41,8 @@ from artemis.memory.graph import (
     upsert_relation,
 )
 from artemis.memory.models import MemoryObservation
-from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter_async
+from artemis.providers.fallback import complete_with_fallback
+from artemis.providers.resolver import NoProviderAvailableError
 
 _logger = logging.getLogger(__name__)
 
@@ -140,46 +141,67 @@ def _get_session_factory() -> Any:
 
 
 async def _default_call_model(content: str, model: str) -> str:
-    """Call the provider abstraction (claude-code cascade) with the static system prompt.
+    """Call the provider abstraction with Gemini → claude-code fallback.
 
-    Routes through resolve_adapter("claude-code") — no raw Anthropic SDK / no
-    ANTHROPIC_API_KEY required when the claude-code CLI is available. Mirrors the
-    pattern used by artemis/memory/consolidator.py (C3 pattern).
+    Determines the primary provider from the ``memory_graph_extraction`` routing
+    override (if set); otherwise defaults to ``"claude-code"``. A Gemini 429 or
+    other transient error cascades to claude-code automatically via
+    ``complete_with_fallback``.
     """
     from artemis.agent.client import CompletionRequest
     from artemis.agent.types import Message, TextBlock
 
+    # Determine the primary provider from the routing table (or default).
     try:
         factory = _get_session_factory()
         async with factory() as _override_session:
-            adapter = await resolve_adapter_async(
-                provider="claude-code",
-                feature_tag="memory_graph_extraction",
-                session=_override_session,
-            )
-    except NoProviderAvailableError as exc:
-        raise RuntimeError(f"Graph extraction: no provider available: {exc}") from exc
+            from artemis.providers.routing_repository import get_routing_override_for_feature
 
+            override = await get_routing_override_for_feature(
+                _override_session, "memory_graph_extraction"
+            )
+            _primary = (
+                override.cascade[0].get("provider", "claude-code")
+                if override and override.cascade
+                else "claude-code"
+            )
+    except Exception:
+        _primary = "claude-code"
+
+    # When primary is Gemini, use the Gemini flash model; otherwise use the
+    # caller-supplied model (which defaults to the Claude haiku id).
+    # complete_with_fallback strips the model on fallback to claude-code.
+    _gemini_model = "gemini-2.5-flash"
+    _effective_model = _gemini_model if _primary == "gemini" else model
     request = CompletionRequest(
         messages=[Message(role="user", content=[TextBlock(text=f'Observation: "{content}"')])],
         system=_SYSTEM_PROMPT,
-        model=model,
+        model=_effective_model,
         max_tokens=512,
         cache_system=True,
     )
-    response = await adapter.complete(request)
+    serving: list[str] = []
+    try:
+        response = await complete_with_fallback(
+            request,
+            primary=_primary,
+            fallback="claude-code",
+            serving_provider_out=serving,
+        )
+    except NoProviderAvailableError as exc:
+        raise RuntimeError(f"Graph extraction: no provider available: {exc}") from exc
+
     # Record cost — failure must never propagate to the caller.
     try:
-        from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
-
-        _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
-        _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+        _actual_provider = serving[0] if serving else _primary
+        _path = "cli" if _actual_provider == "claude-code" else "api"
+        _cost_model = _effective_model if _actual_provider == "gemini" else model
         factory = _get_session_factory()
         async with factory() as _cost_session:
             await record_cost_event(
                 _cost_session,
-                provider=_provider,
-                model=model,
+                provider=_actual_provider,
+                model=_cost_model,
                 provider_path=_path,
                 feature_tag="memory_graph_extraction",
                 input_tokens=getattr(response.usage, "input_tokens", 0),

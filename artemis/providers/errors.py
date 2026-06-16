@@ -36,6 +36,15 @@ class ClaudeCodeTimeoutError(ProviderAPIError):
     """Raised when the Claude Code CLI exceeds its completion timeout."""
 
 
+class GeminiRateLimitError(ProviderAPIError):
+    """Raised when Gemini returns HTTP 429 (rate limited) or 503 (overloaded/UNAVAILABLE).
+
+    Subclasses ProviderAPIError so existing ``except ProviderAPIError`` catch
+    sites are unaffected.  Callers that want to special-case the Gemini runtime
+    fallback can catch this narrower type instead.
+    """
+
+
 class MissingCliBinaryError(Exception):
     """Raised at adapter construction time when the required CLI binary is absent.
 

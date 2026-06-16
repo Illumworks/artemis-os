@@ -59,7 +59,8 @@ from artemis.memory.conflict_detector import detect_conflicts
 from artemis.memory.models import MemoryConflict, MemoryObservation
 from artemis.memory.schemas import Observation, Scope
 from artemis.memory.store import link_evidence, supersede_observation, write_observation
-from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter_async
+from artemis.providers.fallback import complete_with_fallback
+from artemis.providers.resolver import NoProviderAvailableError
 
 _logger = logging.getLogger(__name__)
 
@@ -191,24 +192,6 @@ async def consolidate_observations(
     if len(candidates) < 2:
         return []
 
-    # Resolve adapter once per call — not per attempt.
-    if adapter is None:
-        try:
-            from artemis.db import SessionLocal
-
-            async with SessionLocal() as _override_session:
-                adapter = await resolve_adapter_async(
-                    provider="claude-code",
-                    feature_tag="memory_consolidation",
-                    session=_override_session,
-                )
-        except NoProviderAvailableError as exc:
-            _logger.error(
-                "Consolidation LLM call failed: no provider available: %s", exc, exc_info=True
-            )
-            CONSOLIDATION_FAILURE_COUNTERS["no_provider"] += 1
-            return []
-
     system_prompt = _load_system_prompt()
     input_ids = {obs.id for obs in candidates}
     category = candidates[0].category
@@ -226,36 +209,81 @@ async def consolidate_observations(
         indent=2,
     )
 
-    request = CompletionRequest(
-        messages=[Message(role="user", content=[TextBlock(text=payload)])],
-        system=system_prompt,
-        model=_HAIKU_MODEL,
-        max_tokens=2048,
-        cache_system=True,
-    )
+    _gemini_model = "gemini-2.5-flash"
 
-    async def _call() -> tuple[str, object]:
-        response = await adapter.complete(request)
-        text_parts: list[str] = []
-        for block in response.message.content:
-            if isinstance(block, TextBlock):
-                text_parts.append(block.text)
-        return "".join(text_parts), response.usage
+    async def _call() -> tuple[str, object, str]:
+        """Return (raw_text, usage, serving_provider_id)."""
+        if adapter is not None:
+            # Test-injected adapter — call directly; no fallback path.
+            req = CompletionRequest(
+                messages=[Message(role="user", content=[TextBlock(text=payload)])],
+                system=system_prompt,
+                model=_HAIKU_MODEL,
+                max_tokens=2048,
+                cache_system=True,
+            )
+            response = await adapter.complete(req)
+            text_parts: list[str] = [
+                block.text for block in response.message.content if isinstance(block, TextBlock)
+            ]
+            return "".join(text_parts), response.usage, "injected"
+
+        # Production path: resolve the primary provider from the routing table,
+        # then use complete_with_fallback so Gemini 429s cascade to claude-code.
+        try:
+            from artemis.db import SessionLocal as _SessionLocal
+
+            async with _SessionLocal() as _override_session:
+                from artemis.providers.routing_repository import (
+                    get_routing_override_for_feature,
+                )
+
+                override = await get_routing_override_for_feature(
+                    _override_session, "memory_consolidation"
+                )
+                _primary = (
+                    override.cascade[0].get("provider", "claude-code")
+                    if override and override.cascade
+                    else "claude-code"
+                )
+        except Exception:
+            _primary = "claude-code"
+
+        # Use a Gemini model id when primary is Gemini; otherwise use the
+        # Claude haiku model.  complete_with_fallback clears the model field
+        # on the fallback call so claude-code uses its own default.
+        _model = _gemini_model if _primary == "gemini" else _HAIKU_MODEL
+        req = CompletionRequest(
+            messages=[Message(role="user", content=[TextBlock(text=payload)])],
+            system=system_prompt,
+            model=_model,
+            max_tokens=2048,
+            cache_system=True,
+        )
+        serving: list[str] = []
+        resp = await complete_with_fallback(
+            req,
+            primary=_primary,
+            fallback="claude-code",
+            serving_provider_out=serving,
+        )
+        text_parts = [
+            block.text for block in resp.message.content if isinstance(block, TextBlock)
+        ]
+        return "".join(text_parts), resp.usage, serving[0] if serving else _primary
 
     for attempt in range(2):
         try:
-            raw, _usage = await _call()
+            raw, _usage, _actual_provider = await _call()
             # Record cost event in a separate session — failure must never propagate.
             try:
                 import artemis.db as _db
-                from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 
-                _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
-                _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
+                _path = "cli" if _actual_provider == "claude-code" else "api"
                 async with _db.SessionLocal() as _cost_session:
                     await record_cost_event(
                         _cost_session,
-                        provider=_provider,
+                        provider=_actual_provider,
                         model=_HAIKU_MODEL,
                         provider_path=_path,
                         feature_tag="memory_consolidation",
@@ -276,6 +304,12 @@ async def consolidate_observations(
                 continue
             _logger.error("Consolidation failed after retry: %s", exc)
             CONSOLIDATION_FAILURE_COUNTERS["parse"] += 1
+            return []
+        except NoProviderAvailableError as exc:
+            _logger.error(
+                "Consolidation LLM call failed: no provider available: %s", exc, exc_info=True
+            )
+            CONSOLIDATION_FAILURE_COUNTERS["no_provider"] += 1
             return []
         except Exception as exc:
             _logger.error("Consolidation LLM call failed: %s", exc, exc_info=True)

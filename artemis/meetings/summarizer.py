@@ -323,13 +323,13 @@ async def _llm_summarize(
     the retry, returns an empty summary rather than letting hallucinated
     content propagate into Floating Artemis's system prompt.
 
-    Returns placeholder values if the LLM call fails so the scheduler doesn't
-    crash — a failed summary is still logged.
+    Uses complete_with_fallback so a Gemini 429 cascades to claude-code
+    transparently.  Returns placeholder values if the LLM call fails so the
+    scheduler doesn't crash — a failed summary is still logged.
     """
-    from artemis.agent.client import AnthropicAdapter, CompletionRequest
+    from artemis.agent.client import CompletionRequest
     from artemis.agent.types import Message, TextBlock
-    from artemis.providers import get_adapter
-    from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
+    from artemis.providers.fallback import complete_with_fallback
 
     # Build a readable transcript string from the meeting detail dict.
     transcript_text = ""
@@ -341,19 +341,23 @@ async def _llm_summarize(
         # Fall back to full JSON if no obvious transcript key.
         transcript_text = json.dumps(transcript_data, indent=2)[:60000]
 
-    # Resolve best available provider (same chain as floating_artemis).
-    adapter = None
-    for candidate in ("claude-code", "codex", "lm-studio", "anthropic"):
-        try:
-            adapter = get_adapter(candidate)
-            break
-        except (MissingApiKeyError, UnknownProviderError):
-            continue
-        except Exception:
-            continue
+    # Determine primary provider from the routing table (or default to claude-code).
+    try:
+        async with _db.SessionLocal() as _override_session:
+            from artemis.providers.routing_repository import get_routing_override_for_feature
 
-    if adapter is None:
-        adapter = AnthropicAdapter()
+            override = await get_routing_override_for_feature(
+                _override_session, "meeting_summary"
+            )
+            _primary = (
+                override.cascade[0].get("provider", "claude-code")
+                if override and override.cascade
+                else "claude-code"
+            )
+    except Exception:
+        _primary = "claude-code"
+
+    _gemini_model = "gemini-2.5-flash"
 
     last_error: str | None = None
     for attempt in range(_MAX_VALIDATION_RETRIES + 1):
@@ -366,9 +370,16 @@ async def _llm_summarize(
         try:
             request = CompletionRequest(
                 messages=[Message(role="user", content=[TextBlock(text=prompt)])],
+                model=_gemini_model if _primary == "gemini" else None,
                 max_tokens=1024,
             )
-            response = await adapter.complete(request)
+            serving: list[str] = []
+            response = await complete_with_fallback(
+                request,
+                primary=_primary,
+                fallback="claude-code",
+                serving_provider_out=serving,
+            )
             raw_text = "".join(
                 block.text for block in response.message.content if isinstance(block, TextBlock)
             )
@@ -377,19 +388,13 @@ async def _llm_summarize(
             action_items = [item.model_dump() for item in summary.action_items]
             # Record cost — failure must never propagate.
             try:
-                from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
-
-                _provider = "claude-code" if isinstance(adapter, ClaudeCodeAdapter) else "anthropic"
-                _path = "cli" if isinstance(adapter, ClaudeCodeAdapter) else "api"
-                _model = (
-                    getattr(adapter, "_default_model", None)
-                    or getattr(adapter, "model", None)
-                    or "claude-sonnet-4-6"
-                )
+                _actual_provider = serving[0] if serving else _primary
+                _path = "cli" if _actual_provider == "claude-code" else "api"
+                _model = _gemini_model if _actual_provider == "gemini" else "claude-sonnet-4-6"
                 async with _db.SessionLocal() as _cost_session:
                     await record_cost_event(
                         _cost_session,
-                        provider=_provider,
+                        provider=_actual_provider,
                         model=_model,
                         provider_path=_path,
                         feature_tag="meeting_summary",

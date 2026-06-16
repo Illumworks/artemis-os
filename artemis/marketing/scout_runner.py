@@ -25,7 +25,7 @@ from artemis.marketing.models import ScoutRun, SignalQueue, TerritoryConfig
 from artemis.marketing.scout_intake import normalize_intake_payload
 from artemis.marketing.scout_sources import SCOUT_SOURCE_ADAPTERS
 from artemis.marketing.scout_sources.base import ScoutSourceAdapter
-from artemis.providers.resolver import resolve_adapter_async
+from artemis.providers.fallback import complete_with_fallback
 
 logger = logging.getLogger(__name__)
 # Daily. These sources (legislation, board minutes, RFPs, funding notices) update on the order of
@@ -89,12 +89,13 @@ def reason_code_system_suffix(reason_codes: Any) -> str:
 
 
 async def _call_llm(
-    llm_adapter: Any,
+    primary_provider: str,
+    fallback_provider: str,
     user_parts: list[str],
     system_prompt: str,
     model: str,
 ) -> tuple[dict[str, Any] | None, float, str | None]:
-    """Call the LLM adapter, parse JSON response.
+    """Call the LLM with Gemini → claude-code fallback, parse JSON response.
 
     Returns (payload_dict, cost_delta, error_str).
     On success error_str is None; on failure payload_dict is None.
@@ -102,13 +103,17 @@ async def _call_llm(
     per-item retry in run_scout doesn't redefine a closure each iteration.
     """
     try:
-        resp = await llm_adapter.complete(
+        serving: list[str] = []
+        resp = await complete_with_fallback(
             CompletionRequest(
                 messages=[Message(role="user", content=[TextBlock(text="\n".join(user_parts))])],
                 system=system_prompt,
                 model=model,
                 max_tokens=1024,
-            )
+            ),
+            primary=primary_provider,
+            fallback=fallback_provider,
+            serving_provider_out=serving,
         )
         payload: dict[str, Any] = json.loads(
             "".join(b.text for b in resp.message.content if hasattr(b, "text"))
@@ -121,14 +126,13 @@ async def _call_llm(
         # Record cost — never propagate failures.
         try:
             from artemis.db import SessionLocal
-            from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 
-            _provider = "claude-code" if isinstance(llm_adapter, ClaudeCodeAdapter) else "anthropic"
-            _path = "cli" if isinstance(llm_adapter, ClaudeCodeAdapter) else "api"
+            _actual_provider = serving[0] if serving else primary_provider
+            _path = "cli" if _actual_provider == "claude-code" else "api"
             async with SessionLocal() as _cost_session:
                 await record_cost_event(
                     _cost_session,
-                    provider=_provider,
+                    provider=_actual_provider,
                     model=model,
                     provider_path=_path,
                     feature_tag="marketing_scout",
@@ -208,15 +212,13 @@ async def run_scout(
         )
     ).scalar_one_or_none()
     raw_items = source_adapter.fetch(territory_config, last_row.started_at if last_row else None)
-    try:
-        llm_adapter = await resolve_adapter_async(
-            provider=agent.provider or "claude-code",
-            fallback_provider=agent.fallback_provider,
-            feature_tag="marketing_scout",
-            session=session,
-        )
-    except Exception:
-        llm_adapter = None
+
+    # Provider routing: use the agent's declared provider as primary and
+    # fallback_provider as fallback.  complete_with_fallback handles Gemini 429s
+    # by cascading to claude-code transparently at call time.
+    _primary_provider = agent.provider or "claude-code"
+    _fallback_provider = agent.fallback_provider or "claude-code"
+
     # H2: extract allowlist once per run (list[str] | None).
     # None means no restriction (e.g. empty JSONB list treated as unrestricted).
     _rc_emitted = agent.reason_codes_emitted or []
@@ -234,9 +236,6 @@ async def run_scout(
             status = "partial_complete"
             break
         items_processed += 1
-        if llm_adapter is None:
-            signals_rejected += 1
-            continue
         prompt_parts = [f"Item:\n{raw_item.content}"]
         if raw_item.source_url:
             prompt_parts.append(f"URL: {raw_item.source_url}")
@@ -262,7 +261,7 @@ async def run_scout(
         )
 
         payload, delta, call_err = await _call_llm(
-            llm_adapter, prompt_parts, system_prompt, agent.model
+            _primary_provider, _fallback_provider, prompt_parts, system_prompt, agent.model
         )
         cost_usd += delta
         if call_err or payload is None:
@@ -291,7 +290,7 @@ async def run_scout(
                 f"VALIDATION ERROR — your previous JSON was rejected: {exc}. Fix and re-emit."
             ]
             payload2, delta2, call_err2 = await _call_llm(
-                llm_adapter, retry_parts, system_prompt, agent.model
+                _primary_provider, _fallback_provider, retry_parts, system_prompt, agent.model
             )
             cost_usd += delta2
             if call_err2 or payload2 is None:

@@ -23,7 +23,7 @@ import httpx
 
 from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.agent.types import Message, TextBlock, ToolResultBlock, ToolUseBlock, Usage
-from artemis.providers.errors import MissingApiKeyError, ProviderAPIError
+from artemis.providers.errors import GeminiRateLimitError, MissingApiKeyError, ProviderAPIError
 from artemis.providers.gemini.models import GEMINI_DEFAULT_MODEL, estimate_cost, resolve_model
 from artemis.providers.streaming import (
     StreamEvent,
@@ -77,6 +77,8 @@ class GeminiAdapter:
             )
 
         if not response.is_success:
+            if response.status_code in (429, 503):
+                raise GeminiRateLimitError(response.status_code, response.text)
             raise ProviderAPIError(response.status_code, response.text)
 
         data = response.json()
@@ -113,6 +115,8 @@ class GeminiAdapter:
         ):
             if not response.is_success:
                 error_text = await response.aread()
+                if response.status_code in (429, 503):
+                    raise GeminiRateLimitError(response.status_code, error_text.decode())
                 raise ProviderAPIError(response.status_code, error_text.decode())
 
             input_tokens = 0
