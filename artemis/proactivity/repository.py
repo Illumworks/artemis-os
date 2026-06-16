@@ -9,7 +9,12 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.proactivity.models import Commitment, MorningBriefDelivery, OkrCheckinBreadcrumb
+from artemis.proactivity.models import (
+    Commitment,
+    CommitmentDecision,
+    MorningBriefDelivery,
+    OkrCheckinBreadcrumb,
+)
 
 _DELIVERY_KIND = "morning_brief"
 _OKR_CHECKIN_KIND = "okr_checkin"
@@ -283,8 +288,18 @@ async def upsert_commitment(
     owner_user_id: int | None,
     due: datetime | None,
     sensitivity: str,
+    status: str = "active",
 ) -> tuple[Commitment, bool]:
-    """Insert or refresh a commitment keyed by (source_type, source_id, text)."""
+    """Insert or refresh a commitment keyed by (source_type, source_id, text).
+
+    ``status`` defaults to ``'active'`` for back-compat with all existing
+    callers.  Pass ``'proposed'`` from the meeting-ingest gate so new meeting
+    commitments land in the opt-in holding state.
+
+    On conflict (dedup) the status is intentionally NOT updated — a commitment
+    already promoted to ``active`` by the owner should not be demoted back to
+    ``proposed`` on a re-ingest.
+    """
     now = datetime.now(UTC)
     stmt = (
         pg_insert(Commitment)
@@ -295,6 +310,7 @@ async def upsert_commitment(
             owner_user_id=owner_user_id,
             due=due,
             sensitivity=sensitivity,
+            status=status,
             updated_at=now,
         )
         .on_conflict_do_nothing(
@@ -476,3 +492,99 @@ async def find_commitment_by_source_and_text(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def record_commitment_decision(
+    session: AsyncSession,
+    *,
+    commitment_id: int,
+    decision: str,
+    features: dict[str, Any],
+) -> CommitmentDecision:
+    """Append a decision row to the commitment_decisions table (lossless).
+
+    Never updates an existing row — each approve/dismiss produces a new row so
+    the full decision history is preserved for Phase 2-3 learning.
+    """
+    row = CommitmentDecision(
+        commitment_id=commitment_id,
+        decision=decision,
+        features=features,
+    )
+    session.add(row)
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
+async def approve_commitment(
+    session: AsyncSession,
+    *,
+    commitment_id: int,
+    features: dict[str, Any],
+    now: datetime | None = None,
+) -> Commitment | None:
+    """Promote a proposed commitment to active and record the approval decision.
+
+    Idempotent on already-active commitments (no-op status update, still
+    records the decision row so double-approvals are auditable).
+
+    Returns the updated Commitment, or None if not found.
+    """
+    ts = now or datetime.now(UTC)
+    await session.execute(
+        update(Commitment)
+        .where(Commitment.id == commitment_id)
+        .values(
+            status="active",
+            updated_at=ts,
+        )
+    )
+    commitment = await session.get(Commitment, commitment_id)
+    if commitment is None:
+        return None
+    await record_commitment_decision(
+        session,
+        commitment_id=commitment_id,
+        decision="approve",
+        features=features,
+    )
+    return commitment
+
+
+async def dismiss_commitment_with_decision(
+    session: AsyncSession,
+    *,
+    commitment_id: int,
+    features: dict[str, Any],
+    now: datetime | None = None,
+) -> Commitment | None:
+    """Move a commitment to dismissed and record the dismiss decision.
+
+    Complements the existing ``dismiss_commitment`` (which sets status only).
+    This variant additionally captures the learning-signal row in
+    commitment_decisions.  Callers that want decision capture should use this
+    function; the plain ``dismiss_commitment`` is kept for back-compat.
+
+    Returns the updated Commitment, or None if not found.
+    """
+    ts = now or datetime.now(UTC)
+    await session.execute(
+        update(Commitment)
+        .where(Commitment.id == commitment_id)
+        .values(
+            status="dismissed",
+            snoozed_until=None,
+            updated_at=ts,
+        )
+    )
+    commitment = await session.get(Commitment, commitment_id)
+    if commitment is None:
+        return None
+    await record_commitment_decision(
+        session,
+        commitment_id=commitment_id,
+        decision="dismiss",
+        features=features,
+    )
+    return commitment

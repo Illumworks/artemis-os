@@ -154,7 +154,7 @@ class Commitment(Base):
             name="uq_commitments_source_text",
         ),
         CheckConstraint(
-            "status IN ('active', 'snoozed', 'done', 'dismissed')",
+            "status IN ('proposed', 'active', 'snoozed', 'done', 'dismissed')",
             name="ck_commitments_status",
         ),
         Index("idx_commitments_status_due", "status", "due"),
@@ -183,6 +183,44 @@ class Commitment(Base):
         server_default="now()",
     )
     updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+
+
+class CommitmentDecision(Base):
+    """Append-only learning-signal table for commitment approve/dismiss decisions.
+
+    Every time the owner approves or dismisses a proposed commitment, one row is
+    written here with a feature snapshot.  Rows are never deleted (lossless /
+    audit invariant).  The features JSONB is the labeled dataset for Phase 2-3
+    learning (shrink the proposed list, rank by predicted approval).
+
+    Invariant: decision is immutable after insert — do NOT update rows.
+    """
+
+    __tablename__ = "commitment_decisions"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('approve', 'dismiss')",
+            name="ck_commitment_decisions_decision",
+        ),
+        Index("idx_commitment_decisions_commitment_id", "commitment_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    commitment_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("commitments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # 'approve' → status transitions to 'active'; 'dismiss' → 'dismissed'
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    # Feature snapshot for future learning:
+    # {owner_is_owner, had_due, sensitivity, source_type, source_id, meeting_title}
+    features: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    decided_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default="now()",
