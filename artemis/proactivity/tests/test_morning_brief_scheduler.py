@@ -69,10 +69,9 @@ async def test_fire_morning_brief_generates_and_delivers_once(db_session: AsyncS
     brief = {
         "_snapshotId": 42,
         "summary": "Focus on pipeline cleanup today.",
-        "highlights": [{"title": "Signals", "detail": "3 need review", "source": "slack"}],
-        "priorities": [{"item": "Review candidates", "rationale": "Gate is waiting", "urgency": "high"}],
-        "next_actions": [{"action": "Reply to Angela", "owner": "Jon", "due": "today"}],
-        "risks": ["Two sends are blocked"],
+        "top_priorities": [{"item": "Review candidates", "rationale": "Gate is waiting", "urgency": "high"}],
+        "waiting_on_you": [{"who": "Angela", "context": "Reply needed re: pipeline"}],
+        "okr_at_risk": None,
         "confidence": "high",
     }
 
@@ -111,10 +110,9 @@ def test_format_brief_for_slack_lints_tables_and_banned_chars() -> None:
     delivery_date = datetime(2026, 6, 11, tzinfo=ZoneInfo("America/New_York")).date()
     brief = {
         "summary": "| Topic | Note |\n| --- | --- |\n| Pipeline | Needs review |\n\nShip it — today 😀",
-        "highlights": [],
-        "priorities": [],
-        "next_actions": [],
-        "risks": [],
+        "top_priorities": [],
+        "waiting_on_you": [],
+        "okr_at_risk": None,
         "confidence": "medium",
     }
 
@@ -128,41 +126,45 @@ def test_format_brief_for_slack_lints_tables_and_banned_chars() -> None:
 
 
 def test_format_brief_no_confidence_line_no_trailing_tags() -> None:
-    """Cleanup brief: no 'Confidence' line, no '; source' or '; level' suffixes."""
+    """Trimmed brief: no 'Confidence' line, no redundant sections."""
     delivery_date = datetime(2026, 6, 11, tzinfo=ZoneInfo("America/New_York")).date()
     brief = {
         "summary": "A focused day.",
-        "highlights": [
-            {"title": "Pipeline ready", "detail": "Three sends cleared", "source": "jira"},
-            {"title": "Solo headline", "detail": None, "source": "calendar"},
-        ],
-        "priorities": [
+        "top_priorities": [
             {"item": "Ship the release", "rationale": "Blocked team downstream", "urgency": "high"},
             {"item": "Review OKR progress", "rationale": None, "urgency": "medium"},
         ],
-        "next_actions": [],
-        "risks": [],
+        "waiting_on_you": [
+            {"who": "Angela", "context": "Waiting on pipeline approval"},
+        ],
+        "okr_at_risk": "Product KR at 34% — stalled",
         "confidence": "high",
     }
 
     text = _format_brief_for_slack(brief, delivery_date=delivery_date)
 
-    # Cleanup 1: no Confidence block at all
+    # No Confidence block at all
     assert "Confidence" not in text
 
-    # Cleanup 2: highlights — detail present (not equal to title) → shown, but NO trailing source tag
-    assert "Pipeline ready: Three sends cleared" in text
-    assert "; jira" not in text
-    assert "; calendar" not in text
-
-    # Cleanup 2: priorities — rationale shown when present, but NO trailing urgency tag
+    # Priorities shown with rationale, no trailing urgency tag
     assert "Ship the release: Blocked team downstream" in text
     assert "; high" not in text
     assert "; medium" not in text
 
+    # Waiting on you section present
+    assert "Angela" in text
+    assert "Waiting on pipeline approval" in text
+
+    # OKR at risk shown
+    assert "Product KR at 34%" in text
+
+    # Removed sections must NOT appear
+    assert "*Highlights*" not in text
+    assert "*Next Actions*" not in text
+    assert "*Risks*" not in text
+
     # Sanity: core content still present
     assert "A focused day" in text
-    assert "Pipeline ready" in text
     assert "Ship the release" in text
     assert "Review OKR progress" in text
 

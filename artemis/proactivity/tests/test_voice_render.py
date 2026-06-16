@@ -80,12 +80,11 @@ async def test_render_brief_with_voice_returns_nonelike_on_llm_error() -> None:
     """If the LLM call raises, render_brief_with_voice returns None (caller fallback)."""
     brief: dict[str, Any] = {
         "summary": "A productive day.",
-        "highlights": [{"title": "Pipeline ready", "detail": "Cleared 3 sends", "source": "jira"}],
-        "priorities": [
+        "top_priorities": [
             {"item": "Ship the release", "rationale": "Blocked team", "urgency": "high"}
         ],
-        "next_actions": [],
-        "risks": [],
+        "waiting_on_you": [],
+        "okr_at_risk": None,
     }
     with patch(
         "artemis.proactivity.voice_render._call_voice_llm",
@@ -101,12 +100,11 @@ async def test_render_brief_with_voice_non_empty_when_llm_returns_text() -> None
     """When LLM returns a sensible response, output is non-empty and lint-clean."""
     brief: dict[str, Any] = {
         "summary": "Focus on pipeline cleanup.",
-        "highlights": [{"title": "Signals", "detail": "3 need review", "source": "slack"}],
-        "priorities": [
+        "top_priorities": [
             {"item": "Review candidates", "rationale": "Gate is waiting", "urgency": "high"}
         ],
-        "next_actions": [{"action": "Reply to Angela", "owner": "Jon", "due": "today"}],
-        "risks": ["Two sends are blocked"],
+        "waiting_on_you": [{"who": "Angela", "context": "Reply needed re: pipeline"}],
+        "okr_at_risk": "Two sends are blocked",
     }
     llm_response = "Pipeline's the priority today. Three signals need review and Angela is waiting on a reply. Two sends are still blocked, so move those first."
 
@@ -128,10 +126,9 @@ async def test_render_brief_with_voice_no_labeled_section_headers() -> None:
     """Voice output must NOT contain labeled section headers like Summary: or Highlights:."""
     brief: dict[str, Any] = {
         "summary": "Focus on pipeline cleanup.",
-        "highlights": [{"title": "Signals", "detail": "3 need review", "source": "slack"}],
-        "priorities": [],
-        "next_actions": [],
-        "risks": [],
+        "top_priorities": [],
+        "waiting_on_you": [],
+        "okr_at_risk": None,
     }
     # A response WITHOUT section headers.
     llm_response = "Three signals need review today. Pipeline is the blocker."
@@ -153,10 +150,9 @@ async def test_render_brief_with_voice_discards_response_with_section_headers() 
     """If LLM returns labeled section headers, the pass returns None (caller fallback)."""
     brief: dict[str, Any] = {
         "summary": "A day.",
-        "highlights": [],
-        "priorities": [],
-        "next_actions": [],
-        "risks": [],
+        "top_priorities": [],
+        "waiting_on_you": [],
+        "okr_at_risk": None,
     }
     # LLM ignores the rule and returns a labeled template.
     llm_response = "Summary: A day.\nHighlights:\n- Nothing."
@@ -175,11 +171,10 @@ async def test_render_brief_with_voice_discards_response_with_section_headers() 
 async def test_render_brief_with_voice_contains_grounded_facts() -> None:
     """Voice output contains facts from the grounded brief (not invented)."""
     brief: dict[str, Any] = {
-        "summary": "Pipeline cleanup day.",
-        "highlights": [{"title": "AMIRA-123", "detail": "Merged", "source": "jira"}],
-        "priorities": [{"item": "Ship AMIRA-456", "rationale": "Sprint end", "urgency": "high"}],
-        "next_actions": [],
-        "risks": ["AMIRA-789 blocked"],
+        "summary": "Pipeline cleanup day. AMIRA-123 is merged.",
+        "top_priorities": [{"item": "Ship AMIRA-456", "rationale": "Sprint end", "urgency": "high"}],
+        "waiting_on_you": [],
+        "okr_at_risk": "AMIRA-789 blocked",
     }
     # LLM narrates the grounded facts.
     llm_response = (
@@ -468,10 +463,9 @@ async def test_fire_morning_brief_uses_voice_text_when_available(db_session: Any
     voice_text = "Pipeline is the priority. Ship AMIRA-456."
     brief: dict[str, Any] = {
         "summary": "Pipeline day.",
-        "highlights": [],
-        "priorities": [],
-        "next_actions": [],
-        "risks": [],
+        "top_priorities": [],
+        "waiting_on_you": [],
+        "okr_at_risk": None,
     }
 
     with (
@@ -520,12 +514,11 @@ async def test_fire_morning_brief_falls_back_when_voice_fails(db_session: Any) -
 
     brief: dict[str, Any] = {
         "summary": "Focused day.",
-        "highlights": [],
-        "priorities": [
+        "top_priorities": [
             {"item": "Review candidates", "rationale": "Gate waiting", "urgency": "high"}
         ],
-        "next_actions": [],
-        "risks": [],
+        "waiting_on_you": [],
+        "okr_at_risk": None,
     }
 
     with (

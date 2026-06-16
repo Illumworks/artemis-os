@@ -57,7 +57,12 @@ Hard rules:
 
 
 def _build_brief_voice_prompt(brief: dict[str, Any], delivery_date: date) -> str:
-    """Build the user prompt for the morning brief voice pass."""
+    """Build the user prompt for the morning brief voice pass.
+
+    Supports both new schema (top_priorities, waiting_on_you, okr_at_risk) and
+    old schema (priorities, next_actions, highlights, risks, okr_status) for
+    backward-compat with snapshots persisted before the schema change.
+    """
     date_str = f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
     parts: list[str] = [
         f"Today is {date_str}.",
@@ -70,23 +75,11 @@ def _build_brief_voice_prompt(brief: dict[str, Any], delivery_date: date) -> str
     if summary:
         parts.append(f"Summary: {summary}")
 
-    highlights = brief.get("highlights") or []
-    if isinstance(highlights, list) and highlights:
-        parts.append("Highlights:")
-        for h in highlights[:5]:
-            if not isinstance(h, dict):
-                continue
-            title = str(h.get("title") or "").strip()
-            detail = str(h.get("detail") or "").strip()
-            if title and detail and detail != title:
-                parts.append(f"  - {title}: {detail}")
-            elif title:
-                parts.append(f"  - {title}")
-
-    priorities = brief.get("priorities") or []
-    if isinstance(priorities, list) and priorities:
-        parts.append("Priorities:")
-        for p in priorities[:5]:
+    # New schema: top_priorities; old schema fallback: priorities
+    top_priorities = brief.get("top_priorities") or brief.get("priorities") or []
+    if isinstance(top_priorities, list) and top_priorities:
+        parts.append("Top priorities (most urgent first):")
+        for p in top_priorities[:3]:
             if not isinstance(p, dict):
                 continue
             item = str(p.get("item") or "").strip()
@@ -96,30 +89,30 @@ def _build_brief_voice_prompt(brief: dict[str, Any], delivery_date: date) -> str
             elif item:
                 parts.append(f"  - {item}")
 
-    next_actions = brief.get("next_actions") or []
-    if isinstance(next_actions, list) and next_actions:
-        parts.append("Next actions:")
-        for na in next_actions[:5]:
-            if not isinstance(na, dict):
+    # New schema: waiting_on_you
+    waiting = brief.get("waiting_on_you") or []
+    if isinstance(waiting, list) and waiting:
+        parts.append("Waiting on Jon:")
+        for w in waiting[:5]:
+            if not isinstance(w, dict):
                 continue
-            action = str(na.get("action") or "").strip()
-            if action:
-                parts.append(f"  - {action}")
+            who = str(w.get("who") or "").strip()
+            context = str(w.get("context") or "").strip()
+            if who and context:
+                parts.append(f"  - {who}: {context}")
+            elif who:
+                parts.append(f"  - {who}")
 
-    okr_status = str(brief.get("okr_status") or "").strip()
-    if okr_status:
-        parts.append(f"OKR note: {okr_status}")
-
-    risks = brief.get("risks") or []
-    if isinstance(risks, list) and risks:
-        risk_texts = [str(r).strip() for r in risks[:3] if str(r).strip()]
-        if risk_texts:
-            parts.append("Risks: " + "; ".join(risk_texts))
+    # New schema: okr_at_risk; old schema fallback: okr_status
+    okr_note = str(brief.get("okr_at_risk") or brief.get("okr_status") or "").strip()
+    if okr_note:
+        parts.append(f"OKR at risk: {okr_note}")
 
     parts.append("")
     parts.append(
         "Now write the Slack message. Do NOT include labeled section headers. "
-        "Narrate these facts in Artemis's voice — brief, direct, human."
+        "Narrate these facts in Artemis's voice — brief, direct, human. "
+        "3-6 lines max."
     )
     return "\n".join(parts)
 

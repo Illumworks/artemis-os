@@ -475,70 +475,55 @@ async def _resolve_morning_brief_recipient(session: AsyncSession) -> str:
 
 
 def _format_brief_for_slack(brief: dict[str, Any], *, delivery_date: date) -> str:
-    """Render the stored brief JSON into Slack-friendly plain text."""
+    """Render the stored brief JSON into Slack-friendly plain text.
+
+    Supports both the new trimmed schema (top_priorities, waiting_on_you, okr_at_risk)
+    and the old schema (priorities, next_actions, highlights, risks, okr_status) for
+    backward-compat with any snapshots persisted before the schema change.
+    """
     date_label = (
         f"{delivery_date.strftime('%A')}, {delivery_date.strftime('%B')} {delivery_date.day}"
     )
     lines: list[str] = [f"*Morning brief for {date_label}*"]
 
+    # Summary (1-2 sentences, always first)
     summary = _clean_string(brief.get("summary"))
     if summary:
-        lines.extend(["", "*Summary*", summary])
+        lines.extend(["", summary])
 
-    highlights = brief.get("highlights") or []
-    if isinstance(highlights, list) and highlights:
-        lines.extend(["", "*Highlights*"])
-        for item in highlights[:5]:
+    # Top priorities (new schema: top_priorities; old schema fallback: priorities + next_actions)
+    top_priorities = brief.get("top_priorities") or []
+    old_priorities = brief.get("priorities") or []
+    priority_items = top_priorities if top_priorities else old_priorities
+    if isinstance(priority_items, list) and priority_items:
+        lines.extend(["", "*Top priorities*"])
+        for item in priority_items[:3]:
             if not isinstance(item, dict):
                 continue
-            title = _clean_string(item.get("title"))
-            detail = _clean_string(item.get("detail"))
-            bullet = title or detail
-            if not bullet:
-                continue
-            extras = [segment for segment in [detail if detail != bullet else None] if segment]
-            lines.append("- " + bullet + (f": {'; '.join(extras)}" if extras else ""))
-
-    priorities = brief.get("priorities") or []
-    if isinstance(priorities, list) and priorities:
-        lines.extend(["", "*Priorities*"])
-        for item in priorities[:5]:
-            if not isinstance(item, dict):
-                continue
-            label = _clean_string(item.get("item"))
+            label = _clean_string(item.get("item") or item.get("action") or "")
             rationale = _clean_string(item.get("rationale"))
             if not label:
                 continue
             extras = [segment for segment in [rationale] if segment]
             lines.append("- " + label + (f": {'; '.join(extras)}" if extras else ""))
 
-    next_actions = brief.get("next_actions") or []
-    if isinstance(next_actions, list) and next_actions:
-        lines.extend(["", "*Next Actions*"])
-        for item in next_actions[:5]:
+    # Waiting on you (new schema: waiting_on_you)
+    waiting = brief.get("waiting_on_you") or []
+    if isinstance(waiting, list) and waiting:
+        lines.extend(["", "*Waiting on you*"])
+        for item in waiting[:8]:
             if not isinstance(item, dict):
                 continue
-            action = _clean_string(item.get("action"))
-            owner = _clean_string(item.get("owner"))
-            due = _clean_string(item.get("due"))
-            if not action:
+            who = _clean_string(item.get("who"))
+            context = _clean_string(item.get("context"))
+            if not who:
                 continue
-            metadata = [f"owner: {owner}" for owner in [owner] if owner]
-            if due:
-                metadata.append(f"due: {due}")
-            lines.append("- " + action + (f" ({', '.join(metadata)})" if metadata else ""))
+            lines.append("- " + who + (f": {context}" if context else ""))
 
-    okr_status = _clean_string(brief.get("okr_status"))
-    if okr_status:
-        lines.extend(["", "*OKR Status*", okr_status])
-
-    risks = brief.get("risks") or []
-    if isinstance(risks, list) and any(_clean_string(risk) for risk in risks):
-        lines.extend(["", "*Risks*"])
-        for risk in risks[:5]:
-            risk_text = _clean_string(risk)
-            if risk_text:
-                lines.append(f"- {risk_text}")
+    # OKR at risk (new schema: okr_at_risk; old schema fallback: okr_status)
+    okr_at_risk = _clean_string(brief.get("okr_at_risk") or brief.get("okr_status"))
+    if okr_at_risk:
+        lines.extend(["", "*OKRs at risk*", okr_at_risk])
 
     if len(lines) == 1:
         lines.extend(["", "No major items surfaced yet."])

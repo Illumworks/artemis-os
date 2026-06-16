@@ -115,8 +115,8 @@ async def test_generate_persists_snapshot() -> None:
 
     session = _make_session()
 
-    # H5: DailyBrief shape — highlights/priorities/next_actions (not headline/rank/ticket).
-    valid_json = '{"highlights": [{"title": "Focus day", "detail": "Sprint review first", "source": "jira"}], "priorities": [{"item": "Sprint review", "rationale": "Due today", "urgency": "high"}], "next_actions": [], "okr_status": null, "risks": [], "summary": "Sprint review day.", "confidence": "high"}'
+    # H5 (trimmed): DailyBrief shape — top_priorities/waiting_on_you/okr_at_risk
+    valid_json = '{"summary": "Sprint review day.", "top_priorities": [{"item": "Sprint review", "rationale": "Due today", "urgency": "high"}], "waiting_on_you": [], "okr_at_risk": null, "confidence": "high"}'
 
     snap = _fake_snapshot(id_=42)
 
@@ -148,8 +148,8 @@ async def test_generate_persists_snapshot() -> None:
         result = await generate_brief_endpoint(session=session)
 
     assert result["generated"] is True
-    # H5: DailyBrief shape — highlights key, not headline.
-    assert result["brief"]["highlights"][0]["title"] == "Focus day"
+    # H5 (trimmed): DailyBrief shape — top_priorities, not highlights.
+    assert result["brief"]["top_priorities"][0]["item"] == "Sprint review"
     assert result["brief"]["_snapshotId"] == 42
     mock_save.assert_awaited_once()
 
@@ -161,8 +161,8 @@ async def test_generate_persists_snapshot() -> None:
 async def test_generate_handles_markdown_fenced_json() -> None:
     from artemis.brief.generator import generate_brief
 
-    # H5: DailyBrief-shaped JSON wrapped in markdown fences.
-    inner_json = '{"highlights": [{"title": "Fenced brief", "detail": null, "source": null}], "priorities": [], "next_actions": [], "okr_status": null, "risks": [], "summary": null, "confidence": "medium"}'
+    # H5 (trimmed): DailyBrief-shaped JSON wrapped in markdown fences.
+    inner_json = '{"summary": null, "top_priorities": [{"item": "Fenced brief", "rationale": null, "urgency": "medium"}], "waiting_on_you": [], "okr_at_risk": null, "confidence": "medium"}'
     fenced = f"```json\n{inner_json}\n```"
 
     snap = _fake_snapshot(id_=7)
@@ -194,8 +194,8 @@ async def test_generate_handles_markdown_fenced_json() -> None:
     ):
         result = await generate_brief(session=_make_session())
 
-    # H5: DailyBrief shape — highlights key, not headline.
-    assert result["highlights"][0]["title"] == "Fenced brief"
+    # H5 (trimmed): DailyBrief shape — top_priorities, not highlights.
+    assert result["top_priorities"][0]["item"] == "Fenced brief"
     assert result["_snapshotId"] == 7
 
 
@@ -250,8 +250,8 @@ async def test_generate_falls_back_on_no_json() -> None:
     # H5: no 502 — failure isolation returns empty DailyBrief.
     assert result["generated"] is True
     brief = result["brief"]
-    assert brief["highlights"] == []
-    assert brief["priorities"] == []
+    assert brief["top_priorities"] == []
+    assert brief["waiting_on_you"] == []
     assert brief["summary"] is None
 
 

@@ -2,8 +2,17 @@
 
 `_build_context_string` mirrors the Node reference's section layout
 (same section headers, same truncation limits). `_build_prompt` emits
-the H5 `DailyBrief` schema — the previous Node-shaped prompt was
-replaced when DailyBrief became the validated output contract.
+the trimmed DailyBrief schema:
+  - summary:        1-2 sentence day overview
+  - top_priorities: up to 3 actionable items (merged priorities + next actions)
+  - waiting_on_you: people/threads waiting on Jon
+  - okr_at_risk:    at-risk KRs only (null if none)
+  - confidence:     quality signal
+
+Removed sections vs. old schema:
+  - highlights  (redundant with top_priorities)
+  - next_actions (merged into top_priorities)
+  - risks        (fold real risks into summary or okr_at_risk)
 """
 
 from __future__ import annotations
@@ -30,7 +39,8 @@ def _build_context_string(sources: dict[str, Any]) -> str:
                 generated_at = generated_at.replace(tzinfo=UTC)
             hours_ago = round((now - generated_at).total_seconds() / 3600)
             lines.append(f"\n## Yesterday's brief (generated {hours_ago}h ago)")
-            priorities = prev.get("priorities") or []
+            # Support both old schema (priorities) and new schema (top_priorities)
+            priorities = prev.get("top_priorities") or prev.get("priorities") or []
             if priorities:
                 lines.append("Suggested priorities:")
                 for i, p in enumerate(priorities):
@@ -154,34 +164,33 @@ def _build_context_string(sources: dict[str, Any]) -> str:
 
 
 def _build_prompt(context_string: str) -> str:
-    return f"""You are Artemis, a personal work intelligence assistant. Based on the context below, generate a concise daily brief for Jon.
+    return f"""You are Artemis, a personal work intelligence assistant. Based on the context below, generate a scannable daily brief for Jon.
 
 {context_string}
 
 Generate a JSON object matching this exact schema (no other text, valid JSON only):
 {{
-  "highlights": [
-    {{ "title": "short headline of something notable today", "detail": "1-2 sentence elaboration or null", "source": "jira|calendar|okr|slack|sessions|memory or null" }}
+  "summary": "1-2 sentences: overall shape of the day and whether yesterday's plan held (if previous brief exists)",
+  "top_priorities": [
+    {{ "item": "most urgent action grounded in actual tickets/KRs/meetings", "rationale": "why now, under 25 words or null", "urgency": "high" }},
+    {{ "item": "second priority", "rationale": "...", "urgency": "medium" }},
+    {{ "item": "third priority", "rationale": "...", "urgency": "medium" }}
   ],
-  "priorities": [
-    {{ "item": "short action to focus on", "rationale": "1-2 sentence reason grounded in the data above or null", "urgency": "high" }},
-    {{ "item": "...", "rationale": "...", "urgency": "medium" }}
+  "waiting_on_you": [
+    {{ "who": "person or thread name", "context": "one line on what they need or null" }}
   ],
-  "next_actions": [
-    {{ "action": "concrete next step", "owner": "person responsible or null", "due": "ISO date or loose date token or null" }}
-  ],
-  "okr_status": "1-2 sentences on OKR progress, or null if no OKR data",
-  "risks": ["short risk description", "..."],
-  "summary": "1-3 sentences capturing the day's overall shape and (if a previous brief exists) whether yesterday's plan was followed or interrupted",
+  "okr_at_risk": "1-2 lines naming only KRs that are at-risk or stalled, with their % — null if nothing at risk",
   "confidence": "high"
 }}
 
 Rules:
-- Be direct and opinionated. Say "Focus on X first" not "You might consider X"
-- Ground every priority and highlight in actual data from the context (ticket names, KR names, session titles, meeting names)
-- CRITICAL: Never use bare Jira keys (e.g. "MT-456") alone. Always include the ticket title: write "MT-456 — Fix login redirect" or just "Fix login redirect". The context above already shows the title next to each key — use it.
-- Use 2-3 priorities ordered most-urgent first. The "urgency" field accepts only "high", "medium", or "low"
-- Keep each "rationale" under 30 words
-- highlights, next_actions, and risks may be empty arrays if the context doesn't support specific entries — do not invent
-- "confidence" accepts only "high", "medium", or "low" — reflect how much the context supports concrete recommendations
-- Return ONLY the JSON object, nothing else"""
+- top_priorities replaces both "Priorities" and "Next Actions" — merge them into one ranked list of max 3 actionable items. No duplication.
+- waiting_on_you: use Slack unread DM senders, threads needing reply, or any person explicitly waiting. Empty array if nothing actionable.
+- okr_at_risk: only KRs with status "atrisk" or very low progress. Null if all KRs are on track. Do NOT dump full OKR status here.
+- summary: 1-2 sentences only. Fold any critical risk into the summary if it doesn't fit elsewhere. Do not list every item.
+- Be direct and opinionated. "Focus on X first" not "You might consider X".
+- Ground every item in actual data from the context (ticket names, KR names, session titles, meeting names).
+- CRITICAL: Never use bare Jira keys (e.g. "MT-456") alone. Always include the ticket title: "MT-456 Fix login redirect". The context already shows the title — use it.
+- Keep each "rationale" under 25 words or set to null.
+- "urgency" and "confidence" accept only "high", "medium", or "low".
+- Return ONLY the JSON object, nothing else."""
