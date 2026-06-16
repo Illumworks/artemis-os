@@ -34,6 +34,20 @@ BODY on 401 (it'll say `invalid_client` vs `invalid_grant`) to confirm — the c
 `sync_recent_gcal_events_cache` and confirm today's events populate. (If it's `invalid_grant`, the refresh
 token was revoked → Jon must reconnect; but the connect just succeeded, so invalid_client is the bet.)
 
-## Note
-Marketing credential `amiracentral@` (purpose=marketing) is also expired + was 401 earlier — Jon hasn't
-reconnected it; that's a separate pending user action, not this bug.
+## Marketing credential (amiracentral@, purpose=marketing) — fold into this fix
+The marketing Google credential (used for Callie's Docs) is ALSO expired and 401s — and it has TWO problems:
+1. **Same client-mismatch** on refresh (the fix above should cover both purposes if `_refresh` uses the
+   shared DB client resolver).
+2. **Not on the auto-refresh sweep at all.** The 15-min `token_refresh` sweep (`run_refresh_tick`) iterates
+   `integrations` rows keyed by `provider` (`REFRESHERS.get(integration.provider)`). The marketing Google is a
+   bare `google_credentials` row (purpose=marketing) with NO `integrations` row → never swept. So it only ever
+   refreshes on-demand when Callie touches Docs (and that path hits problem #1). **Wire google_credentials
+   (both purposes) onto a refresh path** so marketing stays fresh like personal.
+
+Likely NO reconnect needed: the failure signature is `unauthorized_client` (wrong client), not `invalid_grant`
+(revoked) — so the refresh token is probably valid and the client fix revives it. Confirm after the fix by
+running a marketing Docs refresh; only if it returns `invalid_grant` does Jon need to re-auth.
+
+**UX gap (separate, can be Lead's):** the marketing Google connect (`/api/google/oauth/start?purpose=marketing`)
+has NO button on the Connectors page, so Jon can't re-auth it from the UI even if needed. Add a Connectors
+entry for the marketing Google, OR surface a direct connect link.
