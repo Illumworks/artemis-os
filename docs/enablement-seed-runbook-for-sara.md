@@ -38,12 +38,15 @@ the important fields are Title, Type, link, Summary, Tags, and Transcript Link f
 
 ## Step 1 — Connect the Google Drive MCP (cloud, no download)
 Claude Code reads the folder straight from Google Drive using the **Drive connector (MCP)** — nothing to
-download. Jon + Artemis will have set up the connector first (the one-time Cloud config). Then you:
-1. In Claude, open **Connectors** (the plus sign / Customize menu), enable **Google Drive**, and **sign in
-   with your Google account** when the Google/Magic-Link screen appears. (Use the account that can see the
-   Enablement folder.)
-2. That's it — Claude can now reach your Drive. The folder you'll work with is:
-   https://drive.google.com/drive/folders/1oWVo3v9SogD-8XMCFUtekYmhrllTknNU
+download. Jon + Artemis set up the Cloud side (OAuth client). Then:
+1. In Claude → **Settings → Connectors → Add custom connector** (if Jon already added it org-wide, skip to
+   step 3). Enter **Server name:** `Google Drive`, **Remote MCP server URL:**
+   `https://drivemcp.googleapis.com/mcp/v1`, and under **Advanced settings** paste the **OAuth Client ID +
+   secret** Jon gives you. Click **Add**.
+2. (If Jon added it for the whole org, you won't need the ID/secret — it'll just appear in your Connectors.)
+3. **Sign in with your Google account** when the Google/Magic-Link screen appears (use the account that can
+   see the Enablement folder). The connector is then available to Claude Code too.
+4. The folder you'll work with: https://drive.google.com/drive/folders/1oWVo3v9SogD-8XMCFUtekYmhrllTknNU
 
 **The skill you're learning:** in Claude Code you just *describe what you want* and it uses the Drive tools
 (`list`/`search_files`, `read_file_content`, `download_file_content`) to go through the folder for you. You
