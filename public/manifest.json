@@ -7,7 +7,7 @@
   "background_color": "#0d1117",
   "theme_color": "#F5F2ED",
   "icons": [
-    { "src": "/icons/icon-pwa-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icons/icon-pwa-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/icons/Aicon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/Aicon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }
