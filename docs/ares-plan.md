@@ -33,14 +33,30 @@ plan-and-build coding surface, but with Ares's four capabilities layered on (§2
 re-briefing), the multi-provider sub-agent fleet, auto-delegate → validate → report-up, and owner-private
 scope. The renamed section is the front door to that experience; Ares is the partner you build in it with.
 
-**Note — no Slack channel needed.** Unlike Callie/Kai (Slack-resident), Ares's home is this **in-app surface**,
-so his Named-Agent wrapper (Phase 3) is persona + scope + the dev_projects loop as his tool layer; the Slack
-app/`integrations` row steps from the playbook are optional/skippable for him.
+**Slack presence: YES — Ares is Artemis-tier or MORE (Jon, 2026-06-16).** Jon wants to receive updates from
+Ares in Slack and interact with him there, not only in-app. So Ares gets the FULL Named-Agent wrapper
+**including Slack** (the playbook's Slack steps DO apply — this corrects an earlier "skip Slack" note). One
+agent, two surfaces:
+- **Forge (in-app):** his build workshop — where plan-and-build / coding happens (the claude.ai-Code experience).
+- **Slack (owner-private):** where he reaches Jon — **proactive push** updates (a Build Report when a build
+  finishes, a blocker hit, a Research Brief ready, a Handoff when project state needs to flow to Artemis) AND
+  conversational (plan / ask / research on the go). His persona's structured outputs (Build Report / Research
+  Brief / Handoff to Artemis) ARE the Slack message formats. Recommended Slack home = a **1:1 DM with Jon**
+  (matches owner-private + candid, like Artemis's personal-PA DM); optionally a private **#forge** channel as a
+  persistent build-log feed. Decision pending.
 
-**Build later (not now, per Jon):** registration follows `docs/named-agent-build-playbook.md` — persona ✅ ready
-→ `_AGENT_DEFAULTS` "ares" + `scope_policy.allowance_for_agent_ares` (owner-private: `agent:ares` + Jon's
-owner/personal scope, excluded from marketing-shared) + surface entry + wire the dev_projects loop as his
-tools. Phases below (§7) unchanged.
+**Ares = the superset.** Everything Artemis is — Slack presence, proactivity, conversation, durable memory —
+PLUS his unique build / research / delegate / validate tool layer, durable *project* memory, and the Forge
+surface. In Jon's words: "either like Artemis, or more advanced because of all the building tools we'll build
+into him." (Division of labor still holds: Artemis operates/orchestrates the OS; Ares builds in the sandbox
+and reports up.)
+
+**Build later (not now, per Jon):** full registration via `docs/named-agent-build-playbook.md` — persona ✅
+ready → `_AGENT_DEFAULTS` "ares" + `scope_policy.allowance_for_agent_ares` (owner-private: `agent:ares` + Jon's
+owner/personal scope, excluded from marketing-shared) + Forge surface + **Slack app + `integrations` row
+(agent_id="ares")** + wire the dev_projects loop as his tools + a **proactive bridge** that pushes his Build
+Reports / blockers / handoffs into his Slack DM. Phases below (§7) unchanged; the proactive-Slack push is a
+small add to Phase 3 (named-agent wrapper).
 
 ---
 
