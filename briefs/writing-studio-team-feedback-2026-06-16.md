@@ -24,13 +24,11 @@ access lane), coordinate with terminal for the realtime-collab pieces.
    metadata) without a refresh. (Co-edit content may sync; metadata/rename clearly does not.)
 
 ## Connector / Google (Lead)
-5. **Auto-refresh token sweep bug.** `refresh_google_credentials_tick`
-   (`artemis/integrations/token_refresh/providers/google_credentials.py`) does NOT persist a refreshed token
-   even though the underlying refresh works (verified: direct Google `refresh_token` POST with the DB client
-   returns 200 + a fresh access_token for BOTH purposes). So proactive auto-refresh is currently a no-op;
-   on-demand refresh (gcal client `_refresh` on 401) covers day-to-day, but fix the sweep so tokens renew
-   proactively (avoids a 401-then-refresh on the first read after expiry). Likely a leeway/cooldown/persist
-   bug in the new tick. NOTE the Google client is now correct (`612420684593`, "Artemis Google Docs Access").
+5. **Auto-refresh token sweep — VERIFIED WORKING (2026-06-16), no bug.** `refresh_google_credentials_tick`
+   refreshes + persists both google_credentials; the production caller `run_refresh_tick` commits
+   (`scheduler.py:217`), and re-test confirmed REFRESHED+PERSISTED for both purposes. (An earlier "no-op"
+   reading was a test artifact — the standalone test didn't commit the session.) Google client is correct
+   (`612420684593`, "Artemis Google Docs Access"). Google credentials thread CLOSED.
 6. **New Google Docs destination.** Writing Studio "create new doc / export" uses the Docs API
    (`google_docs/client.py:295`) which creates the doc in the **My Drive ROOT of the token account** (the
    marketing account, amiracentral@, for Callie's docs) — no target folder (the Docs API can't set a parent;
