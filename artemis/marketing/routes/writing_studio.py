@@ -55,6 +55,7 @@ from artemis.marketing.writing_studio.compose_engine import (
 from artemis.marketing.writing_studio.live_content import apply_live_content
 from artemis.writing_rules import repository as wr_repo
 from artemis.writing_rules import tag_registry_repository as tag_repo
+from artemis.writing_rules.agent_lint import lint_agent_text
 from artemis.writing_rules.seed_corpus import import_writing_seed_corpus
 
 _logger = logging.getLogger(__name__)
@@ -896,6 +897,15 @@ async def compose_draft(
     # object; use `draft_copy` for the fenced text to avoid a name collision.)
     chat_message, draft_copy = parse_draft_fence(cleaned_response_text)
 
+    # ── Deterministic em/en-dash strip ────────────────────────────────────────
+    # lint_agent_text is the hard guarantee: regardless of what the LLM emitted,
+    # em-dashes (—) and en-dashes (–) cannot reach the document or the chat
+    # thread.  Apply to both the conversational reply and the fenced deliverable
+    # copy (the two surfaces returned to the client).
+    chat_message = lint_agent_text(chat_message)
+    if draft_copy is not None:
+        draft_copy = lint_agent_text(draft_copy)
+
     # ── 6. Persist thread messages ─────────────────────────────────────────────
     user_label = request_text or (
         "Adding source files for the next pass." if attachments else "Continue shaping this draft."
@@ -1317,6 +1327,9 @@ async def rewrite_span(
 
     if not rewritten_text.strip():
         raise bad_request("Model returned no text for the span rewrite", "rewrite_empty_response")
+
+    # Deterministic em/en-dash strip — same guarantee as compose_draft.
+    rewritten_text = lint_agent_text(rewritten_text)
 
     # Commit cost event (no other DB writes — span rewrites don't persist).
     await session.commit()
