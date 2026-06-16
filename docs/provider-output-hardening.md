@@ -45,13 +45,26 @@ events and fell back to returning the raw NDJSON stream — rewired to the v0.12
 `item.completed`/`agent_message`/`text`; usage from `turn.completed`). **End-to-end verified:
 `trajectory_summary` produces a valid TrajectorySummary via Codex — and Codex needed NO fence/prose
 tolerance (cleaner structured output than Gemini here).** So the hardening layer is proven
-PROVIDER-AGNOSTIC across Gemini + Codex. **Remaining before routing real work to Codex:** detect the
-usage-limit/`turn.failed` event and surface it as a rate-limit so the cascade falls back (parallel to
-the Gemini-429 net). Nothing routes to Codex yet.
+PROVIDER-AGNOSTIC across Gemini + Codex. **Codex is now fully ready** — usage-limit/`turn.failed`
+detection added (`0c19782`): a usage/rate-limit raises `CodexRateLimitError` → cascade falls back
+(parallel to the Gemini-429 net); genuine failures still surface. Nothing routes to Codex yet, but it's
+safe to when we choose.
 
-**Still on Claude (not yet flipped):** all 6 classification scouts, memory consolidation, meeting
-summary. ✅ Done on Gemini: `trajectory_summary`, `memory_graph_extraction`. Next internal target:
-memory consolidation (Lead-hands-on — supersession is lossless-sensitive). Scouts last.
+**Memory consolidation (feature #3): Gemini-READY but DELIBERATELY NOT FLIPPED (`8ee9a4a`).** Code
+mirrors the pattern (flash-lite + honor override) + fixes a cost-event model-logging bug, but the
+override stays INACTIVE (consolidation runs on Claude). Decision: consolidation is **low-volume**
+(~10 calls/4d → marginal quota win) but **high-risk** (supersedes real observations). A flash-lite
+proposal sample was decent but **slightly over-aggressive** (folded a distinct fact into a dup-merge)
+and **drifted the category label**. Not worth the supersession-quality risk for marginal savings.
+**Before any flip:** (a) A/B gemini-lite vs claude on a real proposal set; (b) coerce the consolidated
+`category` to the source category (the LLM relabels it) — note this also affects the live Claude path,
+so treat as keystone-careful.
+
+**Status board.** ✅ Live on Gemini: `trajectory_summary`, `memory_graph_extraction`. 🟡 Ready-but-not-
+flipped: `memory_consolidation` (risk/reward). ⬜ Still on Claude: 6 classification scouts, meeting
+summary. ✅ Codex: adapter functional + rate-limit fallback (unused so far). **Next: the scouts** — the
+real quota prize and the hard case (rich, customer-facing, anti-hallucination schema) — with a QUALITY
+check, not just validation.
 
 ---
 
