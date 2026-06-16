@@ -13,21 +13,30 @@ GEMINI_MODEL_MAP: dict[str, str] = {
     "gemini-pro": "gemini-1.5-pro",
     "gemini-flash": "gemini-1.5-flash",
     "gemini-flash-2": "gemini-2.0-flash",
-    "gemini-2.5-flash": "gemini-2.5-flash-preview-05-20",
-    "gemini-2.5-pro": "gemini-2.5-pro-preview-05-06",
+    # NOTE 2026-06-15: the dated 2.5 preview IDs (gemini-2.5-flash-preview-05-20,
+    # gemini-2.5-pro-preview-05-06) were RETIRED by Google and now 404 on
+    # generateContent. Point aliases at the stable `-latest` channels so routing
+    # doesn't break again when a dated snapshot is pulled. Verified live: the
+    # `-latest` / `-lite-latest` channels serve generateContent today.
+    "gemini-2.5-flash": "gemini-flash-latest",
+    "gemini-2.5-flash-lite": "gemini-flash-lite-latest",
+    "gemini-2.5-pro": "gemini-pro-latest",
 }
 
-# Per-1k-token pricing (input / output) in USD.
+# Per-1k-token pricing (input / output) in USD. Advisory only (free tier today;
+# real billing is Google-side). Unknown IDs fall back to gemini-2.0-flash.
 GEMINI_PRICING: dict[str, dict[str, float]] = {
     "gemini-1.5-pro": {"input_per_1k": 0.00125, "output_per_1k": 0.005},
     "gemini-1.5-flash": {"input_per_1k": 0.000075, "output_per_1k": 0.0003},
     "gemini-2.0-flash": {"input_per_1k": 0.0001, "output_per_1k": 0.0004},
-    "gemini-2.5-flash-preview-05-20": {"input_per_1k": 0.00015, "output_per_1k": 0.0006},
-    "gemini-2.5-pro-preview-05-06": {"input_per_1k": 0.00125, "output_per_1k": 0.01},
+    "gemini-flash-latest": {"input_per_1k": 0.00015, "output_per_1k": 0.0006},
+    "gemini-flash-lite-latest": {"input_per_1k": 0.0000375, "output_per_1k": 0.00015},
+    "gemini-pro-latest": {"input_per_1k": 0.00125, "output_per_1k": 0.01},
 }
 
 # Default model when no model is specified at construction or request time.
-GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+# Lite-latest: cheap, fast, retirement-proof, verified to return clean output.
+GEMINI_DEFAULT_MODEL = "gemini-flash-lite-latest"
 
 
 def resolve_model(name: str | None) -> str:
