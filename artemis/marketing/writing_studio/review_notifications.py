@@ -16,9 +16,52 @@ from artemis.marketing.models import Approval, CampaignDeliverable
 from artemis.writing_rules import lint_agent_text
 
 _CALLIE_CAMPAIGN_SIGNALS_CHANNEL = "C0B9CHVC7KQ"
+# Placeholder family used by create_blank_draft / create_template_draft for
+# one-off (non-campaign) Writing Studio docs. Treated as "no campaign".
+_TEMPLATE_DRAFT_FAMILY = "writing_studio_template"
 DEFAULT_REVIEWER_EMAIL = "angela@amiralearning.com"
 ReviewPingMode = Literal["channel_mention", "dm"]
 ReviewPingKind = Literal["ready_for_review", "stale_review_escalation"]
+
+
+def _is_campaign_attached(campaign_id: str | None) -> bool:
+    """Return True only if the draft is attached to a real marketing campaign.
+
+    Blank / one-off drafts use a synthetic placeholder family
+    (``writing_studio_template``) rather than NULL so the FK constraint is
+    satisfied.  Both NULL and the placeholder are treated as "no campaign".
+    """
+    if not campaign_id:
+        return False
+    return campaign_id.strip() != _TEMPLATE_DRAFT_FAMILY
+
+
+def _resolve_review_channel(
+    *,
+    campaign_id: str | None,
+    preferred_campaign_channel: str,
+    allowed_channel_ids: tuple[str, ...],
+) -> str:
+    """Return the Slack channel ID for a ready-for-review channel post.
+
+    Routing rule:
+    - Draft is attached to a real campaign → use the configured marketing-
+      campaigns channel (existing behaviour: preferred_campaign_channel → first
+      allowed_channel_ids → _CALLIE_CAMPAIGN_SIGNALS_CHANNEL fallback).
+    - Draft is NOT attached to a campaign (NULL or writing_studio_template) →
+      post to the dedicated 'Marketing Content Review' channel so Angela is
+      pinged for one-off / general marketing docs.
+    """
+    if not _is_campaign_attached(campaign_id):
+        # One-off / general doc — use the dedicated content-review channel.
+        return settings.marketing_content_review_channel_id.strip()
+
+    # Campaign-attached — existing resolution order.
+    return (
+        preferred_campaign_channel
+        or (allowed_channel_ids[0] if allowed_channel_ids else "")
+        or _CALLIE_CAMPAIGN_SIGNALS_CHANNEL
+    )
 
 
 @dataclass(frozen=True)
@@ -119,14 +162,23 @@ async def send_callie_ready_for_review_ping(
     title: str,
     author_name: str,
     reviewer_email: str,
+    campaign_id: str | None = None,
     mode: ReviewPingMode = "channel_mention",
     kind: ReviewPingKind = "ready_for_review",
 ) -> ReviewPingResult:
     """Post the deterministic review ping as Callie.
 
-    ``channel_mention`` posts publicly in Marketing Campaigns and @mentions the
-    reviewer when Slack can resolve the email. ``dm`` preserves the direct
-    message path for later escalation flows.
+    ``channel_mention`` posts publicly in a Slack channel and @mentions the
+    reviewer when Slack can resolve the email. The channel is chosen based on
+    whether the draft is attached to a campaign:
+
+    - campaign_id is set  → existing Marketing Campaigns channel.
+    - campaign_id is None → dedicated 'Marketing Content Review' channel
+      (``settings.marketing_content_review_channel_id``, default C0BAJV9A2UX)
+      so Angela is pinged for one-off / general marketing docs.
+
+    ``dm`` preserves the direct message path for stale-review escalation flows
+    and is unaffected by the campaign routing.
     """
 
     integrations = await integrations_repo.list_active(session, provider="slack")
@@ -161,11 +213,11 @@ async def send_callie_ready_for_review_ping(
         metadata.get("allowed_channel_ids") or creds.get("allowed_channel_ids")
     )
 
-    preferred_channel_id = settings.marketing_campaigns_slack_channel.strip()
-    channel_id = (
-        preferred_channel_id
-        or (allowed_channel_ids[0] if allowed_channel_ids else "")
-        or _CALLIE_CAMPAIGN_SIGNALS_CHANNEL
+    preferred_campaign_channel = settings.marketing_campaigns_slack_channel.strip()
+    channel_id = _resolve_review_channel(
+        campaign_id=campaign_id,
+        preferred_campaign_channel=preferred_campaign_channel,
+        allowed_channel_ids=allowed_channel_ids,
     )
 
     base_url = settings.app_base_url.rstrip("/") or "http://127.0.0.1:8000"

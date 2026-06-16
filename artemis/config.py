@@ -41,6 +41,19 @@ class Settings(BaseSettings):
             "review notification, in addition to approver DMs. Empty = no channel post."
         ),
     )
+    marketing_content_review_channel_id: str = Field(
+        default="C0BAJV9A2UX",
+        validation_alias=AliasChoices(
+            "ARTEMIS_MARKETING_CONTENT_REVIEW_CHANNEL_ID",
+            "MARKETING_CONTENT_REVIEW_CHANNEL_ID",
+        ),
+        description=(
+            "Slack channel ID for the 'Marketing Content Review' channel (C0BAJV9A2UX). "
+            "Used by Callie when a Writing Studio draft is marked ready-for-review but is "
+            "NOT attached to a campaign. Campaign-attached drafts continue to use "
+            "marketing_campaigns_slack_channel."
+        ),
+    )
     approval_notify_override: str = Field(
         default="",
         validation_alias=AliasChoices(

@@ -1626,6 +1626,7 @@ async def ready_for_review(
         title=metadata.get("title") or metadata.get("externalTitle") or f"Draft {draft_id}",
         author_name=author_name,
         reviewer_email=reviewer_email,
+        campaign_id=deliverable.campaign_id,
         mode="channel_mention",
     )
 
