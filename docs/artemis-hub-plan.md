@@ -47,17 +47,28 @@ Jon wants it to *look* like the agents respond to each other in Slack, but never
   without Jon's effort — the core win).
 - **Work that may belong to an existing ticket** → **CHECK FIRST**: maps to a real ticket → PROPOSE adding info
   to it (no silent duplicate); no match → create a new one.
-- **Confidence rule (proposed):** confident match → propose adding (one-tap approve); unsure → ask, don't guess.
+- **Confidence rule (CONFIRMED):** confident match → propose adding; unsure → ask, don't guess. **Jon confirms
+  CONVERSATIONALLY** — by replying in plain language ("yeah" / "no, new one"), NOT buttons (he dislikes
+  buttons). This applies to ALL Artemis proposals, not just tickets.
 - Maps to autonomy levels: create-own-tracking = L1 (act); touch others' / existing canonical tickets = L2
   (propose/ask). **Needs a Jira WRITE integration** (she currently only reads/notifies).
 
-## "Jon's queue" (PROPOSED — OPEN)
-One prioritized **"Needs You" queue** Artemis curates, fed by every agent — the single place Jon checks for
-"what actually needs me," and the source for the morning brief + escalations. *Confirm shape with Jon.*
+## Notification routing (Jon, 2026-06-16 — CONFIRMED)
+No separate "Needs You" surface. Route by **who's asking**, three tiers:
+- **Artemis → DMs Jon directly.** Her DM is the live voice + the escalation/interrupt path (she's the sole
+  silence-bypass authority).
+- **Ares → his own pings** (his 1:1 DM + #forge). The priority build partner has a direct line; he still
+  respects silence, and Artemis escalates *for* him after the ~1-day wait if needed.
+- **Callie / Kai / everyone else → grouped into ONE notification in the morning brief.** Batched,
+  non-interrupting.
 
-## Open questions (to converge)
-1. Exact shape of "Jon's queue" (single Needs-You list vs. something else).
-2. Match-confidence threshold for existing-ticket detection (propose vs. ask).
+## Confirmation style (Jon, 2026-06-16 — CONFIRMED)
+Jon confirms by **writing back to Artemis in plain language**, NOT clicking buttons. Lean away from buttons
+anywhere Artemis asks Jon something. (See [[preference-conversational-confirmation]].)
+
+## Status
+Design settled (2026-06-16). Open questions resolved: notification routing decided above; ticket-match =
+propose-when-confident + conversational confirm. Ready to build when Jon gives the word.
 
 ## Generalizes
 Same hub pattern across ALL agents (Callie, Kai, Ares) — Artemis as the genuine connective tissue of the team.
