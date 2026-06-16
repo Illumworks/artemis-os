@@ -56,6 +56,12 @@ no new turn loop.** Read this before building the next agent (Hestia, Sales, etc
    for private channels). Check `~/Library/Logs/artemisos/app.err.log` if no reply.
 7. **Per-person memory is free** — speaker attribution (`[SPEAKER]`) is built into the named-agent loop, so a
    new agent remembers individuals' prior asks automatically.
+8. **Humanization is free too** — every agent automatically gets: a Slack-retry guard, a reliable first-touch
+   `@mention` (incl. `channel_join` welcomes — each distinct joiner is greeted + pinged), anti-repetition
+   (its last ~4 outbound messages are injected with a "don't echo these" instruction), and a shared
+   human-voice nudge. All structural/prompt-level (`chat.py` `_build_system_prompt` + the events endpoint), so
+   a new agent inherits it with NO extra work. Don't re-solve "agent sounds robotic / repeats itself / won't
+   address people" per agent — it's global.
 
 ## Verification discipline (don't skip)
 - Scope is security-critical → re-verify the deny paths yourself (`allowed_scopes_for_agent` direct call),
