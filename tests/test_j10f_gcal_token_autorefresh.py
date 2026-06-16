@@ -162,6 +162,10 @@ async def test_find_recently_ended_gcal_auth_dead() -> None:
     async def mock_send_owner_dm(session: Any) -> None:
         dm_sent.append(True)
 
+    from artemis.integrations.config_resolver import GCalConfig
+
+    mock_gcal_cfg = GCalConfig(client_id="cid", client_secret="csec")
+
     # list_active returns our mock row, then returns it again on the second call
     # (the one inside find_recently_ended_meetings for gcal_integration_id).
     with (
@@ -169,6 +173,11 @@ async def test_find_recently_ended_gcal_auth_dead() -> None:
             "artemis.integrations.repository.list_active",
             new_callable=AsyncMock,
             return_value=[mock_row],
+        ),
+        patch(
+            "artemis.meetings.summarizer.resolve_gcal_config",
+            new_callable=AsyncMock,
+            return_value=mock_gcal_cfg,
         ),
         patch(
             "artemis.integrations.gcal.client.GCalClient.list_events",
@@ -246,10 +255,19 @@ async def test_scheduler_process_integration_expired_refreshes() -> None:
     mock_session = AsyncMock()
     now = datetime.now(UTC)
 
+    from artemis.integrations.config_resolver import GCalConfig
+
+    mock_gcal_cfg = GCalConfig(client_id="cid", client_secret="csec")
+
     with (
         patch(
             "artemis.integrations.token_refresh.scheduler.REFRESHERS",
             {"gcal": mock_refresher},
+        ),
+        patch(
+            "artemis.integrations.token_refresh.scheduler.resolve_gcal_config",
+            new_callable=AsyncMock,
+            return_value=mock_gcal_cfg,
         ),
         patch(
             "artemis.integrations.token_refresh.scheduler.repo.persist_refreshed_credentials",
