@@ -209,10 +209,15 @@ async def consolidate_observations(
         indent=2,
     )
 
-    _gemini_model = "gemini-2.5-flash"
+    # Default Gemini model = flash-LITE. Full gemini-2.5-flash "thinks" and
+    # exhausts the output-token budget before emitting → truncated/empty JSON
+    # (verified 2026-06-16; same root cause as trajectory_summary and
+    # memory_graph_extraction). Honor an explicit model in the override's
+    # cascade entry. See docs/provider-output-hardening.md §Progress.
+    _gemini_model = "gemini-2.5-flash-lite"
 
-    async def _call() -> tuple[str, object, str]:
-        """Return (raw_text, usage, serving_provider_id)."""
+    async def _call() -> tuple[str, object, str, str]:
+        """Return (raw_text, usage, serving_provider_id, effective_model)."""
         if adapter is not None:
             # Test-injected adapter — call directly; no fallback path.
             req = CompletionRequest(
@@ -226,10 +231,13 @@ async def consolidate_observations(
             text_parts: list[str] = [
                 block.text for block in response.message.content if isinstance(block, TextBlock)
             ]
-            return "".join(text_parts), response.usage, "injected"
+            return "".join(text_parts), response.usage, "injected", _HAIKU_MODEL
 
         # Production path: resolve the primary provider from the routing table,
         # then use complete_with_fallback so Gemini 429s cascade to claude-code.
+        # Also read the override's model field — the resolver doesn't forward it.
+        _primary = "claude-code"
+        _resolved_gemini_model = _gemini_model
         try:
             from artemis.db import SessionLocal as _SessionLocal
 
@@ -241,18 +249,18 @@ async def consolidate_observations(
                 override = await get_routing_override_for_feature(
                     _override_session, "memory_consolidation"
                 )
-                _primary = (
-                    override.cascade[0].get("provider", "claude-code")
-                    if override and override.cascade
-                    else "claude-code"
-                )
+                if override and override.cascade:
+                    _primary = override.cascade[0].get("provider", "claude-code")
+                    _resolved_gemini_model = (
+                        override.cascade[0].get("model") or _gemini_model
+                    )
         except Exception:
-            _primary = "claude-code"
+            pass
 
         # Use a Gemini model id when primary is Gemini; otherwise use the
         # Claude haiku model.  complete_with_fallback clears the model field
         # on the fallback call so claude-code uses its own default.
-        _model = _gemini_model if _primary == "gemini" else _HAIKU_MODEL
+        _model = _resolved_gemini_model if _primary == "gemini" else _HAIKU_MODEL
         req = CompletionRequest(
             messages=[Message(role="user", content=[TextBlock(text=payload)])],
             system=system_prompt,
@@ -270,11 +278,13 @@ async def consolidate_observations(
         text_parts = [
             block.text for block in resp.message.content if isinstance(block, TextBlock)
         ]
-        return "".join(text_parts), resp.usage, serving[0] if serving else _primary
+        _serving_provider = serving[0] if serving else _primary
+        _effective_model = _model if _serving_provider == "gemini" else _HAIKU_MODEL
+        return "".join(text_parts), resp.usage, _serving_provider, _effective_model
 
     for attempt in range(2):
         try:
-            raw, _usage, _actual_provider = await _call()
+            raw, _usage, _actual_provider, _effective_model = await _call()
             # Record cost event in a separate session — failure must never propagate.
             try:
                 import artemis.db as _db
@@ -284,7 +294,7 @@ async def consolidate_observations(
                     await record_cost_event(
                         _cost_session,
                         provider=_actual_provider,
-                        model=_HAIKU_MODEL,
+                        model=_effective_model,
                         provider_path=_path,
                         feature_tag="memory_consolidation",
                         input_tokens=getattr(_usage, "input_tokens", 0),
