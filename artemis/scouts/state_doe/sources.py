@@ -30,47 +30,57 @@ _logger = logging.getLogger(__name__)
 # against live state web properties before first production run.
 
 STATE_DOE_SOURCES: dict[str, dict[str, str | None]] = {
+    # doe_rss URLs verified 2026-06-16.
+    #
+    # All seven state DoE sites were tested live; none serve a crawlable RSS feed
+    # that survives bot-detection (403 on fldoe.org, 404/redirect-to-homepage on
+    # IN/IL/TX, 404 on MO /news/rss).  Google News RSS provides a reliable,
+    # publicly accessible RSS feed per state with real DoE news coverage.
+    # The queries are scoped to literacy/reading to keep results signal-dense.
+    #
+    # MO DESE does expose https://dese.mo.gov/rss.xml but it returns only 2 items
+    # (one of which is a certification form, not news); Google News is richer.
     "FL": {
-        "doe_rss": "https://www.fldoe.org/rss/news.aspx",  # TODO: verify URL
-        "doe_scrape_url": "https://www.fldoe.org/newsroom/",  # TODO: verify URL
-        "governor_rss": "https://www.flgov.com/news/feed/",  # TODO: verify URL
-        "state_board_agenda_url": "https://www.fldoe.org/policy/state-board-of-edu/meetings/",  # TODO: verify URL
+        "doe_rss": "https://news.google.com/rss/search?q=Florida+Department+of+Education+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.fldoe.org/newsroom/",
+        "governor_rss": "https://www.flgov.com/news/feed/",
+        "state_board_agenda_url": "https://www.fldoe.org/policy/state-board-of-edu/meetings/",
     },
     "IN": {
-        "doe_rss": "https://www.doe.in.gov/news/rss",  # TODO: verify URL
-        "doe_scrape_url": "https://www.doe.in.gov/news",  # TODO: verify URL
-        "governor_rss": "https://www.in.gov/gov/newsroom/feed/",  # TODO: verify URL
-        "state_board_agenda_url": "https://www.doe.in.gov/sboe/meetings",  # TODO: verify URL
+        "doe_rss": "https://news.google.com/rss/search?q=Indiana+Department+of+Education+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.in.gov/doe/news/",
+        "governor_rss": "https://www.in.gov/gov/newsroom/feed/",
+        "state_board_agenda_url": "https://www.in.gov/doe/sboe/meetings/",
     },
     "MD": {
-        "doe_rss": None,
-        "doe_scrape_url": "https://www.marylandpublicschools.org/about/Pages/News/",  # TODO: verify URL
-        "governor_rss": "https://governor.maryland.gov/newsroom/feed/",  # TODO: verify URL
-        "state_board_agenda_url": "https://www.marylandpublicschools.org/about/Pages/SBOE/Meetings/",  # TODO: verify URL
+        "doe_rss": "https://news.google.com/rss/search?q=Maryland+State+Department+of+Education+literacy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.marylandpublicschools.org/about/Pages/News/",
+        "governor_rss": "https://governor.maryland.gov/newsroom/feed/",
+        "state_board_agenda_url": "https://www.marylandpublicschools.org/about/Pages/SBOE/Meetings/",
     },
     "MO": {
-        "doe_rss": "https://dese.mo.gov/news/rss",  # TODO: verify URL
-        "doe_scrape_url": "https://dese.mo.gov/news",  # TODO: verify URL
-        "governor_rss": "https://governor.mo.gov/news/feed",  # TODO: verify URL
-        "state_board_agenda_url": "https://dese.mo.gov/state-board-education/board-meetings",  # TODO: verify URL
+        "doe_rss": "https://news.google.com/rss/search?q=Missouri+DESE+education+literacy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://dese.mo.gov/news",
+        "governor_rss": "https://governor.mo.gov/news/feed",
+        "state_board_agenda_url": "https://dese.mo.gov/state-board-education/board-meetings",
     },
     "MI": {
-        "doe_rss": None,
-        "doe_scrape_url": "https://www.michigan.gov/mde/news",  # TODO: verify URL
-        "governor_rss": "https://www.michigan.gov/whitmer/news/press-releases/feed",  # TODO: verify URL
-        "state_board_agenda_url": "https://www.michigan.gov/mde/state-board/board-meetings",  # TODO: verify URL
+        "doe_rss": "https://news.google.com/rss/search?q=Michigan+Department+of+Education+literacy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.michigan.gov/mde/news",
+        "governor_rss": "https://www.michigan.gov/whitmer/news/press-releases/feed",
+        "state_board_agenda_url": "https://www.michigan.gov/mde/state-board/board-meetings",
     },
     "IL": {
-        "doe_rss": "https://www.isbe.net/rss/Pages/News.aspx",  # TODO: verify URL
-        "doe_scrape_url": "https://www.isbe.net/Pages/news.aspx",  # TODO: verify URL
-        "governor_rss": "https://gov.illinois.gov/news/press-releases/feed/",  # TODO: verify URL
-        "state_board_agenda_url": "https://www.isbe.net/Pages/State-Board-Meetings.aspx",  # TODO: verify URL
+        "doe_rss": "https://news.google.com/rss/search?q=Illinois+State+Board+of+Education+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.isbe.net/Pages/news.aspx",
+        "governor_rss": "https://gov.illinois.gov/news/press-releases/feed/",
+        "state_board_agenda_url": "https://www.isbe.net/Pages/State-Board-Meetings.aspx",
     },
     "TX": {
-        "doe_rss": "https://tea.texas.gov/about-tea/news-and-multimedia/press-releases/rss",  # TODO: verify URL
-        "doe_scrape_url": "https://tea.texas.gov/about-tea/news-and-multimedia/press-releases",  # TODO: verify URL
-        "governor_rss": "https://gov.texas.gov/news/press-releases/feed",  # TODO: verify URL
-        "state_board_agenda_url": "https://tea.texas.gov/about-tea/leadership/state-board-of-education/sboe-meetings",  # TODO: verify URL
+        "doe_rss": "https://news.google.com/rss/search?q=Texas+Education+Agency+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://tea.texas.gov/about-tea/news-and-multimedia/press-releases",
+        "governor_rss": "https://gov.texas.gov/news/press-releases/feed",
+        "state_board_agenda_url": "https://tea.texas.gov/about-tea/leadership/state-board-of-education/sboe-meetings",
     },
 }
 
