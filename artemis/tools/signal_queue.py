@@ -98,6 +98,16 @@ _DEF = Tool(
             },
             "sourceUrl": {"type": "string"},
             "whyFlagged": {"type": "string"},
+            "changeHash": {
+                "type": "string",
+                "description": (
+                    "Activity fingerprint from the source API (e.g. LegiScan change_hash). "
+                    "When provided, the dedup check allows a new write even for a matching "
+                    "source_url if this hash differs from the previously-stored one — enabling "
+                    "re-emission when a bill advances. Leave empty for sources that do not "
+                    "provide an activity hash."
+                ),
+            },
         },
     },
 )
@@ -144,31 +154,61 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
         # If source_url is set, check for a recent non-archived row with the same URL.
         # District-based dedup in the qualifier suppress-stale rule handles non-null
         # districts; this catches the federal_funding case where district_id is null.
+        #
+        # Activity-aware override: when the incoming payload carries a change_hash AND
+        # the matched existing row also carries one AND they differ, the bill has
+        # advanced — allow the new write instead of deduplicating.  If either side
+        # lacks a change_hash the old URL-only dedup is unchanged (backward-compat).
+        incoming_change_hash: str | None = arguments.get("changeHash") or None
+        if isinstance(incoming_change_hash, str):
+            incoming_change_hash = incoming_change_hash.strip() or None
+
         if normalized.source_url:
             _dedup_statuses_excluded = ("archived", "rejected_hard_filter")
             existing_stmt = (
-                select(SignalQueue.id)
+                select(SignalQueue.id, SignalQueue.provenance)
                 .where(SignalQueue.source_url == normalized.source_url)
                 .where(SignalQueue.signal_status.notin_(_dedup_statuses_excluded))
                 .where(SignalQueue.created_at >= text("now() - interval '30 days'"))
                 .limit(1)
             )
             existing_result = await ctx.session.execute(existing_stmt)
-            existing_id = existing_result.scalar_one_or_none()
-            if existing_id is not None:
-                logger.info(
-                    "signal_queue.write: deduped agent=%s source_url=%s existing_id=%s",
-                    ctx.agent_id,
-                    normalized.source_url,
-                    existing_id,
-                )
-                return json.dumps(
-                    {
-                        "signal_id": existing_id,
-                        "status": "deduplicated",
-                        "duplicate_of": existing_id,
-                    }
-                )
+            existing_row = existing_result.one_or_none()
+            if existing_row is not None:
+                existing_id, existing_provenance = existing_row
+                # Activity-aware override: if both sides have a change_hash and
+                # they differ, this is new activity on the same bill — write it.
+                existing_change_hash: str | None = None
+                if isinstance(existing_provenance, dict):
+                    existing_change_hash = existing_provenance.get("change_hash") or None
+                if (
+                    incoming_change_hash is not None
+                    and existing_change_hash is not None
+                    and incoming_change_hash != existing_change_hash
+                ):
+                    logger.info(
+                        "signal_queue.write: change_hash mismatch — allowing re-emit "
+                        "agent=%s source_url=%s old_hash=%s new_hash=%s",
+                        ctx.agent_id,
+                        normalized.source_url,
+                        existing_change_hash,
+                        incoming_change_hash,
+                    )
+                    # Fall through to write the new signal below.
+                else:
+                    logger.info(
+                        "signal_queue.write: deduped agent=%s source_url=%s existing_id=%s",
+                        ctx.agent_id,
+                        normalized.source_url,
+                        existing_id,
+                    )
+                    return json.dumps(
+                        {
+                            "signal_id": existing_id,
+                            "status": "deduplicated",
+                            "duplicate_of": existing_id,
+                        }
+                    )
 
         row = SignalQueue(
             source_type=normalized.source_type,
@@ -187,6 +227,7 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
                 "agent_run_id": ctx.agent_run_id,
                 "agent_id": ctx.agent_id,
                 "why_flagged": normalized.why_flagged,
+                **({"change_hash": incoming_change_hash} if incoming_change_hash else {}),
             },
         )
         ctx.session.add(row)

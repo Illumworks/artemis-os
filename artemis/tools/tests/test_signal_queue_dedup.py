@@ -257,3 +257,71 @@ async def test_archived_row_does_not_block_new_write(db_session: AsyncSession) -
 
     rows = (await db_session.execute(select(SignalQueue))).scalars().all()
     assert len(rows) == 2
+
+
+# ── Tests for activity-aware dedup (change_hash) ──────────────────────────────
+# These three tests cover the legislative-scout fix: same URL + same/different
+# change_hash, and the no-change_hash backward-compat path.
+
+
+@pytest.mark.asyncio
+async def test_same_url_same_change_hash_deduped(db_session: AsyncSession) -> None:
+    """Same URL + same change_hash → deduplicated (bill has NOT advanced)."""
+    ctx = _ctx(db_session)
+    _, impl = _factory(ctx)
+
+    first = json.loads(await impl(_federal_payload(changeHash="abc123")))
+    assert first["status"] == "written"
+    original_id = first["signal_id"]
+
+    second = json.loads(await impl(_federal_payload(changeHash="abc123")))
+    assert second["status"] == "deduplicated", f"Expected deduplicated, got: {second}"
+    assert second["signal_id"] == original_id
+
+    rows_after = (await db_session.execute(select(SignalQueue))).scalars().all()
+    assert len(rows_after) == 1
+
+
+@pytest.mark.asyncio
+async def test_same_url_different_change_hash_written(db_session: AsyncSession) -> None:
+    """Same URL + DIFFERENT change_hash → new write (bill has advanced)."""
+    ctx = _ctx(db_session)
+    _, impl = _factory(ctx)
+
+    first = json.loads(await impl(_federal_payload(changeHash="abc123")))
+    assert first["status"] == "written"
+    original_id = first["signal_id"]
+
+    second = json.loads(await impl(_federal_payload(changeHash="xyz789")))
+    assert second["status"] == "written", f"Expected written for new change_hash, got: {second}"
+    assert second["signal_id"] != original_id
+
+    rows_after = (await db_session.execute(select(SignalQueue))).scalars().all()
+    assert len(rows_after) == 2
+
+    # Confirm new row stores the new change_hash in provenance
+    new_row = await db_session.get(SignalQueue, second["signal_id"])
+    assert new_row is not None
+    assert new_row.provenance is not None
+    assert new_row.provenance.get("change_hash") == "xyz789"
+
+
+@pytest.mark.asyncio
+async def test_same_url_no_change_hash_deduped(db_session: AsyncSession) -> None:
+    """Same URL + NO change_hash on payload → deduplicated (legacy behavior unchanged)."""
+    ctx = _ctx(db_session)
+    _, impl = _factory(ctx)
+
+    first = json.loads(await impl(_federal_payload()))
+    assert first["status"] == "written"
+    original_id = first["signal_id"]
+
+    # Second write with no changeHash — should still deduplicate as before
+    second = json.loads(await impl(_federal_payload()))
+    assert second["status"] == "deduplicated", (
+        f"No-change_hash path must still dedup on URL alone, got: {second}"
+    )
+    assert second["signal_id"] == original_id
+
+    rows_after = (await db_session.execute(select(SignalQueue))).scalars().all()
+    assert len(rows_after) == 1
