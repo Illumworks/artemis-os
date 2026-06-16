@@ -29,24 +29,30 @@ class TestIsPendingAsk:
     def test_jon_mention_detected(self) -> None:
         from artemis.hub.detection import is_pending_ask
 
-        assert is_pending_ask("<@U09F3EPJXSQ> can you take a look?")
+        assert is_pending_ask("<@U09F3EPJXSQ> can you take a look?", jon_slack_id="U09F3EPJXSQ")
 
     def test_literal_at_jon(self) -> None:
         from artemis.hub.detection import is_pending_ask
 
         assert is_pending_ask("Hey @Jon, prototype is ready. What do you think?")
 
-    def test_question_with_ask_phrase(self) -> None:
+    def test_ask_phrase_dm_vs_channel(self) -> None:
         from artemis.hub.detection import is_pending_ask
 
-        assert is_pending_ask("The report is done. Let me know if you need changes.")
+        # In Jon's 1:1 DM, an ask-phrase counts (every message there is to Jon).
+        assert is_pending_ask("The report is done. Let me know if you need changes.", is_dm=True)
+        # In a channel, an ask-phrase with NO @Jon mention does not (could be aimed at anyone).
+        assert not is_pending_ask("The report is done. Let me know if you need changes.")
 
-    def test_trailing_question_mark_detected(self) -> None:
+    def test_trailing_question_dm_vs_channel(self) -> None:
         from artemis.hub.detection import is_pending_ask
 
-        # Any trailing "?" counts as a question directed at the conversation partner.
-        assert is_pending_ask("The build finished successfully?")
-        assert is_pending_ask("Which option should we go with?")
+        # DM: any trailing "?" is to Jon.
+        assert is_pending_ask("Which option should we go with?", is_dm=True)
+        # Channel: a question with no @Jon mention is NOT an ask to Jon — e.g. Kai
+        # asking Sara something must never queue an escalation to Jon.
+        assert not is_pending_ask("Which option should we go with?")
+        assert not is_pending_ask("What would be most helpful to know about how you work?")
 
     def test_no_question_no_ask_phrase_not_detected(self) -> None:
         from artemis.hub.detection import is_pending_ask

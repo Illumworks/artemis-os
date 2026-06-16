@@ -74,27 +74,28 @@ def _has_trailing_question(text: str) -> bool:
     return bool(_TRAILING_QUESTION_RE.search(text))
 
 
-def is_pending_ask(text: str, *, jon_slack_id: str = "") -> bool:
+def is_pending_ask(text: str, *, jon_slack_id: str = "", is_dm: bool = False) -> bool:
     """Return True if this outbound agent message is an ask directed at Jon.
 
     Used to decide whether to record a pending-ask row.  Intentionally
-    conservative — we'd rather miss a few than flood Jon's DM.
+    conservative — we'd rather miss a few than flood Jon's DM with escalations
+    for questions that were never aimed at him.
 
-    Detection rules (any one sufficient):
-      1. @-mention of Jon (Slack <@UID> or literal @Jon).
-      2. Trailing question mark — text clearly ends with "?".
-      3. Ask phrase present (e.g. "let me know", "can you", "your call") —
-         these are directive phrases that solicit Jon's input even without
-         a literal "?".
+    Channel vs DM matters:
+      - In a **channel**, an agent talks to many people (e.g. Kai asking Sara
+        "what would be most helpful to know?"). A trailing "?" or an ask-phrase
+        is NOT an ask to Jon. We require an explicit **@-mention of Jon**.
+      - In a **1:1 DM with Jon**, every message IS to Jon, so a trailing "?",
+        an ask-phrase, or a mention all count.
     """
     if not text or not text.strip():
         return False
     if is_jon_mention(text, jon_slack_id=jon_slack_id):
         return True
-    if _has_trailing_question(text):
-        return True
-    if _has_ask_phrase(text):
-        return True
+    if is_dm:
+        # 1:1 DM with Jon — a question / directive ask is inherently to him.
+        return _has_trailing_question(text) or _has_ask_phrase(text)
+    # Channel: only an explicit @Jon mention counts as an ask directed at him.
     return False
 
 

@@ -539,13 +539,18 @@ async def _post_slack_message(
         return
     try:
         from artemis.hub.detection import extract_summary, is_pending_ask
+        from artemis.proactivity.scheduler import _resolve_morning_brief_recipient
 
-        if is_pending_ask(outbound_text):
-            ts_key = posted_ts or reply_thread_ts or session_id
-            summary = extract_summary(outbound_text)
-            async with _db.SessionLocal() as db_session:
+        # In a channel, only an explicit @Jon mention counts as an ask to Jon
+        # (agents talk to many people there). In Jon's 1:1 DM, any question does.
+        is_dm = channel_id.startswith("D")
+        async with _db.SessionLocal() as db_session:
+            jon_slack_id = await _resolve_morning_brief_recipient(db_session)
+            if is_pending_ask(outbound_text, jon_slack_id=jon_slack_id, is_dm=is_dm):
                 from artemis.hub import repository as hub_repo
 
+                ts_key = posted_ts or reply_thread_ts or session_id
+                summary = extract_summary(outbound_text)
                 _, created = await hub_repo.record_pending_ask(
                     db_session,
                     agent_id=normalized_agent,
@@ -554,13 +559,13 @@ async def _post_slack_message(
                     summary=summary,
                 )
                 await db_session.commit()
-            if created:
-                logger.debug(
-                    "hub: recorded pending ask for agent=%s channel=%s ts=%s",
-                    normalized_agent,
-                    channel_id,
-                    ts_key,
-                )
+                if created:
+                    logger.debug(
+                        "hub: recorded pending ask for agent=%s channel=%s ts=%s",
+                        normalized_agent,
+                        channel_id,
+                        ts_key,
+                    )
     except Exception:
         # Never block the send path; escalation is best-effort.
         logger.debug(
