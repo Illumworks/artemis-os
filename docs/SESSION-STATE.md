@@ -6,6 +6,42 @@ auto-loaded memory index (`MEMORY.md`). Opus Lead = the planning/verify/merge ag
 
 ---
 
+## ⏩ RESUME — 2026-06-16 (read FIRST; latest)
+
+main HEAD ≈ `b4aaadd`; alembic at **0095**. Everything below is merged + live (app restarted, healthy) unless
+marked. Opus Lead lane; terminal runs a separate instability/R3 lane.
+
+**Landed this session (all live):**
+- **KAI (Chiron) — 2nd named agent, LIVE in Slack.** First non-marketing team (Enablement) onboarded per
+  Mark's directive. Read-only knowledge router (NO creation tools), answers in `#enablement-library`
+  (`C0BB17EJLKC`, private). Store + sync + agent shell + read-only tools + Slack row, scope-verified
+  fail-closed. End-to-end verified (Jon @mention + plain message → on-persona replies). See
+  [[project-enablement-kai-initiative]]. Pending = content (Sara's seed) + sync cron + `drive.readonly` scope.
+- **Named-Agent Build Playbook** (`docs/named-agent-build-playbook.md`) — repeatable recipe + gotchas so the
+  next agent (Hestia, Sales) is fast. See [[reference-named-agent-build-playbook]].
+- **Skills page fixed** (500-guard on `fetchSkills`; underlying instability → terminal).
+- **DB multi-team capacity** raised (pool/max_conn/shared_buffers) for ~30 active users, planned higher ceiling.
+- **Owner identity fix:** `OWNER_EMAIL` → `jon.fila@amiralearning.com` (was amiracentral@ = Callie's acct; owner
+  was getting floating-Callie). See [[project-m3-owner-email-cf-access]].
+- **Surface access lockdown:** Personal Workspace + Dev Projects owner-only; closed unauth memory endpoints.
+  See [[project-surface-access-owner-only]]. **Do not loosen.**
+- **Google connector RESOLVED:** repointed to client `612420684593` "Artemis Google Docs Access" (orphaned
+  `975…` was the root); auto-refresh confirmed working (prod `run_refresh_tick` commits). Calendar live. See
+  [[project-google-oauth-two-resolver-mismatch]].
+- **PWA icon:** transparent "A" (Chrome flat-tiles macOS PWA icons — platform limit; don't re-litigate). See
+  [[project-pwa-icon-macos]].
+- **Opt-in commitments:** meeting action-items no longer auto-fire; proposed → Jon approves (owner+deadline
+  gate) → weekday digest; she learns from approvals.
+- **Writing Studio:** non-campaign "ready for review" → Angela in "Marketing Content Review" `C0BAJV9A2UX`;
+  no-em-dashes enforced as a MUST; new docs → folder `19Dxp0xTwz_owGorQAc_BwSXmCJO-pPeP`.
+
+**STILL OPEN (not urgent):** Sara's seed → sync cron → `drive.readonly` scope + reconnect; server-side
+shortcut resolution (Mark's link-shared files); connectors card hidden from non-owners; Signal Playbook
+editable by Josh; Writing Studio live presence + rename-refresh; writing-rules architecture design session;
+PWA "A" centering (cosmetic).
+
+---
+
 ## ⏩ RESUME — 2026-06-15 (read FIRST; handoff to a fresh session)
 
 Prior Lead session (claude.ai app) hit connection issues mid-work; continuing fresh. Everything below is
