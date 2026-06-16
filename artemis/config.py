@@ -221,6 +221,14 @@ class Settings(BaseSettings):
         default="America/New_York",
         description="IANA timezone for the commitment proposals digest sweep.",
     )
+    hub_escalation_cron: str = Field(
+        default="0 * * * *",
+        description=(
+            "Cron expression for the hub agent-escalation sweep "
+            "(default: every hour). Finds pending asks unresolved after ~1 day "
+            "and has Artemis post a terminal comment + DM Jon."
+        ),
+    )
     uvicorn_workers: int = Field(
         default=1,
         validation_alias=AliasChoices(

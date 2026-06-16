@@ -497,9 +497,14 @@ async def _post_slack_message(
     reply_thread_ts: str | None,
     outbound_text: str,
 ) -> None:
-    """Post a message to Slack — shared by the normal path and the confirm path."""
+    """Post a message to Slack — shared by the normal path and the confirm path.
+
+    After posting, if the agent (non-Artemis) asks Jon a question or @-mentions
+    him, we record a pending ask for the hub escalation layer.
+    """
     import artemis.db as _db
 
+    posted_ts: str | None = None
     try:
         async with _db.SessionLocal() as db_session:
             from artemis.integrations.slack.client import SlackClient
@@ -516,13 +521,53 @@ async def _post_slack_message(
                 )
                 return
             client = SlackClient(token=agent_cfg.access_token)
-            await client.post_message(
+            resp = await client.post_message(
                 channel=channel_id,
                 text=outbound_text,
                 thread_ts=reply_thread_ts,
             )
+            # Capture the ts Slack assigned to the posted message.
+            posted_ts = str(resp.get("ts", "")) or None
     except Exception:
         logger.exception("route_inbound: failed to post Slack reply for session %s", session_id)
+        return
+
+    # ── Hub pending-ask recording (non-blocking, best-effort) ────────────────
+    # Only record asks from non-Artemis agents; Artemis routes via notify_jon.
+    # Artemis's own escalation comments are terminal — never record those.
+    if normalized_agent == "artemis":
+        return
+    try:
+        from artemis.hub.detection import extract_summary, is_pending_ask
+
+        if is_pending_ask(outbound_text):
+            ts_key = posted_ts or reply_thread_ts or session_id
+            summary = extract_summary(outbound_text)
+            async with _db.SessionLocal() as db_session:
+                from artemis.hub import repository as hub_repo
+
+                _, created = await hub_repo.record_pending_ask(
+                    db_session,
+                    agent_id=normalized_agent,
+                    channel_id=channel_id,
+                    message_ts=ts_key,
+                    summary=summary,
+                )
+                await db_session.commit()
+            if created:
+                logger.debug(
+                    "hub: recorded pending ask for agent=%s channel=%s ts=%s",
+                    normalized_agent,
+                    channel_id,
+                    ts_key,
+                )
+    except Exception:
+        # Never block the send path; escalation is best-effort.
+        logger.debug(
+            "hub: pending-ask recording failed for agent=%s — continuing",
+            normalized_agent,
+            exc_info=True,
+        )
 
 
 async def route_inbound(
@@ -989,6 +1034,34 @@ async def _handle_mentionable_event(
     if not is_new:
         logger.debug("Duplicate Slack event_id=%s — ignored", event_id)
         return
+
+    # ── Hub: resolve pending asks when Jon posts in a channel ────────────────
+    # If this inbound is from an authorized user (Jon), any unresolved pending
+    # asks in this channel are considered answered.  Best-effort, non-blocking.
+    if agent_cfg.is_user_allowed(user_id) and channel_id:
+        try:
+            import artemis.db as _hub_db
+            from artemis.hub import repository as hub_repo
+
+            async with _hub_db.SessionLocal() as hub_session:
+                resolved_count = await hub_repo.resolve_pending_asks_in_channel(
+                    hub_session,
+                    channel_id=channel_id,
+                )
+                if resolved_count:
+                    await hub_session.commit()
+                    logger.debug(
+                        "hub: resolved %d pending ask(s) in channel=%s after Jon's reply event_id=%s",
+                        resolved_count,
+                        channel_id,
+                        event_id,
+                    )
+        except Exception:
+            logger.debug(
+                "hub: pending-ask resolution failed for channel=%s — continuing",
+                channel_id,
+                exc_info=True,
+            )
 
     # ── Guard 2: allowlist gate — only allowed senders reach the agent loop ─────
     if not _is_authorized_inbound(
