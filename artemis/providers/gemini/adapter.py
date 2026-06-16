@@ -43,6 +43,32 @@ _FINISH_REASON_MAP: dict[str, str] = {
 }
 
 
+def _strip_wrapping_code_fence(text: str) -> str:
+    """Strip a markdown code fence that wraps the ENTIRE response.
+
+    Gemini routinely returns JSON wrapped in ```json ... ``` even when asked for
+    raw JSON, which breaks downstream json.loads / Pydantic model_validate_json
+    (scouts, memory consolidation/graph, meeting/trajectory summaries). We only
+    strip when the whole response is fenced — a summary containing an inline code
+    block (not wholly wrapped) is left untouched.
+    """
+    s = text.strip()
+    if not (s.startswith("```") and s.endswith("```")):
+        return text
+    first_nl = s.find("\n")
+    if first_nl == -1:  # single-line ``` ... ``` — unusual; leave it
+        return text
+    # First line is the opening fence (``` or ```json); only treat it as a fence
+    # marker if it's just the backticks + an optional short lang tag.
+    opening = s[:first_nl].strip()
+    if len(opening) > 8:  # e.g. "```json" is 7; anything longer isn't a bare fence
+        return text
+    inner = s[first_nl + 1 :].rstrip()
+    if inner.endswith("```"):
+        inner = inner[:-3]
+    return inner.strip()
+
+
 class GeminiAdapter:
     """Conforms to the ModelAdapter and SupportsStreaming protocols."""
 
@@ -247,7 +273,7 @@ class GeminiAdapter:
         blocks: list[Any] = []
         for part in raw_parts:
             if "text" in part:
-                blocks.append(TextBlock(text=part["text"]))
+                blocks.append(TextBlock(text=_strip_wrapping_code_fence(part["text"])))
             elif "functionCall" in part:
                 fc = part["functionCall"]
                 blocks.append(
