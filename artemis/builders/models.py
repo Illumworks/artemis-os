@@ -16,6 +16,9 @@ O1 — Agent-Builder + Self-Improvement tables:
   definition_proposals              — proposed definitions awaiting approval
   agent_run_trajectory_summaries    — per-run self-improvement input summaries
 
+P6 — Self-evolution foundation:
+  agent_traces   — per-turn structured trace rows for self-evolution learning
+
 Phase F2a: data layer only. Execution wiring (F2b) wires these to the F1 loop.
 """
 
@@ -429,5 +432,63 @@ class AgentRunTrajectorySummary(Base):
     what_stalled: Mapped[str | None] = mapped_column(Text, nullable=True)
     what_was_missing: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ── P6 — Self-evolution foundation ───────────────────────────────────────────
+
+
+class AgentTrace(Base):
+    """Per-turn execution trace — foundation for the P6 self-evolution loop.
+
+    One row per agent turn (floating-agent or executor run). Written
+    fire-and-forget at the end of every turn; failures are swallowed so a
+    DB hiccup never breaks the user-facing response.
+
+    Complements (does NOT duplicate) agent_run_trajectory_summaries:
+    - Trajectory summaries are LLM-generated, per agent_run, narrative text
+      (what_worked / what_stalled / what_was_missing).
+    - agent_traces are structured, per-turn, captured synchronously from
+      available runtime fields — no LLM call, no latency.  They give P6
+      fine-grained raw material (latency, tokens, tool list, error, outcome)
+      that trajectory summaries deliberately omit.
+
+    owner_user_id / agent_id together scope traces; the P6 consumer can
+    query by agent_id + time window without touching other agents' data.
+    """
+
+    __tablename__ = "agent_traces"
+    __table_args__ = (
+        Index("idx_agent_traces_agent_created", "agent_id", "created_at"),
+        Index("idx_agent_traces_session_id", "session_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # ── identity ──────────────────────────────────────────────────────────────
+    agent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ── routing / model ───────────────────────────────────────────────────────
+    feature_tag: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ── content digest ────────────────────────────────────────────────────────
+    # First 500 chars of user message (no PII policy enforcement yet; P6 will gate)
+    input_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON array of tool names called, e.g. ["query_memory", "get_okr"]
+    tools_used: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
+    # First 500 chars of assistant final text
+    output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ── outcome ───────────────────────────────────────────────────────────────
+    # "success" | "error" | "partial" | "tool_pending"
+    outcome: Mapped[str] = mapped_column(Text, nullable=False, server_default="success")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ── cost / latency ────────────────────────────────────────────────────────
+    latency_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # ── ownership ─────────────────────────────────────────────────────────────
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )

@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
+
+from artemis.trace.capture import capture_trace, elapsed_ms, start_timer
 from uuid import uuid4
 
 from artemis.agent.client import AnthropicAdapter, ModelAdapter
@@ -883,6 +885,7 @@ async def handle_turn(
     hooks.on("after_tool", after_tool_hook)
 
     session_token = floating_session_id_var.set(session_id)
+    _turn_start = start_timer()
     try:
         result = await run_turn(
             adapter=adapter,
@@ -1014,6 +1017,39 @@ async def handle_turn(
                 user_msg_id,
                 exc_info=True,
             )
+
+    # ── 9d. P6: fire-and-forget trace capture ────────────────────────────────
+    # Non-blocking; failure is swallowed inside capture_trace. Records a
+    # structured per-turn trace row for the self-evolution data foundation.
+    try:
+        _fa_provider = "claude-code" if "ClaudeCodeAdapter" in type(adapter).__name__ else "anthropic"
+        _fa_model = getattr(adapter, "_default_model", None) or "claude-sonnet-4-6"
+        # Collect distinct tool names from the turn's assistant messages.
+        _tools_used: list[str] = []
+        _seen_tools: set[str] = set()
+        for _msg in result.messages:
+            if _msg.role == "assistant":
+                for _block in _msg.content:
+                    if isinstance(_block, ToolUseBlock) and _block.name not in _seen_tools:
+                        _tools_used.append(_block.name)
+                        _seen_tools.add(_block.name)
+        capture_trace(
+            agent_id=session_ctx.agent_id,
+            feature_tag="floating_artemis",
+            session_id=session_id,
+            provider=_fa_provider,
+            model=_fa_model,
+            input_summary=user_text[:500] if user_text else None,
+            tools_used=_tools_used,
+            output_summary=response_text[:500] if response_text else None,
+            outcome="success",
+            latency_ms=elapsed_ms(_turn_start),
+            input_tokens=result.usage.input_tokens if result.usage else None,
+            output_tokens=result.usage.output_tokens if result.usage else None,
+            owner_user_id=owner_user_id,
+        )
+    except Exception:
+        logger.debug("P6 trace capture setup failed (non-fatal) session_id=%s", session_id, exc_info=True)
 
     # ── 10. Broadcast completion ──────────────────────────────────────────────
     await _broadcast(
