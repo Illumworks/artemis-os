@@ -69,6 +69,7 @@ def _build_system_prompt(
     speaker_name: str | None = None,
     is_personal_slack_dm: bool = False,
     okr_reconcile_context: str | None = None,
+    recent_outbound_texts: list[str] | None = None,
 ) -> str:
     profile = load_agent_profile("artemis")
     persona_core = profile.persona_core if persona_core is None else persona_core
@@ -123,6 +124,31 @@ def _build_system_prompt(
     # tool suspends and waits for the operator's explicit 'go' before writing.
     if okr_reconcile_context:
         parts.append(okr_reconcile_context)
+
+    # ── Human-voice nudge (agent-agnostic) ──────────────────────────────────
+    # Applied to every agent on every turn.  Does NOT override persona content;
+    # it reinforces structural habits that make any agent sound human.
+    parts.append(
+        "## Human communication rules (all agents, every turn)\n"
+        "- Address people by their first name naturally when you know it — weave it "
+        "in, don't open every message the same way.\n"
+        "- Vary your sentence openings. Never start two consecutive messages the same way.\n"
+        "- Never send canned, templated, or copy-pasted-sounding text.\n"
+        "- Sound like a real person: concrete, warm where it fits, specific rather than generic."
+    )
+
+    # ── Anti-repetition: recent outbound messages ────────────────────────────
+    # When the last few assistant messages in this session are available, inject
+    # them so the LLM actively avoids repeating itself.  This prevents two
+    # back-to-back channel-join welcomes from being verbatim identical.
+    if recent_outbound_texts:
+        quoted = "\n".join(f'- "{t}"' for t in recent_outbound_texts)
+        parts.append(
+            "## Your recent messages in this channel (do NOT repeat or closely echo these)\n"
+            "These are your last outbound messages. Read them and deliberately vary your "
+            "wording, structure, and opening so your next reply feels fresh and distinct:\n"
+            + quoted
+        )
 
     # Slack-originated session: establish the conversational context.
     if session_id.startswith("slack-"):
@@ -691,7 +717,7 @@ async def handle_turn(
     )
     available_surfaces = session_ctx.available_surfaces
 
-    # ── 3. Build system prompt ────────────────────────────────────────────────
+    # ── 3. Gather system prompt ingredients (built after history loads in 4a) ──
     agent_profile = load_agent_profile(session_ctx.agent_id)
     # Use the profile-sourced voice corpus (deterministic per session_id).
     voice_samples = select_voice_samples(
@@ -708,6 +734,32 @@ async def handle_turn(
     if session_ctx.is_personal_slack_dm and speaker_id:
         okr_reconcile_ctx = await _get_okr_reconcile_context(speaker_id, db_session)
 
+    # ── 4. Load history ───────────────────────────────────────────────────────
+    history = await _load_message_history(
+        session_id=session_id,
+        db_session=db_session,
+        session_metadata=session_ctx.metadata,
+    )
+
+    # ── 4a. Anti-repetition: rebuild system prompt with recent outbound texts ─
+    # Extract the last 3-5 assistant text blocks from history so the LLM can
+    # actively avoid repeating itself.  Two back-to-back channel-join welcomes
+    # will have different recent_outbound_texts even if both start from a cold
+    # session, because the first joiner's turn writes to history before the
+    # second fires (background tasks run serially per worker).  When history is
+    # empty (true cold start) the list is empty and the block is omitted.
+    recent_outbound_texts: list[str] = []
+    for msg in reversed(history):
+        if msg.role == "assistant":
+            for block in msg.content:
+                if isinstance(block, TextBlock) and block.text.strip():
+                    recent_outbound_texts.append(block.text.strip())
+                    break  # one text per message is enough
+        if len(recent_outbound_texts) >= 4:
+            break
+    recent_outbound_texts.reverse()  # chronological order for readability
+
+    # Rebuild system prompt with the anti-repetition context now available.
     system_prompt = _build_system_prompt(
         voice_samples=voice_samples,
         page_context=page_context_text,
@@ -721,13 +773,7 @@ async def handle_turn(
         speaker_name=speaker_name,
         is_personal_slack_dm=session_ctx.is_personal_slack_dm,
         okr_reconcile_context=okr_reconcile_ctx,
-    )
-
-    # ── 4. Load history ───────────────────────────────────────────────────────
-    history = await _load_message_history(
-        session_id=session_id,
-        db_session=db_session,
-        session_metadata=session_ctx.metadata,
+        recent_outbound_texts=recent_outbound_texts if recent_outbound_texts else None,
     )
 
     # ── 4b. M4: inject memory context into system prompt ─────────────────────

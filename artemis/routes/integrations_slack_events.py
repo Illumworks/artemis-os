@@ -941,6 +941,9 @@ async def _handle_mentionable_event(
     ts: str = str(event.get("ts", ""))
     thread_ts: str | None = str(event["thread_ts"]) if "thread_ts" in event else None
     raw_text: str | None = str(event["text"]) if "text" in event else None
+    # Detect channel-join events: arrive as message subtype "channel_join".
+    # The joiner's user_id is already captured in user_id above.
+    is_channel_join: bool = str(event.get("subtype", "")) == "channel_join"
 
     try:
         agent_cfg = await _resolve_agent_slack_config(
@@ -998,12 +1001,15 @@ async def _handle_mentionable_event(
         return
 
     # ── Guard 3: relevance gate (channel messages for listen_channel_messages agents) ─
-    # app_mention and DM messages bypass this gate.
+    # app_mention, DM messages, and channel_join events bypass this gate.
+    # channel_join: the agent must greet every new member; there is nothing to
+    # "classify" — the join itself is the trigger.
     is_dm = channel_type == "im" or channel_id.startswith("D")
     is_direct_mention = inner_type == "app_mention"
     needs_gate = (
         not is_direct_mention
         and not is_dm
+        and not is_channel_join
         and inner_type == "message"
         and agent_cfg.listen_channel_messages
     )
@@ -1029,11 +1035,18 @@ async def _handle_mentionable_event(
 
     # ── Ping decision — @mention the asker on cold-start / re-engagement ─────────
     # Never ping in DMs. Never ping for Artemis personal DM path.
+    # Channel-join events: ALWAYS ping the joiner regardless of re-engagement gap,
+    # because each join is a distinct first-touch for that specific person even if
+    # the session already has messages from a prior joiner.
     ping_user_id: str | None = None
     if not is_dm and agent_cfg.agent_id != "artemis":
-        last_ts = await _last_message_timestamp(session_id)
-        if should_ping_asker(is_dm=False, last_message_at=last_ts):
-            ping_user_id = user_id if user_id else None
+        if is_channel_join and user_id:
+            # Force-ping the joiner: this is their first-touch moment.
+            ping_user_id = user_id
+        else:
+            last_ts = await _last_message_timestamp(session_id)
+            if should_ping_asker(is_dm=False, last_message_at=last_ts):
+                ping_user_id = user_id if user_id else None
 
     event_data: dict[str, object] = {
         "event_id": event_id,
@@ -1104,6 +1117,27 @@ async def _slack_events(
 
     if not _verify_slack_signature(raw_body, timestamp, signature, agent_cfg.signing_secret):
         return JSONResponse(status_code=401, content={"error": "invalid signature"})
+
+    # ── 4b. Retry safety (belt-and-suspenders) ────────────────────────────────
+    # Slack retries a delivery when it doesn't receive a 200 in time.  Our
+    # background-task model means we always reply 200 quickly, but if a network
+    # hiccup drops the response, Slack retries with X-Slack-Retry-Num >= 1.
+    # The event_id DB-dedup inside _handle_mentionable_event prevents double
+    # dispatch for any retry that reaches the upsert; this early-exit prevents
+    # even starting the heavier processing path for known retries.
+    retry_num_raw = request.headers.get("X-Slack-Retry-Num", "")
+    if retry_num_raw.strip():
+        try:
+            if int(retry_num_raw.strip()) >= 1:
+                logger.info(
+                    "Slack retry detected (X-Slack-Retry-Num=%s, event_id=%s) — acking 200, skipping reprocess",
+                    retry_num_raw.strip(),
+                    str(payload.get("event_id", "")),
+                )
+                return JSONResponse(status_code=200, content={"ok": True})
+        except ValueError:
+            # Malformed header — ignore and continue normal processing
+            pass
 
     # ── 5. Dispatch by type ───────────────────────────────────────────────────
     if event_type == "event_callback":
