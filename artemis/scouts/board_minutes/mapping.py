@@ -1,6 +1,10 @@
 """Mapping helpers: convert board meeting items into scout finding dicts.
 
 This module is purely deterministic — no I/O, no async.
+
+Reason codes emitted here match the canonical registry in
+docs/marketing-ops-v1/schemas/reason-codes.md.  The mapping targets
+PRE-RFP-INTENT signals that surface 6–18 months before a formal RFP posts.
 """
 
 from __future__ import annotations
@@ -8,39 +12,104 @@ from __future__ import annotations
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Relevance filter
+# Relevance filter — must contain at least one of these to be worth classifying.
+#
+# Keywords are intentionally focused on genuine literacy/curriculum/procurement
+# content.  Generic words like "assessment" or "curriculum" are kept only when
+# they are strong enough to justify the scan cost; broad terms like
+# "superintendent" that also match routine agenda items are NOT included here
+# (the LLM path handles leader-transition signals separately via
+# LEADER_TRANSITION_FORMAL from the leadership_transition scout).
 # ---------------------------------------------------------------------------
 
 LITERACY_KEYWORDS: list[str] = [
+    # Core literacy / reading
     "literacy",
     "reading",
     "dyslexia",
-    "obc",
-    "outcomes-based",
+    "phonics",
+    "structured literacy",
+    "science of reading",
+    "foundational literacy",
+    "language arts",
+    "ela ",
+    "ela,",
+    "ela.",
+    # Curriculum / program adoption
     "curriculum",
-    "assessment",
+    "instructional materials",
+    "reading program",
+    "curriculum adoption",
+    "ela adoption",
+    "reading materials",
+    "supplemental curriculum",
+    # Tutoring / intervention
     "tutoring",
+    "intervention",
+    "mtss",
+    "tier 2",
+    "tier 3",
+    "high-impact tutoring",
+    "hit program",
+    # Vendor / procurement
     "vendor",
     "rfp",
-    "superintendent",
-    "transition",
+    "procurement",
+    "iready",
+    "lexia",
+    "amplify",
+    # Texas policy anchors
+    "hb 1416",
+    "hb1416",
+    "hb 3",
+    "hb3",
+    "elia",
+    "adsy",
+    "tutoring waiver",
+    "tea waiver",
+    # Proficiency / strategic
+    "proficiency",
+    "achievement gap",
+    "strategic plan",
+    "literacy initiative",
+    "reading initiative",
+    "dual language",
+    "bilingual",
+    "dll",
+    # Screen time
+    "screen time",
+    "ed tech time",
+    # ESSER (kept for context)
     "esser",
+    # OBC
+    "obc",
+    "outcomes-based",
 ]
 
 # ---------------------------------------------------------------------------
-# Reason code constants
+# Canonical reason code constants (from decisions/campaign-signal-spec-v1.md)
 # ---------------------------------------------------------------------------
 
-_RC_BOARD_RFP_AUTHORIZATION = "BOARD_RFP_AUTHORIZATION"
-_RC_BOARD_OBC_RFP_APPROVED = "BOARD_OBC_RFP_APPROVED"
-_RC_SUPERINTENDENT_TRANSITION = "SUPERINTENDENT_TRANSITION"
-_RC_BOARD_RFP_PENDING = "BOARD_RFP_AUTHORIZATION"  # same code, different urgency
-_RC_BOARD_OBC_DISCUSSION = "BOARD_OBC_DISCUSSION"
-_RC_BOARD_VENDOR_REVIEW = "BOARD_VENDOR_REVIEW"
-_RC_BOARD_VENDOR_ACCOUNTABILITY = "BOARD_VENDOR_ACCOUNTABILITY"
-_RC_BOARD_BUDGET_PRESSURE = "BOARD_BUDGET_PRESSURE"
-_RC_ESSER_CLIFF = "ESSER_CLIFF_REFERENCE"
-_RC_BOARD_LITERACY_CURRICULUM = "BOARD_LITERACY_CURRICULUM_REVIEW"
+# Hot signals
+_RC_TX_HB1416_WAIVER = "TX_HB1416_WAIVER"
+_RC_TX_HB3_DYSLEXIA = "TX_HB3_DYSLEXIA_COMPLIANCE"
+_RC_PROCUREMENT_RFP = "PROCUREMENT_LITERACY_RFP"
+
+# Standard signals — pre-RFP intent
+_RC_PROCUREMENT_ELA = "PROCUREMENT_ELA_ADOPTION"
+_RC_VENDOR_DISSATISFACTION = "VENDOR_DISSATISFACTION"
+_RC_DISTRICT_STRATEGIC_LIT = "DISTRICT_STRATEGIC_LITERACY"
+_RC_DISTRICT_PROF_GAP = "DISTRICT_PROFICIENCY_GAP"
+_RC_DISTRICT_MTSS_STRAIN = "DISTRICT_MTSS_STRAIN"
+_RC_DISTRICT_DLL = "DISTRICT_DLL_EXPANSION"
+_RC_POLICY_LIT_MANDATE = "POLICY_LIT_MANDATE"
+_RC_POLICY_EDTECH = "POLICY_EDTECH_TIME_LIMIT"
+
+# Enrichment
+_RC_FUNDING_HB2_ELIA = "FUNDING_HB2_ELIA"
+
+# Fallback — generic literacy curriculum discussion
+_RC_DISTRICT_STRATEGIC_LIT_FALLBACK = "DISTRICT_STRATEGIC_LITERACY"
 
 
 def _is_relevant(text: str) -> bool:
@@ -52,43 +121,168 @@ def _is_relevant(text: str) -> bool:
 def _classify(combined: str) -> tuple[str, str]:
     """Return (reason_code, urgency) for *combined* text (title + body).
 
-    Checks conditions in priority order — first match wins.
+    Checks conditions in priority order — first match wins.  Codes and
+    urgency tiers match the canonical spec (decisions/campaign-signal-spec-v1.md).
     """
     lower = combined.lower()
 
-    # Hot signals first.
-    if "rfp" in lower and ("approved" in lower or "authorization" in lower):
-        return _RC_BOARD_RFP_AUTHORIZATION, "hot"
+    # -----------------------------------------------------------------------
+    # Hot signals first — direct buying/substitution signals
+    # -----------------------------------------------------------------------
 
-    if ("obc" in lower or "outcomes-based" in lower) and "approved" in lower:
-        return _RC_BOARD_OBC_RFP_APPROVED, "hot"
+    # TX HB 1416 tutoring waiver (any mention = hot, Amira is TEA-approved)
+    if "hb 1416" in lower or "hb1416" in lower or "tutoring waiver" in lower:
+        return _RC_TX_HB1416_WAIVER, "hot"
 
-    if "superintendent" in lower and (
-        "transition" in lower or "resign" in lower or "retire" in lower or "new" in lower
+    # ADSY (Additional Days School Year) when scoped to literacy / reading
+    if "adsy" in lower and any(kw in lower for kw in ("reading", "literacy", "tutoring")):
+        return _RC_TX_HB1416_WAIVER, "hot"
+
+    # TX HB 3 dyslexia compliance
+    if ("hb 3" in lower or "hb3" in lower) and (
+        "dyslexia" in lower or "reporting" in lower or "compliance" in lower
     ):
-        return _RC_SUPERINTENDENT_TRANSITION, "hot"
+        return _RC_TX_HB3_DYSLEXIA, "hot"
 
-    # Standard signals.
-    if "rfp" in lower or "procurement" in lower:
-        return _RC_BOARD_RFP_AUTHORIZATION, "standard"
+    # Formal RFP authorization for literacy/reading/assessment/tutoring
+    if "rfp" in lower and any(
+        kw in lower
+        for kw in ("literacy", "reading", "curriculum", "assessment", "tutoring", "ela")
+    ):
+        if any(kw in lower for kw in ("approved", "authorization", "authorize")):
+            return _RC_PROCUREMENT_RFP, "hot"
+        return _RC_PROCUREMENT_RFP, "standard"
 
+    # Named competitor + negative action → hot VENDOR_DISSATISFACTION
+    # (vendor non-renewal/replacement without the generic "vendor" word in title)
+    _named_vendors = ("iready", "lexia", "amplify", "imagine learning", "ucsf multitudes")
+    _negative_actions = ("non-renewal", "non renewal", "not renew", "replace", "terminate", "end contract")
+    if any(v in lower for v in _named_vendors) and any(a in lower for a in _negative_actions):
+        return _RC_VENDOR_DISSATISFACTION, "hot"
+
+    # Vendor non-renewal vote → hot VENDOR_DISSATISFACTION
+    if "vendor" in lower and any(
+        kw in lower for kw in ("non-renewal", "non renewal", "not renew", "replace", "terminate")
+    ):
+        return _RC_VENDOR_DISSATISFACTION, "hot"
+
+    # -----------------------------------------------------------------------
+    # Standard pre-RFP intent signals
+    # -----------------------------------------------------------------------
+
+    # Vendor review / dissatisfaction (check BEFORE ELA adoption so "reading curriculum"
+    # in a vendor-review context doesn't get grabbed by the ELA adoption path)
+    if "vendor" in lower and any(
+        kw in lower
+        for kw in (
+            "review",
+            "evaluation",
+            "efficacy",
+            "renewal",
+            "iready",
+            "lexia",
+            "amplify",
+            "accountability",
+        )
+    ):
+        return _RC_VENDOR_DISSATISFACTION, "standard"
+
+    # OBC (outcomes-based contracting) discussion or approval
     if "obc" in lower or "outcomes-based" in lower:
-        return _RC_BOARD_OBC_DISCUSSION, "standard"
+        return _RC_PROCUREMENT_ELA, "standard"
 
-    if "vendor" in lower and "review" in lower:
-        return _RC_BOARD_VENDOR_REVIEW, "standard"
-
-    if "vendor" in lower and "accountability" in lower:
-        return _RC_BOARD_VENDOR_ACCOUNTABILITY, "standard"
-
-    if "budget" in lower and ("cut" in lower or "pressure" in lower or "reduction" in lower):
-        return _RC_BOARD_BUDGET_PRESSURE, "standard"
-
+    # ESSER cliff / fund expiration — enrichment context. Check BEFORE generic ELA/reading
+    # phrases so "esser ... reading programs" doesn't false-positive as ELA adoption.
     if "esser" in lower:
-        return _RC_ESSER_CLIFF, "standard"
+        return _RC_DISTRICT_STRATEGIC_LIT_FALLBACK, "enrichment"
 
-    # Default — covers literacy / reading / curriculum / assessment / tutoring.
-    return _RC_BOARD_LITERACY_CURRICULUM, "standard"
+    # Curriculum / ELA materials purchase / adoption committee — PROCUREMENT_ELA_ADOPTION
+    if any(
+        phrase in lower
+        for phrase in (
+            "ela adoption",
+            "curriculum adoption",
+            "instructional materials",
+            "reading materials",
+            "reading program",
+            "supplemental curriculum",
+            "reading curriculum",
+            "language arts adoption",
+            "ela materials",
+            "core materials",
+        )
+    ):
+        return _RC_PROCUREMENT_ELA, "standard"
+
+    # Strategic literacy plan / reading initiative
+    if any(
+        phrase in lower
+        for phrase in (
+            "strategic plan",
+            "literacy goals",
+            "reading initiative",
+            "literacy initiative",
+            "science of reading",
+            "structured literacy",
+            "foundational literacy",
+            "k-3 reading",
+            "k3 reading",
+        )
+    ):
+        return _RC_DISTRICT_STRATEGIC_LIT, "standard"
+
+    # Proficiency gap / assessment data
+    if any(
+        phrase in lower
+        for phrase in (
+            "proficiency",
+            "achievement gap",
+            "reading scores",
+            "literacy outcomes",
+            "below grade level",
+            "naep",
+            "state assessments",
+            "student performance",
+        )
+    ) and any(kw in lower for kw in ("reading", "literacy", "ela", "language arts")):
+        return _RC_DISTRICT_PROF_GAP, "standard"
+
+    # MTSS / intervention staffing
+    if any(
+        phrase in lower
+        for phrase in (
+            "mtss",
+            "tier 2",
+            "tier 3",
+            "intervention staffing",
+            "reading specialist",
+            "literacy coach",
+            "intervention capacity",
+        )
+    ):
+        return _RC_DISTRICT_MTSS_STRAIN, "standard"
+
+    # Dual language / bilingual expansion
+    if any(
+        phrase in lower
+        for phrase in ("dual language", "bilingual", "dll", "biliteracy", "multilingual")
+    ) and any(kw in lower for kw in ("expand", "program", "addition", "new", "launch")):
+        return _RC_DISTRICT_DLL, "standard"
+
+    # Screen-time / ed-tech limits
+    if "screen time" in lower or "ed tech time" in lower:
+        return _RC_POLICY_EDTECH, "standard"
+
+    # HB 2 ELIA (TX enrichment context)
+    if any(phrase in lower for phrase in ("hb 2", "elia", "early literacy intervention allotment")):
+        return _RC_FUNDING_HB2_ELIA, "enrichment"
+
+    # Generic tutoring / high-impact tutoring
+    if any(phrase in lower for phrase in ("tutoring", "high-impact tutoring", "hit program")):
+        return _RC_DISTRICT_MTSS_STRAIN, "standard"
+
+    # General curriculum / literacy discussion (fallback)
+    return _RC_DISTRICT_STRATEGIC_LIT_FALLBACK, "standard"
 
 
 def _build_evidence(title: str, text: str) -> str:
@@ -149,7 +343,7 @@ def meeting_item_to_finding(
     date: str = item.get("date", "")
     speaker: str | None = item.get("speaker_attribution")
     if speaker is None:
-        speaker = f"Unknown speaker, {date} board meeting"
+        speaker = f"Board agenda item, {date} board meeting"
 
     source_type = _detect_source_type(district, item)
 

@@ -209,23 +209,25 @@ def test_days_to_close_returns_int() -> None:
 
 
 def test_portal_registry_has_state_and_bonfire_portals() -> None:
-    """PORTAL_REGISTRY must include statewide portals plus Bonfire entries.
+    """PORTAL_REGISTRY includes statewide stubs + live platform adapters.
 
-    Phase 1: 9 original statewide portals (html_scrape stubs).
-    Phase 2: +2 live adapters — eMMA (emma_MD) and TX ESBD (esbd_TX).
-    Total non-Bonfire entries: 11.
+    Phase 1: 9 statewide html_scrape stubs. Phase 2: eMMA (emma_MD) + TX ESBD
+    (esbd_TX). Phase 3: OpenGov (opengov_<slug>). Bonfire entries are per-district.
+    Asserted by PRESENCE + a lower bound — robust to adding more portals (don't
+    re-introduce a brittle exact count that breaks on every new adapter).
     """
     from artemis.scouts.procurement.bonfire import BONFIRE_REGISTRY
 
     bonfire_keys = {f"bonfire_{e['slug']}" for e in BONFIRE_REGISTRY}
     state_keys = set(PORTAL_REGISTRY.keys()) - bonfire_keys
-    # 9 original statewide portals + 2 Phase-2 live adapters (eMMA, ESBD) = 11.
-    assert len(state_keys) == 11
+    # At least the 9 original statewide stubs (catches accidental mass removal).
+    assert len(state_keys) >= 9
     # All active Bonfire districts must have a portal entry.
     assert bonfire_keys.issubset(set(PORTAL_REGISTRY.keys()))
-    # Phase-2 adapters must be present.
+    # Live platform adapters must be present.
     assert "emma_MD" in state_keys
     assert "esbd_TX" in state_keys
+    assert any(k.startswith("opengov_") for k in state_keys)
 
 
 def test_portal_registry_has_required_states() -> None:

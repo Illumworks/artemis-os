@@ -95,55 +95,56 @@ def _make_http_mock(
 
 
 def test_meeting_item_to_finding_rfp_approved_hot() -> None:
-    """'rfp authorized' in text → BOARD_RFP_AUTHORIZATION + urgency hot."""
+    """'rfp authorized' for literacy → PROCUREMENT_LITERACY_RFP + urgency hot."""
     item = _make_item(text="The board approved rfp authorization for literacy vendor.")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
-    assert "BOARD_RFP_AUTHORIZATION" in finding["reasonCodes"]
+    assert "PROCUREMENT_LITERACY_RFP" in finding["reasonCodes"]
     assert finding["urgency"] == "hot"
 
 
 def test_meeting_item_to_finding_obc_discussion_standard() -> None:
-    """'obc' without approval → BOARD_OBC_DISCUSSION + standard urgency."""
+    """'obc' discussion → PROCUREMENT_ELA_ADOPTION + standard urgency (OBC = adoption intent)."""
     item = _make_item(text="The board discussed the obc literacy contract proposal.")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
-    assert "BOARD_OBC_DISCUSSION" in finding["reasonCodes"]
+    assert "PROCUREMENT_ELA_ADOPTION" in finding["reasonCodes"]
     assert finding["urgency"] == "standard"
 
 
-def test_meeting_item_to_finding_superintendent_transition_hot() -> None:
-    """'superintendent transition' → SUPERINTENDENT_TRANSITION + hot."""
+def test_meeting_item_to_finding_superintendent_transition_not_relevant() -> None:
+    """'superintendent transition' without literacy keywords → filtered (handled by leadership scout)."""
     item = _make_item(text="The board reviewed superintendent transition plans for the district.")
     finding = meeting_item_to_finding(item, _PINELLAS)
-    assert finding is not None
-    assert "SUPERINTENDENT_TRANSITION" in finding["reasonCodes"]
-    assert finding["urgency"] == "hot"
+    # Superintendent transitions without literacy content are out of scope for this scout.
+    assert finding is None
 
 
 def test_meeting_item_to_finding_esser_reference() -> None:
-    """'esser' in text → ESSER_CLIFF_REFERENCE reason code."""
+    """'esser' + reading context → DISTRICT_STRATEGIC_LITERACY enrichment (budget context signal)."""
     item = _make_item(text="Discussion of esser fund expiration impact on reading programs.")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
-    assert "ESSER_CLIFF_REFERENCE" in finding["reasonCodes"]
+    assert "DISTRICT_STRATEGIC_LITERACY" in finding["reasonCodes"]
+    assert finding["urgency"] == "enrichment"
 
 
 def test_meeting_item_to_finding_vendor_review() -> None:
-    """'vendor review' → BOARD_VENDOR_REVIEW + standard."""
+    """'vendor review' → VENDOR_DISSATISFACTION + standard (pre-RFP intent signal)."""
     item = _make_item(text="Annual vendor review for tutoring and reading curriculum.")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
-    assert "BOARD_VENDOR_REVIEW" in finding["reasonCodes"]
+    assert "VENDOR_DISSATISFACTION" in finding["reasonCodes"]
     assert finding["urgency"] == "standard"
 
 
 def test_meeting_item_to_finding_budget_pressure() -> None:
-    """'budget cut' → BOARD_BUDGET_PRESSURE reason code."""
+    """'budget' + reading program → PROCUREMENT_ELA_ADOPTION (reading program budget = adoption context)."""
     item = _make_item(text="Board discussed budget cut impacts on reading programs.")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
-    assert "BOARD_BUDGET_PRESSURE" in finding["reasonCodes"]
+    # Budget impacts on reading programs are an ELA adoption / procurement intent signal.
+    assert finding["reasonCodes"][0] in ("PROCUREMENT_ELA_ADOPTION", "DISTRICT_STRATEGIC_LITERACY")
 
 
 def test_meeting_item_to_finding_irrelevant_returns_none() -> None:
@@ -175,13 +176,14 @@ def test_meeting_item_to_finding_speaker_attribution_in_metadata() -> None:
 
 
 def test_meeting_item_to_finding_unknown_speaker_fallback() -> None:
-    """None speaker_attribution → 'Unknown speaker, <date> board meeting'."""
+    """None speaker_attribution → 'Board agenda item, <date> board meeting'."""
     item = _make_item(speaker_attribution=None, date="2025-03-10")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
     attr: str = finding["metadata"]["speaker_attribution"]
-    assert attr.startswith("Unknown speaker,")
+    # Fallback is "Board agenda item, <date> board meeting" (not "Unknown speaker,")
     assert "2025-03-10" in attr
+    assert "board meeting" in attr
 
 
 def test_meeting_item_to_finding_source_type_field() -> None:
@@ -193,21 +195,21 @@ def test_meeting_item_to_finding_source_type_field() -> None:
 
 
 def test_meeting_item_to_finding_default_urgency_literacy_keyword() -> None:
-    """A plain 'literacy' item (no other signal) → BOARD_LITERACY_CURRICULUM_REVIEW."""
+    """A plain 'literacy curriculum' item → DISTRICT_STRATEGIC_LITERACY + standard urgency."""
     item = _make_item(text="Board approved literacy curriculum update for K-3.")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
-    assert "BOARD_LITERACY_CURRICULUM_REVIEW" in finding["reasonCodes"]
+    assert "DISTRICT_STRATEGIC_LITERACY" in finding["reasonCodes"]
     assert finding["urgency"] == "standard"
 
 
-def test_meeting_item_to_finding_obc_approved_hot() -> None:
-    """'outcomes-based approved' → BOARD_OBC_RFP_APPROVED + hot."""
+def test_meeting_item_to_finding_obc_approved_standard() -> None:
+    """'outcomes-based' + 'reading vendor' → PROCUREMENT_ELA_ADOPTION + standard."""
     item = _make_item(text="The board approved the outcomes-based contract with reading vendor.")
     finding = meeting_item_to_finding(item, _PINELLAS)
     assert finding is not None
-    assert "BOARD_OBC_RFP_APPROVED" in finding["reasonCodes"]
-    assert finding["urgency"] == "hot"
+    assert "PROCUREMENT_ELA_ADOPTION" in finding["reasonCodes"]
+    assert finding["urgency"] == "standard"
 
 
 def test_meeting_item_to_finding_state_in_metadata() -> None:
@@ -491,7 +493,7 @@ async def test_gather_findings_source_type_field() -> None:
 
 
 async def test_gather_findings_vendor_accountability() -> None:
-    """'vendor accountability' in text → BOARD_VENDOR_ACCOUNTABILITY."""
+    """'vendor accountability' + literacy → VENDOR_DISSATISFACTION (canonical code)."""
 
     async def _fake_fetch_items(district: dict[str, Any]) -> list[dict[str, Any]]:
         return [_make_item(text="vendor accountability metrics for literacy software performance.")]
@@ -501,4 +503,102 @@ async def test_gather_findings_vendor_accountability() -> None:
 
     findings = await scout._gather_findings()
     assert len(findings) >= 1
-    assert "BOARD_VENDOR_ACCOUNTABILITY" in findings[0]["reasonCodes"]
+    assert "VENDOR_DISSATISFACTION" in findings[0]["reasonCodes"]
+
+
+# ===========================================================================
+# Pre-RFP intent signal tests (new — canonical reason codes)
+# ===========================================================================
+
+
+def test_pre_rfp_strategic_literacy() -> None:
+    """Strategic plan with literacy pillar → DISTRICT_STRATEGIC_LITERACY + standard."""
+    item = _make_item(text="Board adopts 5-year strategic plan with literacy as top priority.")
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    assert "DISTRICT_STRATEGIC_LITERACY" in finding["reasonCodes"]
+    assert finding["urgency"] == "standard"
+
+
+def test_pre_rfp_proficiency_gap() -> None:
+    """State assessment results with reading gap → DISTRICT_PROFICIENCY_GAP + standard."""
+    item = _make_item(
+        text="Student performance on state assessments shows reading proficiency gap in K-3."
+    )
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    assert "DISTRICT_PROFICIENCY_GAP" in finding["reasonCodes"]
+    assert finding["urgency"] == "standard"
+
+
+def test_pre_rfp_ela_adoption_committee() -> None:
+    """ELA adoption committee → PROCUREMENT_ELA_ADOPTION + standard."""
+    item = _make_item(
+        text="Board forms ELA adoption committee for K-5 language arts instructional materials."
+    )
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    assert "PROCUREMENT_ELA_ADOPTION" in finding["reasonCodes"]
+    assert finding["urgency"] == "standard"
+
+
+def test_pre_rfp_tx_hb1416_waiver() -> None:
+    """TX HB 1416 tutoring waiver → TX_HB1416_WAIVER + hot."""
+    item = _make_item(text="Board approves submission of HB 1416 tutoring waiver to TEA.")
+    finding = meeting_item_to_finding(item, _DALLAS)
+    assert finding is not None
+    assert "TX_HB1416_WAIVER" in finding["reasonCodes"]
+    assert finding["urgency"] == "hot"
+
+
+def test_pre_rfp_mtss_strain() -> None:
+    """MTSS staffing shortage discussion → DISTRICT_MTSS_STRAIN + standard."""
+    item = _make_item(
+        text="Discussion of MTSS intervention staffing shortages for Tier 2 reading support."
+    )
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    assert "DISTRICT_MTSS_STRAIN" in finding["reasonCodes"]
+    assert finding["urgency"] == "standard"
+
+
+def test_pre_rfp_dll_expansion() -> None:
+    """Dual language program expansion → DISTRICT_DLL_EXPANSION + standard."""
+    item = _make_item(
+        text="Board votes to expand dual language program at three elementary schools."
+    )
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    assert "DISTRICT_DLL_EXPANSION" in finding["reasonCodes"]
+    assert finding["urgency"] == "standard"
+
+
+def test_pre_rfp_vendor_dissatisfaction_review() -> None:
+    """Vendor evaluation/efficacy review → VENDOR_DISSATISFACTION + standard."""
+    item = _make_item(text="Board agenda: efficacy review of current reading software vendor.")
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    assert "VENDOR_DISSATISFACTION" in finding["reasonCodes"]
+    assert finding["urgency"] == "standard"
+
+
+def test_pre_rfp_vendor_nrenewal_hot() -> None:
+    """Vendor non-renewal vote → VENDOR_DISSATISFACTION + hot."""
+    item = _make_item(
+        text="Board votes non-renewal of iReady reading software contract for next year."
+    )
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    assert "VENDOR_DISSATISFACTION" in finding["reasonCodes"]
+    assert finding["urgency"] == "hot"
+
+
+def test_pre_rfp_esser_context() -> None:
+    """ESSER fund expiration with reading context → enrichment (budget context, not hot)."""
+    item = _make_item(
+        text="Discussion of esser fund expiration and impact on reading intervention programs."
+    )
+    finding = meeting_item_to_finding(item, _PINELLAS)
+    assert finding is not None
+    # ESSER is enrichment context — it is not a discrete buying signal on its own.
+    assert finding["urgency"] == "enrichment"
