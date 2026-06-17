@@ -71,10 +71,12 @@ def _build_context_string(sources: dict[str, Any]) -> str:
                     when = "unknown"
                 lines.append(f'  - "{title}" ({when})')
 
-    # Jira
+    # Jira — all tickets below are already filtered to Jon's assignments only.
+    # Surface key + title + status. Do NOT invent field-level actions (e.g. "set
+    # a due date") — no due-date field is fetched; the LLM must not hallucinate it.
     jira = sources.get("jira")
     if jira and jira.get("connected") and jira.get("columns"):
-        lines.append("\n## Jira")
+        lines.append("\n## Jira (Jon's tickets only — key, title, status)")
         columns = jira["columns"]
         in_prog: list[Any] = next(
             (c.get("items", []) for c in columns if c.get("key") == "prog"), []
@@ -85,22 +87,32 @@ def _build_context_string(sources: dict[str, Any]) -> str:
         blocked: list[Any] = next(
             (c.get("items", []) for c in columns if c.get("key") == "blocked"), []
         )
+        # Pass excluded_keys in so they can be filtered before reaching the LLM.
+        excluded_keys: set[str] = sources.get("_excluded_ticket_keys") or set()
         if in_prog:
-            lines.append("In progress:")
-            for t in in_prog[:4]:
-                priority = t.get("priority") or "–"
-                title = t.get("title") or t.get("summary") or ""
-                lines.append(f"  - [{t.get('key', '?')}] {title} ({priority})")
+            filtered_prog = [t for t in in_prog if t.get("key") not in excluded_keys]
+            if filtered_prog:
+                lines.append("In progress:")
+                for t in filtered_prog[:4]:
+                    priority = t.get("priority") or "–"
+                    title = t.get("title") or t.get("summary") or ""
+                    lines.append(f"  - [{t.get('key', '?')}] {title} (status: In Progress, priority: {priority})")
         if review:
-            lines.append("In review:")
-            for t in review[:3]:
-                title = t.get("title") or t.get("summary") or ""
-                lines.append(f"  - [{t.get('key', '?')}] {title}")
+            filtered_review = [t for t in review if t.get("key") not in excluded_keys]
+            if filtered_review:
+                lines.append("In review:")
+                for t in filtered_review[:3]:
+                    title = t.get("title") or t.get("summary") or ""
+                    lines.append(f"  - [{t.get('key', '?')}] {title} (status: In Review)")
         if blocked:
-            lines.append("Blocked:")
-            for t in blocked[:2]:
-                title = t.get("title") or t.get("summary") or ""
-                lines.append(f"  - [{t.get('key', '?')}] {title}")
+            filtered_blocked = [t for t in blocked if t.get("key") not in excluded_keys]
+            if filtered_blocked:
+                lines.append("Blocked:")
+                for t in filtered_blocked[:2]:
+                    title = t.get("title") or t.get("summary") or ""
+                    lines.append(f"  - [{t.get('key', '?')}] {title} (status: Blocked)")
+        if excluded_keys:
+            lines.append(f"## Suppressed — do NOT surface these tickets: {', '.join(sorted(excluded_keys))}")
 
     # Calendar
     calendar = sources.get("calendar")
@@ -191,6 +203,7 @@ Rules:
 - Be direct and opinionated. "Focus on X first" not "You might consider X".
 - Ground every item in actual data from the context (ticket names, KR names, session titles, meeting names).
 - CRITICAL: Never use bare Jira keys (e.g. "MT-456") alone. Always include the ticket title: "MT-456 Fix login redirect". The context already shows the title — use it.
+- CRITICAL: For Jira tickets, only reference key + title + status. Do NOT invent actions like "set a due date" or "schedule a review date" — no due-date field is available in the context. Stick strictly to what the context provides.
 - Keep each "rationale" under 25 words or set to null.
 - "urgency" and "confidence" accept only "high", "medium", or "low".
 - Return ONLY the JSON object, nothing else."""
