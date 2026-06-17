@@ -87,6 +87,16 @@ path like board_minutes did, NOT the dead `marketing/scout_sources/procurement.p
 >   confirm data flows through the built adapter → measure session lifetime / refresh burden. If clean,
 >   extend the pattern to ESBD + IonWave. If session-mgmt is too fragile, those stay genuine StarBridge-gaps.
 > - This generalizes the earlier IonWave (§6) question to the whole gated set — same call, prove it on eMMA.
+>
+> ### ✅ STRATEGIC DECISION (Jon, 2026-06-17): DURABLE + NO-ACCOUNT. Park the fragile gated portals.
+> Jon's call: build only **durable, no-account** sources; don't take on fragile session-refresh treadmills.
+> - **PARK (built, not deleted; stop chasing accounts):** eMMA, TX ESBD, IonWave, DemandStar — all need
+>   expiring session cookies / logins. Adapters stay in the tree, ready if the calculus changes. **eMMA EIN
+>   hunt dropped.** These are deliberately conceded to StarBridge's territory.
+> - **OpenGov:** durable access (one-time free API key, no refresh) but needs an account for narrow coverage
+>   (Pinellas). Left **built + key-optional** — lights up if `OPENGOV_API_KEY` is ever set; not prioritized.
+> - **GO (durable + no-account):** Bonfire (live ✅) + **grant→procurement chaining** (USASpending free API,
+>   no key) + **board_minutes pre-RFP** reason-codes (we own the data). This is the focus.
 
 ## 5. StarBridge capability gaps — what portals CAN'T give (and the roadmap)
 
