@@ -64,6 +64,30 @@ path like board_minutes did, NOT the dead `marketing/scout_sources/procurement.p
   if a registered account unlocks a feed.
 - **IonWave (Euna) — see §6 (the gap decision).** Houston ISD + Fort Worth ISD. Login-gated.
 
+> ### ⚠️ ACCESS-LAYER REALITY (discovered building Phase 2, 2026-06-16) — reshapes the plan
+> Phase 2 revealed that **eMMA + TX ESBD are GATED**, not "public/CSV" as assumed:
+> - **eMMA:** iValua SPA behind **Google reCAPTCHA Enterprise** (every anon request → 302 browser-check).
+> - **TX ESBD:** NetSuite SPA; data via **session-cookie-gated `.ss` endpoints**; robots.txt disallows crawlers.
+> The adapters/parsers are **BUILT + tested + wired into the live tool** (`1f3c9fd`) — they return [] until a
+> session is injected (`fetch_emma_opportunities(session_cookie=…)` / `fetch_esbd_opportunities(ns_session_cookie=…)`).
+>
+> **Portals split into two camps — this IS StarBridge's moat:**
+> - **OPEN (free, scrape now):** Bonfire RSS ✅ (live), OpenGov (developer API — verify), USASpending (grants).
+> - **GATED (need a logged-in session):** eMMA, TX ESBD, IonWave, DemandStar. **Playwright alone won't beat
+>   reCAPTCHA Enterprise** — the realistic key is a **logged-in vendor-account session cookie** injected into
+>   our (already-built) adapters. This is exactly what StarBridge charges to maintain at scale.
+>
+> **DECISION for Jon (the access-layer call):** are we willing to register + maintain **free vendor accounts**
+> for our priority gated portals (MD eMMA, TX ESBD, IonWave-Houston/FW) and feed their session cookies in?
+> - Adapters are ready; a session unlocks them. BUT cookies expire → needs a **session-refresh mechanism**
+>   (not a one-shot), plus ToS gray area + fragility.
+> - **Recommendation:** (1) lock in the OPEN free wins first (OpenGov + grant-chaining + board-minutes
+>   pre-RFP) — guaranteed coverage, no account fragility. (2) Run ONE scoped account experiment on **eMMA**
+>   (highest value — all MD districts): Jon creates a free MD eMMA vendor account → we inject the session →
+>   confirm data flows through the built adapter → measure session lifetime / refresh burden. If clean,
+>   extend the pattern to ESBD + IonWave. If session-mgmt is too fragile, those stay genuine StarBridge-gaps.
+> - This generalizes the earlier IonWave (§6) question to the whole gated set — same call, prove it on eMMA.
+
 ## 5. StarBridge capability gaps — what portals CAN'T give (and the roadmap)
 
 Even with all adapters, portals only see RFPs **after posting**. StarBridge's premium layers + our plan:
