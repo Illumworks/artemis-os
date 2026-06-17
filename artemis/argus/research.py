@@ -60,8 +60,6 @@ _SYNTHESIS_MODEL = "claude-haiku-4-5"
 
 async def _fetch_news(district_key: str, signal: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Fetch Google News RSS items for a district."""
-    from artemis.scouts.news_rss import fetch_google_news_rss  # type: ignore[import]
-
     # Build a targeted query from district_key + signal headline
     state = (signal or {}).get("state", "")
     headline_snippet = (signal or {}).get("headline", "")

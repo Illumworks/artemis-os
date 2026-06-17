@@ -34,6 +34,9 @@ _DECAY_FACTORS: dict[str, float] = {
     "decision": 0.97,
     "discovery": 0.93,
     "commitment": 1.00,
+    # Argus district-research findings: durable reference data, decays slowly
+    # (gently fades to prompt re-research rather than going stale silently).
+    "district_research": 0.99,
 }
 _DEFAULT_DECAY = 0.95
 
