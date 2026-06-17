@@ -1035,7 +1035,10 @@ async def handle_turn(
                         _seen_tools.add(_block.name)
         capture_trace(
             agent_id=session_ctx.agent_id,
-            feature_tag="floating_artemis",
+            # Agent-neutral surface label: handle_turn is the shared conversational
+            # turn engine for ALL agents (Artemis/Callie/Kai/…). The specific agent
+            # is in agent_id; the surface (slack vs in-app) is derivable from session_id.
+            feature_tag="agent_chat",
             session_id=session_id,
             provider=_fa_provider,
             model=_fa_model,
