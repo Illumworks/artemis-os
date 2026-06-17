@@ -19,6 +19,8 @@ from typing import Any
 from artemis.agent.types import Tool, ToolImpl
 from artemis.scouts._http import ScoutHttpClient
 from artemis.scouts.procurement.bonfire import fetch_all_bonfire_opportunities
+from artemis.scouts.procurement.emma import fetch_emma_opportunities
+from artemis.scouts.procurement.esbd import fetch_esbd_opportunities
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import register_tool
 
@@ -207,13 +209,13 @@ def _dedupe_opportunities(items: list[dict[str, str]]) -> list[dict[str, str]]:
 _DEF = Tool(
     name="procurement_portal.fetch",
     description=(
-        "Fetch procurement opportunities from SAM.gov (requires SAM_API_KEY) "
-        "AND from Bonfire (Euna) RSS feeds for all registered districts "
-        "(Dallas ISD, Fort Bend ISD, Chicago PS, U-46, Austin ISD). "
+        "Fetch procurement opportunities from SAM.gov (requires SAM_API_KEY), "
+        "Bonfire (Euna) RSS feeds (Dallas ISD, Fort Bend ISD, Chicago PS, U-46, Austin ISD), "
+        "eMMA (Maryland — all MD districts; reCAPTCHA wall active, returns [] until resolved), "
+        "and TX ESBD (Texas state/TEA/co-op; NS session wall active, returns [] until resolved). "
         "Returns JSON [{title, solicitation_number, agency, posted_date, "
         "response_deadline, url, description, naics}]. "
-        "SAM.gov returns a stub when no key is configured; Bonfire results "
-        "are always attempted. Returns [] on per-source errors."
+        "SAM.gov returns a stub when no key is configured. Returns [] on per-source errors."
     ),
     input_schema={
         "type": "object",
@@ -266,6 +268,26 @@ def _bonfire_posting_to_tool_shape(posting: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _state_portal_posting_to_tool_shape(posting: dict[str, Any]) -> dict[str, str]:
+    """Map an eMMA or ESBD posting dict to the tool's standard output shape.
+
+    Both eMMA and ESBD postings carry: portal_id, state, rfp_id, title, agency,
+    posted_date, due_date, source_url, description, scope_text, district_id.
+    The mapping is identical to Bonfire — rfp_id → solicitation_number,
+    due_date → response_deadline, source_url → url, naics always "".
+    """
+    return {
+        "title": _clean(posting.get("title", "")),
+        "solicitation_number": _clean(posting.get("rfp_id", "")),
+        "agency": _clean(posting.get("agency", "")),
+        "posted_date": _clean(posting.get("posted_date", "")),
+        "response_deadline": _clean(posting.get("due_date", "")),
+        "url": _clean(posting.get("source_url", "")),
+        "description": _clean(posting.get("description", "")),
+        "naics": "",
+    }
+
+
 def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
     async def _impl(arguments: dict[str, Any]) -> str:
         keyword = _normalize_keyword(arguments)
@@ -291,7 +313,41 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             logger.warning("procurement_portal.fetch: Bonfire fetch error — %s", exc)
 
         # ------------------------------------------------------------------
-        # Source 2: SAM.gov — requires SAM_API_KEY; gracefully skipped when absent.
+        # Source 2a: eMMA (Maryland) — all MD districts.
+        # Access wall: reCAPTCHA Enterprise blocks unauthenticated requests.
+        # Returns [] until a valid session is injected; logged at INFO level.
+        # ------------------------------------------------------------------
+        try:
+            async with ScoutHttpClient(timeout=30.0, rate_limit=1.0) as http:
+                emma_postings = await fetch_emma_opportunities(http)
+            emma_mapped = [_state_portal_posting_to_tool_shape(p) for p in emma_postings]
+            logger.info(
+                "procurement_portal.fetch: eMMA returned %d postings",
+                len(emma_mapped),
+            )
+            all_results.extend(emma_mapped)
+        except Exception as exc:
+            logger.warning("procurement_portal.fetch: eMMA fetch error — %s", exc)
+
+        # ------------------------------------------------------------------
+        # Source 2b: TX ESBD (TxSmartBuy) — TX state/TEA/co-op solicitations.
+        # Access wall: NetSuite SuiteCommerce session required.
+        # Returns [] until a valid NS session cookie is injected.
+        # ------------------------------------------------------------------
+        try:
+            async with ScoutHttpClient(timeout=30.0, rate_limit=1.0) as http:
+                esbd_postings = await fetch_esbd_opportunities(http, keyword=keyword)
+            esbd_mapped = [_state_portal_posting_to_tool_shape(p) for p in esbd_postings]
+            logger.info(
+                "procurement_portal.fetch: ESBD returned %d postings",
+                len(esbd_mapped),
+            )
+            all_results.extend(esbd_mapped)
+        except Exception as exc:
+            logger.warning("procurement_portal.fetch: ESBD fetch error — %s", exc)
+
+        # ------------------------------------------------------------------
+        # Source 3: SAM.gov — requires SAM_API_KEY; gracefully skipped when absent.
         # ------------------------------------------------------------------
         api_key = os.getenv("SAM_API_KEY", "")
         if not api_key:

@@ -19,6 +19,18 @@ from artemis.scouts.procurement.bonfire import (
     BONFIRE_REGISTRY,
     fetch_bonfire_opportunities,
 )
+from artemis.scouts.procurement.emma import (
+    PORTAL_ID as EMMA_PORTAL_ID,
+)
+from artemis.scouts.procurement.emma import (
+    fetch_emma_opportunities,
+)
+from artemis.scouts.procurement.esbd import (
+    PORTAL_ID as ESBD_PORTAL_ID,
+)
+from artemis.scouts.procurement.esbd import (
+    fetch_esbd_opportunities,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -68,6 +80,20 @@ def _bonfire_portal_entries() -> dict[str, dict[str, Any]]:
 
 PORTAL_REGISTRY: dict[str, dict[str, Any]] = {
     **_bonfire_portal_entries(),
+    EMMA_PORTAL_ID: {
+        "state": "MD",
+        "name": "MD eMaryland Marketplace Advantage (eMMA)",
+        "url": "https://emma.maryland.gov/page.aspx/en/rfp/request_browse_public",
+        # Access wall: reCAPTCHA Enterprise required — adapter returns [] until resolved.
+        "type": "emma",
+    },
+    ESBD_PORTAL_ID: {
+        "state": "TX",
+        "name": "TX Electronic State Business Daily (ESBD)",
+        "url": "https://www.txsmartbuy.gov/esbd",
+        # Access wall: NetSuite SuiteCommerce session required — adapter returns [] until resolved.
+        "type": "esbd",
+    },
     "CA_eprocurement": {
         "state": "CA",
         "name": "CA eProcurement",
@@ -291,6 +317,36 @@ async def fetch_portal_postings(
         except Exception as exc:
             _logger.warning(
                 "Portal %s: Bonfire fetch error — skipping: %s",
+                portal_id,
+                exc,
+            )
+            return []
+        return [p for p in postings if _is_literacy_relevant(p["title"], p["description"])]
+
+    # ------------------------------------------------------------------
+    # eMMA (Maryland) adapter
+    # ------------------------------------------------------------------
+    if portal_type == "emma":
+        try:
+            postings = await fetch_emma_opportunities(http)
+        except Exception as exc:
+            _logger.warning(
+                "Portal %s: eMMA fetch error — skipping: %s",
+                portal_id,
+                exc,
+            )
+            return []
+        return [p for p in postings if _is_literacy_relevant(p["title"], p["description"])]
+
+    # ------------------------------------------------------------------
+    # TX ESBD adapter
+    # ------------------------------------------------------------------
+    if portal_type == "esbd":
+        try:
+            postings = await fetch_esbd_opportunities(http, keyword="literacy")
+        except Exception as exc:
+            _logger.warning(
+                "Portal %s: ESBD fetch error — skipping: %s",
                 portal_id,
                 exc,
             )
