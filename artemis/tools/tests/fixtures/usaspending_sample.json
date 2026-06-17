@@ -1,0 +1,100 @@
+{
+  "spending_level": "awards",
+  "limit": 5,
+  "results": [
+    {
+      "internal_id": 270651608,
+      "Award ID": "S010A250043",
+      "Recipient Name": "TX EDUCATION AGENCY",
+      "recipient_location_state_code": "TX",
+      "Awarding Agency": "Department of Education",
+      "Award Amount": 1808606075.0,
+      "cfda_number": "84.010",
+      "cfda_program_title": "TITLE I GRANTS TO LOCAL EDUCATIONAL AGENCIES",
+      "Start Date": "2025-07-01",
+      "End Date": "2026-09-30",
+      "Last Modified Date": "2025-10-30 19:18:28",
+      "Description": "TITLE I PART A BASIC GRANTS TO LEAS",
+      "awarding_agency_id": 1068,
+      "agency_slug": "department-of-education",
+      "generated_internal_id": "ASST_NON_S010A250043_091"
+    },
+    {
+      "internal_id": 267720844,
+      "Award ID": "H027A250008",
+      "Recipient Name": "TX EDUCATION AGENCY",
+      "recipient_location_state_code": "TX",
+      "Awarding Agency": "Department of Education",
+      "Award Amount": 1250501548.0,
+      "cfda_number": "84.027",
+      "cfda_program_title": "SPECIAL EDUCATION GRANTS TO STATES",
+      "Start Date": "2025-07-01",
+      "End Date": "2026-09-30",
+      "Last Modified Date": "2025-10-30 19:18:28",
+      "Description": "STATE GRANT - B (611)",
+      "awarding_agency_id": 1068,
+      "agency_slug": "department-of-education",
+      "generated_internal_id": "ASST_NON_H027A250008_091"
+    },
+    {
+      "internal_id": 270651585,
+      "Award ID": "S010A250020",
+      "Recipient Name": "MARYLAND STATE DEPARTMENT OF EDUCATION",
+      "recipient_location_state_code": "MD",
+      "Awarding Agency": "Department of Education",
+      "Award Amount": 296505773.0,
+      "cfda_number": "84.010",
+      "cfda_program_title": "TITLE I GRANTS TO LOCAL EDUCATIONAL AGENCIES",
+      "Start Date": "2025-07-01",
+      "End Date": "2026-09-30",
+      "Last Modified Date": "2025-10-30 19:18:28",
+      "Description": "TITLE I PART A BASIC GRANTS TO LEAS",
+      "awarding_agency_id": 1068,
+      "agency_slug": "department-of-education",
+      "generated_internal_id": "ASST_NON_S010A250020_091"
+    },
+    {
+      "internal_id": 270854326,
+      "Award ID": "S371C240037",
+      "Recipient Name": "DEPARTMENT OF EDUCATION IOWA",
+      "recipient_location_state_code": "IA",
+      "Awarding Agency": "Department of Education",
+      "Award Amount": 9045631.0,
+      "cfda_number": "84.371",
+      "cfda_program_title": "COMPREHENSIVE LITERACY STATE DEVELOPMENT",
+      "Start Date": "2024-10-01",
+      "End Date": "2029-09-30",
+      "Last Modified Date": "2025-08-12 10:00:00",
+      "Description": "IOWA COMPREHENSIVE LITERACY DEVELOPMENT PROJECT: CDFA 84.371C",
+      "awarding_agency_id": 1068,
+      "agency_slug": "department-of-education",
+      "generated_internal_id": "ASST_NON_S371C240037_091"
+    },
+    {
+      "internal_id": 270856804,
+      "Award ID": "S424D200003",
+      "Recipient Name": "DEPARTMENT OF EDUCATION INDIANA",
+      "recipient_location_state_code": "IN",
+      "Awarding Agency": "Department of Education",
+      "Award Amount": 6201818.08,
+      "cfda_number": "84.424",
+      "cfda_program_title": "STUDENT SUPPORT AND ACADEMIC ENRICHMENT PROGRAM",
+      "Start Date": "2020-10-01",
+      "End Date": "2025-09-30",
+      "Last Modified Date": "2026-03-31 13:01:25",
+      "Description": "INDIANA EXPANDING ACCESS TO WELL-ROUNDED COURSES GRANT",
+      "awarding_agency_id": 1068,
+      "agency_slug": "department-of-education",
+      "generated_internal_id": "ASST_NON_S424D200003_091"
+    }
+  ],
+  "page_metadata": {
+    "page": 1,
+    "hasNext": false,
+    "last_record_unique_id": null,
+    "last_record_sort_value": null
+  },
+  "messages": [
+    "For searches, time period start and end dates are currently limited to an earliest date of 2007-10-01."
+  ]
+}

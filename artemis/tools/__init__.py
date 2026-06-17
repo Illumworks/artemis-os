@@ -36,5 +36,6 @@ import artemis.tools.state_doe  # noqa: F401 — registers state_doe.fetch
 # P3 — Tier 1: real tools that make scouts work
 import artemis.tools.territory_config  # noqa: F401 — registers territory_config.*
 import artemis.tools.unresolved_signals  # noqa: F401 — registers unresolved_signals.write (stub)
+import artemis.tools.usaspending  # noqa: F401 — registers usaspending.search (free, no-key)
 
 __all__: list[str] = []
