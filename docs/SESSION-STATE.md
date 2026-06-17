@@ -11,6 +11,20 @@ auto-loaded memory index (`MEMORY.md`). Opus Lead = the planning/verify/merge ag
 main HEAD ≈ `b4aaadd`; alembic at **0095**. Everything below is merged + live (app restarted, healthy) unless
 marked. Opus Lead lane; terminal runs a separate instability/R3 lane.
 
+**▶ NEXT (resume point, 2026-06-16 late):** when terminal finishes the Callie scout/get_signal fixes, do a
+read-only **inventory of tool-LESS agent tasks/features** (read `feature_catalog` + each agent's tool registry)
+→ those are the **Codex-eligible** tasks for cost reduction (Codex CLI can't run tools) → document them, then
+resume the build. Cost lever = route tool-less work to Codex, not "move agents off Claude." See
+[[project-provider-cost-reality]]. Also queued: tool-level trace capture for claude-code (low priority, ~1 day —
+roadmap "Tracked follow-ups").
+
+**Also landed late 6-16 (now live after fixing the restart bug — app must be `-k` restarted, see
+[[feedback-app-restart-requires-k]]):** edit-message drop (agents ignore edits), agent humanization
+(anti-repetition + reliable @mention + retry guard), **trace capture** (`agent_traces` mig 0096, verified
+real row), **Artemis hub escalation Phase 1** (`agent_pending_asks` mig 0097 — sole-interrupt + loop-proof;
+detection tightened to require @Jon in channels). Ares fully spec'd ([[project-ares-plan]]) + Artemis-hub
+design ([[project-artemis-hub]]).
+
 **Landed this session (all live):**
 - **KAI (Chiron) — 2nd named agent, LIVE in Slack.** First non-marketing team (Enablement) onboarded per
   Mark's directive. Read-only knowledge router (NO creation tools), answers in `#enablement-library`
