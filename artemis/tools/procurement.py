@@ -21,6 +21,7 @@ from artemis.scouts._http import ScoutHttpClient
 from artemis.scouts.procurement.bonfire import fetch_all_bonfire_opportunities
 from artemis.scouts.procurement.emma import fetch_emma_opportunities
 from artemis.scouts.procurement.esbd import fetch_esbd_opportunities
+from artemis.scouts.procurement.opengov import fetch_all_opengov_opportunities
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import register_tool
 
@@ -212,7 +213,9 @@ _DEF = Tool(
         "Fetch procurement opportunities from SAM.gov (requires SAM_API_KEY), "
         "Bonfire (Euna) RSS feeds (Dallas ISD, Fort Bend ISD, Chicago PS, U-46, Austin ISD), "
         "eMMA (Maryland — all MD districts; reCAPTCHA wall active, returns [] until resolved), "
-        "and TX ESBD (Texas state/TEA/co-op; NS session wall active, returns [] until resolved). "
+        "TX ESBD (Texas state/TEA/co-op; NS session wall active, returns [] until resolved), "
+        "and OpenGov (Pinellas County Schools FL + future districts; "
+        "API key wall active, returns [] until OPENGOV_API_KEY is set). "
         "Returns JSON [{title, solicitation_number, agency, posted_date, "
         "response_deadline, url, description, naics}]. "
         "SAM.gov returns a stub when no key is configured. Returns [] on per-source errors."
@@ -345,6 +348,26 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             all_results.extend(esbd_mapped)
         except Exception as exc:
             logger.warning("procurement_portal.fetch: ESBD fetch error — %s", exc)
+
+        # ------------------------------------------------------------------
+        # Source 2c: OpenGov — Pinellas County Schools (FL) + registered districts.
+        # Access wall: API key required (OPENGOV_API_KEY).
+        # Returns [] until a valid API key is set; logged at INFO level.
+        # ------------------------------------------------------------------
+        opengov_api_key = os.getenv("OPENGOV_API_KEY") or None
+        try:
+            async with ScoutHttpClient(timeout=30.0, rate_limit=1.0) as http:
+                opengov_postings = await fetch_all_opengov_opportunities(
+                    http, api_key=opengov_api_key
+                )
+            opengov_mapped = [_state_portal_posting_to_tool_shape(p) for p in opengov_postings]
+            logger.info(
+                "procurement_portal.fetch: OpenGov returned %d postings",
+                len(opengov_mapped),
+            )
+            all_results.extend(opengov_mapped)
+        except Exception as exc:
+            logger.warning("procurement_portal.fetch: OpenGov fetch error — %s", exc)
 
         # ------------------------------------------------------------------
         # Source 3: SAM.gov — requires SAM_API_KEY; gracefully skipped when absent.

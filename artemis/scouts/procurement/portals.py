@@ -31,6 +31,10 @@ from artemis.scouts.procurement.esbd import (
 from artemis.scouts.procurement.esbd import (
     fetch_esbd_opportunities,
 )
+from artemis.scouts.procurement.opengov import (
+    OPENGOV_REGISTRY,
+    fetch_opengov_opportunities,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -56,6 +60,33 @@ LITERACY_KEYWORDS: list[str] = [
 # Portal registry
 # ---------------------------------------------------------------------------
 
+
+def _opengov_portal_entries() -> dict[str, dict[str, Any]]:
+    """Build PORTAL_REGISTRY entries for each OpenGov district in OPENGOV_REGISTRY.
+
+    Key pattern: ``opengov_<slug>`` (e.g. ``opengov_pcsb``).
+    Each entry carries ``type: "opengov"`` so ``fetch_portal_postings`` dispatches
+    to the OpenGov adapter rather than the generic HTML scraper.
+
+    Access wall: OpenGov requires an API key.  The adapter returns [] until
+    ``OPENGOV_API_KEY`` is set.  Katy ISD is commented out in the registry
+    until the slug is confirmed.
+    """
+    entries: dict[str, dict[str, Any]] = {}
+    for entry in OPENGOV_REGISTRY:
+        slug = entry["slug"]
+        entries[f"opengov_{slug}"] = {
+            "state": entry["state"],
+            "name": entry["name"],
+            "url": f"https://procurement.opengov.com/portal/{slug}",
+            # Access wall: API key required — adapter returns [] until provided.
+            "type": "opengov",
+            # Carry the full entry for dispatch without an extra lookup.
+            "_opengov_entry": entry,
+        }
+    return entries
+
+
 def _bonfire_portal_entries() -> dict[str, dict[str, Any]]:
     """Build PORTAL_REGISTRY entries for each Bonfire district in BONFIRE_REGISTRY.
 
@@ -80,6 +111,7 @@ def _bonfire_portal_entries() -> dict[str, dict[str, Any]]:
 
 PORTAL_REGISTRY: dict[str, dict[str, Any]] = {
     **_bonfire_portal_entries(),
+    **_opengov_portal_entries(),
     EMMA_PORTAL_ID: {
         "state": "MD",
         "name": "MD eMaryland Marketplace Advantage (eMMA)",
@@ -317,6 +349,32 @@ async def fetch_portal_postings(
         except Exception as exc:
             _logger.warning(
                 "Portal %s: Bonfire fetch error — skipping: %s",
+                portal_id,
+                exc,
+            )
+            return []
+        return [p for p in postings if _is_literacy_relevant(p["title"], p["description"])]
+
+    # ------------------------------------------------------------------
+    # OpenGov adapter
+    # Access wall: API key required — returns [] until OPENGOV_API_KEY is set.
+    # ------------------------------------------------------------------
+    if portal_type == "opengov":
+        opengov_entry = portal.get("_opengov_entry")
+        if opengov_entry is None:
+            _logger.warning(
+                "Portal %s: type=opengov but no _opengov_entry — skipping.",
+                portal_id,
+            )
+            return []
+        try:
+            import os
+
+            api_key = os.getenv("OPENGOV_API_KEY") or None
+            postings = await fetch_opengov_opportunities(opengov_entry, http, api_key=api_key)
+        except Exception as exc:
+            _logger.warning(
+                "Portal %s: OpenGov fetch error — skipping: %s",
                 portal_id,
                 exc,
             )
