@@ -93,8 +93,11 @@ path like board_minutes did, NOT the dead `marketing/scout_sources/procurement.p
 > - **PARK (built, not deleted; stop chasing accounts):** eMMA, TX ESBD, IonWave, DemandStar — all need
 >   expiring session cookies / logins. Adapters stay in the tree, ready if the calculus changes. **eMMA EIN
 >   hunt dropped.** These are deliberately conceded to StarBridge's territory.
-> - **OpenGov:** durable access (one-time free API key, no refresh) but needs an account for narrow coverage
->   (Pinellas). Left **built + key-optional** — lights up if `OPENGOV_API_KEY` is ever set; not prioritized.
+> - **OpenGov: PARKED (2026-06-17).** Jon registered a free vendor account but `developer.opengov.com`
+>   login failed — the developer/API portal is NOT open to free vendor accounts (appears to need an
+>   agency/paid or partner tier). Combined with one-district coverage (Pinellas) + the no-account
+>   principle, not worth pursuing. Adapter stays **built + key-optional** (lights up if `OPENGOV_API_KEY`
+>   is ever obtained), but it's effectively in the parked-gated camp with eMMA/ESBD.
 > - **GO (durable + no-account):** Bonfire (live ✅) + **grant→procurement chaining** (USASpending free API,
 >   no key) + **board_minutes pre-RFP** reason-codes (we own the data). This is the focus.
 
