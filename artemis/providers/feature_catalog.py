@@ -179,6 +179,12 @@ FEATURES: dict[str, dict[str, object]] = {
         "default_cascade": _T1,
         "recommended_tier": 1,
     },
+    "slack_channel_gate": {
+        "label": "Slack channel relevance gate",
+        "description": "Tool-less YES/NO classifier: should the agent respond to an ambient channel message? No API key needed; Codex CLI primary, claude-code fallback. Fail-closed on any error.",
+        "default_cascade": _T2,
+        "recommended_tier": 2,
+    },
 }
 
 # Canonical tag list — used for validation

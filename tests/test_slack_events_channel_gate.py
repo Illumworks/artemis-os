@@ -3,6 +3,7 @@
 Covers:
   - should_ping_asker — pure function, no I/O
   - should_respond_to_channel_message — injectable classifier, no live LLM or DB
+  - _default_channel_classifier — mocked complete_with_fallback, no live LLM
   - route_inbound ping_user_id injection — ping prefix applied after lint
   - _handle_mentionable_event gate path — relevance gate drops idle chatter
   - Bot-authored events are still dropped before any gate
@@ -596,6 +597,152 @@ async def test_duplicate_event_dropped() -> None:
         upsert_return=False,  # already seen
     )
     assert dispatched == [], "Duplicate event must not be dispatched"
+
+
+# ── _default_channel_classifier — mocked complete_with_fallback ──────────────
+
+
+def _make_completion_response(answer: str) -> Any:
+    """Build a minimal CompletionResponse with a single TextBlock."""
+    from artemis.agent.client import CompletionResponse
+    from artemis.agent.types import Message, TextBlock, Usage
+
+    return CompletionResponse(
+        message=Message(role="assistant", content=[TextBlock(text=answer)]),
+        stop_reason="end_turn",
+        usage=Usage(input_tokens=5, output_tokens=1),
+    )
+
+
+async def test_default_classifier_yes_returns_true() -> None:
+    """LLM returns 'YES' → classifier returns True."""
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        new_callable=AsyncMock,
+        return_value=_make_completion_response("YES"),
+    ) as mock_cwf:
+        result = await _default_channel_classifier("What is our Q2 email open rate?")
+
+    assert result is True
+    mock_cwf.assert_awaited_once()
+    # Verify routing: codex primary, claude-code fallback, correct feature tag
+    _call_kwargs = mock_cwf.call_args
+    assert _call_kwargs.kwargs["primary"] == "codex"
+    assert _call_kwargs.kwargs["fallback"] == "claude-code"
+    assert _call_kwargs.kwargs["feature_tag"] == "slack_channel_gate"
+
+
+async def test_default_classifier_yes_lowercase_returns_true() -> None:
+    """LLM returns 'yes' (lower-case) → classifier normalises and returns True."""
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        new_callable=AsyncMock,
+        return_value=_make_completion_response("yes"),
+    ):
+        result = await _default_channel_classifier("Can you pull the CTR numbers?")
+
+    assert result is True
+
+
+async def test_default_classifier_no_returns_false() -> None:
+    """LLM returns 'NO' → classifier returns False (fail-closed)."""
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        new_callable=AsyncMock,
+        return_value=_make_completion_response("NO"),
+    ):
+        result = await _default_channel_classifier("Has anyone seen my stapler?")
+
+    assert result is False
+
+
+async def test_default_classifier_neither_returns_false() -> None:
+    """LLM returns 'NEITHER' → False."""
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        new_callable=AsyncMock,
+        return_value=_make_completion_response("NEITHER"),
+    ):
+        result = await _default_channel_classifier("random office chatter")
+
+    assert result is False
+
+
+async def test_default_classifier_garbage_returns_false() -> None:
+    """LLM returns garbage text → False (only clear YES is True)."""
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        new_callable=AsyncMock,
+        return_value=_make_completion_response("I cannot determine that."),
+    ):
+        result = await _default_channel_classifier("something weird")
+
+    assert result is False
+
+
+async def test_default_classifier_exception_returns_false() -> None:
+    """Any exception from complete_with_fallback → fail-closed False, no re-raise."""
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("both providers down"),
+    ):
+        result = await _default_channel_classifier("help me with our campaign")
+
+    assert result is False
+
+
+async def test_default_classifier_missing_api_key_returns_false() -> None:
+    """MissingApiKeyError (both providers fail) → fail-closed False."""
+    from artemis.providers.errors import MissingApiKeyError
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        new_callable=AsyncMock,
+        side_effect=MissingApiKeyError("anthropic"),
+    ):
+        result = await _default_channel_classifier("anything")
+
+    assert result is False
+
+
+async def test_default_classifier_model_is_none() -> None:
+    """The CompletionRequest forwarded to complete_with_fallback has model=None.
+
+    codex and claude-code don't accept Anthropic model ids, so the model field
+    must be left as None so each adapter uses its own default.
+    """
+    from artemis.routes.integrations_slack_events import _default_channel_classifier
+
+    captured_requests: list[Any] = []
+
+    async def _capture(req: Any, **kwargs: Any) -> Any:
+        captured_requests.append(req)
+        return _make_completion_response("YES")
+
+    with patch(
+        "artemis.providers.fallback.complete_with_fallback",
+        side_effect=_capture,
+    ):
+        await _default_channel_classifier("What is our open rate?")
+
+    assert captured_requests, "complete_with_fallback must be called"
+    assert captured_requests[0].model is None, (
+        "model must be None so adapters use their own defaults"
+    )
 
 
 # ── Session key continuity — channel message uses same key as app_mention ────

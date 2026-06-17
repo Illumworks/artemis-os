@@ -95,29 +95,34 @@ def should_ping_asker(
 
 
 async def _default_channel_classifier(text: str) -> bool:
-    """Real cheap haiku classifier — returns True iff the message should get a reply.
+    """Cheap YES/NO classifier — returns True iff the message should get a reply.
 
-    Uses a ~5-token YES/NO completion; never runs a full agent turn.
-    Any non-clear-YES answer → False (conservative default).
+    Routes through ``complete_with_fallback`` (codex primary → claude-code
+    fallback) so it works on the Claude Code subscription with NO Anthropic API
+    key.  The model field is left as None so each adapter uses its own
+    sensible default (codex and claude-code don't accept Anthropic model ids).
+
+    Any non-clear-YES answer → False (conservative fail-closed default).
     """
-    from artemis.agent.client import AnthropicAdapter, CompletionRequest
+    from artemis.agent.client import CompletionRequest
     from artemis.agent.types import Message, TextBlock
+    from artemis.providers.fallback import complete_with_fallback
 
     req = CompletionRequest(
         messages=[Message(role="user", content=[TextBlock(text=text)])],
         system=_GATE_SYSTEM,
-        model=_GATE_MODEL,
+        model=None,  # let each adapter use its own default; _GATE_MODEL is Anthropic-only
         max_tokens=5,
         cache_system=False,
         cache_tools=False,
     )
     try:
-        # Construct INSIDE the try: AnthropicAdapter now raises MissingApiKeyError
-        # at construction when ANTHROPIC_API_KEY is unset (the subscription/no-key
-        # case), so the no-key path must be caught here to keep degrading to silent
-        # rather than throwing into the inbound Slack handler.
-        adapter = AnthropicAdapter()
-        resp = await adapter.complete(req)
+        resp = await complete_with_fallback(
+            req,
+            primary="codex",
+            fallback="claude-code",
+            feature_tag="slack_channel_gate",
+        )
         answer = ""
         for block in resp.message.content:
             if hasattr(block, "text"):
