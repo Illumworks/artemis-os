@@ -229,6 +229,9 @@ class JiraClient:
     ) -> dict[str, Any]:
         cm: dict[str, list[str]] = {**_DEFAULT_COLUMN_MAP, **(column_map or {})}
         project_clause = f' AND project = "{project_key}"' if project_key else ""
+        # Always filter to the authenticated user's tickets only — prevents
+        # cross-team bleed (e.g. surfacing tickets assigned to other team members).
+        assignee_clause = " AND assignee = currentUser()"
 
         async with httpx.AsyncClient(timeout=20) as client:
             me_resp = await client.get(f"{self._base}/rest/api/3/myself", headers=self._headers())
@@ -243,22 +246,22 @@ class JiraClient:
             todo, prog, blocked, review = await asyncio.gather(
                 self._fetch_column(
                     client,
-                    f"status IN ({_status_in_clause(cm['todo'])}){project_clause} ORDER BY updated DESC",
+                    f"status IN ({_status_in_clause(cm['todo'])}){project_clause}{assignee_clause} ORDER BY updated DESC",
                     max_items,
                 ),
                 self._fetch_column(
                     client,
-                    f"status IN ({_status_in_clause(cm['prog'])}){project_clause} ORDER BY updated DESC",
+                    f"status IN ({_status_in_clause(cm['prog'])}){project_clause}{assignee_clause} ORDER BY updated DESC",
                     max_items,
                 ),
                 self._fetch_column(
                     client,
-                    f"status IN ({_status_in_clause(cm['blocked'])}){project_clause} ORDER BY updated DESC",
+                    f"status IN ({_status_in_clause(cm['blocked'])}){project_clause}{assignee_clause} ORDER BY updated DESC",
                     max_items,
                 ),
                 self._fetch_column(
                     client,
-                    f"status IN ({_status_in_clause(cm['review'])}){project_clause} ORDER BY updated DESC",
+                    f"status IN ({_status_in_clause(cm['review'])}){project_clause}{assignee_clause} ORDER BY updated DESC",
                     max_items,
                 ),
             )

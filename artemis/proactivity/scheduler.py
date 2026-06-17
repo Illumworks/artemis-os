@@ -400,7 +400,10 @@ async def _fire_morning_brief() -> None:
             if not token:
                 raise RuntimeError("No active Slack token found for agent_id='artemis'")
 
-            await SlackClient(token=token).post_dm(user=recipient_id, text=slack_text)
+            slack_client = SlackClient(token=token)
+            chunks = _chunk_slack_text(slack_text)
+            for chunk in chunks:
+                await slack_client.post_dm(user=recipient_id, text=chunk)
             await repo.mark_morning_brief_delivery_sent(
                 session,
                 delivery_id=delivery_id,
@@ -520,6 +523,64 @@ async def _resolve_morning_brief_recipient(session: AsyncSession) -> str:
     env_user_id = os.environ.get("SLACK_AUTHED_USER_ID", "").strip()
     recipient_id = authed_user_id or env_user_id or _OWNER_SLACK_ID_FALLBACK
     return recipient_id
+
+
+_SLACK_MAX = 3800
+
+
+def _chunk_slack_text(text: str) -> list[str]:
+    """Split ``text`` into Slack-safe chunks of at most ``_SLACK_MAX`` chars.
+
+    Splits preferentially on ``\\n\\n`` section boundaries so sections stay
+    intact.  If a single section still exceeds the limit it is sliced at the
+    last ``\\n`` before the boundary.  Order is always preserved.
+    """
+    if len(text) <= _SLACK_MAX:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    # Split on double-newline (section boundary) while keeping the separator.
+    import re
+
+    parts = re.split(r"(\n\n)", text)
+    # re.split with a capturing group interleaves separators: [piece, sep, piece, sep, ...]
+    # Reconstruct sections by pairing each piece with its following separator.
+    sections: list[str] = []
+    i = 0
+    while i < len(parts):
+        piece = parts[i]
+        sep = parts[i + 1] if i + 1 < len(parts) else ""
+        sections.append(piece + sep)
+        i += 2
+
+    for section in sections:
+        if len(current) + len(section) <= _SLACK_MAX:
+            current += section
+        else:
+            # Flush current chunk (if non-empty) then start a new one.
+            if current:
+                chunks.append(current.rstrip())
+                current = ""
+            if len(section) <= _SLACK_MAX:
+                current = section
+            else:
+                # Section itself is too large — slice at last newline before limit.
+                remaining = section
+                while remaining:
+                    if len(remaining) <= _SLACK_MAX:
+                        current = remaining
+                        break
+                    boundary = remaining.rfind("\n", 0, _SLACK_MAX)
+                    if boundary <= 0:
+                        boundary = _SLACK_MAX
+                    chunks.append(remaining[:boundary].rstrip())
+                    remaining = remaining[boundary:].lstrip("\n")
+
+    if current:
+        chunks.append(current.rstrip())
+
+    return [c for c in chunks if c]
 
 
 def _format_brief_for_slack(brief: dict[str, Any], *, delivery_date: date) -> str:

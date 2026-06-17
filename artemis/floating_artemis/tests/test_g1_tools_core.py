@@ -169,6 +169,8 @@ def test_register_core_tools_all_registered() -> None:
         "read_file",
         "propose_edit",
         "set_pref",
+        "set_brief_exclusion",
+        "clear_brief_exclusion",
         "spawn_subagent",
     }
     registered = {e.tool.name for e in reg.all_entries()}
@@ -184,7 +186,7 @@ def test_register_core_tools_layers() -> None:
         assert entry is not None, f"{name} not found"
         assert entry.layer == 1, f"{name} should be layer 1, got {entry.layer}"
     # Layer 2 tools
-    for name in ["write_memory", "propose_edit", "set_pref"]:
+    for name in ["write_memory", "propose_edit", "set_pref", "set_brief_exclusion", "clear_brief_exclusion"]:
         entry = reg.get(name)
         assert entry is not None, f"{name} not found"
         assert entry.layer == 2, f"{name} should be layer 2, got {entry.layer}"

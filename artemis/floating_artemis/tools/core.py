@@ -235,6 +235,58 @@ async def _set_pref(inp: dict[str, Any]) -> str:
     )
 
 
+# Brief-suppression scope: must match what sources._safe_brief_exclusions queries.
+_BRIEF_EXCLUSION_SCOPE = "agent:floating-artemis"
+_BRIEF_EXCLUSION_PREFIX = "brief_exclusion:"
+
+
+async def _set_brief_exclusion(inp: dict[str, Any]) -> str:
+    """Mute a Jira ticket from the morning brief.
+
+    Writes a tagged memory observation so the brief can filter it out.
+    The agent calls this when Jon says something like "stop surfacing MT-456
+    — that's long-term".  Confirm conversationally after writing; no buttons.
+    """
+    ticket_key = (inp.get("ticket_key") or "").strip().upper()
+    reason = (inp.get("reason") or "").strip()
+    if not ticket_key:
+        return "Error: ticket_key is required (e.g. 'MT-456')"
+
+    content = f"{_BRIEF_EXCLUSION_PREFIX}{ticket_key}"
+    if reason:
+        content += f" reason={reason}"
+    result = await _write_memory(
+        {"content": content, "scope": _BRIEF_EXCLUSION_SCOPE, "source": "operator"}
+    )
+    if "failed" in result.lower():
+        return result
+    return (
+        f"Got it — {ticket_key} will no longer appear in your morning brief. "
+        f"Say 'unmute {ticket_key}' any time to bring it back."
+    )
+
+
+async def _clear_brief_exclusion(inp: dict[str, Any]) -> str:
+    """Unmute a Jira ticket so it reappears in the morning brief.
+
+    Writes a clear-marker observation that overrides the suppression.
+    The agent calls this when Jon says "unmute MT-456" or "show MT-456 again".
+    """
+    ticket_key = (inp.get("ticket_key") or "").strip().upper()
+    if not ticket_key:
+        return "Error: ticket_key is required (e.g. 'MT-456')"
+
+    content = f"{_BRIEF_EXCLUSION_PREFIX}{ticket_key} cleared"
+    result = await _write_memory(
+        {"content": content, "scope": _BRIEF_EXCLUSION_SCOPE, "source": "operator"}
+    )
+    if "failed" in result.lower():
+        return result
+    return (
+        f"Done — {ticket_key} will show up in your morning brief again starting tomorrow."
+    )
+
+
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
 
@@ -339,6 +391,49 @@ SET_PREF = Tool(
             "value": {"description": "Preference value (any JSON type)"},
         },
         "required": ["key", "value"],
+    },
+)
+
+SET_BRIEF_EXCLUSION = Tool(
+    name="set_brief_exclusion",
+    description=(
+        "Mute a Jira ticket from the morning brief. "
+        "Call when Jon says things like 'stop surfacing MT-456', 'those are long-term', "
+        "'don't show me MT-456 any more'. Writes a suppression to memory. "
+        "Confirm conversationally — no buttons. [layer:2]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "ticket_key": {
+                "type": "string",
+                "description": "Jira ticket key to suppress, e.g. 'MT-456'",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Optional short reason (stored for context)",
+            },
+        },
+        "required": ["ticket_key"],
+    },
+)
+
+CLEAR_BRIEF_EXCLUSION = Tool(
+    name="clear_brief_exclusion",
+    description=(
+        "Unmute a previously suppressed Jira ticket so it reappears in the morning brief. "
+        "Call when Jon says 'unmute MT-456', 'show MT-456 again', etc. "
+        "Confirm conversationally. [layer:2]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "ticket_key": {
+                "type": "string",
+                "description": "Jira ticket key to un-suppress, e.g. 'MT-456'",
+            },
+        },
+        "required": ["ticket_key"],
     },
 )
 
@@ -517,4 +612,6 @@ def register_core_tools(registry: AuthorizedToolRegistry, agent_id: str | None =
     registry.register(READ_FILE, _read_file, layer=1)
     registry.register(PROPOSE_EDIT, _propose_edit, layer=2)
     registry.register(SET_PREF, _set_pref, layer=2)
+    registry.register(SET_BRIEF_EXCLUSION, _set_brief_exclusion, layer=2)
+    registry.register(CLEAR_BRIEF_EXCLUSION, _clear_brief_exclusion, layer=2)
     registry.register(SPAWN_SUBAGENT, _spawn_subagent, layer=3)

@@ -102,6 +102,51 @@ async def _safe_slack_signals() -> dict[str, Any] | None:
     return None
 
 
+async def _safe_brief_exclusions(session: AsyncSession) -> set[str]:
+    """Return the set of Jira ticket keys Jon has asked to suppress from the brief.
+
+    Reads memory observations in the ``agent:floating-artemis`` scope — the same
+    scope that ``set_brief_exclusion`` / ``clear_brief_exclusion`` write to.
+    A ticket is excluded if there is a ``brief_exclusion:<KEY>`` observation
+    with no later ``brief_exclusion:<KEY> cleared`` observation.
+    """
+    try:
+        from artemis.memory.retrieval import search_observations
+        from artemis.memory.schemas import Scope
+
+        scope = [Scope(scope_kind="agent", scope_id="floating-artemis")]
+        results = await search_observations(
+            session=session,
+            scope_set=scope,
+            query="brief_exclusion",
+            limit=50,
+            modes=["fts"],
+        )
+
+        # Build the net exclusion set: the last write per key wins.
+        # observations come back newest-first from FTS; iterate to find the state.
+        seen: dict[str, str] = {}  # ticket_key -> "excluded" | "cleared"
+        _PREFIX = "brief_exclusion:"
+        for obs in results:
+            content = (obs.content if hasattr(obs, "content") else obs.get("content", "")) or ""
+            if not content.startswith(_PREFIX):
+                continue
+            rest = content[len(_PREFIX):]
+            parts = rest.split(None, 1)
+            ticket_key = parts[0].upper() if parts else ""
+            if not ticket_key:
+                continue
+            state = "cleared" if (len(parts) > 1 and "cleared" in parts[1]) else "excluded"
+            # Only record the first (newest) observation per key.
+            if ticket_key not in seen:
+                seen[ticket_key] = state
+
+        return {k for k, v in seen.items() if v == "excluded"}
+    except Exception:
+        logger.debug("Brief exclusions unavailable", exc_info=True)
+        return set()
+
+
 async def gather_sources(session: AsyncSession) -> dict[str, Any]:
     """Gather all data sources concurrently. Missing sources return None / [].
 
@@ -126,6 +171,7 @@ async def gather_sources(session: AsyncSession) -> dict[str, Any]:
         sessions,
         memory,
         previous_brief,
+        brief_exclusions,
     ) = await asyncio.gather(
         _own(_safe_jira),
         _own(_safe_calendar),
@@ -134,6 +180,7 @@ async def gather_sources(session: AsyncSession) -> dict[str, Any]:
         _safe_sessions(),
         _own(_safe_memory),
         _own(_safe_previous_brief),
+        _own(_safe_brief_exclusions),
         return_exceptions=True,
     )
 
@@ -150,4 +197,6 @@ async def gather_sources(session: AsyncSession) -> dict[str, Any]:
         "sessions": _unwrap(sessions, []),
         "memory": _unwrap(memory, []),
         "previousBrief": _unwrap(previous_brief, None),
+        # Private key consumed by _build_context_string — not passed to LLM directly.
+        "_excluded_ticket_keys": _unwrap(brief_exclusions, set()),
     }
