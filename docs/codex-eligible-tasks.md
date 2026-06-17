@@ -1,9 +1,19 @@
 # Codex-Eligible Tasks (tool-less → cost-reduction routing)
 
-**Status:** ANALYSIS (2026-06-16, read-only). **Flips DEFERRED** until terminal finishes the Callie
-scout/`get_signal` fixes, then apply + live-verify. Companions: **`docs/provider-output-hardening.md`
-(AUTHORITATIVE provider-move status/plan)**, `docs/provider-routing-cost-plan.md`, `docs/ares-plan.md` §6/§10,
-[[project-provider-cost-reality]].
+**Status:** ANALYSIS (2026-06-16, read-only). Terminal's marketing lane is now CLEAR (2026-06-17, HEAD 03ff005).
+Companions: **`docs/provider-output-hardening.md` (AUTHORITATIVE provider-move status/plan)**,
+`docs/provider-routing-cost-plan.md`, `docs/ares-plan.md` §6/§10, [[project-provider-cost-reality]].
+
+## ⚠️ CORRECTION (2026-06-17, from terminal — supersedes the scout rows below)
+This inventory analyzed `scout_runner.py` and called the classification scouts tool-less/Codex-eligible. **That
+is the DEAD path.** The **LIVE scout path is AGENTIC** (`scout_cli → run_agent → the agent's tools`), so the
+scouts **use tools at runtime → they are NOT tool-less → NOT Codex-eligible.** Do not flip scouts to Codex.
+(Classic verify-the-actual-call-path trap — it bit terminal twice; documented in
+`docs/procurement-intelligence-buildout.md`.) Also: `memory_graph_extraction` + `trajectory_summary` are
+**already LIVE on Gemini** (not broken); `memory_consolidation` is **held on Claude**.
+**Net — the genuine Codex candidates today are only:** the Slack channel gate (✅ DONE), `okr_extract_activity`
+/ `okr_suggest_kr`, and `pipeline_canvas_ai`. Everything scout/JSON-schema/long-context stays on Claude or the
+Gemini hardening track. (Plus the Writing Studio pilot — separate, see `provider-cost-reality`.)
 
 ## Two axes — BOTH required to move a task off Claude
 1. **Tool-less.** Codex CLI cannot run tools, so only tasks that make a plain `complete()` /
