@@ -156,7 +156,7 @@ Recommendation: **defer the account; exhaust non-login paths first.**
 | 2 | eMMA + TX ESBD | all MD districts + TX state/co-op | ~4–6d |
 | 3 | OpenGov API | Pinellas, Katy pilot, growing | ~3–4d |
 | 4 | Grant→procurement chaining (USASpending) | federal-funded districts | ✅ DONE+LIVE `c2d1f4b` |
-| 5 | board_minutes pre-RFP reason-codes (strengthen our lead) | territory-wide | ~2d — NEXT (last durable no-account piece) |
+| 5 | board_minutes pre-RFP reason-codes (strengthen our lead) | territory-wide | ✅ DONE+LIVE `a39d030` — DURABLE NO-ACCOUNT STACK COMPLETE |
 | — | DemandStar / IonWave / FOIA contracts | FL big-4, Houston/FW, incumbent intel | gated/HARD — decide per §5/§6 |
 
 ## 9. Open decisions for Jon
