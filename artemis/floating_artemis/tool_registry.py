@@ -8,6 +8,7 @@ importing the full chat orchestration module.
 from __future__ import annotations
 
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
+from artemis.floating_artemis.tools.argus_tools import register_argus_tools
 from artemis.floating_artemis.tools.builders import register_builders_tools
 from artemis.floating_artemis.tools.core import register_core_tools
 from artemis.floating_artemis.tools.granola_tools import register_granola_tools
@@ -78,4 +79,8 @@ def build_authorized_tool_registry(
         register_jira_tools(registry)
     if "meetings" in available_surfaces:
         register_granola_tools(registry)
+    # Argus dispatch tool: available to callie only.
+    # Callie is the face for Argus; no other agent should see this tool.
+    if normalized_agent == "callie":
+        register_argus_tools(registry)
     return registry

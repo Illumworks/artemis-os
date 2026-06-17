@@ -33,6 +33,7 @@ from artemis.argus.drawer import (
 from artemis.argus.research import (
     PRIMARY_DIMENSIONS,
     identify_gaps,
+    research_dimensions,
     stub_research_dimensions,
 )
 
@@ -121,7 +122,7 @@ async def research_district(
     )
 
     # ── 3. RESEARCH ──────────────────────────────────────────────────────────
-    research_fn = _research_fn or stub_research_dimensions
+    research_fn = _research_fn or research_dimensions
     try:
         raw_findings: list[DistrictFinding] = await research_fn(
             district_key, gaps, signal
