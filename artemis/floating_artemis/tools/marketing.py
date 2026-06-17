@@ -395,7 +395,13 @@ async def _list_signals(inp: dict[str, Any]) -> str:
             signals = await repo.list_signals(session, status=status, limit=limit)
         if not signals:
             return f"No signals with status='{status}'."
-        lines = [f"{s.id}: [{s.signal_status}] {s.headline}" for s in signals]
+        lines = [
+            f"{s.id}: [{s.signal_status}] {s.headline}"
+            f" | district={s.district_id or ''}"
+            f" state={s.state or ''}"
+            f" url={s.source_url or ''}"
+            for s in signals
+        ]
         return "\n".join(lines)
     except Exception as exc:
         return f"list_signals failed: {exc}"
@@ -411,12 +417,21 @@ async def _get_signal(inp: dict[str, Any]) -> str:
 
         async with _db.SessionLocal() as session:
             signal = await repo.get_signal(session, int(signal_id))
+        prov = signal.provenance or {}
+        why_flagged = prov.get("why_flagged") if isinstance(prov, dict) else None
         return json.dumps(
             {
                 "id": signal.id,
                 "signal_status": signal.signal_status,
                 "headline": signal.headline,
                 "campaign_family": signal.campaign_family,
+                "source_url": signal.source_url,
+                "district_id": signal.district_id,
+                "resolved_district_id": signal.resolved_district_id,
+                "state": signal.state,
+                "urgency_tier": signal.urgency_tier,
+                "reason_codes": signal.reason_codes or [],
+                "why_flagged": why_flagged,
             }
         )
     except Exception as exc:

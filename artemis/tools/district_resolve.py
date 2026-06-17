@@ -90,7 +90,10 @@ _STRIP_SUFFIXES: tuple[str, ...] = tuple(
             " county schools",
             " school districts",
             " school district",
-            " city schools",
+            # NOTE: " city schools" intentionally omitted — it is over-greedy and
+            # strips the discriminating "city" component from names like
+            # "Orange City Schools" (DB: "Orange City"), leaving only "orange"
+            # and preventing a match.  " schools" below handles these cases safely.
             " schools",
             " county",
             " unified",
@@ -158,6 +161,14 @@ def _bare(normalised: str) -> str:
     # (district / dist / cusd / csd / sd / chsd / esd / hsd / unit / no / #).
     result = re.sub(
         r"\s+(?:district|dist\.?|cusd|csd|sd|chsd|esd|hsd|unit|no\.?|number|#)?\s*#?\s*\d+$",
+        "",
+        result,
+    ).strip()
+    # Strip NCES-style district code suffixes that end with an alphanumeric token
+    # (e.g. "Salem-Keizer SD 24J", "Wichita USD 259", "Anywhere CUSD 3").
+    # These use a letter suffix (like "24J") that the pure-digit regex above misses.
+    result = re.sub(
+        r"\s+(?:sd|usd|isd|csd|cusd|ccsd|chsd|esd|hsd)\s+[a-z0-9]+$",
         "",
         result,
     ).strip()

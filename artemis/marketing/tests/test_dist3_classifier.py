@@ -503,3 +503,118 @@ def test_numbered_strip_does_not_fabricate_on_collision() -> None:
     result = resolve_district_from_list("Lincoln Public Schools", "NE", [a, b])
     assert result.matched is False
     assert result.district_id is None
+
+
+# ---------------------------------------------------------------------------
+# Test: NCES-style alphanumeric district code suffix (Salem-Keizer SD 24J)
+# ---------------------------------------------------------------------------
+
+
+def _make_district(did: int, name: str, state: str) -> District:
+    return District(
+        id=did,
+        nces_id=f"nces-{did}",
+        name=name,
+        state=state,
+        enrollment=40000,
+        tier="D1",
+        supported=True,
+        on_skip_list=False,
+        classification_source="nces",
+    )
+
+
+def test_resolve_nces_alphanumeric_suffix_salem_keizer() -> None:
+    """Scout emits 'Salem-Keizer School District'; NCES DB has 'Salem-Keizer SD 24J'.
+
+    The alphanumeric suffix '24J' is not a pure digit so the old trailing-number
+    regex missed it.  The NCES-style strip now handles 'SD <alphanum>' patterns.
+    """
+    db_district = _make_district(7001, "Salem-Keizer SD 24J", "OR")
+    result = resolve_district_from_list(
+        "Salem-Keizer School District",
+        "OR",
+        [db_district],
+    )
+    assert result.matched is True, result.message
+    assert result.district_id == 7001
+    assert result.confidence >= 0.70
+
+
+def test_resolve_nces_alphanumeric_suffix_no_false_positive() -> None:
+    """Unrelated districts are NOT pulled in by the NCES suffix strip."""
+    db_district = _make_district(7002, "Portland SD 1J", "OR")
+    result = resolve_district_from_list(
+        "Salem-Keizer School District",
+        "OR",
+        [db_district],
+    )
+    assert result.matched is False
+
+
+# ---------------------------------------------------------------------------
+# Test: over-greedy " city schools" suffix (Orange City Schools)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_city_schools_preserves_city_component() -> None:
+    """Scout emits 'Orange City Schools'; NCES DB has plain 'Orange City'.
+
+    The old ' city schools' suffix strip consumed 'city' leaving only 'orange',
+    which failed to match 'orange city'.  The fix removes the over-greedy suffix
+    so ' schools' strips instead, leaving 'orange city' — a correct bare match.
+    """
+    db_district = _make_district(8001, "Orange City", "IA")
+    result = resolve_district_from_list(
+        "Orange City Schools",
+        "IA",
+        [db_district],
+    )
+    assert result.matched is True, result.message
+    assert result.district_id == 8001
+    assert result.confidence >= 0.70
+
+
+def test_resolve_city_schools_no_false_positive() -> None:
+    """'Kansas City Schools' does NOT match an unrelated 'Kansas' district."""
+    db_district = _make_district(8002, "Kansas", "KS")
+    result = resolve_district_from_list(
+        "Kansas City Schools",
+        "KS",
+        [db_district],
+    )
+    # "kansas city" != "kansas" — should not match
+    assert result.matched is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: Brookfield and Torrington still resolve after the suffix changes
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_brookfield_regression() -> None:
+    """Brookfield Public Schools (input) matches 'Brookfield' (DB) — regression guard."""
+    brookfield = _make_district(9901, "Brookfield", "CT")
+    unrelated = _make_district(9902, "Tiny Valley School District", "WY")
+
+    result = resolve_district_from_list(
+        "Brookfield Public Schools",
+        "CT",
+        [brookfield, unrelated],
+    )
+    assert result.matched is True, result.message
+    assert result.district_id == 9901
+
+
+def test_resolve_torrington_regression() -> None:
+    """Torrington School District (input) matches 'Torrington' (DB) — regression guard."""
+    torrington = _make_district(9903, "Torrington", "CT")
+    unrelated = _make_district(9904, "Tiny Valley School District", "WY")
+
+    result = resolve_district_from_list(
+        "Torrington School District",
+        "CT",
+        [torrington, unrelated],
+    )
+    assert result.matched is True, result.message
+    assert result.district_id == 9903
