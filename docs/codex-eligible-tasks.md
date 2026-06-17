@@ -43,8 +43,14 @@ So: a true **Codex candidate today** = tool-less **AND** simple/portable output 
 - **Classification scouts (6)** — need Layer-C tolerant validators first; planned for **Gemini**, not Codex.
 - **`meeting_summary`** — hardening + long context → Gemini.
 - **`memory_consolidation`** — stays on Claude (held).
-- **`writing_studio_compose`, `campaign_brief_assembler`, `campaign_initiation`, `meetings_qa`,
-  `workflow` steps** — tool-less but customer-facing/quality-critical; keep on Claude unless quality validates.
+- **`writing_studio_compose` — STRONG Codex PILOT candidate (possibly the biggest single cost win).**
+  Tool-less + **free-text output** (no JSON-schema rejection risk, unlike scouts/memory) + **high token volume**,
+  and drafting is GPT/Codex's strength. Only gate = **voice/quality** (personas, Compass). The hard no-em-dash
+  rule is enforced by `lint_agent_text` AFTER generation regardless of provider → provider-safe. **Pilot it:**
+  compose a few real pieces on Codex, lint + have Callie/Angela/Jon judge voice side-by-side vs Claude; commit
+  only if it holds. Don't blind-flip a customer-facing surface, but test it — the upside is large.
+- **`campaign_brief_assembler`, `campaign_initiation`, `meetings_qa`, `workflow` steps** — tool-less but
+  customer-facing/quality-critical; keep on Claude unless a pilot validates quality (same playbook as above).
 
 ## ❌ NOT Codex-eligible (tool-USING — must stay tool-capable)
 - **`floating_artemis`** (Artemis/Callie/Kai chat turns) — full MCP tool catalog (`chat.py:816,893`).
