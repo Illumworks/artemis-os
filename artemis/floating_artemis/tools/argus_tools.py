@@ -372,9 +372,12 @@ async def _callie_summarize(
             cache_system=False,
             cache_tools=False,
         )
+        # Voice-critical: this is Callie relaying Argus's findings to Jon, so it
+        # runs on claude-code (her voice) — NOT codex. claude-code is free
+        # (subscription), so there's no cost reason to use codex here.
         resp = await complete_with_fallback(
             req,
-            primary="codex",
+            primary="claude-code",
             fallback="claude-code",
             feature_tag="argus_callie_summary",
         )
