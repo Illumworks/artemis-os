@@ -4,6 +4,85 @@ from __future__ import annotations
 
 import re
 
+# ── Markdown → Slack mrkdwn converter ────────────────────────────────────────
+
+
+def md_to_mrkdwn(text: str) -> str:
+    """Convert standard Markdown to Slack mrkdwn syntax.
+
+    Conversions applied (outside code spans/blocks and Slack-link spans):
+      - ``**bold**`` / ``__bold__``          → ``*bold*``  (Slack bold)
+      - ``## Header`` / ``### Header`` …     → ``*Header*``  (any ATX heading level)
+      - ``[label](url)``                      → ``<url|label>``  (Slack link)
+
+    Deliberately left alone:
+      - Fenced code blocks (``` … ```) and inline code (` … `) — untouched
+      - Bare URLs (https?://…) — untouched (Slack auto-links them)
+      - ``_italic_`` — already valid Slack italic; not double-converted
+      - Bullet list markers (``- `` / ``* `` at line start) — Slack renders these fine
+      - Existing Slack mrkdwn (``<url|label>``, ``*bold*``) — idempotent-safe
+
+    Safety / idempotency:
+      - Bold conversion runs on ``**...**`` / ``__...__`` only; single ``*`` is left
+        alone so Slack's existing italic/bold markers are not double-processed.
+      - Heading conversion strips the leading ``#``-sequence + whitespace so the
+        text itself is never double-bolded on re-run (``*Header*`` has no ``#``).
+      - Slack-link conversion is guarded against mangling existing ``<url|text>``
+        spans because those contain ``<`` which is not a ``[`` character.
+      - All transformations are performed on non-protected substrings only —
+        content inside `` ` `` and ``` ``` spans is passed through verbatim.
+    """
+    if not text:
+        return text
+
+    # ── Protected-span splitter ────────────────────────────────────────────────
+    # We split the text into alternating unprotected / protected segments.
+    # Protected = fenced code blocks, inline code, existing Slack link spans (<…>).
+    # Transformations only apply to unprotected segments.
+    _PROTECTED_RE = re.compile(
+        r"```[\s\S]*?```"          # fenced code block
+        r"|`[^`\n]+`"              # inline code
+        r"|<[^>]+\|[^>]+>"        # existing Slack link  <url|label>
+        r"|<https?://[^>]+>",     # bare Slack URL  <https://…>
+        re.MULTILINE,
+    )
+
+    segments: list[str] = []
+    cursor = 0
+    for m in _PROTECTED_RE.finditer(text):
+        segments.append(("free", text[cursor : m.start()]))
+        segments.append(("prot", m.group(0)))
+        cursor = m.end()
+    segments.append(("free", text[cursor:]))
+
+    def _convert_free(s: str) -> str:
+        """Apply all mrkdwn conversions to a free (unprotected) text segment."""
+        if not s:
+            return s
+
+        # 1. Markdown links [label](url)  →  <url|label>
+        #    Guard: only fire when url doesn't already contain < to avoid
+        #    re-processing partially-converted text.
+        s = re.sub(r"\[([^\]]+)\]\(([^)<>]+)\)", r"<\2|\1>", s)
+
+        # 2. ATX headings (any level: # … ######) at the start of a line.
+        #    Strips the leading hashes + optional space, then wraps in *…*.
+        #    Already-converted lines start with * so no re-match.
+        s = re.sub(r"(?m)^#{1,6}\s+(.*?)\s*$", r"*\1*", s)
+
+        # 3. Bold: **text** and __text__  →  *text*
+        #    Uses a non-greedy match; requires at least 1 non-whitespace char
+        #    between the delimiters to avoid converting standalone **.
+        #    The negative look-around prevents matching a leading/trailing space
+        #    inside the markers (common in ``** bold **`` typos that would look
+        #    odd anyway).
+        s = re.sub(r"\*\*(\S[\s\S]*?\S|\S)\*\*", r"*\1*", s)
+        s = re.sub(r"__(\S[\s\S]*?\S|\S)__", r"*\1*", s)
+
+        return s
+
+    return "".join(_convert_free(seg) if kind == "free" else seg for kind, seg in segments)
+
 _PROTECTED_SPAN_RE = re.compile(
     r"```[\s\S]*?```|`[^`\n]+`|https?://[^\s<>()]+",
     re.MULTILINE,

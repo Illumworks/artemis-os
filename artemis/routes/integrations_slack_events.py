@@ -31,7 +31,7 @@ from artemis.integrations import repository as repo
 from artemis.integrations.config_resolver import _parse_allowed_user_ids
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.models import Integration
-from artemis.writing_rules import lint_agent_text
+from artemis.writing_rules import lint_agent_text, md_to_mrkdwn
 
 logger = logging.getLogger(__name__)
 
@@ -745,7 +745,7 @@ async def route_inbound(
 
             # Post the result text (or a fallback ack for cancel).
             if resume_result.response_text:
-                outbound_text = lint_agent_text(resume_result.response_text)
+                outbound_text = md_to_mrkdwn(lint_agent_text(resume_result.response_text))
             elif decision == "cancel":
                 outbound_text = "Got it, cancelled."
             else:
@@ -936,7 +936,7 @@ async def route_inbound(
                     team_id=team_id,
                     channel_id=channel_id,
                     reply_thread_ts=reply_thread_ts,
-                    outbound_text=lint_agent_text(pending_reply.outbound_text),
+                    outbound_text=md_to_mrkdwn(lint_agent_text(pending_reply.outbound_text)),
                 )
                 return
         except Exception:
@@ -961,7 +961,7 @@ async def route_inbound(
     response_text = result.response_text
     if not response_text:
         return
-    outbound_text = lint_agent_text(response_text)
+    outbound_text = md_to_mrkdwn(lint_agent_text(response_text))
     if not outbound_text.strip():
         logger.warning("route_inbound: linted Slack reply became empty for session %s", session_id)
         return
