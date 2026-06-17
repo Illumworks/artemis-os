@@ -65,20 +65,40 @@ drawer. So when Callie or Jon initiates a campaign from that signal, the brief *
 competitor intel, decision-makers, procurement timing, and the recommended angle. **Research once → it flows
 into every campaign for that district, no re-research.** That's the payoff.
 
-## Build plan (DEFERRED — not now)
-Follows `docs/named-agent-build-playbook.md` but **headless** (skip the Slack app/row steps):
-1. **District-drawer schema** (the foundation — what a district profile holds; reuse memory infra).
-2. **Argus's tool set** — read-existing (signal/scout/drawer) + web/deep research + write-to-drawer through the
-   memory pipeline. Scope-gate to marketing.
-3. **Dispatch hook** — a Callie tool (`dispatch_research(signal_or_district)`); the true delegate primitive (P4)
-   when ready. Callie reports "Argus is on it / it landed."
-4. **"Dig deeper" UI affordance** on top-tier qualified signals → fires Argus.
-5. **Assembler integration** — brief/campaign assembler reads the district drawer.
-6. **Learning** — register Argus with the skill-distiller so his research patterns compound.
+## Callie credits Argus (conversational attribution — Jon, 2026-06-16)
+When Argus's research lands, Callie surfaces it **in her voice, crediting him by name** ("Here's what Argus dug
+up…", "I had Argus look into this and…") — makes the team feel human. Two pieces:
+1. **Light addition to Callie's persona** (`callie-personality-profile.md`): establish Argus as *her
+   researcher*, and the habit of naming him when she relays his findings. Voice/relationship layer.
+2. **Dossier provenance:** each finding carries `source: "Argus"` so her attribution is grounded in truth, not
+   flavor. The turn that surfaces the dossier includes that provenance so she can say "Argus found X" accurately.
+Both land WITH the build (no point crediting him before he exists).
 
-**Dependencies:** the dispatch/delegate primitive (P4, shared with Ares) for true async delegation — but step
-2–3 can start as a synchronous research tool Callie calls, before P4. Persona: TBD (a short profile like the
-others; he's headless so voice matters less, but Callie references him by name).
+## Build plan + sequencing (foundation starting NOW; integration deferred for terminal)
+Follows `docs/named-agent-build-playbook.md` but **headless** (skip the Slack app/row steps).
+
+⚠️ **Collision reality:** terminal is *actively* in the marketing/signals/Callie lane right now (get_signal,
+district resolver, signal backfill). Argus's INTEGRATION points live in that same territory → don't build those
+concurrently. So:
+
+**START NOW (isolated — new module, memory-based, NO migration, no terminal-file overlap):**
+1. **District research drawer** — a per-district drawer over the EXISTING memory infra (marketing-shared scope,
+   keyed by district id/name). NO new table → NO migration (dodges terminal's concurrent migrations). Define
+   the observation shape (the researched dimensions + provenance + the synthesized angle) + read/write helpers.
+2. **Argus module skeleton** (`artemis/argus/`) — the core flow: read-existing (signal/scout/drawer) → identify
+   gaps → [research step] → write findings **through the memory pipeline** (dedup/conflict handled for us).
+   Web/deep-research tool wired here.
+
+**DEFER until terminal clears the marketing lane:**
+3. **Dispatch hook** — a Callie tool (`dispatch_research(signal_or_district)`); true delegate primitive (P4)
+   later, synchronous tool first. Touches Callie's tools (terminal's file).
+4. **"Dig deeper" UI affordance** on top-tier qualified signals.
+5. **Assembler integration** — brief/campaign assembler reads the district drawer (terminal's file).
+6. **Callie persona credit** — the attribution addition above (needs Argus live to be meaningful).
+7. **Learning** — register Argus with the skill-distiller so his research patterns compound.
+
+**Dependencies:** P4 (shared with Ares) for true async delegation — steps 3 can start synchronous before P4.
+Argus's drawer keys off the district record terminal's resolver produces (they compose, not collide).
 
 ## Open / to-decide later
 - Persona depth for a headless agent (probably light).
