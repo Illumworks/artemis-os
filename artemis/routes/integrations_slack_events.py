@@ -8,6 +8,7 @@ Handles three Slack callback types:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import hmac
@@ -53,6 +54,49 @@ _GATE_SYSTEM = (
     "Reply YES only if the message is clearly asking for marketing help. "
     "Otherwise reply NO."
 )
+
+# ── Message-identity dedup (in-process, async-safe) ──────────────────────────
+# When a bot is @mentioned in a channel it's a member of, Slack delivers TWO
+# events for the same physical message: an `app_mention` AND a `message`.
+# They share `ts` + `client_msg_id` but have DIFFERENT `event_id`s, so the
+# event_id DB-dedup does not catch the pair.
+#
+# We maintain a small in-process TTL cache keyed on the message identity:
+#   key = client_msg_id   (when present in the event)
+#         OR  "{channel_id}:{ts}"   (fallback — both event types share ts)
+#
+# The asyncio.Lock guarantees that the check-and-set is atomic within the single
+# uvicorn process, preventing a race between the two near-simultaneous deliveries.
+# Entries are evicted after _MSG_DEDUP_TTL_SECS seconds (well beyond Slack's
+# typical sub-second dual-delivery window).
+
+_MSG_DEDUP_TTL_SECS: float = 60.0
+# Maps dedup_key → monotonic insertion time (time.monotonic())
+_msg_dedup_cache: dict[str, float] = {}
+_msg_dedup_lock: asyncio.Lock = asyncio.Lock()
+
+
+def _evict_msg_dedup_cache() -> None:
+    """Remove entries older than _MSG_DEDUP_TTL_SECS from the cache (call under lock)."""
+    cutoff = time.monotonic() - _MSG_DEDUP_TTL_SECS
+    stale = [k for k, t in _msg_dedup_cache.items() if t < cutoff]
+    for k in stale:
+        del _msg_dedup_cache[k]
+
+
+async def _check_and_set_msg_dedup(key: str) -> bool:
+    """Return True if this is the first time we've seen *key* within the TTL window.
+
+    Atomically checks the cache under the asyncio lock so the two near-simultaneous
+    Slack events (app_mention + message) cannot both win the race.
+    """
+    async with _msg_dedup_lock:
+        _evict_msg_dedup_cache()
+        if key in _msg_dedup_cache:
+            return False
+        _msg_dedup_cache[key] = time.monotonic()
+        return True
+
 
 # ── Pure gate helpers ─────────────────────────────────────────────────────────
 
@@ -1043,6 +1087,26 @@ async def _handle_mentionable_event(
 
     if not is_new:
         logger.debug("Duplicate Slack event_id=%s — ignored", event_id)
+        return
+
+    # ── Guard 1b: message-identity dedup — prevent dual dispatch for the
+    # app_mention + message event pair Slack sends when a bot is @mentioned ──────
+    # Both events share `ts` and (when present) `client_msg_id` but have different
+    # `event_id`s, so the event_id DB-dedup above doesn't catch the duplicate.
+    # We use a process-local async TTL cache checked atomically under an asyncio
+    # lock so the two near-simultaneous deliveries cannot both win the race.
+    _client_msg_id: str = str(event.get("client_msg_id", ""))
+    msg_dedup_key: str = (
+        _client_msg_id if _client_msg_id else f"{channel_id}:{ts}"
+    )
+    is_first_for_message = await _check_and_set_msg_dedup(msg_dedup_key)
+    if not is_first_for_message:
+        logger.debug(
+            "Duplicate Slack message identity key=%r (event_id=%s, type=%s) — ignored",
+            msg_dedup_key,
+            event_id,
+            inner_type,
+        )
         return
 
     # ── Hub: resolve pending asks when Jon posts in a channel ────────────────

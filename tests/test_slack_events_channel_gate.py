@@ -29,6 +29,24 @@ from artemis.routes.integrations_slack_events import (
     should_respond_to_channel_message,
 )
 
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_msg_dedup_cache() -> None:
+    """Reset the module-level message-identity dedup cache before each test.
+
+    Without this, tests that share a default ``ts`` value would be silently
+    dropped by the in-process dedup added to ``_handle_mentionable_event``.
+    """
+    from artemis.routes.integrations_slack_events import _msg_dedup_cache
+
+    _msg_dedup_cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
