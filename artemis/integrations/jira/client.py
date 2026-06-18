@@ -249,9 +249,16 @@ class JiraClient:
             # Brief path: only the authenticated user's own tickets.
             assignee_clause = " AND assignee = currentUser()"
         elif isinstance(assignee_filter, list) and assignee_filter:
-            # Board path with a configured team: show the team + unassigned.
+            # Board path with a configured team: show the team + the owner
+            # (currentUser()) + unassigned.  The team_members list may not
+            # include the board owner, so we always add currentUser() so that
+            # the owner's swim lane always appears alongside the team.
             ids_joined = ", ".join(f'"{aid}"' for aid in assignee_filter)
-            assignee_clause = f" AND (assignee IN ({ids_joined}) OR assignee IS EMPTY)"
+            assignee_clause = (
+                f" AND (assignee IN ({ids_joined})"
+                f" OR assignee = currentUser()"
+                f" OR assignee IS EMPTY)"
+            )
         else:
             # None or empty list: whole project, no assignee restriction.
             assignee_clause = ""

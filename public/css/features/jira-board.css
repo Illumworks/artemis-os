@@ -646,9 +646,14 @@
 /* Hide filtered items without layout shift */
 .jira-hidden { display: none !important; }
 
-/* ── Filter dropdown panel ── */
+/* ── Filter dropdown panel ──
+   position: fixed so it escapes .jira-wrap's containing block entirely.
+   This prevents the dropdown from being clipped when the board collapses to
+   a short height (e.g. after clicking "Clear" hides all swim lanes).
+   _positionDrop() in home.js sets top/left via getBoundingClientRect()
+   (viewport coords), which pairs correctly with position:fixed. */
 .jira-filter-drop {
-  position: absolute; z-index: 350;
+  position: fixed; z-index: 350;
   min-width: 180px; max-height: 260px; overflow-y: auto;
   background: var(--surface-card); border: 1px solid var(--rule);
   border-radius: var(--r-md); box-shadow: 0 8px 28px rgba(0,0,0,0.16);

@@ -3717,13 +3717,13 @@ function _wireJiraBoard(container) {
   _applyFilters();
 
   // Position a dropdown panel below its trigger button.
-  // Must be relative to .jira-wrap (position:relative), which is the containing block.
+  // The dropdown uses position:fixed so it is positioned relative to the
+  // viewport — this keeps it fully visible even when .jira-wrap collapses to
+  // a short height (e.g. after "Clear" hides all swim lanes).
   function _positionDrop(btn, drop) {
-    const wrap = container.querySelector('.jira-wrap') || container;
     const btnRect = btn.getBoundingClientRect();
-    const wrapRect = wrap.getBoundingClientRect();
-    drop.style.top = `${btnRect.bottom - wrapRect.top + wrap.scrollTop + 4}px`;
-    drop.style.left = `${btnRect.left - wrapRect.left}px`;
+    drop.style.top = `${btnRect.bottom + 4}px`;
+    drop.style.left = `${btnRect.left}px`;
   }
 
   container.addEventListener('click', (e) => {
@@ -6428,6 +6428,20 @@ function buildJiraDedicatedViewModel({ jiraOverview = null } = {}) {
         });
       }
     }
+  }
+
+  // Always ensure the current user appears in the people list even if they
+  // have no open tickets (Bug 2 fix: guarantees the "just-me" seeding finds
+  // the owner and that their swim lane + checkbox always render).
+  const _ownerAccountId = jiraOverview.currentUser?.accountId || '';
+  const _ownerName = jiraOverview.currentUser?.displayName || '';
+  if (_ownerAccountId && !peopleMap.has(_ownerAccountId)) {
+    peopleMap.set(_ownerAccountId, {
+      id: _ownerAccountId,
+      name: _ownerName || _ownerAccountId,
+      initials: _jiraInitials(_ownerName),
+      color: _jiraAvatarColor(_ownerAccountId),
+    });
   }
 
   const people = [...peopleMap.values()].sort((a, b) => a.name.localeCompare(b.name));
