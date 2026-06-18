@@ -24,15 +24,16 @@ alert() {
   [ -f "$ALERTED_FLAG" ] && return   # already alerted for this ongoing outage
   local msg="$1"
   [ -f "$CONF" ] && . "$CONF"
+  local sent=0
   if [ -n "${PHONE:-}" ]; then
     osascript -e "tell application \"Messages\" to send \"$msg\" to participant \"$PHONE\"" 2>>"$LOG" \
-      || log "iMessage send failed"
-  elif [ -n "${WEBHOOK_URL:-}" ]; then
-    curl -fsS -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"$msg\"}" "$WEBHOOK_URL" >/dev/null 2>>"$LOG" || log "webhook send failed"
-  else
-    log "ALERT (no channel configured in watchdog.conf): $msg"
+      && sent=1 || log "iMessage send failed"
   fi
+  if [ -n "${WEBHOOK_URL:-}" ]; then
+    curl -fsS -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"$msg\"}" "$WEBHOOK_URL" >/dev/null 2>>"$LOG" && sent=1 || log "webhook send failed"
+  fi
+  [ "$sent" -eq 0 ] && log "ALERT (no channel configured/sent in watchdog.conf): $msg"
   touch "$ALERTED_FLAG"
 }
 
