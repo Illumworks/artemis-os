@@ -35,3 +35,4 @@ build/
 .codex-screenshots/
 .claire/
 Icon?
+scripts/watchdog.conf
