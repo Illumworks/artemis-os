@@ -101,6 +101,9 @@ class ArtemisJiraCardDrawer extends HTMLElement {
     this._ac = null;
     this._pendingMentions = new Map();
     this._mentionCursor = -1;
+    // Accumulates {filename, url} for files dropped/attached to the reply area
+    // before the comment is submitted. Cleared on submit (success or failure reset).
+    this._pendingCommentAttachments = [];
     this.innerHTML = '';
   }
 
@@ -120,6 +123,7 @@ class ArtemisJiraCardDrawer extends HTMLElement {
     this._siteUrl = siteUrl || '';
     this._pendingMentions = new Map();
     this._mentionCursor = -1;
+    this._pendingCommentAttachments = [];
     this._renderLoading();
     this._fetchAndRender();
   }
@@ -592,12 +596,18 @@ class ArtemisJiraCardDrawer extends HTMLElement {
     this._pendingMentions.clear();
     this._closeMentionDropdown();
 
+    // Snapshot and clear pending attachment refs before the API call.
+    const attachmentRefs = [...this._pendingCommentAttachments];
+    this._pendingCommentAttachments = [];
+
     const btn = this.querySelector('[data-jira-drawer-action="submit-comment"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     area.value = '';
+    // Clear attachment chips from the reply area.
+    this.querySelectorAll('.jira-attach-chip').forEach(c => c.remove());
     this._clearErr('comment');
 
-    // Optimistic append
+    // Optimistic append — replaced by server version on success.
     const thread = this.querySelector('[data-jira-comments]');
     const countEl = this.querySelector('[data-jira-comment-count]');
     const placeholder = thread?.querySelector('.jira-empty-line');
@@ -609,6 +619,12 @@ class ArtemisJiraCardDrawer extends HTMLElement {
     const tempEl = document.createElement('div');
     tempEl.className = 'jira-comment';
     tempEl.dataset.tempId = tempId;
+    // Build optimistic body: text + linked attachment chips (if any).
+    const attachHtml = attachmentRefs.map(r =>
+      `<div class="jira-comment-text" style="font-size:12px">
+         📎 <a href="${_esc(r.url)}" target="_blank" rel="noopener noreferrer" class="jira-comment-link">${_esc(r.filename)}</a>
+       </div>`
+    ).join('');
     tempEl.innerHTML = `
       <span class="jira-card-avatar jira-comment-avatar" style="background:${meColor}">${meInit}</span>
       <div style="flex:1;min-width:0">
@@ -617,22 +633,75 @@ class ArtemisJiraCardDrawer extends HTMLElement {
           <span class="jira-comment-when">just now</span>
         </div>
         <div class="jira-comment-text">${_renderText(text)}</div>
+        ${attachHtml}
       </div>
     `;
     thread?.appendChild(tempEl);
     if (countEl) countEl.textContent = (parseInt(countEl.textContent) || 0) + 1;
 
     try {
-      await addJiraCommentApi(this._issueKey, text, mentions);
-      // Commit optimistic — leave tempEl in place
+      await addJiraCommentApi(this._issueKey, text, mentions, attachmentRefs);
+      // Part 1 — refresh: replace the optimistic temp element with the canonical
+      // server comment (real id, real timestamp, ADF-rendered body with links).
+      // We re-fetch the full issue so counts and any concurrent edits are reconciled.
+      try {
+        const fresh = await fetchJiraIssueApi(this._issueKey);
+        if (fresh && Array.isArray(fresh.comments)) {
+          this._issue = { ...this._issue, ...fresh, comments: fresh.comments };
+          this._refreshComments(fresh.comments);
+        }
+      } catch (_) {
+        // Refresh is best-effort — leave the optimistic temp if the re-fetch fails.
+      }
     } catch (err) {
       tempEl.remove();
       if (countEl) countEl.textContent = Math.max(0, (parseInt(countEl.textContent) || 0) - 1);
       area.value = text;
+      // Restore attachment refs so the user can retry.
+      this._pendingCommentAttachments = attachmentRefs;
+      attachmentRefs.forEach(r => {
+        const chip = document.createElement('div');
+        chip.className = 'jira-attach-chip';
+        chip.title = r.filename;
+        chip.innerHTML = `<span>📎 ${_esc(r.filename)}</span>`;
+        this.querySelector('[data-jira-reply-area-wrap]')?.insertAdjacentElement('afterbegin', chip);
+      });
       this._showErr('comment', err.message || 'Failed to post comment');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Comment'; }
     }
+  }
+
+  // ── Re-render comments section from a fresh server list ─────────────────────
+
+  _refreshComments(comments) {
+    const thread = this.querySelector('[data-jira-comments]');
+    const countEl = this.querySelector('[data-jira-comment-count]');
+    if (!thread) return;
+    if (!comments || comments.length === 0) {
+      thread.innerHTML = `<div class="jira-empty-line">No comments yet. Start the thread.</div>`;
+      if (countEl) countEl.textContent = '0';
+      return;
+    }
+    thread.innerHTML = comments.map(c => {
+      const cName = c.author || 'Unknown';
+      const cColor = _avatarColor(cName);
+      const cInit = _initials(cName);
+      return `
+        <div class="jira-comment">
+          <span class="jira-card-avatar jira-comment-avatar" style="background:${_esc(cColor)}">${_esc(cInit)}</span>
+          <div style="flex:1;min-width:0">
+            <div class="jira-comment-head">
+              <span class="jira-comment-author">${_esc(cName)}</span>
+              <span class="jira-comment-when">${_esc(_relTime(c.created))}</span>
+              <button class="jira-reply-btn" data-jira-drawer-action="reply-to" data-reply-author="${_esc(cName)}" title="Reply to ${_esc(cName)}">Reply</button>
+            </div>
+            <div class="jira-comment-text">${_renderText(c.body || c.text || '')}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    if (countEl) countEl.textContent = String(comments.length);
   }
 
   // ── @mention autocomplete ────────────────────────────────────────────────────
@@ -713,12 +782,26 @@ class ArtemisJiraCardDrawer extends HTMLElement {
   // ── Upload files from comment area ──────────────────────────────────────────
 
   async _uploadCommentFiles(files) {
+    // Upload each file to the issue and accumulate {filename, url} refs.
+    // The refs are passed to addJiraCommentApi when the comment is submitted,
+    // so each attachment is linked inside the comment body (ADF link mark)
+    // rather than appended as a bare "📎 filename" text token.
     const area = this.querySelector('[data-jira-reply]');
+    const wrap = this.querySelector('[data-jira-reply-area-wrap]');
     for (const file of files) {
       try {
-        await uploadJiraAttachmentApi(this._issueKey, file);
-        if (area) area.value += (area.value ? ' ' : '') + `📎 ${file.name}`;
-        // Refresh attachment list count
+        const result = await uploadJiraAttachmentApi(this._issueKey, file);
+        // Record the ref so it's threaded into the comment on submit.
+        const ref = { filename: file.name, url: result?.url || '' };
+        this._pendingCommentAttachments.push(ref);
+        // Show a visual chip inside the reply area so the user knows the file
+        // was uploaded and will be linked when they hit Comment.
+        const chip = document.createElement('div');
+        chip.className = 'jira-attach-chip';
+        chip.title = file.name;
+        chip.innerHTML = `<span>📎 ${_esc(file.name)}</span>`;
+        wrap?.insertAdjacentElement('afterbegin', chip);
+        // Update the attachment section count.
         const countEl = this.querySelector('[data-jira-attach-count]');
         if (countEl) countEl.textContent = (parseInt(countEl.textContent) || 0) + 1;
       } catch (err) {

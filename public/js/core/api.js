@@ -409,11 +409,13 @@ export async function fetchJiraAssignableUsersApi(project) {
   return _readJsonOrThrow(res, "Failed to load assignable users");
 }
 
-export async function addJiraCommentApi(key, text, mentions = []) {
+export async function addJiraCommentApi(key, text, mentions = [], attachmentRefs = []) {
+  // attachmentRefs: [{filename, url}] — pre-uploaded attachments to link in the comment body.
+  // Each is appended as an ADF linked paragraph so the file is genuinely linked to the reply.
   const res = await fetch(`/api/jira/issue/${encodeURIComponent(key)}/comment`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, mentions }),
+    body: JSON.stringify({ text, mentions, attachmentRefs }),
   });
   return _readJsonOrThrow(res, "Failed to add Jira comment");
 }

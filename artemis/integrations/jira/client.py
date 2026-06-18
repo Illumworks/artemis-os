@@ -66,12 +66,24 @@ class JiraAPIError(Exception):
 
 
 def adf_to_text(node: dict[str, Any] | None) -> str:
-    """Flatten an Atlassian Document Format node to plain text."""
+    """Flatten an Atlassian Document Format node to plain text.
+
+    Handles link marks (renders as "text (url)"), media/mediaSingle nodes
+    (renders as "📎 filename"), and all standard block/inline node types.
+    """
     if not node:
         return ""
     ntype = node.get("type", "")
     if ntype == "text":
-        return str(node.get("text", ""))
+        text = str(node.get("text", ""))
+        # Render link marks: show "text (url)" so the link is visible as plain text.
+        for mark in node.get("marks") or []:
+            if mark.get("type") == "link":
+                href = str((mark.get("attrs") or {}).get("href") or "")
+                if href and href not in text:
+                    text = f"{text} ({href})"
+                break
+        return text
     if ntype == "hardBreak":
         return "\n"
     if ntype == "mention":
@@ -84,6 +96,18 @@ def adf_to_text(node: dict[str, Any] | None) -> str:
         return str((node.get("attrs") or {}).get("url") or "")
     if ntype == "rule":
         return "\n---\n"
+    # media node: a file embedded via Atlassian Media Services.
+    # We don't have the media-services URL here, so render a placeholder.
+    if ntype == "media":
+        attrs = node.get("attrs") or {}
+        alt = str(attrs.get("alt") or attrs.get("id") or "attachment")
+        return f"📎 {alt}"
+    # mediaSingle wraps a single media node — delegate to its child.
+    if ntype == "mediaSingle":
+        content = node.get("content")
+        if isinstance(content, list) and content:
+            return adf_to_text(content[0]) + "\n"
+        return ""
     content = node.get("content")
     if isinstance(content, list):
         if ntype == "codeBlock":
@@ -114,29 +138,76 @@ def _wrap_adf(text: str) -> dict[str, Any]:
     }
 
 
-def _build_adf(text: str, mentions: list[dict[str, str]]) -> dict[str, Any]:
-    """Build ADF doc, substituting proper mention nodes for @name references."""
+def _build_adf(
+    text: str,
+    mentions: list[dict[str, str]],
+    attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build ADF doc with mention substitution and optional attachment links.
+
+    Each entry in ``attachments`` must have at least ``filename`` and ``url``
+    (the Jira attachment content URL).  Each file is appended as a new
+    paragraph containing a linked text node so the upload is genuinely linked
+    inside the comment body, not just a bare "📎 filename" token.
+
+    Inline media embedding (mediaSingle/media) is NOT used here because Jira
+    Cloud's media node requires a Media Services ID — a separate identifier
+    only accessible via the Atlassian Media API with OAuth.  The attachment
+    content URL works directly and is the reliable cross-auth tier.
+    """
+    # ── Build the main text paragraph ────────────────────────────────────────
     if not mentions:
-        return _wrap_adf(text)
-    sorted_m = sorted(mentions, key=lambda m: -len(m.get("name", "")))
-    pattern = "|".join(re.escape(m["name"]) for m in sorted_m if m.get("name"))
-    if not pattern:
-        return _wrap_adf(text)
-    re_ = re.compile(rf"@@?({pattern})")
-    nodes: list[dict[str, Any]] = []
-    last = 0
-    for match in re_.finditer(text):
-        if match.start() > last:
-            nodes.append({"type": "text", "text": text[last : match.start()]})
-        mention = next((m for m in sorted_m if m.get("name") == match.group(1)), None)
-        if mention:
-            nodes.append(
-                {"type": "mention", "attrs": {"id": mention["id"], "text": f"@{match.group(1)}"}}
+        para_nodes: list[dict[str, Any]] = [{"type": "text", "text": str(text)}]
+    else:
+        sorted_m = sorted(mentions, key=lambda m: -len(m.get("name", "")))
+        pattern = "|".join(re.escape(m["name"]) for m in sorted_m if m.get("name"))
+        if not pattern:
+            para_nodes = [{"type": "text", "text": str(text)}]
+        else:
+            re_ = re.compile(rf"@@?({pattern})")
+            para_nodes = []
+            last = 0
+            for match in re_.finditer(text):
+                if match.start() > last:
+                    para_nodes.append({"type": "text", "text": text[last : match.start()]})
+                mention = next((m for m in sorted_m if m.get("name") == match.group(1)), None)
+                if mention:
+                    para_nodes.append(
+                        {
+                            "type": "mention",
+                            "attrs": {"id": mention["id"], "text": f"@{match.group(1)}"},
+                        }
+                    )
+                last = match.end()
+            if last < len(text):
+                para_nodes.append({"type": "text", "text": text[last:]})
+
+    doc_content: list[dict[str, Any]] = [{"type": "paragraph", "content": para_nodes}]
+
+    # ── Append one linked-text paragraph per attachment ───────────────────────
+    for att in attachments or []:
+        filename = str(att.get("filename") or "attachment")
+        url = str(att.get("url") or "")
+        if not url:
+            # Fallback: no URL means we can only render a bare filename line.
+            doc_content.append(
+                {"type": "paragraph", "content": [{"type": "text", "text": f"📎 {filename}"}]}
             )
-        last = match.end()
-    if last < len(text):
-        nodes.append({"type": "text", "text": text[last:]})
-    return {"version": 1, "type": "doc", "content": [{"type": "paragraph", "content": nodes}]}
+            continue
+        doc_content.append(
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"📎 {filename}",
+                        "marks": [{"type": "link", "attrs": {"href": url, "title": filename}}],
+                    }
+                ],
+            }
+        )
+
+    return {"version": 1, "type": "doc", "content": doc_content}
 
 
 def _description_to_adf(text: str) -> dict[str, Any]:
@@ -469,14 +540,32 @@ class JiraClient:
         ]
 
     async def add_comment(
-        self, key: str, text: str, mentions: list[dict[str, str]] | None = None
+        self,
+        key: str,
+        text: str,
+        mentions: list[dict[str, str]] | None = None,
+        attachment_refs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        """Post a comment to a Jira issue.
+
+        ``attachment_refs`` is a list of dicts with at minimum ``filename`` and
+        ``url`` (the Jira attachment content URL returned by ``upload_attachment``).
+        Each attachment is appended as a linked paragraph in the ADF comment body
+        so the upload is genuinely linked to the reply.
+
+        Note on inline media embedding: Jira Cloud's ``mediaSingle``/``media``
+        ADF nodes require a Media Services ID (not the attachment ID).  That ID
+        is only obtainable via the Atlassian Media API with OAuth scopes we don't
+        hold.  ADF link marks on text nodes are the reliable tier for basic auth.
+        """
         enc = quote(key, safe="")
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(
                 f"{self._base}/rest/api/3/issue/{enc}/comment",
                 headers=self._headers("application/json"),
-                json={"body": _build_adf(text, mentions or [])},
+                json={
+                    "body": _build_adf(text, mentions or [], attachment_refs or [])
+                },
             )
         if not resp.is_success:
             raise JiraAPIError("add_comment", resp.status_code, resp.text[:200])

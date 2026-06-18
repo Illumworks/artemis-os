@@ -358,17 +358,33 @@ async def jira_add_comment(
     _: None = Depends(require_token),  # noqa: B008
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
+    """Post a comment, optionally linking pre-uploaded attachments.
+
+    Body fields:
+    - ``text`` (str, required) — comment text; @mentions are resolved to ADF nodes.
+    - ``mentions`` (list[{name, id}], optional) — Jira accountId mapping for @names.
+    - ``attachmentRefs`` (list[{filename, url}], optional) — attachments already
+      uploaded via POST /issue/{key}/attachment; each is appended as a linked
+      paragraph in the ADF body so the file is genuinely linked to the comment.
+    """
     text = str(body.get("text") or "")
     if not text:
         raise HTTPException(status_code=400, detail="text required")
     mentions = body.get("mentions")
+    attachment_refs_raw = body.get("attachmentRefs")
+    attachment_refs = attachment_refs_raw if isinstance(attachment_refs_raw, list) else []
     try:
         cfg = await resolve_jira_config(session)
     except MissingProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     client = JiraClient(cfg.site_url, cfg.email, cfg.api_token)
     try:
-        return await client.add_comment(key, text, mentions if isinstance(mentions, list) else [])
+        return await client.add_comment(
+            key,
+            text,
+            mentions if isinstance(mentions, list) else [],
+            attachment_refs,
+        )
     except JiraAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
