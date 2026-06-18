@@ -73,7 +73,15 @@ def _make_client(raw: dict[str, object]) -> JiraClient:
 async def jira_overview(
     _: None = Depends(require_token),  # noqa: B008
     session: AsyncSession = Depends(get_session),  # noqa: B008
+    *,
+    me_only: bool = False,
 ) -> dict[str, Any]:
+    """Return the Jira board overview.
+
+    ``me_only=True`` forces ``assignee = currentUser()`` regardless of the
+    configured team members.  The morning brief sets this so Jon only sees
+    his own tickets even when the board is configured for a full team.
+    """
     raw = await repo.get_provider_config(session, "jira") or {}
     saved_config = _build_saved_config(raw)
 
@@ -92,6 +100,14 @@ async def jira_overview(
         }
 
     client = _make_client(raw)
+    if me_only:
+        # Brief path: always scope to the authenticated user only.
+        assignee_filter: list[str] | None | str = "me"
+    else:
+        # Board path: show all configured team members (+ unassigned).
+        # Fall back to None (whole project) when no team is configured.
+        _tm = raw.get("team_members")
+        assignee_filter = list(_tm) if isinstance(_tm, list) and _tm else None
     try:
         result = await client.get_overview(
             project_key=str(raw.get("project_key") or ""),
@@ -99,6 +115,7 @@ async def jira_overview(
             if (_m := raw.get("max_items_per_column")) and isinstance(_m, (int, float, str))
             else 20,
             column_map=raw.get("column_map"),  # type: ignore[arg-type]
+            assignee_filter=assignee_filter,
         )
         result["savedConfig"] = saved_config
         return result
