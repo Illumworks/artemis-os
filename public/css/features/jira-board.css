@@ -537,6 +537,38 @@
 .jira-comment-link:hover { text-decoration: underline; }
 .jira-mention { display: inline-block; background: var(--amber-soft); color: var(--amber-ink); border-radius: 3px; padding: 0 4px; font-size: 12px; font-weight: 500; white-space: nowrap; }
 .jira-reply { margin-top: 8px; }
+
+/* ── Threaded reply nesting ─────────────────────────────────────
+   Replies sit in a .jira-comment-replies container indented to
+   align their avatar with the parent's text column.
+   A vertical connector line runs down the left edge of the block,
+   matching Jira's visual threading style.
+   ──────────────────────────────────────────────────────────── */
+.jira-comment-replies {
+  /* Indent: avatar-width (20px) + gap (10px) = 30px */
+  margin-left: 30px;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--amber-ink) 28%, transparent);
+  position: relative;
+}
+
+/* Individual reply row — slightly de-emphasised */
+.jira-comment--reply .jira-comment-author {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.jira-comment--reply .jira-card-avatar {
+  width: 18px;
+  height: 18px;
+  font-size: 7.5px;
+}
+.jira-comment--reply .jira-comment-text {
+  font-size: 12.5px;
+}
 .jira-reply-area-wrap { position: relative; }
 .jira-reply-area-wrap.drag-over textarea { border-color: var(--amber-soft); outline: 2px dashed var(--amber-soft); }
 

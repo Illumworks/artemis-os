@@ -8,6 +8,10 @@ import {
   transitionJiraIssueApi,
   updateJiraDescriptionApi,
 } from '../core/api.js';
+import {
+  _buildMentionRegex,
+  _buildCommentThread,
+} from './jira-comment-helpers.js';
 
 // Map colKey → display label + CSS class
 const COL_META = {
@@ -70,9 +74,11 @@ function _esc(str) {
 }
 
 // Render comment body: URLs → clickable links, @mentions → chips, rest → escaped.
-function _renderText(raw) {
+// knownNames: optional string[] of known display names for bounded mention matching.
+// Uses _buildMentionRegex (imported from jira-comment-helpers.js).
+function _renderText(raw, knownNames) {
   if (!raw) return '';
-  const CHUNK_RE = /(https?:\/\/[^\s<>"&]+)|(@@?[A-Za-z][^\s@{}<&\n,;!?.*]{0,49}(?:\s+[A-Za-z][^\s@{}<&\n,;!?.*]{0,49}){0,2})/g;
+  const CHUNK_RE = _buildMentionRegex(knownNames || []);
   let result = '';
   let lastIdx = 0;
   let m;
@@ -88,6 +94,55 @@ function _renderText(raw) {
   }
   result += _esc(raw.slice(lastIdx));
   return result;
+}
+
+// Collect all known display names from comments, assignee and assignable users list.
+// Used to feed both _buildCommentThread and _renderText for bounded mention matching.
+function _gatherKnownNames(comments, assigneeName, assignableUsers) {
+  const names = new Set();
+  for (const c of (comments || [])) {
+    const n = (c.author || '').trim();
+    if (n) names.add(n);
+  }
+  if (assigneeName && assigneeName !== 'Unassigned') names.add(assigneeName.trim());
+  for (const u of (assignableUsers || [])) {
+    const n = (u.displayName || u.name || '').trim();
+    if (n) names.add(n);
+  }
+  return [...names];
+}
+
+// Render a single comment row as an HTML string.
+// indent: true → render as a nested reply (indented + connector line).
+function _renderCommentHtml(c, knownNames, { indent = false } = {}) {
+  const cName = c.author || 'Unknown';
+  const cColor = _avatarColor(cName);
+  const cInit = _initials(cName);
+  const indentCls = indent ? ' jira-comment--reply' : '';
+  return `
+    <div class="jira-comment${indentCls}">
+      <span class="jira-card-avatar jira-comment-avatar" style="background:${_esc(cColor)}">${_esc(cInit)}</span>
+      <div style="flex:1;min-width:0">
+        <div class="jira-comment-head">
+          <span class="jira-comment-author">${_esc(cName)}</span>
+          <span class="jira-comment-when">${_esc(_relTime(c.created))}</span>
+          <button class="jira-reply-btn" data-jira-drawer-action="reply-to" data-reply-author="${_esc(cName)}" title="Reply to ${_esc(cName)}">Reply</button>
+        </div>
+        <div class="jira-comment-text">${_renderText(c.body || c.text || '', knownNames)}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Build the full threaded comment list HTML from a flat comments array.
+function _renderThreadedComments(comments, knownNames) {
+  const threads = _buildCommentThread(comments, knownNames);
+  return threads.map(({ comment, replies }) => {
+    const parentHtml = _renderCommentHtml(comment, knownNames, { indent: false });
+    if (replies.length === 0) return parentHtml;
+    const repliesHtml = replies.map(r => _renderCommentHtml(r, knownNames, { indent: true })).join('');
+    return `${parentHtml}<div class="jira-comment-replies">${repliesHtml}</div>`;
+  }).join('');
 }
 
 class ArtemisJiraCardDrawer extends HTMLElement {
@@ -226,27 +281,14 @@ class ArtemisJiraCardDrawer extends HTMLElement {
       </div>
     `;
 
-    // Comments HTML
+    // Build the set of known names for mention-boundary matching.
+    // Includes: all comment authors + assignee + any assignable users.
+    const knownNames = _gatherKnownNames(comments, assigneeName, this._assignableUsers);
+
+    // Comments HTML — threaded
     const commentsHtml = comments.length === 0
       ? `<div class="jira-empty-line">No comments yet. Start the thread.</div>`
-      : comments.map(c => {
-          const cName = c.author || 'Unknown';
-          const cColor = _avatarColor(cName);
-          const cInit = _initials(cName);
-          return `
-            <div class="jira-comment">
-              <span class="jira-card-avatar jira-comment-avatar" style="background:${_esc(cColor)}">${_esc(cInit)}</span>
-              <div style="flex:1;min-width:0">
-                <div class="jira-comment-head">
-                  <span class="jira-comment-author">${_esc(cName)}</span>
-                  <span class="jira-comment-when">${_esc(_relTime(c.created))}</span>
-                  <button class="jira-reply-btn" data-jira-drawer-action="reply-to" data-reply-author="${_esc(cName)}" title="Reply to ${_esc(cName)}">Reply</button>
-                </div>
-                <div class="jira-comment-text">${_renderText(c.body || c.text || '')}</div>
-              </div>
-            </div>
-          `;
-        }).join('');
+      : _renderThreadedComments(comments, knownNames);
 
     // Worklogs HTML — API returns timeSpentSeconds, convert to hours for display
     const _secsToHrs = (s) => {
@@ -632,7 +674,7 @@ class ArtemisJiraCardDrawer extends HTMLElement {
           <span class="jira-comment-author">You</span>
           <span class="jira-comment-when">just now</span>
         </div>
-        <div class="jira-comment-text">${_renderText(text)}</div>
+        <div class="jira-comment-text">${_renderText(text, _gatherKnownNames(this._issue?.comments || [], this._issue?.assigneeName || '', this._assignableUsers))}</div>
         ${attachHtml}
       </div>
     `;
@@ -683,24 +725,9 @@ class ArtemisJiraCardDrawer extends HTMLElement {
       if (countEl) countEl.textContent = '0';
       return;
     }
-    thread.innerHTML = comments.map(c => {
-      const cName = c.author || 'Unknown';
-      const cColor = _avatarColor(cName);
-      const cInit = _initials(cName);
-      return `
-        <div class="jira-comment">
-          <span class="jira-card-avatar jira-comment-avatar" style="background:${_esc(cColor)}">${_esc(cInit)}</span>
-          <div style="flex:1;min-width:0">
-            <div class="jira-comment-head">
-              <span class="jira-comment-author">${_esc(cName)}</span>
-              <span class="jira-comment-when">${_esc(_relTime(c.created))}</span>
-              <button class="jira-reply-btn" data-jira-drawer-action="reply-to" data-reply-author="${_esc(cName)}" title="Reply to ${_esc(cName)}">Reply</button>
-            </div>
-            <div class="jira-comment-text">${_renderText(c.body || c.text || '')}</div>
-          </div>
-        </div>
-      `;
-    }).join('');
+    const assigneeName = this._issue?.assigneeName || this._issue?.assignee || '';
+    const knownNames = _gatherKnownNames(comments, assigneeName, this._assignableUsers);
+    thread.innerHTML = _renderThreadedComments(comments, knownNames);
     if (countEl) countEl.textContent = String(comments.length);
   }
 
