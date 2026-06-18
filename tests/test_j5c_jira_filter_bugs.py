@@ -108,7 +108,11 @@ async def test_get_overview_explicit_me_string_uses_current_user_jql() -> None:
 
 @pytest.mark.asyncio
 async def test_get_overview_team_list_uses_in_and_is_empty_jql() -> None:
-    """Team list path must embed `assignee IN (...) OR assignee IS EMPTY`."""
+    """Team list path must embed `assignee IN (...) OR assignee = currentUser() OR assignee IS EMPTY`.
+
+    The board owner may not be in team_members, so currentUser() is always
+    appended to guarantee the owner's own swim lane appears.
+    """
     client = _make_client()
     team = ["U1", "U2", "U3"]
 
@@ -127,10 +131,38 @@ async def test_get_overview_team_list_uses_in_and_is_empty_jql() -> None:
     for jql in jqls:
         assert "assignee IN" in jql, f"Expected assignee IN clause in: {jql}"
         assert "assignee IS EMPTY" in jql, f"Expected IS EMPTY in: {jql}"
-        assert "currentUser()" not in jql
+        # Owner must always be included via currentUser() even if not in team list.
+        assert "assignee = currentUser()" in jql, f"Expected currentUser() clause in: {jql}"
         # All three IDs must be present
         for uid in team:
             assert uid in jql, f"Expected {uid} in JQL: {jql}"
+
+
+@pytest.mark.asyncio
+async def test_get_overview_team_list_jql_structure() -> None:
+    """Team list JQL must be structured as (IN ... OR currentUser() OR IS EMPTY)
+    so Jira treats them as a single grouped OR condition."""
+    client = _make_client()
+
+    with patch("httpx.AsyncClient") as mock_cls:
+        mock_http = AsyncMock()
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        mock_http.get = AsyncMock(return_value=_myself_response())
+        mock_http.post = AsyncMock(return_value=_empty_search_response())
+        mock_cls.return_value = mock_http
+
+        await client.get_overview(assignee_filter=["A1"])
+
+    jqls = _captured_jql_calls(mock_http)
+    for jql in jqls:
+        # All three conditions must sit inside a single parenthesised OR group.
+        import re
+        # Look for (assignee IN (...) OR assignee = currentUser() OR assignee IS EMPTY)
+        assert re.search(
+            r'\(assignee IN \(.*?\)\s+OR\s+assignee = currentUser\(\)\s+OR\s+assignee IS EMPTY\)',
+            jql,
+        ), f"Expected grouped OR structure in: {jql}"
 
 
 @pytest.mark.asyncio
