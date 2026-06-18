@@ -755,11 +755,13 @@ async def compose_draft(
     )
 
     # ── 5. Model invocation via provider cascade ───────────────────────────────
-    # Resolve adapter the same way pipelines/routes.py does it.
+    # compose_draft is a voice-critical surface (Callie's brand voice).  We
+    # MUST run on claude-code and MUST NOT silently fall through to Codex or any
+    # other provider if claude-code is unavailable.  strict=True suppresses the
+    # DEFAULT_CASCADE tail entirely so a claude-code outage raises
+    # NoProviderAvailableError immediately instead of degrading silently.
     try:
-        adapter = resolve_adapter(
-            getattr(profile, "default_model_provider", None) or None,
-        )
+        adapter = resolve_adapter("claude-code", strict=True)
     except NoProviderAvailableError as exc:
         raise bad_request(
             "No LLM provider is available. Add an API key in Integrations.",
@@ -1253,10 +1255,11 @@ async def rewrite_span(
     )
 
     # ── 5. Model invocation ───────────────────────────────────────────────────
+    # rewrite-span is a voice-critical surface (same quality bar as compose_draft).
+    # strict=True suppresses DEFAULT_CASCADE so a claude-code outage raises
+    # NoProviderAvailableError instead of silently falling through to Codex.
     try:
-        adapter = resolve_adapter(
-            getattr(profile, "default_model_provider", None) or None,
-        )
+        adapter = resolve_adapter("claude-code", strict=True)
     except NoProviderAvailableError as exc:
         raise bad_request(
             "No LLM provider is available. Add an API key in Integrations.",

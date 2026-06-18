@@ -13,10 +13,19 @@ is given and an active override row exists in ``feature_routing_overrides``,
 the override's cascade replaces the default. Callers that do not pass
 ``feature_tag`` see exactly the same behavior as before — backwards compatible.
 
+Optional ``strict`` parameter (default ``False``) disables the
+``DEFAULT_CASCADE`` tail entirely.  When ``strict=True`` only ``provider``
+(and ``fallback_provider`` if given) are tried; if neither can be constructed
+the function raises ``NoProviderAvailableError`` immediately instead of
+silently degrading to another provider.  Use this for quality-critical surfaces
+where the cascade fallback is unacceptable (e.g. voice-generation paths that
+must not fall through to Codex).
+
 Used by:
   * ``artemis/pipelines/routes.py`` (HTTP AI-assistant turn endpoint)
   * ``artemis/pipelines/node_executors/agent_executor.py``
   * ``artemis/builders/executor.py::run_agent`` (defensive fallback)
+  * ``artemis/marketing/routes/writing_studio.py`` (compose_draft, rewrite-span)
 """
 
 from __future__ import annotations
@@ -60,6 +69,7 @@ def resolve_adapter(
     provider: str | None = None,
     fallback_provider: str | None = None,
     *,
+    strict: bool = False,
     feature_tag: str | None = None,
     session: AsyncSession | None = None,
     **kwargs: Any,
@@ -74,6 +84,12 @@ def resolve_adapter(
     Args:
         provider:           Preferred provider id (e.g. ``"claude-code"``).
         fallback_provider:  Provider tried if ``provider`` is unavailable.
+        strict:             When ``True``, the ``DEFAULT_CASCADE`` tail is
+                            suppressed.  Only ``provider`` (and
+                            ``fallback_provider`` if given) are attempted; if
+                            neither is available ``NoProviderAvailableError`` is
+                            raised immediately.  Defaults to ``False`` so all
+                            existing callers are unaffected.
         feature_tag:        Optional. Enables per-feature DB override lookup.
                             Callers that do not pass this see identical behavior
                             to the pre-override resolver — backwards compatible.
@@ -95,8 +111,11 @@ def resolve_adapter(
     # Sync path does not perform DB override lookup — callers that want the async
     # override path should use resolve_adapter_async() instead.
     # Build the ordered candidate list, dropping duplicates while preserving order.
+    # When strict=True, skip the DEFAULT_CASCADE tail so we never silently fall
+    # through to a provider the caller didn't explicitly approve.
+    tail = () if strict else DEFAULT_CASCADE
     candidate_list: list[str] = []
-    for _cand in (provider, fallback_provider, *DEFAULT_CASCADE):
+    for _cand in (provider, fallback_provider, *tail):
         if _cand and _cand not in seen:
             candidate_list.append(str(_cand))
             seen.add(_cand)
@@ -127,6 +146,7 @@ async def resolve_adapter_async(
     provider: str | None = None,
     fallback_provider: str | None = None,
     *,
+    strict: bool = False,
     feature_tag: str | None = None,
     session: AsyncSession | None = None,
     **kwargs: Any,
@@ -139,6 +159,8 @@ async def resolve_adapter_async(
 
     Callers that do not pass ``feature_tag`` see exactly the same behavior as
     ``resolve_adapter`` — backwards compatible.
+
+    See ``resolve_adapter`` for the ``strict`` parameter docs.
     """
     override_cascade: list[dict[str, str]] | None = None
 
@@ -169,9 +191,11 @@ async def resolve_adapter_async(
                 candidate_providers.append(cand)
                 seen.add(cand)
     else:
-        # Normal resolution — identical to sync resolve_adapter
+        # Normal resolution — identical to sync resolve_adapter.
+        # When strict=True, suppress DEFAULT_CASCADE tail (same as sync path).
+        tail = () if strict else DEFAULT_CASCADE
         seen = set()
-        for _cand in (provider, fallback_provider, *DEFAULT_CASCADE):
+        for _cand in (provider, fallback_provider, *tail):
             if _cand and _cand not in seen:
                 candidate_providers.append(str(_cand))
                 seen.add(_cand)

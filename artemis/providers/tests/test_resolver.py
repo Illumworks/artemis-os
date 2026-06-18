@@ -208,3 +208,145 @@ def test_default_cascade_starts_with_claude_code() -> None:
 
 def test_default_cascade_contains_anthropic_as_last_resort() -> None:
     assert "anthropic" in DEFAULT_CASCADE
+
+
+# ── strict mode ───────────────────────────────────────────────────────────────
+
+
+def test_strict_returns_named_provider_when_available() -> None:
+    """strict=True returns the adapter when the provider IS available."""
+    sentinel = _Sentinel("claude-code")
+    with patch(
+        "artemis.providers.resolver.get_adapter",
+        side_effect=_make_builders({"claude-code": sentinel}),
+    ):
+        result = resolve_adapter("claude-code", strict=True)
+    assert result is sentinel  # type: ignore[comparison-overlap]
+
+
+def test_strict_raises_when_named_provider_unavailable_not_codex() -> None:
+    """strict=True raises NoProviderAvailableError and does NOT fall through to
+    Codex or any other DEFAULT_CASCADE member when claude-code is down."""
+    codex_sentinel = _Sentinel("codex")
+    calls: list[str] = []
+
+    def _builder(provider_id: str, **_: Any) -> Any:
+        calls.append(provider_id)
+        if provider_id == "claude-code":
+            raise MissingCliBinaryError("claude-code", "claude")
+        # Any other provider (codex, anthropic, …) would succeed — but strict
+        # mode must never reach them.
+        return codex_sentinel
+
+    with (
+        patch("artemis.providers.resolver.get_adapter", side_effect=_builder),
+        pytest.raises(NoProviderAvailableError),
+    ):
+        resolve_adapter("claude-code", strict=True)
+
+    # Only claude-code must have been attempted — no fallthrough to codex etc.
+    assert calls == ["claude-code"]
+
+
+def test_strict_raises_does_not_return_codex_adapter() -> None:
+    """Return value is never a non-claude-code adapter under strict=True."""
+    codex_sentinel = _Sentinel("codex")
+    with patch(
+        "artemis.providers.resolver.get_adapter",
+        side_effect=_make_builders(
+            {
+                "claude-code": MissingCliBinaryError("claude-code", "claude"),
+                "codex": codex_sentinel,
+            }
+        ),
+    ):
+        with pytest.raises(NoProviderAvailableError):
+            result = resolve_adapter("claude-code", strict=True)
+        # If we somehow get here (we shouldn't), assert it's not codex.
+        # The pytest.raises context manager ensures the line below is unreachable,
+        # but the pattern is kept for documentation purposes.
+
+
+def test_strict_false_default_keeps_cascade_behavior() -> None:
+    """Default strict=False preserves the existing cascade — falls through to
+    DEFAULT_CASCADE members when the primary provider is unavailable."""
+    codex_sentinel = _Sentinel("codex")
+    with patch(
+        "artemis.providers.resolver.get_adapter",
+        side_effect=_make_builders(
+            {
+                "claude-code": MissingCliBinaryError("claude-code", "claude"),
+                "codex": codex_sentinel,
+            }
+        ),
+    ):
+        # strict defaults to False → falls through from claude-code to codex
+        result = resolve_adapter("claude-code")
+    assert result is codex_sentinel  # type: ignore[comparison-overlap]
+
+
+def test_strict_with_fallback_provider_only_tries_those_two() -> None:
+    """strict=True with a fallback_provider tries provider then fallback only."""
+    anthropic_sentinel = _Sentinel("anthropic")
+    calls: list[str] = []
+
+    def _builder(provider_id: str, **_: Any) -> Any:
+        calls.append(provider_id)
+        if provider_id == "claude-code":
+            raise MissingCliBinaryError("claude-code", "claude")
+        if provider_id == "anthropic":
+            return anthropic_sentinel
+        raise UnknownProviderError(f"unexpected: {provider_id}")
+
+    with patch("artemis.providers.resolver.get_adapter", side_effect=_builder):
+        result = resolve_adapter("claude-code", "anthropic", strict=True)
+
+    assert result is anthropic_sentinel  # type: ignore[comparison-overlap]
+    # Exactly two providers tried: claude-code, then anthropic — no cascade tail.
+    assert calls == ["claude-code", "anthropic"]
+
+
+def test_strict_with_fallback_raises_when_both_unavailable() -> None:
+    """strict=True raises when both provider and fallback are unavailable."""
+    with (
+        patch(
+            "artemis.providers.resolver.get_adapter",
+            side_effect=MissingCliBinaryError("both down", "cli"),
+        ),
+        pytest.raises(NoProviderAvailableError),
+    ):
+        resolve_adapter("claude-code", "anthropic", strict=True)
+
+
+# ── compose surfaces use strict mode ─────────────────────────────────────────
+
+
+def test_compose_draft_uses_strict_claude_code() -> None:
+    """compose_draft must call resolve_adapter with provider='claude-code' and
+    strict=True — verified by inspecting the call site source."""
+    import inspect
+
+    import artemis.marketing.routes.writing_studio as ws
+
+    src = inspect.getsource(ws.compose_draft)
+    assert 'resolve_adapter("claude-code", strict=True)' in src, (
+        "compose_draft must call resolve_adapter('claude-code', strict=True)"
+    )
+
+
+def test_rewrite_span_uses_strict_claude_code() -> None:
+    """rewrite-span handler must call resolve_adapter with provider='claude-code'
+    and strict=True — verified by inspecting the call site source."""
+    import inspect
+
+    import artemis.marketing.routes.writing_studio as ws
+
+    # The rewrite-span handler is the function that contains 'rewrite-span' in
+    # its docstring/name; we check the module source for the second occurrence
+    # of the strict call (compose_draft is the first).
+    src = inspect.getsource(ws)
+    occurrences = src.count('resolve_adapter("claude-code", strict=True)')
+    assert occurrences >= 2, (  # noqa: PLR2004
+        f"Expected at least 2 strict resolve_adapter calls (compose_draft + rewrite-span), "
+        f"found {occurrences}"
+    )
