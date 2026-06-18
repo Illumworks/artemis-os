@@ -127,12 +127,24 @@ async def jira_overview(
         )
         if team_ids and project_key:
             _roster_coro = client.get_assignable_users(project_key, team_filter=team_ids)
-            result, roster_raw = await asyncio.gather(_overview_coro, _roster_coro)
-            # Normalise to {id, name} pairs consumed by the frontend.
-            result["teamRoster"] = [
-                {"id": u["accountId"], "name": u.get("displayName") or u["accountId"]}
-                for u in roster_raw
-            ]
+            # return_exceptions so a roster-fetch failure can NEVER take down the
+            # board — the roster is secondary enrichment (pinned empty lanes).
+            result, roster_raw = await asyncio.gather(
+                _overview_coro, _roster_coro, return_exceptions=True
+            )
+            if isinstance(result, BaseException):
+                raise result  # the overview itself failing IS a real error
+            if isinstance(roster_raw, BaseException):
+                logger.warning(
+                    "jira teamRoster fetch failed; board renders without roster: %s", roster_raw
+                )
+                result["teamRoster"] = []
+            else:
+                # Normalise to {id, name} pairs consumed by the frontend.
+                result["teamRoster"] = [
+                    {"id": u["accountId"], "name": u.get("displayName") or u["accountId"]}
+                    for u in roster_raw
+                ]
         else:
             result = await _overview_coro
             result["teamRoster"] = []
