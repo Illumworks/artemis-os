@@ -3272,7 +3272,7 @@ function renderJiraCard(card) {
 }
 
 function renderJiraBoardCanvas(viewModel) {
-  const { swimlanes = [], stats = {}, colStatusMap = {}, assignees = [], priorities = [], sprints = [], projectKey = '', siteUrl = '' } = viewModel;
+  const { swimlanes = [], stats = {}, colStatusMap = {}, assignees = [], priorities = [], sprints = [], projectKey = '', siteUrl = '', currentUserId = '' } = viewModel;
   const COL_KEYS = ['todo', 'prog', 'blocked', 'review'];
   const COL_META = {
     todo:    { label: 'TO DO',       cls: 'todo' },
@@ -3304,9 +3304,13 @@ function renderJiraBoardCanvas(viewModel) {
       </div>
     </div>
     <div class="jira-filter-drop" data-filter-drop="people" hidden>
+      <div class="jira-filter-actions">
+        <button type="button" class="btn btn-outline btn-xs" data-people-filter-action="all">All</button>
+        <button type="button" class="btn btn-outline btn-xs" data-people-filter-action="clear">Clear</button>
+      </div>
       ${assignees.map(a => `
         <label class="jira-filter-item">
-          <input type="checkbox" value="${escapeAttribute(a.id)}" data-filter-val="people" checked>
+          <input type="checkbox" value="${escapeAttribute(a.id)}" data-filter-val="people">
           <span>${escapeHtml(a.name)}</span>
         </label>`).join('')}
     </div>
@@ -3370,7 +3374,7 @@ function renderJiraBoardCanvas(viewModel) {
 
   if (!swimlanes.length) {
     return `
-      <div class="jira-wrap" data-col-status-map="${escapeAttribute(JSON.stringify(colStatusMap))}" data-project-key="${escapeAttribute(projectKey)}" data-site-url="${escapeAttribute(siteUrl)}">
+      <div class="jira-wrap" data-col-status-map="${escapeAttribute(JSON.stringify(colStatusMap))}" data-project-key="${escapeAttribute(projectKey)}" data-site-url="${escapeAttribute(siteUrl)}" data-current-user-id="${escapeAttribute(currentUserId)}">
         ${toolbar}
         <div style="padding:40px 0;text-align:center;color:var(--ink-4);font-size:13px;">No issues in active columns.</div>
       </div>
@@ -3378,7 +3382,7 @@ function renderJiraBoardCanvas(viewModel) {
   }
 
   return `
-    <div class="jira-wrap" data-col-status-map="${escapeAttribute(JSON.stringify(colStatusMap))}" data-project-key="${escapeAttribute(projectKey)}" data-site-url="${escapeAttribute(siteUrl)}">
+    <div class="jira-wrap" data-col-status-map="${escapeAttribute(JSON.stringify(colStatusMap))}" data-project-key="${escapeAttribute(projectKey)}" data-site-url="${escapeAttribute(siteUrl)}" data-current-user-id="${escapeAttribute(currentUserId)}">
       ${toolbar}
       ${colHeads}
       ${rows}
@@ -3463,11 +3467,13 @@ function _wireJiraBoard(container) {
   let _siteUrl = '';
 
   const board = container.querySelector('.jira-wrap');
+  let _currentUserId = '';
   if (board) {
     if (board.dataset.colStatusMap) {
       try { _colStatusMap = JSON.parse(board.dataset.colStatusMap); } catch (_) { /* ignore */ }
     }
     _siteUrl = board.dataset.siteUrl || '';
+    _currentUserId = board.dataset.currentUserId || '';
   }
 
   function _updateColCount(col) {
@@ -3609,25 +3615,43 @@ function _wireJiraBoard(container) {
   // ── Filter logic ────────────────────────────────────────────────────────────
 
   const SWIMLANE_FILTER_KEY = 'artemis.jira.swimlane.filter';
-  // IDs of swimlane rows to hide; empty = show all (default)
+  // IDs of swimlane rows to hide; empty = show all
   let _swimlaneHideFilter = new Set();
   let _priorityFilter = new Set();
   let _sprintFilter = '';
 
-  // Restore people filter from localStorage (unchecks saved hidden IDs)
+  // Collect all people IDs rendered in the dropdown (includes __unassigned__).
+  const _allPeopleIds = [...container.querySelectorAll('[data-filter-val="people"]')].map(cb => cb.value);
+
+  // Restore or seed the people filter.
+  // - If a stored pref exists, use it (persisted choice wins).
+  // - Otherwise default to "just me": hide every lane except the current user
+  //   so the board opens focused on the authenticated user's own work.
   try {
     const stored = localStorage.getItem(SWIMLANE_FILTER_KEY);
     if (stored) {
       const hiddenIds = JSON.parse(stored);
       if (Array.isArray(hiddenIds)) {
         _swimlaneHideFilter = new Set(hiddenIds);
-        hiddenIds.forEach(id => {
-          const cb = container.querySelector(`[data-filter-val="people"][value="${CSS.escape(id)}"]`);
-          if (cb) cb.checked = false;
-        });
       }
+    } else if (_currentUserId) {
+      // No stored pref — seed the hide-set with everyone except the current user.
+      _allPeopleIds.forEach(id => {
+        if (id !== _currentUserId) _swimlaneHideFilter.add(id);
+      });
+      // Persist the seeded default so it survives a page reload even before the
+      // user touches the filter (A1: localStorage pref is now always written).
+      try {
+        localStorage.setItem(SWIMLANE_FILTER_KEY, JSON.stringify([..._swimlaneHideFilter]));
+      } catch (_) { /* storage full */ }
     }
   } catch (_) { /* ignore corrupt storage */ }
+
+  // Sync checkbox checked-state to match _swimlaneHideFilter.
+  _allPeopleIds.forEach(id => {
+    const cb = container.querySelector(`[data-filter-val="people"][value="${CSS.escape(id)}"]`);
+    if (cb) cb.checked = !_swimlaneHideFilter.has(id);
+  });
 
   function _closeAllDropdowns(except) {
     container.querySelectorAll('.jira-filter-drop:not([hidden])').forEach(d => {
@@ -3688,8 +3712,9 @@ function _wireJiraBoard(container) {
     if (sprintBtn) sprintBtn.textContent = _sprintFilter ? _sprintFilter : 'Sprint';
   }
 
-  // Apply persisted swimlane filter on initial render
-  if (_swimlaneHideFilter.size > 0) _applyFilters();
+  // Apply the swimlane filter on initial render (always — may have been seeded
+  // with the just-me default above, or restored from localStorage).
+  _applyFilters();
 
   // Position a dropdown panel below its trigger button.
   // Must be relative to .jira-wrap (position:relative), which is the containing block.
@@ -3718,6 +3743,32 @@ function _wireJiraBoard(container) {
       } else {
         drop.hidden = true;
       }
+      return;
+    }
+
+    // People filter: All / Clear quick-action buttons
+    const peopleAction = e.target.closest('[data-people-filter-action]');
+    if (peopleAction) {
+      const action = peopleAction.dataset.peopleFilterAction;
+      if (action === 'all') {
+        // Show all lanes: clear the hide-set, check all checkboxes.
+        _swimlaneHideFilter.clear();
+        _allPeopleIds.forEach(id => {
+          const cb = container.querySelector(`[data-filter-val="people"][value="${CSS.escape(id)}"]`);
+          if (cb) cb.checked = true;
+        });
+      } else if (action === 'clear') {
+        // Hide all lanes: add everyone to hide-set, uncheck all checkboxes.
+        _allPeopleIds.forEach(id => {
+          _swimlaneHideFilter.add(id);
+          const cb = container.querySelector(`[data-filter-val="people"][value="${CSS.escape(id)}"]`);
+          if (cb) cb.checked = false;
+        });
+      }
+      try {
+        localStorage.setItem(SWIMLANE_FILTER_KEY, JSON.stringify([..._swimlaneHideFilter]));
+      } catch (_) { /* storage full */ }
+      _applyFilters();
       return;
     }
 
@@ -6463,6 +6514,7 @@ function buildJiraDedicatedViewModel({ jiraOverview = null } = {}) {
     priorities,
     sprints,
     projectKey: jiraOverview.savedConfig?.projectKey || '',
+    currentUserId: jiraOverview.currentUser?.accountId || '',
   };
 }
 

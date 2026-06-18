@@ -226,12 +226,35 @@ class JiraClient:
         project_key: str = "",
         max_items: int = 20,
         column_map: dict[str, list[str]] | None = None,
+        assignee_filter: list[str] | None | str = "me",
     ) -> dict[str, Any]:
+        """Fetch a swimlane overview of the board.
+
+        ``assignee_filter`` controls which tickets are returned:
+
+        * ``"me"`` (default) — only the authenticated user's tickets
+          (``assignee = currentUser()``).  The morning brief uses this path so
+          Jon only sees his own work.
+        * A non-empty ``list[str]`` of Jira account IDs — tickets assigned to
+          any of those people OR unassigned
+          (``assignee IN (...) OR assignee IS EMPTY``).  The board uses this
+          when ``team_members`` is configured.
+        * ``None`` — no assignee clause; returns the whole project.  Used when
+          the board has no team members configured.
+        """
         cm: dict[str, list[str]] = {**_DEFAULT_COLUMN_MAP, **(column_map or {})}
         project_clause = f' AND project = "{project_key}"' if project_key else ""
-        # Always filter to the authenticated user's tickets only — prevents
-        # cross-team bleed (e.g. surfacing tickets assigned to other team members).
-        assignee_clause = " AND assignee = currentUser()"
+
+        if assignee_filter == "me":
+            # Brief path: only the authenticated user's own tickets.
+            assignee_clause = " AND assignee = currentUser()"
+        elif isinstance(assignee_filter, list) and assignee_filter:
+            # Board path with a configured team: show the team + unassigned.
+            ids_joined = ", ".join(f'"{aid}"' for aid in assignee_filter)
+            assignee_clause = f" AND (assignee IN ({ids_joined}) OR assignee IS EMPTY)"
+        else:
+            # None or empty list: whole project, no assignee restriction.
+            assignee_clause = ""
 
         async with httpx.AsyncClient(timeout=20) as client:
             me_resp = await client.get(f"{self._base}/rest/api/3/myself", headers=self._headers())

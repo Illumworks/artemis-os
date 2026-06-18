@@ -23,7 +23,9 @@ async def _safe_jira(session: AsyncSession) -> dict[str, Any] | None:
     try:
         from artemis.routes.jira import jira_overview
 
-        result = await jira_overview(session=session, _=None)
+        # me_only=True keeps the brief scoped to Jon's own tickets regardless
+        # of any team_members configuration on the board.
+        result = await jira_overview(session=session, _=None, me_only=True)
         return dict(result) if result else None
     except Exception:
         logger.debug("Jira source unavailable", exc_info=True)
