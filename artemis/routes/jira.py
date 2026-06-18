@@ -10,6 +10,7 @@ the existing provider-config repo, mirroring the Slack / GCal pattern.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -100,23 +101,41 @@ async def jira_overview(
         }
 
     client = _make_client(raw)
+    project_key = str(raw.get("project_key") or "")
     if me_only:
         # Brief path: always scope to the authenticated user only.
         assignee_filter: list[str] | None | str = "me"
+        team_ids: list[str] = []
     else:
         # Board path: show all configured team members (+ unassigned).
         # Fall back to None (whole project) when no team is configured.
         _tm = raw.get("team_members")
-        assignee_filter = list(_tm) if isinstance(_tm, list) and _tm else None
+        team_ids = list(_tm) if isinstance(_tm, list) and _tm else []
+        assignee_filter = team_ids if team_ids else None
     try:
-        result = await client.get_overview(
-            project_key=str(raw.get("project_key") or ""),
+        # Fetch the board overview.  When a team is configured and a project
+        # key is available, also resolve display names for every team member so
+        # the frontend can show all lanes even for members with zero tickets.
+        # The two calls are issued in parallel to keep latency low.
+        _overview_coro = client.get_overview(
+            project_key=project_key,
             max_items=int(_m)
             if (_m := raw.get("max_items_per_column")) and isinstance(_m, (int, float, str))
             else 20,
             column_map=raw.get("column_map"),  # type: ignore[arg-type]
             assignee_filter=assignee_filter,
         )
+        if team_ids and project_key:
+            _roster_coro = client.get_assignable_users(project_key, team_filter=team_ids)
+            result, roster_raw = await asyncio.gather(_overview_coro, _roster_coro)
+            # Normalise to {id, name} pairs consumed by the frontend.
+            result["teamRoster"] = [
+                {"id": u["accountId"], "name": u.get("displayName") or u["accountId"]}
+                for u in roster_raw
+            ]
+        else:
+            result = await _overview_coro
+            result["teamRoster"] = []
         result["savedConfig"] = saved_config
         return result
     except JiraAPIError as exc:

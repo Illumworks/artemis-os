@@ -3720,10 +3720,17 @@ function _wireJiraBoard(container) {
   // The dropdown uses position:fixed so it is positioned relative to the
   // viewport — this keeps it fully visible even when .jira-wrap collapses to
   // a short height (e.g. after "Clear" hides all swim lanes).
+  //
+  // Right-anchor the dropdown's right edge to the button's right edge so that
+  // dropdowns inside the right-side toolbar don't spill off-screen.  We use
+  // `right` (distance from viewport right edge) and clear `left` so the two
+  // properties don't fight each other (a lingering `left` overrides `right`
+  // on the same fixed element in most browsers).
   function _positionDrop(btn, drop) {
     const btnRect = btn.getBoundingClientRect();
     drop.style.top = `${btnRect.bottom + 4}px`;
-    drop.style.left = `${btnRect.left}px`;
+    drop.style.left = 'auto';
+    drop.style.right = `${window.innerWidth - btnRect.right}px`;
   }
 
   container.addEventListener('click', (e) => {
@@ -6415,8 +6422,31 @@ function buildJiraDedicatedViewModel({ jiraOverview = null } = {}) {
     colStatusMap[col.key] = statuses.length ? statuses : [col.label];
   }
 
-  // Collect assignees who appear in any visible column
+  // Build the people roster as a UNION of:
+  //   1. Configured team roster (teamRoster from backend — id + display name,
+  //      present even for members with zero tickets today)
+  //   2. The board owner / current user (always included)
+  //   3. Any ticket assignee found in the returned columns (catches people not
+  //      in the saved team config but who have tickets, e.g. external guests)
+  //
+  // De-duped by accountId.  Falls back gracefully when teamRoster is absent
+  // or empty (no team configured): behaviour is identical to the old code
+  // (only ticket-assignees + currentUser appear).
   const peopleMap = new Map(); // accountId → { id, name, initials, color }
+
+  // 1. Seed from the backend team roster (may be empty when no team configured)
+  for (const member of jiraOverview.teamRoster || []) {
+    if (member.id && !peopleMap.has(member.id)) {
+      peopleMap.set(member.id, {
+        id: member.id,
+        name: member.name || member.id,
+        initials: _jiraInitials(member.name),
+        color: _jiraAvatarColor(member.id),
+      });
+    }
+  }
+
+  // 2. Seed from ticket assignees (covers anyone not in team config)
   for (const col of rawCols) {
     for (const item of col.items || []) {
       if (item.assigneeId && !peopleMap.has(item.assigneeId)) {
@@ -6430,9 +6460,8 @@ function buildJiraDedicatedViewModel({ jiraOverview = null } = {}) {
     }
   }
 
-  // Always ensure the current user appears in the people list even if they
-  // have no open tickets (Bug 2 fix: guarantees the "just-me" seeding finds
-  // the owner and that their swim lane + checkbox always render).
+  // 3. Always ensure the current user / board owner is included even if they
+  //    have no open tickets and are not in the team roster.
   const _ownerAccountId = jiraOverview.currentUser?.accountId || '';
   const _ownerName = jiraOverview.currentUser?.displayName || '';
   if (_ownerAccountId && !peopleMap.has(_ownerAccountId)) {
@@ -6448,6 +6477,16 @@ function buildJiraDedicatedViewModel({ jiraOverview = null } = {}) {
   // Unassigned row always appears last
   const UNASSIGNED_ID = '__unassigned__';
   people.push({ id: UNASSIGNED_ID, name: 'Unassigned', initials: '–', color: '#B8AE9D' });
+
+  // Build the set of "pinned" IDs: team-roster members + current user always
+  // get a swim lane even with zero tickets today.  Ad-hoc assignees (people
+  // who appear on tickets but aren't in the roster) are still pruned when
+  // their ticket count drops to zero, preserving old behaviour for projects
+  // without a configured team.
+  const _teamRosterIds = new Set(
+    (jiraOverview.teamRoster || []).map(m => m.id).filter(Boolean)
+  );
+  if (_ownerAccountId) _teamRosterIds.add(_ownerAccountId);
 
   const COL_KEYS = ['todo', 'prog', 'blocked', 'review'];
   const colByKey = {};
@@ -6477,9 +6516,11 @@ function buildJiraDedicatedViewModel({ jiraOverview = null } = {}) {
         sprint: item.sprint || '',
       }));
     }
-    // Skip person rows with zero cards across all columns
+    // Keep lanes for: Unassigned, pinned team/owner members (0-ticket lanes
+    // allowed), and anyone with actual cards.
     const total = COL_KEYS.reduce((s, k) => s + cells[k].length, 0);
-    return total > 0 || person.id === UNASSIGNED_ID ? { person, cells } : null;
+    const pinned = person.id === UNASSIGNED_ID || _teamRosterIds.has(person.id);
+    return total > 0 || pinned ? { person, cells } : null;
   }).filter(Boolean);
 
   const allItems = rawCols.flatMap(c => c.items || []);
