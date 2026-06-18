@@ -353,6 +353,84 @@ def _load_brief_assembler_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
 
+def _resolve_district_key(primary_signal: Any) -> str | None:
+    """Derive the Argus drawer key from a primary signal.
+
+    Convention (mirrors argus_tools.py dispatch_research schema):
+      1. Use signal.district_id (the raw string identifier, e.g. "TX-001") when
+         present — this is what Callie passes to dispatch_research so drawer entries
+         written by Argus already use it as the key.
+      2. Fall back to str(resolved_district_id) when the signal has a resolved DB
+         row but no string district_id — rare, but safe to support.
+      3. Return None if neither is available (no resolved district → no drawer to read).
+
+    Returns None rather than raising so callers can skip drawer reads gracefully.
+    """
+    if primary_signal is None:
+        return None
+    if primary_signal.district_id and str(primary_signal.district_id).strip():
+        return str(primary_signal.district_id).strip()
+    if primary_signal.resolved_district_id is not None:
+        return str(primary_signal.resolved_district_id)
+    return None
+
+
+async def _read_argus_context(
+    session: Any,
+    district_key: str | None,
+) -> dict[str, Any] | None:
+    """Read Argus findings for a district and return a structured context dict.
+
+    Returns None when:
+      - district_key is None (no resolved district on the signal), or
+      - the drawer is empty (Argus has not yet researched this district), or
+      - the DB read fails (graceful, logs the error).
+
+    When findings exist the returned dict has the shape:
+      {
+        "district_key": str,
+        "attributed_to": "Argus",
+        "findings": {<dimension>: {"value": str, "source": str, "researched_at": str}, ...},
+        "recommended_angle": str | None,
+      }
+    """
+    if not district_key:
+        return None
+    try:
+        from artemis.argus.drawer import Dimension, read_district_drawer
+
+        findings = await read_district_drawer(session, district_key)
+        if not findings:
+            return None
+
+        recommended_angle: str | None = None
+        findings_payload: dict[str, Any] = {}
+        for dim, finding in findings.items():
+            if dim == Dimension.RECOMMENDED_ANGLE:
+                recommended_angle = finding.value
+            else:
+                findings_payload[dim] = {
+                    "value": finding.value,
+                    "source": finding.source,
+                    "researched_at": finding.researched_at,
+                }
+
+        return {
+            "district_key": district_key,
+            "attributed_to": "Argus",
+            "findings": findings_payload,
+            "recommended_angle": recommended_angle,
+        }
+    except Exception:
+        logger.warning(
+            "build_campaign_initiation_context: Argus drawer read failed for "
+            "district_key=%r (skipping; no research context will be included)",
+            district_key,
+            exc_info=True,
+        )
+        return None
+
+
 async def build_campaign_initiation_context(
     session: Any,
     candidate_id: int,
@@ -390,7 +468,13 @@ async def build_campaign_initiation_context(
         if district_state:
             default_target_scope = {"base": "states", "states": [str(district_state).upper()]}
 
-    return {
+    # Argus district research — read the per-district drawer so any prior research
+    # (competitor intel, procurement timing, decision-makers, recommended angle)
+    # automatically enriches this campaign brief. Empty drawer → no change (backward-compat).
+    district_key = _resolve_district_key(primary_signal)
+    argus_research = await _read_argus_context(session, district_key)
+
+    context: dict[str, Any] = {
         "candidate": {
             "id": candidate.id,
             "campaign_family": candidate.campaign_family,
@@ -428,13 +512,44 @@ async def build_campaign_initiation_context(
         if "outreach_email" in active_slugs
         else active_slugs[:1],
     }
+    # Only inject the argus_research key when findings exist so the context dict
+    # shape is identical to the pre-Argus shape for districts with no research.
+    if argus_research is not None:
+        context["argus_research"] = argus_research
+    return context
 
 
 def _build_campaign_initiation_prompt(context: dict[str, Any]) -> str:
     prompt_scaffold = _load_brief_assembler_prompt().strip()
     context_json = json.dumps(context, indent=2, sort_keys=True)
+
+    # When Argus has researched this district, surface a human-readable research
+    # block BEFORE the raw JSON so the model sees the key findings prominently.
+    argus_section = ""
+    argus_research = context.get("argus_research")
+    if argus_research:
+        lines: list[str] = [
+            "## District Research (from Argus)",
+            f"District: {argus_research.get('district_key', 'unknown')}",
+            "Source: Argus (Callie's dedicated research agent) — use these findings to",
+            "inform the campaign angle, positioning, and targeting.",
+        ]
+        recommended_angle = argus_research.get("recommended_angle")
+        if recommended_angle:
+            lines.append(f"\nRecommended angle: {recommended_angle}")
+        findings = argus_research.get("findings") or {}
+        if findings:
+            lines.append("\nResearched dimensions:")
+            for dim, detail in sorted(findings.items()):
+                value = detail.get("value", "")
+                researched_at = detail.get("researched_at", "")
+                date_str = f" (as of {researched_at})" if researched_at else ""
+                lines.append(f"  • {dim}{date_str}: {value}")
+        argus_section = "\n".join(lines) + "\n\n"
+
     return (
         f"{prompt_scaffold}\n\n"
+        f"{argus_section}"
         "## Runtime Task\n"
         "Read the full candidate signal cluster and produce exactly one "
         "CampaignInitiationProposal JSON object. Return JSON only.\n\n"
