@@ -51,22 +51,46 @@ class EmbeddingProvider(Protocol):
 class MiniLMProvider:
     """sentence-transformers all-MiniLM-L6-v2 — 384-dim, normalized output.
 
-    Model is loaded once on first call (lazy). CPU-only by default; GPU is used
-    automatically when sentence-transformers detects CUDA. Encoding is offloaded
-    to a thread-pool executor to avoid blocking the async event loop.
+    Model is loaded once on first call (lazy), pinned to CPU.  Forcing CPU
+    avoids the Apple Silicon MPS meta-tensor bug (NotImplementedError: Cannot
+    copy out of meta tensor) that fires when sentence-transformers
+    auto-selects mps:0 on M-series Macs.
+
+    Load failures are cached: the first failure is logged; subsequent calls
+    return the same exception immediately rather than re-storming the thread
+    pool.  A successful load caches the model object as before.
+
+    Encoding is offloaded to a thread-pool executor to avoid blocking the
+    async event loop.
     """
 
     def __init__(self) -> None:
         self._model: Any = None
+        self._load_error: BaseException | None = None
         self._lock = asyncio.Lock()
 
     async def _load(self) -> Any:
         async with self._lock:
+            if self._load_error is not None:
+                raise self._load_error
             if self._model is None:
-                _logger.info("Loading embedding model %s (first call)", _MODEL_NAME)
+                _logger.info(
+                    "Loading embedding model %s (first call, device=cpu)", _MODEL_NAME
+                )
                 loop = asyncio.get_running_loop()
-                self._model = await loop.run_in_executor(None, _load_model_sync, _MODEL_NAME)
-                _logger.info("Embedding model loaded")
+                try:
+                    self._model = await loop.run_in_executor(
+                        None, _load_model_sync, _MODEL_NAME
+                    )
+                    _logger.info("Embedding model loaded successfully")
+                except Exception as exc:
+                    _logger.error(
+                        "Embedding model failed to load; semantic search is unavailable"
+                        " until next process restart: %s",
+                        exc,
+                    )
+                    self._load_error = exc
+                    raise
         return self._model
 
     async def embed(self, text: str) -> list[float]:
@@ -103,7 +127,14 @@ def _load_model_sync(model_name: str) -> Any:
     except Exception:
         pass
 
-    return SentenceTransformer(model_name)
+    # Force CPU to avoid the Apple Silicon MPS meta-tensor bug:
+    #   NotImplementedError: Cannot copy out of meta tensor; no data!
+    #   Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to()
+    #   when moving module from meta to a different device.
+    # On M-series Macs sentence-transformers auto-selects mps:0, which
+    # triggers this error with some torch/transformers version combinations.
+    # CPU is correct for this workload (384-dim MiniLM, web-process embed).
+    return SentenceTransformer(model_name, device="cpu")
 
 
 def _encode_sync(model: Any, text: str) -> Any:
