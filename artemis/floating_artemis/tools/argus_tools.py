@@ -10,6 +10,12 @@ acknowledges in the same turn. The background task runs research_district with i
 own DB session, produces a Callie-voiced summary, and posts it to the originating
 channel via SlackClient.
 
+v3 (resilient, current): dispatch_research PERSISTS a ``pending`` row in
+``argus_research_requests`` BEFORE firing the background task. The row captures
+channel_id, team_id, district_key, and signal so a process restart can recover
+and re-fire the task. On completion the row is marked ``done``; on repeated
+failure the row is marked ``failed`` and a fallback Slack post is sent.
+
 Channel ID resolution
 ---------------------
 The tool reads the ``floating_session_id_var`` context variable (set by the turn
@@ -31,6 +37,11 @@ Background task safety
 Wrapped in a try/except so any failure is logged at WARNING level and never
 propagates. Strong-referenced in ``_BACKGROUND_TASKS`` (same GC-guard pattern as
 ``artemis/trace/capture.py``) so asyncio.create_task() result isn't GC'd.
+
+Retry cap
+---------
+attempts >= 3 → mark failed + post fallback. Startup recovery only re-fires rows
+with attempts < 3, preventing infinite restart loops.
 """
 
 from __future__ import annotations
@@ -39,13 +50,19 @@ import asyncio
 import logging
 from typing import Any
 
+import artemis.db as _db
 from artemis.agent.types import Tool
+from artemis.argus.models import ArgusResearchRequest
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
+from sqlalchemy import select
 
 _logger = logging.getLogger(__name__)
 
 _SURFACE = "[surface:marketing-os]"
 _AGENT_GATE = "[agent:callie]"
+
+# Retry cap: after this many attempts, mark failed and post a fallback.
+_MAX_ATTEMPTS = 3
 
 # ── GC-retention guard (mirrors artemis/trace/capture.py pattern) ─────────────
 # asyncio.create_task() returns a weakly-referenced Task; holding a strong ref
@@ -101,7 +118,7 @@ DISPATCH_RESEARCH = Tool(
 
 
 async def _dispatch_research(inp: dict[str, Any]) -> str:
-    """Fire-and-acknowledge: schedule background research, return immediately.
+    """Fire-and-acknowledge: persist a pending row, schedule background research, return immediately.
 
     Returns a JSON payload like ``{"status":"dispatched","district":"TX-001"}``
     so Callie naturally produces the acknowledgement in her own turn without
@@ -134,16 +151,37 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
         session_id,
     )
 
+    # ── Resolve channel_id + team_id now (in-turn, before going async) ────────
+    channel_id, team_id = await _resolve_channel_and_team(session_id)
+
+    if not channel_id:
+        _logger.warning(
+            "dispatch_research: no channel_id resolved for session_id=%r — "
+            "cannot post Argus findings back to Slack",
+            session_id,
+        )
+        return json.dumps({"status": "dispatched", "district": district_key, "warning": "no_channel_resolved"})
+
+    # ── Persist a pending row BEFORE firing the task ───────────────────────────
+    request_id = await _insert_pending_request(
+        district_key=district_key,
+        channel_id=channel_id,
+        team_id=team_id,
+        signal=signal,
+        triggering_signal_id=triggering_signal_id,
+    )
+
     # Fire the background task (GC-guarded)
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop — shouldn't happen in production; fall back to sync error
         return "Error: no running event loop (dispatch_research requires async context)"
 
     task = loop.create_task(
         _safe_research_and_post(
-            session_id=session_id,
+            request_id=request_id,
+            channel_id=channel_id,
+            team_id=team_id,
             district_key=district_key,
             triggering_signal_id=triggering_signal_id,
             signal=signal,
@@ -157,12 +195,146 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
     return json.dumps({"status": "dispatched", "district": district_key})
 
 
+# ── Persistence helpers ────────────────────────────────────────────────────────
+
+
+async def _resolve_channel_and_team(session_id: str | None) -> tuple[str | None, str]:
+    """Resolve channel_id and team_id from a Slack session_id.
+
+    Returns (channel_id, team_id). channel_id may be None if resolution fails.
+    This runs in-turn (before the background task) so the resolved values are
+    captured in the persistent row and survive across process restarts.
+    """
+    if not session_id:
+        return None, ""
+
+    try:
+        from artemis.floating_artemis import repository as fa_repo
+        from artemis.floating_artemis.session_scope import _session_channel_id
+
+        async with _db.SessionLocal() as _sess:
+            try:
+                row = await fa_repo.get_session_by_id(_sess, session_id)
+                metadata: dict[str, Any] = (
+                    row.metadata_ if isinstance(row.metadata_, dict) else {}
+                )
+            except Exception:
+                metadata = {}
+
+        channel_id = _session_channel_id(session_id, metadata)
+        team_id = str(metadata.get("team_id") or "")
+        return channel_id, team_id
+    except Exception:
+        _logger.warning(
+            "dispatch_research: could not resolve channel/team from session_id=%r",
+            session_id,
+            exc_info=True,
+        )
+        return None, ""
+
+
+async def _insert_pending_request(
+    *,
+    district_key: str,
+    channel_id: str,
+    team_id: str,
+    signal: dict[str, Any] | None,
+    triggering_signal_id: str | None,
+) -> int | None:
+    """Insert a pending row into argus_research_requests; return the row id."""
+    try:
+        async with _db.SessionLocal() as session:
+            row = ArgusResearchRequest(
+                district_key=district_key,
+                channel_id=channel_id,
+                team_id=team_id,
+                signal=signal,
+                triggering_signal_id=triggering_signal_id,
+                status="pending",
+                attempts=0,
+            )
+            session.add(row)
+            await session.flush()
+            row_id: int = row.id
+            await session.commit()
+        _logger.info(
+            "dispatch_research: persisted pending request id=%s for district_key=%r",
+            row_id,
+            district_key,
+        )
+        return row_id
+    except Exception:
+        _logger.warning(
+            "dispatch_research: failed to persist pending request for district_key=%r — "
+            "proceeding without persistence (restart recovery will not apply)",
+            district_key,
+            exc_info=True,
+        )
+        return None
+
+
+async def _mark_request_done(request_id: int | None) -> None:
+    """Mark a request row as done with completed_at=now."""
+    if request_id is None:
+        return
+    try:
+        from datetime import UTC, datetime
+
+        async with _db.SessionLocal() as session:
+            row = await session.get(ArgusResearchRequest, request_id)
+            if row is not None:
+                row.status = "done"
+                row.completed_at = datetime.now(UTC)
+                await session.commit()
+    except Exception:
+        _logger.warning(
+            "dispatch_research: failed to mark request id=%s done",
+            request_id,
+            exc_info=True,
+        )
+
+
+async def _mark_request_failed(
+    request_id: int | None,
+    *,
+    error: str,
+    channel_id: str,
+    team_id: str,
+    district_key: str,
+) -> bool:
+    """Increment attempts; if >= _MAX_ATTEMPTS mark failed and return True (should post fallback)."""
+    if request_id is None:
+        return False
+    try:
+        async with _db.SessionLocal() as session:
+            row = await session.get(ArgusResearchRequest, request_id)
+            if row is None:
+                return False
+            row.attempts = (row.attempts or 0) + 1
+            row.error = error[:2000] if error else None
+            if row.attempts >= _MAX_ATTEMPTS:
+                row.status = "failed"
+                await session.commit()
+                return True  # caller should post fallback
+            await session.commit()
+            return False
+    except Exception:
+        _logger.warning(
+            "dispatch_research: failed to update request id=%s on error",
+            request_id,
+            exc_info=True,
+        )
+        return False
+
+
 # ── Background task ────────────────────────────────────────────────────────────
 
 
 async def _safe_research_and_post(
     *,
-    session_id: str | None,
+    request_id: int | None,
+    channel_id: str,
+    team_id: str,
     district_key: str,
     triggering_signal_id: str | None,
     signal: dict[str, Any] | None,
@@ -170,71 +342,56 @@ async def _safe_research_and_post(
     """Run research + Callie-voiced summary + Slack post. Swallows all exceptions."""
     try:
         await _research_and_post(
-            session_id=session_id,
+            request_id=request_id,
+            channel_id=channel_id,
+            team_id=team_id,
             district_key=district_key,
             triggering_signal_id=triggering_signal_id,
             signal=signal,
         )
-    except Exception:
+    except Exception as exc:
         _logger.warning(
-            "dispatch_research: background task failed for district_key=%r session_id=%r "
-            "(non-fatal, no Slack post will be sent)",
+            "dispatch_research: background task failed for district_key=%r "
+            "request_id=%s channel_id=%r (non-fatal)",
             district_key,
-            session_id,
+            request_id,
+            channel_id,
             exc_info=True,
         )
+        should_post_fallback = await _mark_request_failed(
+            request_id,
+            error=str(exc),
+            channel_id=channel_id,
+            team_id=team_id,
+            district_key=district_key,
+        )
+        if should_post_fallback:
+            _logger.warning(
+                "dispatch_research: request_id=%s reached max attempts (%d) for district_key=%r — "
+                "posting fallback to channel_id=%r",
+                request_id,
+                _MAX_ATTEMPTS,
+                district_key,
+                channel_id,
+            )
+            await _post_fallback(
+                channel_id=channel_id,
+                team_id=team_id,
+                district_key=district_key,
+            )
 
 
 async def _research_and_post(
     *,
-    session_id: str | None,
+    request_id: int | None,
+    channel_id: str,
+    team_id: str,
     district_key: str,
     triggering_signal_id: str | None,
     signal: dict[str, Any] | None,
 ) -> None:
-    """Core background logic: research → LLM summary → Slack post."""
-    import artemis.db as _db
-
-    # ── 1. Resolve channel_id and team_id from session context ────────────────
-    # The session_id for Slack turns is ``slack-callie-{team_id}-{channel_id}-{bucket}``.
-    # _session_channel_id reads metadata["channel_id"] first, then parses the id.
-    # team_id comes from session metadata["team_id"].
-    channel_id: str | None = None
-    team_id: str = ""
-
-    if session_id:
-        try:
-            import artemis.db as _db
-            from artemis.floating_artemis import repository as fa_repo
-            from artemis.floating_artemis.session_scope import _session_channel_id
-
-            async with _db.SessionLocal() as _sess:
-                try:
-                    row = await fa_repo.get_session_by_id(_sess, session_id)
-                    metadata: dict[str, Any] = (
-                        row.metadata_ if isinstance(row.metadata_, dict) else {}
-                    )
-                except Exception:
-                    metadata = {}
-
-            channel_id = _session_channel_id(session_id, metadata)
-            team_id = str(metadata.get("team_id") or "")
-        except Exception:
-            _logger.warning(
-                "dispatch_research: could not resolve channel/team from session_id=%r",
-                session_id,
-                exc_info=True,
-            )
-
-    if not channel_id:
-        _logger.warning(
-            "dispatch_research: no channel_id resolved for session_id=%r — "
-            "cannot post Argus findings back to Slack",
-            session_id,
-        )
-        return
-
-    # ── 2. Optionally fetch signal row if only signal_id provided ─────────────
+    """Core background logic: research → LLM summary → Slack post → mark done."""
+    # ── 1. Optionally fetch signal row if only signal_id provided ─────────────
     if signal is None and triggering_signal_id is not None:
         try:
             from artemis.marketing import repository as _repo
@@ -254,14 +411,14 @@ async def _research_and_post(
                 exc,
             )
 
-    # ── 3. Run research_district (background DB session) ──────────────────────
+    # ── 2. Run research_district (background DB session) ──────────────────────
     _logger.info(
-        "dispatch_research (bg): starting research for district_key=%r channel_id=%r",
+        "dispatch_research (bg): starting research for district_key=%r channel_id=%r request_id=%s",
         district_key,
         channel_id,
+        request_id,
     )
 
-    import artemis.db as _db
     from artemis.argus.flow import research_district
 
     async with _db.SessionLocal() as session:
@@ -273,7 +430,7 @@ async def _research_and_post(
         )
         await session.commit()
 
-    # ── 4. Produce a Callie-voiced summary via LLM ────────────────────────────
+    # ── 3. Produce a Callie-voiced summary via LLM ────────────────────────────
     callie_post = await _callie_summarize(district_key=district_key, summary=summary)
 
     # Apply Slack formatting + linting
@@ -285,9 +442,10 @@ async def _research_and_post(
             "dispatch_research: formatted Callie post is empty for district_key=%r; skipping Slack post",
             district_key,
         )
+        await _mark_request_done(request_id)
         return
 
-    # ── 5. Post back to channel as Callie ─────────────────────────────────────
+    # ── 4. Post back to channel as Callie ─────────────────────────────────────
     await _post_as_callie(
         channel_id=channel_id,
         team_id=team_id,
@@ -295,10 +453,78 @@ async def _research_and_post(
     )
 
     _logger.info(
-        "dispatch_research (bg): posted Argus findings to channel_id=%r for district_key=%r",
+        "dispatch_research (bg): posted Argus findings to channel_id=%r for district_key=%r request_id=%s",
         channel_id,
         district_key,
+        request_id,
     )
+
+    # ── 5. Mark request done ──────────────────────────────────────────────────
+    await _mark_request_done(request_id)
+
+
+# ── Startup recovery ───────────────────────────────────────────────────────────
+
+
+async def recover_pending_requests() -> None:
+    """Re-fire any pending Argus research requests orphaned by a previous process restart.
+
+    Called once at app startup (from the FastAPI lifespan hook in main.py).
+    Queries ``status='pending' AND attempts < _MAX_ATTEMPTS`` and schedules a
+    background task for each row. Non-blocking — does not delay startup.
+
+    These rows are DEFINITIONALLY orphaned: any task that was running died with the
+    previous process, so they will never complete on their own. We re-fire them
+    exactly as if dispatch_research had just been called.
+    """
+    try:
+        async with _db.SessionLocal() as session:
+            result = await session.execute(
+                select(ArgusResearchRequest).where(
+                    ArgusResearchRequest.status == "pending",
+                    ArgusResearchRequest.attempts < _MAX_ATTEMPTS,
+                )
+            )
+            rows = result.scalars().all()
+
+        if not rows:
+            _logger.info("dispatch_research startup_recovery: no orphaned pending requests")
+            return
+
+        _logger.info(
+            "dispatch_research startup_recovery: found %d orphaned pending request(s) — re-firing",
+            len(rows),
+        )
+
+        loop = asyncio.get_running_loop()
+        for row in rows:
+            task = loop.create_task(
+                _safe_research_and_post(
+                    request_id=row.id,
+                    channel_id=row.channel_id,
+                    team_id=row.team_id or "",
+                    district_key=row.district_key,
+                    triggering_signal_id=row.triggering_signal_id,
+                    signal=row.signal,
+                ),
+                name=f"argus_recover_{row.district_key}_{row.id}",
+            )
+            _BACKGROUND_TASKS.add(task)
+            task.add_done_callback(_BACKGROUND_TASKS.discard)
+            _logger.info(
+                "dispatch_research startup_recovery: re-fired request_id=%s district_key=%r",
+                row.id,
+                row.district_key,
+            )
+    except Exception:
+        _logger.warning(
+            "dispatch_research startup_recovery: failed to query/re-fire pending requests — "
+            "startup continues normally",
+            exc_info=True,
+        )
+
+
+# ── Callie summarize + post helpers ───────────────────────────────────────────
 
 
 async def _callie_summarize(
@@ -426,7 +652,6 @@ async def _post_as_callie(
     access_token from the Integration row in the DB. Then uses SlackClient to
     post.
     """
-    import artemis.db as _db
     from artemis.integrations.slack.client import SlackClient
     from artemis.routes.integrations_slack_events import _resolve_agent_slack_config
 
@@ -447,6 +672,31 @@ async def _post_as_callie(
 
     client = SlackClient(token=agent_cfg.access_token)
     await client.post_message(channel=channel_id, text=text)
+
+
+async def _post_fallback(
+    *,
+    channel_id: str,
+    team_id: str,
+    district_key: str,
+) -> None:
+    """Post a fallback message when a request has exhausted all retry attempts."""
+    try:
+        await _post_as_callie(
+            channel_id=channel_id,
+            team_id=team_id,
+            text=(
+                f"Argus couldn't complete the dig on {district_key} after {_MAX_ATTEMPTS} attempts "
+                "— flagging it. I'll retry when you ask again."
+            ),
+        )
+    except Exception:
+        _logger.warning(
+            "dispatch_research: _post_fallback itself failed for district_key=%r channel_id=%r",
+            district_key,
+            channel_id,
+            exc_info=True,
+        )
 
 
 # ── Registry helper ────────────────────────────────────────────────────────────
