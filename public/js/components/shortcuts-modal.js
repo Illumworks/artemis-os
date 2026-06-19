@@ -13,7 +13,7 @@ class ArtemisShortcutsModal extends HTMLElement {
             <tr><td><span class="kbd">&#8984;N</span></td><td>New session</td></tr>
             <tr><td><span class="kbd">&#8984;/</span></td><td>Show keyboard shortcuts</td></tr>
             <tr><td><span class="kbd">&#8984;B</span></td><td>Toggle right panel</td></tr>
-            <tr><td><span class="kbd">&#8984;&#8679;E</span></td><td>Open Dev Projects files</td></tr>
+            <tr><td><span class="kbd">&#8984;&#8679;E</span></td><td>Open Forge files</td></tr>
             <tr><td><span class="kbd">&#8984;&#8679;G</span></td><td>Open git panel</td></tr>
             <tr><td><span class="kbd">&#8984;&#8679;R</span></td><td>Open repos panel</td></tr>
             <tr><td><span class="kbd">&#8984;&#8679;V</span></td><td>Open events panel</td></tr>

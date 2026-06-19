@@ -136,7 +136,7 @@ const CAL_VIEW_STORAGE_KEY = 'artemis-cal-view';
 const CAL_FOCUS_DATE_STORAGE_KEY = 'artemis-cal-focus-date';
 const ACTIVE_VIEW_STORAGE_KEY = 'artemis-active-view';
 const DASHBOARD_CAPTURE_LOCAL_NOTES_STORAGE_KEY = 'artemis-dashboard-capture-local-notes';
-const SHELL_NAV_SECTION_ORDER = ['Personal Workspace', 'Operations', 'Dev Projects'];
+const SHELL_NAV_SECTION_ORDER = ['Personal Workspace', 'Operations', 'Forge'];
 const HOME_SHELL_BOOTSTRAPPED_KEY = '__artemisHomeShellBootstrapped__';
 const IS_VITEST = typeof process !== 'undefined' && Boolean(process.env?.VITEST);
 const DASHBOARD_CAPTURE_DEFAULTS = {
@@ -7129,7 +7129,7 @@ function buildMeetingFollowUpOutputsCopy(approvalCount, agentSignalCount) {
 
 function buildSourceNote(providerStatuses, notifications, timeReality) {
   const connectedProviders = Object.values(providerStatuses || {}).filter((status) => status?.connected).length;
-  return `Live inputs today: ${connectedProviders} connected provider${connectedProviders === 1 ? '' : 's'} and ${notifications.length} unread notification${notifications.length === 1 ? '' : 's'} feeding the shell. ${buildManualTimeRealityStatus(timeReality)} Calendar, Meetings, Jira Board, and OKR Studio live in Workspace, while Files now sits under Dev Projects.`;
+  return `Live inputs today: ${connectedProviders} connected provider${connectedProviders === 1 ? '' : 's'} and ${notifications.length} unread notification${notifications.length === 1 ? '' : 's'} feeding the shell. ${buildManualTimeRealityStatus(timeReality)} Calendar, Meetings, Jira Board, and OKR Studio live in Workspace, while Files now sits under Forge.`;
 }
 
 function inferBestWorkBlock(analytics, timeReality) {

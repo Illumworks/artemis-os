@@ -701,7 +701,7 @@ function createBotDOM() {
         </div>
         <div class="assistant-info">
           <div class="assistant-name">Artemis</div>
-          <div class="assistant-context">Operations · Dev Projects</div>
+          <div class="assistant-context">Operations · Forge</div>
         </div>
         <div class="assistant-header-actions">
           <button class="assistant-header-btn bot-sidebar-toggle-btn" title="Activity sidebar">

@@ -121,7 +121,7 @@ function buildSteps() {
     element: '#attach-btn',
     popover: {
       title: 'Attach Files',
-      description: 'Browse the selected project files under Dev Projects and attach them as context.',
+      description: 'Browse the selected project files under Forge and attach them as context.',
       side: 'top',
       align: 'center',
     },

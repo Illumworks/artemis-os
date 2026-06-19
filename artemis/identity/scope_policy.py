@@ -165,6 +165,26 @@ def allowance_for_agent_artemis() -> ScopeAllowance:
     return ScopeAllowance(allow_all=True)
 
 
+def allowance_for_agent_ares() -> ScopeAllowance:
+    """Ares — owner-private build partner. Reads his own agent scope plus
+    Artemis's context (the shared 'one brain'), and NOTHING else.
+
+    NOT allow_all: Ares must never read marketing, enablement, or other humans'
+    personal scopes. Jon is the owner, so his personal context lives in the
+    agent:artemis / agent:floating-artemis scopes (the personal:<user_id>
+    mechanism is for non-owner humans) — granting those here gives Ares Jon's
+    context without opening the marketing/enablement surfaces.
+
+    Coworkers and other agents must NOT be able to read agent:ares; that is
+    enforced structurally by their own allowances never listing 'ares'.
+    """
+    return ScopeAllowance(
+        allow_all=False,
+        allowed_agent_ids=frozenset({"ares", "artemis", "floating-artemis"}),
+        personal_user_id=None,
+    )
+
+
 def allowance_denied() -> ScopeAllowance:
     """Deny all — returned for unknown/unresolved identities."""
     return ScopeAllowance(denied=True)
@@ -205,6 +225,8 @@ def allowed_scopes_for_agent(agent_id: str) -> ScopeAllowance:
         return allowance_for_agent_callie()
     if normalized == "kai":
         return allowance_for_agent_kai()
+    if normalized == "ares":
+        return allowance_for_agent_ares()
     _logger.warning("allowed_scopes_for_agent: unknown agent_id=%r — denying", agent_id)
     return allowance_denied()
 

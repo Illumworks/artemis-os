@@ -61,7 +61,7 @@ registerDocSection({
   │   ├── telegram.js       → Telegram integration
   │   └── welcome.js        → Guided tour (Driver.js)
   ├── panels/
-  │   ├── dev-project-files.js → Dev Projects file rail
+  │   ├── dev-project-files.js → Forge file rail
   │   ├── mcp-manager.js    → MCP server management
   │   ├── tips-feed.js      → Tips &amp; shortcuts feed
   │   ├── assistant-bot.js  → Artemis assistant bot panel
@@ -85,7 +85,7 @@ registerDocSection({
         <tr><td>ws:connected</td><td><em>none</em> — initial connection established</td></tr>
         <tr><td>ws:reconnected</td><td><em>none</em> — reconnected after disconnect</td></tr>
         <tr><td>ws:disconnected</td><td><em>none</em> — connection lost</td></tr>
-        <tr><td>dev-project-files:focus</td><td><em>none</em> — focus the Dev Projects files rail</td></tr>
+        <tr><td>dev-project-files:focus</td><td><em>none</em> — focus the Forge files rail</td></tr>
       </tbody>
     </table>
 

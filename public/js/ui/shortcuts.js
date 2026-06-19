@@ -92,7 +92,7 @@ registerCommand("shortcuts", {
 // Register /files and /git slash commands
 registerCommand("files", {
   category: "app",
-  description: "Focus Dev Projects files",
+  description: "Focus Forge files",
   execute() {
     localStorage.setItem(DEV_PROJECT_FILES_FOCUS_STORAGE_KEY, "1");
     setState("view", "chat");

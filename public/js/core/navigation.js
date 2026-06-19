@@ -93,8 +93,8 @@ export const PRIMARY_NAV_DESTINATIONS = [
   },
   {
     id: DEV_PROJECTS_VIEW,
-    label: "Dev Projects",
-    shortLabel: "Projects",
+    label: "Forge",
+    shortLabel: "Forge",
     description: "Project-scoped chat, sessions, files, and project context.",
   },
 ];
@@ -247,8 +247,8 @@ export const SECONDARY_NAV_DESTINATIONS = [
     id: "files",
     label: "Files",
     shortLabel: "Files",
-    description: "Project tree, dirty state, and editor handoff for the selected Dev Project.",
-    section: "Dev Projects",
+    description: "Project tree, dirty state, and editor handoff for the selected Forge project.",
+    section: "Forge",
     view: DEV_PROJECTS_VIEW,
     action: "open-project-files",
   },

@@ -29,6 +29,9 @@ _AGENT_SURFACE_ALLOWLIST: dict[str, frozenset[str]] = {
     # Kai (Chiron) is an enablement-scoped read-only agent — no surface entitlements.
     # His retrieval tools register unconditionally (not surface-gated) in tool_registry.py.
     "kai": frozenset(),
+    # Ares is Jon's owner-private build partner — he lives only in the Forge surface
+    # (slug "dev-projects", display label "Forge"). No marketing/personal surfaces.
+    "ares": frozenset({"dev-projects"}),
 }
 
 

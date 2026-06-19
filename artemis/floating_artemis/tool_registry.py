@@ -41,6 +41,39 @@ def _build_kai_tool_registry() -> AuthorizedToolRegistry:
     return registry
 
 
+def _build_ares_tool_registry(agent_id: str) -> AuthorizedToolRegistry:
+    """Build Ares's Brief-1 registry: owner-private, read-only conversation tools.
+
+    Ares is Jon's private build partner, but THIS brief gives him no coding or
+    agency capability yet (the Forge code loop + project-workspace memory land in
+    Brief 2). He gets ONLY the read tools he needs to recall context and discuss
+    the build: query_memory (scope-gated to his owner-private allowance), plus a
+    few read-only inspection tools. NO write/propose/spawn, NO marketing, NO
+    enablement, NO OKR, NO gcal/gmail/slack-posting/builders/system tools.
+
+    Like Kai's registry, this is an early-return that does NOT fall through to the
+    general tool registrations.
+    """
+    from artemis.floating_artemis.tools.core import (
+        LIST_SCOPES,
+        QUERY_MEMORY,
+        READ_FILE,
+        SURFACE_STATUS,
+        _list_scopes,
+        _make_query_memory,
+        _read_file,
+        _surface_status,
+    )
+
+    registry = AuthorizedToolRegistry()
+    # query_memory is gated to Ares's owner-private scope allowance (M3).
+    registry.register(QUERY_MEMORY, _make_query_memory(agent_id), layer=1)
+    registry.register(LIST_SCOPES, _list_scopes, layer=1)
+    registry.register(SURFACE_STATUS, _surface_status, layer=1)
+    registry.register(READ_FILE, _read_file, layer=1)
+    return registry
+
+
 def build_authorized_tool_registry(
     available_surfaces: set[str],
     agent_id: str | None = None,
@@ -62,6 +95,11 @@ def build_authorized_tool_registry(
     # Early return — no fallthrough to the general tool registrations.
     if normalized_agent == "kai":
         return _build_kai_tool_registry()
+
+    # SECURITY: Ares (Brief 1) gets only owner-private read tools — no coding/agency.
+    # Early return — no fallthrough to the general tool registrations.
+    if normalized_agent == "ares":
+        return _build_ares_tool_registry(agent_id or "ares")
 
     registry = AuthorizedToolRegistry()
     register_core_tools(registry, agent_id=agent_id)

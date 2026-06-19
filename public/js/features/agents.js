@@ -183,7 +183,7 @@ function renderRecentRunsSection() {
   const runsHeader = renderSectionHeader(
     "Recent Runs",
     recentRuns.length ? `${recentRuns.length} visible` : "0 visible",
-    "Operational history lives here so Dev Projects can stay focused on human coding conversations."
+    "Operational history lives here so Forge can stay focused on human coding conversations."
   );
   $.agentPanel.appendChild(runsHeader);
 
@@ -199,7 +199,7 @@ function renderRecentRunsSection() {
         <span class="agent-icon">${getMonitorIcon()}</span>
         No recent runs yet
       </div>
-      <div class="toolbox-card-desc">Launch an agent, chain, DAG, or orchestration run and the latest activity will appear here instead of the Dev Projects rail.</div>
+      <div class="toolbox-card-desc">Launch an agent, chain, DAG, or orchestration run and the latest activity will appear here instead of the Forge rail.</div>
     `;
     emptyCard.addEventListener("click", () => {
       $.agentSidebar?.classList.add("hidden");

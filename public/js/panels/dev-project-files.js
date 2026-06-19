@@ -128,7 +128,7 @@ function updateHeader(base, status, query = "") {
 
   if (!base) {
     if ($.devProjectFilesSummary) {
-      $.devProjectFilesSummary.textContent = "Select a project to browse files under Dev Projects.";
+      $.devProjectFilesSummary.textContent = "Select a project to browse files under Forge.";
     }
     if ($.devProjectFilesDirty) {
       $.devProjectFilesDirty.textContent = "No project";
@@ -304,7 +304,7 @@ async function refreshFiles({ force = false } = {}) {
 
   if (!base) {
     updateHeader("", null);
-    renderEmptyState("Select a project", "Files live under Dev Projects and follow the selected project.");
+    renderEmptyState("Select a project", "Files live under Forge and follow the selected project.");
     setActiveFile("");
     return;
   }
