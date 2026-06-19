@@ -116,6 +116,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     _install_loop_diag()
     # --- END TEMP DIAG ---
+    # Wait for Postgres to be ready before starting any schedulers.  On Mac
+    # wake-from-sleep / Postgres cold-start the DB may not accept connections
+    # for several seconds; schedulers that fire immediately against a dead pool
+    # produce cascading job failures and can leave the app unresponsive.
+    # Imported lazily to avoid triggering any circular-import cycles at
+    # module load time.
+    from artemis.db import wait_for_db_ready
+
+    await wait_for_db_ready()
     # Subscribe the Writing Studio adapter to draft lifecycle events.
     ws_adapter.init_adapter()
     # Start the meeting auto-summarizer scheduler.
