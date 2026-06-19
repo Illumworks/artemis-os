@@ -104,6 +104,22 @@ async def _safe_slack_signals() -> dict[str, Any] | None:
     return None
 
 
+async def _safe_engagement_weights(session: AsyncSession) -> dict[str, float]:
+    """Return brief-item engagement weights from memory observations.
+
+    Reads ``brief_reaction:*`` observations from the ``agent:floating-artemis``
+    scope — the same scope that ``record_reaction`` writes to.  Returns an
+    empty dict (neutral, no effect) on any failure.
+    """
+    try:
+        from artemis.proactivity.brief_reactions import read_engagement_weights
+
+        return await read_engagement_weights(session)
+    except Exception:
+        logger.debug("Engagement weights unavailable", exc_info=True)
+        return {}
+
+
 async def _safe_brief_exclusions(session: AsyncSession) -> set[str]:
     """Return the set of Jira ticket keys Jon has asked to suppress from the brief.
 
@@ -174,6 +190,7 @@ async def gather_sources(session: AsyncSession) -> dict[str, Any]:
         memory,
         previous_brief,
         brief_exclusions,
+        engagement_weights,
     ) = await asyncio.gather(
         _own(_safe_jira),
         _own(_safe_calendar),
@@ -183,6 +200,7 @@ async def gather_sources(session: AsyncSession) -> dict[str, Any]:
         _own(_safe_memory),
         _own(_safe_previous_brief),
         _own(_safe_brief_exclusions),
+        _own(_safe_engagement_weights),
         return_exceptions=True,
     )
 
@@ -201,4 +219,6 @@ async def gather_sources(session: AsyncSession) -> dict[str, Any]:
         "previousBrief": _unwrap(previous_brief, None),
         # Private key consumed by _build_context_string — not passed to LLM directly.
         "_excluded_ticket_keys": _unwrap(brief_exclusions, set()),
+        # Private key consumed by generator — not passed to LLM directly.
+        "_engagement_weights": _unwrap(engagement_weights, {}),
     }

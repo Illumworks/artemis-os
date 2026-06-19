@@ -47,6 +47,8 @@ _STALE_REVIEW_ESCALATION_JOB_ID = "proactivity_stale_review_escalation"
 _COMMITMENTS_FOLLOWUP_JOB_ID = "proactivity_commitments_followup"
 _COMMITMENTS_PROPOSALS_DIGEST_JOB_ID = "proactivity_commitments_proposals_digest"
 _HUB_ESCALATION_JOB_ID = "hub_agent_escalation"
+_PRE_MEETING_PREP_JOB_ID = "proactivity_pre_meeting_prep"
+_COMMITMENT_URGENCY_NUDGE_JOB_ID = "proactivity_commitment_urgency_nudge"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -67,12 +69,14 @@ def start_proactivity_scheduler() -> None:
     _register_commitments_followup_job(scheduler)
     _register_commitments_proposals_digest_job(scheduler)
     _register_hub_escalation_job(scheduler)
+    _register_pre_meeting_prep_job(scheduler)
+    _register_commitment_urgency_nudge_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
             "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, "
             "review escalation cron=%r, commitments cron=%r, proposals digest cron=%r, "
-            "hub escalation cron=%r)",
+            "hub escalation cron=%r, pre_meeting_prep cron=%r, urgency_nudge cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
             settings.okr_checkin_cron,
@@ -80,6 +84,8 @@ def start_proactivity_scheduler() -> None:
             settings.commitments_followup_cron,
             settings.commitments_proposals_digest_cron,
             settings.hub_escalation_cron,
+            settings.pre_meeting_prep_cron,
+            settings.commitment_urgency_nudge_cron,
         )
 
 
@@ -187,6 +193,38 @@ def _register_hub_escalation_job(scheduler: AsyncIOScheduler) -> None:
     )
 
 
+def _register_pre_meeting_prep_job(scheduler: AsyncIOScheduler) -> None:
+    """Register the pre-meeting prep sweep job (every 30 min on weekdays)."""
+    trigger = CronTrigger.from_crontab(
+        settings.pre_meeting_prep_cron,
+        timezone=settings.morning_brief_tz,
+    )
+    scheduler.add_job(
+        _fire_pre_meeting_prep,
+        trigger=trigger,
+        id=_PRE_MEETING_PREP_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=1800,
+    )
+
+
+def _register_commitment_urgency_nudge_job(scheduler: AsyncIOScheduler) -> None:
+    """Register the commitment urgency-nudge sweep job (every 2 hours on weekdays)."""
+    trigger = CronTrigger.from_crontab(
+        settings.commitment_urgency_nudge_cron,
+        timezone=settings.morning_brief_tz,
+    )
+    scheduler.add_job(
+        _fire_commitment_urgency_nudge,
+        trigger=trigger,
+        id=_COMMITMENT_URGENCY_NUDGE_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
 async def _fire_hub_escalation() -> None:
     """Run the hub escalation sweep — escalate overdue agent pending asks."""
     from artemis.hub.escalation import run_escalation_sweep
@@ -198,6 +236,168 @@ async def _fire_hub_escalation() -> None:
         summary.escalated,
         summary.failed,
     )
+
+
+async def _fire_pre_meeting_prep() -> None:
+    """Scan today's upcoming events and send a prep DM for any starting soon.
+
+    Uses the hub sole-interrupt path (Artemis DM) only when a meeting is
+    imminent.  Dedup is handled via memory observations so Jon never gets
+    the same prep twice for the same event.
+    """
+    from artemis.proactivity.meeting_prep import (
+        assemble_prep_context,
+        fetch_already_sent_event_ids,
+        fetch_today_upcoming_events,
+        filter_events_needing_prep,
+        format_prep_message,
+        mark_prep_sent,
+    )
+
+    now_utc = datetime.now(UTC)
+    async with _db.SessionLocal() as session:
+        try:
+            events = await fetch_today_upcoming_events(session)
+            if not events:
+                logger.debug("pre_meeting_prep: no events today")
+                return
+
+            already_sent = await fetch_already_sent_event_ids(session)
+            due_events = filter_events_needing_prep(events, now=now_utc, already_sent=already_sent)
+
+            if not due_events:
+                logger.debug("pre_meeting_prep: no events in prep window")
+                return
+
+            token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
+            if not token:
+                logger.warning("pre_meeting_prep: no Slack token for artemis — skipping")
+                return
+
+            from artemis.integrations.slack.client import SlackClient
+
+            recipient_id = await _resolve_morning_brief_recipient(session)
+            slack_client = SlackClient(token=token)
+
+            for event in due_events:
+                try:
+                    ctx = await assemble_prep_context(session, event=event)
+                    prep_text = format_prep_message(ctx, now=now_utc)
+
+                    await slack_client.post_dm(user=recipient_id, text=prep_text)
+                    await mark_prep_sent(session, event_id=event.event_id)
+                    await session.commit()
+
+                    logger.info(
+                        "pre_meeting_prep: sent prep for event=%r (event_id=%s) starting_in=%.0f min",
+                        event.title,
+                        event.event_id,
+                        (event.start_utc - now_utc).total_seconds() / 60,
+                    )
+                except Exception:
+                    logger.exception(
+                        "pre_meeting_prep: failed for event_id=%s", event.event_id
+                    )
+                    await session.rollback()
+        except Exception:
+            logger.exception("pre_meeting_prep: sweep failed")
+
+
+async def _fire_commitment_urgency_nudge() -> None:
+    """Nudge on commitments due within the urgency window (above the daily digest).
+
+    The daily digest catches commitments due within settings.commitments_due_soon_hours
+    (default 48h).  This sweep fires for the *very near* window
+    (settings.commitment_urgency_hours, default 12h), sending an interrupt-bar
+    DM so Jon doesn't miss a commitment on the day it's due.
+
+    Dedup: only personal_ops commitments (not marketing); uses the
+    Artemis DM path (sole-interrupt). Commitments already notified within
+    settings.commitments_renotify_hours are skipped to prevent spam.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from artemis.proactivity.models import Commitment
+
+    now_utc = datetime.now(UTC)
+    urgency_cutoff = now_utc + timedelta(hours=settings.commitment_urgency_hours)
+    renotify_cutoff = now_utc - timedelta(hours=settings.commitments_renotify_hours)
+
+    async with _db.SessionLocal() as session:
+        try:
+            # Find active personal_ops commitments due within the urgency window
+            # that haven't been notified recently.
+            stmt = select(Commitment).where(
+                Commitment.status == "active",
+                Commitment.sensitivity == "personal_ops",
+                Commitment.due.isnot(None),
+                Commitment.due <= urgency_cutoff,
+                Commitment.due >= now_utc,  # not yet past due (daily digest handles overdue)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+
+            eligible = [
+                c for c in rows
+                if (
+                    c.last_notified_at is None
+                    or c.last_notified_at.replace(tzinfo=UTC) < renotify_cutoff
+                )
+            ]
+
+            if not eligible:
+                logger.debug(
+                    "commitment_urgency_nudge: no eligible commitments (total_active=%d)",
+                    len(rows),
+                )
+                return
+
+            token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
+            if not token:
+                logger.warning("commitment_urgency_nudge: no Slack token — skipping")
+                return
+
+            from artemis.integrations.slack.client import SlackClient
+            from artemis.writing_rules import lint_agent_text
+
+            recipient_id = await _resolve_morning_brief_recipient(session)
+            slack_client = SlackClient(token=token)
+
+            for commitment in eligible:
+                try:
+                    due_dt = commitment.due.astimezone(UTC)
+                    hours_left = max(0, (due_dt - now_utc).total_seconds() / 3600)
+                    if hours_left < 1:
+                        time_label = "less than an hour"
+                    else:
+                        time_label = f"~{int(hours_left)}h"
+
+                    text = str(lint_agent_text(
+                        f":alarm_clock: *Commitment due in {time_label}:* {commitment.text}\n"
+                        f"Reply 'done {commitment.id}' to close, "
+                        f"'snooze {commitment.id} 2h' to snooze."
+                    ))
+
+                    await slack_client.post_dm(user=recipient_id, text=text)
+                    await session.execute(
+                        __import__("sqlalchemy", fromlist=["update"]).update(Commitment)
+                        .where(Commitment.id == commitment.id)
+                        .values(last_notified_at=now_utc)
+                    )
+                    await session.commit()
+                    logger.info(
+                        "commitment_urgency_nudge: nudged commitment_id=%d due_in=%.1fh",
+                        commitment.id,
+                        hours_left,
+                    )
+                except Exception:
+                    logger.exception(
+                        "commitment_urgency_nudge: failed for commitment_id=%d", commitment.id
+                    )
+                    await session.rollback()
+        except Exception:
+            logger.exception("commitment_urgency_nudge: sweep failed")
 
 
 async def _fire_okr_checkin() -> None:
