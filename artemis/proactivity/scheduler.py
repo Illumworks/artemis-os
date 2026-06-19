@@ -69,7 +69,10 @@ def start_proactivity_scheduler() -> None:
     _register_commitments_followup_job(scheduler)
     _register_commitments_proposals_digest_job(scheduler)
     _register_hub_escalation_job(scheduler)
-    _register_pre_meeting_prep_job(scheduler)
+    # Pre-meeting prep DISABLED (Jon, 2026-06-18: rarely needed). Code kept in
+    # meeting_prep.py for possible on-demand use. The value is POST-meeting action
+    # execution (scheduling from action items) — built separately.
+    # _register_pre_meeting_prep_job(scheduler)
     _register_commitment_urgency_nudge_job(scheduler)
     if not scheduler.running:
         scheduler.start()
