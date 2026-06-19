@@ -422,6 +422,61 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Screen-Time Watch — Callie reporting to #policy-watch (Brief 2) ─────────
+    # Additive, dormant-until-set (same pattern as callie_proactive_channel).
+    # A NEW consumer of the screentime_signals table — does NOT change Callie's
+    # campaign push behavior. Empty channel = feature OFF (no posts at all).
+    screentime_report_channel: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_SCREENTIME_REPORT_CHANNEL",
+            "SCREENTIME_REPORT_CHANNEL",
+        ),
+        description=(
+            "Slack channel ID for Callie's Screen-Time Watch reports (#policy-watch). "
+            "Empty = feature OFF — no digest, no big-move alerts. Dedicated channel, "
+            "separate from callie_proactive_channel (campaign signals) and the "
+            "approval-gate channel. Set to enable both the weekly digest and immediate "
+            "big-move alerts."
+        ),
+    )
+    screentime_bigmove_states: str = Field(
+        default="CA,TX,FL,NY,PA,IL,OH,GA,NC,MI",
+        validation_alias=AliasChoices(
+            "ARTEMIS_SCREENTIME_BIGMOVE_STATES",
+            "SCREENTIME_BIGMOVE_STATES",
+        ),
+        description=(
+            "Comma-separated 2-letter codes for the 'large' states whose moves count "
+            "as big. A passed UNFAVORABLE move (blanket restriction) in one of these "
+            "states fires an immediate alert. Empty = no state is treated as large "
+            "(so the large-state rule never fires)."
+        ),
+    )
+    screentime_bigmove_statuses: str = Field(
+        default="passed,amended",
+        validation_alias=AliasChoices(
+            "ARTEMIS_SCREENTIME_BIGMOVE_STATUSES",
+            "SCREENTIME_BIGMOVE_STATUSES",
+        ),
+        description=(
+            "Comma-separated signal statuses that count as a 'real move that landed' "
+            "for the big-move alert (vs. merely proposed). Default 'passed,amended'."
+        ),
+    )
+    screentime_bigmove_favorable_alert: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "ARTEMIS_SCREENTIME_BIGMOVE_FAVORABLE_ALERT",
+            "SCREENTIME_BIGMOVE_FAVORABLE_ALERT",
+        ),
+        description=(
+            "When True, a passed FAVORABLE move with an evidence-based carve-out fires "
+            "an immediate alert in ANY state (a new carve-out is strategically useful "
+            "everywhere). Set False to alert only on large-state unfavorable moves."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

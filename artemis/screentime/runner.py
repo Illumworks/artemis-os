@@ -150,6 +150,25 @@ async def run_screentime_pipeline(
                 continue
             if inserted:
                 report.stored_new += 1
+                # Brief 2: immediate big-move alert to #policy-watch. Gated on
+                # the report channel being set (dormant otherwise) and fully
+                # failure-safe (never raises out of the sweep). Only fires for
+                # NEWLY stored signals so a duplicate re-run can't re-alert.
+                try:
+                    from artemis.config import settings as _settings
+
+                    if _settings.screentime_report_channel:
+                        from artemis.screentime.reporting import (
+                            maybe_alert_big_move_by_hash,
+                        )
+
+                        await maybe_alert_big_move_by_hash(session, c.content_hash)
+                except Exception:
+                    _logger.warning(
+                        "screentime: big-move alert hook failed for %r",
+                        c.title[:60],
+                        exc_info=True,
+                    )
             else:
                 report.duplicates += 1
 
