@@ -253,7 +253,8 @@ function indexAitVideoLibrary() {
       key: SOURCE + ':' + number,                      // stable id
       asset_type: 'student_video',
       title: videoName || number,
-      audience: product,
+      // No audience: these are filtered by grade/product/language/micro-intervention
+      // (all in tags), not audience. (Putting Product here polluted the audience facet.)
       tags: compact_([grade, product, language, micro]),
       searchable_text: compact_([videoName, grade, product, language, micro]).join(' '),
       links: [link_('video', 'Video', videoUrl, 'customer', false, false)],
