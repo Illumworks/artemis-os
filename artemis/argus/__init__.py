@@ -21,10 +21,22 @@ NOT reimplement dedup — it rides the memory layer.
 """
 
 from artemis.argus.drawer import read_district_drawer, write_district_findings
-from artemis.argus.flow import research_district
 
 __all__ = [
     "read_district_drawer",
     "write_district_findings",
     "research_district",
 ]
+
+
+def __getattr__(name: str):
+    # Lazy-load research_district to break a circular import: flow -> research ->
+    # providers.fallback -> claude_code.adapter, which (via mcp_server ->
+    # tool_registry -> argus_tools -> argus.models -> this __init__) re-enters the
+    # half-initialized adapter at import time. Deferring to attribute access means
+    # providers are fully initialized by the time this resolves.
+    if name == "research_district":
+        from artemis.argus.flow import research_district
+
+        return research_district
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
