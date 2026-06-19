@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -88,3 +97,46 @@ class DevAnnotation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ProjectWorkspaceMemory(Base):
+    """One-brain drawer per project: plan, decisions log, file map, progress, open threads.
+
+    Exactly one row per project (UNIQUE on project_id). The decisions column is
+    append-only — entries are never removed (lossless memory rule).
+    """
+
+    __tablename__ = "project_workspace_memory"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_project_workspace_memory_project"),
+        Index("ix_project_workspace_memory_project", "project_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("dev_projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # newest-wins free-text plan
+    plan: Mapped[str | None] = mapped_column(Text)
+    # append-only log: [{"ts": "<iso>", "text": "<str>"}, ...]
+    decisions: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    # newest-wins snapshot: {path: purpose}
+    file_map: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    # newest-wins status text
+    progress: Mapped[str | None] = mapped_column(Text)
+    # unresolved items: [{"text": "<str>", ...}, ...]
+    open_threads: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    project: Mapped[DevProject] = relationship()
