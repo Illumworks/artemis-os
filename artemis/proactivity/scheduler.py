@@ -49,6 +49,7 @@ _COMMITMENTS_PROPOSALS_DIGEST_JOB_ID = "proactivity_commitments_proposals_digest
 _HUB_ESCALATION_JOB_ID = "hub_agent_escalation"
 _PRE_MEETING_PREP_JOB_ID = "proactivity_pre_meeting_prep"
 _COMMITMENT_URGENCY_NUDGE_JOB_ID = "proactivity_commitment_urgency_nudge"
+_POST_MEETING_SCHEDULING_JOB_ID = "proactivity_post_meeting_scheduling"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -74,12 +75,17 @@ def start_proactivity_scheduler() -> None:
     # execution (scheduling from action items) — built separately.
     # _register_pre_meeting_prep_job(scheduler)
     _register_commitment_urgency_nudge_job(scheduler)
+    # Post-meeting action execution (v1: scheduling). Detects schedule-able
+    # action items from recent meetings and PROPOSES times to Jon; creation
+    # happens via the agency gate on his confirmation. Replaces pre-meeting prep.
+    _register_post_meeting_scheduling_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
             "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, "
             "review escalation cron=%r, commitments cron=%r, proposals digest cron=%r, "
-            "hub escalation cron=%r, pre_meeting_prep cron=%r, urgency_nudge cron=%r)",
+            "hub escalation cron=%r, pre_meeting_prep cron=%r, urgency_nudge cron=%r, "
+            "post_meeting_scheduling cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
             settings.okr_checkin_cron,
@@ -89,6 +95,7 @@ def start_proactivity_scheduler() -> None:
             settings.hub_escalation_cron,
             settings.pre_meeting_prep_cron,
             settings.commitment_urgency_nudge_cron,
+            settings.post_meeting_scheduling_cron,
         )
 
 
@@ -226,6 +233,50 @@ def _register_commitment_urgency_nudge_job(scheduler: AsyncIOScheduler) -> None:
         max_instances=1,
         misfire_grace_time=3600,
     )
+
+
+def _register_post_meeting_scheduling_job(scheduler: AsyncIOScheduler) -> None:
+    """Register the post-meeting scheduling sweep (every 20 min on weekdays)."""
+    trigger = CronTrigger.from_crontab(
+        settings.post_meeting_scheduling_cron,
+        timezone=settings.morning_brief_tz,
+    )
+    scheduler.add_job(
+        _fire_post_meeting_scheduling,
+        trigger=trigger,
+        id=_POST_MEETING_SCHEDULING_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+async def _fire_post_meeting_scheduling() -> None:
+    """Scan recent meeting action items, propose scheduling to Jon via DM.
+
+    PROPOSE-ONLY — never creates events. Creation goes through the agency gate
+    when Jon replies "yes" to the proposal DM.
+    """
+    from artemis.proactivity.post_meeting_scheduling import (
+        run_post_meeting_scheduling_sweep,
+    )
+
+    async with _db.SessionLocal() as session:
+        try:
+            summary = await run_post_meeting_scheduling_sweep(session)
+            logger.info(
+                "post_meeting_scheduling sweep finished (meetings=%d classified=%d "
+                "scheduling=%d proposed=%d skipped_dup=%d skipped_no_slots=%d)",
+                summary.meetings_scanned,
+                summary.items_classified,
+                summary.scheduling_items,
+                summary.proposals_sent,
+                summary.skipped_already_proposed,
+                summary.skipped_no_slots,
+            )
+        except Exception:
+            logger.exception("post_meeting_scheduling sweep failed")
+            await session.rollback()
 
 
 async def _fire_hub_escalation() -> None:

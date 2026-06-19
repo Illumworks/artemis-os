@@ -260,6 +260,16 @@ class Settings(BaseSettings):
             "for commitments due within the next 12 hours that haven't been nudged."
         ),
     )
+    post_meeting_scheduling_cron: str = Field(
+        default="*/20 8-18 * * 1-5",
+        description=(
+            "Cron expression for the post-meeting scheduling sweep "
+            "(default: every 20 min, weekdays 8am-6pm). Scans recent meeting "
+            "action items, detects scheduling requests, and PROPOSES candidate "
+            "times to Jon via DM. Never auto-creates events — creation goes "
+            "through the agency gate on Jon's confirmation."
+        ),
+    )
     commitment_urgency_hours: int = Field(
         default=12,
         description=(

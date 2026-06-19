@@ -231,6 +231,39 @@ class GCalClient:
         data = await self._get(f"/calendars/{calendar_id}/events/{event_id}")
         return Event.model_validate(data)
 
+    async def query_freebusy(
+        self,
+        time_min: str,
+        time_max: str,
+        calendar_ids: list[str],
+    ) -> dict[str, object]:
+        """Query free/busy for one or more calendars (emails or calendar IDs).
+
+        Returns the raw Google freeBusy response. The shape is::
+
+            {
+              "calendars": {
+                "alice@org.com": {"busy": [{"start": "...", "end": "..."}]},
+                "bob@org.com":   {"errors": [{"domain": "global",
+                                              "reason": "notFound"}]}
+              }
+            }
+
+        IMPORTANT — visibility caveat: Google only returns busy intervals for a
+        calendar the authed account is allowed to see. Inside a Google Workspace
+        org, free/busy is usually visible org-wide by default, so coworkers'
+        busy times come back. For any calendar the account can't read, Google
+        returns an ``errors`` array under that calendar id instead of ``busy``.
+        Callers MUST treat a calendar present in ``errors`` (or absent entirely)
+        as "availability unknown" and degrade gracefully — never as "free".
+        """
+        body: dict[str, object] = {
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "items": [{"id": cid} for cid in calendar_ids],
+        }
+        return await self._post("/freeBusy", body)
+
     async def create_event(
         self,
         calendar_id: str,
