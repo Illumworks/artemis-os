@@ -21,8 +21,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
 
-revision: str = "0098"
-down_revision: str | None = "0097"
+revision: str = "0099"
+down_revision: str | None = "0098"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
