@@ -3,8 +3,9 @@
 Exposes:
   - search_enablement_assets: semantic + keyword search over enablement_assets
   - get_enablement_asset: single asset lookup by drive_file_id or title
+  - list_enablement_facets: facet vocabulary (audiences, types, top tags with counts)
 
-Both tools are READ-ONLY and carry no side effects.  They are gated on
+All tools are READ-ONLY and carry no side effects.  They are gated on
 agent_id == "kai" in tool_registry.py.
 
 source_scope access policy (enforced here):
@@ -63,18 +64,34 @@ def _asset_to_dict(asset: Any) -> dict[str, Any]:
 
 
 async def _search_enablement_assets(inp: dict[str, Any]) -> str:
-    """Vector + keyword search over enablement_assets."""
+    """Vector + keyword search over enablement_assets with optional facet filters."""
     query = str(inp.get("query", "")).strip()
     if not query:
         return "Error: query is required"
     limit = int(inp.get("limit", 5))
     limit = max(1, min(limit, 20))  # clamp: 1–20
 
+    # Optional structured filters.
+    audience_filter: str | None = inp.get("audience")
+    asset_type_filter: str | None = inp.get("asset_type")
+    tags_filter: list[str] | None = inp.get("tags")
+
     try:
-        from sqlalchemy import or_, select
+        from sqlalchemy import func, or_, select
 
         import artemis.db as _db
         from artemis.enablement.models import EnablementAsset
+
+        def _apply_filters(stmt: Any) -> Any:
+            """AND the optional facet filters onto any SELECT statement."""
+            if audience_filter:
+                stmt = stmt.where(func.lower(EnablementAsset.audience) == audience_filter.lower())
+            if asset_type_filter:
+                stmt = stmt.where(EnablementAsset.type == asset_type_filter)
+            if tags_filter:
+                # Row's tags array must contain ALL provided values (@> in Postgres).
+                stmt = stmt.where(EnablementAsset.tags.contains(tags_filter))
+            return stmt
 
         # Attempt vector search first; fall back to keyword if embeddings unavailable.
         embedding: list[float] | None = None
@@ -107,6 +124,7 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                     )
                     .limit(limit)
                 )
+                stmt = _apply_filters(stmt)
                 result = await session.execute(stmt)
                 assets = list(result.scalars().all())
 
@@ -117,7 +135,6 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
             if embedding is None:
                 # Keyword search: case-insensitive substring match on title, summary, tags.
                 q_lower = f"%{query.lower()}%"
-                from sqlalchemy import func
 
                 stmt = (
                     select(EnablementAsset)
@@ -139,6 +156,7 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                     .order_by(EnablementAsset.updated_at.desc())
                     .limit(limit)
                 )
+                stmt = _apply_filters(stmt)
                 result = await session.execute(stmt)
                 assets = list(result.scalars().all())
 
@@ -200,6 +218,91 @@ async def _get_enablement_asset(inp: dict[str, Any]) -> str:
         return f"get_enablement_asset failed: {exc}"
 
 
+async def _list_enablement_facets(inp: dict[str, Any]) -> str:
+    """Return facet vocabulary: distinct audiences, types, and top tags with counts.
+
+    Excludes archived rows and restricts to enablement/shared source_scope.
+    This lets Kai ask precise narrowing questions and answer "what do you have?"
+    without guessing at valid filter values.
+    """
+    tags_limit = int(inp.get("limit", 40))
+    tags_limit = max(1, min(tags_limit, 200))  # clamp: 1–200
+
+    try:
+        from sqlalchemy import Integer, cast, func, or_, select
+        from sqlalchemy import text as sa_text
+
+        import artemis.db as _db
+        from artemis.enablement.models import EnablementAsset
+
+        # Common scope + archived filter applied to all three sub-queries.
+        _scope_filter = or_(
+            EnablementAsset.source_scope == "enablement",
+            EnablementAsset.source_scope == "shared",
+        )
+        _active_filter = EnablementAsset.status.is_distinct_from("archived")
+
+        async with _db.SessionLocal() as session:
+            # 1. Distinct audience values with counts.
+            aud_stmt = (
+                select(
+                    EnablementAsset.audience,
+                    cast(func.count(), Integer).label("count"),
+                )
+                .where(_scope_filter)
+                .where(_active_filter)
+                .where(EnablementAsset.audience.isnot(None))
+                .group_by(EnablementAsset.audience)
+                .order_by(func.count().desc())
+            )
+            aud_rows = (await session.execute(aud_stmt)).all()
+
+            # 2. Distinct type (asset_type) values with counts.
+            type_stmt = (
+                select(
+                    EnablementAsset.type,
+                    cast(func.count(), Integer).label("count"),
+                )
+                .where(_scope_filter)
+                .where(_active_filter)
+                .where(EnablementAsset.type.isnot(None))
+                .group_by(EnablementAsset.type)
+                .order_by(func.count().desc())
+            )
+            type_rows = (await session.execute(type_stmt)).all()
+
+            # 3. Top N tags by frequency via unnest(tags) + GROUP BY.
+            #    Uses a raw text() fragment for the unnest lateral join; the
+            #    scope/archived filter is applied in the WHERE clause via a
+            #    correlated subquery approach (unnest in FROM is cleaner).
+            tag_stmt = sa_text(
+                """
+                SELECT tag, CAST(COUNT(*) AS INTEGER) AS cnt
+                FROM enablement_assets,
+                     LATERAL unnest(tags) AS t(tag)
+                WHERE status IS DISTINCT FROM 'archived'
+                  AND source_scope IN ('enablement', 'shared')
+                  AND tags IS NOT NULL
+                GROUP BY tag
+                ORDER BY cnt DESC
+                LIMIT :lim
+                """
+            ).bindparams(lim=tags_limit)
+            tag_rows = (await session.execute(tag_stmt)).all()
+
+        return json.dumps(
+            {
+                "audiences": [{"audience": row.audience, "count": row.count} for row in aud_rows],
+                "types": [{"asset_type": row.type, "count": row.count} for row in type_rows],
+                "tags": [{"tag": row.tag, "count": row.cnt} for row in tag_rows],
+            },
+            default=str,
+        )
+    except Exception as exc:
+        _logger.exception("list_enablement_facets failed")
+        return f"list_enablement_facets failed: {exc}"
+
+
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
 SEARCH_ENABLEMENT_ASSETS = Tool(
@@ -212,6 +315,11 @@ SEARCH_ENABLEMENT_ASSETS = Tool(
         "and `make_copy` (view-only; remind the user to make a copy). `requires_copy` flags "
         "copy-first assets. Default to surfacing the customer-visible, non-on_request links. "
         "Use to find decks, handouts, one-pagers, videos, walkthroughs, or any enablement collateral. "
+        "Optional filters: `audience` (e.g. 'Teacher', 'Admin'), `asset_type` "
+        "(e.g. 'training_deck', 'student_video', 'walkthrough', 'teacher_resource', 'doc', "
+        "'demo_account'), and `tags` (array of values that must ALL be present — product names like "
+        "'Assess'/'Instruct'/'Tutor', grade, language, persona, category, and micro-intervention "
+        "facets live in tags; use list_enablement_facets to discover valid values). "
         "Empty store or no match returns an empty results list. "
         f"{_SURFACE_TAG} [layer:1]"
     ),
@@ -229,6 +337,33 @@ SEARCH_ENABLEMENT_ASSETS = Tool(
                 "type": "integer",
                 "description": "Maximum number of results to return (1–20, default 5).",
                 "default": 5,
+            },
+            "audience": {
+                "type": "string",
+                "description": (
+                    "Case-insensitive filter on the audience column "
+                    "(e.g. 'Teacher', 'Admin', 'District Leader'). "
+                    "Use list_enablement_facets to see available values."
+                ),
+            },
+            "asset_type": {
+                "type": "string",
+                "description": (
+                    "Exact match filter on the asset type column "
+                    "(e.g. 'training_deck', 'student_video', 'walkthrough', "
+                    "'teacher_resource', 'doc', 'demo_account'). "
+                    "Use list_enablement_facets to see available values."
+                ),
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Require ALL listed tag values to be present on the asset "
+                    "(case-sensitive). Product names (Assess/Instruct/Tutor), grade, "
+                    "language, persona, category, and micro-intervention facets are "
+                    "stored as tags. Use list_enablement_facets to discover valid values."
+                ),
             },
         },
         "required": ["query"],
@@ -258,6 +393,29 @@ GET_ENABLEMENT_ASSET = Tool(
     },
 )
 
+LIST_ENABLEMENT_FACETS = Tool(
+    name="list_enablement_facets",
+    description=(
+        "Return the facet vocabulary of the enablement asset catalog: distinct audience values, "
+        "distinct asset_type values, and the most common tag values — each with counts. "
+        "Use this BEFORE searching to discover valid filter values for audience, asset_type, "
+        "and tags in search_enablement_assets. Also useful for answering 'what do you have?' "
+        "questions without guessing. Excludes archived rows. "
+        f"{_SURFACE_TAG} [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of tag facets to return (1–200, default 40).",
+                "default": 40,
+            },
+        },
+        "required": [],
+    },
+)
+
 
 # ── Registration ──────────────────────────────────────────────────────────────
 
@@ -265,8 +423,9 @@ GET_ENABLEMENT_ASSET = Tool(
 def register_enablement_tools(registry: AuthorizedToolRegistry) -> None:
     """Register Kai's read-only enablement retrieval tools into the provided registry.
 
-    Both tools are Layer 1 (read-only, no confirmation required).
+    All three tools are Layer 1 (read-only, no confirmation required).
     Call this ONLY for agent_id="kai" — the tool_registry.py gate enforces this.
     """
     registry.register(SEARCH_ENABLEMENT_ASSETS, _search_enablement_assets, layer=1)
     registry.register(GET_ENABLEMENT_ASSET, _get_enablement_asset, layer=1)
+    registry.register(LIST_ENABLEMENT_FACETS, _list_enablement_facets, layer=1)
