@@ -332,9 +332,9 @@ class Settings(BaseSettings):
         ),
         description=(
             "Slack channel ID for Callie's proactive top-tier signal posts. "
-            "When empty, falls back to marketing_campaigns_slack_channel. "
-            "Set this to a dedicated #callie-signals channel if you want proactive "
-            "posts separate from the approval-gate channel."
+            "Empty = feature OFF (no proactive pushes). There is intentionally NO "
+            "fallback to marketing_campaigns_slack_channel — signal alerts must never "
+            "leak into the approval-gate channel. Set a dedicated signals channel to enable."
         ),
     )
 

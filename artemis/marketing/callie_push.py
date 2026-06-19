@@ -208,8 +208,8 @@ async def push_top_tier_signal(
     - dedup: never re-post the same signal
     - daily cap: at most ``settings.callie_proactive_daily_cap`` pushes per UTC day
     - score gate: only post if ``top_score >= settings.callie_proactive_min_score``
-    - channel: ``settings.callie_proactive_channel`` (falls back to
-      ``settings.marketing_campaigns_slack_channel``); skip if neither set
+    - channel: ``settings.callie_proactive_channel`` only (NO fallback to the
+      approval-gate channel); skip (feature off) when unset
 
     Non-fatal: any Slack/DB error is logged as WARNING; the calling
     qualification flow is never interrupted.
@@ -224,10 +224,13 @@ async def push_top_tier_signal(
         )
         return False
 
-    # Channel resolution
-    channel = settings.callie_proactive_channel or settings.marketing_campaigns_slack_channel
+    # Channel resolution — a dedicated signals channel must be explicitly set.
+    # We deliberately do NOT fall back to marketing_campaigns_slack_channel: proactive
+    # signal alerts are intelligence, not approval notifications, and must never leak
+    # into the approval-gate channel. Empty = feature off (silent).
+    channel = settings.callie_proactive_channel
     if not channel:
-        _log.debug("callie_push: no channel configured — skip")
+        _log.debug("callie_push: no dedicated signals channel set — feature off, skip")
         return False
 
     try:
