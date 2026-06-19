@@ -244,6 +244,29 @@ class Settings(BaseSettings):
             "and has Artemis post a terminal comment + DM Jon."
         ),
     )
+    pre_meeting_prep_cron: str = Field(
+        default="*/30 7-19 * * 1-5",
+        description=(
+            "Cron expression for the pre-meeting prep sweep "
+            "(default: every 30 min, weekdays 7am-7pm). Sends a prep DM for "
+            "any calendar event starting within the next 30 min."
+        ),
+    )
+    commitment_urgency_nudge_cron: str = Field(
+        default="0 */2 * * 1-5",
+        description=(
+            "Cron expression for the commitment urgency-nudge sweep "
+            "(default: every 2 hours on weekdays). Fires an interrupt-bar DM "
+            "for commitments due within the next 12 hours that haven't been nudged."
+        ),
+    )
+    commitment_urgency_hours: int = Field(
+        default=12,
+        description=(
+            "Commitments due within this many hours trigger an urgency nudge DM "
+            "(above the daily digest cadence)."
+        ),
+    )
     uvicorn_workers: int = Field(
         default=1,
         validation_alias=AliasChoices(

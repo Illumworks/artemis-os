@@ -151,6 +151,10 @@ async def generate_brief(session: AsyncSession) -> dict[str, Any]:
     H5: LLM output is validated against DailyBrief (Pydantic).  One retry on
     failure; persistent failure persists an empty DailyBrief + logs warning.
 
+    After LLM generation, engagement weights (from Jon's past reactions) are
+    applied to re-rank top_priorities and waiting_on_you so the brief surfaces
+    more of what Jon engages with and less of what he ignores/mutes.
+
     Raises BriefGenerationError on failure.
     """
     sources = await gather_sources(session)
@@ -158,6 +162,38 @@ async def generate_brief(session: AsyncSession) -> dict[str, Any]:
     prompt = _build_prompt(context_string)
 
     brief_model, model_used, tokens_in, tokens_out = await _generate_with_retry(prompt)
+
+    # ── Apply engagement-weight re-ranking (P-learning v1) ───────────────────
+    engagement_weights: dict[str, Any] = sources.get("_engagement_weights") or {}
+    if engagement_weights:
+        try:
+            from artemis.proactivity.brief_reactions import weight_priorities, weight_waiting_on
+
+            weighted_priorities = weight_priorities(
+                [p.model_dump(mode="json") for p in brief_model.top_priorities],
+                engagement_weights,
+            )
+            weighted_waiting = weight_waiting_on(
+                [w.model_dump(mode="json") for w in brief_model.waiting_on_you],
+                engagement_weights,
+            )
+            # Rebuild the model with weighted lists.
+            from artemis.brief.schemas import BriefPriority, WaitingItem
+
+            brief_model = brief_model.model_copy(
+                update={
+                    "top_priorities": [BriefPriority.model_validate(p) for p in weighted_priorities],
+                    "waiting_on_you": [WaitingItem.model_validate(w) for w in weighted_waiting],
+                }
+            )
+            logger.debug(
+                "Brief engagement weighting applied: %d priorities, %d waiting items (from %d weights)",
+                len(brief_model.top_priorities),
+                len(brief_model.waiting_on_you),
+                len(engagement_weights),
+            )
+        except Exception:
+            logger.warning("Brief engagement weighting failed — using unweighted brief", exc_info=True)
 
     brief: dict[str, Any] = brief_model.model_dump(mode="json")
 
