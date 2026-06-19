@@ -15,12 +15,15 @@ pgvector wiring:
   for the test engine in `artemis/memory/tests/conftest.py`.
 """
 
-from collections.abc import AsyncIterator
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
 import pgvector.asyncpg  # type: ignore[import-untyped]
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -30,6 +33,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from artemis.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -88,3 +93,96 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency yielding a per-request session."""
     async with SessionLocal() as session:
         yield session
+
+
+# ---------------------------------------------------------------------------
+# Postgres startup-race guard
+# ---------------------------------------------------------------------------
+
+# Errors that indicate Postgres is still initialising (not-yet-ready, not
+# a permanent misconfiguration).  We cast a broad net so asyncpg's
+# CannotConnectNowError (wrapped by SQLAlchemy) and plain OS-level
+# connection-refused are both caught.
+_TRANSIENT_EXC = (OperationalError, InterfaceError, DBAPIError, OSError)
+
+
+async def wait_for_db_ready(
+    *,
+    max_wait: float = 45.0,
+    initial_delay: float = 0.5,
+    max_delay: float = 5.0,
+    _ping: Callable[[], Coroutine[Any, Any, None]] | None = None,
+) -> bool:
+    """Wait until Postgres accepts connections, retrying with exponential back-off.
+
+    Called from the FastAPI lifespan BEFORE any schedulers or background tasks
+    start, so that a cold-DB startup race (Mac wakes from sleep / Postgres
+    restarts mid-boot) doesn't propagate into scheduler abort cascades.
+
+    Parameters
+    ----------
+    max_wait:
+        Total seconds to keep retrying before giving up (default 45).
+    initial_delay:
+        First sleep interval in seconds (default 0.5).
+    max_delay:
+        Upper bound on sleep interval in seconds (default 5).
+    _ping:
+        Async callable that performs the readiness probe.  Defaults to a
+        ``SELECT 1`` against the module-level engine.  Inject a fake in tests
+        to run without a real DB and without real sleeps.
+
+    Returns
+    -------
+    True
+        Postgres is ready.
+
+    Raises
+    ------
+    RuntimeError
+        After ``max_wait`` seconds without a successful connection.
+    """
+
+    async def _default_ping() -> None:
+        # Use a fresh raw connection — bypasses pool and session machinery so
+        # we can probe before any pool warmup.
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+
+    probe = _ping if _ping is not None else _default_ping
+
+    delay = initial_delay
+    elapsed = 0.0
+    attempt = 0
+
+    while True:
+        attempt += 1
+        try:
+            await probe()
+            logger.info("Postgres is ready (attempt %d, elapsed %.1fs).", attempt, elapsed)
+            return True
+        except _TRANSIENT_EXC as exc:
+            remaining = max_wait - elapsed
+            if remaining <= 0:
+                logger.critical(
+                    "Postgres not ready after %.1fs (%d attempts); last error: %s. "
+                    "Aborting startup — launchd KeepAlive will relaunch.",
+                    max_wait,
+                    attempt,
+                    exc,
+                )
+                raise RuntimeError(
+                    f"Postgres not ready after {max_wait}s ({attempt} attempts): {exc}"
+                ) from exc
+            logger.info(
+                "Waiting for Postgres to accept connections, attempt %d "
+                "(%.1fs elapsed, %.1fs remaining): %s",
+                attempt,
+                elapsed,
+                remaining,
+                exc,
+            )
+            sleep_for = min(delay, remaining)
+            await asyncio.sleep(sleep_for)
+            elapsed += sleep_for
+            delay = min(delay * 2, max_delay)
