@@ -353,7 +353,7 @@ async def test_engagement_observation_recorded(db_session: AsyncSession) -> None
 
 
 async def test_engagement_weights_favour_acted(db_session: AsyncSession) -> None:
-    """get_engagement_weights returns >0.5 for acted attributes, <0.5 for ignored."""
+    """get_engagement_weights returns >0.5 for acted attributes, <0.5 for rejected-with-reason."""
     from artemis.marketing.callie_push import get_engagement_weights, record_signal_engagement
 
     # 3 "acted" on OBC family
@@ -366,12 +366,12 @@ async def test_engagement_weights_favour_acted(db_session: AsyncSession) -> None
             campaign_family="obc",
             district_type=None,
         )
-    # 2 "ignored" on biliteracy family
+    # 2 "rejected" (with reason) on biliteracy family
     for i in range(2):
         await record_signal_engagement(
             db_session,
             signal_id=7100 + i,
-            outcome="ignored",
+            outcome="rejected",
             reason_codes=["DISTRICT_DLL_EXPANSION"],
             campaign_family="biliteracy",
             district_type=None,
@@ -386,11 +386,11 @@ async def test_engagement_weights_favour_acted(db_session: AsyncSession) -> None
     assert bili_weight is not None, "family:biliteracy should appear in weights"
     assert obc_weight > bili_weight, (
         f"OBC (all acted) weight {obc_weight:.2f} should exceed "
-        f"biliteracy (all ignored) weight {bili_weight:.2f}"
+        f"biliteracy (all rejected) weight {bili_weight:.2f}"
     )
-    # Laplace smoothing: 3 acted out of 3 → (3+1)/(3+1) = 1.0
+    # Laplace: 3 acted, 0 rejected → (3+1)/(3+0+2) ≈ 0.67
     assert obc_weight > 0.5
-    # 0 acted out of 2 → (0+1)/(2+1) ≈ 0.33
+    # 0 acted, 2 rejected → (0+1)/(0+2+2) = 0.25
     assert bili_weight < 0.5
 
 

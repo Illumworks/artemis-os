@@ -578,6 +578,13 @@ async def reject_signal(
         )
     )
 
+    # Engagement learning: only record when a non-empty reason is given.
+    # A reason-less reject is ambiguous — do not down-weight anything.
+    if reason and reason.strip():
+        _asyncio.create_task(
+            _record_engage_from_rejection(session, updated)
+        )
+
     return _serialize_signal(updated)
 
 
@@ -766,6 +773,37 @@ async def _record_engage_from_approval(
     except Exception:
         log.debug(
             "_record_engage_from_approval: non-fatal failure for signal %s",
+            signal.id,
+            exc_info=True,
+        )
+
+
+async def _record_engage_from_rejection(
+    session: AsyncSession,
+    signal: SignalQueue,
+) -> None:
+    """Fire-and-forget: record 'rejected' engagement when a signal is rejected WITH a reason.
+
+    Callers MUST only call this when ``signal.rejected_reason`` is non-empty.
+    Reason-less rejects are ambiguous; they must not affect weights.
+    """
+    try:
+        from artemis.marketing.callie_push import record_signal_engagement
+
+        reason_codes = [
+            rc.get("code", "") for rc in (signal.reason_codes or []) if isinstance(rc, dict)
+        ]
+        await record_signal_engagement(
+            session,
+            signal_id=signal.id,
+            outcome="rejected",
+            reason_codes=[c for c in reason_codes if c],
+            campaign_family=signal.campaign_family,
+            district_type=None,
+        )
+    except Exception:
+        log.debug(
+            "_record_engage_from_rejection: non-fatal failure for signal %s",
             signal.id,
             exc_info=True,
         )

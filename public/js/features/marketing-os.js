@@ -2532,7 +2532,7 @@ function _signalCardHtml(signal) {
         </div>
       </div>
       <div class="mkt-signal-reject-form" data-reject-for="${esc(signal.id)}" hidden>
-        <textarea class="mkt-signal-notes-input" placeholder="Reason / training note (optional)" rows="2"></textarea>
+        <textarea class="mkt-signal-notes-input" placeholder="Why? (optional — helps Callie learn)" rows="2"></textarea>
         <div class="mkt-signal-form-actions">
           <button class="mkt-btn-ghost mkt-btn-danger" data-signal-action="reject-submit"
                   data-signal-id="${esc(signal.id)}" type="button">Reject signal</button>

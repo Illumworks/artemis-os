@@ -505,12 +505,39 @@ async def _reject_signal(inp: dict[str, Any]) -> str:
     try:
         import artemis.db as _db
         from artemis.marketing import repository as repo
+        from artemis.marketing.state_machine import SignalState, transition
 
         async with _db.SessionLocal() as session:
-            await repo.update_signal(
-                session, int(signal_id), signal_status="rejected", rejected_reason=reason
+            if reason and reason.strip():
+                await repo.update_signal(
+                    session, int(signal_id), rejected_reason=reason
+                )
+            updated = await transition(
+                session, "signal", int(signal_id), SignalState.REJECTED_AT_GATE_1
             )
             await session.commit()
+            await session.refresh(updated)
+
+            # Engagement learning: only when a non-empty reason was given.
+            # Reason-less rejects are ambiguous — do not down-weight anything.
+            if reason and reason.strip():
+                from artemis.marketing.callie_push import record_signal_engagement
+
+                reason_codes = [
+                    rc.get("code", "")
+                    for rc in (updated.reason_codes or [])
+                    if isinstance(rc, dict)
+                ]
+                await record_signal_engagement(
+                    session,
+                    signal_id=updated.id,
+                    outcome="rejected",
+                    reason_codes=[c for c in reason_codes if c],
+                    campaign_family=updated.campaign_family,
+                    district_type=None,
+                )
+                await session.commit()
+
         return f"Signal {signal_id} rejected."
     except Exception as exc:
         return f"reject_signal failed: {exc}"

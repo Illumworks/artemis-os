@@ -297,7 +297,7 @@ async def push_top_tier_signal(
 
 def _engagement_obs_content(
     signal_id: int,
-    outcome: str,  # "acted" | "ignored"
+    outcome: str,  # "acted" | "rejected"
     reason_codes: list[str],
     campaign_family: str | None,
     district_type: str | None,
@@ -308,6 +308,7 @@ def _engagement_obs_content(
     Format is human-readable and grep-able:
 
         callie_engage:acted:signal=123:family=obc:codes=LEADER_TRANSITION_FORMAL,...:dtype=large
+        callie_engage:rejected:signal=456:family=obc:codes=BUDGET_FREEZE:dtype=small
     """
     codes_slug = ",".join(sorted(reason_codes))[:200]  # cap length
     family_slug = (campaign_family or "unknown").replace(" ", "_").lower()
@@ -327,23 +328,37 @@ async def record_signal_engagement(
     campaign_family: str | None,
     district_type: str | None,
 ) -> None:
-    """Record a lightweight engagement event as a scoped memory observation.
+    """Record an explicit engagement event as a scoped memory observation.
 
-    ``outcome`` should be "acted" when Jon interacts with a Callie push
-    (digs deeper or kicks off a brief) and "ignored" when the signal was
-    processed without engagement (e.g., approved/rejected without prior
-    Callie interaction).
+    Learning rule — only explicit signals change weights:
 
-    This is the v1 signal-capture half of the engagement learning loop.
+      ``outcome="acted"``    Jon acts on a Callie push (dig-deeper or kick-off-brief).
+                             Up-weights matching attributes. Source quality 1.0.
+
+      ``outcome="rejected"`` Jon rejects AND provides a non-empty reason.
+                             Down-weights matching attributes. Source quality 0.8.
+                             Callers MUST NOT pass outcome="rejected" when no reason
+                             was given — that is a silent ignore and must not be
+                             recorded here at all.
+
+    Silent ignores (no reaction) and reason-less rejects are intentionally
+    excluded: they are ambiguous and must not penalise a signal type.
+
     ``get_engagement_weights`` reads these back to compute attribute-level
     weights for ranking future proactive pushes.
 
     Pattern note: the observation is scoped to agent:callie, category
     "callie_signal_engagement". The content is deterministic so
     near-duplicate suppression won't accidentally collapse it.
-    Source quality is 1.0 for "acted" (human-confirmed) and 0.6 for
-    "ignored" (implicit signal).
     """
+    if outcome not in ("acted", "rejected"):
+        _log.warning(
+            "record_signal_engagement: unrecognised outcome %r for signal %s — skipping",
+            outcome,
+            signal_id,
+        )
+        return
+
     from artemis.memory.store import write_observation
 
     content = _engagement_obs_content(
@@ -353,7 +368,7 @@ async def record_signal_engagement(
         campaign_family=campaign_family,
         district_type=district_type,
     )
-    quality = 1.0 if outcome == "acted" else 0.6
+    quality = 1.0 if outcome == "acted" else 0.8
     try:
         await write_observation(
             session,
@@ -377,15 +392,28 @@ async def get_engagement_weights(
 ) -> dict[str, float]:
     """Return a simple {attribute_key: weight} dict from past engagement observations.
 
-    Algorithm (v1 — intentionally simple):
-      For each unique (outcome, attribute_key) pair observed, compute:
-        weight = (acted_count + 1) / (total_count + 1)  — Laplace-smoothed
+    Learning rule (v1 — reason-driven only):
+      Only ``acted`` and ``rejected`` observations are recorded (see
+      ``record_signal_engagement``).  Silent ignores and reason-less rejects
+      are never stored, so they have no effect on weights.
 
-    attribute_key examples: "family:obc", "code:LEADER_TRANSITION_FORMAL"
+    Algorithm:
+      For each attribute_key, tally acted_count and rejected_count across all
+      observations that mention it.  Compute a Laplace-smoothed ratio:
 
-    Values > 0.5 = above average engagement; callers multiply their base
-    score by the weight.  v1 is capture + simple weighting; a more
-    sophisticated trace-based version is slated for P6.
+        weight = (acted_count + 1) / (acted_count + rejected_count + 2)
+
+      A weight of exactly 0.5 means equal acted/rejected evidence — neutral.
+      > 0.5 = more positive evidence; < 0.5 = more negative evidence.
+      Attributes with no recorded observations are absent from the result
+      (treat as neutral 0.5 at the call site).
+
+    attribute_key examples: "family:obc", "code:LEADER_TRANSITION_FORMAL",
+      "dtype:large"
+
+    Callers multiply their base score by the weight (or (weight / 0.5) to
+    centre around 1.0).  v1 is capture + simple weighting; a richer
+    trace-based version is slated for P6.
     """
     result = await session.execute(
         select(MemoryObservation)
@@ -398,17 +426,20 @@ async def get_engagement_weights(
     )
     rows = result.scalars().all()
 
-    # Tally acted / total per attribute key
+    # Tally acted / rejected per attribute key (only these two outcomes are stored)
     acted: dict[str, int] = {}
-    total: dict[str, int] = {}
+    rejected: dict[str, int] = {}
 
     for obs in rows:
         content = str(obs.content)
-        # Determine outcome from content prefix
+        # Determine outcome from content — only "acted" and "rejected" are ever written
         is_acted = f"{_ENGAGE_OBS_PREFIX}acted:" in content
+        is_rejected = f"{_ENGAGE_OBS_PREFIX}rejected:" in content
+        if not is_acted and not is_rejected:
+            continue  # unexpected prefix, skip
 
         # Extract family and codes from content
-        # Format: callie_engage:acted:signal=<N>:family=<f>:codes=<c1,...>:dtype=<d>
+        # Format: callie_engage:<outcome>:signal=<N>:family=<f>:codes=<c1,...>:dtype=<d>
         attrs: list[str] = []
         for part in content.split(":"):
             if part.startswith("family="):
@@ -421,14 +452,20 @@ async def get_engagement_weights(
                 attrs.append(f"dtype:{part[6:]}")
 
         for attr in attrs:
-            total[attr] = total.get(attr, 0) + 1
             if is_acted:
                 acted[attr] = acted.get(attr, 0) + 1
+            else:
+                rejected[attr] = rejected.get(attr, 0) + 1
 
-    # Laplace-smoothed weight: (acted + 1) / (total + 1)
+    # Union of all attribute keys that have any evidence
+    all_attrs = set(acted) | set(rejected)
+
+    # Laplace-smoothed weight: (acted + 1) / (acted + rejected + 2)
+    # Neutral (no evidence) = 0.5; more acted → approaches 1.0; more rejected → approaches 0.0
     weights: dict[str, float] = {}
-    for attr, tot in total.items():
-        act = acted.get(attr, 0)
-        weights[attr] = (act + 1) / (tot + 1)
+    for attr in all_attrs:
+        a = acted.get(attr, 0)
+        r = rejected.get(attr, 0)
+        weights[attr] = (a + 1) / (a + r + 2)
 
     return weights
