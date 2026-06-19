@@ -207,19 +207,35 @@ async def push_top_tier_signal(
     Constraints enforced here:
     - dedup: never re-post the same signal
     - daily cap: at most ``settings.callie_proactive_daily_cap`` pushes per UTC day
-    - score gate: only post if ``top_score >= settings.callie_proactive_min_score``
+    - score gate: only post if the ENGAGEMENT-WEIGHTED effective score
+      (``top_score`` × learned attribute multiplier) ``>= settings.callie_proactive_min_score``
     - channel: ``settings.callie_proactive_channel`` only (NO fallback to the
       approval-gate channel); skip (feature off) when unset
 
     Non-fatal: any Slack/DB error is logged as WARNING; the calling
     qualification flow is never interrupted.
     """
-    # Score gate
-    if top_score < settings.callie_proactive_min_score:
+    # Engagement-weighted score gate. Learned weights (from explicit acts and
+    # reason-driven rejects — never silent ignores) nudge the EFFECTIVE score:
+    # families/codes Jon engages with clear the bar more easily; ones he's
+    # rejected with a reason need a higher raw fit to push. No evidence yet →
+    # multiplier 1.0 (behaves exactly as the old raw gate). Weight load is
+    # guarded so a lookup failure never blocks a legitimate push.
+    try:
+        _weights = await get_engagement_weights(session)
+    except Exception:
+        _weights = {}
+    _code_strs = [rc.get("code", "") for rc in (reason_codes or []) if rc.get("code")]
+    _multiplier = _signal_engagement_multiplier(_weights, campaign_family, _code_strs)
+    effective_score = top_score * _multiplier
+    if effective_score < settings.callie_proactive_min_score:
         _log.debug(
-            "callie_push: signal %s score %.2f below gate %.2f — skip",
+            "callie_push: signal %s effective score %.2f (raw %.2f x weight %.2f) "
+            "below gate %.2f — skip",
             signal_id,
+            effective_score,
             top_score,
+            _multiplier,
             settings.callie_proactive_min_score,
         )
         return False
@@ -472,3 +488,36 @@ async def get_engagement_weights(
         weights[attr] = (a + 1) / (a + r + 2)
 
     return weights
+
+
+def _signal_engagement_multiplier(
+    weights: dict[str, float],
+    campaign_family: str | None,
+    reason_code_strs: list[str],
+) -> float:
+    """Map learned attribute weights to a score multiplier centred on 1.0.
+
+    Looks up this signal's attributes (family + reason codes) in ``weights``
+    (from :func:`get_engagement_weights`). Only attributes with recorded
+    evidence count — absent attributes are ignored (NOT treated as 0.5) so a
+    single learned attribute drives the adjustment rather than being diluted by
+    neutral ones. Averages the present weights and centres on 1.0 (Callie's
+    neutral weight is 0.5):
+
+        avg 0.5 → 1.0 (no change), 1.0 → 2.0 (boost), 0.0 → 0.0 (suppress).
+
+    No evidence at all → 1.0 (neutral). Attribute keys mirror exactly the format
+    written by :func:`_engagement_obs_content` (``family:<slug>``, ``code:<C>``).
+    """
+    keys: list[str] = []
+    if campaign_family:
+        keys.append(f"family:{campaign_family.replace(' ', '_').lower()}")
+    for code in reason_code_strs:
+        if code:
+            keys.append(f"code:{code}")
+
+    present = [weights[k] for k in keys if k in weights]
+    if not present:
+        return 1.0
+    avg = sum(present) / len(present)
+    return avg / 0.5

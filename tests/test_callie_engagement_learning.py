@@ -226,3 +226,27 @@ async def test_unknown_outcome_is_skipped_gracefully(
 
     weights = await _weights(db_session)
     assert weights == {}, "Unsupported outcome must not write any observations"
+
+
+# ── Weight application (the apply half) ─────────────────────────────────────────
+
+
+def test_signal_engagement_multiplier_centres_on_neutral() -> None:
+    """The multiplier maps learned weights to a score scaler centred on 1.0."""
+    from artemis.marketing.callie_push import _signal_engagement_multiplier
+
+    # No evidence at all → neutral (no change to the gate).
+    assert _signal_engagement_multiplier({}, "obc", ["LEADER_TRANSITION_FORMAL"]) == 1.0
+
+    # A rejected family (weight 0.25) suppresses: 0.25 / 0.5 = 0.5.
+    assert _signal_engagement_multiplier({"family:obc": 0.25}, "OBC", []) == pytest.approx(0.5)
+
+    # An engaged family (weight 0.75) boosts: 0.75 / 0.5 = 1.5.
+    assert _signal_engagement_multiplier({"family:obc": 0.75}, "obc", []) == pytest.approx(1.5)
+
+    # Only attributes WITH evidence count — an absent code doesn't dilute the
+    # present family signal.
+    m = _signal_engagement_multiplier(
+        {"family:obc": 1.0}, "obc", ["NEVER_SEEN_CODE"]
+    )
+    assert m == pytest.approx(2.0)
