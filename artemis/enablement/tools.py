@@ -32,18 +32,29 @@ _SURFACE_TAG = "[surface:enablement]"
 
 
 def _asset_to_dict(asset: Any) -> dict[str, Any]:
-    """Serialize an EnablementAsset ORM row to a plain dict for tool output."""
+    """Serialize an EnablementAsset ORM row to a plain dict for tool output.
+
+    ``links`` is the surfacing-critical field: each entry carries
+    visibility ("customer"/"internal"), on_request, and make_copy flags that
+    Kai's persona rules act on (customer-default, editable/internal on explicit
+    request only, make-a-copy reminder). ``drive_link`` is the default
+    customer-facing link for backward compatibility.
+    """
     return {
         "asset_name": asset.asset_name,
         "title": asset.title,
         "summary": asset.summary,
         "drive_link": asset.drive_link,
+        "links": asset.links or [],
+        "requires_copy": bool(asset.requires_copy),
         "type": asset.type,
         "confidence_label": asset.confidence_label,
         "audience": asset.audience,
+        "tags": asset.tags or [],
         "transcript_link": asset.transcript_link,
         "status": asset.status,
         "source_scope": asset.source_scope,
+        "source_sheet": asset.source_sheet,
         "drive_file_id": asset.drive_file_id,
     }
 
@@ -89,10 +100,10 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                             EnablementAsset.source_scope == "shared",
                         )
                     )
+                    .where(EnablementAsset.status.is_distinct_from("archived"))
                     .where(EnablementAsset.embedding.isnot(None))
                     .order_by(
-                        sa_text("embedding <=> CAST(:vec AS vector)")
-                        .bindparams(vec=str(embedding))
+                        sa_text("embedding <=> CAST(:vec AS vector)").bindparams(vec=str(embedding))
                     )
                     .limit(limit)
                 )
@@ -116,11 +127,13 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                             EnablementAsset.source_scope == "shared",
                         )
                     )
+                    .where(EnablementAsset.status.is_distinct_from("archived"))
                     .where(
                         or_(
                             func.lower(EnablementAsset.title).like(q_lower),
                             func.lower(EnablementAsset.summary).like(q_lower),
                             func.lower(EnablementAsset.asset_name).like(q_lower),
+                            func.lower(EnablementAsset.searchable_text).like(q_lower),
                         )
                     )
                     .order_by(EnablementAsset.updated_at.desc())
@@ -193,9 +206,12 @@ SEARCH_ENABLEMENT_ASSETS = Tool(
     name="search_enablement_assets",
     description=(
         "Search the enablement asset catalog by semantic similarity and keyword match. "
-        "Returns top matching assets with name, title, summary, Drive link, type, "
-        "confidence label, audience, and transcript link. "
-        "Use to find decks, one-pagers, videos, or any enablement collateral. "
+        "Returns top matching assets, each with title, summary, type, audience, tags, and a "
+        "`links` array. Each link has: role, label, url, `visibility` ('customer' or 'internal'), "
+        "`on_request` (only mention if the user explicitly asks for it, e.g. the editable version), "
+        "and `make_copy` (view-only; remind the user to make a copy). `requires_copy` flags "
+        "copy-first assets. Default to surfacing the customer-visible, non-on_request links. "
+        "Use to find decks, handouts, one-pagers, videos, walkthroughs, or any enablement collateral. "
         "Empty store or no match returns an empty results list. "
         f"{_SURFACE_TAG} [layer:1]"
     ),

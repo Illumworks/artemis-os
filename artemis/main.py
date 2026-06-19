@@ -73,6 +73,7 @@ from artemis.routes import costs as costs_routes
 from artemis.routes import costs_routing as costs_routing_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
+from artemis.routes import enablement as enablement_routes
 from artemis.routes import gmail as gmail_routes
 from artemis.routes import google_docs as google_docs_routes
 from artemis.routes import health, okr, parallel, status, writing_rules, writing_studio_tags
@@ -298,6 +299,9 @@ app.include_router(people_routes.router)
 
 # J7 — Daily brief
 app.include_router(daily_brief_routes.router)
+
+# Enablement indexing — Apps Script ingest webhook (feeds Kai's enablement_assets)
+app.include_router(enablement_routes.router)
 
 # OP1 — Automations registry
 app.include_router(automations_router)

@@ -138,6 +138,21 @@ class Settings(BaseSettings):
         description="Embedding backend. Only 'minilm' supported in V1.",
     )
 
+    enablement_webhook_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_ENABLEMENT_WEBHOOK_SECRET",
+            "ENABLEMENT_WEBHOOK_SECRET",
+        ),
+        description=(
+            "Shared secret the enablement indexing Apps Script must send in the "
+            "X-Enablement-Token header to POST /api/enablement/ingest. Empty = the "
+            "ingest endpoint is disabled (fail-closed). This is the app-layer auth; "
+            "Cloudflare Access in front of the app must separately allow the Apps "
+            "Script through via a service token (see the Apps Script deploy runbook)."
+        ),
+    )
+
     # M1: lossless memory — archive + backup paths and parameters
     archive_dir: Path = Field(
         default=Path.home() / ".artemis" / "archive",

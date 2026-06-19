@@ -22,6 +22,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Index,
     Text,
     UniqueConstraint,
@@ -44,6 +45,7 @@ class EnablementAsset(Base):
         Index("idx_enablement_assets_status", "status"),
         Index("idx_enablement_assets_source_scope", "source_scope"),
         Index("idx_enablement_assets_updated_at", "updated_at"),
+        Index("idx_enablement_assets_source_sheet", "source_sheet"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -65,9 +67,22 @@ class EnablementAsset(Base):
     status: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence_label: Mapped[str | None] = mapped_column(Text, nullable=True)
     # "enablement" (default) or "shared" for cross-team content
-    source_scope: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="'enablement'"
-    )
+    source_scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="'enablement'")
+
+    # --- multi-link surfacing (0098) ---
+    # List of structured link objects:
+    #   {role, label, url, visibility: "customer"|"internal", on_request: bool, make_copy: bool}
+    # Kai's surfacing rules operate on these explicit flags (customer-default,
+    # editable/internal on explicit request, make-a-copy reminder).
+    links: Mapped[Any] = mapped_column(JSONB, nullable=True)
+    # Indexable body folded into the embedding + keyword search (script-doc text,
+    # slide text, full Google-Doc text, walkthrough notes). Separate from summary.
+    searchable_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Provenance (the idempotency anchor remains drive_file_id).
+    source_sheet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_row: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # View-only decks/handouts the CSM must copy before editing.
+    requires_copy: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     # --- embedding (384-dim, all-MiniLM-L6-v2, same as memory keystone) ---
     embedding: Mapped[Any] = mapped_column(Vector(384), nullable=True)
