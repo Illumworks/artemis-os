@@ -6,6 +6,7 @@ Note: env files are loaded in `artemis/__init__.py` on package import, before
 any other module reads `os.environ`.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -130,6 +131,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_memory_scheduler()
     # Start proactive morning-brief delivery (P2a).
     start_proactivity_scheduler()
+    # Recover any Argus research requests orphaned by a previous process restart.
+    # Non-blocking: fires background tasks and returns immediately.
+    from artemis.floating_artemis.tools.argus_tools import recover_pending_requests
+    asyncio.create_task(recover_pending_requests())
     try:
         yield
     finally:

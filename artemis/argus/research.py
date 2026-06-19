@@ -282,13 +282,28 @@ async def _gather_tool_results(
         "state_doe": _fetch_state_doe,
     }
 
+    # Per-tool timeout: a single hanging external call must not stretch the whole
+    # ~54s budget indefinitely.  15s is generous for an HTTP fetch; if a source
+    # is down it returns empty in under 15s so the other tools can still complete.
+    _TOOL_TIMEOUT_S = 15.0
+
     async def _safe_fetch(name: str) -> tuple[str, Any]:
         fetcher = _tool_fetchers.get(name)
         if fetcher is None:
             return name, []
         try:
-            result = await fetcher(district_key, signal)
+            result = await asyncio.wait_for(
+                fetcher(district_key, signal),
+                timeout=_TOOL_TIMEOUT_S,
+            )
             return name, result
+        except asyncio.TimeoutError:
+            _logger.warning(
+                "Argus._gather_tool_results: tool=%r timed out after %.0fs (skipped)",
+                name,
+                _TOOL_TIMEOUT_S,
+            )
+            return name, []
         except Exception as exc:
             _logger.warning(
                 "Argus._gather_tool_results: tool=%r raised -- %s (skipped)", name, exc
