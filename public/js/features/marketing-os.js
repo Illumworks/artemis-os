@@ -39,6 +39,7 @@ import {
   attachDeliverableApi,
   createBlankDeliverableApi,
   listUnlinkedDraftsApi,
+  dispatchArgusForSignalApi,
 } from '../core/api.js';
 import {
   filterSignals,
@@ -2572,6 +2573,16 @@ function _signalCardHtml(signal) {
       ${approvedLink}
       ${trainingNote}
       ${actionsHtml}
+      ${(signal.urgencyTier === 'hot' && !isDemo) ? `
+      <div class="mkt-signal-argus-strip">
+        <button class="mkt-btn-ghost mkt-btn-argus-dig"
+                data-signal-action="argus-dispatch"
+                data-signal-id="${esc(signal.id)}"
+                type="button"
+                title="Ask Argus to research this district in depth; Callie posts findings to Slack">
+          Dig deeper with Argus
+        </button>
+      </div>` : ''}
     </article>`;
 }
 
@@ -3399,6 +3410,26 @@ function _wireSignalActions(container) {
         errEl.textContent = err.message || 'Archive failed.';
         btn.parentElement?.appendChild(errEl);
         setTimeout(() => errEl.remove(), 4000);
+      }
+      return;
+    }
+
+    if (action === 'argus-dispatch') {
+      // "Dig deeper with Argus" button — fires async Argus dispatch for this
+      // signal's district. Only available on top-tier (hot) qualified signals.
+      btn.disabled = true; btn.textContent = 'Dispatching…';
+      try {
+        await dispatchArgusForSignalApi(signalId);
+        btn.textContent = 'Argus dispatched ✓';
+        btn.classList.add('mkt-btn-argus-dig--sent');
+        // Keep the confirmation visible; don't re-enable (one-shot per page load)
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Dig deeper with Argus';
+        const errEl = document.createElement('p');
+        errEl.className = 'mkt-signal-inline-error';
+        errEl.textContent = err.message || 'Dispatch failed.';
+        btn.parentElement?.appendChild(errEl);
+        setTimeout(() => errEl.remove(), 5000);
       }
       return;
     }

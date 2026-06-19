@@ -8,7 +8,8 @@ Endpoints:
   POST   /{id}/approve    — Gate 1: promote to candidate
   POST   /{id}/reject     — reject and record reason
   POST   /{id}/snooze     — snooze for N days
-  POST   /{id}/ask        — archive a signal
+  POST   /{id}/ask              — archive a signal
+  POST   /{id}/argus-dispatch   — dig deeper button: fire async Argus dispatch for signal's district
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.config import settings
 from artemis.db import get_session
 from artemis.marketing.intel.trends import compute_time_sensitivity, compute_velocity_ranking
 from artemis.marketing.models import (
@@ -515,6 +517,13 @@ async def approve_signal(
         )
     )
 
+    # Record engagement: if Callie had proactively pushed this signal, this
+    # approval counts as Jon having "acted" on it (not just ignored it).
+    # Non-fatal: any failure is swallowed so the approval response is unaffected.
+    _asyncio.create_task(
+        _record_engage_from_approval(session, updated)
+    )
+
     return {
         "signal": _serialize_signal(updated),
         "candidateId": candidate.id,
@@ -638,6 +647,157 @@ async def ask_signal(
 ) -> Any:
     """Deprecated alias for /archive kept for one frontend release cycle."""
     return await archive_signal(signal_id, session)
+
+
+# ── Argus "dig deeper" dispatch ───────────────────────────────────────────────
+
+
+@router.post("/{signal_id}/argus-dispatch")
+async def dispatch_argus_for_signal(
+    signal_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Fire async Argus research for a signal's district (the "dig deeper" button).
+
+    Reuses the existing ``_dispatch_research`` async dispatch from
+    ``artemis.floating_artemis.tools.argus_tools`` — the same path Callie uses
+    when Jon asks her to dig deeper in chat.  The endpoint only accepts top-tier
+    (hot) qualified signals; 422 for anything else.
+
+    Also records a "acted" engagement observation so the learning loop (#2)
+    knows Jon engaged with this signal.
+    """
+    try:
+        signal = await get_signal(session, signal_id)
+    except ValueError:
+        raise not_found("Signal not found", "signal_not_found")  # noqa: B904
+
+    if signal.signal_status not in (SignalState.qualified.value, SignalState.APPROVED.value):
+        raise conflict("signal_not_qualified", code="signal_not_qualified")  # noqa: B904
+
+    if signal.urgency_tier != "hot":
+        raise bad_request(
+            "argus-dispatch is only available for top-tier (hot) signals",
+            "not_top_tier",
+        )
+
+    district_key = signal.district_id or signal.headline[:60]
+
+    # Record engagement so the learning loop knows Jon acted on this signal
+    import asyncio as _asyncio
+
+    _asyncio.create_task(
+        _record_engage_from_signal(session, signal, outcome="acted")
+    )
+
+    # Fire async Argus dispatch (returns immediately with dispatched payload)
+    from artemis.floating_artemis.tools.argus_tools import (
+        _BACKGROUND_TASKS,
+        _insert_pending_request,
+        _safe_research_and_post,
+    )
+
+    # Resolve channel from the Callie proactive channel config (not a Slack session)
+    channel = settings.callie_proactive_channel or settings.marketing_campaigns_slack_channel
+    team_id = ""
+
+    request_id = await _insert_pending_request(
+        district_key=district_key,
+        channel_id=channel or "",
+        team_id=team_id,
+        signal={
+            "headline": signal.headline or "",
+            "state": signal.state or "",
+            "district_id": signal.district_id or "",
+        },
+        triggering_signal_id=str(signal_id),
+    )
+
+    if channel:
+        loop = _asyncio.get_running_loop()
+        task = loop.create_task(
+            _safe_research_and_post(
+                request_id=request_id,
+                channel_id=channel,
+                team_id=team_id,
+                district_key=district_key,
+                triggering_signal_id=str(signal_id),
+                signal={
+                    "headline": signal.headline or "",
+                    "state": signal.state or "",
+                    "district_id": signal.district_id or "",
+                },
+            ),
+            name=f"argus_ui_bg_{district_key}",
+        )
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    return {
+        "status": "dispatched",
+        "district": district_key,
+        "signalId": signal_id,
+        "channel": channel or None,
+    }
+
+
+# ── Engagement helpers (for learning loop) ───────────────────────────────────
+
+
+async def _record_engage_from_approval(
+    session: AsyncSession,
+    signal: SignalQueue,
+) -> None:
+    """Fire-and-forget: record 'acted' engagement when a Callie-pushed signal is approved."""
+    try:
+        from artemis.marketing.callie_push import record_signal_engagement
+
+        reason_codes = [
+            rc.get("code", "") for rc in (signal.reason_codes or []) if isinstance(rc, dict)
+        ]
+        await record_signal_engagement(
+            session,
+            signal_id=signal.id,
+            outcome="acted",
+            reason_codes=[c for c in reason_codes if c],
+            campaign_family=signal.campaign_family,
+            district_type=None,
+        )
+    except Exception:
+        log.debug(
+            "_record_engage_from_approval: non-fatal failure for signal %s",
+            signal.id,
+            exc_info=True,
+        )
+
+
+async def _record_engage_from_signal(
+    session: AsyncSession,
+    signal: SignalQueue,
+    *,
+    outcome: str,
+) -> None:
+    """Generic engagement recorder used by the argus-dispatch endpoint."""
+    try:
+        from artemis.marketing.callie_push import record_signal_engagement
+
+        reason_codes = [
+            rc.get("code", "") for rc in (signal.reason_codes or []) if isinstance(rc, dict)
+        ]
+        await record_signal_engagement(
+            session,
+            signal_id=signal.id,
+            outcome=outcome,
+            reason_codes=[c for c in reason_codes if c],
+            campaign_family=signal.campaign_family,
+            district_type=None,
+        )
+    except Exception:
+        log.debug(
+            "_record_engage_from_signal: non-fatal failure for signal %s",
+            signal.id,
+            exc_info=True,
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -299,6 +299,45 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Callie proactive top-tier signal push (event-driven, not scheduler) ────
+    callie_proactive_min_score: float = Field(
+        default=0.7,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CALLIE_PROACTIVE_MIN_SCORE",
+            "CALLIE_PROACTIVE_MIN_SCORE",
+        ),
+        description=(
+            "Minimum qualification fit score (0–1) before Callie posts a top-tier signal "
+            "to the marketing channel unprompted. Default 0.7. Jon can lower to 0.5 for "
+            "more signal or raise to 0.85 to stay quiet until only the clearest wins."
+        ),
+    )
+    callie_proactive_daily_cap: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CALLIE_PROACTIVE_DAILY_CAP",
+            "CALLIE_PROACTIVE_DAILY_CAP",
+        ),
+        description=(
+            "Maximum number of proactive Callie top-tier signal pushes per UTC calendar day. "
+            "Default 3. Set to 0 to disable all proactive pushes. Raise to let more through "
+            "on heavy intake days."
+        ),
+    )
+    callie_proactive_channel: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CALLIE_PROACTIVE_CHANNEL",
+            "CALLIE_PROACTIVE_CHANNEL",
+        ),
+        description=(
+            "Slack channel ID for Callie's proactive top-tier signal posts. "
+            "When empty, falls back to marketing_campaigns_slack_channel. "
+            "Set this to a dedicated #callie-signals channel if you want proactive "
+            "posts separate from the approval-gate channel."
+        ),
+    )
+
     # Multi-account Claude Code support.
     # Maps an account name (e.g. "marketing", "personal") to a CLAUDE_CONFIG_DIR path.
     # Parsed from ARTEMIS_CLAUDE_ACCOUNT_CONFIG_DIRS as a JSON object.

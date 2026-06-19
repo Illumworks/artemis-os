@@ -2618,6 +2618,16 @@ export async function qualifySignalApi(id) {
   return body;
 }
 
+/** Fire async Argus research for a top-tier signal's district (dig deeper button). */
+export async function dispatchArgusForSignalApi(id) {
+  const res = await fetch(`/api/signal-queue/${encodeURIComponent(id)}/argus-dispatch`, {
+    method: "POST",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || body.error || "dispatchArgusForSignalApi failed");
+  return body;
+}
+
 export async function submitSignalIntakeApi(payload = {}) {
   const res = await fetch("/api/signal-queue/intake", {
     method: "POST",

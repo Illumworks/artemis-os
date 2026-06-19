@@ -141,6 +141,40 @@ async def run_and_store_qualification(
                 [r.family for r in active_rulesets_rows],
             )
         # else: already qualified or in a Gate-1 state — no status change needed.
+
+        # ── Callie proactive push: fire on top-tier (hot) signals ─────────────
+        # Only on the first qualification transition (pending → qualified) to
+        # avoid re-posting on re-qualifications.  Non-fatal — push failure
+        # never blocks the qualification result being returned to the caller.
+        if signal.urgency_tier == "hot" and current_status == SignalState.pending_qualification:
+            # Find the best adjusted score across qualifying families
+            best_score = max(
+                (s.adjusted_score for s in qual.scores if s.passes_min_fit_score),
+                default=0.0,
+            )
+            top_family = next(
+                (s.campaign_family for s in qual.scores if s.passes_min_fit_score),
+                signal.campaign_family,
+            )
+            try:
+                from artemis.marketing.callie_push import push_top_tier_signal
+
+                await push_top_tier_signal(
+                    session,
+                    signal_id=signal.id,
+                    headline=signal.headline,
+                    district_id=signal.district_id,
+                    state=signal.state,
+                    campaign_family=top_family,
+                    top_score=best_score,
+                    reason_codes=signal.reason_codes or [],
+                )
+            except Exception:
+                log.warning(
+                    "run_and_store_qualification: callie_push failed for signal %s (non-fatal)",
+                    signal.id,
+                    exc_info=True,
+                )
     else:
         # Fails the fit bar.  Demote qualified → pending_qualification so the signal
         # is withheld from Gate-1, inbox, and campaign promotion.  If it's already
