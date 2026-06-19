@@ -1,0 +1,39 @@
+# Artemis watchdog alert config — COPY THIS FILE to scripts/watchdog.conf and fill in values.
+#
+# scripts/watchdog.conf is gitignored. NEVER commit the real file.
+# This template IS committed; it documents the required keys.
+#
+# The watchdog sources this file only when the app fails to self-heal (true break-glass).
+# It does NOT depend on the Artemis app or DB being up — just curl and the Slack API.
+#
+# -----------------------------------------------------------------------
+# REQUIRED for Slack bot alerts (chat.postMessage — recommended channel):
+# -----------------------------------------------------------------------
+#
+# SLACK_BOT_TOKEN — a Slack bot OAuth token (starts with xoxb-).
+#   The bot must be in the target channel (or able to DM the target user).
+#   Required scopes: chat:write (for channels), or chat:write + im:write (for DMs).
+#
+SLACK_BOT_TOKEN="xoxb-REPLACE-WITH-YOUR-BOT-TOKEN"
+#
+# ALERT_SLACK_TARGET — where to send the alert. Either:
+#   - A Slack user ID  (e.g. U01AB2CD3EF)  — sends a DM to that user.
+#   - A Slack channel ID  (e.g. C01AB2CD3EF)  — posts to that channel.
+#   Get your user ID: Slack profile > ... > Copy member ID.
+#
+ALERT_SLACK_TARGET="U01AB2CD3EF"
+#
+# -----------------------------------------------------------------------
+# OPTIONAL legacy fallbacks (kept for backward compatibility):
+# -----------------------------------------------------------------------
+#
+# WEBHOOK_URL — a Slack incoming webhook URL (older approach; still works).
+#   Only used if SLACK_BOT_TOKEN is absent or its send fails.
+#
+# WEBHOOK_URL="https://hooks.slack.com/services/T.../B.../..."
+#
+# PHONE — a phone number to iMessage (e.g. +12125551234).
+#   Requires the Messages app to be signed in on this Mac.
+#   Only used if both Slack channels above fail.
+#
+# PHONE="+12125551234"
