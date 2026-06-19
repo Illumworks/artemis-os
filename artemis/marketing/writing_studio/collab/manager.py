@@ -102,8 +102,13 @@ class CollabManager:
                 logger.debug("collab:send_failed room=%s — marking dead", room)
                 dead.append(ws)
 
-        for d in dead:
-            self._rooms[room].pop(d, None)
+        # Guard: disconnect() may have already cleaned up this room while we
+        # were awaiting send_json() above.  Use .get() so a concurrent removal
+        # is a safe no-op rather than a KeyError.
+        bucket = self._rooms.get(room)
+        if bucket is not None:
+            for d in dead:
+                bucket.pop(d, None)
         if room in self._rooms and not self._rooms[room]:
             del self._rooms[room]
 

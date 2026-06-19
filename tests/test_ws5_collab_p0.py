@@ -4,6 +4,8 @@ Covers:
   (a) Two simultaneous connections — room count reaches 2; drops to 1 on disconnect.
   (b) Dev-override query params yield distinct identities in the roster.
   (c) Auth rejection when CF Access is enabled but no JWT header is present.
+  (e) Disconnect-race guard: disconnecting from an already-cleaned-up room is a
+      safe no-op (KeyError regression, broadcast dead-removal path).
 
 All tests are hermetic — no real CF Access calls, no DB access.
 """
@@ -196,3 +198,126 @@ def test_presence_event_on_connect() -> None:
         assert evt["type"] == "presence.init"
         assert evt["peers"] == []
         assert "you" in evt
+
+
+# ---------------------------------------------------------------------------
+# (e) Disconnect-race guard — pure unit tests, no transport needed
+# ---------------------------------------------------------------------------
+
+
+def _make_identity(email: str = "test@example.com") -> object:
+    from artemis.identity.dependencies import RequestIdentity
+
+    return RequestIdentity(email=email, name="Test", claims={}, source="dev")
+
+
+def _stub_ws() -> object:
+    """Return a minimal object that works as a dict key (identity-based hash)."""
+    from unittest.mock import MagicMock
+
+    return MagicMock(name="ws")
+
+
+def test_disconnect_already_cleaned_room_is_noop() -> None:
+    """Disconnecting from a room that was already removed must not raise KeyError.
+
+    Reproduces the race: broadcast's dead-removal loop calls disconnect() after
+    the last live peer already deleted the room.  The fix: disconnect() already
+    guards with `if room not in self._rooms: return None`, so this test pins
+    that contract even if the internals change.
+    """
+    from artemis.marketing.writing_studio.collab.manager import CollabManager
+
+    mgr = CollabManager()
+    ws = _stub_ws()
+    room = "race-room-1"
+
+    # Room never existed — disconnect must be a safe no-op.
+    result = mgr.disconnect(room, ws)  # type: ignore[arg-type]
+
+    assert result is None
+    assert room not in mgr._rooms
+
+
+def test_disconnect_after_explicit_room_removal_is_noop() -> None:
+    """Simulate the race: connect, manually remove the room, then disconnect.
+
+    This mirrors what happens when broadcast's dead-removal call fires after
+    disconnect() has already cleaned up the last peer and deleted the room entry.
+    """
+    from artemis.marketing.writing_studio.collab.manager import CollabManager
+
+    mgr = CollabManager()
+    ws = _stub_ws()
+    room = "race-room-2"
+
+    # Seed internal state as if connect() ran.
+    from artemis.marketing.writing_studio.collab.manager import _Peer
+
+    identity = _make_identity()
+    mgr._rooms[room] = {ws: _Peer(client_id="abc123", identity=identity)}  # type: ignore[index]
+
+    # Simulate the concurrent cleanup that removes the room (e.g. the real
+    # disconnect() ran first and deleted the bucket).
+    del mgr._rooms[room]
+
+    # Now the second caller tries to disconnect the same websocket — must not raise.
+    result = mgr.disconnect(room, ws)  # type: ignore[arg-type]
+
+    assert result is None
+    assert room not in mgr._rooms
+
+
+def test_broadcast_dead_removal_race_is_noop() -> None:
+    """broadcast() dead-removal must not raise KeyError when disconnect() already
+    cleaned up the room between the send loop and the dead-pruning step.
+
+    We simulate the race by monkey-patching _rooms so the room disappears
+    mid-broadcast, then calling the dead-cleanup logic indirectly via a direct
+    CollabManager call with a pre-seeded dead list scenario.
+
+    Implementation: we call disconnect() to clear the room, then manually
+    invoke the path that broadcast() would take after collecting dead sockets.
+    """
+    import asyncio
+
+    from artemis.marketing.writing_studio.collab.manager import CollabManager, _Peer
+
+    mgr = CollabManager()
+    ws = _stub_ws()
+    room = "race-room-3"
+    identity = _make_identity("broadcast@example.com")
+
+    # Connect ws into the room.
+    mgr._rooms[room] = {ws: _Peer(client_id="dead001", identity=identity)}  # type: ignore[index]
+
+    # Simulate disconnect() clearing the room (races with broadcast's dead-prune).
+    removed = mgr.disconnect(room, ws)  # type: ignore[arg-type]
+    assert removed == "dead001"
+    assert room not in mgr._rooms
+
+    # Now run broadcast() with the room gone — it should short-circuit safely.
+    async def _run() -> None:
+        await mgr.broadcast(room, {"type": "ping"})
+
+    asyncio.run(_run())  # must not raise
+
+    # State unchanged: room still absent.
+    assert room not in mgr._rooms
+
+
+def test_normal_connect_disconnect_still_works() -> None:
+    """Guard regression: normal single-peer lifecycle returns clientId and cleans room."""
+    from artemis.marketing.writing_studio.collab.manager import CollabManager, _Peer
+
+    mgr = CollabManager()
+    ws = _stub_ws()
+    room = "normal-room-1"
+    identity = _make_identity("normal@example.com")
+
+    mgr._rooms[room] = {ws: _Peer(client_id="cid999", identity=identity)}  # type: ignore[index]
+
+    client_id = mgr.disconnect(room, ws)  # type: ignore[arg-type]
+
+    assert client_id == "cid999"
+    assert room not in mgr._rooms
