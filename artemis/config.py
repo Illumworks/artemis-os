@@ -6,7 +6,7 @@ Never read os.environ directly elsewhere — go through `settings`.
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -369,6 +369,56 @@ class Settings(BaseSettings):
             'Example JSON: {"marketing.": "marketing", "personal": "personal"}. '
             "Exact match wins; longest prefix wins otherwise. "
             "Set via ARTEMIS_CLAUDE_AGENT_ACCOUNTS env var. Empty = all agents use ambient login."
+        ),
+    )
+
+    # ------------------------------------------------------------------ #
+    # Screen-Time Watch — national policy intelligence pipeline (Brief 1) #
+    # ------------------------------------------------------------------ #
+    # Additive, isolated namespace. Nothing here touches the marketing
+    # campaign pipeline. The stance rules live in screentime_stance_config
+    # (DB) with this settings blob as the code-side fallback default, so
+    # Angela can re-tune favorable/unfavorable without a deploy.
+    screentime_cron: str = Field(
+        default="0 7 * * *",
+        description=(
+            "Cron expression for the Screen-Time Watch national sweep (default daily "
+            "07:00). Used by the dedicated runner + reflected on the seeded pipeline row."
+        ),
+    )
+    screentime_cron_tz: str = Field(
+        default="America/Chicago",
+        description="Timezone for screentime_cron.",
+    )
+    screentime_window_days: int = Field(
+        default=30,
+        description=(
+            "Rolling discovery window in days — signals published older than this are "
+            "dropped during a sweep (the 'kept current ~30 days' requirement)."
+        ),
+    )
+    screentime_retention_days: int = Field(
+        default=60,
+        description=(
+            "Retention window in days for stored screentime_signals. The runner / purge "
+            "helper auto-expires signals whose discovered_at is older than this. 0 = keep forever."
+        ),
+    )
+    screentime_states: str = Field(
+        default="",
+        description=(
+            "Comma-separated 2-letter state codes to sweep. EMPTY = all 50 states + DC "
+            "(national, the intended default). Decoupled from the campaign's target states. "
+            "Set only to scope a manual/test run."
+        ),
+    )
+    screentime_stance_rules: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Code-side fallback for the tunable stance rules. EMPTY = use the v1 default "
+            "baked into artemis/screentime/stance_config.py. The DB row "
+            "screentime_stance_config(name='default') overrides this when present. "
+            "Set via ARTEMIS_SCREENTIME_STANCE_RULES (JSON) only to override without a DB row."
         ),
     )
 
