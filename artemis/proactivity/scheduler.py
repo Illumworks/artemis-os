@@ -50,6 +50,7 @@ _HUB_ESCALATION_JOB_ID = "hub_agent_escalation"
 _PRE_MEETING_PREP_JOB_ID = "proactivity_pre_meeting_prep"
 _COMMITMENT_URGENCY_NUDGE_JOB_ID = "proactivity_commitment_urgency_nudge"
 _POST_MEETING_SCHEDULING_JOB_ID = "proactivity_post_meeting_scheduling"
+_DIRECTORY_SYNC_JOB_ID = "proactivity_directory_sync"
 _ARTEMIS_AGENT_ID = "artemis"
 _OWNER_SLACK_ID_FALLBACK = "U09F3EPJXSQ"
 
@@ -79,13 +80,15 @@ def start_proactivity_scheduler() -> None:
     # action items from recent meetings and PROPOSES times to Jon; creation
     # happens via the agency gate on his confirmation. Replaces pre-meeting prep.
     _register_post_meeting_scheduling_job(scheduler)
+    # Weekly name→email directory sync from Slack (feeds the scheduler + agents).
+    _register_directory_sync_job(scheduler)
     if not scheduler.running:
         scheduler.start()
         logger.info(
             "Proactivity scheduler started (morning brief cron=%r tz=%s, okr checkin cron=%r, "
             "review escalation cron=%r, commitments cron=%r, proposals digest cron=%r, "
             "hub escalation cron=%r, pre_meeting_prep cron=%r, urgency_nudge cron=%r, "
-            "post_meeting_scheduling cron=%r)",
+            "post_meeting_scheduling cron=%r, directory_sync cron=%r)",
             settings.morning_brief_cron,
             settings.morning_brief_tz,
             settings.okr_checkin_cron,
@@ -96,6 +99,7 @@ def start_proactivity_scheduler() -> None:
             settings.pre_meeting_prep_cron,
             settings.commitment_urgency_nudge_cron,
             settings.post_meeting_scheduling_cron,
+            settings.directory_sync_cron,
         )
 
 
@@ -249,6 +253,34 @@ def _register_post_meeting_scheduling_job(scheduler: AsyncIOScheduler) -> None:
         max_instances=1,
         misfire_grace_time=3600,
     )
+
+
+def _register_directory_sync_job(scheduler: AsyncIOScheduler) -> None:
+    """Register the weekly name→email directory sync from Slack."""
+    trigger = CronTrigger.from_crontab(
+        settings.directory_sync_cron,
+        timezone=settings.morning_brief_tz,
+    )
+    scheduler.add_job(
+        _fire_directory_sync,
+        trigger=trigger,
+        id=_DIRECTORY_SYNC_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+async def _fire_directory_sync() -> None:
+    """Refresh the directory_people roster cache from Slack.
+
+    FAILURE-SAFE: sync_directory_from_slack never raises (returns 0 on error).
+    """
+    from artemis.directory.sync import sync_directory_from_slack
+
+    async with _db.SessionLocal() as session:
+        count = await sync_directory_from_slack(session)
+    logger.info("directory sync sweep finished (people_upserted=%d)", count)
 
 
 async def _fire_post_meeting_scheduling() -> None:

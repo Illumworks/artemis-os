@@ -574,6 +574,32 @@ async def build_slot_proposal(
 
     attendee_emails, unresolved = split_resolved_attendees(intent.attendees)
 
+    # Directory resolution: try to map each unresolved NAME to an email via the
+    # name→email directory. Only single, confident, unambiguous matches are used
+    # (resolve_one returns None otherwise) — those names stay unresolved and keep
+    # the existing "couldn't map" behaviour unchanged. Import lazily to avoid any
+    # circular-import / provider-stack pull at module load.
+    if unresolved:
+        from artemis.directory.resolver import resolve_one
+
+        still_unresolved: list[str] = []
+        for name in unresolved:
+            resolved_email: str | None = None
+            try:
+                resolved_email = await resolve_one(name, session)
+            except Exception:
+                logger.warning(
+                    "post_meeting_scheduling: directory resolve_one failed for %r — "
+                    "leaving unresolved",
+                    name,
+                    exc_info=True,
+                )
+            if resolved_email and resolved_email not in attendee_emails:
+                attendee_emails.append(resolved_email)
+            elif resolved_email is None:
+                still_unresolved.append(name)
+        unresolved = still_unresolved
+
     # Always include the owner's own calendar so we never double-book Jon.
     owner_cal = await _owner_calendar_id(session)
     calendars_to_query = [owner_cal, *attendee_emails]

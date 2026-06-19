@@ -11,6 +11,7 @@ from artemis.floating_artemis.authority import AuthorizedToolRegistry
 from artemis.floating_artemis.tools.argus_tools import register_argus_tools
 from artemis.floating_artemis.tools.builders import register_builders_tools
 from artemis.floating_artemis.tools.core import register_core_tools
+from artemis.floating_artemis.tools.directory_tools import register_directory_tools
 from artemis.floating_artemis.tools.granola_tools import register_granola_tools
 from artemis.floating_artemis.tools.jira_tools import register_jira_tools
 from artemis.floating_artemis.tools.marketing import register_marketing_tools
@@ -64,6 +65,8 @@ def build_authorized_tool_registry(
 
     registry = AuthorizedToolRegistry()
     register_core_tools(registry, agent_id=agent_id)
+    # Directory resolution (name→email): read-only, harmless, all agents.
+    register_directory_tools(registry)
     register_builders_tools(registry)
     register_system_tools(registry)
     if "okr" in available_surfaces:

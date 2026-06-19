@@ -277,6 +277,13 @@ class Settings(BaseSettings):
             "(above the daily digest cadence)."
         ),
     )
+    directory_sync_cron: str = Field(
+        default="0 6 * * 1",
+        description=(
+            "Cron expression for the weekly name→email directory sync from Slack "
+            "(default: Monday at 06:00). Refreshes the directory_people roster cache."
+        ),
+    )
     uvicorn_workers: int = Field(
         default=1,
         validation_alias=AliasChoices(
