@@ -374,6 +374,7 @@ class _SlackAgentConfig:
     allowed_user_ids: tuple[str, ...]
     allowed_channel_ids: tuple[str, ...]
     listen_channel_messages: bool
+    always_respond_in_channels: bool
 
     def is_user_allowed(self, user_id: str) -> bool:
         return bool(user_id) and user_id in self.allowed_user_ids
@@ -476,6 +477,7 @@ async def _resolve_agent_slack_config(
     bot_user_id = ""
     allowed_channel_ids: tuple[str, ...] = _default_allowed_channel_ids(normalized_agent)
     listen_channel_messages = False
+    always_respond_in_channels = False
 
     if integration is not None:
         try:
@@ -502,6 +504,9 @@ async def _resolve_agent_slack_config(
         listen_channel_messages = bool(
             metadata.get("listen_channel_messages", creds.get("listen_channel_messages", False))
         )
+        always_respond_in_channels = bool(
+            metadata.get("always_respond_in_channels", creds.get("always_respond_in_channels", False))
+        )
 
     if normalized_agent == "artemis" and not signing_secret:
         signing_secret = global_signing_secret
@@ -518,6 +523,7 @@ async def _resolve_agent_slack_config(
         allowed_user_ids=allowed_user_ids,
         allowed_channel_ids=allowed_channel_ids,
         listen_channel_messages=listen_channel_messages,
+        always_respond_in_channels=always_respond_in_channels,
     )
 
 
@@ -549,6 +555,33 @@ def _should_handle_event(
     if channel_type == "im":
         return True
     return agent_cfg.listen_channel_messages
+
+
+def _needs_relevance_gate(
+    *,
+    agent_cfg: _SlackAgentConfig,
+    inner_type: str,
+    is_dm: bool,
+    is_channel_join: bool,
+    is_direct_mention: bool,
+) -> bool:
+    """Whether a plain channel message must pass the marketing relevance
+    classifier before the agent responds.
+
+    app_mention, DMs, and channel_join always bypass. Agents with
+    always_respond_in_channels set (e.g. an owner-private build channel)
+    answer every message in their allowed channels, so they bypass too.
+    The allowlist gate (_is_authorized_inbound) still governs WHO/WHICH
+    channel may reach this point.
+    """
+    return (
+        not is_direct_mention
+        and not is_dm
+        and not is_channel_join
+        and inner_type == "message"
+        and agent_cfg.listen_channel_messages
+        and not agent_cfg.always_respond_in_channels
+    )
 
 
 # ── HMAC verification ─────────────────────────────────────────────────────────
@@ -1216,12 +1249,12 @@ async def _handle_mentionable_event(
     # "classify" — the join itself is the trigger.
     is_dm = channel_type == "im" or channel_id.startswith("D")
     is_direct_mention = inner_type == "app_mention"
-    needs_gate = (
-        not is_direct_mention
-        and not is_dm
-        and not is_channel_join
-        and inner_type == "message"
-        and agent_cfg.listen_channel_messages
+    needs_gate = _needs_relevance_gate(
+        agent_cfg=agent_cfg,
+        inner_type=inner_type,
+        is_dm=is_dm,
+        is_channel_join=is_channel_join,
+        is_direct_mention=is_direct_mention,
     )
 
     # Build session_id here (mirrors route_inbound logic) so the gate can check history.
@@ -1319,6 +1352,7 @@ async def _slack_events(
             allowed_user_ids=(),
             allowed_channel_ids=_default_allowed_channel_ids(normalized_agent),
             listen_channel_messages=False,
+            always_respond_in_channels=False,
         )
 
     # ── 4. HMAC verification ──────────────────────────────────────────────────
