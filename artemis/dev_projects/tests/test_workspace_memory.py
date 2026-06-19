@@ -183,8 +183,8 @@ async def test_append_decision_does_not_clobber_existing(db_session: AsyncSessio
     await append_decision(db_session, project_id, "Keep me")
     await db_session.commit()
 
-    # Refresh from DB to simulate a new request context.
-    await db_session.expire_all()
+    # Refresh from DB to simulate a new request context (expire_all is sync).
+    db_session.expire_all()
 
     await append_decision(db_session, project_id, "Add me too")
     await db_session.commit()
