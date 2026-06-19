@@ -100,6 +100,14 @@ class IngestResult(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _clean(s: str | None) -> str | None:
+    """Return the trimmed string, or None if blank/whitespace-only."""
+    if s is None:
+        return None
+    stripped = s.strip()
+    return stripped if stripped else None
+
+
 def _require_secret(token: str | None) -> None:
     """Fail-closed shared-secret check (constant-time)."""
     secret = settings.enablement_webhook_secret
@@ -179,22 +187,30 @@ async def ingest(
 
             links_json = [link.model_dump() for link in asset.links]
 
+            c_title = _clean(asset.title)
+            c_summary = _clean(asset.summary)
+            c_audience = _clean(asset.audience)
+            c_asset_type = _clean(asset.asset_type)
+            c_confidence_label = _clean(asset.confidence_label)
+            c_drive_link = _clean(_default_link(asset))
+            c_source_row = _clean(asset.source_row)
+
             insert_stmt = pg_insert(EnablementAsset).values(
                 drive_file_id=asset.key,
-                asset_name=asset.title,
-                type=asset.asset_type,
-                drive_link=_default_link(asset),
-                title=asset.title,
-                summary=asset.summary,
+                asset_name=c_title,
+                type=c_asset_type,
+                drive_link=c_drive_link,
+                title=c_title,
+                summary=c_summary,
                 tags=asset.tags or None,
-                audience=asset.audience,
+                audience=c_audience,
                 status=asset.status,
-                confidence_label=asset.confidence_label,
+                confidence_label=c_confidence_label,
                 source_scope=asset.source_scope or "enablement",
                 links=links_json or None,
                 searchable_text=asset.searchable_text,
                 source_sheet=batch.source_sheet,
-                source_row=asset.source_row,
+                source_row=c_source_row,
                 requires_copy=asset.requires_copy,
                 embedding=embed_vec,
                 extra=asset.extra,

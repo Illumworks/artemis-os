@@ -176,6 +176,69 @@ async def test_full_refresh_soft_archives_removed_rows(client):
     assert by_key[f"{_SOURCE}:B"].status == "archived"
 
 
+async def test_blank_strings_stored_as_null(client):
+    """Empty / whitespace-only optional strings must be coerced to NULL on ingest."""
+    headers = {"X-Enablement-Token": "test-secret"}
+    body = {
+        "source_sheet": _SOURCE,
+        "assets": [
+            {
+                "key": f"{_SOURCE}:blank",
+                "title": "Blank Field Asset",
+                "audience": "",  # empty string -> NULL
+                "summary": "   ",  # whitespace-only -> NULL
+                "asset_type": "training_deck",
+                "source_row": "",  # empty -> NULL
+            }
+        ],
+    }
+    r = await client.post("/api/enablement/ingest", json=body, headers=headers)
+    assert r.status_code == 200, r.text
+
+    async with _db.SessionLocal() as session:
+        row = (
+            await session.execute(
+                select(EnablementAsset).where(EnablementAsset.drive_file_id == f"{_SOURCE}:blank")
+            )
+        ).scalar_one()
+
+    assert row.audience is None, f"expected NULL audience, got {row.audience!r}"
+    assert row.summary is None, f"expected NULL summary, got {row.summary!r}"
+    assert row.source_row is None, f"expected NULL source_row, got {row.source_row!r}"
+    # title and asset_type were non-empty; must be kept
+    assert row.title == "Blank Field Asset"
+    assert row.type == "training_deck"
+
+
+async def test_non_empty_strings_preserved_and_trimmed(client):
+    """Non-empty values must survive; leading/trailing whitespace must be trimmed."""
+    headers = {"X-Enablement-Token": "test-secret"}
+    body = {
+        "source_sheet": _SOURCE,
+        "assets": [
+            {
+                "key": f"{_SOURCE}:trim",
+                "title": "  Trim Me  ",
+                "audience": "  Teacher  ",
+                "summary": "A real summary",
+            }
+        ],
+    }
+    r = await client.post("/api/enablement/ingest", json=body, headers=headers)
+    assert r.status_code == 200, r.text
+
+    async with _db.SessionLocal() as session:
+        row = (
+            await session.execute(
+                select(EnablementAsset).where(EnablementAsset.drive_file_id == f"{_SOURCE}:trim")
+            )
+        ).scalar_one()
+
+    assert row.title == "Trim Me"
+    assert row.audience == "Teacher"
+    assert row.summary == "A real summary"
+
+
 async def test_search_excludes_archived_and_surfaces_links(client):
     import json
 
