@@ -75,6 +75,42 @@ _MSG_DEDUP_TTL_SECS: float = 60.0
 _msg_dedup_cache: dict[str, float] = {}
 _msg_dedup_lock: asyncio.Lock = asyncio.Lock()
 
+# ── GC-retention guard for fire-and-forget capture tasks ─────────────────────
+# asyncio.create_task() returns a weakly-referenced Task; hold a strong ref here
+# so it isn't GC'd before it runs. The done-callback drops the ref. Mirrors the
+# _BACKGROUND_TASKS pattern in artemis/floating_artemis/tools/argus_tools.py.
+_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+
+
+async def _capture_brief_reactions_bg(message_text: str) -> None:
+    """Fire-and-forget: record explicit brief reactions from Jon's reply.
+
+    Runs off the reply path with its OWN DB session so it never blocks or
+    delays Jon's response. Guarded so any failure is logged and swallowed.
+    """
+    try:
+        from artemis.proactivity.brief_reaction_capture import (
+            capture_brief_reactions_from_message,
+        )
+
+        async with db.SessionLocal() as session:
+            await capture_brief_reactions_from_message(session, message_text)
+    except Exception:
+        logger.debug(
+            "route_inbound: brief-reaction capture task failed (non-fatal)", exc_info=True
+        )
+
+
+def _spawn_brief_reaction_capture(message_text: str) -> None:
+    """Schedule the brief-reaction capture as a GC-safe background task."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_capture_brief_reactions_bg(message_text))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
 
 def _evict_msg_dedup_cache() -> None:
     """Remove entries older than _MSG_DEDUP_TTL_SECS from the cache (call under lock)."""
@@ -957,6 +993,27 @@ async def route_inbound(
     except Exception:
         logger.exception("route_inbound: handle_turn failed for session %s", session_id)
         return
+
+    # ── Brief-reaction capture (fire-and-forget, never blocks the reply) ──────
+    # Learn from Jon's natural replies to the morning brief: record explicit
+    # engage/mute reactions for brief items he references. Gate strictly on a
+    # PERSONAL DM (channel id starts with "D") from JON (the brief recipient) to
+    # Artemis (the brief sender). Off the reply path with its own DB session.
+    try:
+        if normalized_agent == "artemis" and channel_id.startswith("D") and slack_user_id:
+            from artemis.proactivity.scheduler import _resolve_morning_brief_recipient
+
+            async with db.SessionLocal() as _recip_session:
+                jon_slack_id = await _resolve_morning_brief_recipient(_recip_session)
+            if jon_slack_id and slack_user_id == jon_slack_id:
+                _spawn_brief_reaction_capture(text)
+    except Exception:
+        # Capture is best-effort; never affect the response path.
+        logger.debug(
+            "route_inbound: failed to schedule brief-reaction capture for session %s",
+            session_id,
+            exc_info=True,
+        )
 
     response_text = result.response_text
     if not response_text:

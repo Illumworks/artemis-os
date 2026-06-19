@@ -23,6 +23,7 @@ from artemis.integrations.slack.client import SlackClient
 from artemis.marketing.writing_studio.review_escalation import send_stale_review_escalations
 from artemis.proactivity import radar_repository
 from artemis.proactivity import repository as repo
+from artemis.proactivity.brief_reaction_capture import persist_brief_manifest
 from artemis.proactivity.commitments import (
     send_commitment_followups,
     send_commitment_proposals_digest,
@@ -703,6 +704,17 @@ async def _fire_morning_brief() -> None:
                 recipient_id,
                 delivery_date.isoformat(),
             )
+            # Persist the delivered brief's canonical item labels so reactions
+            # in Jon's replies can be bound back to the brief's weighting keys.
+            # Failure-safe by contract — never breaks delivery.
+            try:
+                await persist_brief_manifest(session, brief)
+                await session.commit()
+            except Exception:
+                logger.warning(
+                    "Morning brief: manifest persistence failed — reactions won't bind",
+                    exc_info=True,
+                )
         except Exception as exc:
             logger.exception("Morning brief delivery failed")
             await session.rollback()
