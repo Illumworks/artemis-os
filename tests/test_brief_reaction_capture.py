@@ -211,12 +211,12 @@ async def test_capture_records_engage_and_mute_under_canonical_labels(
     await persist_brief_manifest(db_session, _BRIEF)
     await db_session.commit()
 
-    # The model: engage one priority (lowercased to test case-insensitive match),
-    # mute the waiting_on item, and reference a label NOT in the manifest.
+    # The model references items by 1-based manifest index: engage priority #1,
+    # mute waiting_on #3, and an out-of-range index that must be ignored.
     payload = [
-        {"label": "ship the login redirect fix", "reaction": "engage"},
-        {"label": "Alice", "reaction": "mute"},
-        {"label": "Some random thing Jon invented", "reaction": "engage"},
+        {"index": 1, "reaction": "engage"},
+        {"index": 3, "reaction": "mute"},
+        {"index": 99, "reaction": "engage"},
     ]
     monkeypatch.setattr(fb, "complete_with_fallback", _fake_complete(payload))
 

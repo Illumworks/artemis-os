@@ -215,12 +215,12 @@ def _build_classify_prompt(items: list[dict], message_text: str) -> str:
             "",
             "Return STRICT JSON: a list of objects, one per brief item Jon "
             "EXPLICITLY references. Each object is "
-            '{"label": <exact label from the numbered list above>, "reaction": "engage"|"mute"}.',
+            '{"index": <the item number from the list above>, "reaction": "engage"|"mute"}.',
             '- "engage": he shows interest, wants to focus on, or asks about the item.',
             '- "mute": he says skip it, drop it, not now, or otherwise dismisses it.',
             "Only include items he explicitly references; omit everything else. "
             "Never infer a reaction from silence. If he references none, return [].",
-            "Use the label text EXACTLY as written in the list. Output JSON only, no prose.",
+            "Output JSON only, no prose.",
         ]
     )
     return "\n".join(lines)
@@ -278,14 +278,13 @@ async def capture_brief_reactions_from_message(
         if not items:
             return []
 
-        # Map canonical label (case-insensitive) -> (type, exact-label).
-        by_label: dict[str, tuple[str, str]] = {}
-        for it in items:
-            label = str(it.get("label", "")).strip()
-            item_type = str(it.get("type", "")).strip()
-            if label and item_type in _VALID_ITEM_TYPES:
-                by_label[label.lower()] = (item_type, label)
-        if not by_label:
+        # The model references items by their 1-based index in this list, so the
+        # canonical (type, label) binding is exact — no fragile label echoing.
+        if not any(
+            str(it.get("type", "")).strip() in _VALID_ITEM_TYPES
+            and str(it.get("label", "")).strip()
+            for it in items
+        ):
             return []
 
         # ── LLM classify (lazy provider import — circular-import rule) ─────────
@@ -308,7 +307,6 @@ async def capture_brief_reactions_from_message(
             primary="codex",
             fallback="claude-code",
             feature_tag="brief_reaction_capture",
-            model=None,
         )
         raw = ""
         for block in resp.message.content:
@@ -320,15 +318,24 @@ async def capture_brief_reactions_from_message(
             return []
 
         recorded: list[tuple[str, str, str]] = []
+        seen_idx: set[int] = set()
         for d in decisions:
-            label = str(d.get("label", "")).strip()
             reaction = str(d.get("reaction", "")).strip().lower()
             if reaction not in {"engage", "mute"}:
                 continue
-            match = by_label.get(label.lower())
-            if match is None:
-                continue  # not a manifest label — ignore Jon's paraphrase / hallucination
-            item_type, canonical_label = match
+            try:
+                idx = int(d.get("index"))
+            except (TypeError, ValueError):
+                continue
+            # 1-based index into the manifest; ignore out-of-range / duplicates.
+            if idx < 1 or idx > len(items) or idx in seen_idx:
+                continue
+            seen_idx.add(idx)
+            it = items[idx - 1]
+            item_type = str(it.get("type", "")).strip()
+            canonical_label = str(it.get("label", "")).strip()
+            if item_type not in _VALID_ITEM_TYPES or not canonical_label:
+                continue
             await record_reaction(
                 session,
                 item_type=item_type,
