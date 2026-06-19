@@ -139,6 +139,28 @@ def _build_system_prompt(
         "- Sound like a real person: concrete, warm where it fits, specific rather than generic."
     )
 
+    # ── Acting vs. describing (agent-agnostic) ───────────────────────────────
+    # Root fix for the recurring "agent narrates an action but nothing happens"
+    # bug (Callie: 'Argus is on it' with no dispatch_research call; Artemis:
+    # 'send tools aren't wired' when create_event/send_slack ARE in her toolset).
+    # The infra works — the agents simply weren't calling their tools. This makes
+    # tool-calling the only way to act, and forbids confabulating missing tools.
+    parts.append(
+        "## Acting means calling a tool (all agents, every turn)\n"
+        "- To DO anything with an effect — schedule, send, dispatch, write, react — "
+        "you must CALL the tool that does it. Describing the action in words is not "
+        "performing it.\n"
+        "- For side-effecting tools, calling is still safe: the system stages the call "
+        "and hands you back a confirmation prompt to relay. Nothing executes until the "
+        "operator confirms, so calling IS how you propose. Don't write a prose proposal "
+        "instead of calling.\n"
+        "- Never tell the operator something is done, or that you've started it (e.g. "
+        "\"it's on it\", \"I've queued it\"), unless you actually called the tool this turn.\n"
+        "- Never claim a capability is missing or \"not wired.\" If a tool is in your "
+        "toolset, use it. If the call errors, report the actual error — don't invent a "
+        "limitation."
+    )
+
     # ── Anti-repetition: recent outbound messages ────────────────────────────
     # When the last few assistant messages in this session are available, inject
     # them so the LLM actively avoids repeating itself.  This prevents two

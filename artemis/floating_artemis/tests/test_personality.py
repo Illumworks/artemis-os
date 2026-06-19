@@ -233,6 +233,29 @@ def test_build_system_prompt_artemis_profile_matches_legacy_output() -> None:
         parts.append("## Current operator context\nPage: okr")
         parts.append("## Available surfaces (your tools are gated by these)\nokr")
         parts.append(
+            "## Human communication rules (all agents, every turn)\n"
+            "- Address people by their first name naturally when you know it — weave it "
+            "in, don't open every message the same way.\n"
+            "- Vary your sentence openings. Never start two consecutive messages the same way.\n"
+            "- Never send canned, templated, or copy-pasted-sounding text.\n"
+            "- Sound like a real person: concrete, warm where it fits, specific rather than generic."
+        )
+        parts.append(
+            "## Acting means calling a tool (all agents, every turn)\n"
+            "- To DO anything with an effect — schedule, send, dispatch, write, react — "
+            "you must CALL the tool that does it. Describing the action in words is not "
+            "performing it.\n"
+            "- For side-effecting tools, calling is still safe: the system stages the call "
+            "and hands you back a confirmation prompt to relay. Nothing executes until the "
+            "operator confirms, so calling IS how you propose. Don't write a prose proposal "
+            "instead of calling.\n"
+            "- Never tell the operator something is done, or that you've started it (e.g. "
+            "\"it's on it\", \"I've queued it\"), unless you actually called the tool this turn.\n"
+            "- Never claim a capability is missing or \"not wired.\" If a tool is in your "
+            "toolset, use it. If the call errors, report the actual error — don't invent a "
+            "limitation."
+        )
+        parts.append(
             "**You are responding in Slack.** The operator @-mentioned you directly. "
             "**Assume they are addressing you and respond on-topic.** "
             'Do not ask "Are you talking to me?" — they are. '
