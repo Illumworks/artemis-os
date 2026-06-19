@@ -147,6 +147,32 @@ async def test_first_name_only_ambiguous(db_session: AsyncSession) -> None:
     assert await resolve_one("Julie", db_session) is None
 
 
+async def test_first_name_only_unique_resolves(db_session: AsyncSession) -> None:
+    """A unique first name resolves (the only 'Angela' → Angela Miata)."""
+    await _seed(db_session, [
+        _person(email="angela.miata@amiralearning.com", full_name="Angela Miata",
+                first_name="Angela", last_name="Miata"),
+        _person(email="bob@amiralearning.com", full_name="Bob Lee",
+                first_name="Bob", last_name="Lee"),
+    ])
+    assert await resolve_one("Angela", db_session) == "angela.miata@amiralearning.com"
+
+
+async def test_exact_first_name_beats_fuzzy(db_session: AsyncSession) -> None:
+    """'Angela' must resolve to the person NAMED Angela, not fuzzy 'Angel' matches."""
+    await _seed(db_session, [
+        _person(email="angela.miata@amiralearning.com", full_name="Angela Miata",
+                first_name="Angela", last_name="Miata"),
+        _person(email="angel.blandero@amiralearning.com", full_name="Angel Blandero",
+                first_name="Angel", last_name="Blandero"),
+        _person(email="mark.angel@amiralearning.com", full_name="Mark Angel",
+                first_name="Mark", last_name="Angel"),
+    ])
+    assert await resolve_one("Angela", db_session) == "angela.miata@amiralearning.com"
+    # And the distinct first name "Angel" resolves to the other person.
+    assert await resolve_one("Angel", db_session) == "angel.blandero@amiralearning.com"
+
+
 async def test_fuzzy_match(db_session: AsyncSession) -> None:
     await _seed(db_session, [_person(email="kristen@amiralearning.com", full_name="Kristen Jameson",
                                      first_name="Kristen", last_name="Jameson")])

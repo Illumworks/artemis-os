@@ -21,7 +21,9 @@ loading them all is fine). Priorities, highest first:
                                → if MORE THAN ONE person matches at this tier,
                                  their confidence drops to ~0.70 and reason is
                                  marked "ambiguous".
-    0.60  first-name only     (usually several people → ambiguous)
+    0.90  first-name only     (exact first-name hit; outranks fuzzy noise.
+                               several people share it → resolve_one declines on
+                               the 0.10 separation guard)
     fuzzy difflib ratio >= 0.80 against full_name/first/last → ratio * 0.70
 """
 
@@ -98,9 +100,12 @@ def _score_person(query: str, tokens: list[str], person: DirectoryPerson) -> tup
             if last and last.startswith(rest_joined):
                 return 0.95, "first + last"
 
-        # 0.60 — first-name only (often several people share a first name).
+        # 0.90 — first-name only. An EXACT first-name hit must decisively outrank
+        # fuzzy noise (e.g. "Angela" must beat fuzzy matches on "Angel"). When
+        # several people share the first name, resolve_one still declines because
+        # the matches tie within its 0.10 separation guard.
         if len(tokens) == 1 and first == first_tok:
-            return 0.60, "first name only"
+            return 0.90, "first name only"
 
     # Fuzzy fallback against full_name / first / last.
     best = max(_ratio(query, full_name), _ratio(query, first), _ratio(query, last))
@@ -170,21 +175,30 @@ async def resolve_people(query: str, session: Any, limit: int = 5) -> list[Direc
 async def resolve_one(query: str, session: Any) -> str | None:
     """Return the email IFF a single confident, unambiguous match exists.
 
-    A match qualifies only when the top match has confidence >= 0.90 AND no
-    other match is within 0.10 of it. Otherwise (ambiguous or unresolved)
-    returns ``None`` — the safe default for automation.
+    Resolves in two cases:
+    - a STRONG match: top confidence >= 0.90 and no other match within 0.10 of it
+      (e.g. exact email, "First Last", a unique "First L.").
+    - a UNIQUE plausible match: exactly one candidate above the noise floor
+      (>= 0.60), e.g. the only "Angela"/"Kristen" in the roster. This is safe for
+      automation because the caller proposes and the operator confirms before
+      anything is sent — so a lone reasonable match is worth surfacing, not dropping.
+
+    Otherwise (several plausible people, or nothing) returns ``None``.
     """
     matches = await resolve_people(query, session, limit=5)
     if not matches:
         return None
 
     top = matches[0]
-    if top.confidence < 0.90:
-        return None
 
-    if len(matches) > 1:
-        runner_up = matches[1]
-        if top.confidence - runner_up.confidence < 0.10:
-            return None
+    # Strong, clearly-separated match.
+    if top.confidence >= 0.90 and (
+        len(matches) == 1 or top.confidence - matches[1].confidence >= 0.10
+    ):
+        return top.email
 
-    return top.email
+    # Unique plausible match — exactly one candidate above the noise floor.
+    if len(matches) == 1 and top.confidence >= 0.60:
+        return top.email
+
+    return None

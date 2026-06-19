@@ -11,11 +11,17 @@ safe (no circular-import risk at app boot).
 from __future__ import annotations
 
 from artemis.directory.resolver import DirectoryMatch, resolve_one, resolve_people
-from artemis.directory.sync import sync_directory_from_slack
+from artemis.directory.sync import (
+    sync_directory,
+    sync_directory_from_calendar,
+    sync_directory_from_slack,
+)
 
 __all__ = [
     "DirectoryMatch",
     "resolve_one",
     "resolve_people",
+    "sync_directory",
+    "sync_directory_from_calendar",
     "sync_directory_from_slack",
 ]

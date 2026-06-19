@@ -272,14 +272,16 @@ def _register_directory_sync_job(scheduler: AsyncIOScheduler) -> None:
 
 
 async def _fire_directory_sync() -> None:
-    """Refresh the directory_people roster cache from Slack.
+    """Refresh the directory_people roster cache from all sources.
 
-    FAILURE-SAFE: sync_directory_from_slack never raises (returns 0 on error).
+    Runs the Slack workspace roster AND calendar attendees (the people the owner
+    actually schedules with, who may not be in Slack).
+    FAILURE-SAFE: sync_directory never raises (each source returns 0 on error).
     """
-    from artemis.directory.sync import sync_directory_from_slack
+    from artemis.directory.sync import sync_directory
 
     async with _db.SessionLocal() as session:
-        count = await sync_directory_from_slack(session)
+        count = await sync_directory(session)
     logger.info("directory sync sweep finished (people_upserted=%d)", count)
 
 
