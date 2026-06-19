@@ -70,13 +70,47 @@ async def _fetch_gcal_people(
     creds: dict[str, object],
     query: str,
     limit: int,
+    integration_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Call People API and return normalised results."""
+    """Call People API and return normalised results.
+
+    When integration_id is provided an on_tokens_refreshed callback is wired up
+    so any on-the-fly token refresh is persisted back to the DB.
+    """
+    async def _on_tokens_refreshed(
+        access_token: str, refresh_token: str, expires_at: float
+    ) -> None:
+        if integration_id is None:
+            return
+        import artemis.db as _db
+        from artemis.integrations import repository as repo
+
+        new_creds = dict(creds)
+        new_creds["access_token"] = access_token
+        new_creds["refresh_token"] = refresh_token
+        new_creds["expires_at"] = expires_at
+        async with _db.SessionLocal() as _session:
+            try:
+                await repo.persist_refreshed_credentials(
+                    _session,
+                    integration_id=integration_id,
+                    new_creds=new_creds,
+                )
+                await _session.commit()
+            except Exception:
+                logger.debug(
+                    "people: persist_refreshed_credentials failed for integration_id=%d",
+                    integration_id,
+                    exc_info=True,
+                )
+
     client = PeopleClient(
         access_token=str(creds.get("access_token", "")),
         refresh_token=str(creds.get("refresh_token", "")),
         client_id=str(creds.get("client_id", "")),
         client_secret=str(creds.get("client_secret", "")),
+        expires_at=float(str(creds.get("expires_at") or 0)),
+        on_tokens_refreshed=_on_tokens_refreshed if integration_id is not None else None,
     )
     try:
         contacts = await client.search_contacts(query, limit=limit)
@@ -200,11 +234,13 @@ async def search_people(
     slack_rows = await repo.list_active(session, provider="slack")
 
     gcal_creds: dict[str, object] | None = None
+    gcal_integration_id: int | None = None
     slack_token: str | None = None
 
     if gcal_rows:
         try:
             gcal_creds = decrypt_credentials(bytes(gcal_rows[0].encrypted_credentials))
+            gcal_integration_id = gcal_rows[0].id
         except Exception:
             gcal_creds = None
 
@@ -224,7 +260,7 @@ async def search_people(
             return []
         try:
             return await asyncio.wait_for(
-                _fetch_gcal_people(gcal_creds, q_stripped, limit),
+                _fetch_gcal_people(gcal_creds, q_stripped, limit, gcal_integration_id),
                 timeout=0.5,
             )
         except TimeoutError:

@@ -6,6 +6,11 @@ Scope required: https://www.googleapis.com/auth/contacts.readonly
 
 from __future__ import annotations
 
+import logging
+import time
+from collections.abc import Callable, Coroutine
+from typing import Any
+
 import httpx
 
 from artemis.integrations.gcal.client import GCalAPIError
@@ -15,6 +20,10 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Fields requested from the People API — kept minimal for speed.
 _PERSON_FIELDS = "names,emailAddresses,photos"
+
+_OnTokensRefreshed = Callable[[str, str, float], Coroutine[Any, Any, None]]
+
+logger = logging.getLogger(__name__)
 
 
 class PeopleClient:
@@ -26,13 +35,18 @@ class PeopleClient:
         refresh_token: str,
         client_id: str,
         client_secret: str,
+        expires_at: float = 0.0,
+        on_tokens_refreshed: _OnTokensRefreshed | None = None,
     ) -> None:
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._client_id = client_id
         self._client_secret = client_secret
+        self._expires_at = expires_at
+        self._on_tokens_refreshed = on_tokens_refreshed
 
     async def _refresh(self) -> None:
+        """Exchange the refresh token for a new access token and persist if callback set."""
         async with httpx.AsyncClient(timeout=10) as http:
             resp = await http.post(
                 _TOKEN_URL,
@@ -44,7 +58,21 @@ class PeopleClient:
                 },
             )
         resp.raise_for_status()
-        self._access_token = resp.json()["access_token"]
+        body = resp.json()
+        self._access_token = str(body["access_token"])
+        self._refresh_token = str(body.get("refresh_token") or self._refresh_token)
+        new_expires_at = time.time() + int(body.get("expires_in", 3600))
+        self._expires_at = new_expires_at
+
+        if self._on_tokens_refreshed is not None:
+            try:
+                await self._on_tokens_refreshed(
+                    self._access_token,
+                    self._refresh_token,
+                    new_expires_at,
+                )
+            except Exception:
+                logger.debug("PeopleClient on_tokens_refreshed callback failed", exc_info=True)
 
     async def _get(self, path: str, **params: object) -> dict[str, object]:
         url = f"{_PEOPLE_BASE}{path}"

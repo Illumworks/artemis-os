@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
 from artemis.integrations import repository as repo
-from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.gcal.client import GCalAPIError, GCalClient
+from artemis.integrations.gcal.sync import _client_from_row
 from artemis.integrations.gcal.types import EventDateTime
 from artemis.marketing.routes._auth import require_owner, require_token
 
@@ -36,18 +36,15 @@ router = APIRouter(
 
 
 async def _get_gcal_client(session: AsyncSession) -> GCalClient:
-    """Return a configured GCalClient or raise 503 if not connected."""
+    """Return a configured GCalClient (with persist callback) or raise 503 if not connected.
+
+    Uses _client_from_row from sync.py so every on-the-fly 401 refresh is
+    written back to the DB — same path as the scheduler and summarizer.
+    """
     rows = await repo.list_active(session, provider="gcal")
     if not rows:
         raise HTTPException(status_code=503, detail="Google Calendar not connected.")
-    integration = rows[0]
-    creds = decrypt_credentials(bytes(integration.encrypted_credentials))
-    return GCalClient(
-        access_token=str(creds.get("access_token", "")),
-        refresh_token=str(creds.get("refresh_token", "")),
-        client_id=str(creds.get("client_id", "")),
-        client_secret=str(creds.get("client_secret", "")),
-    )
+    return await _client_from_row(rows[0], session)
 
 
 def _format_start_label(dt_str: str) -> str:
@@ -68,15 +65,8 @@ async def get_calendar_overview(
     if not rows:
         return {"status": "not_connected", "provider": "gcal"}
 
-    integration = rows[0]
     try:
-        creds = decrypt_credentials(bytes(integration.encrypted_credentials))
-        client = GCalClient(
-            access_token=str(creds.get("access_token", "")),
-            refresh_token=str(creds.get("refresh_token", "")),
-            client_id=str(creds.get("client_id", "")),
-            client_secret=str(creds.get("client_secret", "")),
-        )
+        client = await _client_from_row(rows[0], session)
 
         now_utc = datetime.now(UTC)
         today_start = datetime.combine(now_utc.date(), time.min).replace(tzinfo=UTC)
@@ -130,15 +120,8 @@ async def get_calendar_event(
     rows = await repo.list_active(session, provider="gcal")
     if not rows:
         raise HTTPException(status_code=503, detail="Google Calendar not connected.")
-    integration = rows[0]
     try:
-        creds = decrypt_credentials(bytes(integration.encrypted_credentials))
-        client = GCalClient(
-            access_token=str(creds.get("access_token", "")),
-            refresh_token=str(creds.get("refresh_token", "")),
-            client_id=str(creds.get("client_id", "")),
-            client_secret=str(creds.get("client_secret", "")),
-        )
+        client = await _client_from_row(rows[0], session)
         event = await client.get_event(calendar_id="primary", event_id=event_id)
     except HTTPException:
         raise
@@ -170,15 +153,8 @@ async def get_calendar_events(
     rows = await repo.list_active(session, provider="gcal")
     if not rows:
         raise HTTPException(status_code=503, detail="Google Calendar not connected.")
-    integration = rows[0]
     try:
-        creds = decrypt_credentials(bytes(integration.encrypted_credentials))
-        client = GCalClient(
-            access_token=str(creds.get("access_token", "")),
-            refresh_token=str(creds.get("refresh_token", "")),
-            client_id=str(creds.get("client_id", "")),
-            client_secret=str(creds.get("client_secret", "")),
-        )
+        client = await _client_from_row(rows[0], session)
         events = await client.list_events(
             calendar_id="primary",
             time_min=range_start,
