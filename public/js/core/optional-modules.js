@@ -42,6 +42,12 @@ const OPTIONAL_MODULES = [
     name: "integrations",
     load: () => import("../features/integrations.js"),
   },
+  {
+    // Screen-Time Watch — internal policy heat map + signal repository. Self-
+    // subscribes to the `view` store and paints into #app-shell-content.
+    name: "screentime-watch",
+    load: () => import("../features/screentime-watch.js"),
+  },
 ];
 
 export async function loadOptionalModules(logger = console) {

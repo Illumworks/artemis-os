@@ -83,6 +83,7 @@ from artemis.routes import me as me_routes
 from artemis.routes import meetings as meetings_routes
 from artemis.routes import notifications as notifications_routes
 from artemis.routes import people as people_routes
+from artemis.routes import screentime as screentime_routes
 from artemis.routes import sessions as sessions_routes
 from artemis.routes import stats as stats_routes
 from artemis.routes import users as users_routes
@@ -316,6 +317,9 @@ app.include_router(daily_brief_routes.router)
 
 # Enablement indexing — Apps Script ingest webhook (feeds Kai's enablement_assets)
 app.include_router(enablement_routes.router)
+
+# Screen-Time Watch — internal dashboard (state-stance heat map + signal repo + purge)
+app.include_router(screentime_routes.router)
 
 # OP1 — Automations registry
 app.include_router(automations_router)
