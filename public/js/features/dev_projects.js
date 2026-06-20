@@ -363,6 +363,30 @@ async function loadSession(sessionId) {
           seenTokenOrError = true;
         }
         lastPermission = null;
+      } else if (entry.kind === "message") {
+        // Ares-path message replay: payload is { role, content: [...] }
+        const content = entry.payload?.content;
+        if (Array.isArray(content)) {
+          renderAresTextBlocks(content);
+          seenTokenOrError = true;
+        }
+        lastPermission = null;
+      } else if (entry.kind === "tool_use") {
+        // Tool call chip replay: payload is { tool, input }
+        if (els.messages) {
+          els.messages.insertAdjacentHTML("beforeend", renderToolStepChip(entry.payload?.tool, entry.payload?.input));
+          seenTokenOrError = true;
+        }
+      } else if (entry.kind === "tool_result") {
+        // Tool result replay: payload is { tool, result, is_error }
+        if (els.messages) {
+          els.messages.insertAdjacentHTML("beforeend", renderToolStepResult(
+            entry.payload?.tool,
+            entry.payload?.result,
+            entry.payload?.is_error,
+          ));
+          seenTokenOrError = true;
+        }
       }
     }
 
@@ -486,13 +510,78 @@ function connectWs(sessionId) {
   state.ws.onmessage = (event) => handleWs(JSON.parse(event.data));
 }
 
+// Render a compact tool-step chip for a tool call.
+function renderToolStepChip(tool, input) {
+  let label = escapeHtml(tool || "tool");
+  // Summarize the most useful part of input for common Ares tools.
+  if (input) {
+    const path = input.path || input.file_path || input.filepath || "";
+    if (path) {
+      label += ` <span class="dev-tool-step-arg">${escapeHtml(String(path))}</span>`;
+    } else if (tool === "git_diff" && input.args) {
+      const arg = Array.isArray(input.args) ? input.args.join(" ") : String(input.args);
+      if (arg) label += ` <span class="dev-tool-step-arg">${escapeHtml(arg.slice(0, 60))}</span>`;
+    }
+  }
+  return `<div class="dev-tool-step dev-tool-step-call">${label}</div>`;
+}
+
+// Render a collapsible tool result block, appended after its call chip.
+function renderToolStepResult(tool, result, isError) {
+  const safeResult = escapeHtml(typeof result === "string" ? result : JSON.stringify(result));
+  const errorCls = isError ? " dev-tool-step-error" : "";
+  return `<details class="dev-tool-step dev-tool-step-result${errorCls}">
+    <summary class="dev-tool-step-summary">${isError ? "error" : "result"}</summary>
+    <pre class="dev-tool-step-pre">${safeResult}</pre>
+  </details>`;
+}
+
+// Render text blocks from an Ares-path content array as an assistant bubble.
+function renderAresTextBlocks(contentArray) {
+  const texts = contentArray
+    .filter((block) => block.type === "text" && block.text)
+    .map((block) => escapeHtml(block.text))
+    .join("\n");
+  if (!texts) return;
+  // Finalize any open streaming bubble first (Ares messages arrive as
+  // complete per-iteration chunks, not token streams, so we start fresh).
+  finalizeStreamingBubble();
+  els.messages?.insertAdjacentHTML("beforeend", `
+    <article class="dev-message dev-message-assistant">
+      <div class="dev-message-role">assistant</div>
+      <div class="dev-message-body"><div class="dev-message-text">${texts}</div></div>
+    </article>
+  `);
+}
+
+// Seal the current streaming bubble (remove the .streaming class so a
+// subsequent ensureStreamingBubble() call creates a fresh one).
+function finalizeStreamingBubble() {
+  els.messages?.querySelector(".dev-message.streaming")?.classList.remove("streaming");
+}
+
 function handleWs(event) {
   if (event.type === "dev_projects.message" || event.type === "dev_projects.message_complete") {
     if (event.message) {
+      // Legacy path: wrapped as { message: { id, session_id, role, content, created_at } }
       els.messages?.insertAdjacentHTML("beforeend", renderMessages([event.message]));
       scrollToBottom();
       window.hljs?.highlightAll?.();
+    } else if (Array.isArray(event.content)) {
+      // Ares path: { type, role, content: [...] } — no message wrapper, no id.
+      renderAresTextBlocks(event.content);
+      scrollToBottom();
     }
+  } else if (event.type === "dev_projects.tool_step") {
+    if (!els.messages) return;
+    if (event.is_result) {
+      // Tool result: collapsible block after the preceding chip.
+      els.messages.insertAdjacentHTML("beforeend", renderToolStepResult(event.tool, event.result, event.is_error));
+    } else {
+      // Tool call chip.
+      els.messages.insertAdjacentHTML("beforeend", renderToolStepChip(event.tool, event.input));
+    }
+    scrollToBottom();
   } else if (event.type === "dev_projects.token") {
     ensureStreamingBubble().querySelector(".dev-message-text").textContent += event.token || "";
     scrollToBottom();
