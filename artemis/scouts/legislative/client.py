@@ -34,13 +34,18 @@ class BillSummary(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    # LegiScan getSearch returns: bill_id, bill_number, title, relevance, state,
+    # url, last_action, last_action_date (NO numeric status — that comes from
+    # getBill). Only bill_id is load-bearing (the scout fetches the full bill by
+    # id); the rest are defaulted so a search result never fails validation.
     bill_id: int
-    number: str
-    title: str
-    status: int
+    number: str = Field(default="", alias="bill_number")
+    title: str = ""
+    status: int = 0
     last_action: str = ""
     last_action_date: str = ""
     url: str = ""
+    state: str = ""
 
 
 class Bill(BaseModel):
@@ -141,7 +146,15 @@ class LegiScanClient:
             )
             return []
 
-        raw_results = data.get("searchresult", {}).get("results", [])
+        # LegiScan getSearch returns ``searchresult`` as numbered keys
+        # ("0", "1", …) plus a "summary" entry — NOT a "results" list. The old
+        # ``.get("results")`` therefore always returned [], so EVERY search (here
+        # and in the campaign pipeline) silently yielded zero bills. Collect the
+        # numbered bill dicts, skipping the "summary" metadata entry.
+        searchresult = data.get("searchresult", {})
+        raw_results = [
+            v for k, v in searchresult.items() if k != "summary" and isinstance(v, dict)
+        ]
         summaries: list[BillSummary] = []
         for raw in raw_results:
             try:

@@ -34,11 +34,14 @@ from artemis.scouts.legislative.scout import LegislativeScout
 # Test helpers
 # ---------------------------------------------------------------------------
 
+# Mirrors a real LegiScan getSearch result entry: bill_number (not "number"),
+# relevance + state, and NO numeric status (that comes from getBill).
 _BILL_SUMMARY_RAW: dict[str, Any] = {
     "bill_id": 123,
-    "number": "HB 1",
+    "bill_number": "HB 1",
     "title": "Florida Literacy Instruction Act",
-    "status": STATUS_INTRODUCED,
+    "relevance": 95,
+    "state": "FL",
     "last_action": "Referred to committee",
     "last_action_date": "2024-01-15",
     "url": "https://legiscan.com/FL/bill/HB1/2024",
@@ -59,8 +62,10 @@ _BILL_RAW: dict[str, Any] = {
 _SEARCH_RESPONSE: dict[str, Any] = {
     "status": "OK",
     "searchresult": {
-        "summary": {"page": 1, "range": 50, "relevancy": 0},
-        "results": [_BILL_SUMMARY_RAW],
+        # LegiScan keys results by number ("0","1",…) alongside a "summary" entry,
+        # NOT under a "results" list.
+        "summary": {"page": "1 of 1", "count": 1},
+        "0": _BILL_SUMMARY_RAW,
     },
 }
 
@@ -221,8 +226,9 @@ async def test_search_parses_bill_summary_list() -> None:
     assert len(summaries) == 1
     assert isinstance(summaries[0], BillSummary)
     assert summaries[0].bill_id == 123
-    assert summaries[0].number == "HB 1"
-    assert summaries[0].status == STATUS_INTRODUCED
+    assert summaries[0].number == "HB 1"  # read from "bill_number" via alias
+    assert summaries[0].state == "FL"
+    assert summaries[0].status == 0  # getSearch carries no status; defaulted
 
 
 async def test_get_bill_parses_bill_model() -> None:
@@ -352,8 +358,15 @@ def test_mapping_metadata_contains_bill_id_and_state() -> None:
 # ===========================================================================
 
 
-async def test_gather_findings_empty_api_key_returns_empty() -> None:
-    """_gather_findings() must return [] when api_key is not set."""
+async def test_gather_findings_empty_api_key_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_gather_findings() must return [] when api_key is not set.
+
+    The scout falls back to ``LEGISCAN_API_KEY`` when ``api_key=""``, so clear it
+    to exercise the genuinely-no-key path (otherwise a loaded .env makes a live call).
+    """
+    monkeypatch.delenv("LEGISCAN_API_KEY", raising=False)
     scout = LegislativeScout(ScoutConfig(), api_key="")
     findings = await scout._gather_findings()
     assert findings == []
