@@ -84,6 +84,24 @@ loop_runner's shell exec as the command substrate.
   reconnect. Verify: start build → close browser → reopen on another device →
   still running + catches up.
 
+### Phase 1 — DESIGN (locked 2026-06-19, from substrate research)
+
+**Gap (precise):** a Forge turn is a detached `asyncio.create_task(run_turn(...))` (returns 202 immediately) — so it ALREADY survives the browser closing (it dies only if the process crashes). But streamed output (`dev_projects.token`) is broadcast ephemerally via `ws_manager` and never persisted; the assistant message is written to `dev_messages` only once, at end-of-turn. So a device reconnecting mid-build sees nothing of the in-flight work, and there is no "is a build running" signal. Reuse: `ws_manager` (room-keyed, in-proc), the `create_task` launch, and the `/ws/agent-runs/{run_id}` on-reconnect replay pattern (`_send_initial_agent_state`). `agent_runs` lacks a streamable log + a dev_session FK, so Forge gets its own run tables.
+
+**Data model (new, migration 0102):**
+- `forge_runs`: id PK, `run_id` (text, unique, WS-room key), `dev_session_id` FK->dev_sessions (indexed), `project_id` FK->dev_projects, `status` (running|completed|failed|cancelled), `started_at`, `completed_at?`, `error?`. One row per turn/build.
+- `forge_run_log`: id PK, `run_id` FK->forge_runs.run_id (indexed), `seq` int (ordered), `kind` (token|message|tool_use|tool_result|permission|error|status), `payload` JSONB, `created_at`. APPEND-ONLY (lossless) — the replayable transcript. Index (run_id, seq).
+
+**Reconnect contract:** `GET /api/dev-projects/sessions/{id}/active-run` -> `{run_id, status, log:[{seq,kind,payload}...]}` or `null`. Frontend calls it on session load; if a run is active, it renders the replayed log (reconstructs the in-flight streaming bubble) then joins the live WS. Mirrors `_send_initial_agent_state`.
+
+**Chunks:**
+- **1.1 (data layer, independent — START FIRST):** forge_runs + forge_run_log models + migration 0102 + repository (`create_run`, `append_log(run_id, kind, payload)` with seq, `complete_run`, `get_active_run_for_session`, `get_run_log`) + round-trip tests. Mirrors the workspace_memory data-layer chunk.
+- **1.2 (loop_runner integration, after 1.1):** in `run_turn`/`_run_provider_completion` create a forge_run on start, append each broadcast event to forge_run_log (BATCH token deltas — do NOT write one row per token; flush every ~50 tokens or ~400ms), complete the run at end. Keep existing ephemeral WS broadcast unchanged (log is additive). High-judgment — Lead reviews.
+- **1.3 (reconnect/replay, after 1.1, parallel with 1.2):** the `/active-run` endpoint + log replay; touches routes/dev_projects.py.
+- **1.4 (frontend, after 1.2/1.3 contract):** dev_projects.js shows "build running" + replays the log into the streaming bubble on load, then joins WS.
+
+**Scope boundary (honest):** V1 runs are in-process detached tasks — they survive tab-close + reconnect, and the persisted log preserves everything up to a crash, but an in-flight turn does NOT survive an app restart (the readiness guard + watchdog keep the process alive). True cross-process durability (worker queue + Redis WS fanout) is a later phase — `ws_manager` is explicitly single-process.
+
 ### Phase 2 — Ares drives the full build loop (the experience)
 - **2.1** Route Forge `send_message` through the agent loop with Ares persona +
   system prompt + FA tool registry; hydrate one-brain on start. Keep dev_messages
