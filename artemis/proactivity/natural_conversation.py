@@ -67,7 +67,8 @@ _REJECT_RE = re.compile(
     re.IGNORECASE,
 )
 
-_ROUTER_SYSTEM = """You route a Slack DM reply against Artemis's pending context.
+_ROUTER_SYSTEM = """You decide ONE thing: is this Slack reply the operator ACTING ON a
+pending proposal/approval, or is it normal conversation? Default hard to conversation.
 
 Return JSON only. No markdown, no prose outside JSON.
 
@@ -79,11 +80,26 @@ Allowed intents:
 - clarify
 - converse
 
-Rules:
-- Approve/reject/apply intents require explicit, high-confidence reference to a specific pending item.
-- If the reply is ambiguous across multiple pending things, return intent="clarify".
-- If the reply is unrelated small talk or a new topic, return intent="converse".
-- Never infer approval from vague positivity when multiple domains are pending.
+DEFAULT TO "converse". Only pick an action or "clarify" intent when the reply is
+UNMISTAKABLY trying to act on a specific pending item.
+
+Choose "converse" (hand off to normal conversation) whenever the reply is any of:
+- a QUESTION (e.g. "why are you giving me a daily brief?", "what's pending?")
+- a NEW instruction/request/preference ("don't do morning briefs on weekends",
+  "stop X", "change Y", "can you confirm ...")
+- a topic change, small talk, or anything not clearly approving/selecting a pending item
+- unclear whether it even refers to the pending items at all
+When in any doubt, choose "converse". Hijacking a real message (a question or an
+instruction) is far worse than missing an approval — the operator can just restate it.
+
+Choose approve_proposals / reject_proposals / apply_okr_updates / reject_okr_updates
+ONLY on an explicit, high-confidence reference to a specific pending item
+(e.g. "yes, send the CNN invite", "approve 2", "no, skip the podcast one").
+
+Choose "clarify" ONLY when the reply is clearly trying to approve/select a pending
+item but is genuinely ambiguous about WHICH one — NEVER for a question or a new topic.
+
+- Never infer approval from vague positivity.
 - If approving/rejecting proposals, include the exact proposal_ids.
 - If clarifying, provide one short natural question in reply_text.
 
