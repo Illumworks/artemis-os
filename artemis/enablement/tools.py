@@ -63,6 +63,32 @@ def _asset_to_dict(asset: Any) -> dict[str, Any]:
 # ── Implementations ───────────────────────────────────────────────────────────
 
 
+def _rerank_enablement_(assets: list[Any], query: str) -> list[Any]:
+    """Hybrid re-rank: boost assets whose TITLE / tags / name contain the query's
+    terms, so an exact-named asset (e.g. "Instruct-Core Coherent") wins over a
+    semantically-close cousin (e.g. "Assess") that the embedding scored marginally
+    higher. Stable: ties preserve the incoming order (vector distance / recency).
+    Added 2026-06-20 — vector-only ranking surfaced the wrong deck for Sara."""
+    import re as _re
+
+    q = (query or "").lower().strip()
+    terms = [t for t in _re.split(r"[^a-z0-9]+", q) if len(t) >= 3]
+    if not terms:
+        return assets
+
+    def _score(a: Any) -> int:
+        title = (getattr(a, "title", "") or "").lower()
+        tags = " ".join(getattr(a, "tags", None) or []).lower()
+        name = (getattr(a, "asset_name", "") or "").lower()
+        hay = f"{title} {tags} {name}"
+        phrase = 3 if (q and q in hay) else 0          # whole query appears
+        title_hits = sum(1 for t in terms if t in title)  # title matches weighted
+        any_hits = sum(1 for t in terms if t in hay)
+        return phrase * 4 + title_hits * 2 + any_hits
+
+    return sorted(assets, key=_score, reverse=True)
+
+
 async def _search_enablement_assets(inp: dict[str, Any]) -> str:
     """Vector + keyword search over enablement_assets with optional facet filters."""
     query = str(inp.get("query", "")).strip()
@@ -70,6 +96,7 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
         return "Error: query is required"
     limit = int(inp.get("limit", 5))
     limit = max(1, min(limit, 20))  # clamp: 1–20
+    candidate_k = max(limit * 4, 20)  # wider pool so the hybrid re-rank has room to work
 
     # Optional structured filters.
     audience_filter: str | None = inp.get("audience")
@@ -122,7 +149,7 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                     .order_by(
                         sa_text("embedding <=> CAST(:vec AS vector)").bindparams(vec=str(embedding))
                     )
-                    .limit(limit)
+                    .limit(candidate_k)
                 )
                 stmt = _apply_filters(stmt)
                 result = await session.execute(stmt)
@@ -154,11 +181,14 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                         )
                     )
                     .order_by(EnablementAsset.updated_at.desc())
-                    .limit(limit)
+                    .limit(candidate_k)
                 )
                 stmt = _apply_filters(stmt)
                 result = await session.execute(stmt)
                 assets = list(result.scalars().all())
+
+        # Hybrid re-rank (keyword/title boost over the vector pool), then trim.
+        assets = _rerank_enablement_(assets, query)[:limit]
 
         if not assets:
             return json.dumps({"results": [], "count": 0, "query": query})

@@ -294,11 +294,12 @@ class TestKaiScopePolicy:
 
 
 class TestKaiToolRegistry:
-    def test_kai_registry_has_exactly_two_tools(self):
+    def test_kai_registry_has_exactly_three_tools(self):
         from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
 
+        # Kai's locked-down registry: search + get + the facet/filter tool.
         reg = build_authorized_tool_registry(set(), agent_id="kai")
-        assert len(reg) == 2
+        assert len(reg) == 3
 
     def test_kai_registry_has_search_tool(self):
         from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
