@@ -822,6 +822,11 @@ async def _discard_staged_okr_updates(session: AsyncSession, *, slack_user_id: s
 
 
 def _proposal_short_label(row: ProposedAction) -> str:
+    # Prefer the specific human preview (the event title, etc.) so multiple
+    # proposals of the same type are distinguishable in a disambiguation prompt —
+    # not "the calendar change, the calendar change, the calendar change".
+    if row.preview:
+        return row.preview
     if row.action_type == "slack.send":
         return "the Slack note"
     if row.action_type == "gmail.send":
@@ -830,7 +835,7 @@ def _proposal_short_label(row: ProposedAction) -> str:
         return "the calendar change"
     if row.action_type == "jira.create":
         return "the Jira issue"
-    return row.preview or row.action_type
+    return row.action_type
 
 
 def _flatten_message_content(role: str, content: Any) -> str:
@@ -891,7 +896,7 @@ def _default_clarification(context: PendingContext) -> str:
     if len(proposal_labels) == 1:
         return f"Did you mean approve {proposal_labels[0]}, or skip it?"
     if len(proposal_labels) > 1:
-        labels = ", ".join(proposal_labels[:3])
+        labels = ", ".join(list(dict.fromkeys(proposal_labels))[:3])
         return f"Which one did you mean: {labels}, or more than one?"
     if context.staged_okr_updates:
         return "Did you want me to apply the staged OKR updates, or leave them alone?"
