@@ -81,9 +81,13 @@ def classify_by_rules(
 ) -> str:
     """Deterministic stance from the tunable rules. PURE, no I/O.
 
-    favorable = restriction present AND a favorable carve-out keyword present.
-    unfavorable = a blanket/unfavorable keyword present (and no carve-out).
-    neutral = otherwise, or out-of-lane (cellphone ban / not screen-time).
+    favorable = a restriction (blanket | restrictive-action | anchor) present AND
+                a favorable carve-out keyword present.
+    unfavorable = a blanket keyword OR an explicit restrictive-ACTION keyword
+                present (and no carve-out). A broad anchor alone (e.g. a "Standards
+                Act" that merely mentions screen time, a study) is NOT unfavorable.
+    neutral = anchor-only / standards-framework / study, otherwise, or out-of-lane
+                (cellphone ban / not screen-time).
 
     Hardening (Brief 4): a carve-out / "exempt(ion)" signal counts toward
     FAVORABLE only when the item is screen-time-TOPIC-relevant. Post-gate every
@@ -99,11 +103,17 @@ def classify_by_rules(
 
     favorable = [k.lower() for k in rules.get("favorable_keywords", [])]
     unfavorable = [k.lower() for k in rules.get("unfavorable_keywords", [])]
+    action = [k.lower() for k in rules.get("restriction_action_keywords", [])]
     restriction = [k.lower() for k in rules.get("restriction_keywords", [])]
 
     has_carveout = any(_keyword_present_unnegated(lower, k) for k in favorable)
     has_blanket = any(k in lower for k in unfavorable)
-    has_restriction = any(k in lower for k in restriction) or has_blanket
+    has_action = any(k in lower for k in action)
+    # "Is this unfavorable on its own?" — a blanket policy OR an explicit
+    # restrictive action on screen/device/instructional time.
+    has_unfavorable_intent = has_blanket or has_action
+    # "Is this a restriction at all?" — the above, OR just a broad anchor present.
+    has_restriction = has_unfavorable_intent or any(k in lower for k in restriction)
 
     # A carve-out only earns 🟢 favorable on a genuinely screen-time-topical item.
     # If topic_rules are supplied and the item is NOT topic-relevant, neutralize
@@ -116,9 +126,10 @@ def classify_by_rules(
 
     if has_restriction and has_carveout:
         return STANCE_FAVORABLE
-    if has_blanket and not has_carveout:
+    if has_unfavorable_intent and not has_carveout:
         return STANCE_UNFAVORABLE
-    # A restriction with neither explicit carve-out nor blanket language is unknown.
+    # Anchor-only (a "Standards Act", a study, a framework with no restrictive
+    # action and no carve-out) → neutral. Genuinely no clear direction.
     return STANCE_NEUTRAL
 
 

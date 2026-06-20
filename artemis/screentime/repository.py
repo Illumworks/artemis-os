@@ -168,6 +168,116 @@ async def recompute_state_stance(
     return written
 
 
+async def reclassify_stored_signals(session: AsyncSession) -> int:
+    """Re-color ALREADY-STORED signals in place — no scout sweep needed.
+
+    Runs the tuned topic gate + config-driven stance classifier over every row in
+    ``screentime_signals``:
+      * rows that NO LONGER pass the topic gate (now-off-topic noise that slipped
+        an earlier, looser gate — e.g. a health "screening" or budget "study")
+        are DELETED;
+      * surviving rows are re-classified by the deterministic rule classifier and
+        their ``stance`` / ``amira_angle`` updated when the stance changes.
+    Then ``screentime_state_stance`` is recomputed so the heat map reflects the
+    re-colored set.
+
+    This is the deterministic, config-driven re-color path: it uses the rule
+    classifier only (no LLM / no provider call), so it's cheap and reproducible —
+    re-running it after a stance/topic config edit re-colors existing data without
+    a full scout sweep (Lead's "re-classify after merge" step).
+
+    Returns the number of signals re-classified (kept rows whose row was visited;
+    deletions are not counted in the return but are logged). Failure-safe: a bad
+    individual row is skipped, never aborting the batch; an outer failure rolls the
+    count back to what completed and is logged, never raised.
+    """
+    from artemis.screentime.classifier import _rule_angle, classify_by_rules
+    from artemis.screentime.filters import CandidateSignal, passes_topic_gate
+    from artemis.screentime.stance_config import load_stance_rules
+    from artemis.screentime.topic_config import load_topic_rules
+
+    rules = await load_stance_rules(session)
+    topic_rules = await load_topic_rules(session)
+
+    rows = (
+        await session.execute(
+            select(
+                ScreentimeSignal.id,
+                ScreentimeSignal.content_hash,
+                ScreentimeSignal.state,
+                ScreentimeSignal.title,
+                ScreentimeSignal.summary,
+                ScreentimeSignal.stance,
+                ScreentimeSignal.level,
+                ScreentimeSignal.status,
+                ScreentimeSignal.source_type,
+                ScreentimeSignal.source_url,
+            )
+        )
+    ).all()
+
+    reclassified = 0
+    dropped = 0
+    for row in rows:
+        try:
+            combined = f"{row.title or ''}\n{row.summary or ''}".strip()
+
+            # 1. Re-apply the (possibly tightened) topic gate. Now-off-topic → drop.
+            if not passes_topic_gate(combined, topic_rules):
+                await session.execute(
+                    text("DELETE FROM screentime_signals WHERE id = :id"),
+                    {"id": row.id},
+                )
+                dropped += 1
+                continue
+
+            # 2. Re-classify with the config-driven rule classifier (topic-hardened).
+            new_stance = classify_by_rules(combined, rules, topic_rules=topic_rules)
+            if new_stance != row.stance:
+                candidate = CandidateSignal(
+                    state=row.state,
+                    title=row.title,
+                    summary=row.summary or "",
+                    source_type=row.source_type,
+                    source_url=row.source_url or "",
+                    level=row.level,
+                    status=row.status,
+                )
+                await session.execute(
+                    text(
+                        """
+                        UPDATE screentime_signals
+                           SET stance = :stance, amira_angle = :angle
+                         WHERE id = :id
+                        """
+                    ),
+                    {
+                        "stance": new_stance,
+                        "angle": _rule_angle(new_stance, candidate),
+                        "id": row.id,
+                    },
+                )
+            reclassified += 1
+        except Exception:
+            _logger.warning(
+                "reclassify_stored_signals: skipped a row (id=%s)", getattr(row, "id", "?"), exc_info=True
+            )
+            continue
+
+    await session.flush()
+
+    # 3. Recompute the per-state rollup over the re-colored / trimmed set.
+    try:
+        await recompute_state_stance(session, rules)
+    except Exception:
+        _logger.warning("reclassify_stored_signals: state rollup failed", exc_info=True)
+
+    _logger.info(
+        "reclassify_stored_signals: reclassified=%d dropped_off_topic=%d", reclassified, dropped
+    )
+    return reclassified
+
+
 async def expire_old_signals(session: AsyncSession, retention_days: int) -> int:
     """Delete signals older than *retention_days* (by discovered_at). 0 = keep all.
 

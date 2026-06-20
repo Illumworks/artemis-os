@@ -218,10 +218,15 @@ def is_screentime_relevant(text: str, rules: dict[str, Any]) -> bool:
     lower = text.lower()
     exclude = [k.lower() for k in rules.get("exclude_keywords", [])]
     restriction = [k.lower() for k in rules.get("restriction_keywords", [])]
+    action = [k.lower() for k in rules.get("restriction_action_keywords", [])]
     favorable = [k.lower() for k in rules.get("favorable_keywords", [])]
     # A pure cellphone-ban item with NO instructional-screen-time hook is out of lane.
     has_phone = any(k in lower for k in exclude)
-    has_topic = any(k in lower for k in restriction) or any(k in lower for k in favorable)
+    has_topic = (
+        any(k in lower for k in restriction)
+        or any(k in lower for k in action)
+        or any(k in lower for k in favorable)
+    )
     if has_phone and not has_topic:
         return False
     return has_topic

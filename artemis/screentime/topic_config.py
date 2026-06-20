@@ -46,9 +46,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # stance rules row so both live side-by-side and are tuned independently.
 TOPIC_CONFIG_NAME = "topic"
 
-# v1 default — the screen-time topic anchor.
+# v2 default — the screen-time topic anchor (v2 tightens the exclude set against
+# health/behavioral "screenings" and budget "study" noise from the first run).
 DEFAULT_TOPIC_RULES: dict[str, Any] = {
-    "version": 1,
+    "version": 2,
     # At least ONE of these must appear for an item to be screen-time-relevant.
     # All are explicit screen/device-time anchors — NOT generic "limit"/"evidence
     # -based" language that any ed-policy item carries.
@@ -98,6 +99,26 @@ DEFAULT_TOPIC_RULES: dict[str, Any] = {
         "standardized test",
         "assessment scores",
         "graduation requirement",
+        # Health/behavioral "screenings" that matched "screen" in the first run —
+        # NOT screen-time policy. A screenings item with no screen-TIME anchor
+        # already lacks a require-term and is dropped; these belt-and-suspenders
+        # excludes also drop one that incidentally name-drops a screen-time anchor.
+        "behavioral health screening",
+        "mental health screening",
+        "pediatric screening",
+        "vision screening",
+        "hearing screening",
+        "health screening",
+        "developmental screening",
+        "screening program",
+        "screenings",
+        # Pure budget / appropriations "study" items with no screen-time substance.
+        "general appropriations",
+        "appropriations act",
+        "budget bill",
+        "commissions a study",
+        "feasibility study",
+        "funding study",
     ],
     # Per-config toggle for the cheap LLM tie-break on mixed-signal items. The
     # settings.screentime_topic_llm_tiebreak flag ALSO gates it (both must be on).

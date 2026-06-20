@@ -17,6 +17,7 @@ from artemis.screentime.models import (
 from artemis.screentime.repository import (
     expire_old_signals,
     purge_screentime_data,
+    reclassify_stored_signals,
     recompute_state_stance,
     signal_count,
     state_stance_count,
@@ -100,6 +101,59 @@ async def test_config_flip_on_rerun(db_session):
         )
     ).scalar_one()
     assert after == STANCE_UNFAVORABLE
+
+
+async def test_reclassify_stored_signals_recolors_and_drops(db_session):
+    """re-color path: a stale-neutral restriction flips 🔴, an off-topic screening
+    that slipped a looser gate is DROPPED, and the rollup is recomputed — all
+    without a scout sweep."""
+    # 1. A real restriction bill mis-stored as neutral (the v1 bug).
+    mn = CandidateSignal(
+        state="MN",
+        title="Screen time prohibited for children in preschool and kindergarten",
+        summary="Blanket prohibition for early grades.",
+        source_type="legislative",
+        source_url="http://leg/mn/1",
+        status="passed",
+    )
+    assert await store_signal(db_session, mn, _cls(STANCE_NEUTRAL)) is True
+
+    # 2. An off-topic health "screening" that slipped a looser gate.
+    fl = CandidateSignal(
+        state="FL",
+        title="Pediatric Behavioral Health Screenings",
+        summary="Establishes a mental health screening program.",
+        source_type="legislative",
+        source_url="http://leg/fl/1",
+        status="passed",
+    )
+    assert await store_signal(db_session, fl, _cls(STANCE_NEUTRAL)) is True
+    await db_session.flush()
+    assert await signal_count(db_session) == 2
+
+    reclassified = await reclassify_stored_signals(db_session)
+    await db_session.flush()
+
+    # The off-topic screening row is gone; the real bill survives.
+    assert reclassified == 1  # only MN survived the gate and was visited
+    assert await signal_count(db_session) == 1
+
+    rows = dict(
+        (r[0], r[1])
+        for r in (
+            await db_session.execute(text("SELECT state, stance FROM screentime_signals"))
+        ).all()
+    )
+    assert "FL" not in rows
+    assert rows["MN"] == STANCE_UNFAVORABLE  # re-colored from neutral
+
+    # Rollup recomputed over the trimmed/re-colored set.
+    mn_state = (
+        await db_session.execute(
+            text("SELECT stance FROM screentime_state_stance WHERE state='MN'")
+        )
+    ).scalar_one()
+    assert mn_state == STANCE_UNFAVORABLE
 
 
 async def test_expire_old_signals(db_session):

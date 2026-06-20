@@ -11,10 +11,14 @@ Resolution order (first hit wins):
 
 Rule schema (``rules`` JSONB):
   {
-    "version": 1,
+    "version": 2,
     "favorable_keywords":   [...],   # carve-out / exemption / evidence-based language
-    "unfavorable_keywords": [...],   # blanket-restriction language
-    "restriction_keywords": [...],   # "is this a restriction at all?" signal
+    "unfavorable_keywords": [...],   # *blanket* restriction language (total ban, etc.)
+    "restriction_action_keywords": [...],  # explicit restrictive ACTION on screen/
+                                     #   device time ("prohibit", "limit", "ban") —
+                                     #   unfavorable on its own (no carve-out needed)
+    "restriction_keywords": [...],   # broad screen-time ANCHOR ("screen time", "cap")
+                                     #   — topicality only, NOT unfavorable on its own
     "exclude_keywords":     [...],   # out-of-scope (cellphone bans) → forces neutral
     "rollup": {                       # how per-signal stances roll up to a state
       "favorable_wins_ties": true
@@ -22,10 +26,17 @@ Rule schema (``rules`` JSONB):
   }
 
 Classification semantics (see ``classifier``):
-  - exclude_keywords present                                  → neutral (out of lane)
-  - restriction + favorable carve-out                         → favorable
-  - blanket restriction, no carve-out                         → unfavorable
+  - not screen-time relevant / exclude_keywords present       → neutral (out of lane)
+  - any restriction (blanket OR action OR anchor) + carve-out → favorable
+  - blanket OR restrictive-action keyword, no carve-out       → unfavorable
+  - anchor-only (e.g. a "standards" framework, a study)       → neutral
   - otherwise / unknown                                       → neutral
+
+The split between ``restriction_action_keywords`` (a real restrictive action →
+unfavorable on its own) and the broad ``restriction_keywords`` anchor (topicality
+only) is what lets "Screen time prohibited in preschool" read 🔴 while "Student
+Screen-Time Standards Act" — a standards framework with no restrictive action —
+stays ⚪ neutral.
 
 These keyword rules also drive a deterministic fallback classification when the
 LLM provider is unavailable, so the pipeline never hard-depends on a model call.
@@ -40,9 +51,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 DEFAULT_CONFIG_NAME = "default"
 
-# v1 default — the definition locked with Jon in the plan.
+# v2 default — the definition locked with Jon, tuned after the first real bills.
 DEFAULT_STANCE_RULES: dict[str, Any] = {
-    "version": 1,
+    "version": 2,
     # Pro-evidence-based / carve-out language → favorable.
     "favorable_keywords": [
         "carve-out",
@@ -51,7 +62,9 @@ DEFAULT_STANCE_RULES: dict[str, Any] = {
         "exemption",
         "exempt",
         "exempts",
+        "exempting",
         "exception",
+        "exclude evidence-based",
         "evidence-based",
         "evidence based",
         "purpose-built",
@@ -64,7 +77,8 @@ DEFAULT_STANCE_RULES: dict[str, Any] = {
         "research-based",
         "adaptive learning",
     ],
-    # Blanket-restriction language → unfavorable (unless a carve-out is present).
+    # *Blanket* / sweeping restriction language → unfavorable on its own (unless a
+    # carve-out is present). These are the strongest restriction signals.
     "unfavorable_keywords": [
         "blanket",
         "total ban",
@@ -72,6 +86,7 @@ DEFAULT_STANCE_RULES: dict[str, Any] = {
         "ban all",
         "eliminate screen",
         "no screens",
+        "no screen time",
         "device-free",
         "screen-free",
         "remove devices",
@@ -79,14 +94,64 @@ DEFAULT_STANCE_RULES: dict[str, Any] = {
         "minimize screen time",
         "reduce screen time",
     ],
-    # Does the item concern an instructional screen-time restriction at all?
+    # Explicit restrictive ACTION on screen / device / instructional time. A match
+    # here (on a screen-time-topical item) is unfavorable on its own — no carve-out
+    # needed — because it actively restricts screen/device use in instruction. This
+    # is what makes "Screen time prohibited", "limiting screen time", and
+    # "screen-based instruction limited" read 🔴 (they were neutral under v1, which
+    # only fired unfavorable on the narrow "blanket" set). The negation-aware
+    # carve-out check still flips these to 🟢 when an evidence-based exemption is
+    # present. NOTE: kept distinct from the broad anchor below so a non-restrictive
+    # "Standards Act" / study does NOT become unfavorable.
+    "restriction_action_keywords": [
+        "prohibit",
+        "prohibits",
+        "prohibited",
+        "prohibiting",
+        "prohibition",
+        "ban screen",
+        "banned",
+        "banning",
+        "limit screen",
+        "limits screen",
+        "limiting screen",
+        "limit instructional",
+        "limit device",
+        "limits device",
+        "limiting device",
+        "restrict screen",
+        "restricts screen",
+        "restricting screen",
+        "restrict device",
+        "screen time limited",
+        "screen-based instruction limited",
+        "screen based instruction limited",
+        "instruction limited",
+        "screen time prohibited",
+        "screen-time prohibited",
+        "cap on screen",
+        "capping screen",
+        "no device use",
+        "device use prohibited",
+        "device-use prohibited",
+        "devices prohibited",
+        "ban on devices",
+    ],
+    # Broad screen-time ANCHOR — establishes "is this about screen-time at all?"
+    # for topicality. Intentionally broad ("screen time", "cap", "limit") — these
+    # alone are NOT unfavorable (a "Standards Act" mentions screen time without
+    # restricting it). Restrictive intent comes from restriction_action_keywords.
     "restriction_keywords": [
         "screen time",
         "screen-time",
         "screentime",
+        "screen-based instruction",
+        "screen based instruction",
         "device time",
         "limit",
         "limits",
+        "limiting",
+        "limited",
         "restrict",
         "restriction",
         "cap",

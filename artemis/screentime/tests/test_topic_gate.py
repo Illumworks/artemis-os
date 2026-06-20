@@ -77,6 +77,48 @@ def test_test_scores_item_dropped():
     assert passes_topic_gate(c.text, TOPIC) is False
 
 
+# --- DROPS the screenings / budget-study noise (v2 tightening) --------------
+
+def test_behavioral_health_screening_dropped():
+    c = _cand(
+        "Pediatric Behavioral Health Screenings",
+        "Establishes mental health screening program for students.",
+    )
+    assert passes_topic_gate(c.text, TOPIC) is False
+
+
+def test_screening_with_incidental_screen_anchor_not_clean_keep():
+    """A health 'screening' item that incidentally name-drops a screen-time anchor
+    is no longer a clean keep — the v2 exclude makes it ambiguous (flaggable)."""
+    c = _cand(
+        "Pediatric behavioral health screening",
+        "Screening program that also limits student screen time during screenings.",
+    )
+    assert topic_prescreen(c.text, TOPIC) == TOPIC_AMBIGUOUS
+
+
+def test_budget_study_dropped():
+    c = _cand(
+        "General Appropriations Act",
+        "Budget bill commissions a funding study of school facilities.",
+    )
+    assert passes_topic_gate(c.text, TOPIC) is False
+
+
+def test_real_bills_still_pass_the_gate():
+    """The named real stored bills must all survive the tightened gate."""
+    titles = [
+        "Screen time prohibited for children in preschool and kindergarten",
+        "A bill limiting screen time for prekindergarten through fifth grade",
+        "Screen-based instruction limited in kindergarten",
+        "Student Screen-Time Standards Act",
+        "An act limiting screen time for students, exempting evidence-based "
+        "purpose-built instructional tools",
+    ]
+    for t in titles:
+        assert passes_topic_gate(t, TOPIC) is True, t
+
+
 # --- KEEPS real screen-time items -------------------------------------------
 
 def test_instructional_screen_time_limit_kept():
