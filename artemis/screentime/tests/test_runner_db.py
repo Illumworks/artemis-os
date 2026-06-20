@@ -112,6 +112,63 @@ async def test_fixtured_run_stores_real_moves_and_uses_codex(db_session, fake_ch
     assert {"TN", "CA"} <= stance_states
 
 
+async def test_topic_gate_drops_offtopic_noise_end_to_end(db_session, fake_cheap_provider):
+    """The first-run regression: reading-retention / literacy noise must be dropped
+    by the topic gate before classify/store, while a genuine screen-time move is kept.
+    """
+    findings = [
+        # OFF-TOPIC #1: reading retention with an "exempt" — the false-favorable.
+        {
+            "sourceType": "legiscan",
+            "discoveredBy": "legislative_scout",
+            "districtId": "STATE_FL",
+            "evidence": (
+                "HB 1 passed: third grade reading retention; exempts students using "
+                "evidence-based reading programs from the retention limit."
+            ),
+            "metadata": {"state": "FL", "status_code": 4, "url": "http://leg/fl/hb1"},
+        },
+        # OFF-TOPIC #2: literacy curriculum mandate.
+        {
+            "sourceType": "state_doe",
+            "discoveredBy": "state_doe_scout",
+            "title": "Literacy curriculum approval",
+            "summary": "Districts must adopt approved evidence-based phonics curriculum.",
+            "metadata": {"state": "GA", "url": "http://doe/ga/lit"},
+        },
+        # ON-TOPIC: a real instructional screen-time move (kept).
+        {
+            "sourceType": "legiscan",
+            "discoveredBy": "legislative_scout",
+            "districtId": "STATE_TN",
+            "evidence": "HB 100 passed: limits instructional screen time but exempts evidence-based software.",
+            "metadata": {"state": "TN", "status_code": 4, "url": "http://leg/tn/hb100"},
+        },
+    ]
+    report = await run_screentime_pipeline(db_session, findings=findings, states=["FL", "GA", "TN"])
+    await db_session.commit()
+
+    assert report.error is None
+    assert report.gathered == 3
+    # Both off-topic items are dropped by the topic gate; only TN survives.
+    assert report.dropped_off_topic == 2
+    assert report.topic_relevant == 1
+    assert report.real_moves == 1
+    assert report.stored_new == 1
+
+    rows = dict(
+        (r[0], r[1])
+        for r in (
+            await db_session.execute(text("SELECT state, stance FROM screentime_signals"))
+        ).all()
+    )
+    # The off-topic reading-retention "exempt" NEVER stored → no false 🟢.
+    assert "FL" not in rows
+    assert "GA" not in rows
+    # The genuine screen-time exemption is stored AND favorable.
+    assert rows == {"TN": "favorable"}
+
+
 async def test_rerun_after_config_change_flips_stance(db_session, fake_cheap_provider):
     # First run with default rules → CA blanket restriction = unfavorable.
     await run_screentime_pipeline(db_session, findings=[FINDINGS[1]], states=["CA"])

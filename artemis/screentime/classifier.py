@@ -73,12 +73,25 @@ def _keyword_present_unnegated(lower_text: str, keyword: str) -> bool:
     return False
 
 
-def classify_by_rules(text: str, rules: dict[str, Any]) -> str:
+def classify_by_rules(
+    text: str,
+    rules: dict[str, Any],
+    *,
+    topic_rules: dict[str, Any] | None = None,
+) -> str:
     """Deterministic stance from the tunable rules. PURE, no I/O.
 
     favorable = restriction present AND a favorable carve-out keyword present.
     unfavorable = a blanket/unfavorable keyword present (and no carve-out).
     neutral = otherwise, or out-of-lane (cellphone ban / not screen-time).
+
+    Hardening (Brief 4): a carve-out / "exempt(ion)" signal counts toward
+    FAVORABLE only when the item is screen-time-TOPIC-relevant. Post-gate every
+    item reaching the classifier is already topical, so this is belt-and-
+    suspenders — it stops a stray reading-retention "exemption" from ever reading
+    🟢 favorable even if the classifier is called directly (off the runner path).
+    When *topic_rules* is omitted the check is skipped (callers that pre-gate).
+    The existing negation-awareness ("no exceptions") is preserved.
     """
     lower = text.lower()
     if not is_screentime_relevant(text, rules):
@@ -91,6 +104,15 @@ def classify_by_rules(text: str, rules: dict[str, Any]) -> str:
     has_carveout = any(_keyword_present_unnegated(lower, k) for k in favorable)
     has_blanket = any(k in lower for k in unfavorable)
     has_restriction = any(k in lower for k in restriction) or has_blanket
+
+    # A carve-out only earns 🟢 favorable on a genuinely screen-time-topical item.
+    # If topic_rules are supplied and the item is NOT topic-relevant, neutralize
+    # the carve-out so an off-topic "exemption" can't flip the stance favorable.
+    if has_carveout and topic_rules is not None:
+        from artemis.screentime.filters import passes_topic_gate
+
+        if not passes_topic_gate(text, topic_rules):
+            has_carveout = False
 
     if has_restriction and has_carveout:
         return STANCE_FAVORABLE
@@ -120,13 +142,17 @@ async def classify_signal(
     rules: dict[str, Any],
     *,
     session: Any | None = None,
+    topic_rules: dict[str, Any] | None = None,
 ) -> Classification:
     """Classify one candidate: rule-driven stance + LLM Amira angle (cheap provider).
 
     Never raises — on any provider failure it returns the deterministic
     rule-based classification so a sweep always completes (failure-safe).
+
+    *topic_rules*, when supplied, hardens the carve-out → favorable path so it
+    only fires on a screen-time-topical item (belt-and-suspenders post-gate).
     """
-    rule_stance = classify_by_rules(candidate.text, rules)
+    rule_stance = classify_by_rules(candidate.text, rules, topic_rules=topic_rules)
 
     # Lazy provider imports — keep them out of module top (circular-import / boot safe).
     try:

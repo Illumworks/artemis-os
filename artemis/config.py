@@ -421,6 +421,29 @@ class Settings(BaseSettings):
             "Set via ARTEMIS_SCREENTIME_STANCE_RULES (JSON) only to override without a DB row."
         ),
     )
+    screentime_topic_rules: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Code-side fallback for the tunable TOPIC-relevance gate (require/exclude "
+            "terms + LLM tie-break toggle). EMPTY = use the default baked into "
+            "artemis/screentime/topic_config.py. The DB row "
+            "screentime_stance_config(name='topic') overrides this when present. "
+            "Set via ARTEMIS_SCREENTIME_TOPIC_RULES (JSON) to override without a deploy. "
+            "This gate runs BEFORE store/classify and drops generic ed-policy noise "
+            "(literacy, reading retention, curriculum approvals, test scores) so only "
+            "genuine instructional/student screen-time items survive."
+        ),
+    )
+    screentime_topic_llm_tiebreak: bool = Field(
+        default=False,
+        description=(
+            "When True, keyword-ambiguous items (pass require-terms but also hit an "
+            "exclude-term, i.e. mixed signal) get a cheap tool-less LLM relevance check "
+            "(codex→claude-code) instead of being dropped on keywords alone. OFF by "
+            "default to keep the gate deterministic + free; the deterministic gate is "
+            "always the fallback."
+        ),
+    )
 
     # ── Screen-Time Watch — Callie reporting to #policy-watch (Brief 2) ─────────
     # Additive, dormant-until-set (same pattern as callie_proactive_channel).

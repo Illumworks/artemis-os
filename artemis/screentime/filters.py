@@ -16,12 +16,15 @@ All functions here are PURE (no I/O, no async, no provider calls).
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from artemis.screentime.models import LEVEL_DISTRICT, LEVEL_STATE
+
+_logger = logging.getLogger(__name__)
 
 # Maps each scout's emitted sourceType / discoveredBy to our canonical
 # source_type vocabulary (legislative | state_doe | board_minutes | regional_news).
@@ -222,6 +225,195 @@ def is_screentime_relevant(text: str, rules: dict[str, Any]) -> bool:
     if has_phone and not has_topic:
         return False
     return has_topic
+
+
+# --- Screen-time TOPIC-relevance gate ---------------------------------------
+# This is the core data-quality fix. It runs BEFORE store/classify and keeps
+# ONLY findings genuinely about instructional/student screen-time or device-time
+# limits (and evidence-based-tool exemptions to such limits). It drops generic
+# ed-policy (literacy, reading retention, curriculum approval, test scores).
+#
+# Distinct from is_screentime_relevant (which reuses the broad stance keywords:
+# "limit"/"restrict"/"evidence-based") — those words are exactly what the
+# reading-retention / literacy noise carries, which is why that check let the
+# noise through. The topic gate requires an explicit SCREEN/DEVICE-time anchor.
+
+# Decision the keyword pre-screen returns for an item.
+TOPIC_KEEP = "keep"  # has a screen-time anchor, no exclude conflict → keep
+TOPIC_DROP = "drop"  # no screen-time anchor (or only excluded themes) → drop
+TOPIC_AMBIGUOUS = "ambiguous"  # has anchor AND an excluded theme → mixed signal
+
+
+def _topic_terms(rules: dict[str, Any], key: str) -> list[str]:
+    return [str(k).lower() for k in (rules.get(key) or []) if str(k).strip()]
+
+
+def topic_prescreen(text: str, topic_rules: dict[str, Any]) -> str:
+    """Pure keyword pre-screen → TOPIC_KEEP | TOPIC_DROP | TOPIC_AMBIGUOUS.
+
+    KEEP       : a require-term (screen/device-time anchor) is present and no
+                 excluded ed-policy theme is present.
+    AMBIGUOUS  : a require-term AND an excluded theme are both present (e.g. a
+                 reading-retention bill that also mentions "screen time"). The
+                 caller decides: LLM tie-break if enabled, else KEEP (the anchor
+                 wins — precision is enforced on the no-anchor path).
+    DROP       : no require-term at all (the generic ed-policy noise), OR only an
+                 excluded theme with no anchor.
+    """
+    lower = text.lower()
+    require = _topic_terms(topic_rules, "require_any")
+    exclude = _topic_terms(topic_rules, "exclude_any")
+
+    has_anchor = any(term in lower for term in require)
+    if not has_anchor:
+        return TOPIC_DROP
+    has_excluded = any(term in lower for term in exclude)
+    if has_excluded:
+        return TOPIC_AMBIGUOUS
+    return TOPIC_KEEP
+
+
+def passes_topic_gate(text: str, topic_rules: dict[str, Any]) -> bool:
+    """Deterministic topic gate: True iff the item is screen-time-relevant.
+
+    PURE, no I/O — the fast path used everywhere. Ambiguous (anchor + excluded
+    theme) defaults to KEPT here; the async wrapper applies the optional LLM
+    tie-break only when explicitly enabled.
+    """
+    return topic_prescreen(text, topic_rules) != TOPIC_DROP
+
+
+async def passes_topic_gate_async(
+    candidate: CandidateSignal,
+    topic_rules: dict[str, Any],
+    *,
+    session: Any | None = None,
+    llm_tiebreak: bool | None = None,
+) -> bool:
+    """Topic gate with an OPTIONAL cheap LLM tie-break for ambiguous items only.
+
+    Cost discipline (per brief): the LLM is invoked ONLY for keyword-ambiguous
+    items (require-term AND an excluded theme both present) AND only when the
+    tie-break is enabled. Clear keeps/drops never hit a model. Failure-safe: any
+    provider error falls back to KEEPING the ambiguous item (the anchor present
+    means it is more likely on-topic than not).
+
+    *llm_tiebreak* overrides the settings flag when given (tests). When None, the
+    flag resolves from the per-config ``llm_tiebreak`` key OR the settings flag.
+    """
+    decision = topic_prescreen(candidate.text, topic_rules)
+    if decision == TOPIC_DROP:
+        return False
+    if decision == TOPIC_KEEP:
+        return True
+
+    # AMBIGUOUS — decide whether to spend an LLM call.
+    use_llm = llm_tiebreak
+    if use_llm is None:
+        use_llm = bool(topic_rules.get("llm_tiebreak"))
+        try:
+            from artemis.config import settings
+
+            use_llm = use_llm or bool(settings.screentime_topic_llm_tiebreak)
+        except Exception:  # pragma: no cover - settings guard
+            pass
+    if not use_llm:
+        # Deterministic default: the anchor wins, keep it.
+        return True
+
+    verdict = await _llm_topic_relevant(candidate, session=session)
+    # None = provider unreachable → failure-safe keep (anchor present).
+    return True if verdict is None else verdict
+
+
+async def _llm_topic_relevant(
+    candidate: CandidateSignal,
+    *,
+    session: Any | None = None,
+) -> bool | None:
+    """Cheap tool-less LLM yes/no: is this item about instructional screen-time?
+
+    Returns True/False, or None when no provider is reachable (caller treats
+    None as failure-safe keep). Provider shape copied from classifier.classify_signal:
+    ``complete_with_fallback(primary="codex", fallback="claude-code")`` with
+    ``model=None`` INSIDE the CompletionRequest (NEVER a kwarg).
+    """
+    try:
+        from artemis.agent.client import CompletionRequest
+        from artemis.agent.types import Message, TextBlock
+        from artemis.providers.fallback import complete_with_fallback
+    except Exception:  # pragma: no cover - import guard
+        _logger.warning("screentime.topic_gate: provider import failed; keeping ambiguous item", exc_info=True)
+        return None
+
+    system = (
+        "You are a policy analyst for Amira Learning. Decide if a policy/legislation "
+        "item is genuinely about INSTRUCTIONAL or STUDENT SCREEN-TIME / DEVICE-TIME "
+        "limits in schools (including exemptions/carve-outs to such limits). It is NOT "
+        "relevant if it is generic education policy whose mention of screens is "
+        "incidental — e.g. reading retention, literacy mandates, curriculum/textbook "
+        "approval, or test scores. Reply with ONLY compact JSON: "
+        '{"relevant": true|false}. No prose.'
+    )
+    prompt = (
+        f"Title: {candidate.title}\n"
+        f"Summary: {candidate.summary}\n"
+        "Is this genuinely about instructional/student screen-time or device-time limits?"
+    )
+    req = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text=prompt)])],
+        system=system,
+        model=None,  # MUST be inside the request (CodexAdapter rejects a kwarg).
+        max_tokens=50,
+        cache_system=False,
+        cache_tools=False,
+    )
+    try:
+        resp = await complete_with_fallback(
+            req,
+            primary="codex",
+            fallback="claude-code",
+            session=session,
+            feature_tag="screentime_topic_gate",
+        )
+    except Exception:
+        _logger.warning("screentime.topic_gate: provider call failed; keeping ambiguous item", exc_info=True)
+        return None
+
+    answer = ""
+    for block in resp.message.content:
+        if hasattr(block, "text"):
+            answer = block.text.strip()
+            break
+    return _parse_relevant(answer)
+
+
+def _parse_relevant(text: str) -> bool | None:
+    """Best-effort parse {"relevant": true|false} from a model reply."""
+    import json
+
+    text = (text or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            obj = json.loads(text[start : end + 1])
+            if isinstance(obj, dict) and isinstance(obj.get("relevant"), bool):
+                return obj["relevant"]
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Fallback: a bare yes/no in the text.
+    low = text.lower()
+    if "true" in low or low.startswith("yes"):
+        return True
+    if "false" in low or low.startswith("no"):
+        return False
+    return None
 
 
 def is_real_move(candidate: CandidateSignal, rules: dict[str, Any]) -> bool:

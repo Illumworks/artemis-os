@@ -38,16 +38,45 @@ US_STATES_AND_DC: list[str] = [
 
 # Screen-time-tuned search terms — instructional screen-time + evidence-based
 # carve-outs. Deliberately NOT cellphone-ban terms (a different project).
-SCREENTIME_KEYWORDS: list[str] = [
+#
+# LegiScan-query bug (the first live run's `legislative: ok:0`): the LegiScan
+# `getSearch` op runs an ADAS full-text query where SPACE-separated terms are
+# AND-ed (a doc must contain them all). The shared LegislativeScout joins its
+# keyword list with spaces (`" ".join(keywords)`), so passing these as a flat
+# list produced one giant AND query — '"screen time" AND "instructional
+# technology" AND "digital learning" AND ...' — which essentially no bill
+# matches → 0 results. (The literacy default "works" by luck: its terms are
+# individually common, but it is the same latent bug.)
+#
+# Fix WITHOUT touching the shared scout: hand the scout a SINGLE pre-composed
+# ADAS boolean OR expression as its one keyword. Joined-with-spaces that is just
+# the OR string, so the search now matches bills mentioning ANY screen-time term.
+# Phrases are quoted so multi-word terms match as phrases, not loose tokens.
+SCREENTIME_TERMS: list[str] = [
     "screen time",
-    "instructional technology",
-    "digital learning",
+    "screen-time",
     "device time",
-    "edtech",
-    "educational technology",
-    "evidence-based instruction",
-    "purpose-built software",
+    "screen use in schools",
+    "instructional screen time",
+    "student screen time",
+    "screen time limit",
+    "device usage limit",
 ]
+
+
+def _legiscan_query(terms: list[str]) -> str:
+    """Compose an ADAS boolean OR expression from screen-time terms.
+
+    Each multi-word term is quoted so LegiScan matches it as a phrase; terms are
+    OR-ed so a bill matching ANY one is returned (vs. the implicit-AND bug).
+    """
+    return " OR ".join(f'"{t}"' for t in terms)
+
+
+# A single-element keyword list: the shared scout's `" ".join(keywords)` yields
+# exactly the OR expression below. Kept as a list because the scout's `keywords=`
+# parameter expects one.
+SCREENTIME_KEYWORDS: list[str] = [_legiscan_query(SCREENTIME_TERMS)]
 
 
 def _dry_run_config() -> ScoutConfig:

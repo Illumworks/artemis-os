@@ -26,6 +26,7 @@ from artemis.screentime import filters
 from artemis.screentime.classifier import classify_signal
 from artemis.screentime.scout_fanout import gather_national_findings
 from artemis.screentime.stance_config import load_stance_rules
+from artemis.screentime.topic_config import load_topic_rules
 
 _logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class RunReport:
     gathered: int = 0
     normalized: int = 0
     deduped: int = 0
+    topic_relevant: int = 0
+    dropped_off_topic: int = 0
     real_moves: int = 0
     dropped_not_real_move: int = 0
     stored_new: int = 0
@@ -50,6 +53,8 @@ class RunReport:
             "gathered": self.gathered,
             "normalized": self.normalized,
             "deduped": self.deduped,
+            "topic_relevant": self.topic_relevant,
+            "dropped_off_topic": self.dropped_off_topic,
             "real_moves": self.real_moves,
             "dropped_not_real_move": self.dropped_not_real_move,
             "stored_new": self.stored_new,
@@ -97,6 +102,7 @@ async def run_screentime_pipeline(
         from artemis.screentime import repository
 
         rules = await load_stance_rules(session)
+        topic_rules = await load_topic_rules(session)
         sweep_states = states if states is not None else _resolve_states()
 
         # 1. Fan-out (or use injected findings).
@@ -123,9 +129,36 @@ async def run_screentime_pipeline(
         candidates = filters.dedupe(candidates)
         report.deduped = len(candidates)
 
+        # 3b. Screen-time TOPIC-relevance gate (the core data-quality fix).
+        # Runs BEFORE the real-moves filter / classify / store so generic
+        # ed-policy noise (literacy, reading retention, curriculum approval,
+        # test scores) never reaches the classifier — which also kills the
+        # "exempt" false-favorable at the source (an off-topic reading-retention
+        # exemption is dropped here, never classified). Failure-safe: a gate
+        # error keeps the item (recall over a crash); the LLM tie-break (if
+        # enabled) only fires for keyword-ambiguous items.
+        topical: list[Any] = []
+        for c in candidates:
+            try:
+                keep = await filters.passes_topic_gate_async(
+                    c, topic_rules, session=session
+                )
+            except Exception:
+                _logger.warning(
+                    "screentime: topic gate failed for %r — keeping (failsafe)",
+                    c.title[:60],
+                    exc_info=True,
+                )
+                keep = True
+            if keep:
+                topical.append(c)
+            else:
+                report.dropped_off_topic += 1
+        report.topic_relevant = len(topical)
+
         # 4. "Real moves" filter.
         real_moves = []
-        for c in candidates:
+        for c in topical:
             if filters.is_real_move(c, rules):
                 real_moves.append(c)
             else:
@@ -135,7 +168,9 @@ async def run_screentime_pipeline(
         # 5. Classify + 6. Store (per-signal failure-safe).
         for c in real_moves:
             try:
-                classification = await classify_signal(c, rules, session=session)
+                classification = await classify_signal(
+                    c, rules, session=session, topic_rules=topic_rules
+                )
             except Exception:
                 _logger.warning("screentime: classify failed for %r", c.title[:60], exc_info=True)
                 continue
