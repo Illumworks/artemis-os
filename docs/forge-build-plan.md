@@ -240,3 +240,24 @@ a later enhancement, the adapter's "CC19" SSE limitation).
   slice?
 - Confirm the thin-magic-slice discipline: get one end-to-end build working
   (browser → mini → result → approve) before investing in right-rail breadth.
+
+### Phase 2 — BUILD STAGING (claude-code Forge mode, 2026-06-20)
+
+Research gave exact adapter edit points. Two real blockers: the claude CLI canNOT block
+network if Bash is enabled (curl/wget work; needs OS sandbox later), and --add-dir behavior
+under bypassPermissions is unverified. So we stage safety-first:
+
+- **F1 (adapter Forge mode, OPT-IN):** new `forge_project_path_var` contextvar
+  (artemis/dev_projects/context.py). New `_build_forge_command` in the claude-code adapter:
+  `claude -p --output-format json --model ... --add-dir <project> --permission-mode
+  bypassPermissions` with READ-ONLY native tools allowed (Read, Glob, Grep), WebSearch/
+  WebFetch/Bash/Write/Edit DISALLOWED for this first slice. `_run_subprocess` gains
+  cwd=project_path. `_complete_with_tools` uses the forge command ONLY when the contextvar
+  is set (existing MCP path untouched).
+- **F2 (loop_runner wiring):** for claude-code Ares Forge turns, set forge_project_path_var
+  (+ floating_session_id_var) around the adapter call; drop the parked hook/in-process-tool
+  path; log final result to forge_run + persist to dev_messages. Ares persona via system.
+- **F3 (Phase 3 gate):** enable Write/Edit/Bash ONLY inside an isolated git worktree
+  (worktree isolation = the primary safety boundary). Accept the network caveat or add
+  macOS sandbox-exec later. Edits do NOT ship until the worktree boundary lands.
+- **Later:** stream subprocess stdout (--output-format stream-json) for live "watch it work".
