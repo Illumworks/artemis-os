@@ -1135,3 +1135,118 @@ html[data-theme="dark"] .dev-run-badge {
   border-color: rgba(255,255,255,0.08);
   color: rgba(255,255,255,0.45);
 }
+
+/* ── Ares tool-step activity rows (Forge Phase 2 chunk 2.3) ────────────────
+   These appear inline in the message stream as Ares drives a Forge turn:
+   tool call chips (compact, muted, monospace-ish) followed by collapsible
+   result blocks. Aligned to the same 820px max-width column as messages. */
+
+/* Base row — shared by both call chip and result block */
+.dev-tool-step {
+  max-width: 820px;
+  margin: 0 auto 4px;
+  /* Indent to the message-body column (86px role label + 12px gap = 98px) */
+  padding-left: 98px;
+}
+
+/* Call chip: compact single-line, muted amber tint to signal "Ares is doing
+   something", monospace font for tool names, smaller than a message bubble. */
+.dev-tool-step-call {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 11.5px;
+  color: var(--ink-4);
+  letter-spacing: 0.01em;
+  padding-right: 8px;
+}
+
+/* Argument portion of the chip (path, diff target, etc.) */
+.dev-tool-step-arg {
+  color: var(--amber-ink, #A46220);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* Result block: collapsible <details>; monospace, scroll-capped. */
+.dev-tool-step-result {
+  margin-bottom: 8px;
+}
+
+.dev-tool-step-result > .dev-tool-step-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 11px;
+  color: var(--ink-5);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  padding: 2px 0;
+}
+.dev-tool-step-result > .dev-tool-step-summary::-webkit-details-marker { display: none; }
+.dev-tool-step-result > .dev-tool-step-summary::before {
+  content: "v";
+  display: inline-block;
+  font-size: 9px;
+  color: var(--ink-5);
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+  margin-right: 2px;
+}
+.dev-tool-step-result[open] > .dev-tool-step-summary::before {
+  transform: rotate(0deg);
+}
+
+.dev-tool-step-pre {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--surface-0);
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+/* Error variant: red border + text tint on both chip and result */
+.dev-tool-step-error > .dev-tool-step-summary {
+  color: #9f2323;
+}
+.dev-tool-step-error .dev-tool-step-pre {
+  border-color: #c74c4c;
+  color: #9f2323;
+}
+
+/* Dark-theme overrides */
+html[data-theme="dark"] .dev-tool-step-call {
+  color: rgba(255,255,255,0.3);
+}
+html[data-theme="dark"] .dev-tool-step-arg {
+  color: var(--amber, #C77E2B);
+}
+html[data-theme="dark"] .dev-tool-step-result > .dev-tool-step-summary {
+  color: rgba(255,255,255,0.28);
+}
+html[data-theme="dark"] .dev-tool-step-pre {
+  background: rgba(0,0,0,0.28);
+  border-color: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.5);
+}
+html[data-theme="dark"] .dev-tool-step-error > .dev-tool-step-summary {
+  color: #e07070;
+}
+html[data-theme="dark"] .dev-tool-step-error .dev-tool-step-pre {
+  border-color: rgba(199,76,76,0.5);
+  color: #e07070;
+}
