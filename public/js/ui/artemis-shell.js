@@ -27,6 +27,7 @@ import {
   MARKETING_SIGNALS_VIEW,
   MARKETING_APPROVALS_VIEW,
   MARKETING_SIGNAL_PLAYBOOK_VIEW,
+  SCREENTIME_VIEW,
   ROUTING_VIEW,
   COST_VIEW,
   isShellView,
@@ -58,6 +59,7 @@ const RAIL_NAV_VIEW_MAP = {
   'marketing-prioritization': MARKETING_SIGNALS_VIEW,
   'signals-inbox': MARKETING_SIGNALS_VIEW,
   'where-to-focus': MARKETING_SIGNALS_VIEW,
+  'screentime-watch': SCREENTIME_VIEW,
 };
 
 // Focus hints for Workspace sub-sections that still share a parent view.
