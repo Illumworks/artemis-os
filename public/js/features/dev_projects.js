@@ -314,6 +314,74 @@ async function loadSession(sessionId) {
   renderRail();
   applyRailState();
   syncModelButtonLabel();
+
+  // Reconnect catch-up: if a build is in flight, replay persisted log entries
+  // into the streaming bubble before attaching the live WS so the user sees
+  // everything streamed so far instead of a blank screen.
+  let activeRun = null;
+  try {
+    const runData = await fetch(`${API}/sessions/${sessionId}/active-run`).then((r) => r.json());
+    activeRun = runData?.active_run || null;
+  } catch {
+    // Network/parse failure — fall through and connect WS as normal.
+  }
+
+  if (activeRun && activeRun.status === "running") {
+    // Show a lightweight "build running" badge above the messages area.
+    if (els.messages) {
+      els.messages.insertAdjacentHTML("afterbegin", `
+        <div class="dev-run-badge" id="dev-run-badge">
+          <span class="dev-run-badge-dot"></span>build running
+        </div>
+      `);
+    }
+
+    // Replay log entries in seq order.
+    const log = Array.isArray(activeRun.log) ? activeRun.log.slice().sort((a, b) => a.seq - b.seq) : [];
+    let lastPermission = null;
+    let seenTokenOrError = false;
+
+    for (const entry of log) {
+      if (entry.kind === "token") {
+        const text = entry.payload?.text || "";
+        if (text) {
+          ensureStreamingBubble().querySelector(".dev-message-text").textContent += text;
+          seenTokenOrError = true;
+        }
+        lastPermission = null; // a token after a permission means it was resolved
+      } else if (entry.kind === "permission") {
+        lastPermission = entry;
+      } else if (entry.kind === "error") {
+        const text = entry.payload?.text || "";
+        if (text && els.messages) {
+          els.messages.insertAdjacentHTML("beforeend", `
+            <div class="dev-message dev-message-error">
+              <div class="dev-message-role">error</div>
+              <div class="dev-message-body"><div class="dev-message-text">${escapeHtml(text)}</div></div>
+            </div>
+          `);
+          seenTokenOrError = true;
+        }
+        lastPermission = null;
+      }
+    }
+
+    // Re-surface the permission gate if the last unresolved entry was a
+    // permission (no subsequent token/error consumed it).
+    if (lastPermission) {
+      const p = lastPermission.payload || {};
+      appendPermission(els.messages, {
+        permission_id: p.permission_id,
+        tool_name: p.tool_name,
+        args: p.args || {},
+      });
+    }
+
+    if (seenTokenOrError || lastPermission) scrollToBottom();
+  }
+
+  // Connect WS after replay so live tokens append to the same streaming bubble
+  // (ensureStreamingBubble reuses the existing .streaming element).
   connectWs(data.session.id);
 }
 
