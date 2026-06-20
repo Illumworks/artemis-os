@@ -219,13 +219,21 @@ async def run_turn(
     # --- 3. Execute the turn, complete/fail the run ---
     turn_exc: BaseException | None = None
     try:
-        handled = await _maybe_run_local_tool(
-            session_id=session_id,
-            project_path=project.path,
-            user_text=user_text,
-            bypass=dev_session.bypass_permissions,
-            run_id=run_id,
-        )
+        # The legacy keyword-heuristic bash stub (_maybe_run_local_tool) is a
+        # pre-Ares placeholder. For claude-code sessions Ares drives the turn with
+        # his own real, scope-safe tools (list_project_dir, git_status, etc.), so
+        # the stub must NOT intercept — its naive "list/file/run" keyword match
+        # would otherwise hijack the turn and raise a permission gate. Only the
+        # non-Ares (other-provider) path still uses the stub.
+        handled = False
+        if dev_session.provider != "claude-code":
+            handled = await _maybe_run_local_tool(
+                session_id=session_id,
+                project_path=project.path,
+                user_text=user_text,
+                bypass=dev_session.bypass_permissions,
+                run_id=run_id,
+            )
         if not handled:
             await _run_provider_completion(
                 session_id=session_id,
