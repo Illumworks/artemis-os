@@ -26,6 +26,7 @@ export const MARKETING_PRIORITIZATION_VIEW = "marketing-prioritization";
 export const INTEGRATIONS_VIEW = "integrations";
 export const ROUTING_VIEW = "routing";
 export const COST_VIEW = "cost";
+export const SCREENTIME_VIEW = "screentime-watch";
 
 function normalizeHashPath(pathname) {
   const raw = String(pathname || "").trim();
@@ -90,6 +91,12 @@ export const PRIMARY_NAV_DESTINATIONS = [
     label: "Marketing Campaign OS",
     shortLabel: "Marketing",
     description: "Campaign portfolio, workspace, signals inbox, and approval queue.",
+  },
+  {
+    id: SCREENTIME_VIEW,
+    label: "Screen-Time Watch",
+    shortLabel: "Screen-Time",
+    description: "National screen-time policy heat map + searchable signal repository (internal).",
   },
   {
     id: DEV_PROJECTS_VIEW,
@@ -278,6 +285,7 @@ const KNOWN_VIEWS = new Set([
   INTEGRATIONS_VIEW,
   ROUTING_VIEW,
   COST_VIEW,
+  SCREENTIME_VIEW,
   "agents/builder",
   ...PRIMARY_NAV_DESTINATIONS.map((item) => item.id),
   ...SECONDARY_NAV_DESTINATIONS.map((item) => item.id),
@@ -311,6 +319,7 @@ export function normalizeAppView(view) {
   if (view === "integrations") return INTEGRATIONS_VIEW;
   if (view === "routing") return ROUTING_VIEW;
   if (view === "cost") return COST_VIEW;
+  if (view === "screentime-watch" || view === "screentime" || view === "screen-time-watch") return SCREENTIME_VIEW;
   if (view === "command-center") return DEFAULT_APP_VIEW;
   if (view === "modules") return WORKSPACE_VIEW;
   if (view === "chat") return "chat";
@@ -349,5 +358,6 @@ export function isShellView(view) {
     || normalizedView === LEGACY_DASHBOARD_VIEW
     || normalizedView === INTEGRATIONS_VIEW
     || normalizedView === ROUTING_VIEW
-    || normalizedView === COST_VIEW;
+    || normalizedView === COST_VIEW
+    || normalizedView === SCREENTIME_VIEW;
 }
