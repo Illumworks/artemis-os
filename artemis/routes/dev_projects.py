@@ -5,15 +5,19 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.config import settings
 from artemis.db import get_session
 from artemis.dev_projects import repository as repo
+from artemis.dev_projects.forge_runs import get_active_run_for_session, get_run_log
 from artemis.dev_projects.loop_runner import broadcast, decide_permission, run_turn
 from artemis.dev_projects.schemas import (
     DevAnnotationCreate,
@@ -31,7 +35,6 @@ from artemis.dev_projects.schemas import (
     PermissionDecision,
 )
 from artemis.dev_projects.service import list_project_files
-from artemis.config import settings
 from artemis.identity.dependencies import resolve_request_identity
 from artemis.identity.scope_policy import OWNER_EMAIL
 from artemis.marketing.routes._auth import require_owner, require_token
@@ -47,6 +50,31 @@ router = APIRouter(
 )
 
 ws_router = APIRouter(tags=["dev-projects-ws"])
+
+
+# ── Forge active-run response models ─────────────────────────────────────────
+
+
+class ForgeRunLogEntry(BaseModel):
+    seq: int
+    kind: str
+    payload: dict[str, Any]
+
+
+class ForgeRunSummary(BaseModel):
+    run_id: str
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    error: str | None = None
+    log: list[ForgeRunLogEntry]
+
+
+class ActiveRunResponse(BaseModel):
+    active_run: ForgeRunSummary | None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _project_read(row: Any) -> dict[str, Any]:
@@ -289,6 +317,34 @@ async def get_session_detail(
         annotations=[DevAnnotationRead.model_validate(a) for a in annotations],
     )
     return detail.model_dump()
+
+
+@router.get("/sessions/{session_id}/active-run")
+async def get_active_run(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return the in-flight ForgeRun for a session, or active_run: null.
+
+    Called by a reconnecting device to catch up on streamed build output before
+    joining the live WebSocket.  Owner-gated via the router-level dependency.
+    """
+    run = await get_active_run_for_session(session, session_id)
+    if run is None:
+        return ActiveRunResponse(active_run=None).model_dump()
+    log_entries = await get_run_log(session, run.run_id)
+    summary = ForgeRunSummary(
+        run_id=run.run_id,
+        status=run.status,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        error=run.error,
+        log=[
+            ForgeRunLogEntry(seq=entry.seq, kind=entry.kind, payload=entry.payload or {})
+            for entry in log_entries
+        ],
+    )
+    return ActiveRunResponse(active_run=summary).model_dump()
 
 
 @router.patch("/sessions/{session_id}")
