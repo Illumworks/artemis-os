@@ -105,6 +105,29 @@ _DISALLOWED_BUILTINS: tuple[str, ...] = (
 #: blanket bypass, is the security boundary.
 _PERMISSION_MODE = "default"
 
+# ---------------------------------------------------------------------------
+# Forge mode constants (Ares read-only project inspection).
+#
+# Forge mode is opted into by setting ``forge_project_path_var`` before
+# calling adapter.complete().  It grants the CLI read-only native file tools
+# inside the target project directory.  Bash, Write, Edit are withheld until
+# a future slice adds worktree isolation.
+# ---------------------------------------------------------------------------
+
+#: Native tools allowed in Forge mode (read-only file inspection only).
+_FORGE_READONLY_ALLOWED: tuple[str, ...] = ("Read", "Glob", "Grep")
+
+#: Native tools explicitly disallowed in Forge mode.  No Bash/Write/Edit
+#: until worktree isolation lands in a future slice.
+_FORGE_DISALLOWED: tuple[str, ...] = (
+    "Bash",
+    "Write",
+    "Edit",
+    "WebSearch",
+    "WebFetch",
+    "NotebookEdit",
+)
+
 
 def _timeout_seconds() -> float:
     """Read the wall-clock subprocess timeout (env-configurable).
@@ -310,40 +333,58 @@ class ClaudeCodeAdapter:
         )
 
     async def _complete_with_tools(self, request: CompletionRequest) -> CompletionResponse:
-        """Route a completion through the Artemis MCP server when tools are present (CC19).
+        """Route a completion through the appropriate backend when tools are present (CC19).
 
         Reads the active tool-session scope from caller-owned contextvars:
-        Builder uses ``builder_session_id_var``; Floating Artemis uses
-        ``floating_session_id_var``. Launches ``claude -p --mcp-config`` against
-        the matching scoped MCP server.
 
-        Design:
-        - claude-code's internal agent loop handles all tool-use iterations.
-        - Builder proposal rows land in the DB via the MCP server during the subprocess run.
-        - We return the final text answer as a CompletionResponse with stop_reason="end_turn".
-        - Builder and Floating Artemis callers both short-circuit their local
-          tool loops because there are no tool_use blocks in the returned response.
+        - **Forge mode** (``forge_project_path_var`` is set): build a read-only
+          native-tools argv via ``_build_forge_command`` and run the CLI with
+          ``cwd=project_path``.  No MCP server is launched.
+        - **Builder** (``builder_session_id_var`` is set): scoped Artemis MCP
+          server with the five Builder tools.
+        - **Floating Artemis** (``floating_session_id_var`` is set): scoped
+          Artemis MCP server with the session's auto-invoke tools.
+
+        The guard requires that at least one of the three contextvars is set;
+        it raises ``ProviderAPIError`` only when all three are None.
 
         Known limitation: /messages/stream SSE stays text-only for CC19.
         Streaming + tools is a separate brief.
         """
+        # Lazy imports guard against circular-import at module load time.
         from artemis.builder.context import builder_session_id_var
+        from artemis.dev_projects.context import forge_project_path_var
         from artemis.floating_artemis.context import floating_session_id_var
 
         builder_session_id = builder_session_id_var.get()
         floating_session_id = floating_session_id_var.get()
+        forge_project_path = forge_project_path_var.get()
+
         agent_tools = [tool.name for tool in request.tools or []]
-        if builder_session_id is None and floating_session_id is None:
+
+        if builder_session_id is None and floating_session_id is None and forge_project_path is None:
             raise ProviderAPIError(
                 0,
                 "_complete_with_tools called but no tool-session contextvar is set. "
-                "Ensure the Builder or Floating Artemis turn handler sets its "
+                "Ensure the Builder, Floating Artemis, or Forge turn handler sets its "
                 "session context before calling adapter.complete().",
             )
 
         model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
 
+        # ── Forge mode: read-only native tools, no MCP server. ────────────────
+        if forge_project_path is not None:
+            cmd = _build_forge_command(
+                binary=self._binary,
+                model=model,
+                project_path=forge_project_path,
+            )
+            return await self._run_subprocess(
+                cmd, prompt, tool_run=True, project_path=forge_project_path
+            )
+
+        # ── MCP path: Builder or Floating Artemis. ────────────────────────────
         if builder_session_id is not None:
             config = _build_builder_mcp_config(builder_session_id=builder_session_id)
         else:
@@ -463,6 +504,7 @@ class ClaudeCodeAdapter:
         tool_run: bool = False,
         timeout_seconds: float | None = None,
         claude_config_dir: str | None = None,
+        project_path: str | None = None,
     ) -> CompletionResponse:
         """Launch the claude CLI, enforce the wall-clock timeout, parse the result.
 
@@ -483,6 +525,11 @@ class ClaudeCodeAdapter:
         at that path.  When ``None``, the key is absent (inherit ambient login).
         Only honoured on the tool-run path (``tool_run=True``) because the
         text-only path does not set an env at all; passing it there is a no-op.
+
+        ``project_path``: when provided, sets the subprocess working directory
+        to that path via ``cwd=``.  Used by Forge mode so the CLI runs inside
+        the target project directory.  When ``None``, cwd is inherited from the
+        parent process (existing behavior — no change for MCP paths).
         """
         timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
         env = _mcp_eager_env(claude_config_dir=claude_config_dir) if tool_run else None
@@ -493,6 +540,7 @@ class ClaudeCodeAdapter:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                **({"cwd": project_path} if project_path is not None else {}),
             )
         except OSError as exc:
             raise ProviderAPIError(0, f"failed to launch claude CLI: {exc}") from exc
@@ -629,6 +677,45 @@ def _build_floating_artemis_mcp_config(*, session_id: str, tool_names: list[str]
             }
         }
     }
+
+
+def _build_forge_command(*, binary: str, model: str, project_path: str) -> list[str]:
+    """Build the Forge-mode ``claude -p`` argv.
+
+    Forge mode gives Ares read-only native file tools (Read, Glob, Grep) inside
+    a real project directory.  No Artemis MCP server is launched — this slice
+    uses only the CLI's built-in tools so there is no session-scope to establish.
+
+    Key differences from the standard MCP argv:
+    - ``--add-dir <project_path>`` grants the CLI access to the project tree.
+    - ``--permission-mode bypassPermissions`` runs the read-only tools without
+      interactive prompts; the ``--disallowed-tools`` list is the hard boundary.
+    - No ``--mcp-config`` / ``--strict-mcp-config``: no Artemis MCP tools are
+      needed for this read-only inspection slice.
+    - ``--allowed-tools Read Glob Grep``: explicit allowlist keeps the surface
+      minimal.
+    - ``--disallowed-tools Bash Write Edit WebSearch WebFetch NotebookEdit``:
+      belt-and-suspenders deny list so mutating tools cannot be invoked even if
+      ``bypassPermissions`` were to be loosened later.
+
+    Returns the argv list; does NOT launch a subprocess.  Unit-testable.
+    """
+    return [
+        binary,
+        "-p",
+        "--output-format",
+        "json",
+        "--model",
+        model,
+        "--add-dir",
+        project_path,
+        "--permission-mode",
+        "bypassPermissions",
+        "--allowed-tools",
+        *_FORGE_READONLY_ALLOWED,
+        "--disallowed-tools",
+        *_FORGE_DISALLOWED,
+    ]
 
 
 def allowed_tools_for(agent_tools: list[str]) -> list[str]:
