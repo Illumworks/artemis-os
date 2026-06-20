@@ -147,6 +147,34 @@ to the artemis-os repo root. Forge coding tools must be scoped to the SESSION's 
   viewer + plan/todo panel wired to live build state. Desktop. The thin magic slice (2.1-2.3)
   = "Ares answers in Forge in his voice, reads your project, you watch him work" ships first.
 
+### Phase 2 — DECISION (Jon, 2026-06-20): Real Claude Code on Max subscription
+
+Live testing revealed claude-code runs tools in a black-box subprocess (no per-step
+events, no in-process tools reach it) while the anthropic API path gives step-streaming
++ our tools but is metered $$. **Jon chose: claude-code engine (Max subscription)** —
+Forge wraps the REAL Claude Code running in the project dir with its native file/bash/git
+tools. Cheap, ideal for long unattended builds, IS the tool Jon wants. Tradeoff accepted:
+no live per-step "watch it work" for now (see result + summary; text-progress streaming is
+a later enhancement, the adapter's "CC19" SSE limitation).
+
+**Consequences / re-plan:**
+- Chunks 2.1 (project tools), 2.2 (hook step-streaming), 2.3 (tool-step UI) are PARKED —
+  built for the API path, not deleted, reusable if we ever add the hybrid. The claude-code
+  Forge turn currently fails safe to bare-completion; superseded by the mode below.
+- **NEW Phase 2 (claude-code Forge mode):** a Forge adapter mode that runs `claude -p` with
+  cwd=project.path and its NATIVE coding tools allowed (currently the adapter does
+  `--disallowed-tools Bash Read Write Edit`; Forge mode must allow them), sets the required
+  session contextvar, returns the final text, and logs it to forge_run + persists to
+  dev_messages. Ares persona via system/append. Provider stays claude-code (Max).
+- **SAFETY MODEL SHIFT (important):** since tools run INSIDE the subprocess we CANNOT gate
+  individual tool calls (no per-call layer-3 confirm). Safety therefore comes from:
+  (a) running in an ISOLATED git worktree/branch (Phase 3 — now the PRIMARY safety boundary),
+  (b) no push / no network egress, (c) human reviews the diff before merge. So Phase 3
+  (worktree isolation) is now load-bearing and should gate before edits are enabled. For the
+  immediate slice, can start read-leaning (let Claude Code read+answer in the project) and
+  enable edits once worktree isolation lands.
+- "Watch it work" later = stream the subprocess's text/stdout progress (separate brief).
+
 ### Phase 2 — BUILD (the experience)
 - **2.1** Route Forge `send_message` through the agent loop with Ares persona +
   system prompt + FA tool registry; hydrate one-brain on start. Keep dev_messages
