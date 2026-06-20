@@ -8,6 +8,8 @@ Authority layers:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -32,6 +34,259 @@ def _safe_repo_path(relative_path: str) -> Path | None:
         return candidate
     except ValueError:
         return None
+
+
+def _safe_path_under(root: Path, relative_path: str) -> Path | None:
+    """Return an absolute path only if it resolves within ``root``.
+
+    Accepts relative paths (resolved against ``root``) and absolute paths
+    (which must still fall inside ``root`` after resolution).  Returns None
+    on path-traversal / escape attempts so callers never reach the filesystem
+    for out-of-bounds paths.
+    """
+    try:
+        candidate = (root / relative_path).resolve()
+        candidate.relative_to(root)
+        return candidate
+    except (ValueError, TypeError):
+        return None
+
+
+# ── Forge / Ares project-scoped tool factories (read-only, Layer 1) ──────────
+
+
+def _make_read_file(root: Path) -> Any:
+    """Return a read_project_file impl constrained to ``root``."""
+
+    async def _impl(inp: dict[str, Any]) -> str:
+        relative = inp.get("path", "")
+        if not relative:
+            return "Error: path is required"
+
+        safe_path = _safe_path_under(root, relative)
+        if safe_path is None:
+            return f"Error: path '{relative}' is outside the project root — access denied"
+
+        if not safe_path.exists():
+            return f"Error: '{relative}' does not exist"
+        if not safe_path.is_file():
+            return f"Error: '{relative}' is not a file"
+
+        try:
+            content = safe_path.read_text(encoding="utf-8", errors="replace")
+            max_chars = int(inp.get("max_chars", 8000))
+            if len(content) > max_chars:
+                content = content[:max_chars] + f"\n[...truncated at {max_chars} chars]"
+            return content
+        except Exception as exc:
+            return f"Read failed: {exc}"
+
+    return _impl
+
+
+def _make_list_dir(root: Path) -> Any:
+    """Return a list_project_dir impl constrained to ``root``."""
+
+    max_entries = 500
+
+    async def _impl(inp: dict[str, Any]) -> str:
+        relative = inp.get("path", ".")
+        safe_path = _safe_path_under(root, relative)
+        if safe_path is None:
+            return f"Error: path '{relative}' is outside the project root — access denied"
+
+        if not safe_path.exists():
+            return f"Error: '{relative}' does not exist"
+        if not safe_path.is_dir():
+            return f"Error: '{relative}' is not a directory"
+
+        try:
+            entries = list(safe_path.iterdir())
+            dirs = sorted(e.name for e in entries if e.is_dir())
+            files = sorted(e.name for e in entries if not e.is_dir())
+            names = [n + "/" for n in dirs] + files
+            truncated = False
+            if len(names) > max_entries:
+                names = names[:max_entries]
+                truncated = True
+            result = "\n".join(names)
+            if truncated:
+                result += f"\n[...truncated at {max_entries} entries]"
+            return result if result else "(empty directory)"
+        except Exception as exc:
+            return f"List dir failed: {exc}"
+
+    return _impl
+
+
+def _make_git_status(root: Path) -> Any:
+    """Return a git_status impl that runs ``git status`` in ``root``."""
+
+    async def _impl(inp: dict[str, Any]) -> str:  # noqa: ARG001
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "-C",
+                str(root),
+                "status",
+                "--porcelain=v1",
+                "--branch",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            except TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                return "Error: git status timed out after 10s"
+
+            if proc.returncode != 0:
+                err = stderr.decode("utf-8", errors="replace").strip()
+                return f"Error: git status exited {proc.returncode}: {err}"
+
+            return stdout.decode("utf-8", errors="replace")
+        except Exception as exc:
+            return f"git status failed: {exc}"
+
+    return _impl
+
+
+def _make_git_diff(root: Path) -> Any:
+    """Return a git_diff impl that runs ``git diff`` in ``root``."""
+
+    max_chars = 16000
+
+    async def _impl(inp: dict[str, Any]) -> str:
+        path_arg = inp.get("path", "")
+        cmd = ["git", "-C", str(root), "diff"]
+
+        if path_arg:
+            safe_path = _safe_path_under(root, path_arg)
+            if safe_path is None:
+                return f"Error: path '{path_arg}' is outside the project root — access denied"
+            cmd.append(str(safe_path))
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            except TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                return "Error: git diff timed out after 10s"
+
+            if proc.returncode != 0:
+                err = stderr.decode("utf-8", errors="replace").strip()
+                return f"Error: git diff exited {proc.returncode}: {err}"
+
+            output = stdout.decode("utf-8", errors="replace")
+            if len(output) > max_chars:
+                output = output[:max_chars] + f"\n[...truncated at {max_chars} chars]"
+            return output if output else "(no diff — working tree is clean)"
+        except Exception as exc:
+            return f"git diff failed: {exc}"
+
+    return _impl
+
+
+# ── Forge / Ares project-scoped Tool definitions ──────────────────────────────
+
+READ_PROJECT_FILE = Tool(
+    name="read_project_file",
+    description=(
+        "Read a file within the current Forge project root. "
+        "Path must be relative to the project root. "
+        "Access is constrained to that root — no path traversal. [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Relative path from the project root",
+            },
+            "max_chars": {
+                "type": "integer",
+                "description": "Max characters to return",
+                "default": 8000,
+            },
+        },
+        "required": ["path"],
+    },
+)
+
+LIST_PROJECT_DIR = Tool(
+    name="list_project_dir",
+    description=(
+        "List the contents of a directory within the current Forge project root. "
+        "Returns names with trailing '/' for subdirectories, sorted dirs-first. "
+        "Defaults to the project root ('.') when no path is given. [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Relative path from the project root (default '.')",
+                "default": ".",
+            },
+        },
+        "required": [],
+    },
+)
+
+GIT_STATUS = Tool(
+    name="git_status",
+    description=(
+        "Run 'git status --porcelain=v1 --branch' in the current Forge project root "
+        "and return the output. Read-only. [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+)
+
+GIT_DIFF = Tool(
+    name="git_diff",
+    description=(
+        "Run 'git diff' in the current Forge project root and return the output. "
+        "Optionally scoped to a single file (path relative to project root). "
+        "Output is capped at 16000 characters. Read-only. [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Optional relative path to scope the diff to a single file",
+            },
+        },
+        "required": [],
+    },
+)
+
+
+def register_ares_coding_tools(
+    registry: AuthorizedToolRegistry,
+    project_path: str,
+) -> None:
+    """Register the four read-only Forge coding tools into ``registry``.
+
+    All tools are constrained to ``project_path`` (resolved to an absolute
+    path at registration time).  Layer 1 — read-only, no side-effects.
+    """
+    root = Path(project_path).resolve()
+    registry.register(READ_PROJECT_FILE, _make_read_file(root), layer=1)
+    registry.register(LIST_PROJECT_DIR, _make_list_dir(root), layer=1)
+    registry.register(GIT_STATUS, _make_git_status(root), layer=1)
+    registry.register(GIT_DIFF, _make_git_diff(root), layer=1)
 
 
 # ── Tool implementations ──────────────────────────────────────────────────────

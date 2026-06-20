@@ -41,18 +41,22 @@ def _build_kai_tool_registry() -> AuthorizedToolRegistry:
     return registry
 
 
-def _build_ares_tool_registry(agent_id: str) -> AuthorizedToolRegistry:
-    """Build Ares's Brief-1 registry: owner-private, read-only conversation tools.
+def _build_ares_tool_registry(
+    agent_id: str,
+    project_path: str | None = None,
+) -> AuthorizedToolRegistry:
+    """Build Ares's registry: owner-private, read-only conversation tools.
 
-    Ares is Jon's private build partner, but THIS brief gives him no coding or
-    agency capability yet (the Forge code loop + project-workspace memory land in
-    Brief 2). He gets ONLY the read tools he needs to recall context and discuss
-    the build: query_memory (scope-gated to his owner-private allowance), plus a
-    few read-only inspection tools. NO write/propose/spawn, NO marketing, NO
-    enablement, NO OKR, NO gcal/gmail/slack-posting/builders/system tools.
+    Brief-1 base: query_memory (scope-gated to his owner-private allowance),
+    list_scopes, surface_status, read_file.  NO write/propose/spawn, NO
+    marketing, NO enablement, NO OKR, NO gcal/gmail/slack-posting/builders/system.
 
-    Like Kai's registry, this is an early-return that does NOT fall through to the
-    general tool registrations.
+    Brief-2 extension (chunk 2.1): when ``project_path`` is provided, the four
+    Forge coding tools (read_project_file, list_project_dir, git_status,
+    git_diff) are also registered, all at layer 1 (read-only).
+
+    Like Kai's registry, this is an early-return that does NOT fall through to
+    the general tool registrations.
     """
     from artemis.floating_artemis.tools.core import (
         LIST_SCOPES,
@@ -63,6 +67,7 @@ def _build_ares_tool_registry(agent_id: str) -> AuthorizedToolRegistry:
         _make_query_memory,
         _read_file,
         _surface_status,
+        register_ares_coding_tools,
     )
 
     registry = AuthorizedToolRegistry()
@@ -71,18 +76,28 @@ def _build_ares_tool_registry(agent_id: str) -> AuthorizedToolRegistry:
     registry.register(LIST_SCOPES, _list_scopes, layer=1)
     registry.register(SURFACE_STATUS, _surface_status, layer=1)
     registry.register(READ_FILE, _read_file, layer=1)
+
+    # Brief-2 chunk 2.1: project-scoped coding tools (read-only).
+    if project_path is not None:
+        register_ares_coding_tools(registry, project_path)
+
     return registry
 
 
 def build_authorized_tool_registry(
     available_surfaces: set[str],
     agent_id: str | None = None,
+    project_path: str | None = None,
 ) -> AuthorizedToolRegistry:
     """Build the Floating Artemis tool catalog for the given agent and surfaces.
 
     ``agent_id`` is threaded into ``register_core_tools`` so that ``query_memory``
     is gated to the calling agent's scope allowance (M3).  Must be supplied for
     any live session; None → fail-closed (empty results for every query).
+
+    ``project_path`` is Ares-only: when set, the four Forge coding tools
+    (read_project_file, list_project_dir, git_status, git_diff) are added to
+    his registry.  Ignored for all other agents.
 
     Special case — Kai:
       Kai's registry contains ONLY search_enablement_assets + get_enablement_asset.
@@ -96,10 +111,10 @@ def build_authorized_tool_registry(
     if normalized_agent == "kai":
         return _build_kai_tool_registry()
 
-    # SECURITY: Ares (Brief 1) gets only owner-private read tools — no coding/agency.
+    # SECURITY: Ares gets only owner-private read tools + optional Forge coding tools.
     # Early return — no fallthrough to the general tool registrations.
     if normalized_agent == "ares":
-        return _build_ares_tool_registry(agent_id or "ares")
+        return _build_ares_tool_registry(agent_id or "ares", project_path=project_path)
 
     registry = AuthorizedToolRegistry()
     register_core_tools(registry, agent_id=agent_id)
