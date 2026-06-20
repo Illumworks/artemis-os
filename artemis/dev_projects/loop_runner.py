@@ -384,15 +384,18 @@ async def _run_provider_completion(
 ) -> None:
     """Execute one Forge turn.
 
-    For the ``claude-code`` provider: runs the full Ares agent loop (tool-capable,
-    multi-iteration) and streams each step to the Forge WebSocket room.
+    For the ``claude-code`` provider: sets the Forge context vars and calls
+    the adapter once via ``_run_forge_turn``.  The adapter's
+    ``_complete_with_tools`` branch runs the real Claude Code CLI
+    (read-only: Read/Glob/Grep) inside the project directory and returns
+    the final text.
 
     For all other providers: falls through to the legacy bare-completion path
     (streaming or non-streaming), unchanged from Phase 1.
 
-    Fallback: if building Ares's system prompt or tool registry fails for any
-    reason, the function logs the error and retries using the legacy bare path so
-    the turn is never silently dropped.
+    Fallback: if ``_run_forge_turn`` fails for any reason, the function logs
+    the error and retries using the legacy bare path so the turn is never
+    silently dropped.
     """
     async with SessionLocal() as db:
         dev_session = await repo.get_session(db, session_id)
@@ -414,11 +417,11 @@ async def _run_provider_completion(
         model = dev_session.model
 
     # -----------------------------------------------------------------------
-    # Ares agent-loop path (claude-code provider only)
+    # Forge turn path (claude-code provider only)
     # -----------------------------------------------------------------------
     if provider == "claude-code":
         try:
-            await _run_ares_loop(
+            await _run_forge_turn(
                 session_id=session_id,
                 run_id=run_id,
                 project_path=project_path,
@@ -428,7 +431,7 @@ async def _run_provider_completion(
             return
         except Exception:
             logger.exception(
-                "forge turn: Ares loop failed for session=%s run=%s — falling back to bare completion",
+                "forge turn: _run_forge_turn failed for session=%s run=%s -- falling back to bare completion",
                 session_id,
                 run_id,
             )
@@ -480,7 +483,7 @@ async def _run_provider_completion(
     )
 
 
-async def _run_ares_loop(
+async def _run_forge_turn(
     *,
     session_id: int,
     run_id: str | None,
@@ -488,217 +491,110 @@ async def _run_ares_loop(
     request_messages: list[Message],
     model: str | None,
 ) -> None:
-    """Run the Ares agent loop for one Forge turn.
+    """Run one Forge turn via the real Claude Code CLI (read-only, Forge mode).
 
-    All imports are lazy to avoid circular import issues with providers/
-    floating_artemis modules.  If any import or setup step fails the exception
-    propagates to the caller, which catches it and falls back to bare completion.
+    Routing through the Forge branch
+    ---------------------------------
+    ``ClaudeCodeAdapter.complete()`` routes to ``_complete_with_tools()`` when
+    ``request.tools`` is non-empty.  Inside ``_complete_with_tools``, if
+    ``forge_project_path_var`` is set, the method builds a Forge argv
+    (``--add-dir``, ``--permission-mode bypassPermissions``, Read/Glob/Grep
+    allowed tools) and runs the CLI with ``cwd=project_path`` -- no Artemis MCP
+    server is launched.  The tools list itself is ignored by the Forge argv; it
+    is only present to trigger the ``_complete_with_tools`` dispatch.  A single
+    placeholder ``Tool`` object satisfies the guard.
+
+    When ``project_path`` is None, this function raises so the caller falls
+    back to the legacy bare-completion path -- Forge mode requires a directory.
+
+    All imports are lazy to guard against circular imports with providers/
+    floating_artemis modules.  Any exception propagates to the caller, which
+    logs it and retries via the legacy bare path so a turn is never dropped.
     """
+    if project_path is None:
+        raise RuntimeError("forge turn: project_path is None -- cannot enter Forge mode")
+
     # -- Lazy imports (circular-import guard) --------------------------------
-    from artemis.agent.hooks import HookRegistry
-    from artemis.agent.loop import run_turn as agent_run_turn
-    from artemis.agent.types import TextBlock as ATextBlock
-    from artemis.agent.types import ToolResultBlock as AToolResultBlock
-    from artemis.agent.types import ToolUseBlock as AToolUseBlock
-    from artemis.floating_artemis.personality import load_agent_profile, select_voice_samples
-    from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
+    from artemis.agent.types import Tool as ATool
+    from artemis.dev_projects.context import forge_project_path_var
+    from artemis.floating_artemis.context import floating_session_id_var
+    from artemis.floating_artemis.personality import load_agent_profile
     from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
 
     # -- 1. Resolve the claude-code adapter ----------------------------------
     try:
         adapter = resolve_adapter(provider="claude-code")
     except NoProviderAvailableError as exc:
-        raise RuntimeError(f"forge Ares: no claude-code adapter available: {exc}") from exc
+        raise RuntimeError(f"forge turn: no claude-code adapter available: {exc}") from exc
 
-    # -- 2. Build Ares's system prompt ---------------------------------------
+    # -- 2. Build Ares system prompt (persona_core + profile_text) -----------
     ares_profile = load_agent_profile("ares")
-    # Use the real _build_system_prompt from chat.py to get the full human-voice
-    # and acting rules injected.  Import lazily; fall back to a minimal prompt
-    # if the import somehow fails (e.g. transitive dep missing at test time).
-    try:
-        from artemis.floating_artemis.chat import _build_system_prompt  # noqa: PLC2701
+    parts: list[str] = []
+    if ares_profile.persona_core:
+        parts.append(ares_profile.persona_core)
+    if ares_profile.profile_text:
+        parts.append(ares_profile.profile_text)
+    ares_system = "\n\n".join(parts) or "You are Ares, a build assistant."
 
-        voice_samples = select_voice_samples(
-            session_id=str(session_id),
-            k=4,
-            voice_corpus=ares_profile.voice_corpus,
+    # -- 3. Build CompletionRequest ------------------------------------------
+    # ``tools`` must be non-empty so ``adapter.complete()`` routes to
+    # ``_complete_with_tools()`` where the Forge branch lives.  The placeholder
+    # tool is never called -- the Forge argv uses native Read/Glob/Grep only.
+    placeholder_tools: list[ATool] = [
+        ATool(
+            name="forge_noop",
+            description="Internal placeholder; not callable. Triggers Forge mode routing.",
+            input_schema={"type": "object", "properties": {}},
         )
-        ares_system = _build_system_prompt(
-            voice_samples=voice_samples,
-            page_context=None,
-            available_surfaces=["dev-projects"],
-            persona_core=ares_profile.persona_core,
-            profile_text=ares_profile.profile_text,
-            display_name=ares_profile.display_name,
-            agent_id="ares",
-            session_id=str(session_id),
-        )
-    except Exception:
-        logger.warning(
-            "forge Ares: _build_system_prompt import failed; using bare persona_core",
-            exc_info=True,
-        )
-        parts = []
-        if ares_profile.persona_core:
-            parts.append(ares_profile.persona_core)
-        if ares_profile.profile_text:
-            parts.append(ares_profile.profile_text)
-        ares_system = "\n\n".join(parts) or "You are Ares, a build assistant."
-
-    # -- 3. Build Ares's tool registry ---------------------------------------
-    auth_registry = build_authorized_tool_registry(
-        {"dev-projects"},
-        agent_id="ares",
-        project_path=project_path,
-    )
-    # Wrap into the plain ToolRegistry the agent loop consumes.
-    # Use the same auto-invoke wrapper that chat.py uses so layer-1/2 tools
-    # run immediately and layer-3/4 tools are staged.
-    try:
-        from artemis.floating_artemis.chat import _build_auto_invoke_tool_registry  # noqa: PLC2701
-
-        tool_registry = _build_auto_invoke_tool_registry(
-            auth_registry,
-            session_id=str(session_id),
-            agent_id="ares",
-        )
-    except Exception:
-        logger.warning(
-            "forge Ares: _build_auto_invoke_tool_registry import failed; using empty registry",
-            exc_info=True,
-        )
-        from artemis.agent.tools import ToolRegistry as PlainToolRegistry
-
-        # Build a minimal plain registry from layer-1/2 entries only.
-        tool_registry = PlainToolRegistry()
-        for entry in auth_registry.all_entries():
-            if entry.layer <= 2:
-                tool_registry.register(entry.tool, entry.impl)
-
-    # -- 4. Build hook registry to bridge loop events -> Forge WS ------------
-    hooks = HookRegistry()
-
-    # Track tool-name by tool_use_id so tool-result messages can name the tool.
-    _pending_tool_names: dict[str, str] = {}
-
-    async def _on_message_hook(msg: Any) -> None:  # noqa: ANN401
-        """Fire for every new message appended by the agent loop."""
-        from artemis.agent.types import Message as AMessage
-
-        if not isinstance(msg, AMessage):
-            return
-
-        if msg.role == "assistant":
-            # Collect text and tool_use blocks for broadcasting.
-            text_blocks: list[dict[str, Any]] = []
-            tool_use_blocks: list[dict[str, Any]] = []
-
-            for block in msg.content:
-                if isinstance(block, ATextBlock):
-                    text_blocks.append({"type": "text", "text": block.text})
-                elif isinstance(block, AToolUseBlock):
-                    # Remember the name so the matching result can use it.
-                    _pending_tool_names[block.id] = block.name
-                    tool_use_blocks.append(
-                        {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
-                    )
-
-            # Broadcast the full assistant message (text + tool_use blocks together).
-            all_blocks: list[dict[str, Any]] = text_blocks + tool_use_blocks
-            if all_blocks:
-                await broadcast(
-                    session_id,
-                    {
-                        "type": "dev_projects.message",
-                        "role": "assistant",
-                        "content": all_blocks,
-                    },
-                )
-                # Log to ForgeRunLog as a "message" kind.
-                if run_id is not None:
-                    await _forge_append_log(run_id, "message", {"role": "assistant", "content": all_blocks})
-
-            # Broadcast individual tool_use steps.
-            for tu in tool_use_blocks:
-                await broadcast(
-                    session_id,
-                    {
-                        "type": "dev_projects.tool_step",
-                        "tool": tu["name"],
-                        "input": tu["input"],
-                    },
-                )
-                if run_id is not None:
-                    await _forge_append_log(
-                        run_id,
-                        "tool_use",
-                        {"tool": tu["name"], "input": tu["input"]},
-                    )
-
-        elif msg.role == "user":
-            # Tool-result messages: one ToolResultBlock per tool call.
-            for block in msg.content:
-                if not isinstance(block, AToolResultBlock):
-                    continue
-                tool_name = _pending_tool_names.pop(block.tool_use_id, block.tool_use_id)
-                # Cap result text before broadcast/log to keep payloads sane.
-                raw_result = block.content if isinstance(block.content, str) else str(block.content)
-                capped = raw_result[:_ARES_TOOL_RESULT_BROADCAST_CAP]
-                if len(raw_result) > _ARES_TOOL_RESULT_BROADCAST_CAP:
-                    capped += " ...[truncated]"
-                await broadcast(
-                    session_id,
-                    {
-                        "type": "dev_projects.tool_step",
-                        "tool": tool_name,
-                        "result": capped,
-                        "is_error": block.is_error,
-                        "is_result": True,
-                    },
-                )
-                if run_id is not None:
-                    await _forge_append_log(
-                        run_id,
-                        "tool_result",
-                        {
-                            "tool": tool_name,
-                            "result": capped,
-                            "is_error": block.is_error,
-                        },
-                    )
-
-    hooks.on("on_message", _on_message_hook)
-
-    # -- 5. Run the agent loop -----------------------------------------------
+    ]
     effective_model = model or _ARES_FORGE_MODEL_DEFAULT
-    result = await agent_run_turn(
-        adapter=adapter,
+    request = CompletionRequest(
         messages=request_messages,
-        tools=tool_registry,
         system=ares_system,
+        tools=placeholder_tools,
         model=effective_model,
-        max_iterations=12,
-        hooks=hooks,
     )
 
-    # -- 6. Extract final text and persist via the existing path -------------
-    final_text = ""
-    for msg in reversed(result.messages):
-        if msg.role == "assistant":
-            texts = [b.text for b in msg.content if isinstance(b, ATextBlock)]
-            if texts:
-                final_text = " ".join(texts)
-                break
+    # -- 4. Set contextvars (set/reset token pattern in try/finally) ---------
+    # forge_project_path_var  -> tells _complete_with_tools to use Forge argv
+    # floating_session_id_var -> stable session identity for safety/parity
+    forge_token = forge_project_path_var.set(project_path)
+    floating_token = floating_session_id_var.set(f"forge-{session_id}")
+    try:
+        # -- 5. Single adapter.complete() call -- claude-code runs its own loop
+        response = await adapter.complete(request)
+    finally:
+        forge_project_path_var.reset(forge_token)
+        floating_session_id_var.reset(floating_token)
 
-    final_text = final_text.strip() or "(No response.)"
-    # Persist via the unchanged Phase-1 path so dev_messages and the
-    # message_complete event are identical to the pre-Ares behaviour.
+    # -- 6. Extract final text -----------------------------------------------
+    from artemis.agent.types import TextBlock as ATextBlock
+
+    final_text = " ".join(
+        b.text for b in response.message.content if isinstance(b, ATextBlock)
+    ).strip() or "(No response.)"
+
+    # -- 7. Persist + broadcast via the existing Phase-1 path ---------------
+    final_content: list[dict[str, Any]] = [{"type": "text", "text": final_text}]
     await _persist_and_broadcast(
         session_id,
         role="assistant",
-        content=[{"type": "text", "text": final_text}],
+        content=final_content,
         event_type="dev_projects.message_complete",
     )
+    # Log to durable ForgeRunLog so reconnect replay captures the result.
+    if run_id is not None:
+        await _forge_append_log(
+            run_id,
+            "message",
+            {"role": "assistant", "content": final_content},
+        )
+
+
+# Keep the old name as an alias so any external callers that may reference it
+# do not break at import time.  _run_provider_completion calls _run_forge_turn
+# directly; _run_ares_loop is retained as a shim only.
+_run_ares_loop = _run_forge_turn
 
 
 async def _persist_and_broadcast(
