@@ -87,6 +87,13 @@ async def fetch_slack_awaiting_reply(session: AsyncSession) -> list[RadarItem]:
         if len(items) >= _CAP:
             break
 
+        # "People waiting on you" = humans only. Skip bot/app messages — the
+        # agents (Callie/Ares/Kai/Artemis) @-mention Jon constantly; their asks
+        # belong in the separate "Agent asks" brief section, not here. Slack tags
+        # bot/app messages with bot_id; real people have none.
+        if hit.get("bot_id"):
+            continue
+
         hit_ts_raw = str(hit.get("ts") or "")
         if not hit_ts_raw:
             continue
