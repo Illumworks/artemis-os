@@ -102,7 +102,52 @@ loop_runner's shell exec as the command substrate.
 
 **Scope boundary (honest):** V1 runs are in-process detached tasks — they survive tab-close + reconnect, and the persisted log preserves everything up to a crash, but an in-flight turn does NOT survive an app restart (the readiness guard + watchdog keep the process alive). True cross-process durability (worker queue + Redis WS fanout) is a later phase — `ws_manager` is explicitly single-process.
 
-### Phase 2 — Ares drives the full build loop (the experience)
+### Phase 2 — DESIGN (locked 2026-06-20, from integration research)
+
+**Decision: Option B** — keep `loop_runner.run_turn` as the orchestrator; inject Ares's
+brain into it. (Option A = routing through `handle_turn` was rejected: different session
+store (floating_artemis_messages vs dev_messages), different WS room (`fa:` vs
+`dev-projects:`) + event shapes, and it bypasses Phase-1 forge_run logging — 100+ lines
+of glue fighting the architecture.) Option B preserves dev_messages history, the existing
+Forge WS streaming, and forge_run logging with ZERO frontend changes for the read-only core.
+
+**Which sessions are Ares-driven:** ALL Forge sessions (owner-private; locked decision #6).
+No agent_id column, no migration — loop_runner drives every claude-code Forge turn as Ares.
+
+**Streaming model change (conscious tradeoff):** `agent/loop.run_turn` (the tool-capable
+iterative loop, already used by spawn_subagent) takes a plain `ToolRegistry` + `system` +
+`hooks` and runs COMPLETE-response iterations — it is NOT token-streaming like the current
+`adapter.stream()` path. So Phase 2 replaces token-by-token streaming with STEP-level
+streaming via the loop's `HookRegistry` (`on_message` fires per assistant message + per tool
+result): each step is broadcast to the existing `dev-projects:{id}` WS room AND appended to
+forge_run_log. This is the right signal for "watch Ares work" (read file X -> ran git_status
+-> reasoning) and is REQUIRED to support tools at all. Token-streaming-within-each-step is a
+possible later polish (would need a streaming tool-loop). Tool execution: wrap Ares's
+`AuthorizedToolRegistry` via the `_build_auto_invoke_tool_registry` pattern (layer 1/2 auto;
+layer 3 staged) into the plain ToolRegistry the loop consumes. Provider stays claude-code.
+
+**Project-path scoping (the one genuinely new thing):** Brief-1's `read_file` is constrained
+to the artemis-os repo root. Forge coding tools must be scoped to the SESSION's project root
+(`DevProject.path`), injected at registry-build time — so a factory `_make_read_file(root)` /
+`_make_list_dir(root)` etc., closed over `project_path`, mirroring `_make_query_memory(agent_id)`.
+
+**Chunks (thin-magic-slice order; right rail is separable, comes last):**
+- **2.1 Ares coding tools (self-contained, START FIRST):** in `tools/core.py` add layer-1
+  read-only, path-constrained factories `_make_read_file(root)`, `_make_list_dir(root)`,
+  `_make_git_status(root)`, `_make_git_diff(root)`; extend `_build_ares_tool_registry(agent_id,
+  project_path=None)` to register them when project_path is given. Tests. No loop_runner touch.
+- **2.2 loop_runner Ares integration (the core; Lead reviews hard + live-tests):** rewrite the
+  claude-code path in `_run_provider_completion` to build Ares system prompt + Ares registry
+  (with project_path) wrapped to a ToolRegistry, call `agent.loop.run_turn` with a HookRegistry
+  that bridges each step to the Forge WS (dev_projects.message + a tool-step event) AND
+  forge_run_log. Keep dev_messages persistence + Phase-1 run lifecycle. Depends on 2.1.
+- **2.3 frontend tool-step rendering (small):** dev_projects.js renders tool-step events
+  ("Ares ran git_status" + collapsible output). Depends on 2.2 event shape.
+- **2.4 right rail (separate, larger — AFTER the core slice proves out):** file tree + diff
+  viewer + plan/todo panel wired to live build state. Desktop. The thin magic slice (2.1-2.3)
+  = "Ares answers in Forge in his voice, reads your project, you watch him work" ships first.
+
+### Phase 2 — BUILD (the experience)
 - **2.1** Route Forge `send_message` through the agent loop with Ares persona +
   system prompt + FA tool registry; hydrate one-brain on start. Keep dev_messages
   persist + WS stream.
