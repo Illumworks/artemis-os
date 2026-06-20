@@ -61,6 +61,8 @@ class Bill(BaseModel):
     last_action: str = ""
     state: str = ""
     body: str = ""
+    url: str = ""  # LegiScan bill page
+    state_link: str = ""  # official state legislature link
     session: dict[str, Any] = Field(default_factory=dict)
 
 

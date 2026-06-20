@@ -111,5 +111,7 @@ def bill_to_finding(bill: Bill, state: str) -> dict[str, Any]:
             "state": state.upper(),
             "status_code": bill.status,
             "last_action": bill.last_action,
+            "source_url": bill.url or bill.state_link,
+            "state_link": bill.state_link,
         },
     }
