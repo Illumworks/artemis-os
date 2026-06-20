@@ -178,8 +178,12 @@ class Settings(BaseSettings):
     archive_age_days: int = Field(
         default=90, description="Archive raw_inputs rows older than this many days."
     )
+    # NOTE: use day NAMES (mon-fri/fri/mon), NOT numbers, for the day-of-week field.
+    # APScheduler's CronTrigger.from_crontab reads numeric day-of-week as 0=Mon..6=Sun,
+    # so "1-5" fired Tue-Sat (ran Saturday, skipped Monday) — not Mon-Fri. Day names map
+    # unambiguously. (Bug fixed 2026-06-20.)
     morning_brief_cron: str = Field(
-        default="0 8 * * 1-5",
+        default="0 8 * * mon-fri",
         description="Cron expression for the scheduled Slack morning brief (default: weekdays Mon-Fri at 08:00).",
     )
     morning_brief_tz: str = Field(
@@ -187,7 +191,7 @@ class Settings(BaseSettings):
         description="IANA timezone for the scheduled Slack morning brief.",
     )
     okr_checkin_cron: str = Field(
-        default="0 16 * * 5",
+        default="0 16 * * fri",
         description="Cron expression for the Friday 4pm OKR check-in (default: Fri 16:00).",
     )
     review_escalation_cron: str = Field(
@@ -206,7 +210,7 @@ class Settings(BaseSettings):
         description="Minimum age in hours before a ready-for-review draft is escalated.",
     )
     commitments_followup_cron: str = Field(
-        default="30 9 * * 1-5",
+        default="30 9 * * mon-fri",
         description="Cron expression for the commitments follow-up sweep (default: weekdays Mon-Fri at 09:30).",
     )
     commitments_followup_tz: str = Field(
@@ -226,7 +230,7 @@ class Settings(BaseSettings):
         description="Default snooze duration when a follow-up reply omits an explicit window.",
     )
     commitments_proposals_digest_cron: str = Field(
-        default="0 9 * * 1-5",
+        default="0 9 * * mon-fri",
         description=(
             "Cron expression for the daily proposals digest sweep "
             "(default: weekdays Mon-Fri at 09:00). Fires only when proposed commitments exist."
@@ -245,7 +249,7 @@ class Settings(BaseSettings):
         ),
     )
     pre_meeting_prep_cron: str = Field(
-        default="*/30 7-19 * * 1-5",
+        default="*/30 7-19 * * mon-fri",
         description=(
             "Cron expression for the pre-meeting prep sweep "
             "(default: every 30 min, weekdays 7am-7pm). Sends a prep DM for "
@@ -253,7 +257,7 @@ class Settings(BaseSettings):
         ),
     )
     commitment_urgency_nudge_cron: str = Field(
-        default="0 */2 * * 1-5",
+        default="0 */2 * * mon-fri",
         description=(
             "Cron expression for the commitment urgency-nudge sweep "
             "(default: every 2 hours on weekdays). Fires an interrupt-bar DM "
@@ -261,7 +265,7 @@ class Settings(BaseSettings):
         ),
     )
     post_meeting_scheduling_cron: str = Field(
-        default="*/20 8-18 * * 1-5",
+        default="*/20 8-18 * * mon-fri",
         description=(
             "Cron expression for the post-meeting scheduling sweep "
             "(default: every 20 min, weekdays 8am-6pm). Scans recent meeting "
@@ -278,7 +282,7 @@ class Settings(BaseSettings):
         ),
     )
     directory_sync_cron: str = Field(
-        default="0 6 * * 1",
+        default="0 6 * * mon",
         description=(
             "Cron expression for the weekly name→email directory sync from Slack "
             "(default: Monday at 06:00). Refreshes the directory_people roster cache."
