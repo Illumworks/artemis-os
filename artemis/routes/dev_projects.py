@@ -104,6 +104,7 @@ def _session_read(row: Any, message_count: int = 0) -> dict[str, Any]:
         fork_of=row.fork_of,
         fork_at_message=row.fork_at_message,
         message_count=message_count,
+        forge_mode=row.forge_mode,
     ).model_dump()
 
 
@@ -293,6 +294,7 @@ async def create_project_session(
             provider=provider,
             model=str(model) if model else None,
             title=body.title,
+            forge_mode=body.forge_mode,
         )
     except ValueError:
         raise not_found(f"Project {project_id} not found", "project_not_found")  # noqa: B904
@@ -355,17 +357,18 @@ async def update_project_session(
 ) -> dict[str, Any]:
     if body.provider is not None and body.provider not in list_providers():
         raise bad_request(f"Unknown provider {body.provider!r}", "unknown_provider")
+    update_kwargs: dict[str, Any] = {
+        "title": body.title,
+        "provider": body.provider,
+        "model": body.model,
+        "bypass_permissions": body.bypass_permissions,
+        "pinned": body.pinned,
+        "archived": body.archived,
+    }
+    if "forge_mode" in body.model_fields_set:
+        update_kwargs["forge_mode"] = body.forge_mode
     try:
-        row = await repo.update_session(
-            session,
-            session_id,
-            title=body.title,
-            provider=body.provider,
-            model=body.model,
-            bypass_permissions=body.bypass_permissions,
-            pinned=body.pinned,
-            archived=body.archived,
-        )
+        row = await repo.update_session(session, session_id, **update_kwargs)
     except ValueError:
         raise not_found(f"Session {session_id} not found", "session_not_found")  # noqa: B904
     await session.commit()

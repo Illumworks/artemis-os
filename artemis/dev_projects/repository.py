@@ -96,6 +96,7 @@ async def create_session(
     title: str | None = None,
     fork_of: int | None = None,
     fork_at_message: int | None = None,
+    forge_mode: str | None = None,
 ) -> DevSession:
     await get_project(session, project_id)
     row = DevSession(
@@ -106,6 +107,7 @@ async def create_session(
         fork_of=fork_of,
         fork_at_message=fork_at_message,
         notes=[],
+        forge_mode=forge_mode if forge_mode in ("read", "write") else None,
     )
     session.add(row)
     await session.flush()
@@ -137,6 +139,9 @@ async def list_sessions(session: AsyncSession, project_id: int) -> list[tuple[De
     return [(row[0], int(row[1] or 0)) for row in result.all()]
 
 
+_UNSET: object = object()
+
+
 async def update_session(
     session: AsyncSession,
     session_id: int,
@@ -147,6 +152,7 @@ async def update_session(
     bypass_permissions: bool | None = None,
     pinned: bool | None = None,
     archived: bool | None = None,
+    forge_mode: object = _UNSET,
 ) -> DevSession:
     row = await get_session(session, session_id)
     if title is not None:
@@ -167,6 +173,8 @@ async def update_session(
         row.pinned = pinned
     if archived is not None:
         row.archived_at = _now() if archived else None
+    if forge_mode is not _UNSET:
+        row.forge_mode = forge_mode if forge_mode in ("read", "write") else None  # type: ignore[assignment]
     row.last_active_at = _now()
     await session.flush()
     await session.refresh(row)
