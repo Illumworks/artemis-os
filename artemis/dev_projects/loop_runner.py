@@ -193,6 +193,9 @@ async def run_turn(
         project = await repo.get_project(db, dev_session.project_id)
         # Capture scalar values before the session closes
         _project_id: int = dev_session.project_id
+        _provider: str = dev_session.provider
+        _bypass: bool = dev_session.bypass_permissions
+        _forge_mode: str | None = dev_session.forge_mode
         content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
         content.extend(images or [])
         user_msg = await repo.add_message(db, session_id=session_id, role="user", content=content)
@@ -212,49 +215,92 @@ async def run_turn(
         },
     )
 
-    # --- 2. Create ForgeRun (failure-isolated) ---
+    # --- 2. Determine write mode ---
+    write_mode = (_forge_mode == "write")
+
+    # --- 3. Create ForgeRun (failure-isolated) ---
     run_id = f"run_{uuid.uuid4().hex}"
     await _forge_create_run(run_id, dev_session_id=session_id, project_id=_project_id)
 
-    # --- 3. Execute the turn, complete/fail the run ---
-    turn_exc: BaseException | None = None
-    try:
-        # The legacy keyword-heuristic bash stub (_maybe_run_local_tool) is a
-        # pre-Ares placeholder. For claude-code sessions Ares drives the turn with
-        # his own real, scope-safe tools (list_project_dir, git_status, etc.), so
-        # the stub must NOT intercept — its naive "list/file/run" keyword match
-        # would otherwise hijack the turn and raise a permission gate. Only the
-        # non-Ares (other-provider) path still uses the stub.
-        handled = False
-        if dev_session.provider != "claude-code":
-            handled = await _maybe_run_local_tool(
-                session_id=session_id,
-                project_path=project.path,
-                user_text=user_text,
-                bypass=dev_session.bypass_permissions,
-                run_id=run_id,
-            )
-        if not handled:
-            await _run_provider_completion(
-                session_id=session_id,
-                run_id=run_id,
-                project_path=project.path,
-            )
-    except Exception as exc:
-        turn_exc = exc
-        # Log error to ForgeRunLog before broadcasting
-        await _forge_append_log(run_id, "error", {"text": str(exc)})
-        await _persist_and_broadcast(
-            session_id,
-            role="assistant",
-            content=[{"type": "text", "text": f"Error: {exc}"}],
-            event_type="dev_projects.error",
-        )
-    finally:
-        if turn_exc is None:
-            await _forge_complete_run(run_id, status="completed")
+    # --- 4. Serialize turns per session; compute effective working path ---
+    # Lazy imports to avoid circular import issues at module load time.
+    from artemis.dev_projects.worktree import (  # noqa: PLC0415
+        WorktreeError,
+        ensure_worktree,
+        session_lock,
+    )
+
+    async with session_lock(session_id):
+        # Resolve the effective project path for this turn.
+        if write_mode:
+            try:
+                effective_path = await ensure_worktree(project.path, session_id)
+            except WorktreeError as wt_exc:
+                logger.error(
+                    "forge write-mode: could not create worktree for session=%s: %s",
+                    session_id,
+                    wt_exc,
+                )
+                await _forge_append_log(run_id, "error", {"text": str(wt_exc)})
+                await _persist_and_broadcast(
+                    session_id,
+                    role="assistant",
+                    content=[
+                        {
+                            "type": "text",
+                            "text": (
+                                "Forge write mode could not create the isolated worktree: "
+                                f"{wt_exc}"
+                            ),
+                        }
+                    ],
+                    event_type="dev_projects.error",
+                )
+                await _forge_complete_run(run_id, status="failed", error=str(wt_exc))
+                return
         else:
-            await _forge_complete_run(run_id, status="failed", error=str(turn_exc))
+            effective_path = project.path
+
+        # --- 5. Execute the turn, complete/fail the run ---
+        turn_exc: BaseException | None = None
+        try:
+            # The legacy keyword-heuristic bash stub (_maybe_run_local_tool) is a
+            # pre-Ares placeholder. For claude-code sessions Ares drives the turn with
+            # his own real, scope-safe tools (list_project_dir, git_status, etc.), so
+            # the stub must NOT intercept -- its naive "list/file/run" keyword match
+            # would otherwise hijack the turn and raise a permission gate. Only the
+            # non-Ares (other-provider) path still uses the stub.
+            handled = False
+            if _provider != "claude-code":
+                handled = await _maybe_run_local_tool(
+                    session_id=session_id,
+                    project_path=effective_path,
+                    user_text=user_text,
+                    bypass=_bypass,
+                    run_id=run_id,
+                )
+            if not handled:
+                await _run_provider_completion(
+                    session_id=session_id,
+                    run_id=run_id,
+                    project_path=effective_path,
+                    write_mode=write_mode,
+                )
+        except Exception as exc:
+            turn_exc = exc
+            # Log error to ForgeRunLog before broadcasting
+            await _forge_append_log(run_id, "error", {"text": str(exc)})
+            await _persist_and_broadcast(
+                session_id,
+                role="assistant",
+                content=[{"type": "text", "text": f"Error: {exc}"}],
+                event_type="dev_projects.error",
+            )
+        finally:
+            if turn_exc is None:
+                await _forge_complete_run(run_id, status="completed")
+            else:
+                await _forge_complete_run(run_id, status="failed", error=str(turn_exc))
 
 
 async def _maybe_run_local_tool(
@@ -380,22 +426,29 @@ _ARES_TOOL_RESULT_BROADCAST_CAP = 4000  # chars; keep broadcast payloads sane
 
 
 async def _run_provider_completion(
-    *, session_id: int, run_id: str | None = None, project_path: str | None = None
+    *,
+    session_id: int,
+    run_id: str | None = None,
+    project_path: str | None = None,
+    write_mode: bool = False,
 ) -> None:
     """Execute one Forge turn.
 
     For the ``claude-code`` provider: sets the Forge context vars and calls
     the adapter once via ``_run_forge_turn``.  The adapter's
-    ``_complete_with_tools`` branch runs the real Claude Code CLI
-    (read-only: Read/Glob/Grep) inside the project directory and returns
-    the final text.
+    ``_complete_with_tools`` branch runs the real Claude Code CLI inside the
+    project directory.  When ``write_mode`` is True the adapter is granted
+    Write/Edit/Bash in addition to the read-only tools, and ``project_path``
+    is the isolated worktree path (not the real project tree).
 
     For all other providers: falls through to the legacy bare-completion path
     (streaming or non-streaming), unchanged from Phase 1.
 
     Fallback: if ``_run_forge_turn`` fails for any reason, the function logs
     the error and retries using the legacy bare path so the turn is never
-    silently dropped.
+    silently dropped.  EXCEPTION: when write_mode is True the fallback is
+    NOT used -- a failure in the forge-turn path must not silently fall back
+    to editing the real project tree.
     """
     async with SessionLocal() as db:
         dev_session = await repo.get_session(db, session_id)
@@ -427,15 +480,22 @@ async def _run_provider_completion(
                 project_path=project_path,
                 request_messages=request_messages,
                 model=model,
+                write_mode=write_mode,
             )
             return
         except Exception:
+            if write_mode:
+                # In write mode the worktree is already set up -- falling back
+                # to the legacy bare path would allow writes to the real project
+                # tree, which defeats isolation.  Re-raise so the caller marks
+                # the run failed.
+                raise
             logger.exception(
                 "forge turn: _run_forge_turn failed for session=%s run=%s -- falling back to bare completion",
                 session_id,
                 run_id,
             )
-            # Fall through to the legacy path below.
+            # Fall through to the legacy path below (read-only sessions only).
 
     # -----------------------------------------------------------------------
     # Legacy bare-completion path (non-claude-code, or Ares fallback)
@@ -490,33 +550,46 @@ async def _run_forge_turn(
     project_path: str | None,
     request_messages: list[Message],
     model: str | None,
+    write_mode: bool = False,
 ) -> None:
-    """Run one Forge turn via the real Claude Code CLI (read-only, Forge mode).
+    """Run one Forge turn via the real Claude Code CLI.
 
     Routing through the Forge branch
     ---------------------------------
     ``ClaudeCodeAdapter.complete()`` routes to ``_complete_with_tools()`` when
     ``request.tools`` is non-empty.  Inside ``_complete_with_tools``, if
     ``forge_project_path_var`` is set, the method builds a Forge argv
-    (``--add-dir``, ``--permission-mode bypassPermissions``, Read/Glob/Grep
-    allowed tools) and runs the CLI with ``cwd=project_path`` -- no Artemis MCP
-    server is launched.  The tools list itself is ignored by the Forge argv; it
-    is only present to trigger the ``_complete_with_tools`` dispatch.  A single
-    placeholder ``Tool`` object satisfies the guard.
+    (``--add-dir``, ``--permission-mode bypassPermissions``) and runs the CLI
+    with ``cwd=project_path`` -- no Artemis MCP server is launched.  When
+    ``forge_write_mode_var`` is also True the adapter grants Write/Edit/Bash
+    in addition to the read-only tools.
+
+    The tools list itself is ignored by the Forge argv; it is only present to
+    trigger the ``_complete_with_tools`` dispatch.  A single placeholder Tool
+    object satisfies the guard.
 
     When ``project_path`` is None, this function raises so the caller falls
-    back to the legacy bare-completion path -- Forge mode requires a directory.
+    back to the legacy bare-completion path (read-only sessions only) -- Forge
+    mode requires a directory.
 
     All imports are lazy to guard against circular imports with providers/
-    floating_artemis modules.  Any exception propagates to the caller, which
-    logs it and retries via the legacy bare path so a turn is never dropped.
+    floating_artemis modules.  Any exception propagates to the caller.
+
+    write_mode
+    ----------
+    When True:
+      - ``forge_write_mode_var`` is set to True so the adapter unlocks Write,
+        Edit, and Bash.
+      - ``project_path`` is the worktree path (already resolved by the caller).
+      - The Ares system prompt is extended with a short write-mode instruction.
+    When False (default): read-only behavior identical to before this change.
     """
     if project_path is None:
         raise RuntimeError("forge turn: project_path is None -- cannot enter Forge mode")
 
     # -- Lazy imports (circular-import guard) --------------------------------
     from artemis.agent.types import Tool as ATool
-    from artemis.dev_projects.context import forge_project_path_var
+    from artemis.dev_projects.context import forge_project_path_var, forge_write_mode_var
     from artemis.floating_artemis.context import floating_session_id_var
     from artemis.floating_artemis.personality import load_agent_profile
     from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
@@ -536,10 +609,19 @@ async def _run_forge_turn(
         parts.append(ares_profile.profile_text)
     ares_system = "\n\n".join(parts) or "You are Ares, a build assistant."
 
+    # In write mode, append a brief instruction scoping Ares to the worktree.
+    if write_mode:
+        ares_system += (
+            "\n\nYou are working in an isolated git worktree on branch "
+            f"forge/session-{session_id}. You may read, edit, run commands, and "
+            "commit freely inside this worktree. Do NOT push or merge to any other "
+            "branch -- the human reviews this branch and merges it manually."
+        )
+
     # -- 3. Build CompletionRequest ------------------------------------------
     # ``tools`` must be non-empty so ``adapter.complete()`` routes to
     # ``_complete_with_tools()`` where the Forge branch lives.  The placeholder
-    # tool is never called -- the Forge argv uses native Read/Glob/Grep only.
+    # tool is never called -- the Forge argv uses native tools only.
     placeholder_tools: list[ATool] = [
         ATool(
             name="forge_noop",
@@ -557,14 +639,18 @@ async def _run_forge_turn(
 
     # -- 4. Set contextvars (set/reset token pattern in try/finally) ---------
     # forge_project_path_var  -> tells _complete_with_tools to use Forge argv
+    #                            (in write mode this is the worktree path)
+    # forge_write_mode_var    -> grants Write/Edit/Bash when True
     # floating_session_id_var -> stable session identity for safety/parity
     forge_token = forge_project_path_var.set(project_path)
+    write_token = forge_write_mode_var.set(write_mode)
     floating_token = floating_session_id_var.set(f"forge-{session_id}")
     try:
         # -- 5. Single adapter.complete() call -- claude-code runs its own loop
         response = await adapter.complete(request)
     finally:
         forge_project_path_var.reset(forge_token)
+        forge_write_mode_var.reset(write_token)
         floating_session_id_var.reset(floating_token)
 
     # -- 6. Extract final text -----------------------------------------------
