@@ -535,6 +535,376 @@ async def search_project_files(
     return {"files": [item.model_dump() for item in list_project_files(project.path, q)]}
 
 
+# ── Worktree review/merge endpoints (Forge Phase 3, chunk 3.5) ───────────────
+#
+# All four endpoints are owner-gated by the router-level dependency.
+# They resolve the project path via the DB, and run git via _run_git below.
+
+
+async def _run_git(
+    *args: str,
+    cwd: str | None = None,
+    timeout: float = 30.0,
+) -> tuple[int, str, str]:
+    """Minimal async git runner for route-level git calls.
+
+    No shell.  All args are pre-validated (project_path is a checked git repo,
+    session_id is always int).  Returns (returncode, stdout, stderr).
+    Never raises -- callers inspect rc.
+    """
+    import contextlib
+
+    cmd = ["git"]
+    if cwd is not None:
+        cmd += ["-C", cwd]
+    cmd += list(args)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        raw_out, raw_err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        return -1, "", f"git {' '.join(args[:3])} timed out after {timeout}s"
+    rc = proc.returncode if proc.returncode is not None else -1
+    return rc, raw_out.decode(errors="replace").strip(), raw_err.decode(errors="replace").strip()
+
+
+async def _detect_base_branch(project_path: str) -> str:
+    """Return the base branch name for a project git repo.
+
+    Detection order:
+    1. ``git symbolic-ref --short refs/remotes/origin/HEAD``  (e.g. ``origin/main`` -> ``main``)
+    2. ``git rev-parse --abbrev-ref HEAD`` on the main tree (current checkout)
+    3. Hard fallback: ``"main"``
+    """
+    rc, out, _ = await _run_git(
+        "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
+        cwd=project_path,
+    )
+    if rc == 0 and out.strip():
+        return out.strip().removeprefix("origin/")
+
+    rc2, out2, _ = await _run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=project_path)
+    if rc2 == 0 and out2.strip() and out2.strip() != "HEAD":
+        return out2.strip()
+
+    return "main"
+
+
+# ── Response models ───────────────────────────────────────────────────────────
+
+
+class WorktreeCommitEntry(BaseModel):
+    sha: str
+    subject: str
+
+
+class WorktreeStatusResponse(BaseModel):
+    exists: bool
+    branch: str
+    ahead: int
+    dirty_files: int
+    commits: list[WorktreeCommitEntry]
+
+
+class WorktreeDiffResponse(BaseModel):
+    diff: str
+    truncated: bool
+    branch: str
+    base: str
+
+
+class WorktreeMergeRequest(BaseModel):
+    squash: bool = False
+    message: str | None = None
+
+
+class WorktreeMergeResponse(BaseModel):
+    merged: bool
+    into: str
+    branch: str
+
+
+class WorktreeDiscardResponse(BaseModel):
+    discarded: bool
+
+
+_DIFF_MAX_CHARS = 50_000
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/sessions/{session_id}/worktree/status")
+async def get_worktree_status(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return status of the Forge worktree for this session.
+
+    Always returns 200.  When the worktree directory does not exist, returns
+    exists=false with all numeric fields zero and commits=[].
+    """
+    from artemis.dev_projects.worktree import worktree_path_for
+
+    try:
+        dev_session = await repo.get_session(session, session_id)
+        project = await repo.get_project(session, dev_session.project_id)
+    except ValueError:
+        raise not_found(f"Session {session_id} not found", "session_not_found")  # noqa: B904
+
+    project_path = project.path
+    branch = f"forge/session-{session_id}"
+    wt_path = worktree_path_for(project_path, session_id)
+
+    if not wt_path.exists():
+        return WorktreeStatusResponse(
+            exists=False,
+            branch=branch,
+            ahead=0,
+            dirty_files=0,
+            commits=[],
+        ).model_dump()
+
+    base = await _detect_base_branch(project_path)
+
+    # Commits introduced on branch since it diverged from base.
+    rc, log_out, _ = await _run_git(
+        "log", "--oneline", f"{base}..{branch}",
+        cwd=project_path,
+    )
+    commits: list[WorktreeCommitEntry] = []
+    if rc == 0 and log_out.strip():
+        for line in log_out.splitlines():
+            parts = line.strip().split(" ", 1)
+            commits.append(
+                WorktreeCommitEntry(
+                    sha=parts[0],
+                    subject=parts[1] if len(parts) > 1 else "",
+                )
+            )
+
+    # Uncommitted changes sitting in the worktree checkout.
+    rc2, status_out, _ = await _run_git("status", "--porcelain", cwd=str(wt_path))
+    dirty_files = (
+        len([ln for ln in status_out.splitlines() if ln.strip()]) if rc2 == 0 else 0
+    )
+
+    return WorktreeStatusResponse(
+        exists=True,
+        branch=branch,
+        ahead=len(commits),
+        dirty_files=dirty_files,
+        commits=commits,
+    ).model_dump()
+
+
+@router.get("/sessions/{session_id}/worktree/diff")
+async def get_worktree_diff(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Return the three-dot diff between base and the Forge branch.
+
+    Three-dot diff (``base...branch``) shows changes introduced on the branch
+    since it diverged from base, ignoring any new commits on base itself.
+
+    Capped at 50 000 chars; ``truncated=true`` when the cap is hit.
+    Returns an empty diff (200) when worktree or branch is missing.
+    """
+    from artemis.dev_projects.worktree import worktree_path_for
+
+    try:
+        dev_session = await repo.get_session(session, session_id)
+        project = await repo.get_project(session, dev_session.project_id)
+    except ValueError:
+        raise not_found(f"Session {session_id} not found", "session_not_found")  # noqa: B904
+
+    project_path = project.path
+    branch = f"forge/session-{session_id}"
+    wt_path = worktree_path_for(project_path, session_id)
+    base = await _detect_base_branch(project_path)
+
+    if not wt_path.exists():
+        return WorktreeDiffResponse(
+            diff="", truncated=False, branch=branch, base=base
+        ).model_dump()
+
+    rc, diff_out, _ = await _run_git(
+        "diff", f"{base}...{branch}",
+        cwd=project_path,
+        timeout=60.0,
+    )
+    if rc != 0:
+        return WorktreeDiffResponse(
+            diff="", truncated=False, branch=branch, base=base
+        ).model_dump()
+
+    truncated = len(diff_out) > _DIFF_MAX_CHARS
+    return WorktreeDiffResponse(
+        diff=diff_out[:_DIFF_MAX_CHARS] if truncated else diff_out,
+        truncated=truncated,
+        branch=branch,
+        base=base,
+    ).model_dump()
+
+
+@router.post("/sessions/{session_id}/worktree/merge")
+async def merge_worktree(
+    session_id: int,
+    body: WorktreeMergeRequest | None = None,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Merge the Forge branch into the project's base branch (human gate).
+
+    Safety guards
+    -------------
+    - 409 when the main working tree has uncommitted changes.
+    - On conflict: aborts the merge and returns 409; worktree is preserved so
+      Jon can inspect / resolve.
+    - Worktree + branch are deleted only after a successful merge.
+    - Never uses --force.
+
+    Squash merge
+    ------------
+    When ``squash=true``, ``git merge --squash`` is used followed by an explicit
+    ``git commit``.  The commit message defaults to
+    ``"Squash merge forge/session-{id} into {base}"``.
+    """
+    import logging
+
+    from artemis.dev_projects.worktree import WorktreeError, remove_worktree
+
+    merge_req = body if body is not None else WorktreeMergeRequest()
+
+    try:
+        dev_session = await repo.get_session(session, session_id)
+        project = await repo.get_project(session, dev_session.project_id)
+    except ValueError:
+        raise not_found(f"Session {session_id} not found", "session_not_found")  # noqa: B904
+
+    project_path = project.path
+    branch = f"forge/session-{session_id}"
+    base = await _detect_base_branch(project_path)
+
+    # Guard: main tree must be clean before we touch it.
+    rc_st, status_out, _ = await _run_git("status", "--porcelain", cwd=project_path)
+    if rc_st == 0 and status_out.strip():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "merged": False,
+                "conflict": False,
+                "detail": "main tree dirty, commit or stash first",
+            },
+        )
+
+    # Guard: branch must exist.
+    rc_br, branch_list, _ = await _run_git("branch", "--list", branch, cwd=project_path)
+    if rc_br != 0 or not branch_list.strip():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "merged": False,
+                "conflict": False,
+                "detail": f"branch {branch!r} does not exist",
+            },
+        )
+
+    if merge_req.squash:
+        # Stage all commits as a single diff, then commit manually.
+        rc_m, merge_out, merge_err = await _run_git(
+            "merge", "--squash", branch,
+            cwd=project_path,
+            timeout=60.0,
+        )
+        if rc_m != 0:
+            await _run_git("reset", "--merge", cwd=project_path)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "merged": False,
+                    "conflict": True,
+                    "detail": (merge_err or merge_out)[:2000],
+                },
+            )
+        commit_msg = merge_req.message or f"Squash merge {branch} into {base}"
+        rc_c, _, commit_err = await _run_git(
+            "commit", "-m", commit_msg,
+            cwd=project_path,
+            timeout=30.0,
+        )
+        if rc_c != 0:
+            await _run_git("reset", "--merge", cwd=project_path)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "merged": False,
+                    "conflict": True,
+                    "detail": commit_err[:2000],
+                },
+            )
+    else:
+        # Standard --no-ff merge.
+        merge_args: list[str] = ["merge", "--no-ff"]
+        if merge_req.message:
+            merge_args += ["-m", merge_req.message]
+        merge_args.append(branch)
+
+        rc_m, merge_out, merge_err = await _run_git(
+            *merge_args,
+            cwd=project_path,
+            timeout=60.0,
+        )
+        if rc_m != 0:
+            # Abort so the main tree is left clean.
+            await _run_git("merge", "--abort", cwd=project_path)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "merged": False,
+                    "conflict": True,
+                    "detail": (merge_err or merge_out)[:2000],
+                },
+            )
+
+    # Merge succeeded -- clean up.
+    try:
+        await remove_worktree(project_path, session_id, delete_branch=True)
+    except WorktreeError as exc:
+        # Non-fatal: cleanup failure doesn't invalidate the merge.
+        logging.getLogger(__name__).warning(
+            "worktree: post-merge cleanup failed for session=%s: %s", session_id, exc
+        )
+
+    return WorktreeMergeResponse(merged=True, into=base, branch=branch).model_dump()
+
+
+@router.delete("/sessions/{session_id}/worktree")
+async def discard_worktree(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Discard the Forge worktree and its branch without merging (human gate: reject)."""
+    from artemis.dev_projects.worktree import remove_worktree
+
+    try:
+        dev_session = await repo.get_session(session, session_id)
+        project = await repo.get_project(session, dev_session.project_id)
+    except ValueError:
+        raise not_found(f"Session {session_id} not found", "session_not_found")  # noqa: B904
+
+    await remove_worktree(project.path, session_id, delete_branch=True)
+    return WorktreeDiscardResponse(discarded=True).model_dump()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @ws_router.websocket("/ws/dev-projects/{session_id}")
 async def dev_projects_ws(session_id: int, websocket: WebSocket) -> None:
     """Owner-only WebSocket.
