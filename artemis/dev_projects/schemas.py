@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -30,10 +30,14 @@ class DevProjectRead(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+_ForgeModeT = Literal["read", "write"] | None
+
+
 class DevSessionCreate(BaseModel):
     provider: str | None = None
     model: str | None = None
     title: str | None = None
+    forge_mode: _ForgeModeT = None
 
 
 class DevSessionUpdate(BaseModel):
@@ -43,6 +47,7 @@ class DevSessionUpdate(BaseModel):
     bypass_permissions: bool | None = None
     pinned: bool | None = None
     archived: bool | None = None
+    forge_mode: _ForgeModeT = None
 
 
 class DevSessionRead(BaseModel):
@@ -62,6 +67,7 @@ class DevSessionRead(BaseModel):
     fork_of: int | None = None
     fork_at_message: int | None = None
     message_count: int = 0
+    forge_mode: str | None = None
 
 
 class DevMessageRead(BaseModel):

@@ -66,6 +66,7 @@ class DevSession(Base):
         BigInteger, ForeignKey("dev_sessions.id", ondelete="SET NULL")
     )
     fork_at_message: Mapped[int | None] = mapped_column(BigInteger)
+    forge_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     project: Mapped[DevProject] = relationship(back_populates="sessions")
 
