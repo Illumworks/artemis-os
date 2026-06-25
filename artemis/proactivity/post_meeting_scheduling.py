@@ -427,35 +427,39 @@ def format_proposal_message(proposal: SlotProposal, *, tz: ZoneInfo) -> str:
         return ""
 
     title = intent.title or "a meeting"
-    who = ""
     invited = proposal.resolved_attendees
-    if invited:
-        who = " with " + ", ".join(invited)
 
-    lines = [f"I can set up *{title}*{who} — these times work:"]
+    lines = [f"I can set up *{title}* — these times work:"]
     for i, slot in enumerate(proposal.slots, start=1):
         lines.append(f"  {i}. {format_slot_label(slot, tz=tz)}")
 
-    caveats: list[str] = []
+    # Always make the invitee list explicit so Jon can catch anyone missing BEFORE
+    # the invite goes out — a meeting that should include 5 people but only lists 1
+    # is easy to miss when "who" is buried in the title line.
+    lines.append("")
+    if invited:
+        lines.append("*Inviting:* " + ", ".join(invited))
+    else:
+        lines.append("*Inviting:* no one mapped yet — tell me who should be on it.")
+
     if proposal.unresolved_attendees:
-        caveats.append(
+        lines.append(
             "I couldn't map "
             + ", ".join(proposal.unresolved_attendees)
-            + " to a calendar, so they're not on the invite yet."
+            + " to a calendar, so they are NOT on the invite — send me their email to add them."
         )
     if proposal.availability_pending:
-        caveats.append(
+        lines.append(
             "Heads up — I couldn't read "
             + ", ".join(proposal.availability_pending)
-            + "'s availability, so these are based on your calendar; "
-            "their times are pending."
+            + "'s availability, so these times are based on your calendar; theirs are pending."
         )
-    if caveats:
-        lines.append("")
-        lines.extend(caveats)
 
     lines.append("")
-    lines.append("Want me to send the invite? Reply *yes* (or *yes 2* to pick a time).")
+    lines.append(
+        "Reply *yes* to send (or *yes 2* to pick a time) — "
+        "and tell me if anyone else should be on it first."
+    )
     return "\n".join(lines)
 
 
