@@ -335,7 +335,11 @@ async def test_route_inbound_no_ping_when_not_set() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_callie_cfg(*, listen_channel_messages: bool = True) -> Any:
+def _make_callie_cfg(
+    *,
+    listen_channel_messages: bool = True,
+    always_respond_in_channels: bool = False,
+) -> Any:
     """Create a minimal _SlackAgentConfig-like mock for Callie."""
     from artemis.routes.integrations_slack_events import _SlackAgentConfig
 
@@ -348,6 +352,7 @@ def _make_callie_cfg(*, listen_channel_messages: bool = True) -> Any:
         allowed_user_ids=("U_JON",),
         allowed_channel_ids=("C_MARKETING",),
         listen_channel_messages=listen_channel_messages,
+        always_respond_in_channels=always_respond_in_channels,
     )
 
 
@@ -365,6 +370,7 @@ def _make_channel_event(
     event_type: str = "message",
     channel_type: str = "channel",
     bot_id: str | None = None,
+    parent_user_id: str | None = None,
 ) -> dict[str, Any]:
     ev: dict[str, Any] = {
         "type": event_type,
@@ -378,6 +384,8 @@ def _make_channel_event(
         ev["thread_ts"] = thread_ts
     if bot_id is not None:
         ev["bot_id"] = bot_id
+    if parent_user_id is not None:
+        ev["parent_user_id"] = parent_user_id
     return ev
 
 
@@ -475,6 +483,42 @@ async def test_idle_chatter_no_reply() -> None:
     event = _make_channel_event(text="Has anyone seen my coffee mug?")
     _, dispatched = await _run_handle_mentionable(event=event, classifier=_no_classifier)
     assert dispatched == [], "Irrelevant chatter must not be dispatched"
+
+
+# ── Reply on the agent's OWN post bypasses the relevance gate ─────────────────
+
+
+async def test_reply_to_agent_post_bypasses_gate() -> None:
+    """A thread reply whose root was authored by the agent (parent_user_id ==
+    bot_user_id) is dispatched even when the classifier would say NO — someone
+    replying to the agent's own message is unambiguously talking to it."""
+    event = _make_channel_event(
+        text="thanks — and does that cover middle school too?",
+        thread_ts="111.100",
+        parent_user_id="BCALLIE",  # the thread root was Callie's own post
+    )
+    _, dispatched = await _run_handle_mentionable(
+        event=event,
+        classifier=_no_classifier,  # gate would DROP this if it were reached
+        last_ts=None,
+    )
+    assert len(dispatched) == 1, "Reply on the agent's own post must bypass the gate"
+
+
+async def test_reply_to_other_user_still_gated() -> None:
+    """A thread reply whose root was authored by a human (not the bot) is NOT a
+    reply-to-agent, so the relevance gate still applies and drops off-topic chatter."""
+    event = _make_channel_event(
+        text="lol same",
+        thread_ts="111.100",
+        parent_user_id="U_SOMEONE_ELSE",
+    )
+    _, dispatched = await _run_handle_mentionable(
+        event=event,
+        classifier=_no_classifier,
+        last_ts=None,
+    )
+    assert dispatched == [], "Reply to another user's post must still pass the gate"
 
 
 # ── app_mention always replies ────────────────────────────────────────────────

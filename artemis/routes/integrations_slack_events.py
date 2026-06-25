@@ -547,12 +547,17 @@ def _should_handle_event(
     agent_cfg: _SlackAgentConfig,
     inner_type: str,
     channel_type: str,
+    is_reply_to_agent: bool = False,
 ) -> bool:
     if inner_type == "app_mention":
         return True
     if inner_type != "message":
         return False
     if channel_type == "im":
+        return True
+    # A reply on the agent's OWN post is a direct continuation — handle it even when
+    # the agent doesn't otherwise listen to plain channel chatter.
+    if is_reply_to_agent:
         return True
     return agent_cfg.listen_channel_messages
 
@@ -564,11 +569,14 @@ def _needs_relevance_gate(
     is_dm: bool,
     is_channel_join: bool,
     is_direct_mention: bool,
+    is_reply_to_agent: bool = False,
 ) -> bool:
     """Whether a plain channel message must pass the marketing relevance
     classifier before the agent responds.
 
-    app_mention, DMs, and channel_join always bypass. Agents with
+    app_mention, DMs, and channel_join always bypass. Replies on the agent's own
+    post (is_reply_to_agent) bypass too — someone replying to the agent's message
+    is unambiguously talking to it, so no classifier is needed. Agents with
     always_respond_in_channels set (e.g. an owner-private build channel)
     answer every message in their allowed channels, so they bypass too.
     The allowlist gate (_is_authorized_inbound) still governs WHO/WHICH
@@ -578,6 +586,7 @@ def _needs_relevance_gate(
         not is_direct_mention
         and not is_dm
         and not is_channel_join
+        and not is_reply_to_agent
         and inner_type == "message"
         and agent_cfg.listen_channel_messages
         and not agent_cfg.always_respond_in_channels
@@ -1089,6 +1098,20 @@ def _is_bot_authored(event: dict[str, object], bot_user_id: str) -> bool:
     return bool(bot_user_id) and str(event.get("user", "")) == bot_user_id
 
 
+def _is_reply_to_agent(event: dict[str, object], bot_user_id: str) -> bool:
+    """Return True when this message is a thread reply whose ROOT post was authored
+    by THIS agent's bot — i.e. someone is replying to the agent's own message.
+
+    Such replies are a direct continuation of a conversation with the agent and
+    should always get a response, with no @mention required: Kai answers a question
+    at top level, Sara replies in the thread, and Kai should keep talking.  Slack
+    stamps the thread root's author onto every reply as ``parent_user_id``.
+    """
+    if not bot_user_id or not event.get("thread_ts"):
+        return False
+    return str(event.get("parent_user_id", "")) == str(bot_user_id)
+
+
 # ── Event handler helper ──────────────────────────────────────────────────────
 
 
@@ -1249,12 +1272,14 @@ async def _handle_mentionable_event(
     # "classify" — the join itself is the trigger.
     is_dm = channel_type == "im" or channel_id.startswith("D")
     is_direct_mention = inner_type == "app_mention"
+    is_reply_to_agent = _is_reply_to_agent(event, agent_cfg.bot_user_id)
     needs_gate = _needs_relevance_gate(
         agent_cfg=agent_cfg,
         inner_type=inner_type,
         is_dm=is_dm,
         is_channel_join=is_channel_join,
         is_direct_mention=is_direct_mention,
+        is_reply_to_agent=is_reply_to_agent,
     )
 
     # Build session_id here (mirrors route_inbound logic) so the gate can check history.
@@ -1395,6 +1420,7 @@ async def _slack_events(
             agent_cfg=agent_cfg,
             inner_type=inner_type,
             channel_type=channel_type,
+            is_reply_to_agent=_is_reply_to_agent(event, agent_cfg.bot_user_id),
         ):
             await _handle_mentionable_event(
                 payload,
