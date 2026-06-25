@@ -128,6 +128,17 @@ _FORGE_DISALLOWED: tuple[str, ...] = (
     "NotebookEdit",
 )
 
+# Write mode runs inside an isolated git worktree (cwd), so Bash/Write/Edit are
+# scoped there; --disallowed still blocks web tools.  This is a WORKFLOW boundary
+# not a hard sandbox (Bash can reach the wider machine; OS sandbox is a later slice).
+
+#: Native tools allowed in Forge write mode (read + edit + shell inside worktree).
+_FORGE_WRITE_ALLOWED: tuple[str, ...] = ("Read", "Glob", "Grep", "Write", "Edit", "Bash")
+
+#: Native tools explicitly disallowed in Forge write mode.  Web and notebook
+#: tools remain off-limits regardless of write mode.
+_FORGE_WRITE_DISALLOWED: tuple[str, ...] = ("WebSearch", "WebFetch", "NotebookEdit")
+
 
 def _timeout_seconds() -> float:
     """Read the wall-clock subprocess timeout (env-configurable).
@@ -353,12 +364,13 @@ class ClaudeCodeAdapter:
         """
         # Lazy imports guard against circular-import at module load time.
         from artemis.builder.context import builder_session_id_var
-        from artemis.dev_projects.context import forge_project_path_var
+        from artemis.dev_projects.context import forge_project_path_var, forge_write_mode_var
         from artemis.floating_artemis.context import floating_session_id_var
 
         builder_session_id = builder_session_id_var.get()
         floating_session_id = floating_session_id_var.get()
         forge_project_path = forge_project_path_var.get()
+        forge_write_mode = forge_write_mode_var.get()
 
         agent_tools = [tool.name for tool in request.tools or []]
 
@@ -373,12 +385,13 @@ class ClaudeCodeAdapter:
         model = request.model or self._default_model
         prompt = _flatten_to_prompt(request)
 
-        # ── Forge mode: read-only native tools, no MCP server. ────────────────
+        # ── Forge mode: native tools, no MCP server. ─────────────────────────
         if forge_project_path is not None:
             cmd = _build_forge_command(
                 binary=self._binary,
                 model=model,
                 project_path=forge_project_path,
+                write_mode=forge_write_mode,
             )
             return await self._run_subprocess(
                 cmd, prompt, tool_run=True, project_path=forge_project_path
@@ -679,27 +692,31 @@ def _build_floating_artemis_mcp_config(*, session_id: str, tool_names: list[str]
     }
 
 
-def _build_forge_command(*, binary: str, model: str, project_path: str) -> list[str]:
+def _build_forge_command(
+    *, binary: str, model: str, project_path: str, write_mode: bool = False
+) -> list[str]:
     """Build the Forge-mode ``claude -p`` argv.
 
-    Forge mode gives Ares read-only native file tools (Read, Glob, Grep) inside
-    a real project directory.  No Artemis MCP server is launched — this slice
-    uses only the CLI's built-in tools so there is no session-scope to establish.
+    Forge mode gives Ares native file tools inside a real project directory.
+    No Artemis MCP server is launched — this slice uses only the CLI's built-in
+    tools so there is no session-scope to establish.
 
     Key differences from the standard MCP argv:
     - ``--add-dir <project_path>`` grants the CLI access to the project tree.
-    - ``--permission-mode bypassPermissions`` runs the read-only tools without
-      interactive prompts; the ``--disallowed-tools`` list is the hard boundary.
+    - ``--permission-mode bypassPermissions`` runs the tools without interactive
+      prompts; the ``--disallowed-tools`` list is the hard boundary.
     - No ``--mcp-config`` / ``--strict-mcp-config``: no Artemis MCP tools are
-      needed for this read-only inspection slice.
-    - ``--allowed-tools Read Glob Grep``: explicit allowlist keeps the surface
-      minimal.
-    - ``--disallowed-tools Bash Write Edit WebSearch WebFetch NotebookEdit``:
-      belt-and-suspenders deny list so mutating tools cannot be invoked even if
-      ``bypassPermissions`` were to be loosened later.
+      needed for Forge mode.
+    - Read-only (``write_mode=False``, default): ``--allowed-tools Read Glob Grep``;
+      ``--disallowed-tools Bash Write Edit WebSearch WebFetch NotebookEdit``.
+    - Write mode (``write_mode=True``): ``--allowed-tools Read Glob Grep Write
+      Edit Bash``; ``--disallowed-tools WebSearch WebFetch NotebookEdit``.
+      Must be combined with an isolated git worktree as the subprocess cwd.
 
     Returns the argv list; does NOT launch a subprocess.  Unit-testable.
     """
+    allowed = _FORGE_WRITE_ALLOWED if write_mode else _FORGE_READONLY_ALLOWED
+    disallowed = _FORGE_WRITE_DISALLOWED if write_mode else _FORGE_DISALLOWED
     return [
         binary,
         "-p",
@@ -712,9 +729,9 @@ def _build_forge_command(*, binary: str, model: str, project_path: str) -> list[
         "--permission-mode",
         "bypassPermissions",
         "--allowed-tools",
-        *_FORGE_READONLY_ALLOWED,
+        *allowed,
         "--disallowed-tools",
-        *_FORGE_DISALLOWED,
+        *disallowed,
     ]
 
 
