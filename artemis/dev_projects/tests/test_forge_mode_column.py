@@ -82,12 +82,12 @@ async def test_create_session_write_mode_persists(db_session: AsyncSession) -> N
     project_id = await _make_project(db_session)
 
     row = await repo.create_session(db_session, project_id=project_id, forge_mode="write")
+    session_id = row.id  # capture before commit/expire (instance gets expired)
     await db_session.commit()
 
-    # Reload from DB to confirm it round-trips (authoritative check; the returned
-    # instance is expired by create_session's refresh()).
+    # Reload from DB to confirm it round-trips (authoritative check).
     db_session.expire_all()
-    reloaded = await repo.get_session(db_session, row.id)
+    reloaded = await repo.get_session(db_session, session_id)
     assert reloaded.forge_mode == "write"
 
 
