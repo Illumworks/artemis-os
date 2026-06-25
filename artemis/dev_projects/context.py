@@ -33,3 +33,13 @@ forge_project_path_var: ContextVar[str | None] = ContextVar(
     "forge_project_path_var",
     default=None,
 )
+
+#: Set to True alongside ``forge_project_path_var`` to opt into write mode for
+#: the current Forge turn.  When True the adapter grants Write, Edit, and Bash
+#: in addition to the read-only tools; WebSearch/WebFetch/NotebookEdit remain
+#: disallowed.  Defaults to False so all existing Forge turns are read-only
+#: unless the caller explicitly opts in.
+forge_write_mode_var: ContextVar[bool] = ContextVar(
+    "forge_write_mode_var",
+    default=False,
+)
