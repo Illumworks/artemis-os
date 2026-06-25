@@ -261,3 +261,30 @@ under bypassPermissions is unverified. So we stage safety-first:
   (worktree isolation = the primary safety boundary). Accept the network caveat or add
   macOS sandbox-exec later. Edits do NOT ship until the worktree boundary lands.
 - **Later:** stream subprocess stdout (--output-format stream-json) for live "watch it work".
+
+### Phase 3 — DESIGN + DECISION (2026-06-25): write mode via worktree isolation
+
+Jon chose FULL SHELL (Write/Edit/Bash) in write mode = same trust as him running Claude Code
+himself on this machine. HONEST SECURITY NOTE: the git worktree is a clean review/merge
+WORKFLOW boundary (edits land on branch `forge/session-{id}`, main tree untouched, diff +
+human-approved merge), NOT a hard sandbox — Bash can reach the whole machine + network
+(--add-dir only fences claude's file tools). Acceptable: owner-only, his machine, his
+projects, IS what Claude Code already is. OS-level sandbox (sandbox-exec) deferred to a later
+hardening slice (matters most for unattended runs / the parked different-person use case).
+
+Design (from research): worktree at `~/.artemis/forge-worktrees/<slug>/<session_id>/` on
+branch `forge/session-{id}`, created lazily on first write turn, deterministic path (no DB
+storage), shared `.git/objects` (cheap). Read-vs-write selected by NEW column
+`dev_sessions.forge_mode` (NULL/"read" = Phase-2 read-only; "write" = worktree + Write/Edit/
+Bash). Push blocked defense-in-depth (per-worktree `git config --worktree remote.origin.pushurl
+no_push`, needs `extensions.worktreeConfig true`); REAL gate = human merge via UI. Per-session
+asyncio Lock prevents concurrent turns corrupting one worktree. Startup sweep prunes orphaned
+worktrees + marks stale running ForgeRuns failed.
+
+CHUNKS: 3.1 forge_mode column (migration 0104 + models/schemas/repo) | 3.2 worktree.py
+(ensure/remove/sweep/path + per-session lock; SECURITY-CRITICAL) | 3.3 context.py
+forge_write_mode_var + adapter write-mode tool sets (_FORGE_WRITE_ALLOWED Read/Glob/Grep/Write/
+Edit/Bash; SECURITY-CRITICAL) | 3.4 loop_runner wiring (read forge_mode, lock, ensure_worktree,
+pass write_mode; Lead live-tests edits land in worktree NOT main) | 3.5 merge/diff/discard
+routes | 3.6 UI review panel. 3.1/3.2/3.3 parallel (file-disjoint); 3.4 after all three; 3.5
+after 3.2; 3.6 after 3.5.
