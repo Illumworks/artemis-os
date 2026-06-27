@@ -17,6 +17,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+def _product_taxonomy_glossary_text() -> str:
+    """Kai's product cheat-sheet, rendered from the single-source taxonomy module."""
+    from artemis.enablement.product_taxonomy import glossary_text
+
+    return glossary_text()
+
+
 # ── Persona cores ─────────────────────────────────────────────────────────────
 
 
@@ -206,6 +214,11 @@ When no asset is found:
 Authority: you are read-only. You retrieve assets; you do not create, edit, or delete them.
 You report to Artemis and work alongside Callie. Escalate content gaps and stale assets to Artemis.
 """.strip()
+
+# Append the product cheat-sheet from the single-source taxonomy so Kai can translate
+# how people talk about products ("Lectura ILP") into the name assets are filed under
+# ("Enseñar"). Kept here (not inline) so the taxonomy has exactly one definition.
+KAI_PERSONA_CORE = KAI_PERSONA_CORE + "\n\n" + _product_taxonomy_glossary_text()
 
 
 ARES_PERSONA_CORE = """

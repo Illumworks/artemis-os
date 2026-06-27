@@ -76,6 +76,23 @@ def _rerank_enablement_(assets: list[Any], query: str) -> list[Any]:
     if not terms:
         return assets
 
+    # Format intent: when the asker names a format ("video", "deck"), prefer assets
+    # of that actual type over a same-words asset of the wrong type (Sara asked for a
+    # video; a "Student Prep Video" teacher_resource should not beat a student_video).
+    _format_types: dict[str, tuple[str, ...]] = {
+        "video": ("student_video", "video"),
+        "deck": ("training_deck",),
+        "slides": ("training_deck",),
+        "presentation": ("training_deck",),
+        "walkthrough": ("walkthrough",),
+        "demo": ("walkthrough",),
+        "handout": ("handout",),
+    }
+    wanted_types: set[str] = set()
+    for word, types in _format_types.items():
+        if word in q:
+            wanted_types.update(types)
+
     def _score(a: Any) -> int:
         title = (getattr(a, "title", "") or "").lower()
         tags = " ".join(getattr(a, "tags", None) or []).lower()
@@ -84,7 +101,8 @@ def _rerank_enablement_(assets: list[Any], query: str) -> list[Any]:
         phrase = 3 if (q and q in hay) else 0          # whole query appears
         title_hits = sum(1 for t in terms if t in title)  # title matches weighted
         any_hits = sum(1 for t in terms if t in hay)
-        return phrase * 4 + title_hits * 2 + any_hits
+        type_hit = 3 if (getattr(a, "type", "") or "") in wanted_types else 0
+        return phrase * 4 + title_hits * 2 + any_hits + type_hit
 
     return sorted(assets, key=_score, reverse=True)
 
@@ -97,6 +115,13 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
     limit = int(inp.get("limit", 5))
     limit = max(1, min(limit, 20))  # clamp: 1–20
     candidate_k = max(limit * 4, 20)  # wider pool so the hybrid re-rank has room to work
+
+    # Translate "suite + function" phrasing into the product name the asset is filed
+    # under (e.g. "Lectura ILP" -> + "Enseñar"), so retrieval connects regardless of
+    # how the user phrased it. No-op unless a suite AND a function are both named.
+    from artemis.enablement.product_taxonomy import expand_query
+
+    search_text = expand_query(query)
 
     # Optional structured filters.
     audience_filter: str | None = inp.get("audience")
@@ -126,7 +151,7 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
             from artemis.memory.embeddings import MiniLMProvider
 
             provider = MiniLMProvider()
-            embedding = await provider.embed(query)
+            embedding = await provider.embed(search_text)
         except Exception as embed_exc:  # noqa: BLE001
             _logger.debug("search_enablement_assets: embedding unavailable (%r)", embed_exc)
 
@@ -188,7 +213,8 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                 assets = list(result.scalars().all())
 
         # Hybrid re-rank (keyword/title boost over the vector pool), then trim.
-        assets = _rerank_enablement_(assets, query)[:limit]
+        # Use the expanded text so the product-name boost (e.g. "Enseñar") applies.
+        assets = _rerank_enablement_(assets, search_text)[:limit]
 
         if not assets:
             return json.dumps({"results": [], "count": 0, "query": query})
