@@ -77,12 +77,33 @@ faceless. **Theme:** Greek mythology — Artemis (Olympian goddess), Calliope (a
   "delegate-to-a-named-specialist" pattern — the one named agent that's a *delegate*, not a peer).
 - **Gate:** P4 orchestration (delegate primitive) + a deep-research capability.
 
+## 5. Enablement agent  *(Enablement-team-facing; equips the field)*
+- **Name — `Chiron` (locked), goes by "Ky."** The centaur who *trained* the heroes (Achilles, Jason) — the
+  archetypal mentor/trainer, the meaning fit for "enablement"; stays in-family. "Kai" sidesteps the "KY-ron"
+  pronunciation question. **She/her.**
+- **Audience:** the Enablement team — and the field they equip (sales/CS reps reaching for the right asset).
+- **Purpose / directive (MVP):** the **content librarian**. On request, read a **catalogued content database**
+  (the index of enablement assets), find the right one(s) for the ask, and **deliver them with links to the
+  content in Google Drive** — "what's our latest one-pager on X?" / "give me the deck for Y" → the right asset +
+  its GDrive link. MVP is *find-and-deliver only* — it does not generate or edit content yet.
+- **More later (not MVP):** content generation/refresh; gap & staleness detection ("we have no current
+  collateral on Z"); usage analytics; recommending the right asset for a given deal/account (hooks into the
+  Sales/Success agents); onboarding/training paths.
+- **Owns / reports:** the enablement content catalog + retrieval/delivery; reports up to Artemis; peers with
+  Callie, the Sales agent, and Hestia (it equips their lanes).
+- **Gate (MVP, lighter than the others):** a **catalogued content database** (the index) + **GDrive access/MCP
+  fit**. Notably does **not** need the scope-aware multi-team data Sales/Success ride on — so the MVP can land
+  earlier. *More-later* gates: a content-generation capability + scope-aware targeting.
+
 ---
 
 ## Sequencing (planning only)
 Bring each online **as its lane's foundation lands**, not before:
 - **Tyche (Sales)** + **Hestia (Success)** → after the OS multi-team expansion (scope-aware data + MCP fit).
 - **Clio (Research/Credibility)** → after / alongside the data-credibility app.
+- **Chiron (Enablement)** → can lead the pack: MVP only needs a content catalog + GDrive fit (no scope-aware
+  multi-team data), so it's buildable ahead of the lanes that wait on the OS expansion. Generation/targeting
+  features wait for their own foundation.
 - **Ares (Personal research + maker)** → after P4's delegate primitive + scope-aware memory (M3). *(Jon's
   favored direction — bump priority when P4 lands.)* **Early win available sooner:** a session→memory bridge so
   Artemis can see the build world ahead of full Ares.
