@@ -407,6 +407,16 @@ async function loadSession(sessionId) {
   // Connect WS after replay so live tokens append to the same streaming bubble
   // (ensureStreamingBubble reuses the existing .streaming element).
   connectWs(data.session.id);
+
+  // Auto-load the Review Changes panel for write-mode sessions.
+  if (data.session.forge_mode === "write") {
+    resetReviewState();
+    refreshReviewPanel();
+  } else {
+    resetReviewState();
+    // Ensure any stale panel is cleared for read sessions.
+    renderReviewPanel();
+  }
 }
 
 function clearChat() {
@@ -446,6 +456,319 @@ function renderRail() {
     $("dev-rail-toggle")?.classList.remove("hidden");
   } else {
     $("dev-rail-toggle")?.classList.add("hidden");
+  }
+  renderWriteModeBadge();
+  renderReviewPanel();
+}
+
+// ── Write-mode badge + toggle ─────────────────────────────────────────────────
+
+function renderWriteModeBadge() {
+  // Remove any existing badge/toggle so we re-render cleanly.
+  $("dev-write-mode-badge")?.remove();
+  $("dev-write-mode-toggle")?.remove();
+
+  if (!state.activeSession) return;
+
+  const isWrite = state.activeSession.forge_mode === "write";
+
+  if (isWrite) {
+    const badge = document.createElement("span");
+    badge.id = "dev-write-mode-badge";
+    badge.className = "dev-review-badge";
+    badge.textContent = "WRITE MODE";
+    els.headerActions?.insertBefore(badge, els.headerActions.firstChild);
+  }
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.id = "dev-write-mode-toggle";
+  toggle.className = "dp-icon-btn dev-write-mode-toggle-btn";
+  toggle.title = isWrite ? "Switch to read mode" : "Switch to write mode";
+  toggle.setAttribute("aria-label", toggle.title);
+  toggle.innerHTML = isWrite
+    ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`
+    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  toggle.addEventListener("click", toggleForgeMode);
+  els.headerActions?.insertBefore(toggle, els.headerActions.firstChild);
+}
+
+async function toggleForgeMode() {
+  if (!state.activeSessionId) return;
+  const current = state.activeSession?.forge_mode;
+  const next = current === "write" ? "read" : "write";
+  try {
+    const updated = await request(`/sessions/${state.activeSessionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ forge_mode: next }),
+    });
+    state.activeSession = { ...state.activeSession, ...updated };
+    renderWriteModeBadge();
+    renderReviewPanel();
+    if (next === "write") refreshReviewPanel();
+  } catch (err) {
+    // Non-fatal: show inline, don't crash.
+    showReviewError(`Could not switch forge mode: ${err.message}`);
+  }
+}
+
+// ── Review Changes panel ──────────────────────────────────────────────────────
+
+// Internal panel state (reset on session change).
+const reviewState = {
+  loading: false,
+  error: null,
+  status: null, // { exists, branch, ahead, dirty_files, commits }
+  diff: null,   // { diff, truncated, branch, base }
+  diffLoading: false,
+  diffError: null,
+};
+
+function resetReviewState() {
+  reviewState.loading = false;
+  reviewState.error = null;
+  reviewState.status = null;
+  reviewState.diff = null;
+  reviewState.diffLoading = false;
+  reviewState.diffError = null;
+}
+
+function renderReviewPanel() {
+  // The panel lives inside the right rail. We inject/replace a dedicated slot.
+  const rail = document.querySelector(".dp-rail-body");
+  if (!rail) return;
+
+  let panel = $("dev-review-panel");
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "dev-review-panel";
+    panel.className = "dev-review-panel";
+    rail.appendChild(panel);
+  }
+
+  const isWrite = state.activeSession?.forge_mode === "write";
+  if (!isWrite) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+
+  if (reviewState.loading) {
+    panel.innerHTML = `
+      <div class="dev-review-section-head">
+        <span class="dev-review-section-title">Review Changes</span>
+      </div>
+      <div class="dev-review-status-row dev-review-loading">Loading...</div>
+    `;
+    return;
+  }
+
+  if (reviewState.error) {
+    panel.innerHTML = `
+      <div class="dev-review-section-head">
+        <span class="dev-review-section-title">Review Changes</span>
+        <button type="button" class="dev-icon-btn" id="dev-review-refresh" title="Refresh">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+      <div class="dev-review-error-note">${escapeHtml(reviewState.error)}</div>
+    `;
+    $("dev-review-refresh")?.addEventListener("click", refreshReviewPanel);
+    return;
+  }
+
+  const st = reviewState.status;
+  if (!st || !st.exists) {
+    panel.innerHTML = `
+      <div class="dev-review-section-head">
+        <span class="dev-review-section-title">Review Changes</span>
+        <button type="button" class="dev-icon-btn" id="dev-review-refresh" title="Refresh">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+      <div class="dev-review-empty">No changes yet &mdash; ask Ares to build something in this session.</div>
+    `;
+    $("dev-review-refresh")?.addEventListener("click", refreshReviewPanel);
+    return;
+  }
+
+  // Has changes -- render status + diff + action buttons.
+  const commits = Array.isArray(st.commits) ? st.commits : [];
+  const commitRows = commits.map((c) =>
+    `<div class="dev-review-commit-row"><span class="dev-review-commit-sha">${escapeHtml((c.sha || "").slice(0, 7))}</span><span class="dev-review-commit-subject">${escapeHtml(c.subject || "")}</span></div>`
+  ).join("") || `<div class="dev-review-commit-row dev-review-empty-small">No commits</div>`;
+
+  const diffBlock = buildDiffBlock();
+
+  panel.innerHTML = `
+    <div class="dev-review-section-head">
+      <span class="dev-review-section-title">Review Changes</span>
+      <button type="button" class="dev-icon-btn" id="dev-review-refresh" title="Refresh">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+    </div>
+    <div class="dev-review-status">
+      <span class="dev-review-branch">${escapeHtml(st.branch || "")}</span>
+      <span class="dev-review-meta">${st.ahead || 0} commit${st.ahead !== 1 ? "s" : ""} ahead &bull; ${st.dirty_files || 0} dirty file${st.dirty_files !== 1 ? "s" : ""}</span>
+    </div>
+    <div class="dev-review-commits">${commitRows}</div>
+    ${diffBlock}
+    <div id="dev-review-action-note" class="dev-review-action-note hidden"></div>
+    <div class="dev-review-actions">
+      <button type="button" class="dev-btn dev-review-discard-btn" id="dev-review-discard">Discard</button>
+      <button type="button" class="dev-btn dev-review-merge-btn" id="dev-review-merge">Merge to main</button>
+    </div>
+  `;
+
+  $("dev-review-refresh")?.addEventListener("click", refreshReviewPanel);
+  $("dev-review-merge")?.addEventListener("click", () => handleMerge(st));
+  $("dev-review-discard")?.addEventListener("click", () => handleDiscard(st));
+  // Load diff lazily if not yet loaded.
+  if (!reviewState.diff && !reviewState.diffLoading && !reviewState.diffError) {
+    loadWorktreeDiff();
+  }
+}
+
+function buildDiffBlock() {
+  if (reviewState.diffLoading) {
+    return `<details class="dev-review-diff-details">
+      <summary class="dev-review-diff-summary">Diff <span class="dev-review-diff-note">loading...</span></summary>
+    </details>`;
+  }
+  if (reviewState.diffError) {
+    return `<details class="dev-review-diff-details">
+      <summary class="dev-review-diff-summary">Diff</summary>
+      <div class="dev-review-error-note">${escapeHtml(reviewState.diffError)}</div>
+    </details>`;
+  }
+  if (!reviewState.diff) {
+    return `<details class="dev-review-diff-details">
+      <summary class="dev-review-diff-summary">Diff</summary>
+    </details>`;
+  }
+  const truncNote = reviewState.diff.truncated
+    ? `<span class="dev-review-diff-note">diff truncated</span>`
+    : "";
+  const diffHtml = escapeHtml(reviewState.diff.diff || "");
+  return `<details class="dev-review-diff-details">
+    <summary class="dev-review-diff-summary">Diff ${truncNote}</summary>
+    <pre class="dev-diff">${diffHtml}</pre>
+  </details>`;
+}
+
+function showReviewError(msg) {
+  const note = $("dev-review-action-note");
+  if (!note) return;
+  note.textContent = msg;
+  note.className = "dev-review-action-note dev-review-error-note";
+  note.classList.remove("hidden");
+}
+
+function showReviewSuccess(msg) {
+  const note = $("dev-review-action-note");
+  if (!note) return;
+  note.textContent = msg;
+  note.className = "dev-review-action-note dev-review-success-note";
+  note.classList.remove("hidden");
+}
+
+async function refreshReviewPanel() {
+  if (!state.activeSessionId || state.activeSession?.forge_mode !== "write") return;
+  resetReviewState();
+  reviewState.loading = true;
+  renderReviewPanel();
+  await loadWorktreeStatus();
+}
+
+async function loadWorktreeStatus() {
+  if (!state.activeSessionId) return;
+  try {
+    const data = await fetch(`${API}/sessions/${state.activeSessionId}/worktree/status`)
+      .then((r) => r.json());
+    reviewState.status = data;
+    reviewState.loading = false;
+    reviewState.error = null;
+  } catch (err) {
+    reviewState.loading = false;
+    reviewState.error = `Could not load worktree status: ${err.message}`;
+  }
+  renderReviewPanel();
+}
+
+async function loadWorktreeDiff() {
+  if (!state.activeSessionId) return;
+  reviewState.diffLoading = true;
+  reviewState.diffError = null;
+  renderReviewPanel();
+  try {
+    const data = await fetch(`${API}/sessions/${state.activeSessionId}/worktree/diff`)
+      .then((r) => r.json());
+    reviewState.diff = data;
+    reviewState.diffLoading = false;
+  } catch (err) {
+    reviewState.diffLoading = false;
+    reviewState.diffError = `Could not load diff: ${err.message}`;
+  }
+  renderReviewPanel();
+}
+
+async function handleMerge(st) {
+  const branch = st.branch || "worktree branch";
+  const base = (reviewState.diff?.base) || "main";
+  if (!window.confirm(`Merge branch "${branch}" into ${base}? This updates your real project.`)) return;
+
+  const mergeBtn = $("dev-review-merge");
+  if (mergeBtn) mergeBtn.disabled = true;
+
+  try {
+    const res = await fetch(`${API}/sessions/${state.activeSessionId}/worktree/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // 409 or other error -- show detail without throwing.
+      const detail = data.detail || data.error || `Merge failed (HTTP ${res.status})`;
+      showReviewError(`Cannot merge: ${detail}`);
+      if (mergeBtn) mergeBtn.disabled = false;
+      return;
+    }
+    showReviewSuccess(`Merged into ${data.into || base}.`);
+    // Refresh status -- worktree is gone after a successful merge.
+    await loadWorktreeStatus();
+  } catch (err) {
+    showReviewError(`Merge error: ${err.message}`);
+    if (mergeBtn) mergeBtn.disabled = false;
+  }
+}
+
+async function handleDiscard(st) {
+  const branch = st.branch || "worktree branch";
+  if (!window.confirm(`Discard branch "${branch}" and all its changes? This cannot be undone.`)) return;
+
+  const discardBtn = $("dev-review-discard");
+  if (discardBtn) discardBtn.disabled = true;
+
+  try {
+    const res = await fetch(`${API}/sessions/${state.activeSessionId}/worktree`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const detail = data.detail || data.error || `Discard failed (HTTP ${res.status})`;
+      showReviewError(`Cannot discard: ${detail}`);
+      if (discardBtn) discardBtn.disabled = false;
+      return;
+    }
+    // Refresh status -- worktree is gone after discard.
+    resetReviewState();
+    await loadWorktreeStatus();
+  } catch (err) {
+    showReviewError(`Discard error: ${err.message}`);
+    if (discardBtn) discardBtn.disabled = false;
   }
 }
 
@@ -571,6 +894,12 @@ function handleWs(event) {
       // Ares path: { type, role, content: [...] } — no message wrapper, no id.
       renderAresTextBlocks(event.content);
       scrollToBottom();
+    }
+    // After a turn completes, refresh the Review panel so new commits from
+    // Ares appear immediately (no backend worktree_updated event needed).
+    if (event.type === "dev_projects.message_complete" && state.activeSession?.forge_mode === "write") {
+      resetReviewState();
+      refreshReviewPanel();
     }
   } else if (event.type === "dev_projects.tool_step") {
     if (!els.messages) return;
