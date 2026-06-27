@@ -505,6 +505,25 @@ async def test_reply_to_agent_post_bypasses_gate() -> None:
     assert len(dispatched) == 1, "Reply on the agent's own post must bypass the gate"
 
 
+async def test_threaded_app_mention_dispatched() -> None:
+    """An @mention inside a thread (Sara replying to Kai's answer and tagging him)
+    is still an app_mention → dispatched, bypassing the relevance gate. Guards the
+    'Kai didn't respond to my threaded @mention' report."""
+    event = _make_channel_event(
+        text="<@BCALLIE> this is actually the video we wanted",
+        event_type="app_mention",
+        channel_type="",
+        thread_ts="111.100",
+        parent_user_id="BCALLIE",
+    )
+    _, dispatched = await _run_handle_mentionable(
+        event=event,
+        classifier=_no_classifier,  # gate would drop if reached
+        last_ts=None,
+    )
+    assert len(dispatched) == 1, "Threaded @mention must always be dispatched"
+
+
 async def test_reply_to_other_user_still_gated() -> None:
     """A thread reply whose root was authored by a human (not the bot) is NOT a
     reply-to-agent, so the relevance gate still applies and drops off-topic chatter."""
