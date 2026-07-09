@@ -211,10 +211,14 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
     )
 
 
-# CORS — permissive defaults matching Node app behaviour
+# CORS — SECURITY: never wildcard-origin with credentials (Starlette reflects the
+# caller's Origin + returns Allow-Credentials:true, letting any site a logged-in user
+# visits make credentialed cross-origin calls). The SPA is served same-origin, so it
+# needs no CORS allowance; only pin the configured app origin when one is set.
+_cors_allowed_origins = [o for o in [settings.app_base_url.strip().rstrip("/")] if o]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

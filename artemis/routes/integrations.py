@@ -31,6 +31,7 @@ from artemis.google_integration import (
     scopes_for_google_purpose,
 )
 from artemis.identity.dependencies import get_current_user
+from artemis.marketing.routes._auth import require_owner
 from artemis.identity.models import User
 from artemis.integrations import repository as repo
 from artemis.integrations.config_resolver import (
@@ -88,7 +89,7 @@ async def _slack_provider_from_session(session: AsyncSession) -> SlackProvider:
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
-@router.get("", response_model=list[IntegrationOut])
+@router.get("", response_model=list[IntegrationOut], dependencies=[Depends(require_owner)])
 async def list_integrations(
     provider: str | None = Query(default=None),
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
@@ -99,7 +100,7 @@ async def list_integrations(
     return await repo.list_for_ui(session, provider=provider)
 
 
-@router.post("/{integration_id}/refresh")
+@router.post("/{integration_id}/refresh", dependencies=[Depends(require_owner)])
 async def refresh_integration(
     integration_id: int,
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
@@ -148,7 +149,7 @@ async def refresh_integration(
     return {"outcome": result.outcome.value, "new_expires_at": new_expires_at}
 
 
-@router.delete("/{integration_id}", status_code=204)
+@router.delete("/{integration_id}", status_code=204, dependencies=[Depends(require_owner)])
 async def revoke_integration(
     integration_id: int,
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
@@ -617,7 +618,11 @@ _PROVIDER_ENV_FIELDS: dict[str, dict[str, str]] = {
 }
 
 
-@router.get("/providers/{provider}/config", response_model=ProviderConfigOut)
+@router.get(
+    "/providers/{provider}/config",
+    response_model=ProviderConfigOut,
+    dependencies=[Depends(require_owner)],
+)
 async def get_provider_config(
     provider: str,
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
@@ -641,7 +646,11 @@ async def get_provider_config(
     )
 
 
-@router.post("/providers/{provider}/config", response_model=ProviderConfigOut)
+@router.post(
+    "/providers/{provider}/config",
+    response_model=ProviderConfigOut,
+    dependencies=[Depends(require_owner)],
+)
 async def set_provider_config(
     provider: str,
     body: ProviderConfigIn,
@@ -663,7 +672,9 @@ async def set_provider_config(
     )
 
 
-@router.delete("/providers/{provider}/config", status_code=204)
+@router.delete(
+    "/providers/{provider}/config", status_code=204, dependencies=[Depends(require_owner)]
+)
 async def delete_provider_config(
     provider: str,
     session: AsyncSession = Depends(db.get_session),  # noqa: B008
