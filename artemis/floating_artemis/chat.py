@@ -30,7 +30,11 @@ from artemis.floating_artemis.authority import (
     PendingConfirmation,
     confirmation_store,
 )
-from artemis.floating_artemis.context import floating_session_id_var, floating_tool_use_id_var
+from artemis.floating_artemis.context import (
+    floating_session_id_var,
+    floating_tool_use_id_var,
+    floating_trusted_agent_id_var,
+)
 from artemis.floating_artemis.intent import IntentKind, classify_intent, handle_observability_intent
 from artemis.floating_artemis.memory import inject_memory_context, write_turn_drawer
 from artemis.floating_artemis.memory_read_cache import put as cache_put
@@ -907,6 +911,10 @@ async def handle_turn(
     hooks.on("after_tool", after_tool_hook)
 
     session_token = floating_session_id_var.set(session_id)
+    # SECURITY (M3): bind the subprocess's memory scope to the TRUSTED agent_id
+    # (session_ctx.agent_id derives from the live caller's identity), not persisted
+    # session metadata — so a non-owner turn on an owner session can't read owner memory.
+    trusted_token = floating_trusted_agent_id_var.set(session_ctx.agent_id)
     _turn_start = start_timer()
     try:
         result = await run_turn(
@@ -968,6 +976,7 @@ async def handle_turn(
         )
         raise
     finally:
+        floating_trusted_agent_id_var.reset(trusted_token)
         floating_session_id_var.reset(session_token)
 
     # ── 8. Extract final text ─────────────────────────────────────────────────
@@ -1237,6 +1246,10 @@ async def resume_after_confirm(
     )
 
     session_token = floating_session_id_var.set(session_id)
+    # SECURITY (M3): bind the subprocess's memory scope to the TRUSTED agent_id
+    # (session_ctx.agent_id derives from the live caller's identity), not persisted
+    # session metadata — so a non-owner turn on an owner session can't read owner memory.
+    trusted_token = floating_trusted_agent_id_var.set(session_ctx.agent_id)
     try:
         agent_profile = load_agent_profile(session_ctx.agent_id)
         result = await run_turn(
@@ -1251,6 +1264,7 @@ async def resume_after_confirm(
         )
         raise
     finally:
+        floating_trusted_agent_id_var.reset(trusted_token)
         floating_session_id_var.reset(session_token)
 
     response_text: str | None = None

@@ -365,10 +365,14 @@ class ClaudeCodeAdapter:
         # Lazy imports guard against circular-import at module load time.
         from artemis.builder.context import builder_session_id_var
         from artemis.dev_projects.context import forge_project_path_var, forge_write_mode_var
-        from artemis.floating_artemis.context import floating_session_id_var
+        from artemis.floating_artemis.context import (
+            floating_session_id_var,
+            floating_trusted_agent_id_var,
+        )
 
         builder_session_id = builder_session_id_var.get()
         floating_session_id = floating_session_id_var.get()
+        floating_trusted_agent_id = floating_trusted_agent_id_var.get()
         forge_project_path = forge_project_path_var.get()
         forge_write_mode = forge_write_mode_var.get()
 
@@ -404,6 +408,7 @@ class ClaudeCodeAdapter:
             config = _build_floating_artemis_mcp_config(
                 session_id=str(floating_session_id),
                 tool_names=agent_tools,
+                trusted_agent_id=floating_trusted_agent_id,
             )
         tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
             mode="w", suffix=".mcp.json", prefix="artemis-builder-mcp-", delete=False
@@ -668,11 +673,18 @@ def _build_builder_mcp_config(*, builder_session_id: int) -> dict[str, Any]:
     }
 
 
-def _build_floating_artemis_mcp_config(*, session_id: str, tool_names: list[str]) -> dict[str, Any]:
+def _build_floating_artemis_mcp_config(
+    *, session_id: str, tool_names: list[str], trusted_agent_id: str | None = None
+) -> dict[str, Any]:
     """Build the Floating Artemis stdio MCP config.
 
     Passes the session id plus the exact tool-name allowlist chosen by the
     parent turn handler so the subprocess mirrors the in-process tool scope.
+
+    SECURITY (M3): forwards the TRUSTED agent_id (derived from the live caller's
+    identity) as ``--agent-id`` so the subprocess gates memory scope to the live
+    caller rather than re-reading persisted session metadata (which a non-owner
+    can influence). When None (e.g. tests), the subprocess falls back to metadata.
     """
     args = [
         "-m",
@@ -680,6 +692,8 @@ def _build_floating_artemis_mcp_config(*, session_id: str, tool_names: list[str]
         "--floating-session-id",
         session_id,
     ]
+    if trusted_agent_id:
+        args += ["--agent-id", trusted_agent_id]
     for tool_name in tool_names:
         args += ["--tool-name", tool_name]
     return {

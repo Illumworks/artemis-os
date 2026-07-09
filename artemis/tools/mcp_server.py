@@ -1050,30 +1050,35 @@ async def _serve_builder(builder_session_id: int) -> int:
 async def _serve_floating_artemis(
     floating_session_id: str,
     tool_names: list[str] | None,
+    trusted_agent_id: str | None = None,
 ) -> int:
     """Open a session and serve Floating Artemis auto-invoke tools over stdio.
 
-    M3: loads the session's agent_id from the DB so that query_memory is gated
-    to the correct agent allowance.  If the session cannot be loaded (e.g. unknown
-    session_id), agent_id is treated as None and every memory query returns empty
-    (fail-closed).
+    M3 (SECURITY): scope gating binds to ``trusted_agent_id`` when the parent
+    forwards it — that value is derived from the LIVE caller's verified identity,
+    so a non-owner running a turn (on their own or an owner's session) cannot read
+    owner memory. Only when it is absent (tests / legacy callers) do we fall back
+    to loading agent_id from persisted session metadata. If neither resolves,
+    agent_id is None and every memory query returns empty (fail-closed).
     """
     async with SessionLocal() as session:
-        # M3: resolve agent_id for scope enforcement.
-        _fa_agent_id: str | None = None
-        try:
-            from artemis.floating_artemis.chat import _load_session_context
-            _fa_ctx = await _load_session_context(
-                session_id=floating_session_id,
-                db_session=session,
-                all_surfaces=set(),
-            )
-            _fa_agent_id = _fa_ctx.agent_id
-        except Exception:
-            logger.debug(
-                "floating MCP: could not resolve agent_id for session=%s — failing closed",
-                floating_session_id,
-            )
+        # M3: prefer the trusted agent_id from the live caller; never trust
+        # persisted metadata when a trusted value was forwarded.
+        _fa_agent_id: str | None = (trusted_agent_id or "").strip().lower() or None
+        if _fa_agent_id is None:
+            try:
+                from artemis.floating_artemis.chat import _load_session_context
+                _fa_ctx = await _load_session_context(
+                    session_id=floating_session_id,
+                    db_session=session,
+                    all_surfaces=set(),
+                )
+                _fa_agent_id = _fa_ctx.agent_id
+            except Exception:
+                logger.debug(
+                    "floating MCP: could not resolve agent_id for session=%s — failing closed",
+                    floating_session_id,
+                )
 
         tool_set = await build_floating_artemis_tool_set(set(tool_names or []), agent_id=_fa_agent_id)
         logger.info(
@@ -1102,7 +1107,9 @@ def main(argv: list[str] | None = None) -> int:
         return anyio.run(_serve_builder, args.builder_session_id)
 
     if args.floating_session_id is not None:
-        return anyio.run(_serve_floating_artemis, args.floating_session_id, args.tool_name)
+        return anyio.run(
+            _serve_floating_artemis, args.floating_session_id, args.tool_name, args.agent_id
+        )
 
     # Agent-run scope (CC1/CC2): both --agent-id and --run-id are required.
     if not args.agent_id or not args.run_id:

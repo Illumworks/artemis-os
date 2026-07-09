@@ -24,3 +24,15 @@ floating_tool_use_id_var: ContextVar[str | None] = ContextVar(
     "floating_tool_use_id_var",
     default=None,
 )
+
+#: SECURITY (M3): the TRUSTED agent_id for the active turn — derived by the turn
+#: handler from the live caller's verified identity (session_ctx.agent_id), NOT
+#: from persisted session metadata. The claude-code adapter forwards this into the
+#: MCP subprocess so memory-scope gating there binds to the live caller, closing
+#: the agent_id-spoof / cross-session read hole (a non-owner running a turn on an
+#: owner session must NOT get owner memory). When None, the subprocess falls back
+#: to persisted metadata (Slack path server-authors it; tests).
+floating_trusted_agent_id_var: ContextVar[str | None] = ContextVar(
+    "floating_trusted_agent_id_var",
+    default=None,
+)

@@ -152,11 +152,27 @@ async def get_session_route(
 async def update_session(
     session_id: str,
     body: SessionUpdate,
+    request: Request,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
     update_data = body.model_dump(exclude_none=True)
     if not update_data:
         raise bad_request("No fields to update", "empty_update")
+    # SECURITY (D11/M3): agent_id is identity-derived, never client-controlled.
+    # Mirror create: if the client sends metadata, force agent_id to the
+    # server-resolved value so a non-owner can't PATCH agent_id="artemis" (which
+    # the metadata-fallback paths would otherwise trust). Fail-closed to callie.
+    if "metadata" in update_data and isinstance(update_data["metadata"], dict):
+        try:
+            identity = await resolve_request_identity(request)
+            server_agent_id = resolve_agent_id_from_email(identity.email)
+        except Exception:
+            logger.warning(
+                "update_session: could not resolve identity for D11 agent routing — defaulting to callie",
+                exc_info=True,
+            )
+            server_agent_id = "callie"
+        update_data["metadata"]["agent_id"] = server_agent_id
     try:
         row = await repo.update_session(session, session_id, **update_data)
     except ValueError:
