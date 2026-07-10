@@ -18,6 +18,7 @@ import logging
 import signal
 
 from artemis.scouts.base import BaseScout
+from artemis.scouts.board_minutes.peer_scout import BoardPeerValidationScout
 from artemis.scouts.board_minutes.scout import BoardMinutesScout
 from artemis.scouts.config import load_config, scout_config_for
 from artemis.scouts.federal_funding.scout import FederalFundingScout
@@ -40,6 +41,7 @@ _SCOUT_CLASSES = [
     StarbridgeResearcherScout,
     StateDoEScout,
     BoardMinutesScout,
+    BoardPeerValidationScout,
     ProcurementScout,
     LeadershipTransitionScout,
     RegionalNewsScout,

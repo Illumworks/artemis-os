@@ -65,3 +65,10 @@ scouts:
   linkedin_observer:
     enabled: false
     interval_minutes: 60  # hourly during business hours (scheduler filters off-hours)
+
+  # D6b — Board Peer-Validation Scout (BoardDocs item bodies + LLM mention/
+  # sentiment classifier). Non-customer districts discussing Amira/screentime/
+  # AI-in-schools. Customer exclusion list is injected (Salesforce later).
+  board_peer_validation_scout:
+    enabled: false
+    interval_minutes: 10080  # weekly

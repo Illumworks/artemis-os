@@ -1,5 +1,13 @@
-"""Board Minutes Scout — scrapes school district board meeting minutes and agendas.
+"""Board Minutes Scouts — school district board meeting minutes and agendas.
 
-Covers BoardDocs, Granicus, and district websites for Amira Learning's priority
-districts. Signals carry discovered_by="board_minutes_scout".
+Two scouts share this package:
+
+- ``scout.BoardMinutesScout`` (v1) — literacy/pre-RFP-intent signals from
+  Amira's priority districts (BoardDocs, Granicus, district sites).
+  discovered_by="board_minutes_scout".
+- ``peer_scout.BoardPeerValidationScout`` (v2) — NON-customer districts
+  discussing Amira / screentime / AI-in-schools.  Fetches agenda-item BODY
+  text, classifies mention sentiment with an LLM (``classifier``), applies a
+  pluggable customer-exclusion filter (``customers``), and emits
+  peer-validation signals.  discovered_by="board_peer_validation_scout".
 """

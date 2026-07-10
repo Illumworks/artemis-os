@@ -363,3 +363,92 @@ def meeting_item_to_finding(
             "source_type": source_type,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Peer-validation mapping (board_peer_validation_scout)
+# ---------------------------------------------------------------------------
+
+# Reason codes for peer-validation topics.  PEER_* codes are new; the
+# screentime topic additionally carries the canonical POLICY_EDTECH_TIME_LIMIT
+# code so existing qualifier rules keyed on it still fire.
+_PEER_TOPIC_REASON_CODES: dict[str, list[str]] = {
+    "amira": ["PEER_AMIRA_MENTION"],
+    "screentime": ["PEER_SCREENTIME_POLICY", "POLICY_EDTECH_TIME_LIMIT"],
+    "ai_in_schools": ["PEER_AI_POLICY"],
+}
+
+PEER_VALIDATION_TAG = "peer_validation"
+
+
+def peer_item_to_finding(
+    item: dict[str, Any],
+    district: dict[str, Any],
+    classification: Any,
+) -> dict[str, Any] | None:
+    """Map a classified board meeting item to a peer-validation finding.
+
+    Parameters
+    ----------
+    item:
+        Meeting item dict (title / date / source_url / text / ...).
+    district:
+        District config dict from the coverage list.
+    classification:
+        A ``MentionClassification`` (LLM or keyword fallback).
+
+    Returns
+    -------
+    dict | None
+        Finding dict, or ``None`` when the classification is missing /
+        not relevant / has no recognized topics.
+    """
+    if classification is None or not getattr(classification, "relevant", False):
+        return None
+
+    topics: list[str] = list(getattr(classification, "topics", []) or [])
+    reason_codes: list[str] = []
+    for topic in topics:
+        for code in _PEER_TOPIC_REASON_CODES.get(topic, []):
+            if code not in reason_codes:
+                reason_codes.append(code)
+    if not reason_codes:
+        return None
+
+    sentiment: str = getattr(classification, "sentiment", "neutral")
+    excerpt: str = getattr(classification, "excerpt", "") or ""
+
+    # A non-customer board talking about Amira favourably is the hottest
+    # peer-validation signal we can get; policy topics are standard.
+    urgency = "hot" if ("amira" in topics and sentiment == "positive") else "standard"
+
+    # Only positive/neutral hits are tagged peer validation — a board
+    # rejecting the topic is still exec-report intel, but not validation.
+    tags = [PEER_VALIDATION_TAG] if sentiment != "negative" else []
+
+    title: str = item.get("title", "")
+    date: str = item.get("date", "")
+    evidence = excerpt or _build_evidence(title, item.get("text", ""))
+
+    return {
+        "sourceType": "board_minutes",
+        "discoveredBy": "board_peer_validation_scout",
+        "districtId": district["district_id"],
+        "state": district.get("state"),
+        "headline": title or f"Board discussion — {', '.join(topics)}",
+        "reasonCodes": reason_codes,
+        "urgency": urgency,
+        "evidence": evidence,
+        "metadata": {
+            "district_id": district["district_id"],
+            "state": district.get("state"),
+            "source_url": item.get("source_url", ""),
+            "meeting_date": date,
+            "topics": topics,
+            "sentiment": sentiment,
+            "excerpt": excerpt,
+            "classification_method": getattr(classification, "method", "llm"),
+            "tags": tags,
+            "source_type": "boarddocs",
+        },
+    }

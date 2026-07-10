@@ -1,0 +1,72 @@
+[
+  {
+    "scoutType": "legislative_scout",
+    "name": "Legislative Scout",
+    "description": "LegiScan bill tracking for literacy/screentime/edtech legislation across priority states.",
+    "allowedSourceTypes": ["legiscan"],
+    "defaultIntervalMinutes": 1440
+  },
+  {
+    "scoutType": "federal_funding_scout",
+    "name": "Federal Funding Scout",
+    "description": "Federal Register + Grants.gov + ED.gov funding and rulemaking watch.",
+    "allowedSourceTypes": ["federal_register", "grants_gov", "district_press"],
+    "defaultIntervalMinutes": 1440
+  },
+  {
+    "scoutType": "starbridge_researcher",
+    "name": "Starbridge Researcher",
+    "description": "Starbridge procurement/intent items (bench-test period).",
+    "allowedSourceTypes": ["starbridge"],
+    "defaultIntervalMinutes": 240
+  },
+  {
+    "scoutType": "state_doe_scout",
+    "name": "State DoE Scout",
+    "description": "State department-of-education RSS/HTML/state-board PDFs across 7 priority states.",
+    "allowedSourceTypes": ["state_doe", "governor_press"],
+    "defaultIntervalMinutes": 1440
+  },
+  {
+    "scoutType": "board_minutes_scout",
+    "name": "Board Minutes Scout",
+    "description": "BoardDocs/Granicus/district-site board agendas and minutes — pre-RFP literacy intent.",
+    "allowedSourceTypes": ["board_minutes"],
+    "defaultIntervalMinutes": 10080
+  },
+  {
+    "scoutType": "board_peer_validation_scout",
+    "name": "Board Peer-Validation Scout",
+    "description": "Non-customer district board meetings discussing Amira / screentime / AI-in-schools — peer-validation signals for the exec report.",
+    "allowedSourceTypes": ["board_minutes"],
+    "defaultIntervalMinutes": 10080
+  },
+  {
+    "scoutType": "procurement_scout",
+    "name": "Procurement Scout",
+    "description": "Statewide procurement portals — posted literacy/tutoring/assessment RFPs.",
+    "allowedSourceTypes": ["procurement_portal"],
+    "defaultIntervalMinutes": 720
+  },
+  {
+    "scoutType": "leadership_transition_scout",
+    "name": "Leadership Transition Scout",
+    "description": "Superintendent/senior-leader transitions aggregated from board minutes, state DoE, and news.",
+    "allowedSourceTypes": ["board_minutes", "state_doe", "news_article"],
+    "defaultIntervalMinutes": 10080
+  },
+  {
+    "scoutType": "regional_news_scout",
+    "name": "Regional News Scout",
+    "description": "Regional news + board minutes + state DoE multi-source district watch.",
+    "allowedSourceTypes": ["news_article", "board_minutes", "state_doe"],
+    "defaultIntervalMinutes": 1440
+  },
+  {
+    "scoutType": "linkedin_observer",
+    "name": "LinkedIn Observer",
+    "description": "District leader LinkedIn post monitoring (Mode B).",
+    "allowedSourceTypes": ["linkedin_post"],
+    "defaultIntervalMinutes": 60
+  }
+]

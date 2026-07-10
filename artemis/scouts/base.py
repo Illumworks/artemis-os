@@ -19,6 +19,8 @@ from typing import Any, ClassVar
 
 import httpx
 
+from artemis.scouts.finding import Finding
+
 _logger = logging.getLogger(__name__)
 
 
@@ -89,8 +91,52 @@ class BaseScout(ABC):
 
         return await self.emit_signals(findings)
 
+    def _normalize_findings(
+        self, findings: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Normalize raw mapper dicts through the canonical Finding contract.
+
+        Returns ``(wire_payloads, errors)``.  Findings that cannot be
+        normalized (no derivable headline, no source URL/identifier, …) are
+        dropped and reported — never raised.
+        """
+        normalized: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        for i, raw in enumerate(findings):
+            try:
+                normalized.append(Finding.from_raw(raw, scout_type=self.scout_type).to_wire())
+            except Exception as exc:
+                _logger.warning(
+                    "Scout %s: dropping finding %d — normalization failed: %s",
+                    self.scout_type,
+                    i,
+                    exc,
+                )
+                errors.append({"index": i, "error": f"finding normalization failed: {exc}"})
+        return normalized, errors
+
     async def emit_signals(self, findings: list[dict[str, Any]]) -> ScoutRunResult:
-        """POST findings to /api/scouts/runs. Never raises."""
+        """Normalize findings to the canonical contract and POST to /api/scouts/runs.
+
+        Never raises.  Every finding is passed through
+        :meth:`artemis.scouts.finding.Finding.from_raw` so the wire payload
+        always carries the fields the ingest validator requires (headline,
+        campaignFamily, top-level sourceUrl).
+        """
+        normalized, norm_errors = self._normalize_findings(findings)
+        if not normalized:
+            _logger.warning(
+                "Scout %s: 0 of %d findings survived normalization; nothing to emit.",
+                self.scout_type,
+                len(findings),
+            )
+            return ScoutRunResult(
+                scout_type=self.scout_type,
+                status="error" if norm_errors else "skipped",
+                skipped_count=len(findings),
+                errors=norm_errors,
+            )
+
         url = f"{self.config.api_url.rstrip('/')}/api/scouts/runs"
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.config.api_token:
@@ -99,7 +145,7 @@ class BaseScout(ABC):
         payload: dict[str, Any] = {
             "scoutType": self.scout_type,
             "dryRun": self.config.dry_run,
-            "findings": findings,
+            "findings": normalized,
         }
 
         try:
@@ -111,8 +157,8 @@ class BaseScout(ABC):
                 run_id=data.get("runId"),
                 status=str(data.get("status", "unknown")),
                 created_count=int(data.get("createdCount", 0)),
-                skipped_count=int(data.get("skippedCount", 0)),
-                errors=list(data.get("errors") or []),
+                skipped_count=int(data.get("skippedCount", 0)) + len(norm_errors),
+                errors=[*norm_errors, *(data.get("errors") or [])],
             )
             _logger.info(
                 "Scout %s → run %s: status=%s created=%d skipped=%d",

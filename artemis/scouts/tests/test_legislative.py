@@ -492,7 +492,14 @@ async def test_emit_signals_payload_has_correct_scout_type() -> None:
     scout = LegislativeScout(ScoutConfig(api_url="http://localhost:8000"), api_key="key")
     scout._client = typing.cast(httpx.AsyncClient, http_client)
 
-    findings = [{"discoveredBy": "legislative_scout", "sourceType": "legiscan"}]
+    findings = [
+        {
+            "discoveredBy": "legislative_scout",
+            "sourceType": "legiscan",
+            "headline": "HB 1 introduced",
+            "sourceUrl": "https://legiscan.com/tx/hb1",
+        }
+    ]
     await scout.emit_signals(findings)
 
     payload: dict[str, Any] = http_client.post.call_args[1]["json"]

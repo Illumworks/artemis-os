@@ -31,6 +31,15 @@ BoardDocs API notes:
      Returns: HTML fragment containing ``<li>`` elements, each with a
      ``<span class="title">`` carrying the agenda item title.
 
+  3. ``POST /Board.nsf/BD-GetAgendaItem?open&<rand>``
+     Body: ``id=<item_unique>&current_committee_id=<comm_id>``
+     Returns: HTML fragment with the agenda item DETAIL — description /
+     recommended action / minutes text.  This is where actual discussion
+     content (screentime policies, AI pilots, vendor mentions) lives; the
+     agenda listing only carries titles.  If this endpoint fails for a
+     board, we fall back to GET ``/Board.nsf/goto?open&id=<item_unique>``
+     (the shareable permalink) and strip the HTML.
+
   Committee IDs are scraped from the ``/Board.nsf/Public`` SPA shell by
   matching ``committeeid="<id>"`` attributes (only ids that look like
   real governing-board committees are selected — Policies and Leasing
@@ -72,6 +81,10 @@ _SKIP_COMMITTEE_NAMES_RE = re.compile(
 # Limit how many recent meetings we fetch agenda items for per district.
 _MAX_MEETINGS_PER_DISTRICT = 5
 
+# When body retrieval is enabled, cap detail requests per meeting so a
+# 100-item consent agenda can't blow the request budget for a district.
+_MAX_ITEM_BODIES_PER_MEETING = 30
+
 # BoardDocs sits behind CloudFront which blocks the default python-httpx UA.
 # We identify as a generic browser to avoid 403 Forbidden.  No credentials
 # are passed and only publicly-visible board data is requested.
@@ -106,6 +119,30 @@ def _decode_html_entities(text: str) -> str:
         return mapping.get(m.group(0), m.group(0))
 
     return _HTML_ENTITIES.sub(_replace, text)
+
+
+_TAG_RE = re.compile(r"<(?:script|style)[^>]*>.*?</(?:script|style)>", re.IGNORECASE | re.DOTALL)
+_ANY_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"[ \t\r\f\v]+")
+_BLANKLINES_RE = re.compile(r"\n\s*\n+")
+
+
+def _strip_html(html: str) -> str:
+    """Convert an HTML fragment to readable plain text.
+
+    Removes script/style blocks, converts block-level boundaries to
+    newlines, strips remaining tags, decodes entities, and collapses
+    whitespace.  Deliberately regex-based — BoardDocs fragments are small
+    and we avoid a bs4 dependency in the scout worker.
+    """
+    text = _TAG_RE.sub(" ", html)
+    # Block-level boundaries → newlines so sentences don't run together.
+    text = re.sub(r"<(?:br|/p|/div|/li|/tr|/h[1-6])[^>]*>", "\n", text, flags=re.IGNORECASE)
+    text = _ANY_TAG_RE.sub(" ", text)
+    text = _decode_html_entities(text)
+    text = _WS_RE.sub(" ", text)
+    text = _BLANKLINES_RE.sub("\n", text)
+    return "\n".join(line.strip() for line in text.split("\n")).strip()
 
 
 def _extract_speaker(text: str, date: str) -> str | None:
@@ -227,9 +264,71 @@ def _parse_agenda_items(
                 "source_url": goto_url,
                 "text": raw_title,
                 "speaker_attribution": None,
+                # BoardDocs item identifier — used by fetch_agenda_item_body()
+                # to retrieve the item detail/minutes text.
+                "item_unique": item_unique,
             }
         )
     return items
+
+
+async def fetch_agenda_item_body(
+    base_url: str,
+    item_unique: str,
+    committee_id: str,
+    http: ScoutHttpClient,
+) -> str:
+    """Fetch the BODY text of one BoardDocs agenda item.
+
+    Primary path: the ``BD-GetAgendaItem`` AJAX endpoint (same family as
+    ``BD-GetMeetingsList`` / ``BD-GetAgenda``).  Fallback: GET the item's
+    public ``goto`` permalink and strip the HTML.
+
+    Returns plain text; ``""`` on any failure (fail-safe — callers keep the
+    title-only item).
+    """
+    rand = random.random()  # noqa: S311 — not security-sensitive
+    detail_url = f"{base_url}/BD-GetAgendaItem?open&{rand}"
+    try:
+        resp = await http.post(
+            detail_url,
+            data={"id": item_unique, "current_committee_id": committee_id},
+            headers={
+                "User-Agent": _BOARDDOCS_UA,
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "text/html, */*; q=0.01",
+                "Referer": f"{base_url}/Public",
+                "Origin": "https://go.boarddocs.com",
+            },
+        )
+        html = resp.text if resp.status_code == 200 else ""
+        if html and "Error:" not in html and "No Access" not in html:
+            body = _strip_html(html)
+            if body:
+                return body
+    except Exception as exc:
+        _logger.debug(
+            "BoardDocs BD-GetAgendaItem %s (item %s) failed: %s",
+            detail_url,
+            item_unique,
+            exc,
+        )
+
+    # Fallback: the shareable permalink page.
+    goto_url = f"{base_url}/goto?open&id={item_unique}"
+    try:
+        resp = await http.get(
+            goto_url,
+            headers={
+                "User-Agent": _BOARDDOCS_UA,
+                "Accept": _BOARDDOCS_ACCEPT,
+            },
+        )
+        if resp.status_code == 200 and resp.text:
+            return _strip_html(resp.text)
+    except Exception as exc:
+        _logger.debug("BoardDocs goto %s (item %s) failed: %s", goto_url, item_unique, exc)
+    return ""
 
 
 def _numberdate_to_iso(numberdate: str) -> str:
@@ -249,11 +348,17 @@ async def _fetch_boarddocs_api_items(
     base_url: str,
     committee_id: str,
     http: ScoutHttpClient,
+    *,
+    fetch_bodies: bool = False,
+    max_bodies_per_meeting: int = _MAX_ITEM_BODIES_PER_MEETING,
 ) -> list[dict[str, Any]]:
     """Fetch agenda items via the BoardDocs AJAX API for one committee.
 
     Makes at most ``1 + _MAX_MEETINGS_PER_DISTRICT`` HTTP requests:
     one for the meeting list, then one per recent meeting for its agenda.
+    With ``fetch_bodies=True``, additionally fetches each agenda item's
+    detail text (up to ``max_bodies_per_meeting`` per meeting) — the item
+    ``text`` field then carries the body instead of just the title.
 
     Parameters
     ----------
@@ -358,6 +463,19 @@ async def _fetch_boarddocs_api_items(
             date_iso,
             len(agenda_items),
         )
+
+        if fetch_bodies:
+            for agenda_item in agenda_items[:max_bodies_per_meeting]:
+                item_unique = agenda_item.get("item_unique")
+                if not item_unique:
+                    continue
+                body = await fetch_agenda_item_body(base_url, item_unique, committee_id, http)
+                if body:
+                    agenda_item["text"] = body
+                    speaker = _extract_speaker(body, date_iso)
+                    if speaker:
+                        agenda_item["speaker_attribution"] = speaker
+
         items.extend(agenda_items)
 
     return items
@@ -367,6 +485,8 @@ async def fetch_boarddocs(
     district: dict[str, Any],
     http: ScoutHttpClient,
     pdf_open_fn: Any = None,
+    *,
+    fetch_bodies: bool = False,
 ) -> list[dict[str, Any]]:
     """Scrape the BoardDocs public agenda/minutes page for a district.
 
@@ -382,6 +502,10 @@ async def fetch_boarddocs(
         Shared ScoutHttpClient instance.
     pdf_open_fn:
         Injected PDF-open function for tests (forwarded to extract_text).
+    fetch_bodies:
+        When True, also fetch each agenda item's detail text via
+        ``BD-GetAgendaItem`` (v2 / peer-validation path).  Default False —
+        v1 title-only behaviour is unchanged.
 
     Returns
     -------
@@ -433,7 +557,9 @@ async def fetch_boarddocs(
                 comm_id,
                 comm_label,
             )
-            comm_items = await _fetch_boarddocs_api_items(base_url, comm_id, http)
+            comm_items = await _fetch_boarddocs_api_items(
+                base_url, comm_id, http, fetch_bodies=fetch_bodies
+            )
             all_items.extend(comm_items)
         if all_items:
             _logger.info(

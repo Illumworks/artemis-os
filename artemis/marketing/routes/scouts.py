@@ -34,21 +34,17 @@ from artemis.marketing.scout_runner import ScoutMode, ScoutRunResult, run_scout
 
 # ── Package catalogue ─────────────────────────────────────────────────────────
 
-_PACKAGES_PATH = (
+# Canonical in-repo catalogue. Every BaseScout subclass's scout_type MUST be
+# registered here or its POSTs to /api/scouts/runs are rejected with 400.
+# (Previously this fell back to a sibling claudeck-artemis checkout, which
+# does not exist in most deployments — the catalogue resolved to [] and every
+# scout type was "unknown". The catalogue now lives in this repo.)
+_PACKAGES_PATH = Path(__file__).parent.parent.parent.parent / "config" / "scout-packages.json"
+_FALLBACK_PACKAGES_PATH = (
     Path(__file__).parent.parent.parent.parent / "public" / "config" / "scout-packages.json"
 )
-# Fallback: look in a sibling config dir at repo root level
-_ALT_PACKAGES_PATH = Path(__file__).resolve()
-for _candidate in [
-    Path(__file__).parent.parent.parent.parent / "config" / "scout-packages.json",
-    Path(__file__).parent.parent.parent.parent.parent
-    / "claudeck-artemis"
-    / "config"
-    / "scout-packages.json",
-]:
-    if _candidate.exists():
-        _PACKAGES_PATH = _candidate
-        break
+if not _PACKAGES_PATH.exists() and _FALLBACK_PACKAGES_PATH.exists():
+    _PACKAGES_PATH = _FALLBACK_PACKAGES_PATH
 
 _cached_packages: list[dict[str, Any]] | None = None
 
@@ -320,14 +316,23 @@ async def manual_run_scout(
 
 
 def _validate_finding(payload: dict[str, Any]) -> list[str]:
-    """Minimal required-field validation matching the Node normalizeIntakePayload contract."""
+    """Required-field validation matching the canonical Finding wire contract.
+
+    ``sourceUrl`` is required because the dedupe key is (source_url, headline);
+    a missing URL previously made dedupe a silent no-op (NULL never matched).
+    Scouts without a real URL synthesize a stable ``urn:artemis-scout:...``
+    identifier (see artemis/scouts/finding.py).
+    """
     errors: list[str] = []
     headline = payload.get("headline") or payload.get("headline", "")
     campaign_family = payload.get("campaignFamily") or payload.get("campaign_family", "")
+    source_url = payload.get("sourceUrl") or payload.get("source_url", "")
     if not str(headline).strip():
         errors.append("headline is required")
     if not str(campaign_family).strip():
         errors.append("campaignFamily is required")
+    if not str(source_url).strip():
+        errors.append("sourceUrl is required")
     return errors
 
 

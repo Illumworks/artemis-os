@@ -28,6 +28,17 @@ from artemis.scouts.starbridge_researcher import StarbridgeResearcherScout
 # ---------------------------------------------------------------------------
 
 
+
+# Minimal raw finding that survives canonical Finding normalization
+# (emit_signals now drops findings that can't be normalized).
+_RAW_FINDING: dict[str, Any] = {
+    "headline": "Bill introduced",
+    "sourceUrl": "https://example.com/bill/1",
+    "urgency": "standard",
+    "reasonCodes": ["BILL_INTRODUCED"],
+}
+
+
 class _StubScout(BaseScout):
     scout_type = "stub_scout"
 
@@ -170,7 +181,7 @@ async def test_run_once_calls_emit_when_findings_present() -> None:
     client = _mock_client(
         {"runId": "r1", "status": "ok", "createdCount": 2, "skippedCount": 0, "errors": []}
     )
-    scout = _StubScout(ScoutConfig(enabled=True), _client=client, findings=[{"event": "test"}])
+    scout = _StubScout(ScoutConfig(enabled=True), _client=client, findings=[_RAW_FINDING])
     result = await scout.run_once()
     assert result.status == "ok"
     assert result.run_id == "r1"
@@ -185,7 +196,7 @@ async def test_run_once_calls_emit_when_findings_present() -> None:
 async def test_emit_signals_url_no_trailing_slash() -> None:
     client = _mock_client({"status": "ok"})
     scout = _StubScout(ScoutConfig(api_url="http://localhost:8000"), _client=client)
-    await scout.emit_signals([{"x": 1}])
+    await scout.emit_signals([_RAW_FINDING])
     url = typing.cast(AsyncMock, client).post.call_args[0][0]
     assert url == "http://localhost:8000/api/scouts/runs"
 
@@ -193,7 +204,7 @@ async def test_emit_signals_url_no_trailing_slash() -> None:
 async def test_emit_signals_url_strips_trailing_slash() -> None:
     client = _mock_client({"status": "ok"})
     scout = _StubScout(ScoutConfig(api_url="http://localhost:8000/"), _client=client)
-    await scout.emit_signals([{"x": 1}])
+    await scout.emit_signals([_RAW_FINDING])
     url = typing.cast(AsyncMock, client).post.call_args[0][0]
     assert url == "http://localhost:8000/api/scouts/runs"
 
@@ -206,18 +217,24 @@ async def test_emit_signals_url_strips_trailing_slash() -> None:
 async def test_emit_signals_payload_structure() -> None:
     client = _mock_client({"status": "ok"})
     scout = _StubScout(ScoutConfig(dry_run=True), _client=client)
-    findings = [{"event": "bill_introduced"}]
-    await scout.emit_signals(findings)
+    await scout.emit_signals([_RAW_FINDING])
     payload = typing.cast(AsyncMock, client).post.call_args[1]["json"]
     assert payload["scoutType"] == "stub_scout"
     assert payload["dryRun"] is True
-    assert payload["findings"] == findings
+    # Findings are normalized to the canonical wire contract before POSTing.
+    assert len(payload["findings"]) == 1
+    wire = payload["findings"][0]
+    assert wire["headline"] == "Bill introduced"
+    assert wire["sourceUrl"] == "https://example.com/bill/1"
+    assert wire["campaignFamily"]
+    assert wire["urgencyTier"] == "standard"
+    assert wire["discoveredBy"] == "stub_scout"
 
 
 async def test_emit_signals_includes_auth_header_when_token_set() -> None:
     client = _mock_client({"status": "ok"})
     scout = _StubScout(ScoutConfig(api_token="secret"), _client=client)
-    await scout.emit_signals([{"x": 1}])
+    await scout.emit_signals([_RAW_FINDING])
     headers = typing.cast(AsyncMock, client).post.call_args[1]["headers"]
     assert headers["Authorization"] == "Bearer secret"
 
@@ -225,7 +242,7 @@ async def test_emit_signals_includes_auth_header_when_token_set() -> None:
 async def test_emit_signals_no_auth_header_when_token_empty() -> None:
     client = _mock_client({"status": "ok"})
     scout = _StubScout(ScoutConfig(api_token=""), _client=client)
-    await scout.emit_signals([{"x": 1}])
+    await scout.emit_signals([_RAW_FINDING])
     headers = typing.cast(AsyncMock, client).post.call_args[1]["headers"]
     assert "Authorization" not in headers
 
@@ -246,7 +263,7 @@ async def test_emit_signals_parses_run_id_and_counts() -> None:
         }
     )
     scout = _StubScout(ScoutConfig(), _client=client)
-    result = await scout.emit_signals([{"x": 1}])
+    result = await scout.emit_signals([_RAW_FINDING])
     assert result.run_id == "abc-123"
     assert result.status == "complete"
     assert result.created_count == 5
@@ -257,7 +274,7 @@ async def test_emit_signals_parses_run_id_and_counts() -> None:
 async def test_emit_signals_handles_missing_optional_fields() -> None:
     client = _mock_client({"status": "ok"})
     scout = _StubScout(ScoutConfig(), _client=client)
-    result = await scout.emit_signals([{"x": 1}])
+    result = await scout.emit_signals([_RAW_FINDING])
     assert result.run_id is None
     assert result.created_count == 0
     assert result.skipped_count == 0
@@ -271,7 +288,7 @@ async def test_emit_signals_handles_missing_optional_fields() -> None:
 async def test_emit_signals_http_error_returns_error_result() -> None:
     client = _mock_client({"message": "unauthorized"}, status_code=401)
     scout = _StubScout(ScoutConfig(), _client=client)
-    result = await scout.emit_signals([{"x": 1}])
+    result = await scout.emit_signals([_RAW_FINDING])
     assert result.status == "error"
     assert result.errors[0]["status_code"] == 401
 
@@ -280,7 +297,7 @@ async def test_emit_signals_network_error_returns_error_result() -> None:
     client: AsyncMock = AsyncMock(spec=httpx.AsyncClient)
     client.post.side_effect = httpx.ConnectError("connection refused")
     scout = _StubScout(ScoutConfig(), _client=typing.cast(httpx.AsyncClient, client))
-    result = await scout.emit_signals([{"x": 1}])
+    result = await scout.emit_signals([_RAW_FINDING])
     assert result.status == "error"
     assert len(result.errors) == 1
 

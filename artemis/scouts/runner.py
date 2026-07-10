@@ -25,6 +25,7 @@ import os
 import sys
 
 from artemis.scouts.base import BaseScout, ScoutConfig
+from artemis.scouts.board_minutes.peer_scout import BoardPeerValidationScout
 from artemis.scouts.board_minutes.scout import BoardMinutesScout
 from artemis.scouts.config import load_config, scout_config_for
 from artemis.scouts.federal_funding.scout import FederalFundingScout
@@ -48,6 +49,7 @@ _REGISTRY: dict[str, type[BaseScout]] = {
     StarbridgeResearcherScout.scout_type: StarbridgeResearcherScout,
     StateDoEScout.scout_type: StateDoEScout,
     BoardMinutesScout.scout_type: BoardMinutesScout,
+    BoardPeerValidationScout.scout_type: BoardPeerValidationScout,
     ProcurementScout.scout_type: ProcurementScout,
     LeadershipTransitionScout.scout_type: LeadershipTransitionScout,
     RegionalNewsScout.scout_type: RegionalNewsScout,
