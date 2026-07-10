@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.agent.client import CompletionRequest, ModelAdapter
@@ -251,9 +251,7 @@ async def consolidate_observations(
                 )
                 if override and override.cascade:
                     _primary = override.cascade[0].get("provider", "claude-code")
-                    _resolved_gemini_model = (
-                        override.cascade[0].get("model") or _gemini_model
-                    )
+                    _resolved_gemini_model = override.cascade[0].get("model") or _gemini_model
         except Exception:
             pass
 
@@ -275,9 +273,7 @@ async def consolidate_observations(
             fallback="claude-code",
             serving_provider_out=serving,
         )
-        text_parts = [
-            block.text for block in resp.message.content if isinstance(block, TextBlock)
-        ]
+        text_parts = [block.text for block in resp.message.content if isinstance(block, TextBlock)]
         _serving_provider = serving[0] if serving else _primary
         _effective_model = _model if _serving_provider == "gemini" else _HAIKU_MODEL
         return "".join(text_parts), resp.usage, _serving_provider, _effective_model
@@ -338,6 +334,100 @@ _AUTO_RESOLVE_EVIDENCE_RATIO = 2.0
 # Precision-first: only auto-supersede when semantic confidence is this high.
 _SEMANTIC_AUTO_SUPERSEDE_THRESHOLD = 0.85
 
+# Bound on the conflict-check candidate pool per proposal. The shortlist is the
+# top-N active scope peers by pgvector cosine distance (mirroring retrieval.py's
+# semantic channel) unioned with the N most recent active peers (covers rows
+# whose best-effort embedding failed or is pending backfill). Scopes with <= N
+# active observations get exactly the same pool as the old unbounded scan.
+_CONFLICT_CANDIDATE_LIMIT = 50
+
+
+async def _fetch_conflict_candidates(
+    session: AsyncSession,
+    scope: Scope,
+    new_obs_id: int,
+    limit: int = _CONFLICT_CANDIDATE_LIMIT,
+) -> list[MemoryObservation]:
+    """Bounded candidate pool for conflict checks against a newly written observation.
+
+    Pushes the shortlist into SQL instead of loading every active observation in
+    scope: top-`limit` by cosine distance to new_obs's embedding (written in the
+    same transaction by write_observation, so visible here), plus the `limit`
+    most recent active peers. Deduped; new_obs itself is always excluded.
+    """
+    candidate_ids: list[int] = []
+    seen: set[int] = set()
+
+    # ── pgvector shortlist (nearest neighbours are the likeliest conflicts) ──
+    try:
+        vec_sql = text("""
+            WITH new_emb AS (
+                SELECT embedding, model_version
+                FROM memory_embeddings
+                WHERE target_table = 'observation' AND target_id = :_new_id
+                LIMIT 1
+            )
+            SELECT o.id
+            FROM memory_observations o
+            JOIN memory_embeddings me
+              ON me.target_table = 'observation' AND me.target_id = o.id
+            JOIN new_emb ON me.model_version = new_emb.model_version
+            WHERE o.scope_kind = :_sk
+              AND o.scope_id = :_si
+              AND o.superseded_by IS NULL
+              AND o.id != :_new_id
+            ORDER BY me.embedding <=> new_emb.embedding
+            LIMIT :_n
+        """)
+        result = await session.execute(
+            vec_sql,
+            {
+                "_new_id": new_obs_id,
+                "_sk": scope.scope_kind,
+                "_si": scope.scope_id,
+                "_n": limit,
+            },
+        )
+        for row in result:
+            obs_id = int(row.id)
+            if obs_id not in seen:
+                seen.add(obs_id)
+                candidate_ids.append(obs_id)
+    except Exception:
+        _logger.warning(
+            "pgvector conflict-candidate shortlist failed; using recency shortlist only",
+            exc_info=True,
+        )
+
+    # ── Recency shortlist (covers rows with no embedding yet) ──────────────────
+    recency_stmt = (
+        select(MemoryObservation.id)
+        .where(
+            MemoryObservation.scope_kind == scope.scope_kind,
+            MemoryObservation.scope_id == scope.scope_id,
+            MemoryObservation.superseded_by.is_(None),
+            MemoryObservation.id != new_obs_id,
+        )
+        .order_by(MemoryObservation.created_at.desc(), MemoryObservation.id.desc())
+        .limit(limit)
+    )
+    if seen:
+        recency_stmt = recency_stmt.where(MemoryObservation.id.notin_(seen))
+    result = await session.execute(recency_stmt)
+    for row in result:
+        obs_id = int(row.id)
+        if obs_id not in seen:
+            seen.add(obs_id)
+            candidate_ids.append(obs_id)
+
+    if not candidate_ids:
+        return []
+
+    rows = await session.execute(
+        select(MemoryObservation).where(MemoryObservation.id.in_(candidate_ids))
+    )
+    return list(rows.scalars())
+
 
 async def _run_conflict_checks(
     session: AsyncSession,
@@ -357,17 +447,10 @@ async def _run_conflict_checks(
     now = datetime.now(UTC)
 
     try:
-        # Fetch active candidate observations in scope — exclude new_obs itself
-        # and any observations that were just superseded by this consolidation sweep.
-        result = await session.execute(
-            select(MemoryObservation).where(
-                MemoryObservation.scope_kind == scope.scope_kind,
-                MemoryObservation.scope_id == scope.scope_id,
-                MemoryObservation.superseded_by.is_(None),
-                MemoryObservation.id != new_obs.id,
-            )
-        )
-        candidate_rows = list(result.scalars())
+        # Fetch a BOUNDED pool of active candidate observations in scope —
+        # top-N by pgvector cosine distance plus N most recent (see
+        # _fetch_conflict_candidates). Excludes new_obs itself.
+        candidate_rows = await _fetch_conflict_candidates(session, scope, new_obs.id)
         # Additional guard: skip ids we just superseded (the DB update may not yet
         # be visible within this savepoint depending on isolation level).
         candidate_rows = [r for r in candidate_rows if r.id not in superseded_ids]
@@ -483,10 +566,14 @@ async def apply_consolidation(
 
     For each proposal:
     1. Write a new observation (source_quality=0.9).
-    2. Supersede each evidence_from_id with the new observation's id.
-    3. Link each evidence_from_id as Evidence on the new observation.
-    4. Forward any drawer evidence from superseded observations at 0.9× weight.
-    5. [M1/M2 live path] Run rule-based + semantic conflict checks against
+    2. Propagate M2 confidence + evidence_count derived from the source
+       observations (see derive_consolidated_confidence) — without this the
+       merged observation lands at the DB defaults (0.5 / 1) and retrieval's
+       confidence × evidence multipliers rank it BELOW its own sources.
+    3. Supersede each evidence_from_id with the new observation's id.
+    4. Link each evidence_from_id as Evidence on the new observation.
+    5. Forward any drawer evidence from superseded observations at 0.9× weight.
+    6. [M1/M2 live path] Run rule-based + semantic conflict checks against
        remaining active observations in scope (see _run_conflict_checks).
 
     All writes happen inside the caller-managed transaction.
@@ -504,12 +591,41 @@ async def apply_consolidation(
             category=proposal.category,
             source_quality=proposal.source_quality,
         )
+
+        # ── M2: propagate confidence + evidence_count from the sources ────────
+        sources = [
+            source_observations[src_id]
+            for src_id in proposal.evidence_from_ids
+            if src_id in source_observations
+        ]
+        confidence, evidence_count = derive_consolidated_confidence(sources)
+        # write_observation dedups by content hash and may have returned a
+        # PRE-EXISTING row (e.g. the merged content is verbatim one of the
+        # sources). Never lower that row's accumulated belief.
+        confidence = max(confidence, new_obs.confidence)
+        evidence_count = max(evidence_count, new_obs.evidence_count)
+        m2_values: dict[str, Any] = {
+            "confidence": confidence,
+            "evidence_count": evidence_count,
+        }
+        if new_obs.confidence_origin is None:
+            m2_values["confidence_origin"] = "consolidation"
+        await session.execute(
+            update(MemoryObservation).where(MemoryObservation.id == new_obs.id).values(**m2_values)
+        )
+        new_obs = new_obs.model_copy(
+            update={"confidence": confidence, "evidence_count": evidence_count}
+        )
         created.append(new_obs)
 
         # Track all ids being superseded by this proposal (for conflict-check exclusion)
         superseded_ids_for_proposal: set[int] = set(proposal.evidence_from_ids)
 
         for src_id in proposal.evidence_from_ids:
+            if src_id == new_obs.id:
+                # Content-hash dedup returned one of the sources as the "new"
+                # observation — never self-link or self-supersede.
+                continue
             # Link the source observation as evidence
             # CC28: link_evidence now takes source_id: str
             await link_evidence(
@@ -557,6 +673,29 @@ def corroborate_confidence(current: float, current_count: int) -> tuple[float, i
     """
     new_confidence = min(0.99, current + (1.0 - current) * 0.3)
     return new_confidence, current_count + 1
+
+
+def derive_consolidated_confidence(sources: list[Observation]) -> tuple[float, int]:
+    """M2: derive (confidence, evidence_count) for a consolidated observation.
+
+    confidence: starts at the MAX source confidence — the merged claim is at
+    least as believable as its best-supported source — then each ADDITIONAL
+    source counts as one corroboration via corroborate_confidence (asymptotic
+    toward 1.0, capped at 0.99). Merging N sources that each restate a claim is
+    exactly the corroboration case the formula was written for.
+
+    evidence_count: sum of the sources' evidence_count (corroboration the
+    sources had already accumulated carries over losslessly), floored at 1.
+
+    With no sources, returns the DB defaults (0.5, 1).
+    """
+    if not sources:
+        return 0.5, 1
+    confidence = max(s.confidence for s in sources)
+    for _ in range(len(sources) - 1):
+        confidence, _ = corroborate_confidence(confidence, 0)
+    evidence_count = max(1, sum(s.evidence_count for s in sources))
+    return confidence, evidence_count
 
 
 # ── M2: conflict-aware observation writer ────────────────────────────────────
@@ -683,17 +822,13 @@ async def write_observation_with_conflict_check(
     try:
         from artemis.memory.semantic_conflict_detector import detect_semantic_conflicts
 
-        semantic_candidates = await detect_semantic_conflicts(
-            new_obs_with_m2, candidates, session
-        )
+        semantic_candidates = await detect_semantic_conflicts(new_obs_with_m2, candidates, session)
         for sem_cand in semantic_candidates:
             if sem_cand.existing_id in rule_conflict_ids:
                 # Already handled by a rule-based detector; skip to avoid duplicate rows.
                 continue
 
-            existing_row = next(
-                (r for r in candidates_rows if r.id == sem_cand.existing_id), None
-            )
+            existing_row = next((r for r in candidates_rows if r.id == sem_cand.existing_id), None)
             if existing_row is None:
                 continue
 

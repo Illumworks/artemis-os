@@ -166,6 +166,10 @@ class IncrementalConsolidator:
                     "",  # empty query → recency only
                     limit=50,
                     modes=["recency"],
+                    # Internal sweep, not a real retrieval: must not inflate
+                    # hit_count/accessed_at (they feed the retrieval `hits`
+                    # sub-score).
+                    record_usage=False,
                 )
                 # ScoredObservation extends the observation shape with rank
                 # metadata; collapse back to plain Observation for the

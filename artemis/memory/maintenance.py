@@ -50,10 +50,13 @@ def _decay_for(category: str) -> float:
 
 
 async def run_maintenance(session: AsyncSession) -> dict[str, int]:
-    """Apply score decay to all active (non-superseded) observations.
+    """Apply score decay to all active (non-superseded) observations, then
+    collapse near-duplicate clones (M1b, lossless + precision-safe — see
+    artemis.memory.near_duplicate).
 
     Runs inside the caller-managed transaction. Returns a dict mapping
-    category name to number of rows updated.
+    category name to number of rows updated, plus near_duplicate_clusters /
+    near_duplicate_superseded counters from the clone-consolidation pass.
     """
     as_of = datetime.now(UTC)
     _logger.info("Memory maintenance starting at %s", as_of.isoformat())
@@ -96,6 +99,27 @@ async def run_maintenance(session: AsyncSession) -> dict[str, int]:
             updated["other"],
             _DEFAULT_DECAY,
         )
+
+    # ── M1b: near-duplicate (clone) consolidation ─────────────────────────────
+    # Collapses byte-identical-after-normalization clone clusters losslessly
+    # (superseded_by + evidence links; nothing deleted). Runs in a SAVEPOINT so
+    # a failure here can never roll back the score decay above or abort the
+    # caller's transaction.
+    try:
+        from artemis.memory.near_duplicate import consolidate_near_duplicates
+
+        async with session.begin_nested():
+            stats = await consolidate_near_duplicates(session)
+        updated["near_duplicate_clusters"] = stats.clusters
+        updated["near_duplicate_superseded"] = stats.observations_superseded
+        if stats.clusters:
+            _logger.info(
+                "Near-duplicate consolidation: %d clusters, %d observations superseded",
+                stats.clusters,
+                stats.observations_superseded,
+            )
+    except Exception:
+        _logger.exception("Near-duplicate consolidation failed (non-fatal); decay still applies")
 
     _logger.info("Memory maintenance complete: %s", updated)
     return updated
