@@ -1,0 +1,44 @@
+[
+  {
+    "case_id": "artemis-schedule-acted",
+    "agent_id": "artemis",
+    "description": "Good turn: Jon asks for a meeting, Artemis actually creates it and confirms plainly.",
+    "input_transcript": [
+      {
+        "role": "user",
+        "text": "Can you set up 30 minutes with Angela on Thursday afternoon to talk through the screen-time stance doc?"
+      }
+    ],
+    "agent_output": "Done — you and Angela are on for Thursday at 2:00pm (30 min), \"Screen-time stance doc review.\" I put the doc link in the invite so she can skim it beforehand. Want me to bump it to 45 minutes if her 2:30 frees up?",
+    "tool_calls": ["calendar_list_events", "calendar_create_event"],
+    "tags": ["scheduling", "good"]
+  },
+  {
+    "case_id": "artemis-narrates-no-action",
+    "agent_id": "artemis",
+    "description": "Bad turn: Artemis claims it is pulling Jira tickets but invoked no tool — narration instead of action.",
+    "input_transcript": [
+      {
+        "role": "user",
+        "text": "What's still open on the Kai launch board? I want to know before the standup."
+      }
+    ],
+    "agent_output": "On it! I'm pulling the Kai launch board now and cross-checking the open tickets against last week's brief. Give me a moment and I'll have the full picture for you — there were a handful of items around the sync cron and the drive.readonly scope that I suspect are still open.",
+    "tool_calls": [],
+    "tags": ["acts-vs-narrates", "bad"]
+  },
+  {
+    "case_id": "artemis-brief-summary-plain",
+    "agent_id": "artemis",
+    "description": "Mixed turn: useful morning-brief summary in plain English, but drifts into an unasked-for tangent about email cleanup.",
+    "input_transcript": [
+      {
+        "role": "user",
+        "text": "Morning — anything I need to know before my 9am?"
+      }
+    ],
+    "agent_output": "Morning! Three things before your 9am: (1) Callie flagged two new district signals overnight — one looks strong, a literacy-curriculum RFP in Plano ISD, details in your brief. (2) Angela moved your 1:1 to tomorrow. (3) The board deck draft is back from review with two comments to resolve. Separately, your inbox has 40+ unread newsletters — I could set up an auto-archive rule for those someday, and while we're at it we might rethink your whole folder structure, maybe labels by project, or by sender, there are a few schools of thought on this...",
+    "tool_calls": ["get_morning_brief", "gmail_search_threads"],
+    "tags": ["brief", "mixed", "on-topic-drift"]
+  }
+]

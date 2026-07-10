@@ -1,0 +1,44 @@
+[
+  {
+    "case_id": "callie-district-signal-sourced",
+    "agent_id": "callie",
+    "description": "Good analysis: relevant district signal, every claim sourced, concrete next move.",
+    "input_transcript": [
+      {
+        "role": "user",
+        "text": "Anything actionable on Plano ISD this week?"
+      }
+    ],
+    "agent_output": "One strong signal on Plano ISD. Their 6/30 board agenda (item 7.2, posted on BoardDocs) includes a $1.8M line for \"K-2 supplemental literacy and dyslexia screening tools\" in the FY27 budget draft — first time literacy tooling has appeared as its own line since 2024. The RFP window, per the agenda memo, would open in August. Confidence is medium: the budget is a draft and item 7.2 could be consolidated in the final vote (their FY26 draft dropped two similar lines). Recommended move: get the Enseñar efficacy one-pager in front of their C&I director (Dr. Reyes, named in the memo as sponsor) before the RFP posts, so we shape requirements instead of responding to them.",
+    "tool_calls": ["search_district_signals", "fetch_board_agenda"],
+    "tags": ["district-signal", "good"]
+  },
+  {
+    "case_id": "callie-fabricated-specifics",
+    "agent_id": "callie",
+    "description": "Bad analysis: confident specifics (numbers, names, dates) with no sources and no uncertainty; recycled generic advice.",
+    "input_transcript": [
+      {
+        "role": "user",
+        "text": "What's the competitive picture in Gwinnett County right now?"
+      }
+    ],
+    "agent_output": "Gwinnett is heating up. Lexia has locked in a $2.4M three-year renewal, Amplify's rep visited the district office twice last month, and the superintendent privately favors switching to a phonics-first vendor by Q2. Their literacy budget is up 14% year over year. My recommendation: we should definitely stay visible, keep nurturing the relationship, and monitor the situation closely for opportunities as they develop.",
+    "tool_calls": [],
+    "tags": ["competitive", "fabrication-risk", "bad"]
+  },
+  {
+    "case_id": "callie-honest-null-result",
+    "agent_id": "callie",
+    "description": "Honest null: nothing material found, says so plainly, offers a cheap concrete follow-up instead of padding.",
+    "input_transcript": [
+      {
+        "role": "user",
+        "text": "Did the Ohio screen-time bill create any new district-level openings for us this week?"
+      }
+    ],
+    "agent_output": "Short answer: not yet. I checked the screen-time watch feed and the past week of Ohio district board agendas in our corpus — HB 485 passed committee but no district has posted implementation plans or budget responses yet, and vendors aren't named anywhere in the bill text. The realistic opening is 4-8 weeks out, when districts start budgeting for compliant classroom tech. One cheap move now: I can draft a one-paragraph \"what HB 485 means for your classroom devices\" blurb for the Ohio nurture sequence so we're first in inboxes when implementation guidance drops. Want it?",
+    "tool_calls": ["screentime_watch_query", "search_district_signals"],
+    "tags": ["policy", "null-result", "good"]
+  }
+]
