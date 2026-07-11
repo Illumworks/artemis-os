@@ -3,8 +3,24 @@
 This is the data behind the topic gate (see ``filters.passes_topic_gate``) that
 runs BEFORE store/classify. It decides whether a finding is genuinely about
 **instructional / student screen-time or device-time limits** (and evidence-based
--tool exemptions to such limits) — vs. generic ed-policy noise (literacy, reading
-retention, curriculum approval, test scores) that swamped the first live run.
+-tool exemptions to such limits) **OR AI-in-schools policy** (adoption, pilots,
+guidance, moratoria, bans, guardrails — the "AI use in the classroom" beat) — vs.
+generic ed-policy noise (literacy, reading retention, curriculum approval, test
+scores) that swamped the first live run.
+
+2026-07-10 broadening: the owner's exec report ("Board Meetings on Screen Time
+& the Use of AI") treats screen-time and AI-in-schools policy as ONE "rein in
+the technology" story, tracked together. The gate's ``require_any`` now carries
+BOTH a screen/device-time anchor set AND an AI-in-schools-policy anchor set —
+either family alone is enough to pass. AI anchors are deliberately MULTI-WORD
+(e.g. "artificial intelligence", "ai policy", "chatgpt") — a bare "ai" is never
+used as an anchor because it substring-matches unrelated words ("email",
+"available", "captain", ...) and would flood the gate with false positives.
+STANCE tuning for AI-policy items (e.g. whether a ban on open/general chatbots
+is actually *favorable* to Amira as a standards-aligned tool) is OUT OF SCOPE
+here — that is being reviewed with Angela separately; see the TODO on
+``stance_config`` / the classifier. AI findings land with best-effort stance
+until that review lands.
 
 Like the stance rules, the require/exclude term sets are **data, not code**, so
 Angela can re-tune the gate after seeing real signals — a settings change, never
@@ -46,14 +62,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # stance rules row so both live side-by-side and are tuned independently.
 TOPIC_CONFIG_NAME = "topic"
 
-# v2 default — the screen-time topic anchor (v2 tightens the exclude set against
-# health/behavioral "screenings" and budget "study" noise from the first run).
+# v3 default — screen-time anchors PLUS AI-in-schools-policy anchors (v2 tightened
+# the exclude set against health/behavioral "screenings" and budget "study" noise;
+# v3 widens require_any to also admit AI-in-schools policy, per the owner's "rein
+# in the technology" framing — screen-time and AI-in-schools are ONE story now).
 DEFAULT_TOPIC_RULES: dict[str, Any] = {
-    "version": 2,
-    # At least ONE of these must appear for an item to be screen-time-relevant.
-    # All are explicit screen/device-time anchors — NOT generic "limit"/"evidence
-    # -based" language that any ed-policy item carries.
+    "version": 3,
+    # At least ONE of these must appear for an item to be relevant. Two anchor
+    # families, either is sufficient on its own:
+    #   1. explicit screen/device-time anchors — NOT generic "limit"/"evidence
+    #      -based" language that any ed-policy item carries.
+    #   2. explicit AI-in-schools POLICY anchors — deliberately MULTI-WORD only.
+    #      A bare "ai" is NEVER used here: the gate does plain substring
+    #      matching (see filters.topic_prescreen), so a 2-letter "ai" anchor
+    #      would match inside ordinary words ("email", "available", "captain",
+    #      "domain", ...) and defeat the gate's precision. Every AI anchor below
+    #      is a multi-word phrase (or "chatgpt", a distinct token) to avoid that.
     "require_any": [
+        # -- screen/device-time anchors --
         "screen time",
         "screen-time",
         "screentime",
@@ -75,6 +101,21 @@ DEFAULT_TOPIC_RULES: dict[str, Any] = {
         "screen based instruction",
         "instructional screen",
         "student screen",
+        # -- AI-in-schools POLICY anchors (2026-07-10 broadening) --
+        "artificial intelligence",
+        "generative ai",
+        "ai policy",
+        "ai guidance",
+        "ai in schools",
+        "ai in the classroom",
+        "ai use policy",
+        "student use of ai",
+        "ai moratorium",
+        "ai literacy",
+        "chatgpt",
+        "responsible ai",
+        "ai guardrails",
+        "ai in education",
     ],
     # Generic ed-policy themes that produced the first-run noise. An item that
     # hits one of these AND has NO require-term is dropped outright. An item that

@@ -261,6 +261,63 @@ async def test_async_gate_ambiguous_uses_llm_when_enabled(monkeypatch):
     assert seen["n"] == 1
 
 
+# --- 2026-07-10 broadening: AI-in-schools policy anchors (v3) ---------------
+# The owner decided screen-time and AI-in-schools policy are one "rein in the
+# technology" story and should be tracked together (exec report "Board Meetings
+# on Screen Time & the Use of AI"). require_any now carries AI-policy anchors
+# alongside the screen/device-time anchors; either family alone passes the gate.
+
+
+def test_ai_in_schools_policy_item_now_passes_gate():
+    """An AI-only item (no screen-time anchor at all) now PASSES on the new anchors."""
+    c = _cand(
+        "State board adopts AI guidance for classrooms",
+        "New policy on artificial intelligence use in schools; districts must "
+        "publish an AI use policy for student and teacher use of chatgpt tools.",
+    )
+    assert passes_topic_gate(c.text, TOPIC) is True
+    assert topic_prescreen(c.text, TOPIC) == TOPIC_KEEP
+
+
+def test_ai_moratorium_and_chatgpt_bill_kept():
+    c = _cand(
+        "Bill proposes AI moratorium in K-12",
+        "Prohibits generative ai tools including chatgpt from classroom use pending study.",
+    )
+    assert passes_topic_gate(c.text, TOPIC) is True
+
+
+def test_screentime_items_still_pass_after_ai_broadening():
+    """Existing screen-time-only findings are unaffected by the v3 widening."""
+    c = _cand(
+        "Bill to limit instructional screen time",
+        "Caps daily screen time for students in K-3 classrooms.",
+    )
+    assert passes_topic_gate(c.text, TOPIC) is True
+
+
+def test_generic_noise_still_dropped_after_ai_broadening():
+    c = _cand(
+        "Science of reading literacy mandate",
+        "Districts must adopt evidence-based literacy and phonics curriculum.",
+    )
+    assert passes_topic_gate(c.text, TOPIC) is False
+
+
+def test_bare_ai_substring_false_positive_still_excluded():
+    """A bare 'ai' anchor would substring-match ordinary words ('email',
+    'available') — we deliberately never added a bare 'ai' require-term, so
+    text that only contains 'ai' embedded in unrelated words must still DROP."""
+    c = _cand(
+        "District staff directory update",
+        "Send email available for the front office; captain of the maintenance "
+        "team is available Monday through Friday.",
+    )
+    assert passes_topic_gate(c.text, TOPIC) is False
+    # Confirm no baked-in anchor is a bare "ai" that would false-positive here.
+    assert "ai" not in TOPIC["require_any"]
+
+
 @pytest.mark.asyncio
 async def test_async_gate_llm_unreachable_failsafe_keeps(monkeypatch):
     async def _none(candidate, *, session=None):

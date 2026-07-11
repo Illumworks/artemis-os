@@ -12,8 +12,10 @@ National scope:
     state_doe's own source config (``STATE_DOE_SOURCES``) now covers 20
     states (2026-07-10 broadening); a state without a source entry yields []
     gracefully.
-  - legislative also accepts ``keywords`` → we pass screen-time terms (instructional
-    screen-time limits + evidence-based-tool exemptions; NOT cellphone bans).
+  - legislative also accepts ``keywords`` → we pass the SCREENTIME_TERMS query
+    (instructional screen-time limits + evidence-based-tool exemptions +, as of
+    2026-07-10, AI-in-schools POLICY terms — adoption/guidance/moratoria on AI
+    use in the classroom, scoped to schools, NOT general-purpose AI news).
   - regional_news is watch-list driven (no national district list exists) but
     NOW also accepts ``query_topics``/``news_domains`` (2026-07-10) — we pass
     the broadened screen-time/AI-in-schools keyword set + the major ed-policy
@@ -23,13 +25,16 @@ National scope:
   - board_peer_validation (2026-07-10) runs on its own starter district seed
     list — it already classifies screentime AND ai_in_schools mentions (see
     ``board_minutes.classifier.TOPICS``); wired in here so those findings
-    reach the screentime pipeline. NOTE: the topic gate below (topic_config.py)
-    only keeps items with an explicit screen/device-time anchor — an
-    ai_in_schools-only peer finding (no screentime anchor) will still be
-    dropped by that gate. Broadening the topic gate itself to admit
-    AI-in-schools-only signals is a separate, deliberate product-scope call
-    (see topic_config.py's documented "NOT cellphone-ban terms — a different
-    project" scoping) and was NOT made here — flagged for the reviewer.
+    reach the screentime pipeline. The topic gate (topic_config.py,
+    ``DEFAULT_TOPIC_RULES`` v3, 2026-07-10) now ALSO carries explicit
+    AI-in-schools-policy anchors alongside the screen/device-time anchors — the
+    owner decided screen-time and AI-in-schools policy are one "rein in the
+    technology" story (per the exec report "Board Meetings on Screen Time & the
+    Use of AI") and should be tracked together. An ai_in_schools-only peer
+    finding (no screentime anchor) now PASSES the gate on the AI anchor alone.
+    STANCE tuning for AI-policy items is deliberately NOT done here — that is
+    pending a review with Angela (see topic_config.py's docstring) — AI
+    findings land with the existing best-effort stance for now.
 
 Every scout is wrapped in try/except: a failing source NEVER breaks the sweep
 (failure-safe). ``run_once`` is not used (it POSTs); we only call the pure-ish
@@ -55,7 +60,10 @@ US_STATES_AND_DC: list[str] = [
 ]
 
 # Screen-time-tuned search terms — instructional screen-time + evidence-based
-# carve-outs. Deliberately NOT cellphone-ban terms (a different project).
+# carve-outs, PLUS (2026-07-10) AI-in-schools POLICY terms. Deliberately NOT
+# cellphone-ban terms and NOT general-purpose AI news — every AI term here is
+# scoped to schools/students/classrooms so the LegiScan query stays on the
+# "AI in K-12 policy" beat, not general AI legislation.
 #
 # LegiScan-query bug (the first live run's `legislative: ok:0`): the LegiScan
 # `getSearch` op runs an ADAS full-text query where SPACE-separated terms are
@@ -68,9 +76,11 @@ US_STATES_AND_DC: list[str] = [
 #
 # Fix WITHOUT touching the shared scout: hand the scout a SINGLE pre-composed
 # ADAS boolean OR expression as its one keyword. Joined-with-spaces that is just
-# the OR string, so the search now matches bills mentioning ANY screen-time term.
-# Phrases are quoted so multi-word terms match as phrases, not loose tokens.
+# the OR string, so the search now matches bills mentioning ANY screen-time OR
+# AI-in-schools term. Phrases are quoted so multi-word terms match as phrases,
+# not loose tokens.
 SCREENTIME_TERMS: list[str] = [
+    # -- screen/device-time terms --
     "screen time",
     "screen-time",
     "device time",
@@ -79,6 +89,15 @@ SCREENTIME_TERMS: list[str] = [
     "student screen time",
     "screen time limit",
     "device usage limit",
+    # -- AI-in-schools POLICY terms (2026-07-10 broadening; school-scoped) --
+    "artificial intelligence in schools",
+    "ai in the classroom",
+    "ai use in schools",
+    "student use of artificial intelligence",
+    "generative ai in education",
+    "ai policy for schools",
+    "school ai guidance",
+    "ai literacy in schools",
 ]
 
 

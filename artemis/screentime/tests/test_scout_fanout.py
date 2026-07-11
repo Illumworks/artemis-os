@@ -33,6 +33,27 @@ def test_keywords_is_single_or_expression():
     assert query.count(" OR ") == len(SCREENTIME_TERMS) - 1
 
 
+_AI_TOPIC_MARKERS = ("artificial intelligence", "generative ai", " ai ", "ai in", "ai use", "ai literacy", "ai policy", "ai guidance")
+
+
+def test_screentime_terms_include_school_scoped_ai_policy_terms():
+    """2026-07-10 broadening: AI-in-schools policy terms are part of the LegiScan
+    query too, each scoped to schools/classrooms/students (not bare "AI")."""
+    ai_terms = [
+        t for t in SCREENTIME_TERMS
+        if any(marker in f" {t.lower()} " for marker in _AI_TOPIC_MARKERS)
+    ]
+    assert ai_terms, "expected at least one AI-in-schools term in SCREENTIME_TERMS"
+    school_scope_words = ("school", "classroom", "student", "education")
+    for term in ai_terms:
+        assert any(w in term.lower() for w in school_scope_words), (
+            f"AI term {term!r} must be school-scoped, not general AI"
+        )
+    # Every AI term is multi-word (never a bare "ai" token).
+    for term in ai_terms:
+        assert term.strip().lower() != "ai"
+
+
 def test_legiscan_query_quotes_and_ors():
     q = _legiscan_query(["screen time", "device time"])
     assert q == '"screen time" OR "device time"'

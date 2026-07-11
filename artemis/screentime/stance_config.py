@@ -40,6 +40,18 @@ stays ⚪ neutral.
 
 These keyword rules also drive a deterministic fallback classification when the
 LLM provider is unavailable, so the pipeline never hard-depends on a model call.
+
+TODO(2026-07-10, AI-in-schools broadening): the topic gate (topic_config.py,
+v3) now also admits AI-in-schools POLICY findings (not just screen/device-time),
+per the owner's "rein in the technology" framing. These STANCE keywords were
+NOT retuned for AI here — that is deliberately deferred to a review with
+Angela, because AI-policy stance has nuance the generic restriction/favorable
+keywords below don't capture (e.g. per the exec report, a ban on open/general
+chatbots is NOT unfavorable to Amira, which sits in the standards-aligned,
+purpose-built-tool carve-out — the opposite of how "ban" reads for screen-time).
+Until that review lands, AI-policy findings get classified with this same
+best-effort generic ruleset (e.g. "prohibit"/"ban" reads unfavorable even for
+an open-chatbot ban that wouldn't actually hurt Amira) — a known, accepted gap.
 """
 
 from __future__ import annotations
