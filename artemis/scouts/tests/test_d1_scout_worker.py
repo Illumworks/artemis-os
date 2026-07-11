@@ -370,6 +370,16 @@ def test_load_config_dry_run_not_active_without_env(
     assert cfg.dry_run is False
 
 
+def test_load_config_board_peer_validation_scout_enabled_general_mode() -> None:
+    """The real config/scouts.yaml: board_peer_validation_scout is enabled
+    (2026-07-11 board-meeting scout go-live, seeded ahead of the delayed
+    Salesforce customer list — general board-intel mode; see the scout's
+    module docstring / peer_scout.py for the exclusion-provider deferral)."""
+    cfg = load_config()  # no path override -> reads the real config/scouts.yaml
+    assert "board_peer_validation_scout" in cfg.scouts
+    assert cfg.scouts["board_peer_validation_scout"].enabled is True
+
+
 def test_load_config_propagates_api_url_to_scout_configs(tmp_path: Path) -> None:
     f = tmp_path / "scouts.yaml"
     f.write_text(

@@ -396,6 +396,19 @@ async def test_gather_findings_prefilter_bounds_llm_calls() -> None:
     assert adapter.complete.await_count == 1
 
 
+async def test_gather_findings_default_exclusions_admit_all_general_mode() -> None:
+    """GENERAL board-intel mode: with no exclusions injected (the production
+    default — StaticCustomerExclusions() is empty), a district's mentions
+    surface regardless of whether it might be a customer. This is the owner's
+    'run general now, layer peer-validation exclusion in later' decision."""
+    scout = _scout()  # no `exclusions` kwarg — production default applies
+    assert isinstance(scout._exclusions, StaticCustomerExclusions)
+    assert await scout._exclusions.get_customer_district_ids() == set()
+
+    findings = await scout._gather_findings()
+    assert len(findings) == 1  # the FL_pinellas screentime item still surfaces
+
+
 async def test_gather_findings_customer_district_excluded() -> None:
     scout = _scout(exclusions=StaticCustomerExclusions(["FL_pinellas"]))
     findings = await scout._gather_findings()
@@ -472,6 +485,24 @@ def test_default_watch_list_broadened_2026_07_10() -> None:
 
     urls = [d["boarddocs_url"] for d in _DEFAULT_PEER_WATCH_LIST]
     assert all(u.startswith("https://go.boarddocs.com/") for u in urls)
+
+
+def test_default_watch_list_broadened_2026_07_11_priority_states() -> None:
+    """Board-scout go-live pass: seed roughly doubled-to-tripled (13 -> 27) and now
+    covers every priority state — Josh's spec (FL, IN, MD, MO, IL, TX) plus the
+    legislative scout's broader set (CA, NY, GA, NC, OH)."""
+    assert len(_DEFAULT_PEER_WATCH_LIST) >= 26  # ~2x the prior 13-district seed
+
+    district_ids = [d["district_id"] for d in _DEFAULT_PEER_WATCH_LIST]
+    assert len(district_ids) == len(set(district_ids))  # still no duplicates
+
+    states = {d["state"] for d in _DEFAULT_PEER_WATCH_LIST}
+    priority_states = {"FL", "IN", "MD", "MO", "IL", "TX", "CA", "NY", "GA", "NC", "OH"}
+    assert priority_states.issubset(states)
+
+    for entry in _DEFAULT_PEER_WATCH_LIST:
+        assert entry["district_id"] and entry["state"] and entry["boarddocs_url"]
+        assert entry["boarddocs_url"].startswith("https://go.boarddocs.com/")
 
 
 def test_load_watch_list_roundtrip(tmp_path: Any) -> None:

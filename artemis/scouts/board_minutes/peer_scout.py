@@ -1,20 +1,33 @@
 """BoardPeerValidationScout — board-meeting minutes scout v2 (peer validation).
 
-Scans NON-customer district board meetings (BoardDocs) for substantive
-discussion of Amira / screentime policy / AI-in-schools, classifies mention
-sentiment with an LLM, and emits peer-validation findings.  Feeds the exec
-report: district board actions + state policy on screentime/AI, sourced.
+Scans district board meetings (BoardDocs) for substantive discussion of
+Amira / screentime policy / AI-in-schools, classifies mention sentiment with
+an LLM, and emits findings.  Feeds the exec report: district board actions +
+state policy on screentime/AI, sourced.
+
+Two modes, same code path:
+- GENERAL board-intel mode (current, since 2026-07-11): the exclusion
+  provider's set is empty, so EVERY covered district's board mentions
+  surface — customer and non-customer alike. This is how the scout runs
+  today, live, ahead of the (delayed) Salesforce customer list.
+- PEER-VALIDATION mode (deferred): once a customer list is injected into the
+  exclusion provider (see ``customers.py``), customer districts are filtered
+  out and only NON-customer mentions surface — the "even districts that
+  don't use us are talking about this" signal. No code change needed to
+  flip modes; only the injected ``exclusions`` provider changes.
 
 Key differences from the v1 ``BoardMinutesScout``:
 - Retrieves agenda-item BODY text (``fetch_bodies=True``) — mentions live in
   the item detail/minutes, not the title.
 - LLM mention+sentiment classification (keyword prefilter bounds cost;
   deterministic keyword fallback when no adapter is available).
-- Pluggable customer-exclusion input (Salesforce later; injected now).
+- Pluggable customer-exclusion input (Salesforce later; injected now — empty
+  by default, meaning GENERAL mode as described above).
 - Configurable district coverage list — designed for a prioritized national
   seed list (~500–800 districts) supplied later via ``load_watch_list()``;
-  ships with a small verified starter set.  Never crawls thousands live:
-  per-run coverage is capped by ``max_districts_per_run``.
+  ships with a verified starter set (27 districts as of 2026-07-11, covering
+  every priority state). Never crawls thousands live: per-run coverage is
+  capped by ``max_districts_per_run``.
 """
 
 from __future__ import annotations
@@ -52,6 +65,19 @@ _logger = logging.getLogger(__name__)
 # picking large districts across priority states that had no board-level
 # coverage yet. The national prioritized seed list (~500–800 districts) is
 # supplied later via ``load_watch_list(path)`` — same dict shape, one JSON file.
+#
+# 2026-07-11 second broadening pass (board-meeting scout go-live, seeded ahead
+# of the delayed Salesforce customer list): added 14 more large districts —
+# every one of Josh's spec priority_states (FL, IN, MD, MO, IL, TX) plus the
+# legislative scout's broader priority set (CA, NY, GA, NC, OH) now has
+# board-level coverage. Each added slug was live-checked the same way (HTTP
+# 200 + page-title match) on 2026-07-11. Candidates that could NOT be verified
+# (no live BoardDocs presence found — they run Legistar/Simbli/their own
+# portal instead) were left OUT rather than guessed: Houston ISD (TX), Fort
+# Worth ISD (TX), San Antonio ISD (TX), Fresno Unified (CA), Fort Wayne
+# Community Schools (IN — the "nacs" slug found is a different district,
+# Northwest Allen County Schools), DeKalb County Schools (GA — no BoardDocs
+# site found).
 _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
     {
         "district_id": "FL_pinellas",
@@ -129,6 +155,91 @@ _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
         # Horry County Schools.
         "boarddocs_url": "https://go.boarddocs.com/sc/horry/Board.nsf/Public",
     },
+    # --- 2026-07-11 board-scout go-live broadening: verified 200 + title match ---
+    {
+        "district_id": "MD_prince_georges",
+        "state": "MD",
+        # Prince George's County Board of Education (MABE-hosted BoardDocs).
+        "boarddocs_url": "https://go.boarddocs.com/mabe/pgcps/Board.nsf/Public",
+    },
+    {
+        "district_id": "MD_montgomery",
+        "state": "MD",
+        # Montgomery County Board of Education (MABE-hosted BoardDocs).
+        "boarddocs_url": "https://go.boarddocs.com/mabe/mcpsmd/Board.nsf/Public",
+    },
+    {
+        "district_id": "MO_st_louis",
+        "state": "MO",
+        # Board of Education of the City of St. Louis.
+        "boarddocs_url": "https://go.boarddocs.com/mo/stlps/Board.nsf/Public",
+    },
+    {
+        "district_id": "MO_kansas_city",
+        "state": "MO",
+        # Kansas City Public Schools.
+        "boarddocs_url": "https://go.boarddocs.com/mo/kanscsd/Board.nsf/Public",
+    },
+    {
+        "district_id": "IL_elgin_u46",
+        "state": "IL",
+        # School District U-46 (Elgin, IL) — second-largest district in IL.
+        "boarddocs_url": "https://go.boarddocs.com/il/u46/Board.nsf/Public",
+    },
+    {
+        "district_id": "IL_rockford",
+        "state": "IL",
+        # Rockford Public School District 205.
+        "boarddocs_url": "https://go.boarddocs.com/il/rps205/Board.nsf/Public",
+    },
+    {
+        "district_id": "FL_miami_dade",
+        "state": "FL",
+        # Miami-Dade County Public Schools — largest district in FL.
+        "boarddocs_url": "https://go.boarddocs.com/fl/sbmd/Board.nsf/Public",
+    },
+    {
+        "district_id": "IN_indianapolis",
+        "state": "IN",
+        # Indianapolis Public Schools.
+        "boarddocs_url": "https://go.boarddocs.com/in/indps/Board.nsf/Public",
+    },
+    {
+        "district_id": "OH_cleveland",
+        "state": "OH",
+        # Cleveland Metropolitan School District.
+        "boarddocs_url": "https://go.boarddocs.com/oh/cmsd/Board.nsf/Public",
+    },
+    {
+        "district_id": "NY_rochester",
+        "state": "NY",
+        # Rochester City School District.
+        "boarddocs_url": "https://go.boarddocs.com/ny/rochny/Board.nsf/Public",
+    },
+    {
+        "district_id": "NC_charlotte_mecklenburg",
+        "state": "NC",
+        # Charlotte-Mecklenburg Schools.
+        "boarddocs_url": "https://go.boarddocs.com/nc/cmsnc/Board.nsf/Public",
+    },
+    {
+        "district_id": "NC_wake",
+        "state": "NC",
+        # Wake County Public School System — largest district in NC.
+        "boarddocs_url": "https://go.boarddocs.com/nc/wcpsnc/Board.nsf/Public",
+    },
+    {
+        "district_id": "GA_gwinnett",
+        "state": "GA",
+        # Gwinnett County Public Schools — largest district in GA.
+        "boarddocs_url": "https://go.boarddocs.com/ga/gcps/Board.nsf/Public",
+    },
+    {
+        "district_id": "GA_fulton",
+        "state": "GA",
+        # Fulton County Schools (Atlanta metro).
+        "boarddocs_url": "https://go.boarddocs.com/ga/fcss/Board.nsf/Public",
+    },
 ]
 
 # Hard cap on districts scanned in one run — the national seed list will be
@@ -172,8 +283,11 @@ class BoardPeerValidationScout(BaseScout):
         boarddocs_url).  Defaults to the small verified starter set.
     exclusions:
         Customer-exclusion provider (``async get_customer_district_ids()``).
-        Defaults to the empty static set — inject the Salesforce-backed
-        provider when it lands.
+        Defaults to the empty static set — that is GENERAL board-intel mode
+        (all districts' mentions surface). Inject the Salesforce-backed
+        provider (or a populated ``StaticCustomerExclusions``) once the
+        customer list lands to switch to PEER-VALIDATION mode (non-customer
+        mentions only) — no other code change required.
     max_districts_per_run:
         Per-run cap on districts scanned (protects against a huge seed list).
     _http_client:

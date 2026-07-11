@@ -73,17 +73,27 @@ scouts:
     interval_minutes: 60  # hourly during business hours (scheduler filters off-hours)
 
   # D6b — Board Peer-Validation Scout (BoardDocs item bodies + LLM mention/
-  # sentiment classifier). Non-customer districts discussing Amira/screentime/
+  # sentiment classifier). District board discussion of Amira/screentime/
   # AI-in-schools. Customer exclusion list is injected (Salesforce later —
-  # StaticCustomerExclusions() defaults to an EMPTY set until wired, so a
-  # customer district could surface until that lands; downstream review
-  # catches these). Enabled 2026-07-10 with a 13-district REAL starter seed
-  # list (BoardDocs-verified) — see board_minutes/peer_scout.py. Also wired
-  # into the Screen-Time Watch national fan-out (artemis/screentime/scout_fanout.py).
+  # StaticCustomerExclusions() defaults to an EMPTY set until wired). Seed
+  # list broadened 2026-07-10 (13 districts) then 2026-07-11 (27 districts,
+  # BoardDocs-verified — see board_minutes/peer_scout.py) to cover every
+  # priority state (Josh's spec: FL, IN, MD, MO, IL, TX; legislative scout's
+  # broader set: CA, NY, GA, NC, OH). Also wired into the Screen-Time Watch
+  # national fan-out (artemis/screentime/scout_fanout.py).
+  #
+  # ENABLED 2026-07-11 in GENERAL BOARD-INTEL MODE (owner decision): the
+  # Salesforce customer list is delayed, so rather than wait, this runs now
+  # surfacing ALL board mentions of screen-time / AI-in-schools policy —
+  # customer AND non-customer districts alike. The "peer validation" framing
+  # (a NON-customer board praising Amira is the strongest signal) is layered
+  # in LATER, once the customer list lands: the exclusion provider is already
+  # pluggable (artemis/scouts/board_minutes/customers.py) — swap
+  # StaticCustomerExclusions() for the Salesforce-backed provider (or inject
+  # the real IDs into StaticCustomerExclusions) and every downstream piece
+  # (finding tags, urgency, exec report) picks it up with no code change.
+  # Until then customer districts CAN surface (reviewed downstream — this is
+  # the intentional trade-off the owner accepted for going live now).
   board_peer_validation_scout:
-    # HELD DISABLED until the Salesforce customer list powers the non-customer
-    # exclusion (Neil, pending). Enabling now would flag CUSTOMER districts as
-    # "peer validation" — backwards. Wiring + seed list are ready; flip to true
-    # once the exclusion source lands.
-    enabled: false
+    enabled: true
     interval_minutes: 10080  # weekly
