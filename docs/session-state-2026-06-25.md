@@ -31,8 +31,16 @@ New `artemis/screentime/national_news.py` gatherer: per-state Google News RSS (s
 News outlets (Chalkbeat/EdSource/K-12 Dive/EdWeek/GovTech/The 74/Hechinger/Axios) + keywords; state-DOE 7→20 states; board scout wired into the fan-out with a 13-district live-verified seed. Board scout kept **DISABLED** (Salesforce exclusion pending — enabling would flag customers as "peer validation").
   - ✅ **Topic gate widened to include AI-in-schools policy — LIVE (main 855ae82).** topic_config.py v3 + LegiScan fanout now admit AI-policy findings (14 multi-word anchors, never bare "ai"). Verified no stored DB 'topic' row overrides the new DEFAULT, so it's active. Screen-Time Watch now tracks screen-time AND AI-in-schools policy as one story. **AI-policy STANCE tuning DEFERRED to the Angela stance review** (a ban on open chatbots is NOT unfavorable to Amira — standards-aligned carve-out); AI findings currently take best-effort stance + a TODO in stance_config.py.
 
+## 🔄 IN PROGRESS — Screen-Time go-live (decoupled per Jon, 2026-07-10; order agreed)
+Owner decision: DECOUPLE collection from alerting. Get data flowing + on-demand reports now; hold noisy auto-push until stance is tuned. Three builds in flight:
+1. **Collection cron + fixes** (`lead/screentime-collection-cron`): fix LegiScan status bug (vetoed/failed ≠ "passed"), wire `register_screentime_schedule` COLLECTION-ONLY daily 11:00 UTC into main.py, fix the display-only pipeline landmine. NO auto-digest.
+2. **Board scout LIVE via priority-state districts** (`lead/board-priority-seed`): enable board_peer_validation_scout seeded from josh_spec priority states (NOT waiting on Salesforce). GENERAL board-intel mode — surfaces ALL board screen-time/AI mentions; the non-customer "peer validation" exclusion layers in later when the customer list arrives (Jon may get it from Product; the teammate withholding it is stalling — do not block on it).
+3. **Callie on-demand screen-time report** (`lead/callie-screentime-report`): read-only tool so Amy (COO) + others just CHAT with Callie for the report — NO auto-broadcast (low noise). Plus the deny-with-reason self-learning loop (reuses callie_push: explicit reasoned-reject teaches the filter, silent ignore = nothing).
+
+**Held for Jon/Angela:** (a) AI+screen-time STANCE tuning (favorable/unfavorable — chatbot ban ≠ bad for Amira) — tune against the now-flowing real data; (b) the optional "worth a look" light announcement mode (Jon: "we could" — deferred, keeps noise low); (c) which channel Amy uses (DM works by default).
+
 ## ⏭️ Deferred (in the roadmap)
-Memory embedding refresh (MiniLM→bge) + eval A/B; marketing gate-timeout (DB-backed); frontend XSS-escaping unify; scout dedup cursor; Forge items (handed to the app-seat Opus); Callie self-serve COO report (Jon has a manual report for now).
+Memory embedding refresh (MiniLM→bge) + eval A/B; marketing gate-timeout (DB-backed); frontend XSS-escaping unify; scout dedup cursor; Forge items (handed to the app-seat Opus). WA cross-check: we beat on bills+news breadth, match once board scout is live; empirical sweep available on request.
 
 ## Fable trial
 ~2-day promo window used for the hard/greenfield builds above (report card, memory, scout, security). Method + full findings in memory `project-fable-system-audit` and the roadmap doc.
