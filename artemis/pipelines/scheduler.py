@@ -126,7 +126,20 @@ def _pipeline_job_id(pipeline_id: str) -> str:
 
 
 def _has_scheduled_trigger(pipeline: object) -> bool:
-    """Return True if the pipeline has a trigger_scheduled node."""
+    """Return True if the pipeline has a trigger_scheduled node.
+
+    Display-only pipelines (``metadata.display_only = True`` — e.g. the seeded
+    Screen-Time Watch row from ``artemis/screentime/pipeline_seed.py``, which
+    documents a dedicated cron runner that this executor never drives — see
+    ``artemis/screentime/runner.py``) are deliberately excluded here even when
+    they carry a ``trigger_scheduled`` node. Without this guard the scheduler
+    would cron-execute the display graph's no-op ``skill_call`` nodes and
+    produce misleading "succeeded" pipeline runs that never actually gathered
+    or stored anything.
+    """
+    metadata = getattr(pipeline, "metadata_", None) or {}
+    if isinstance(metadata, dict) and metadata.get("display_only"):
+        return False
     nodes = getattr(pipeline, "nodes", None) or []
     return any(isinstance(n, dict) and n.get("type") == "trigger_scheduled" for n in nodes)
 

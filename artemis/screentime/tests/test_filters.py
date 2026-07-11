@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from artemis.screentime.filters import (
+    STATUS_VETOED_FAILED,
     CandidateSignal,
     compute_content_hash,
     dedupe,
@@ -91,6 +92,46 @@ def test_normalize_legislative_finding():
     assert c.source_type == "legislative"
     assert c.status == "passed"  # status_code 4
     assert c.source_url == "http://leg/tn/hb1"
+
+
+def test_normalize_legislative_vetoed_status_code_is_not_passed():
+    # Regression: status_code 5 (VETOED per artemis/scouts/legislative/client.py)
+    # used to fall into the `>= 4` bucket and be misread as "passed".
+    finding = {
+        "sourceType": "legiscan",
+        "districtId": "STATE_TN",
+        "evidence": "An act to limit screen time.",
+        "metadata": {"state": "TN", "status_code": 5, "url": "http://leg/tn/hb2"},
+    }
+    c = normalize_finding(finding)
+    assert c is not None
+    assert c.status == STATUS_VETOED_FAILED
+    assert c.status != "passed"
+
+
+def test_normalize_legislative_failed_status_code_is_not_passed():
+    # status_code 6 == FAILED — same non-enacted bucket as vetoed.
+    finding = {
+        "sourceType": "legiscan",
+        "districtId": "STATE_TN",
+        "evidence": "An act to limit screen time.",
+        "metadata": {"state": "TN", "status_code": 6, "url": "http://leg/tn/hb3"},
+    }
+    c = normalize_finding(finding)
+    assert c is not None
+    assert c.status == STATUS_VETOED_FAILED
+
+
+def test_vetoed_failed_bill_is_not_a_real_move():
+    # A vetoed/failed bill never became law — it must not count as a "real
+    # move" (and therefore never as a "big move" either, since big-move
+    # eligibility is a subset of real moves).
+    c = _cand(
+        title="HB 2 vetoed: screen time limit bill",
+        summary="Governor vetoed the instructional screen-time limit bill.",
+        status=STATUS_VETOED_FAILED,
+    )
+    assert is_real_move(c, RULES) is False
 
 
 def test_normalize_drops_stateless_finding():

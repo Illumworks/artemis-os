@@ -103,6 +103,10 @@ from artemis.routes.integrations_slack_events import router as slack_events_rout
 from artemis.routes.memory import router as memory_router
 from artemis.routes.routing import router as routing_router
 from artemis.routes.slack import router as slack_router
+from artemis.screentime.runner import (
+    start_screentime_scheduler,
+    stop_screentime_scheduler,
+)
 from artemis.ws.routes import router as ws_router
 
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
@@ -146,6 +150,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_memory_scheduler()
     # Start proactive morning-brief delivery (P2a).
     start_proactivity_scheduler()
+    # Start the Screen-Time Watch daily collection sweep (data collection only —
+    # gather → normalize → topic-gate → classify → store. No auto-digest / Callie
+    # channel posting is wired here; that stays off by owner decision unless
+    # settings.screentime_report_channel is explicitly set).
+    start_screentime_scheduler()
     # Recover any Argus research requests orphaned by a previous process restart.
     # Non-blocking: fires background tasks and returns immediately.
     from artemis.floating_artemis.tools.argus_tools import recover_pending_requests
@@ -164,6 +173,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_pipeline_scheduler()
         stop_memory_scheduler()
         stop_proactivity_scheduler()
+        stop_screentime_scheduler()
 
 
 app = FastAPI(

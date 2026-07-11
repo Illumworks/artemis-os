@@ -384,14 +384,18 @@ class Settings(BaseSettings):
     # (DB) with this settings blob as the code-side fallback default, so
     # Angela can re-tune favorable/unfavorable without a deploy.
     screentime_cron: str = Field(
-        default="0 7 * * *",
+        default="0 11 * * *",
         description=(
             "Cron expression for the Screen-Time Watch national sweep (default daily "
-            "07:00). Used by the dedicated runner + reflected on the seeded pipeline row."
+            "11:00 UTC — collection only, no auto-digest/alerting). Used by the "
+            "dedicated runner (register_screentime_schedule) + reflected on the seeded "
+            "display pipeline row. No numeric day-of-week is used here (this repo's "
+            "APScheduler cron day-of-week bug: 0=Mon, not Sun) — a bare '* * *' day/month/dow "
+            "with only hour+minute set sidesteps it entirely."
         ),
     )
     screentime_cron_tz: str = Field(
-        default="America/Chicago",
+        default="UTC",
         description="Timezone for screentime_cron.",
     )
     screentime_window_days: int = Field(

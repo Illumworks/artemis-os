@@ -55,6 +55,12 @@ STATUS_PASSED = "passed"
 STATUS_AMENDED = "amended"
 STATUS_GUIDANCE = "guidance"
 STATUS_NEWS = "news"  # NOT a real move on its own
+# A bill that was VETOED or FAILED never became law. It must never be counted
+# as "passed" (that would falsely register as a landed real/big move). Kept as
+# its own distinct status rather than dropped silently so it's still visible
+# in raw data if ever needed, but it is deliberately excluded from
+# _REAL_MOVE_STATUSES below.
+STATUS_VETOED_FAILED = "vetoed_failed"
 
 _REAL_MOVE_STATUSES: frozenset[str] = frozenset(
     {STATUS_PROPOSED, STATUS_PASSED, STATUS_AMENDED, STATUS_GUIDANCE}
@@ -197,9 +203,16 @@ def _parse_dt(value: Any) -> datetime | None:
 def _classify_status(text: str, source_type: str, meta: dict[str, Any]) -> str:
     """Infer the action status from text + metadata. Defaults to 'news'."""
     # Legislative scout carries an explicit numeric status_code — trust it first.
+    # Codes per artemis/scouts/legislative/client.py (LegiScan):
+    #   1=introduced 2=engrossed 3=enrolled 4=passed 5=vetoed 6=failed.
+    # 5/6 are terminal-but-NOT-enacted outcomes — they must never fall into the
+    # >=4 "passed" bucket (that was the bug: a vetoed/failed bill would falsely
+    # read as a landed "real move" / big move).
     status_code = meta.get("status_code")
     if isinstance(status_code, int):
-        if status_code >= 4:
+        if status_code in (5, 6):
+            return STATUS_VETOED_FAILED
+        if status_code == 4:
             return STATUS_PASSED
         if status_code in (2, 3):
             return STATUS_AMENDED

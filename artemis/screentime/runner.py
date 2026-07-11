@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
+
 from artemis.screentime import filters
 from artemis.screentime.classifier import classify_signal
 from artemis.screentime.scout_fanout import gather_national_findings
@@ -252,6 +254,15 @@ async def run_scheduled() -> dict[str, Any]:
 def register_screentime_schedule(scheduler: Any) -> None:
     """Register the cron job on an APScheduler instance. Idempotent.
 
+    Registers ONLY the collection sweep (``run_scheduled`` — gather →
+    normalize → topic-gate → classify → store). This is the data-collection
+    path; it does NOT wire any digest/alerting delivery. The only thing that
+    could ever push a message to Slack from a sweep is the per-signal
+    big-move-alert hook inside ``run_screentime_pipeline`` itself, and that
+    stays dormant unless ``settings.screentime_report_channel`` is explicitly
+    set (empty by default — owner decision, see artemis/config.py). Wiring
+    that channel is a separate, deliberate step, not part of this schedule.
+
     Call from the FastAPI lifespan (Brief 3 / wiring) — not invoked here so this
     module imports cleanly without side effects.
     """
@@ -269,3 +280,43 @@ def register_screentime_schedule(scheduler: Any) -> None:
         coalesce=True,
     )
     _logger.info("screentime: registered cron %s (%s)", settings.screentime_cron, settings.screentime_cron_tz)
+
+
+_scheduler: AsyncIOScheduler | None = None
+
+
+def get_screentime_scheduler() -> AsyncIOScheduler:
+    """Return the singleton Screen-Time Watch scheduler, creating it if needed.
+
+    Dedicated scheduler instance (mirrors artemis/memory/scheduler.py,
+    artemis/meetings/scheduler.py, etc.) — deliberately NOT the shared
+    pipelines scheduler (artemis/pipelines/scheduler.py), which drives
+    DB-defined Pipeline rows via the PipelineExecutor. The Screen-Time Watch
+    sweep is a dedicated in-process runner (see module docstring for why), so
+    it gets its own APScheduler instance instead.
+    """
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = AsyncIOScheduler()
+    return _scheduler
+
+
+def start_screentime_scheduler() -> None:
+    """Start the Screen-Time Watch scheduler and register the daily collection
+    sweep. Call from the FastAPI lifespan startup, alongside the other
+    schedulers. Idempotent — safe to call more than once.
+    """
+    scheduler = get_screentime_scheduler()
+    register_screentime_schedule(scheduler)
+    if not scheduler.running:
+        scheduler.start()
+        _logger.info("screentime: scheduler started")
+
+
+def stop_screentime_scheduler() -> None:
+    """Stop the scheduler. Call from the FastAPI lifespan shutdown."""
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        _scheduler.shutdown(wait=False)
+        _logger.info("screentime: scheduler stopped")
+    _scheduler = None
