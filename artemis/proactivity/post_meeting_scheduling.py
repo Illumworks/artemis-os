@@ -76,6 +76,13 @@ class SchedulingIntent:
     duration_minutes: int = DEFAULT_DURATION_MINUTES
     timeframe: str = ""  # free text e.g. "next week", "this Friday"
     confidence: float = 0.0
+    # The classifier's own read of who owns this item, given the ``owner``
+    # context we now pass into the prompt: True only if it believes the
+    # commitment belongs to Jon (the account owner), False otherwise/unstated.
+    # This is a corroborating signal ONLY — the authoritative eligibility gate
+    # is the deterministic owner resolution in run_post_meeting_scheduling_sweep
+    # (mirrors artemis.proactivity.commitments.ingest_meeting_commitments).
+    owner_is_operator: bool = False
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,9 @@ _DETECTION_SYSTEM = (
     "(something that becomes a calendar event with attendees). "
     "Pure reminders, tasks, doc edits, or follow-ups that are NOT a calendar "
     "event are NOT scheduling.\n\n"
+    "You are also told who the item's owner is (the person who committed to "
+    "it). 'Jon' / 'Me' refers to the account owner using this system; anyone "
+    "else is a different person.\n\n"
     "Return ONLY a JSON object, no prose, with keys:\n"
     '  is_scheduling (bool)\n'
     '  title (str: a concise event title, e.g. "Writing Studio training")\n'
@@ -117,14 +127,22 @@ _DETECTION_SYSTEM = (
     '  duration_minutes (int: stated length, else 60)\n'
     '  timeframe (str: when, e.g. "next week"; "" if unstated)\n'
     '  confidence (number 0..1)\n'
+    '  owner_is_operator (bool: true ONLY if the stated owner is Jon/"Me" '
+    "(the account owner) — false if the owner is someone else or unstated)\n"
 )
 
 
-def build_detection_prompt(*, action_item_text: str, meeting_title: str) -> str:
+def build_detection_prompt(
+    *, action_item_text: str, meeting_title: str, owner: str | None = None
+) -> str:
     """Render the user prompt for the detection classify call (pure)."""
+    owner_line = f'Owner (who committed to this): "{owner}"' if owner else (
+        "Owner (who committed to this): unstated"
+    )
     return (
         f"Meeting: {meeting_title}\n"
-        f'Action item: "{action_item_text}"\n\n'
+        f'Action item: "{action_item_text}"\n'
+        f"{owner_line}\n\n"
         "Classify this action item. Return only the JSON object."
     )
 
@@ -174,6 +192,7 @@ def parse_detection_response(raw: str) -> SchedulingIntent:
         duration_minutes=duration,
         timeframe=str(data.get("timeframe") or "").strip(),
         confidence=confidence,
+        owner_is_operator=bool(data.get("owner_is_operator")),
     )
 
 
@@ -182,18 +201,24 @@ async def classify_action_item(
     action_item_text: str,
     meeting_title: str,
     adapter: Any,
+    owner: str | None = None,
 ) -> SchedulingIntent:
     """Run the LLM detection classify for one action item.
 
     ``adapter`` is a ModelAdapter (artemis.agent.client). Returns a
     non-scheduling intent on any failure — fail closed.
+
+    ``owner`` is the action item's structured owner label (if any), passed
+    through for prompt context / the ``owner_is_operator`` signal. It is NOT
+    the authoritative eligibility check — callers must still gate on the
+    deterministic owner resolution (see run_post_meeting_scheduling_sweep).
     """
     from artemis.agent.client import CompletionRequest
     from artemis.agent.types import Message, TextBlock
 
     try:
         prompt = build_detection_prompt(
-            action_item_text=action_item_text, meeting_title=meeting_title
+            action_item_text=action_item_text, meeting_title=meeting_title, owner=owner
         )
         response = await adapter.complete(
             CompletionRequest(
@@ -702,6 +727,10 @@ class SchedulingSweepSummary:
     proposals_sent: int
     skipped_already_proposed: int
     skipped_no_slots: int
+    # Scheduling-shaped items whose owner did NOT resolve to Jon (the account
+    # owner) — e.g. a coworker's action item. We never propose a calendar
+    # action on Jon's behalf for someone else's commitment.
+    skipped_not_owner: int = 0
 
 
 async def run_post_meeting_scheduling_sweep(
@@ -717,6 +746,15 @@ async def run_post_meeting_scheduling_sweep(
     agency gate when Jon replies "yes" to the DM, routed through the existing
     proposed-action reply handler.
 
+    Owner gating: mirrors the opt-in pattern in
+    artemis.proactivity.commitments.ingest_meeting_commitments. Each action
+    item's ``owner`` field is resolved to a user id and compared against the
+    canonical system owner (jon.fila@, OWNER_EMAIL). A calendar proposal is
+    only ever sent when the item's owner resolves to Jon. Scheduling-shaped
+    items owned by someone else (or with an unresolved/unstated owner) are
+    skipped — Artemis never proposes a calendar action on Jon's behalf for a
+    commitment someone else made.
+
     Returns a summary of what happened (counts), suitable for logging/tests.
     """
     from sqlalchemy import select
@@ -725,7 +763,10 @@ async def run_post_meeting_scheduling_sweep(
     from artemis.meetings.models import MeetingSummary
     from artemis.proactivity.agency_gate import propose_action
     from artemis.proactivity.commitments import (  # reuse identity resolution
+        _normalize_text,
         _resolve_artemis_dm_recipient,
+        _resolve_canonical_owner_user_id,
+        _resolve_owner_user_id,
         action_item_key,
     )
 
@@ -739,6 +780,7 @@ async def run_post_meeting_scheduling_sweep(
     proposals_sent = 0
     skipped_already = 0
     skipped_no_slots = 0
+    skipped_not_owner = 0
 
     if adapter is None:
         from artemis.providers.resolver import NoProviderAvailableError, resolve_adapter
@@ -765,6 +807,9 @@ async def run_post_meeting_scheduling_sweep(
 
     gcal_client = await _resolve_gcal_client_io(session)
     target_user_id = await _resolve_artemis_dm_recipient(session)
+    # Resolve once per sweep (mirrors ingest_meeting_commitments) to avoid a
+    # DB round-trip per action item.
+    canonical_owner_user_id = await _resolve_canonical_owner_user_id(session)
 
     for meeting in rows:
         meetings_scanned += 1
@@ -778,6 +823,7 @@ async def run_post_meeting_scheduling_sweep(
             text = " ".join(str(item.get("text") or "").split()).strip()
             if not text:
                 continue
+            owner_label = _normalize_text(item.get("owner")) or None
 
             dedup = scheduled_dedup_key(meeting.granola_id, action_item_key(text))
             if await _already_proposed(session, dedup_content=dedup):
@@ -789,10 +835,39 @@ async def run_post_meeting_scheduling_sweep(
                 action_item_text=text,
                 meeting_title=meeting.title,
                 adapter=adapter,
+                owner=owner_label,
             )
             if not intent.is_scheduling:
                 continue
             scheduling_items += 1
+
+            # ── Owner gate ────────────────────────────────────────────────────
+            # Mirrors commitments.ingest_meeting_commitments's opt-in gate: only
+            # propose a calendar action when the item's owner resolves to Jon
+            # (the account owner). A coworker's action item — or one with no
+            # resolvable owner — is skipped; Artemis never proposes inviting
+            # people to a meeting on Jon's behalf for someone else's commitment.
+            owner_user_id = await _resolve_owner_user_id(session, owner_label)
+            owner_is_owner = (
+                canonical_owner_user_id is not None
+                and owner_user_id == canonical_owner_user_id
+            )
+            if not owner_is_owner:
+                skipped_not_owner += 1
+                logger.info(
+                    "post_meeting_scheduling: skipping scheduling proposal — owner=%r "
+                    "does not resolve to the account owner (granola_id=%s, "
+                    "llm_owner_is_operator=%s)",
+                    owner_label,
+                    meeting.granola_id,
+                    intent.owner_is_operator,
+                )
+                # Still mark proposed so we don't re-classify every sweep.
+                if not dry_run:
+                    await _mark_proposed(
+                        session, dedup_content=dedup, granola_id=meeting.granola_id
+                    )
+                continue
 
             proposal = await build_slot_proposal(
                 session,
@@ -857,6 +932,7 @@ async def run_post_meeting_scheduling_sweep(
         proposals_sent=proposals_sent,
         skipped_already_proposed=skipped_already,
         skipped_no_slots=skipped_no_slots,
+        skipped_not_owner=skipped_not_owner,
     )
 
 

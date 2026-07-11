@@ -22,6 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.writing_rules.models  # noqa: F401  — ensures writing_folders is in metadata
+import artemis.writing_rules.repository as wr_repo
 from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
 from artemis.marketing.repository import (
     create_campaign_candidate_from_signal,
@@ -294,3 +295,119 @@ class TestBackfillCampaignFolders:
         assert refreshed.campaign_id == "obc"
         meta = refreshed.deliverable_metadata or {}
         assert isinstance(meta.get("folder_id"), int)
+
+    async def test_backfill_does_not_clobber_explicit_manual_folder_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A draft with an explicit (non-candidate) folder_id survives backfill.
+
+        Regression test for the Writing Studio drag-into-folder bug: the
+        overview endpoint used to run backfill_campaign_folders on every load,
+        and the old logic force-rewrote metadata.folder_id to the auto
+        per-candidate folder for ANY deliverable with a candidate_id — even one
+        the user had manually dragged into a different folder. A present
+        "folder_id" key must be respected, not overwritten.
+        """
+        clear_subscribers()
+        candidate = await _make_candidate(db_session, family="obc", name="OBC Growth")
+
+        # A manually-created destination folder, unrelated to the candidate's
+        # auto per-candidate folder.
+        manual_folder = await wr_repo.create_folder(db_session, name="My Manual Folder")
+        await db_session.commit()
+        manual_folder_id = manual_folder.id
+
+        draft = CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="manual-drag-1",
+            campaign_id="obc",
+            status="generating",
+            deliverable_metadata={"title": "Dragged draft", "folder_id": manual_folder_id},
+        )
+        db_session.add(draft)
+        await db_session.flush()
+        await db_session.commit()
+        draft_id = draft.id
+
+        result = await backfill_campaign_folders(db_session)
+        await db_session.commit()
+
+        db_session.expire_all()
+        refreshed = await db_session.get(CampaignDeliverable, draft_id)
+        assert refreshed is not None
+        meta = refreshed.deliverable_metadata or {}
+        assert meta.get("folder_id") == manual_folder_id, (
+            "backfill must not overwrite a manually-assigned folder_id"
+        )
+        assert isinstance(result, BackfillResult)
+
+    async def test_backfill_does_not_clobber_explicit_null_folder_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A draft explicitly unassigned (folder_id key present but null) stays unassigned.
+
+        A present key with a null value means the user/app explicitly decided
+        "no folder" — that is different from a legacy row that never had the
+        key at all, and must not be auto-assigned by backfill.
+        """
+        clear_subscribers()
+        candidate = await _make_candidate(db_session, family="obc", name="OBC Growth")
+
+        draft = CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="explicit-null-1",
+            campaign_id="obc",
+            status="generating",
+            deliverable_metadata={"title": "Explicitly unfiled draft", "folder_id": None},
+        )
+        db_session.add(draft)
+        await db_session.flush()
+        await db_session.commit()
+        draft_id = draft.id
+
+        await backfill_campaign_folders(db_session)
+        await db_session.commit()
+
+        db_session.expire_all()
+        refreshed = await db_session.get(CampaignDeliverable, draft_id)
+        assert refreshed is not None
+        meta = refreshed.deliverable_metadata or {}
+        assert "folder_id" in meta
+        assert meta.get("folder_id") is None, (
+            "backfill must not auto-assign a folder when folder_id was explicitly null"
+        )
+
+    async def test_backfill_still_assigns_genuinely_unassigned_draft(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Sanity check: a draft with NO folder_id key at all still gets backfilled.
+
+        This is the first-time-backfill path that must keep working for
+        legacy/pipeline-created rows that never had folder metadata written.
+        """
+        clear_subscribers()
+        candidate = await _make_candidate(db_session, family="obc", name="OBC Growth")
+
+        draft = CampaignDeliverable(
+            candidate_id=candidate.id,
+            deliverable_id="never-assigned-1",
+            campaign_id="obc",
+            status="generating",
+            deliverable_metadata={"title": "Never touched"},
+        )
+        db_session.add(draft)
+        await db_session.flush()
+        await db_session.commit()
+        draft_id = draft.id
+
+        result = await backfill_campaign_folders(db_session)
+        await db_session.commit()
+
+        assert result.rows_updated >= 1
+
+        db_session.expire_all()
+        refreshed = await db_session.get(CampaignDeliverable, draft_id)
+        assert refreshed is not None
+        meta = refreshed.deliverable_metadata or {}
+        assert isinstance(meta.get("folder_id"), int)
+        assert meta.get("folder_name") == "OBC Growth"

@@ -743,10 +743,13 @@ async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
       4. Ensure ``campaign_deliverables.campaign_id`` equals the family
          string (unchanged semantic).
 
-    A row is considered already-correct when its ``metadata.folder_id``
-    equals the id of the per-candidate folder for its candidate.  Only
-    those rows are skipped; all others are updated (idempotent re-runs are
-    safe).
+    A row is considered already-decided when its ``metadata`` dict already
+    contains a ``folder_id`` key — even an explicit ``null`` — because that
+    means either a prior backfill run or the user/app (e.g. dragging a draft
+    into a folder in Writing Studio) already set it. Those rows are left
+    untouched; only rows with NO ``folder_id`` key at all (never assigned)
+    get auto-backfilled. This makes re-runs idempotent AND non-destructive —
+    they can never clobber a manual folder placement.
 
     Pass 2 — Orphaned family-level folders
     ──────────────────────────────────────
@@ -830,8 +833,14 @@ async def backfill_campaign_folders(session: AsyncSession) -> BackfillResult:
                 rows_updated += 1
             continue
 
-        # Check if this deliverable is already pointing at the correct folder.
-        if meta.get("folder_id") == folder.id and d.campaign_id == family:
+        # A present "folder_id" key — even an explicit null — means the folder
+        # assignment was already decided, either by a prior backfill run or by
+        # the user/app (e.g. dragging a draft into a folder in Writing Studio).
+        # Respect it and never overwrite it here. Only deliverables with NO
+        # "folder_id" key at all (genuinely never assigned) get auto-backfilled
+        # below. This is what makes repeated backfill runs (e.g. on every
+        # overview load) safe: they can never clobber a manual placement.
+        if "folder_id" in meta:
             continue
 
         d.campaign_id = family

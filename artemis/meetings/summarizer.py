@@ -309,11 +309,19 @@ Meeting title: {title}
 Transcript / notes:
 {transcript}
 
+Speaker attribution: lines prefixed "Me:" (or "Me") are Jon — the account
+owner who is using this system — NOT a generic participant. Every other named
+or role-labeled speaker is someone else.
+
 Produce a JSON object with exactly these keys:
 - "bullets": a list of 3-5 concise bullet-point strings summarizing the key points
 - "action_items": a list of objects, each with:
     - "text": string (what needs to be done)
-    - "owner": string or null (person responsible, if mentioned)
+    - "owner": string or null (the person who actually committed to doing this
+      item — attribute it to the specific speaker who said they'd do it, not
+      to whoever it was assigned to or discussed near. If "Me" said "I'll set
+      that up," the owner is "Jon" / "Me", not another attendee mentioned in
+      the same breath. Use null only if the transcript gives no clue who owns it.)
     - "due": string or null (due date/timeframe, if mentioned)
 
 Respond with ONLY the JSON object. No markdown fences, no preamble."""
