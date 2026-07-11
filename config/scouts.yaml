@@ -81,5 +81,9 @@ scouts:
   # list (BoardDocs-verified) — see board_minutes/peer_scout.py. Also wired
   # into the Screen-Time Watch national fan-out (artemis/screentime/scout_fanout.py).
   board_peer_validation_scout:
-    enabled: true
+    # HELD DISABLED until the Salesforce customer list powers the non-customer
+    # exclusion (Neil, pending). Enabling now would flag CUSTOMER districts as
+    # "peer validation" — backwards. Wiring + seed list are ready; flip to true
+    # once the exclusion source lands.
+    enabled: false
     interval_minutes: 10080  # weekly
