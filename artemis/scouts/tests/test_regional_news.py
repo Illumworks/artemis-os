@@ -560,6 +560,150 @@ async def test_gather_findings_filters_none_results() -> None:
     assert result == []
 
 
+# ===========================================================================
+# 2026-07-10 broadening: screen-time / AI-in-schools news coverage
+# ===========================================================================
+
+
+def test_article_to_finding_screen_time_only_is_relevant() -> None:
+    """An article about screen-time with NO literacy word must still be kept."""
+    article = _make_article(
+        title="District adopts bell-to-bell cell phone ban",
+        description="The board approved new screen time limits for all students.",
+    )
+    finding = article_to_finding(article, _DISTRICT)
+    assert finding is not None
+    assert "POLICY_EDTECH_TIME_LIMIT" in finding["reasonCodes"]
+
+
+def test_article_to_finding_ai_in_schools_only_is_relevant() -> None:
+    """An article about AI policy with NO literacy word must still be kept."""
+    article = _make_article(
+        title="School board issues generative AI guidance",
+        description="New AI policy guides teacher use of ChatGPT in classrooms.",
+    )
+    finding = article_to_finding(article, _DISTRICT)
+    assert finding is not None
+    assert "POLICY_AI_IN_SCHOOLS" in finding["reasonCodes"]
+
+
+def test_article_to_finding_phone_free_still_irrelevant_without_anchor() -> None:
+    """Sanity: an article with none of the anchors is still dropped."""
+    article = _make_article(
+        title="Local bakery wins county fair ribbon",
+        description="The bakery took first place for its sourdough.",
+    )
+    assert article_to_finding(article, _DISTRICT) is None
+
+
+async def test_fetch_news_articles_query_includes_screen_time_and_ai_terms() -> None:
+    """Default query broadens beyond literacy to screen-time + AI-in-schools terms."""
+    from artemis.scouts.regional_news.client import fetch_news_articles
+
+    http = _make_http_mock({"articles": []})
+    await fetch_news_articles("Pinellas County Schools", http, api_key="test-key")
+
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    query = sent_params["q"]
+    assert "screen time" in query
+    assert "artificial intelligence" in query
+    assert "literacy" in query  # original beat preserved
+
+
+async def test_fetch_news_articles_query_topics_override() -> None:
+    """query_topics overrides the default OR-group entirely."""
+    from artemis.scouts.regional_news.client import fetch_news_articles
+
+    http = _make_http_mock({"articles": []})
+    await fetch_news_articles(
+        "Pinellas County Schools", http, api_key="test-key", query_topics=["ai moratorium"]
+    )
+
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    assert sent_params["q"] == '"Pinellas County Schools" AND (ai moratorium)'
+
+
+async def test_fetch_news_articles_domains_param_sent_when_provided() -> None:
+    """domains, when given, is joined into newsapi's `domains` filter."""
+    from artemis.scouts.regional_news.client import NEWS_OUTLET_DOMAINS, fetch_news_articles
+
+    http = _make_http_mock({"articles": []})
+    await fetch_news_articles(
+        "Pinellas County Schools", http, api_key="test-key", domains=NEWS_OUTLET_DOMAINS
+    )
+
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    assert sent_params["domains"] == ",".join(NEWS_OUTLET_DOMAINS)
+
+
+async def test_fetch_news_articles_no_domains_param_by_default() -> None:
+    """Without an explicit domains list, no `domains` filter is sent (unrestricted search)."""
+    from artemis.scouts.regional_news.client import fetch_news_articles
+
+    http = _make_http_mock({"articles": []})
+    await fetch_news_articles("Pinellas County Schools", http, api_key="test-key")
+
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    assert "domains" not in sent_params
+
+
+def test_news_outlet_domains_covers_major_ed_policy_outlets() -> None:
+    from artemis.scouts.regional_news.client import NEWS_OUTLET_DOMAINS
+
+    expected = {
+        "chalkbeat.org",
+        "edsource.org",
+        "k12dive.com",
+        "edweek.org",
+        "govtech.com",
+        "the74million.org",
+        "hechingerreport.org",
+        "axios.com",
+    }
+    assert expected.issubset(set(NEWS_OUTLET_DOMAINS))
+
+
+async def test_scout_forwards_query_topics_and_domains_to_fetcher() -> None:
+    """RegionalNewsScout threads query_topics/news_domains through to the injected fetcher."""
+    news_mock: AsyncMock = AsyncMock(return_value=[])
+    board_mock: AsyncMock = AsyncMock(return_value=[])
+    doe_mock: AsyncMock = AsyncMock(return_value=[])
+
+    scout = RegionalNewsScout(
+        ScoutConfig(),
+        watch_districts=[_DISTRICT],
+        query_topics=["screen time"],
+        news_domains=["chalkbeat.org"],
+        _news_fetcher=news_mock,
+        _board_fetcher=board_mock,
+        _doe_fetcher=doe_mock,
+    )
+    await scout._gather_findings()
+
+    _, kwargs = news_mock.call_args
+    assert kwargs["query_topics"] == ["screen time"]
+    assert kwargs["domains"] == ["chalkbeat.org"]
+
+
+async def test_scout_omits_query_topics_and_domains_when_unset() -> None:
+    """Backward compatibility: a fetcher stub with the OLD signature still works."""
+
+    async def _old_signature_fetcher(
+        district_name: str, http: ScoutHttpClient, *, api_key: str = ""
+    ) -> list[dict[str, Any]]:
+        return []
+
+    scout = RegionalNewsScout(
+        ScoutConfig(),
+        watch_districts=[_DISTRICT],
+        _news_fetcher=_old_signature_fetcher,
+        _board_fetcher=AsyncMock(return_value=[]),
+        _doe_fetcher=AsyncMock(return_value=[]),
+    )
+    result = await scout._gather_findings()
+    assert result == []
+
+
 def test_regional_news_scout_type_class_var() -> None:
     """RegionalNewsScout.scout_type class var must equal 'regional_news_scout'."""
     assert RegionalNewsScout.scout_type == "regional_news_scout"

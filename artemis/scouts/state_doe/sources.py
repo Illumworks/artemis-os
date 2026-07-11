@@ -84,6 +84,92 @@ STATE_DOE_SOURCES: dict[str, dict[str, str | None]] = {
         "governor_rss": "https://gov.texas.gov/news/press-releases/feed",
         "state_board_agenda_url": "https://tea.texas.gov/about-tea/leadership/state-board-of-education/sboe-meetings",
     },
+    # --- National broadening pass (2026-07-10, Screen-Time Watch scout expansion) ---
+    # Domains below were live-checked (root resolves 200) as part of this pass;
+    # doe_rss/governor_rss reuse the Google News RSS pattern proven reliable for
+    # the original seven states (direct agency RSS is inconsistent/bot-blocked
+    # across state sites). doe_scrape_url / state_board_agenda_url are
+    # best-effort agency page guesses under the verified root domain — mark
+    # "# TODO: verify URL" per this file's existing convention; validate against
+    # live site structure before relying on the HTML-scrape fallback path.
+    "CA": {
+        "doe_rss": "https://news.google.com/rss/search?q=California+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.cde.ca.gov/nr/ne/",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=California+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.cde.ca.gov/be/ag/ag/",  # TODO: verify URL
+    },
+    "OR": {
+        "doe_rss": "https://news.google.com/rss/search?q=Oregon+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.oregon.gov/ode/about-us/newsroom/Pages/default.aspx",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Oregon+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.oregon.gov/ode/rules-and-policies/Pages/State-Board.aspx",  # TODO: verify URL
+    },
+    "NY": {
+        "doe_rss": "https://news.google.com/rss/search?q=New+York+State+Education+Department+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.nysed.gov/news",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=New+York+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.regents.nysed.gov/meetings",  # TODO: verify URL
+    },
+    "SC": {
+        "doe_rss": "https://news.google.com/rss/search?q=South+Carolina+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://ed.sc.gov/newsroom/",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=South+Carolina+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://ed.sc.gov/about/state-board-of-education/",  # TODO: verify URL
+    },
+    "UT": {
+        "doe_rss": "https://news.google.com/rss/search?q=Utah+State+Board+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://schools.utah.gov/communications",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Utah+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://schools.utah.gov/board",  # TODO: verify URL
+    },
+    "AL": {
+        "doe_rss": "https://news.google.com/rss/search?q=Alabama+State+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.alabamaachieves.org/newsroom/",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Alabama+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.alabamaachieves.org/about/state-board-of-education/",  # TODO: verify URL
+    },
+    "OH": {
+        "doe_rss": "https://news.google.com/rss/search?q=Ohio+Department+of+Education+and+Workforce+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://education.ohio.gov/Media",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Ohio+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://education.ohio.gov/Topics/State-Board-of-Education",  # TODO: verify URL
+    },
+    "TN": {
+        "doe_rss": "https://news.google.com/rss/search?q=Tennessee+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.tn.gov/education/news.html",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Tennessee+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.tn.gov/sbe.html",  # TODO: verify URL
+    },
+    "MS": {
+        "doe_rss": "https://news.google.com/rss/search?q=Mississippi+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.mdek12.org/newsroom",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Mississippi+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.mdek12.org/board",  # TODO: verify URL
+    },
+    "NC": {
+        "doe_rss": "https://news.google.com/rss/search?q=North+Carolina+Department+of+Public+Instruction+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.dpi.nc.gov/news",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=North+Carolina+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.dpi.nc.gov/about-dpi/state-board-education",  # TODO: verify URL
+    },
+    "CO": {
+        "doe_rss": "https://news.google.com/rss/search?q=Colorado+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.cde.state.co.us/communications/newsreleases",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Colorado+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.cde.state.co.us/csb",  # TODO: verify URL
+    },
+    "LA": {
+        "doe_rss": "https://news.google.com/rss/search?q=Louisiana+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.louisianabelieves.com/newsroom/news-releases",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Louisiana+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.louisianabelieves.com/about-us/bese",  # TODO: verify URL
+    },
+    "VA": {
+        "doe_rss": "https://news.google.com/rss/search?q=Virginia+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://www.doe.virginia.gov/news",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=Virginia+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://www.doe.virginia.gov/boe",  # TODO: verify URL
+    },
 }
 
 

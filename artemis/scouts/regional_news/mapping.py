@@ -25,6 +25,8 @@ _RC_STATE_GUIDANCE = "STATE_GUIDANCE_ISSUED"
 _RC_BOARD_OBC_DISCUSSION = "BOARD_OBC_DISCUSSION"
 _RC_STATE_DYSLEXIA = "STATE_DYSLEXIA_MANDATE"
 _RC_ESSER_CLIFF = "ESSER_CLIFF_REFERENCE"
+_RC_POLICY_EDTECH_TIME_LIMIT = "POLICY_EDTECH_TIME_LIMIT"
+_RC_POLICY_AI_IN_SCHOOLS = "POLICY_AI_IN_SCHOOLS"
 
 # ---------------------------------------------------------------------------
 # Shared classification helpers
@@ -90,6 +92,44 @@ def _classify(combined: str) -> tuple[list[str], str]:
     if "esser" in lower and _RC_ESSER_CLIFF not in reason_codes:
         reason_codes.append(_RC_ESSER_CLIFF)
 
+    # --- Screen-time / AI-in-schools (2026-07-10 broadening) ---
+    if (
+        any(
+            kw in lower
+            for kw in (
+                "screen time",
+                "screen-time",
+                "device time",
+                "device limit",
+                "device-free",
+                "cell phone ban",
+                "cellphone ban",
+                "phone-free",
+                "phone free",
+                "bell to bell",
+                "bell-to-bell",
+            )
+        )
+        and _RC_POLICY_EDTECH_TIME_LIMIT not in reason_codes
+    ):
+        reason_codes.append(_RC_POLICY_EDTECH_TIME_LIMIT)
+
+    if (
+        any(
+            kw in lower
+            for kw in (
+                "ai policy",
+                "ai guidance",
+                "ai moratorium",
+                "generative ai",
+                "artificial intelligence",
+                "chatgpt",
+            )
+        )
+        and _RC_POLICY_AI_IN_SCHOOLS not in reason_codes
+    ):
+        reason_codes.append(_RC_POLICY_AI_IN_SCHOOLS)
+
     # Default fallback: ensure at least one reason code
     if not reason_codes:
         reason_codes.append(_RC_BOARD_LITERACY_CURRICULUM)
@@ -124,11 +164,38 @@ _LITERACY_KEYWORDS: list[str] = [
     "passed",
 ]
 
+# Screen-time / AI-in-schools anchors — broadens the relevance gate (2026-07-10)
+# so an item ABOUT device policy or AI adoption, with no literacy word at all,
+# still survives (e.g. a pure "board adopts bell-to-bell phone ban" story).
+# Additive to _LITERACY_KEYWORDS; kept as its own list so the two beats can be
+# tuned independently.
+_SCREEN_TIME_AI_KEYWORDS: list[str] = [
+    "screen time",
+    "screen-time",
+    "device time",
+    "device limit",
+    "device-free",
+    "cell phone ban",
+    "cellphone ban",
+    "phone-free",
+    "phone free",
+    "bell to bell",
+    "bell-to-bell",
+    "ai policy",
+    "ai guidance",
+    "ai moratorium",
+    "generative ai",
+    "artificial intelligence",
+    "chatgpt",
+]
+
+_RELEVANCE_KEYWORDS: list[str] = [*_LITERACY_KEYWORDS, *_SCREEN_TIME_AI_KEYWORDS]
+
 
 def _is_relevant(text: str) -> bool:
-    """Return True if *text* contains at least one literacy-related keyword."""
+    """Return True if *text* contains at least one literacy / screen-time / AI keyword."""
     lower = text.lower()
-    return any(kw in lower for kw in _LITERACY_KEYWORDS)
+    return any(kw in lower for kw in _RELEVANCE_KEYWORDS)
 
 
 # ---------------------------------------------------------------------------

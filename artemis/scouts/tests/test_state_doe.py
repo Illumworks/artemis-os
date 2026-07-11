@@ -345,6 +345,41 @@ def test_state_doe_sources_has_doe_rss_or_scrape_for_each() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 2026-07-10 national broadening — Screen-Time Watch scout coverage expansion
+# ---------------------------------------------------------------------------
+
+
+def test_state_doe_sources_covers_screentime_priority_states() -> None:
+    """STATE_DOE_SOURCES now covers the Screen-Time Watch priority state list.
+
+    CA, OR, NY, SC, UT, AL, OH, TN, MS, NC, CO, LA, VA were added on top of the
+    original seven (FL, IN, MD, MO, MI, IL, TX).
+    """
+    priority = {
+        "CA", "OR", "NY", "FL", "SC", "MO", "TX", "UT", "AL", "MD",
+        "OH", "TN", "MS", "NC", "CO", "LA", "VA",
+    }
+    assert priority.issubset(set(STATE_DOE_SOURCES.keys()))
+    assert len(STATE_DOE_SOURCES) >= 20
+
+
+def test_state_doe_sources_new_states_have_doe_rss_and_governor_rss() -> None:
+    """Newly added states carry both a doe_rss and governor_rss entry (not just scrape)."""
+    new_states = {"CA", "OR", "NY", "SC", "UT", "AL", "OH", "TN", "MS", "NC", "CO", "LA", "VA"}
+    for state in new_states:
+        config = STATE_DOE_SOURCES[state]
+        assert config.get("doe_rss"), f"{state} missing doe_rss"
+        assert config.get("governor_rss"), f"{state} missing governor_rss"
+
+
+async def test_gather_findings_returns_list_for_new_priority_state() -> None:
+    """StateDoEScout runs cleanly (no crash) for a newly added priority state."""
+    scout = _make_scout(priority_states=["CA"])
+    findings = await scout._gather_findings()
+    assert isinstance(findings, list)
+
+
+# ---------------------------------------------------------------------------
 # scout.py tests
 # ---------------------------------------------------------------------------
 

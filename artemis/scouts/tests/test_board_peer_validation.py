@@ -459,6 +459,21 @@ def test_default_watch_list_shape() -> None:
         assert entry["district_id"] and entry["state"] and entry["boarddocs_url"]
 
 
+def test_default_watch_list_broadened_2026_07_10() -> None:
+    """Starter seed grew from 3 to a 'handful of large districts' across more states."""
+    assert len(_DEFAULT_PEER_WATCH_LIST) >= 10
+
+    district_ids = [d["district_id"] for d in _DEFAULT_PEER_WATCH_LIST]
+    assert len(district_ids) == len(set(district_ids))  # no duplicates
+
+    states = {d["state"] for d in _DEFAULT_PEER_WATCH_LIST}
+    # Broadened beyond the original FL/TX/IN trio.
+    assert {"FL", "TX", "IN", "CA", "OH", "VA", "NY", "LA", "CO", "UT", "SC"}.issubset(states)
+
+    urls = [d["boarddocs_url"] for d in _DEFAULT_PEER_WATCH_LIST]
+    assert all(u.startswith("https://go.boarddocs.com/") for u in urls)
+
+
 def test_load_watch_list_roundtrip(tmp_path: Any) -> None:
     seed = [
         {"district_id": "CA_x", "state": "CA", "boarddocs_url": "https://go.boarddocs.com/ca/x/Board.nsf/Public"},

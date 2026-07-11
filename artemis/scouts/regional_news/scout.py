@@ -78,6 +78,14 @@ class RegionalNewsScout(BaseScout):
     news_api_key:
         newsapi.org API key.  Defaults to the ``NEWS_API_KEY`` environment
         variable.  When empty, news article fetching is skipped gracefully.
+    query_topics:
+        Override the OR-group of topic terms ANDed with each district name in
+        the newsapi query (default: literacy + screen-time/AI-in-schools —
+        see ``regional_news.client.TOPIC_KEYWORDS``).
+    news_domains:
+        Optional newsapi ``domains`` filter (e.g.
+        ``regional_news.client.NEWS_OUTLET_DOMAINS``) to prioritize the major
+        ed-policy outlets. ``None`` (default) leaves news search unrestricted.
     _http_client:
         Inject a pre-built ``ScoutHttpClient`` — intended for tests only.
     _news_fetcher:
@@ -96,6 +104,8 @@ class RegionalNewsScout(BaseScout):
         *,
         watch_districts: list[dict[str, Any]] | None = None,
         news_api_key: str = "",
+        query_topics: list[str] | None = None,
+        news_domains: list[str] | None = None,
         _http_client: ScoutHttpClient | None = None,
         _news_fetcher: Any = None,
         _board_fetcher: Any = None,
@@ -106,6 +116,8 @@ class RegionalNewsScout(BaseScout):
             watch_districts if watch_districts is not None else list(_DEFAULT_WATCH_DISTRICTS)
         )
         self._news_api_key: str = news_api_key or os.getenv("NEWS_API_KEY", "")
+        self._query_topics: list[str] | None = query_topics
+        self._news_domains: list[str] | None = news_domains
         self._http: ScoutHttpClient = _http_client or ScoutHttpClient()
         # Injected fetchers (fall back to real implementations)
         self._news_fetcher: Any = _news_fetcher or fetch_news_articles
@@ -150,10 +162,18 @@ class RegionalNewsScout(BaseScout):
 
         # 1. News articles
         district_name: str = district.get("district_name") or district.get("district_id", "")
+        news_kwargs: dict[str, Any] = {"api_key": self._news_api_key}
+        # Only forwarded when explicitly set — keeps the call signature
+        # backward-compatible with injected test fetchers that don't accept
+        # query_topics/domains.
+        if self._query_topics is not None:
+            news_kwargs["query_topics"] = self._query_topics
+        if self._news_domains is not None:
+            news_kwargs["domains"] = self._news_domains
         articles = await self._news_fetcher(
             district_name,
             self._http,
-            api_key=self._news_api_key,
+            **news_kwargs,
         )
         for article in articles:
             finding = article_to_finding(article, district)

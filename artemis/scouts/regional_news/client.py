@@ -38,11 +38,67 @@ LITERACY_KEYWORDS: list[str] = [
     "board approved",
 ]
 
+# Screen-time / AI-in-schools terms — broadens the news beat beyond literacy so
+# district-level searches also surface device-policy and AI-adoption coverage.
+# Additive to LITERACY_KEYWORDS (never replaces it) so existing literacy recall
+# is unaffected; used by both the newsapi query builder and the post-fetch
+# relevance filter below. Data-driven: tune here, no code change needed.
+SCREEN_TIME_AI_KEYWORDS: list[str] = [
+    "screen time",
+    "screen-time",
+    "device time",
+    "device limit",
+    "device-free",
+    "cell phone ban",
+    "cellphone ban",
+    "phone-free",
+    "phone free",
+    "bell to bell",
+    "bell-to-bell",
+    "ai policy",
+    "ai guidance",
+    "ai moratorium",
+    "generative ai",
+    "artificial intelligence",
+    "chatgpt",
+]
+
+# Combined relevance/query vocabulary — literacy (original beat) + screen-time
+# and AI-in-schools (this broadening pass). Kept as one list so the newsapi
+# query OR-group and the post-fetch keyword filter never drift apart.
+TOPIC_KEYWORDS: list[str] = [*LITERACY_KEYWORDS, *SCREEN_TIME_AI_KEYWORDS]
+
+# Major ed-policy outlets that actually cover the screen-time / AI-in-schools
+# beat nationally (vs. literacy-only trade press). Passed as newsapi's
+# `domains` filter when the caller opts in (see `domains` param below) — data,
+# not code, so Angela/Callie can retune the outlet list without a deploy.
+NEWS_OUTLET_DOMAINS: list[str] = [
+    "chalkbeat.org",
+    "edsource.org",
+    "k12dive.com",
+    "edweek.org",
+    "govtech.com",
+    "the74million.org",
+    "hechingerreport.org",
+    "axios.com",
+]
+
 
 def _contains_literacy_keyword(text: str) -> bool:
-    """Return True if *text* contains at least one literacy keyword."""
+    """Return True if *text* contains at least one literacy OR screen-time/AI keyword.
+
+    Name kept for backward compatibility with existing callers; the keyword
+    set was broadened (2026-07-10) to include SCREEN_TIME_AI_KEYWORDS.
+    """
     lower = text.lower()
-    return any(kw in lower for kw in LITERACY_KEYWORDS)
+    return any(kw in lower for kw in TOPIC_KEYWORDS)
+
+
+def _build_query(district_name: str, query_topics: list[str] | None) -> str:
+    """Compose the newsapi `q` expression: district name AND (topic OR topic OR ...)."""
+    topics = query_topics if query_topics is not None else TOPIC_KEYWORDS
+    topic_group = " OR ".join(topics)
+    return f'"{district_name}" AND ({topic_group})'
 
 
 async def fetch_news_articles(
@@ -50,10 +106,24 @@ async def fetch_news_articles(
     http: ScoutHttpClient,
     *,
     api_key: str = "",
+    query_topics: list[str] | None = None,
+    domains: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Search newsapi.org for district education news.
 
     Returns [] gracefully when api_key is empty or on any error.
+
+    Parameters
+    ----------
+    query_topics:
+        Override the OR-group of topic terms ANDed with the district name.
+        Defaults to :data:`TOPIC_KEYWORDS` (literacy + screen-time/AI).
+    domains:
+        Optional comma-joined newsapi `domains` filter — restricts results to
+        the given outlet domains (e.g. :data:`NEWS_OUTLET_DOMAINS`). ``None``
+        (default) leaves the search unrestricted across all newsapi sources,
+        preserving existing per-district recall (e.g. local papers not on the
+        national ed-policy beat).
 
     Each returned article dict has keys:
     title, description, url, published_at, source_name, content
@@ -62,16 +132,15 @@ async def fetch_news_articles(
         _logger.debug("fetch_news_articles: NEWS_API_KEY is not set — returning []")
         return []
 
-    query = (
-        f'"{district_name}" AND '
-        "(literacy OR reading OR dyslexia OR curriculum OR superintendent OR RFP)"
-    )
+    query = _build_query(district_name, query_topics)
     params: dict[str, str] = {
         "q": query,
         "sortBy": "publishedAt",
         "language": "en",
         "apiKey": api_key,
     }
+    if domains:
+        params["domains"] = ",".join(domains)
 
     try:
         resp = await http.get(_NEWSAPI_URL, params=params)

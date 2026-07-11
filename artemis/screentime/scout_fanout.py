@@ -1,17 +1,35 @@
 """National, screen-time-tuned scout fan-out — read-only, in-process.
 
 We REUSE the existing scouts (``legislative``, ``state_doe``, ``board_minutes``,
-``regional_news``) WITHOUT editing them. Each scout exposes ``_gather_findings()``
-returning raw finding dicts; we call that directly (in-process) so nothing is
-POSTed to the marketing ``/api/scouts/runs`` ingest path — our findings flow into
-the isolated ``screentime_*`` tables instead.
+``regional_news``, ``board_peer_validation``) WITHOUT editing their core
+behavior. Each scout exposes ``_gather_findings()`` returning raw finding
+dicts; we call that directly (in-process) so nothing is POSTed to the
+marketing ``/api/scouts/runs`` ingest path — our findings flow into the
+isolated ``screentime_*`` tables instead.
 
 National scope:
   - legislative + state_doe accept ``priority_states`` → we pass all 50 + DC.
+    state_doe's own source config (``STATE_DOE_SOURCES``) now covers 20
+    states (2026-07-10 broadening); a state without a source entry yields []
+    gracefully.
   - legislative also accepts ``keywords`` → we pass screen-time terms (instructional
     screen-time limits + evidence-based-tool exemptions; NOT cellphone bans).
-  - board_minutes + regional_news are watch-list driven (no national source list
-    exists), so they run on their default national-ish watch lists, read-only.
+  - regional_news is watch-list driven (no national district list exists) but
+    NOW also accepts ``query_topics``/``news_domains`` (2026-07-10) — we pass
+    the broadened screen-time/AI-in-schools keyword set + the major ed-policy
+    outlet list so its per-district newsapi queries surface this beat, not
+    just literacy.
+  - board_minutes runs on its default watch list, read-only.
+  - board_peer_validation (2026-07-10) runs on its own starter district seed
+    list — it already classifies screentime AND ai_in_schools mentions (see
+    ``board_minutes.classifier.TOPICS``); wired in here so those findings
+    reach the screentime pipeline. NOTE: the topic gate below (topic_config.py)
+    only keeps items with an explicit screen/device-time anchor — an
+    ai_in_schools-only peer finding (no screentime anchor) will still be
+    dropped by that gate. Broadening the topic gate itself to admit
+    AI-in-schools-only signals is a separate, deliberate product-scope call
+    (see topic_config.py's documented "NOT cellphone-ban terms — a different
+    project" scoping) and was NOT made here — flagged for the reviewer.
 
 Every scout is wrapped in try/except: a failing source NEVER breaks the sweep
 (failure-safe). ``run_once`` is not used (it POSTs); we only call the pure-ish
@@ -115,9 +133,21 @@ async def _gather_board_minutes() -> list[dict[str, Any]]:
 
 
 async def _gather_regional_news() -> list[dict[str, Any]]:
+    from artemis.scouts.regional_news.client import NEWS_OUTLET_DOMAINS, TOPIC_KEYWORDS
     from artemis.scouts.regional_news.scout import RegionalNewsScout
 
-    scout = RegionalNewsScout(_dry_run_config())
+    scout = RegionalNewsScout(
+        _dry_run_config(),
+        query_topics=TOPIC_KEYWORDS,
+        news_domains=NEWS_OUTLET_DOMAINS,
+    )
+    return await scout._gather_findings()
+
+
+async def _gather_board_peer_validation() -> list[dict[str, Any]]:
+    from artemis.scouts.board_minutes.peer_scout import BoardPeerValidationScout
+
+    scout = BoardPeerValidationScout(_dry_run_config())
     return await scout._gather_findings()
 
 
@@ -128,6 +158,7 @@ _SCOUT_GATHERERS: dict[str, Any] = {
     "state_doe": lambda states: _gather_state_doe(states),
     "board_minutes": lambda _states: _gather_board_minutes(),
     "regional_news": lambda _states: _gather_regional_news(),
+    "board_peer_validation": lambda _states: _gather_board_peer_validation(),
 }
 
 

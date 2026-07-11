@@ -45,9 +45,13 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Coverage — starter watch list
 # ---------------------------------------------------------------------------
-# Small REAL starter set (BoardDocs slugs verified 2026-06-16 in the v1 watch
-# list).  The national prioritized seed list (~500–800 districts) is supplied
-# later via ``load_watch_list(path)`` — same dict shape, one JSON file.
+# Small REAL starter set. The original three (BoardDocs slugs verified
+# 2026-06-16 in the v1 watch list) plus a 2026-07-10 broadening pass — each
+# added slug was live-checked (HTTP 200 + page-title/body content match to the
+# named district) as part of the Screen-Time Watch scout-coverage expansion,
+# picking large districts across priority states that had no board-level
+# coverage yet. The national prioritized seed list (~500–800 districts) is
+# supplied later via ``load_watch_list(path)`` — same dict shape, one JSON file.
 _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
     {
         "district_id": "FL_pinellas",
@@ -63,6 +67,67 @@ _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
         "district_id": "IN_msd_pike",
         "state": "IN",
         "boarddocs_url": "https://go.boarddocs.com/in/pike/Board.nsf/Public",
+    },
+    # --- 2026-07-10 broadening: verified 200 + title/body match ---
+    {
+        "district_id": "CA_san_diego",
+        "state": "CA",
+        # San Diego Unified School District, Board of Education.
+        "boarddocs_url": "https://go.boarddocs.com/ca/sandi/Board.nsf/Public",
+    },
+    {
+        "district_id": "TX_humble",
+        "state": "TX",
+        # Humble Independent School District (Houston metro).
+        "boarddocs_url": "https://go.boarddocs.com/tx/hisd/Board.nsf/Public",
+    },
+    {
+        "district_id": "OH_columbus",
+        "state": "OH",
+        # Columbus City Schools.
+        "boarddocs_url": "https://go.boarddocs.com/oh/columbus/Board.nsf/Public",
+    },
+    {
+        "district_id": "VA_fauquier",
+        "state": "VA",
+        # Fauquier County Public Schools.
+        "boarddocs_url": "https://go.boarddocs.com/va/fcps/Board.nsf/Public",
+    },
+    {
+        "district_id": "NY_buffalo",
+        "state": "NY",
+        # Buffalo City School District.
+        "boarddocs_url": "https://go.boarddocs.com/ny/buffalo/Board.nsf/Public",
+    },
+    {
+        "district_id": "LA_jefferson_parish",
+        "state": "LA",
+        # Jefferson Parish Public School System.
+        "boarddocs_url": "https://go.boarddocs.com/la/jppss/Board.nsf/Public",
+    },
+    {
+        "district_id": "CO_aurora",
+        "state": "CO",
+        # Aurora Public Schools.
+        "boarddocs_url": "https://go.boarddocs.com/co/aurora/Board.nsf/Public",
+    },
+    {
+        "district_id": "UT_canyons",
+        "state": "UT",
+        # Canyons School District.
+        "boarddocs_url": "https://go.boarddocs.com/ut/canyons/Board.nsf/Public",
+    },
+    {
+        "district_id": "SC_charleston",
+        "state": "SC",
+        # Charleston County School District.
+        "boarddocs_url": "https://go.boarddocs.com/sc/charleston/Board.nsf/Public",
+    },
+    {
+        "district_id": "SC_horry",
+        "state": "SC",
+        # Horry County Schools.
+        "boarddocs_url": "https://go.boarddocs.com/sc/horry/Board.nsf/Public",
     },
 ]
 

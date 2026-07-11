@@ -28,8 +28,10 @@ scouts:
     enabled: false
     interval_minutes: 240  # 4h poll
 
-  # D5 — State DoE Scout (RSS + scraping + state-board PDFs, 7 priority states).
-  # No extra env vars required; scraping is unauthenticated.
+  # D5 — State DoE Scout (RSS + scraping + state-board PDFs).
+  # Broadened 2026-07-10: STATE_DOE_SOURCES now covers 20 states (was 7) —
+  # see artemis/scouts/state_doe/sources.py. No extra env vars required;
+  # scraping is unauthenticated.
   state_doe_scout:
     enabled: false
     interval_minutes: 1440  # daily
@@ -54,6 +56,10 @@ scouts:
 
   # D9 — Regional News Scout (News API + board minutes + state DoE, multi-source).
   # Requires NEWS_API_KEY for news API access (graceful no-op when absent).
+  # Broadened 2026-07-10: query/relevance keywords now cover screen-time and
+  # AI-in-schools terms (not just literacy) and the Screen-Time Watch fan-out
+  # passes a major-ed-policy-outlet domain filter — see
+  # artemis/scouts/regional_news/client.py (TOPIC_KEYWORDS, NEWS_OUTLET_DOMAINS).
   regional_news_scout:
     enabled: false
     interval_minutes: 1440  # daily
@@ -68,7 +74,12 @@ scouts:
 
   # D6b — Board Peer-Validation Scout (BoardDocs item bodies + LLM mention/
   # sentiment classifier). Non-customer districts discussing Amira/screentime/
-  # AI-in-schools. Customer exclusion list is injected (Salesforce later).
+  # AI-in-schools. Customer exclusion list is injected (Salesforce later —
+  # StaticCustomerExclusions() defaults to an EMPTY set until wired, so a
+  # customer district could surface until that lands; downstream review
+  # catches these). Enabled 2026-07-10 with a 13-district REAL starter seed
+  # list (BoardDocs-verified) — see board_minutes/peer_scout.py. Also wired
+  # into the Screen-Time Watch national fan-out (artemis/screentime/scout_fanout.py).
   board_peer_validation_scout:
-    enabled: false
+    enabled: true
     interval_minutes: 10080  # weekly
