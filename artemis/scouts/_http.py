@@ -5,6 +5,10 @@ All external HTTP in scouts should go through ``ScoutHttpClient``.  It provides:
 - Per-client rate limiting (token bucket via asyncio.Lock)
 - Automatic retry with configurable back-off on transient failures
   (5xx, 429, and network-level errors)
+- SSRF egress guard: every outgoing request URL is validated against
+  ``artemis.egress_guard`` (blocks loopback / RFC-1918 / link-local /
+  other non-public destinations). Scout URLs come from external, sometimes
+  attacker-influenceable data, so this is on by default.
 - Context-manager lifecycle around the inner ``httpx.AsyncClient``
 """
 
@@ -16,6 +20,8 @@ from collections.abc import Sequence
 from typing import Any
 
 import httpx
+
+from artemis.egress_guard import httpx_egress_hook
 
 _logger = logging.getLogger(__name__)
 
@@ -63,8 +69,14 @@ class ScoutHttpClient:
         determines maximum retry count.
     retry_statuses:
         HTTP status codes that trigger a retry.
+    guard_egress:
+        When True (default), every outgoing request URL is validated by the
+        SSRF egress guard (blocks loopback / private / link-local hosts,
+        including on redirect hops). Only disable for clients that must talk
+        to explicitly-configured internal services.
     _inner:
-        Inject a pre-built ``httpx.AsyncClient`` — intended for tests only.
+        Inject a pre-built ``httpx.AsyncClient`` — intended for tests only
+        (bypasses the egress guard).
     """
 
     def __init__(
@@ -76,12 +88,14 @@ class ScoutHttpClient:
         rate_limit: float = 5.0,
         backoff: Sequence[float] = _DEFAULT_BACKOFF,
         retry_statuses: frozenset[int] = _DEFAULT_RETRY_STATUSES,
+        guard_egress: bool = True,
         _inner: httpx.AsyncClient | None = None,
     ) -> None:
         self._client: httpx.AsyncClient = _inner or httpx.AsyncClient(
             base_url=base_url,
             headers=headers or {},
             timeout=timeout,
+            event_hooks={"request": [httpx_egress_hook()]} if guard_egress else None,
         )
         self._limiter = _RateLimiter(rate_limit)
         self._backoff = tuple(backoff)

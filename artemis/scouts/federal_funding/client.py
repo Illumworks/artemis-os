@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from datetime import date, timedelta
 from typing import Any
 
+import defusedxml.ElementTree as SafeET
 from pydantic import BaseModel, ConfigDict
 
 from artemis.scouts._http import ScoutHttpClient
@@ -269,8 +270,9 @@ class EdGovRssClient:
             return []
 
         try:
-            root = ET.fromstring(resp.text)
-        except ET.ParseError:
+            # defusedxml: rejects entity/DTD tricks in untrusted feed XML.
+            root = SafeET.fromstring(resp.text)
+        except (ET.ParseError, ValueError):
             _logger.critical("EdGovRssClient: RSS XML parse failure — signals may be missed")
             return []
 

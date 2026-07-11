@@ -26,7 +26,7 @@ from artemis.automations.scheduler import (
 )
 from artemis.builder.routes import agents_subresource_router as builder_agents_router
 from artemis.builder.routes import router as builder_router
-from artemis.config import settings
+from artemis.config import assert_production_auth_config, settings
 from artemis.connectors.routes import agents_router as connectors_agents_router
 from artemis.connectors.routes import router as connectors_router
 from artemis.integrations.token_refresh.scheduler import (
@@ -110,6 +110,10 @@ PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # SECURITY: refuse to boot a production deploy whose identity layer would
+    # fall open to the dev shim (cf_access_enabled defaults False). No-op for
+    # env=development/test.
+    assert_production_auth_config()
     warn_if_multiworker_collab(settings.uvicorn_workers)
     # --- TEMP DIAG: event-loop freeze capture for the asyncpg/instability bug.
     # Remove with artemis/loop_diag.py once the bug is closed. ---

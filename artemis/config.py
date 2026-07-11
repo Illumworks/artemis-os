@@ -511,3 +511,38 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+class ProductionAuthConfigError(RuntimeError):
+    """Raised at startup when a production deploy would boot unauthenticated.
+
+    ``cf_access_enabled`` defaults to ``False``; if a production deploy forgets
+    to set it, ``resolve_request_identity`` silently falls back to the dev-shim
+    identity and every endpoint runs UNAUTHENTICATED. This error makes that
+    misconfiguration a refusal-to-boot instead of a silent fail-open.
+    """
+
+
+def assert_production_auth_config(cfg: Settings | None = None) -> None:
+    """Refuse to boot a production deploy whose identity layer would fall open.
+
+    No-op unless ``env == "production"`` — development and test boots are
+    intentionally unaffected (the dev shim is the designed behavior there).
+    Called from the app lifespan before anything else starts.
+    """
+    active = cfg if cfg is not None else settings
+    if active.env != "production":
+        return
+    problems: list[str] = []
+    if not active.cf_access_enabled:
+        problems.append("ARTEMIS_CF_ACCESS_ENABLED must be true")
+    if not active.cf_access_team_domain.strip():
+        problems.append("ARTEMIS_CF_ACCESS_TEAM_DOMAIN is not set")
+    if not active.cf_access_aud.strip():
+        problems.append("ARTEMIS_CF_ACCESS_AUD is not set")
+    if problems:
+        raise ProductionAuthConfigError(
+            "Refusing to start: ARTEMIS_ENV=production but Cloudflare Access identity "
+            "is not fully configured — the app would serve every request with the "
+            "unauthenticated dev-shim identity. Fix: " + "; ".join(problems)
+        )

@@ -70,7 +70,8 @@ async def _fetch_news(district_key: str, signal: dict[str, Any] | None) -> list[
 
     try:
         import urllib.parse
-        import xml.etree.ElementTree as ET
+
+        import defusedxml.ElementTree as SafeET  # defused: untrusted RSS
 
         encoded = urllib.parse.quote_plus(query)
         url = f"https://news.google.com/rss/search?q={encoded}&hl=en-US&gl=US&ceid=US:en"
@@ -78,7 +79,7 @@ async def _fetch_news(district_key: str, signal: dict[str, Any] | None) -> list[
             resp = await http.get(url)
         if resp.status_code != 200:
             return []
-        root = ET.fromstring(resp.text)
+        root = SafeET.fromstring(resp.text)
         channel = root.find("channel") or root
         items: list[dict[str, Any]] = []
         for item_el in channel.findall("item")[:15]:

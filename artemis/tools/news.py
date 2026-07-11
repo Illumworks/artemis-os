@@ -16,6 +16,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Any
 
+import defusedxml.ElementTree as SafeET
+
 from artemis.agent.types import Tool, ToolImpl
 from artemis.scouts._http import ScoutHttpClient
 from artemis.tools.context import ToolContext
@@ -52,8 +54,10 @@ def _parse_google_news_rss(xml_text: str) -> list[dict[str, Any]]:
     if not xml_text:
         return []
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
+        # defusedxml: rejects entity/DTD tricks in untrusted feed XML
+        # (DefusedXmlException subclasses ValueError).
+        root = SafeET.fromstring(xml_text)
+    except (ET.ParseError, ValueError) as exc:
         logger.warning("news_api.search: malformed RSS XML — %s", exc)
         return []
 

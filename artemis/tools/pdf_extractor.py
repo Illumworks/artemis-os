@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from artemis.agent.types import Tool, ToolImpl
+from artemis.egress_guard import EgressBlockedError, async_validate_url
 from artemis.scouts._http import ScoutHttpClient
 from artemis.scouts._pdf import extract_text
 from artemis.tools.context import ToolContext
@@ -43,6 +44,14 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
         url: str = arguments.get("url", "")
         if not url:
             return "ERROR: 'url' argument is required"
+        # SSRF guard: the URL is attacker-influenceable (agents pass URLs found
+        # in external content). ScoutHttpClient re-checks every request/redirect
+        # hop; this explicit check just produces a clear error string.
+        try:
+            await async_validate_url(url)
+        except EgressBlockedError as exc:
+            logger.warning("pdf_extractor.extract(%s): blocked — %s", url, exc)
+            return f"ERROR: {exc}"
         try:
             async with ScoutHttpClient(timeout=30.0) as http:
                 resp = await http.get(url)

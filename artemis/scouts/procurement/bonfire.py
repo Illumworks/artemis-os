@@ -42,6 +42,8 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+import defusedxml.ElementTree as SafeET
+
 from artemis.scouts._http import ScoutHttpClient
 
 _logger = logging.getLogger(__name__)
@@ -223,8 +225,9 @@ def _parse_rss(
         Returns ``[]`` on any parse error.
     """
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
+        # defusedxml: rejects entity/DTD tricks in untrusted feed XML.
+        root = SafeET.fromstring(xml_text)
+    except (ET.ParseError, ValueError) as exc:
         _logger.warning("Bonfire %s: RSS parse error: %s", slug, exc)
         return []
 

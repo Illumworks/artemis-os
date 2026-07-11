@@ -11,6 +11,8 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import Any
 
+import defusedxml.ElementTree as SafeET
+
 from artemis.scouts._http import ScoutHttpClient
 from artemis.scouts._pdf import extract_text
 
@@ -157,8 +159,9 @@ def _parse_rss_xml(xml_text: str, *, source_type: str) -> list[dict[str, Any]]:
     if not xml_text:
         return []
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
+        # defusedxml: rejects entity/DTD tricks in untrusted feed XML.
+        root = SafeET.fromstring(xml_text)
+    except (ET.ParseError, ValueError) as exc:
         _logger.warning("_parse_rss_xml: malformed XML — %s", exc)
         return []
 
