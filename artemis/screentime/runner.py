@@ -84,6 +84,7 @@ async def run_screentime_pipeline(
     *,
     findings: list[dict[str, Any]] | None = None,
     states: list[str] | None = None,
+    deliver_alerts: bool = True,
 ) -> RunReport:
     """Execute one Screen-Time Watch sweep against *session*. Never raises.
 
@@ -98,6 +99,12 @@ async def run_screentime_pipeline(
         fixtured runs). When None, the national fan-out runs.
     states:
         Override the configured state scope (tests). None → settings/national.
+    deliver_alerts:
+        When False, the per-signal big-move Slack alert hook is SUPPRESSED even
+        if ``screentime_report_channel`` is set. The scheduled COLLECTION cron
+        (``run_scheduled``) passes False — owner decision: collect silently, no
+        auto-push; Slack delivery is a separate, deliberate step. Defaults True
+        so explicit/manual callers keep the existing behavior.
     """
     report = RunReport()
     try:
@@ -194,7 +201,7 @@ async def run_screentime_pipeline(
                 try:
                     from artemis.config import settings as _settings
 
-                    if _settings.screentime_report_channel:
+                    if deliver_alerts and _settings.screentime_report_channel:
                         from artemis.screentime.reporting import (
                             maybe_alert_big_move_by_hash,
                         )
@@ -242,7 +249,10 @@ async def run_scheduled() -> dict[str, Any]:
         from artemis.db import SessionLocal
 
         async with SessionLocal() as session:
-            report = await run_screentime_pipeline(session)
+            # COLLECTION ONLY — deliver_alerts=False suppresses any Slack push even
+            # though screentime_report_channel is set. Owner decision: no auto-push;
+            # Callie reports on-demand + a deliberate digest can be wired separately.
+            report = await run_screentime_pipeline(session, deliver_alerts=False)
             await session.commit()
             _logger.info("screentime: scheduled run complete: %s", report.as_dict())
             return report.as_dict()
