@@ -27,7 +27,8 @@ from artemis.screentime.models import LEVEL_DISTRICT, LEVEL_STATE
 _logger = logging.getLogger(__name__)
 
 # Maps each scout's emitted sourceType / discoveredBy to our canonical
-# source_type vocabulary (legislative | state_doe | board_minutes | regional_news).
+# source_type vocabulary (legislative | state_doe | board_minutes |
+# regional_news | national_news).
 _SOURCE_TYPE_MAP: dict[str, str] = {
     "legiscan": "legislative",
     "legislative_scout": "legislative",
@@ -40,6 +41,10 @@ _SOURCE_TYPE_MAP: dict[str, str] = {
     "regional_news": "regional_news",
     "regional_news_scout": "regional_news",
     "newsapi": "regional_news",
+    # 2026-07-10: screentime-owned 50-state news gatherer (national_news.py) —
+    # distinct from regional_news (which is watch-list/district driven).
+    "national_news": "national_news",
+    "national_news_scout": "national_news",
 }
 
 # --- "real move" status detection -------------------------------------------

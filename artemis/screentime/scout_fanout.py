@@ -35,6 +35,14 @@ National scope:
     STANCE tuning for AI-policy items is deliberately NOT done here — that is
     pending a review with Angela (see topic_config.py's docstring) — AI
     findings land with the existing best-effort stance for now.
+  - national_news (2026-07-10) is a NEW, screentime-owned gatherer — per-state
+    Google News RSS coverage of screen-time + AI-in-schools policy (see
+    ``artemis.screentime.national_news``). This fills the NEWS gap: legislative
+    is national but bill-only; national_news surfaces agency guidance, board
+    actions, and AI-adoption stories that never became a bill, one query per
+    state (all 50 + DC by default every run — Google News RSS is lightweight).
+    Deliberately NOT added to scouts/state_doe (that package is shared with the
+    literacy-scoped marketing scout).
 
 Every scout is wrapped in try/except: a failing source NEVER breaks the sweep
 (failure-safe). ``run_once`` is not used (it POSTs); we only call the pure-ish
@@ -170,6 +178,22 @@ async def _gather_board_peer_validation() -> list[dict[str, Any]]:
     return await scout._gather_findings()
 
 
+async def _gather_national_news(states: list[str]) -> list[dict[str, Any]]:
+    """Per-state Google News RSS coverage of screen-time + AI-in-schools policy.
+
+    Screentime-owned (artemis.screentime.national_news) — NOT the shared
+    scouts/state_doe package. Fills the news gap LegiScan (bill tracking) can't:
+    state agency guidance, board actions, and AI-adoption stories that never
+    became a bill. Default (states_per_run=None): sweeps every state passed in
+    every run — Google News RSS is lightweight enough not to need throttling by
+    default; see national_news.py for the optional rotation/cursor mode.
+    """
+    from artemis.screentime.national_news import gather_national_policy_news
+
+    findings, _next_cursor = await gather_national_policy_news(states)
+    return findings
+
+
 # scout label → coroutine factory. Kept as a dict so tests can monkeypatch a
 # single source or inject fakes.
 _SCOUT_GATHERERS: dict[str, Any] = {
@@ -178,6 +202,7 @@ _SCOUT_GATHERERS: dict[str, Any] = {
     "board_minutes": lambda _states: _gather_board_minutes(),
     "regional_news": lambda _states: _gather_regional_news(),
     "board_peer_validation": lambda _states: _gather_board_peer_validation(),
+    "national_news": lambda states: _gather_national_news(states),
 }
 
 

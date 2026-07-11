@@ -63,7 +63,7 @@ class ScreentimeSignal(Base):
     amira_angle: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # legislative | state_doe | board_minutes | regional_news
+    # legislative | state_doe | board_minutes | regional_news | national_news
     source_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="regional_news")
 
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
