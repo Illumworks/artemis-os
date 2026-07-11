@@ -16,6 +16,7 @@ from artemis.floating_artemis.tools.granola_tools import register_granola_tools
 from artemis.floating_artemis.tools.jira_tools import register_jira_tools
 from artemis.floating_artemis.tools.marketing import register_marketing_tools
 from artemis.floating_artemis.tools.okr import register_okr_tools
+from artemis.floating_artemis.tools.screentime_tools import register_screentime_report_tools
 from artemis.floating_artemis.tools.system import register_system_tools
 from artemis.floating_artemis.tools.writing_rules import register_writing_rules_tools
 from artemis.integrations.gcal.tools import register_gcal_tools
@@ -139,4 +140,8 @@ def build_authorized_tool_registry(
     # Callie is the face for Argus; no other agent should see this tool.
     if normalized_agent == "callie":
         register_argus_tools(registry)
+        # On-demand Screen-Time & AI-policy report: Callie only, read-only,
+        # fires on request (no scheduler, no auto-push). See
+        # artemis/screentime/callie_report.py + tools/screentime_tools.py.
+        register_screentime_report_tools(registry)
     return registry
