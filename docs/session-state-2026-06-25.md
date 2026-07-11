@@ -24,8 +24,9 @@ Companion to [docs/fable-audit-roadmap.md](fable-audit-roadmap.md) (full priorit
 4. **Report card grades fixtures today.** To get real numbers on Artemis/Callie/Ares, feed real captured outputs — a clean follow-up behind the existing API.
 5. **Tableau screen-time tracker (Whiteboard Advisors):** decided NOT to scrape (their product, downloads disabled). Broadening our own scouts instead (in flight). Revisit only if we ever want their curation specifically.
 
-## 🔄 In flight
-- **Broaden Screen-Time scout coverage** (worker, branch `lead/broaden-scouts`): expanding news outlets + state-DOE states + enabling the board scout with a starter seed. Lead will rebase past the security change (shared file: scouts/state_doe/sources.py) and verify on landing.
+## 🟡 Built & verified, HELD for Jon's go (branch `lead/broaden-scouts`, commit 2e91a20)
+Broaden Screen-Time scout coverage — news outlets (Chalkbeat/EdSource/K-12 Dive/EdWeek/GovTech/The 74/Hechinger/Axios) + keywords; state-DOE 7→20 states; board scout wired into the fan-out with a 13-district live-verified seed. Additive, 594 tests on isolated DB. NOT merged — held because it (a) increases live scout activity/cost, (b) enables the board scout before the Salesforce customer-exclusion exists (would flag customers as "peer validation"), and (c) surfaced the scope decision below. **Merge needs a small manual resolve in `scouts/state_doe/sources.py`** (security's defusedxml change touches the same file).
+  - **DECISION FOR JON — topic-gate scope:** `artemis/screentime/topic_config.py` deliberately gates to *screen-time only* and DROPS AI-only findings (a prior "different project" decision). The COO report is "Screen Time **& AI**," so the new AI-in-schools coverage won't surface until this gate is widened. Widen it (include AI-in-schools) or keep Screen-Time strictly screen-time? Jon's call. Also decide whether to keep the board scout enabled (recommend: leave DISABLED until Salesforce list).
 
 ## ⏭️ Deferred (in the roadmap)
 Memory embedding refresh (MiniLM→bge) + eval A/B; marketing gate-timeout (DB-backed); frontend XSS-escaping unify; scout dedup cursor; Forge items (handed to the app-seat Opus); Callie self-serve COO report (Jon has a manual report for now).
