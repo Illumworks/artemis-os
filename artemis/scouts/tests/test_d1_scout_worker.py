@@ -370,14 +370,16 @@ def test_load_config_dry_run_not_active_without_env(
     assert cfg.dry_run is False
 
 
-def test_load_config_board_peer_validation_scout_enabled_general_mode() -> None:
-    """The real config/scouts.yaml: board_peer_validation_scout is enabled
-    (2026-07-11 board-meeting scout go-live, seeded ahead of the delayed
-    Salesforce customer list — general board-intel mode; see the scout's
-    module docstring / peer_scout.py for the exclusion-provider deferral)."""
+def test_load_config_board_peer_validation_scout_disabled_for_standalone() -> None:
+    """The real config/scouts.yaml: board_peer_validation_scout is DISABLED for
+    the standalone scout scheduler (which would emit into the marketing
+    signal_queue → possible Callie auto-push, which the owner forbids). Board
+    coverage still runs via the Screen-Time Watch fan-out, which calls the scout
+    directly regardless of this flag. Flip to true only for a deliberate
+    pushable-marketing-signal use with the Salesforce exclusion in place."""
     cfg = load_config()  # no path override -> reads the real config/scouts.yaml
     assert "board_peer_validation_scout" in cfg.scouts
-    assert cfg.scouts["board_peer_validation_scout"].enabled is True
+    assert cfg.scouts["board_peer_validation_scout"].enabled is False
 
 
 def test_load_config_propagates_api_url_to_scout_configs(tmp_path: Path) -> None:

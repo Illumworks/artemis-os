@@ -95,5 +95,13 @@ scouts:
   # Until then customer districts CAN surface (reviewed downstream — this is
   # the intentional trade-off the owner accepted for going live now).
   board_peer_validation_scout:
-    enabled: true
+    # DELIBERATELY DISABLED for the STANDALONE scout scheduler (which would emit
+    # into the marketing signal_queue → possible Callie auto-push). The owner
+    # requires NO auto-push of screen-time/AI updates. Board coverage still runs:
+    # the Screen-Time Watch fan-out (scout_fanout._gather_board_peer_validation)
+    # calls this scout DIRECTLY on the silent daily collection sweep, independent
+    # of this flag — findings land in screentime_signals for Callie's ON-DEMAND
+    # report, with no Slack broadcast. Flip to true (with the Salesforce customer
+    # exclusion) only when we deliberately want it as a pushable marketing signal.
+    enabled: false
     interval_minutes: 10080  # weekly
