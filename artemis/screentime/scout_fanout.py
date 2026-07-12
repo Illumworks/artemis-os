@@ -1,48 +1,67 @@
 """National, screen-time-tuned scout fan-out — read-only, in-process.
 
-We REUSE the existing scouts (``legislative``, ``state_doe``, ``board_minutes``,
-``regional_news``, ``board_peer_validation``) WITHOUT editing their core
-behavior. Each scout exposes ``_gather_findings()`` returning raw finding
-dicts; we call that directly (in-process) so nothing is POSTed to the
-marketing ``/api/scouts/runs`` ingest path — our findings flow into the
-isolated ``screentime_*`` tables instead.
+We REUSE the existing scouts (``legislative``, ``regional_news``, and — on a
+SEPARATE weekly sweep, not the daily one — ``board_peer_validation``) WITHOUT
+editing their core behavior. Each scout exposes ``_gather_findings()``
+returning raw finding dicts; we call that directly (in-process) so nothing is
+POSTed to the marketing ``/api/scouts/runs`` ingest path — our findings flow
+into the isolated ``screentime_*`` tables instead.
 
-National scope:
-  - legislative + state_doe accept ``priority_states`` → we pass all 50 + DC.
-    state_doe's own source config (``STATE_DOE_SOURCES``) now covers 20
-    states (2026-07-10 broadening); a state without a source entry yields []
-    gracefully.
-  - legislative also accepts ``keywords`` → we pass the SCREENTIME_TERMS query
-    (instructional screen-time limits + evidence-based-tool exemptions +, as of
-    2026-07-10, AI-in-schools POLICY terms — adoption/guidance/moratoria on AI
-    use in the classroom, scoped to schools, NOT general-purpose AI news).
+2026-07-11 source tuning (live PoC sweep findings — see
+``docs/screentime-watch-plan.md`` / the tuning brief):
+  - ``state_doe`` REMOVED from the daily fan-out. It is the shared
+    literacy-scoped marketing scout (``artemis/scouts/state_doe/``) —
+    pointing its RSS queries at 50 states floods ~2,185 off-topic items into
+    this pipeline. ``national_news`` (below) is the screentime-owned
+    replacement for state-level news coverage; the ``state_doe`` package
+    itself is UNTOUCHED (still serves marketing). ``_gather_state_doe`` is
+    kept (dead code, harmless) only as a reference for what the old wiring
+    looked like — it is no longer registered in ``_SCOUT_GATHERERS``.
+  - ``board_minutes`` and ``board_peer_validation`` REMOVED from the daily
+    fan-out (``_SCOUT_GATHERERS``). The board scout is slow (27 districts ×
+    BoardDocs fetch + an LLM call each) and was blowing the 10-minute daily
+    sweep timeout. It now runs on its OWN weekly schedule with bounded
+    concurrency — see ``run_board_sweep`` in ``artemis.screentime.runner``,
+    which calls ``_gather_board_peer_validation_concurrent`` (below) directly;
+    it is NOT part of ``gather_national_findings``/``_SCOUT_GATHERERS`` at all
+    (kept fully separate so the daily path can never accidentally invoke it).
+  - The daily fast set is now exactly: ``legislative`` (national bill search),
+    ``national_news`` (per-state Google News RSS), ``regional_news``
+    (watch-list newsapi). No BoardDocs, no LLM calls, no state_doe — fast and
+    clean.
+
+Daily-sweep sources:
+  - legislative accepts ``priority_states`` (all 50 + DC) and ``keywords`` →
+    the SCREENTIME_TERMS query (instructional screen-time limits +
+    evidence-based-tool exemptions +, as of 2026-07-10, AI-in-schools POLICY
+    terms — adoption/guidance/moratoria on AI use in the classroom, scoped to
+    schools, NOT general-purpose AI news).
   - regional_news is watch-list driven (no national district list exists) but
-    NOW also accepts ``query_topics``/``news_domains`` (2026-07-10) — we pass
-    the broadened screen-time/AI-in-schools keyword set + the major ed-policy
+    also accepts ``query_topics``/``news_domains`` (2026-07-10) — we pass the
+    broadened screen-time/AI-in-schools keyword set + the major ed-policy
     outlet list so its per-district newsapi queries surface this beat, not
     just literacy.
-  - board_minutes runs on its default watch list, read-only.
-  - board_peer_validation (2026-07-10) runs on its own starter district seed
-    list — it already classifies screentime AND ai_in_schools mentions (see
-    ``board_minutes.classifier.TOPICS``); wired in here so those findings
-    reach the screentime pipeline. The topic gate (topic_config.py,
-    ``DEFAULT_TOPIC_RULES`` v3, 2026-07-10) now ALSO carries explicit
-    AI-in-schools-policy anchors alongside the screen/device-time anchors — the
-    owner decided screen-time and AI-in-schools policy are one "rein in the
-    technology" story (per the exec report "Board Meetings on Screen Time & the
-    Use of AI") and should be tracked together. An ai_in_schools-only peer
-    finding (no screentime anchor) now PASSES the gate on the AI anchor alone.
-    STANCE tuning for AI-policy items is deliberately NOT done here — that is
-    pending a review with Angela (see topic_config.py's docstring) — AI
+  - national_news (2026-07-10, broadened 2026-07-11) is a NEW, screentime-owned
+    gatherer — per-state Google News RSS coverage of screen-time +
+    AI-in-schools policy (see ``artemis.screentime.national_news``). This
+    fills the NEWS gap: legislative is national but bill-only; national_news
+    surfaces agency guidance, board actions, and AI-adoption stories that
+    never became a bill, one query per state (all 50 + DC by default every
+    run — Google News RSS is lightweight). Deliberately NOT added to
+    scouts/state_doe (that package is shared with the literacy-scoped
+    marketing scout).
+
+Weekly (separate) sweep — see ``artemis.screentime.runner.run_board_sweep``:
+  - board_peer_validation classifies screentime AND ai_in_schools mentions
+    (see ``board_minutes.classifier.TOPICS``) across a starter district seed
+    list. The topic gate (topic_config.py, ``DEFAULT_TOPIC_RULES`` v3,
+    2026-07-10) carries explicit AI-in-schools-policy anchors alongside the
+    screen/device-time anchors — the owner decided screen-time and
+    AI-in-schools policy are one "rein in the technology" story (per the exec
+    report "Board Meetings on Screen Time & the Use of AI") and should be
+    tracked together. STANCE tuning for AI-policy items is deliberately NOT
+    done here — pending a review with Angela (see topic_config.py) — AI
     findings land with the existing best-effort stance for now.
-  - national_news (2026-07-10) is a NEW, screentime-owned gatherer — per-state
-    Google News RSS coverage of screen-time + AI-in-schools policy (see
-    ``artemis.screentime.national_news``). This fills the NEWS gap: legislative
-    is national but bill-only; national_news surfaces agency guidance, board
-    actions, and AI-adoption stories that never became a bill, one query per
-    state (all 50 + DC by default every run — Google News RSS is lightweight).
-    Deliberately NOT added to scouts/state_doe (that package is shared with the
-    literacy-scoped marketing scout).
 
 Every scout is wrapped in try/except: a failing source NEVER breaks the sweep
 (failure-safe). ``run_once`` is not used (it POSTs); we only call the pure-ish
@@ -144,21 +163,6 @@ async def _gather_legislative(states: list[str]) -> list[dict[str, Any]]:
     return await scout._gather_findings()
 
 
-async def _gather_state_doe(states: list[str]) -> list[dict[str, Any]]:
-    from artemis.scouts.state_doe.scout import StateDoEScout
-
-    # state_doe is source-list driven; pass the national states it has sources for.
-    scout = StateDoEScout(_dry_run_config(), priority_states=states)
-    return await scout._gather_findings()
-
-
-async def _gather_board_minutes() -> list[dict[str, Any]]:
-    from artemis.scouts.board_minutes.scout import BoardMinutesScout
-
-    scout = BoardMinutesScout(_dry_run_config())
-    return await scout._gather_findings()
-
-
 async def _gather_regional_news() -> list[dict[str, Any]]:
     from artemis.scouts.regional_news.client import NEWS_OUTLET_DOMAINS, TOPIC_KEYWORDS
     from artemis.scouts.regional_news.scout import RegionalNewsScout
@@ -172,10 +176,70 @@ async def _gather_regional_news() -> list[dict[str, Any]]:
 
 
 async def _gather_board_peer_validation() -> list[dict[str, Any]]:
+    """Serial board-peer-validation gather (one scout instance, its own default
+    watch list) — NOT part of the daily fan-out (too slow: BoardDocs + an LLM
+    call per district, serially). Kept for tests / ad-hoc single-scout use;
+    the weekly board sweep uses ``_gather_board_peer_validation_concurrent``
+    instead (see ``artemis.screentime.runner.run_board_sweep``).
+    """
     from artemis.scouts.board_minutes.peer_scout import BoardPeerValidationScout
 
     scout = BoardPeerValidationScout(_dry_run_config())
     return await scout._gather_findings()
+
+
+_BOARD_SWEEP_CONCURRENCY = 5
+
+
+async def _gather_board_peer_validation_concurrent(
+    *,
+    concurrency: int = _BOARD_SWEEP_CONCURRENCY,
+    watch_list: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Bounded-concurrency board-peer-validation sweep — the weekly path.
+
+    The default ``BoardPeerValidationScout._gather_findings()`` walks its
+    watch list one district at a time (BoardDocs fetch + an LLM classify call
+    per relevant item) — with ~27 districts that easily blows the 10-minute
+    daily-sweep timeout. This runs ONE scout instance per district and
+    gathers them under an ``asyncio.Semaphore(concurrency)`` (default 5
+    concurrent districts) instead — same per-district watch list, same
+    per-district/per-meeting caps inside ``fetch_boarddocs`` (untouched), just
+    parallelized. ``BoardPeerValidationScout`` itself is NOT modified.
+
+    A single district's failure (BoardDocs down, LLM error, etc.) is caught
+    and logged — it never aborts the rest of the sweep.
+    """
+    import asyncio
+
+    from artemis.scouts.board_minutes.peer_scout import (
+        _DEFAULT_PEER_WATCH_LIST,
+        BoardPeerValidationScout,
+    )
+
+    districts = watch_list if watch_list is not None else list(_DEFAULT_PEER_WATCH_LIST)
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+
+    async def _one(district: dict[str, Any]) -> list[dict[str, Any]]:
+        async with semaphore:
+            scout = BoardPeerValidationScout(
+                _dry_run_config(), watch_list=[district], max_districts_per_run=1
+            )
+            try:
+                return await scout._gather_findings()
+            except Exception as exc:
+                _logger.warning(
+                    "board sweep: district %s failed — skipping: %s",
+                    district.get("district_id", "unknown"),
+                    exc,
+                )
+                return []
+
+    results = await asyncio.gather(*(_one(d) for d in districts))
+    findings: list[dict[str, Any]] = []
+    for r in results:
+        findings.extend(r)
+    return findings
 
 
 async def _gather_national_news(states: list[str]) -> list[dict[str, Any]]:
@@ -196,12 +260,18 @@ async def _gather_national_news(states: list[str]) -> list[dict[str, Any]]:
 
 # scout label → coroutine factory. Kept as a dict so tests can monkeypatch a
 # single source or inject fakes.
+#
+# DAILY FAST SET ONLY (2026-07-11 tuning): legislative + national_news +
+# regional_news. Deliberately EXCLUDES state_doe (shared marketing scout,
+# floods ~2,185 off-topic items when pointed at 50 states) and board_minutes /
+# board_peer_validation (too slow for the daily 10-minute window — BoardDocs +
+# an LLM call per district). The board scout runs on its OWN weekly schedule
+# instead — see ``artemis.screentime.runner.run_board_sweep``, which calls
+# ``_gather_board_peer_validation_concurrent`` directly (not through this
+# dict, so it can never be pulled into the daily path by accident).
 _SCOUT_GATHERERS: dict[str, Any] = {
     "legislative": lambda states: _gather_legislative(states),
-    "state_doe": lambda states: _gather_state_doe(states),
-    "board_minutes": lambda _states: _gather_board_minutes(),
     "regional_news": lambda _states: _gather_regional_news(),
-    "board_peer_validation": lambda _states: _gather_board_peer_validation(),
     "national_news": lambda states: _gather_national_news(states),
 }
 

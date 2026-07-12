@@ -162,7 +162,15 @@ async def classify_mention(
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError("classifier output is not a JSON object")
-        data.setdefault("relevant", False)
+        # Coerce missing/None fields rather than let pydantic reject the whole
+        # item — the LLM sometimes omits or nulls "sentiment"/"relevant", and a
+        # ValidationError here used to silently drop an otherwise-valid mention
+        # (crash-then-skip). setdefault() alone doesn't help when the key is
+        # PRESENT but None, so check both cases explicitly.
+        if data.get("relevant") is None:
+            data["relevant"] = False
+        if data.get("sentiment") not in ("positive", "neutral", "negative"):
+            data["sentiment"] = "neutral"
         data["method"] = "llm"
         # Drop unknown topic labels instead of failing the whole result.
         data["topics"] = [t for t in (data.get("topics") or []) if t in TOPICS]

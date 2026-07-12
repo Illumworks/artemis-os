@@ -63,5 +63,56 @@ async def test_start_stop_screentime_scheduler_registers_and_tears_down():
         assert scheduler.running is True
         job = scheduler.get_job("screentime.watch.sweep")
         assert job is not None
+        # 2026-07-11: the weekly board sweep is registered alongside the daily one.
+        board_job = scheduler.get_job("screentime.watch.board_sweep")
+        assert board_job is not None
     finally:
         runner.stop_screentime_scheduler()
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-11: the board-peer-validation sweep is decoupled onto its OWN weekly
+# schedule (BoardDocs + LLM-per-district is too slow for the daily fast sweep).
+# ---------------------------------------------------------------------------
+
+
+def test_register_board_sweep_schedule_adds_its_own_weekly_job():
+    scheduler = MagicMock()
+    runner.register_board_sweep_schedule(scheduler)
+
+    assert scheduler.add_job.call_count == 1
+    args = scheduler.add_job.call_args.args
+    _, kwargs = scheduler.add_job.call_args
+
+    # A dedicated entry point — not the daily run_scheduled.
+    assert args[0] is runner.run_board_sweep
+    assert kwargs["id"] == "screentime.watch.board_sweep"
+    assert kwargs["replace_existing"] is True
+    assert kwargs["max_instances"] == 1
+
+    trigger = kwargs["trigger"]
+    fields = {f.name: str(f) for f in trigger.fields}
+    # Weekly — day-of-week given by NAME ('sun'), never a numeric field (this
+    # repo's APScheduler cron day-of-week gotcha: numeric 0=Mon, not Sun).
+    assert fields["day_of_week"] == "sun"
+    assert not fields["day_of_week"].isdigit()
+
+
+def test_register_board_sweep_schedule_is_idempotent_replace_existing():
+    scheduler = MagicMock()
+    runner.register_board_sweep_schedule(scheduler)
+    runner.register_board_sweep_schedule(scheduler)
+    assert scheduler.add_job.call_count == 2
+    for call in scheduler.add_job.call_args_list:
+        assert call.kwargs["replace_existing"] is True
+        assert call.kwargs["id"] == "screentime.watch.board_sweep"
+
+
+def test_daily_and_board_sweep_schedules_are_registered_as_separate_jobs():
+    """start_screentime_scheduler wires BOTH the daily fast sweep and the
+    weekly board sweep as two independent jobs (not merged into one)."""
+    scheduler = MagicMock()
+    runner.register_screentime_schedule(scheduler)
+    runner.register_board_sweep_schedule(scheduler)
+    ids = {call.kwargs["id"] for call in scheduler.add_job.call_args_list}
+    assert ids == {"screentime.watch.sweep", "screentime.watch.board_sweep"}

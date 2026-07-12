@@ -57,27 +57,30 @@ def test_all_states_and_dc_have_names():
 
 
 def test_query_is_multiword_and_school_scoped():
+    """2026-07-11 broadening: state + 'schools' bare-ANDed with a short OR'd
+    group of quoted core phrases (replaces the old 4x fully-quoted 5-6-word
+    sentences that returned 0 live hits — see module docstring)."""
     query = build_state_news_query("FL")
-    assert "Florida" in query
+    assert query.startswith("Florida schools (")
     assert " OR " in query
-    # Every OR'd phrase is quoted, multi-word, and school/classroom-scoped.
-    phrases = [p.strip() for p in query.split(" OR ")]
+    # The OR group's phrases are quoted and each is multi-word (no bare "ai").
+    inner = query[query.index("(") + 1 : query.rindex(")")]
+    phrases = [p.strip() for p in inner.split(" OR ")]
     assert len(phrases) == 4
     for phrase in phrases:
         assert phrase.startswith('"') and phrase.endswith('"')
-        inner = phrase.strip('"')
-        assert len(inner.split()) > 1
-        assert any(w in inner.lower() for w in ("school", "classroom"))
+        assert len(phrase.strip('"').split()) > 1
     # Never a bare "ai" anchor.
     assert '"ai"' not in query.lower()
 
 
 def test_query_covers_screentime_and_ai():
     query = build_state_news_query("TX").lower()
+    assert query.startswith("texas schools (")
     assert "screen time" in query
-    assert "device limits" in query
+    assert "device policy" in query
     assert "ai policy" in query
-    assert "generative ai" in query
+    assert "artificial intelligence" in query
 
 
 def test_unknown_state_raises():

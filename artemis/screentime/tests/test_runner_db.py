@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from sqlalchemy import text
 
 import artemis.screentime.classifier as classifier_mod
 from artemis.agent.client import CompletionResponse
 from artemis.agent.types import Message, TextBlock, Usage
-from artemis.screentime.runner import run_screentime_pipeline
+from artemis.screentime.runner import run_board_sweep, run_screentime_pipeline
 from artemis.screentime.stance_config import load_stance_rules, set_stance_rules
 
 pytestmark = pytest.mark.asyncio
@@ -200,3 +202,70 @@ async def test_rerun_after_config_change_flips_stance(db_session, fake_cheap_pro
         )
         == "favorable"
     )
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-11: the weekly board sweep — bounded-concurrency gather feeding the
+# SAME store pipeline, silently. Mocks the gather (no BoardDocs/LLM network
+# calls) and drives run_board_sweep's own SessionLocal() end-to-end against
+# the test DB (conftest points artemis.db.SessionLocal at the test engine).
+# ---------------------------------------------------------------------------
+
+_BOARD_FINDING = {
+    "sourceType": "board_minutes",
+    "discoveredBy": "board_peer_validation_scout",
+    "districtId": "FL_pinellas",
+    "state": "FL",
+    "headline": "Board adopts screen time limit for classrooms",
+    "reasonCodes": ["POLICY_EDTECH_TIME_LIMIT"],
+    "evidence": "The board voted to adopt an instructional screen time limit policy for all classrooms.",
+    "metadata": {"state": "FL", "url": "http://boarddocs/fl/item1"},
+}
+
+
+async def test_run_board_sweep_uses_bounded_concurrency_gather_and_stores_silently(
+    db_session, fake_cheap_provider, monkeypatch
+):
+    """run_board_sweep pulls findings from the bounded-concurrency board
+    gatherer (mocked — no live BoardDocs/LLM calls) and stores them through
+    the normal pipeline, silently (deliver_alerts=False, no Slack channel
+    configured)."""
+    import artemis.screentime.scout_fanout as fanout_mod
+
+    called: dict[str, Any] = {"n": 0, "kwargs": None}
+
+    async def _fake_gather(*, concurrency=5, watch_list=None):
+        called["n"] += 1
+        called["kwargs"] = {"concurrency": concurrency, "watch_list": watch_list}
+        return [_BOARD_FINDING]
+
+    monkeypatch.setattr(fanout_mod, "_gather_board_peer_validation_concurrent", _fake_gather)
+
+    result = await run_board_sweep()
+
+    assert called["n"] == 1  # the bounded-concurrency gatherer was invoked, not the serial one
+    assert result["error"] is None
+    assert result["source_status"] == {"board_peer_validation": "ok:1"}
+    assert result["gathered"] == 1
+    assert result["stored_new"] == 1
+
+    rows = (
+        await db_session.execute(
+            text("SELECT state, source_type FROM screentime_signals WHERE state = 'FL'")
+        )
+    ).all()
+    assert len(rows) == 1
+    assert rows[0][1] == "board_minutes"
+
+
+async def test_run_board_sweep_never_raises_on_gather_failure(monkeypatch):
+    """Cron-safety: a gather-level exception is caught, never propagates."""
+    import artemis.screentime.scout_fanout as fanout_mod
+
+    async def _boom(*, concurrency=5, watch_list=None):
+        raise RuntimeError("boarddocs down")
+
+    monkeypatch.setattr(fanout_mod, "_gather_board_peer_validation_concurrent", _boom)
+
+    result = await run_board_sweep()
+    assert "error" in result

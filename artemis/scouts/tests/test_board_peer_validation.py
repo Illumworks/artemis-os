@@ -270,6 +270,37 @@ async def test_classify_mention_unknown_topics_dropped() -> None:
     assert result.topics == ["screentime"]
 
 
+async def test_classify_mention_none_sentiment_coerces_to_neutral() -> None:
+    """Regression: the LLM sometimes returns sentiment=None. That used to raise
+    a pydantic ValidationError inside classify_mention's try/except, which was
+    caught and turned the WHOLE item into None ("not classified") — silently
+    dropping an otherwise-valid, relevant mention. It must instead coerce to
+    "neutral" and still return a classified result."""
+    adapter = _adapter_returning(
+        json.dumps({"relevant": True, "topics": ["screentime"], "sentiment": None, "excerpt": "e"})
+    )
+    result = await classify_mention("t", "b", adapter=adapter)
+    assert result is not None
+    assert result.relevant is True
+    assert result.sentiment == "neutral"
+
+
+async def test_classify_mention_missing_sentiment_coerces_to_neutral() -> None:
+    """Same coercion when the key is omitted entirely, not just null."""
+    adapter = _adapter_returning(json.dumps({"relevant": True, "topics": ["screentime"]}))
+    result = await classify_mention("t", "b", adapter=adapter)
+    assert result is not None
+    assert result.sentiment == "neutral"
+
+
+async def test_classify_mention_none_relevant_coerces_to_false() -> None:
+    """Same class of bug for 'relevant' — None must default to False, not crash."""
+    adapter = _adapter_returning(json.dumps({"relevant": None, "topics": [], "sentiment": "neutral"}))
+    result = await classify_mention("t", "b", adapter=adapter)
+    assert result is not None
+    assert result.relevant is False
+
+
 async def test_classify_mention_adapter_raises_returns_none() -> None:
     adapter = AsyncMock()
     adapter.complete.side_effect = RuntimeError("provider down")

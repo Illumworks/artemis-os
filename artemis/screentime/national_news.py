@@ -11,12 +11,28 @@ beat. Everything here is additive and self-contained.
 
 Query shape
 -----------
-One Google News RSS query per state, OR-ing four school-scoped phrases so a
-state matching ANY of them surfaces (never a bare "ai" token — see
-``artemis.screentime.topic_config`` for why that would flood the gate):
+2026-07-11 broadening (the live PoC sweep found this source effectively dead —
+1 finding across 51 states): the ORIGINAL query OR'd four fully-quoted,
+5-6-word phrases per state (e.g. ``"Florida schools screen time policy"``).
+Google News RSS treats a quoted phrase as a near-exact match, so a bespoke
+5-6-word sentence almost never appears verbatim in a real headline/body —
+manual verification against the live feed confirmed 0 items for FL/TX/CA
+under the old shape.
 
-    "<State> schools screen time policy" OR "<State> classroom device limits"
-    OR "<State> schools AI policy" OR "<State> generative AI schools"
+The NEW query keeps the state name + "schools" as bare (AND-ed, not quoted)
+terms — the school/education scope — and OR's a group of SHORT (2-3 word),
+still-quoted core phrases so any one of them matching is enough:
+
+    <State> schools ("screen time" OR "device policy" OR "AI policy"
+    OR "artificial intelligence")
+
+Manually verified against the live Google News RSS feed (2026-07-11): FL 79
+items, TX 73 items, CA 80 items (vs. 0/0/0 under the old shape) — and the
+top results are genuinely on-topic (state AI-in-schools policy, device-time
+tracking, etc.), not noise. Still multi-word throughout (never a bare "ai"
+token — see ``artemis.screentime.topic_config`` for why that would flood the
+gate); the broadened volume is filtered downstream by the existing topic
+gate + dedupe, same as every other source.
 
 Same URL shape as ``artemis/scouts/state_doe/sources.py``'s Google News usage:
 ``https://news.google.com/rss/search?q=...&hl=en-US&gl=US&ceid=US%3Aen``.
@@ -89,6 +105,16 @@ STATE_NAMES: dict[str, str] = {
 
 _GOOGLE_NEWS_RSS_BASE = "https://news.google.com/rss/search"
 
+# Short, quoted, still school/AI-scoped core phrases OR'd together (2026-07-11
+# broadening — see module docstring). Each is <=3 words so it actually shows
+# up verbatim in real headlines/body text, unlike the old 5-6-word sentences.
+_CORE_NEWS_TERMS: tuple[str, ...] = (
+    "screen time",
+    "device policy",
+    "AI policy",
+    "artificial intelligence",
+)
+
 # Reason codes — mirrors artemis/scouts/regional_news/mapping.py's vocabulary
 # so downstream provenance stays consistent across scouts (kept as local
 # string constants rather than a cross-module import to avoid coupling this
@@ -138,19 +164,20 @@ def _classify_reason_codes(text: str) -> list[str]:
 
 
 def build_state_news_query(state_abbr: str) -> str:
-    """Return the OR'd, school-scoped search phrase for *state_abbr*.
+    """Return the broadened, school-scoped search query for *state_abbr*.
+
+    Shape: ``<State> schools ("screen time" OR "device policy" OR "AI policy"
+    OR "artificial intelligence")`` — the state name + "schools" are bare/AND-ed
+    (the school scope), and a short OR'd group of quoted 2-3-word phrases
+    covers screen-time OR AI-in-schools coverage. See the module docstring for
+    why this replaced the old fully-quoted 5-6-word-phrase shape (0 live hits).
 
     Raises ``KeyError`` for an unknown abbreviation (fail loud — a typo'd
     state code should never silently produce a garbage query).
     """
     name = STATE_NAMES[state_abbr.upper()]
-    phrases = (
-        f"{name} schools screen time policy",
-        f"{name} classroom device limits",
-        f"{name} schools AI policy",
-        f"{name} generative AI schools",
-    )
-    return " OR ".join(f'"{p}"' for p in phrases)
+    or_group = " OR ".join(f'"{t}"' for t in _CORE_NEWS_TERMS)
+    return f"{name} schools ({or_group})"
 
 
 def build_state_news_rss_url(state_abbr: str) -> str:

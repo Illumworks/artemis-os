@@ -72,8 +72,17 @@ def test_join_with_spaces_preserves_or_expression():
 # ---------------------------------------------------------------------------
 
 
-def test_board_peer_validation_registered_in_gatherers():
-    assert "board_peer_validation" in _SCOUT_GATHERERS
+def test_daily_fan_out_is_the_fast_set_only():
+    """2026-07-11 source tuning: the daily _SCOUT_GATHERERS is EXACTLY
+    {legislative, national_news, regional_news}. state_doe (shared marketing
+    scout, floods ~2,185 off-topic items) and board_minutes /
+    board_peer_validation (too slow — BoardDocs + an LLM call per district,
+    blows the 10-minute daily window) are excluded; the board scout moved to
+    its own weekly sweep (``runner.run_board_sweep``)."""
+    assert set(_SCOUT_GATHERERS.keys()) == {"legislative", "national_news", "regional_news"}
+    assert "state_doe" not in _SCOUT_GATHERERS
+    assert "board_minutes" not in _SCOUT_GATHERERS
+    assert "board_peer_validation" not in _SCOUT_GATHERERS
 
 
 async def test_gather_national_findings_includes_board_peer_validation_status():
@@ -149,3 +158,103 @@ async def test_gather_board_peer_validation_calls_scout():
         result = await _gather_board_peer_validation()
 
     assert result == [{"headline": "peer"}]
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-11: board sweep decoupled from the daily fan-out + bounded
+# concurrency (the PoC-sweep timeout fix — 27 districts x BoardDocs + LLM
+# call each blew the 10-minute daily window run serially).
+# ---------------------------------------------------------------------------
+
+
+async def test_gather_board_peer_validation_concurrent_respects_semaphore_cap():
+    """No more than `concurrency` districts run BoardDocs+classify at once."""
+    import asyncio
+
+    from artemis.screentime.scout_fanout import _gather_board_peer_validation_concurrent
+
+    concurrency = 2
+    in_flight = 0
+    max_in_flight = 0
+    lock = asyncio.Lock()
+
+    class _FakeScout:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def _gather_findings(self):
+            nonlocal in_flight, max_in_flight
+            async with lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.02)
+            async with lock:
+                in_flight -= 1
+            return [{"headline": "ok"}]
+
+    watch_list = [{"district_id": f"D{i}", "boarddocs_url": "x"} for i in range(6)]
+
+    with patch(
+        "artemis.scouts.board_minutes.peer_scout.BoardPeerValidationScout",
+        _FakeScout,
+    ):
+        results = await _gather_board_peer_validation_concurrent(
+            concurrency=concurrency, watch_list=watch_list
+        )
+
+    assert len(results) == 6
+    assert max_in_flight <= concurrency
+
+
+async def test_gather_board_peer_validation_concurrent_isolates_district_failures():
+    """One district raising doesn't stop the others from being gathered."""
+    from artemis.screentime.scout_fanout import _gather_board_peer_validation_concurrent
+
+    class _FakeScout:
+        def __init__(self, *_args, watch_list=None, **_kwargs):
+            self._district = (watch_list or [{}])[0]
+
+        async def _gather_findings(self):
+            if self._district.get("district_id") == "boom":
+                raise RuntimeError("boarddocs down")
+            return [{"headline": self._district.get("district_id")}]
+
+    watch_list = [
+        {"district_id": "ok1", "boarddocs_url": "x"},
+        {"district_id": "boom", "boarddocs_url": "x"},
+        {"district_id": "ok2", "boarddocs_url": "x"},
+    ]
+
+    with patch(
+        "artemis.scouts.board_minutes.peer_scout.BoardPeerValidationScout",
+        _FakeScout,
+    ):
+        results = await _gather_board_peer_validation_concurrent(watch_list=watch_list)
+
+    headlines = {r["headline"] for r in results}
+    assert headlines == {"ok1", "ok2"}
+
+
+async def test_gather_board_peer_validation_concurrent_defaults_to_full_watch_list():
+    """With no watch_list override, every district in the default starter
+    seed list is scanned (one scout instance per district)."""
+    from artemis.scouts.board_minutes.peer_scout import _DEFAULT_PEER_WATCH_LIST
+    from artemis.screentime.scout_fanout import _gather_board_peer_validation_concurrent
+
+    seen_watch_lists: list[list[dict]] = []
+
+    class _FakeScout:
+        def __init__(self, *_args, watch_list=None, max_districts_per_run=None, **_kwargs):
+            seen_watch_lists.append(watch_list)
+            assert max_districts_per_run == 1
+
+        async def _gather_findings(self):
+            return []
+
+    with patch(
+        "artemis.scouts.board_minutes.peer_scout.BoardPeerValidationScout",
+        _FakeScout,
+    ):
+        await _gather_board_peer_validation_concurrent()
+
+    assert len(seen_watch_lists) == len(_DEFAULT_PEER_WATCH_LIST)

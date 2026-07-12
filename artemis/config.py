@@ -398,6 +398,19 @@ class Settings(BaseSettings):
         default="UTC",
         description="Timezone for screentime_cron.",
     )
+    screentime_board_sweep_cron: str = Field(
+        default="0 12 * * sun",
+        description=(
+            "Cron expression for the SEPARATE, weekly board-peer-validation sweep "
+            "(BoardDocs + an LLM call per district — too slow for the daily fast "
+            "sweep, decoupled 2026-07-11). Registered by "
+            "``artemis.screentime.runner.register_board_sweep_schedule``, its own "
+            "job id, silent (no Slack). Uses the day-of-week NAME 'sun' rather than "
+            "a numeric field — this repo's APScheduler cron day-of-week gotcha "
+            "(numeric 0=Mon, not Sun) is sidestepped by never using a numeric dow. "
+            "Uses screentime_cron_tz for its timezone."
+        ),
+    )
     screentime_window_days: int = Field(
         default=30,
         description=(

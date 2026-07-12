@@ -261,6 +261,44 @@ async def run_scheduled() -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+async def run_board_sweep() -> dict[str, Any]:
+    """Weekly, SEPARATE board-peer-validation sweep — bounded concurrency.
+
+    2026-07-11 decoupling: the board scout (BoardDocs fetch + an LLM
+    classification call per district) is too slow to share the daily 10-minute
+    fast sweep (``run_scheduled`` — legislative + national_news + regional_news
+    only). This runs ``_gather_board_peer_validation_concurrent`` (one scout
+    instance per district, gathered under an ``asyncio.Semaphore`` capped at
+    ~5 concurrent districts — see ``scout_fanout.py``) and feeds the result
+    through the SAME normalize → dedupe → topic-gate → real-moves → classify →
+    store pipeline as the daily sweep (``run_screentime_pipeline``), into the
+    SAME ``screentime_signals`` table. Silent — ``deliver_alerts=False`` always
+    (no Slack push from this path; matches the daily collection-only cron).
+    Cron-safe: never raises, opens/commits its own session.
+    """
+    try:
+        from artemis.db import SessionLocal
+        from artemis.screentime.scout_fanout import (
+            _gather_board_peer_validation_concurrent,
+        )
+
+        board_findings = await _gather_board_peer_validation_concurrent()
+
+        async with SessionLocal() as session:
+            report = await run_screentime_pipeline(
+                session, findings=board_findings, deliver_alerts=False
+            )
+            # run_screentime_pipeline labels injected findings "injected" —
+            # relabel for an accurate run report/log line.
+            report.source_status = {"board_peer_validation": f"ok:{len(board_findings)}"}
+            await session.commit()
+            _logger.info("screentime: board sweep complete: %s", report.as_dict())
+            return report.as_dict()
+    except Exception as exc:  # pragma: no cover - cron guard
+        _logger.exception("screentime: run_board_sweep failed")
+        return {"error": str(exc)}
+
+
 def register_screentime_schedule(scheduler: Any) -> None:
     """Register the cron job on an APScheduler instance. Idempotent.
 
@@ -292,6 +330,43 @@ def register_screentime_schedule(scheduler: Any) -> None:
     _logger.info("screentime: registered cron %s (%s)", settings.screentime_cron, settings.screentime_cron_tz)
 
 
+def register_board_sweep_schedule(scheduler: Any) -> None:
+    """Register the SEPARATE, weekly board-peer-validation sweep. Idempotent.
+
+    2026-07-11 decoupling: deliberately its OWN job (id
+    ``screentime.watch.board_sweep``), OWN weekly cron
+    (``settings.screentime_board_sweep_cron``, default Sunday noon UTC —
+    day-of-week given by NAME, never numeric, sidestepping this repo's
+    APScheduler cron day-of-week gotcha), and its OWN entry point
+    (``run_board_sweep``) — completely decoupled from the daily
+    ``register_screentime_schedule``/``run_scheduled`` fast path. Silent (no
+    Slack; ``run_board_sweep`` always passes ``deliver_alerts=False``).
+
+    Call alongside ``register_screentime_schedule`` from the FastAPI lifespan
+    — not invoked here so this module imports cleanly without side effects.
+    """
+    from apscheduler.triggers.cron import CronTrigger
+
+    from artemis.config import settings
+
+    trigger = CronTrigger.from_crontab(
+        settings.screentime_board_sweep_cron, timezone=settings.screentime_cron_tz
+    )
+    scheduler.add_job(
+        run_board_sweep,
+        trigger=trigger,
+        id="screentime.watch.board_sweep",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    _logger.info(
+        "screentime: registered board sweep cron %s (%s)",
+        settings.screentime_board_sweep_cron,
+        settings.screentime_cron_tz,
+    )
+
+
 _scheduler: AsyncIOScheduler | None = None
 
 
@@ -312,12 +387,14 @@ def get_screentime_scheduler() -> AsyncIOScheduler:
 
 
 def start_screentime_scheduler() -> None:
-    """Start the Screen-Time Watch scheduler and register the daily collection
-    sweep. Call from the FastAPI lifespan startup, alongside the other
-    schedulers. Idempotent — safe to call more than once.
+    """Start the Screen-Time Watch scheduler and register both jobs: the daily
+    collection sweep AND the separate weekly board-peer-validation sweep. Call
+    from the FastAPI lifespan startup, alongside the other schedulers.
+    Idempotent — safe to call more than once.
     """
     scheduler = get_screentime_scheduler()
     register_screentime_schedule(scheduler)
+    register_board_sweep_schedule(scheduler)
     if not scheduler.running:
         scheduler.start()
         _logger.info("screentime: scheduler started")
