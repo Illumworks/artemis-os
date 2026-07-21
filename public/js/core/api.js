@@ -734,6 +734,65 @@ export async function composeWritingDraftApi(id, payload = {}) {
 }
 
 /**
+ * Start an async compose job. Returns immediately with { jobId, status }.
+ * Pair with pollComposeJobApi — this avoids the ~100s gateway request ceiling
+ * that a single long synchronous compose request trips on longer drafts.
+ */
+export async function startComposeJobApi(id, payload = {}) {
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(id)}/compose/start`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  return _readJsonOrThrow(res, "Failed to start Writing Studio draft");
+}
+
+/**
+ * Poll a compose job started via startComposeJobApi.
+ * Returns { status: "running" } | { status: "done", ...composePayload }
+ *         | { status: "error", error, code }.
+ * A 404 (dropped/expired job) throws with the server's retry message.
+ */
+export async function pollComposeJobApi(id, jobId) {
+  const res = await fetch(
+    `/api/writing-studio/drafts/${encodeURIComponent(id)}/compose/jobs/${encodeURIComponent(jobId)}`
+  );
+  return _readJsonOrThrow(res, "Failed to check Writing Studio draft status");
+}
+
+const COMPOSE_POLL_INTERVAL_MS = 2000;
+const COMPOSE_POLL_MAX_MS = 16 * 60 * 1000; // > server 900s adapter ceiling + margin
+
+/**
+ * Start an async compose job and poll it to completion. Resolves to the same
+ * payload the synchronous compose endpoint returned (responseText, chatMessage,
+ * deliverable, persistedMessages, proposedCandidates, trace, metrics) so callers
+ * need no other change. Immune to the ~100s gateway request ceiling because the
+ * start call and every poll are fast. Throws on server error or timeout.
+ */
+export async function composeWritingDraftViaJob(id, payload = {}) {
+  const { jobId } = await startComposeJobApi(id, payload);
+  const startedAt = Date.now();
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, COMPOSE_POLL_INTERVAL_MS));
+    const status = await pollComposeJobApi(id, jobId);
+    if (status.status === "done") return status;
+    if (status.status === "error") {
+      const err = new Error(status.error || "Writing Studio drafting failed.");
+      err.code = status.code;
+      throw err;
+    }
+    if (Date.now() - startedAt > COMPOSE_POLL_MAX_MS) {
+      throw new Error("Drafting timed out. Please try again.");
+    }
+    // status.status === "running" → keep polling
+  }
+}
+
+/**
  * Rewrite a selected text span using the tag-scoped rules for the draft.
  * Composer Stage 2 — powers the floating selection toolbar.
  *

@@ -1,7 +1,7 @@
 import { escapeHtml } from "../core/utils.js";
 import { mountComposerV5 } from "./composer-v5.js";
 import {
-  composeWritingDraftApi,
+  composeWritingDraftViaJob,
   createWritingDraftApi,
   createWritingDraftFromGoogleDocApi,
   deleteWritingDraftApi,
@@ -2451,7 +2451,7 @@ async function autoComposeNewDraft(draftId, request, engine) {
   setWritingBusy(true);
   setWritingStatus("Drafting your first pass…");
   try {
-    const response = await composeWritingDraftApi(draftId, {
+    const response = await composeWritingDraftViaJob(draftId, {
       request,
       selectedText: "",
       attachments: [],
@@ -2539,7 +2539,7 @@ async function applyWritingChatPrompt() {
   setWritingBusy(true);
   setWritingStatus("Drafting with Writing Studio memory...");
   try {
-    const response = await composeWritingDraftApi(draftId, {
+    const response = await composeWritingDraftViaJob(draftId, {
       request,
       selectedText,
       attachments: attachments.map((attachment) => ({

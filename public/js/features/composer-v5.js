@@ -26,7 +26,7 @@ import { escapeHtml } from "../core/utils.js";
 import {
   applyWritingTemplateApi,
   approveClaimApi,
-  composeWritingDraftApi,
+  composeWritingDraftViaJob,
   createClaimApi,
   createDraftCommentApi,
   createWritingDraftApi,
@@ -4034,7 +4034,7 @@ export function mountComposerV5(rootEl, { draft, allDrafts = [], allFolders = []
     renderChatThread();
 
     try {
-      const resp = await composeWritingDraftApi(currentDraftId, {
+      const resp = await composeWritingDraftViaJob(currentDraftId, {
         request,
         selectedText: "",
         attachments: [],

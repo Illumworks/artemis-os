@@ -78,3 +78,8 @@ Audience Router** — + 3 rules; several "features" are wire-ups, not from-scrat
 - Custom-GPT export lives on the **Memory page** (acts on the profile), not the composer.
 - Identity = **Cloudflare Access + Google SSO** (verify the JWT); no separate account system.
 - "AI proposes, human confirms" everywhere that affects how we write or what's approved.
+
+## Future enhancements
+- **Live typing (token streaming):** stream Amira's compose reply word-by-word instead of
+  spinner-then-dump. Deferred (touches shared provider adapter). Full write-up:
+  [writing-studio-live-typing-streaming.md](writing-studio-live-typing-streaming.md).

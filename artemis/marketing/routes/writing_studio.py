@@ -23,9 +23,12 @@ Existing C4 stub routes (kept intact):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import uuid
+from dataclasses import dataclass, field as dc_field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.db import get_session
+from artemis.db import SessionLocal, get_session
 from artemis.identity.dependencies import get_current_user
 from artemis.identity.models import User
 from artemis.marketing.models import CampaignCandidate, CampaignDeliverable
@@ -661,13 +664,16 @@ async def delete_draft(
 # ── Phase 2 piece ③: Compose endpoint ────────────────────────────────────────
 
 
-@router.post("/drafts/{draft_id}/compose", status_code=200)
-async def compose_draft(
+async def _perform_compose(
+    session: AsyncSession,
+    draft_id: int,
     body: dict[str, Any],
-    draft_id: int = Path(..., ge=1),
-    session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Converse with the AI about a draft.
+    """Core compose logic — shared by the synchronous endpoint and the async job
+    worker (:func:`_run_compose_job`).  Raises HTTPException on failure exactly
+    as the endpoint did before; returns the compose response dict on success.
+
+    Converse with the AI about a draft.
 
     Body fields (all optional):
       request      — the user's message / writing action
@@ -996,6 +1002,138 @@ async def compose_draft(
             "outputTokens": result.usage.output_tokens,
         },
     }
+
+
+@router.post("/drafts/{draft_id}/compose", status_code=200)
+async def compose_draft(
+    body: dict[str, Any],
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Synchronous compose — kept for programmatic / back-compat callers.
+
+    NOTE: this holds ONE long HTTP request open for the whole model turn, which
+    trips the ~100s Cloudflare edge timeout on long drafts (the request returns
+    a non-JSON 5xx the browser can't parse).  Browser callers should use the
+    async job pair below (``compose/start`` + ``compose/jobs/{job_id}``), which
+    is immune to that ceiling.  This path is retained for the invoke/agent flow
+    and existing tests.
+    """
+    return await _perform_compose(session, draft_id, body)
+
+
+# ── Async compose jobs (gateway-timeout-safe) ────────────────────────────────
+# Compose can run tens of seconds to a few minutes.  Held as a single sync HTTP
+# request it trips Cloudflare's ~100s edge timeout, which returns a non-JSON 5xx
+# the browser surfaces as the generic "Failed to generate Writing Studio draft".
+# The browser instead STARTS a job (fast) and POLLS a fast status endpoint, so
+# no single request stays open long enough to trip the ceiling.  Jobs live
+# in-process: on an app restart an in-flight job is lost and its poll returns
+# ``compose_job_not_found``, which the FE surfaces as a retry prompt.
+
+
+@dataclass
+class _ComposeJob:
+    draft_id: int
+    status: str = "running"  # running | done | error
+    result: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None  # {"error": str, "code": str}
+    created_at: datetime = dc_field(default_factory=lambda: datetime.now(UTC))
+
+
+_compose_jobs: dict[str, _ComposeJob] = {}
+# Hold strong refs to background tasks so they aren't GC'd mid-flight.
+_compose_tasks: set[asyncio.Task[Any]] = set()
+_COMPOSE_JOB_TTL_SECONDS = 1800  # prune finished/stale jobs after 30 min
+
+
+def _prune_compose_jobs() -> None:
+    now = datetime.now(UTC)
+    stale = [
+        jid
+        for jid, job in _compose_jobs.items()
+        if (now - job.created_at).total_seconds() > _COMPOSE_JOB_TTL_SECONDS
+    ]
+    for jid in stale:
+        _compose_jobs.pop(jid, None)
+
+
+async def _run_compose_job(job_id: str, draft_id: int, body: dict[str, Any]) -> None:
+    """Background worker: run compose with its OWN DB session (the request-scoped
+    session from ``start`` is gone by now) and stash the outcome on the job."""
+    job = _compose_jobs.get(job_id)
+    if job is None:
+        return
+    try:
+        async with SessionLocal() as session:
+            result = await _perform_compose(session, draft_id, body)
+        job.result = result
+        job.status = "done"
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        job.error = {
+            "error": detail.get("error", str(exc.detail)),
+            "code": detail.get("code", "compose_error"),
+        }
+        job.status = "error"
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "compose job %s failed for draft_id=%s", job_id, draft_id, exc_info=True
+        )
+        job.error = {"error": f"Compose failed: {exc}", "code": "compose_error"}
+        job.status = "error"
+
+
+@router.post("/drafts/{draft_id}/compose/start", status_code=202)
+async def start_compose_job(
+    body: dict[str, Any],
+    draft_id: int = Path(..., ge=1),
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> dict[str, Any]:
+    """Start an async compose job; return a job id immediately (fast request).
+
+    Validates the draft exists first so the caller gets an obvious 404 rather
+    than a job that fails a moment later.
+    """
+    _prune_compose_jobs()
+    deliverable = await session.get(CampaignDeliverable, draft_id)
+    if deliverable is None:
+        raise not_found(f"Draft {draft_id} not found", "draft_not_found")
+
+    job_id = uuid.uuid4().hex
+    _compose_jobs[job_id] = _ComposeJob(draft_id=draft_id)
+    task = asyncio.create_task(_run_compose_job(job_id, draft_id, body))
+    _compose_tasks.add(task)
+    task.add_done_callback(_compose_tasks.discard)
+    return {"jobId": job_id, "status": "running"}
+
+
+@router.get("/drafts/{draft_id}/compose/jobs/{job_id}")
+async def get_compose_job(
+    draft_id: int = Path(..., ge=1),
+    job_id: str = Path(...),
+) -> dict[str, Any]:
+    """Poll an async compose job.
+
+    - running → ``{"status": "running"}``
+    - done    → ``{"status": "done", ...<full compose payload>}``
+    - error   → ``{"status": "error", "error": ..., "code": ...}``
+    - unknown → 404 ``compose_job_not_found`` (dropped/expired → FE prompts retry)
+    """
+    job = _compose_jobs.get(job_id)
+    if job is None or job.draft_id != draft_id:
+        raise not_found(
+            "Compose job not found or expired; please retry.",
+            "compose_job_not_found",
+        )
+    if job.status == "done":
+        return {"status": "done", **(job.result or {})}
+    if job.status == "error":
+        return {
+            "status": "error",
+            **(job.error or {"error": "Compose failed", "code": "compose_error"}),
+        }
+    return {"status": "running"}
 
 
 # ── Phase 3 Piece B: Training candidate endpoints ────────────────────────────
