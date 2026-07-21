@@ -235,6 +235,36 @@ def resolve_claude_config_dir(agent_id: str) -> str | None:
     return config_dir
 
 
+def _cli_failure_detail(stdout: bytes, stderr: bytes) -> str:
+    """Build a human-readable failure detail from a non-zero claude CLI exit.
+
+    The CLI frequently exits non-zero while writing the real error to STDOUT as
+    JSON (e.g. a 401 auth failure:
+    ``{"is_error": true, "api_error_status": 401, "result": "Failed to
+    authenticate..."}``) and leaves STDERR empty.  Prefer stderr when present;
+    otherwise mine stdout so failures are diagnosable in logs and to callers
+    instead of an opaque empty ``Provider API error N:`` message.
+    """
+    stderr_text = stderr.decode(errors="replace").strip()
+    if stderr_text:
+        return stderr_text
+    stdout_text = stdout.decode(errors="replace").strip()
+    if not stdout_text:
+        return ""
+    try:
+        payload = json.loads(stdout_text)
+    except json.JSONDecodeError:
+        return stdout_text[:300]
+    parts: list[str] = []
+    status = payload.get("api_error_status")
+    if status:
+        parts.append(f"api_error_status={status}")
+    result = payload.get("result") or payload.get("subtype")
+    if result:
+        parts.append(str(result))
+    return "; ".join(parts) or stdout_text[:300]
+
+
 class ClaudeCodeAdapter:
     """Conforms to the ModelAdapter protocol. Streaming not supported."""
 
@@ -293,7 +323,7 @@ class ClaudeCodeAdapter:
         if proc.returncode != 0:
             raise ProviderAPIError(
                 proc.returncode or 1,
-                stderr.decode(errors="replace"),
+                _cli_failure_detail(stdout, stderr),
             )
 
         raw = stdout.decode(errors="replace").strip()
@@ -579,7 +609,7 @@ class ClaudeCodeAdapter:
         if proc.returncode != 0:
             raise ProviderAPIError(
                 proc.returncode or 1,
-                stderr.decode(errors="replace"),
+                _cli_failure_detail(stdout, stderr),
             )
 
         raw = stdout.decode(errors="replace").strip()
