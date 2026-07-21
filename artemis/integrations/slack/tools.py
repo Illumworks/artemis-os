@@ -12,6 +12,21 @@ from typing import Any
 from artemis.agent.types import Tool
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
 
+def _slack_token(creds: dict[str, Any]) -> str:
+    """Return the usable bearer token from a decrypted Slack credential.
+
+    Bot integrations store the token under ``bot_token``; OAuth v2 rows store it
+    under ``access_token``.  Accept either — a mixed set of per-agent rows must
+    not KeyError.  (This was the bug that surfaced to agents as the opaque
+    ``list_slack_channels failed: 'access_token'`` — a KeyError on a bot-token
+    row that only carries ``bot_token``.)
+    """
+    token = creds.get("access_token") or creds.get("bot_token")
+    if not token:
+        raise RuntimeError("active Slack integration has no access_token or bot_token")
+    return str(token)
+
+
 # ── Implementations ───────────────────────────────────────────────────────────
 
 
@@ -33,7 +48,7 @@ async def _send_slack_message(inp: dict[str, Any]) -> str:
         if not integrations:
             return "No active Slack integration found"
         creds = decrypt_credentials(bytes(integrations[0].encrypted_credentials))
-        token = str(creds["access_token"])
+        token = _slack_token(creds)
         result = await SlackClient(token).post_message(
             channel, text, thread_ts=thread_ts, blocks=blocks
         )
@@ -58,7 +73,7 @@ async def _send_slack_dm(inp: dict[str, Any]) -> str:
         if not integrations:
             return "No active Slack integration found"
         creds = decrypt_credentials(bytes(integrations[0].encrypted_credentials))
-        token = str(creds["access_token"])
+        token = _slack_token(creds)
         result = await SlackClient(token).post_dm(user, text)
         return json.dumps(result)
     except Exception as exc:
@@ -81,7 +96,7 @@ async def _read_slack_channel(inp: dict[str, Any]) -> str:
         if not integrations:
             return "No active Slack integration found"
         creds = decrypt_credentials(bytes(integrations[0].encrypted_credentials))
-        token = str(creds["access_token"])
+        token = _slack_token(creds)
         messages = await SlackClient(token).get_channel_history(channel, limit=limit)
         return json.dumps(messages)
     except Exception as exc:
@@ -105,7 +120,7 @@ async def _react_to_slack_message(inp: dict[str, Any]) -> str:
         if not integrations:
             return "No active Slack integration found"
         creds = decrypt_credentials(bytes(integrations[0].encrypted_credentials))
-        token = str(creds["access_token"])
+        token = _slack_token(creds)
         result = await SlackClient(token).add_reaction(channel, ts, emoji)
         return json.dumps(result)
     except Exception as exc:
@@ -125,7 +140,7 @@ async def _list_slack_channels(inp: dict[str, Any]) -> str:
         if not integrations:
             return "No active Slack integration found"
         creds = decrypt_credentials(bytes(integrations[0].encrypted_credentials))
-        token = str(creds["access_token"])
+        token = _slack_token(creds)
         channels = await SlackClient(token).list_channels(limit=limit)
         return json.dumps(channels)
     except Exception as exc:
