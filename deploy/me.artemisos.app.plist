@@ -5,15 +5,24 @@
     <key>Label</key>
     <string>me.artemisos.app</string>
     <key>WorkingDirectory</key>
-    <string>/Users/artemis/Desktop/Artemis/artemis-os</string>
+    <string>/Users/artemis/Artemis/artemis-os</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/artemis/Desktop/Artemis/artemis-os/.venv/bin/uvicorn</string>
+        <string>/Users/artemis/Artemis/artemis-os/.venv/bin/uvicorn</string>
         <string>artemis.main:app</string>
         <string>--host</string>
         <string>127.0.0.1</string>
         <string>--port</string>
         <string>8000</string>
+        <!-- Must exceed cloudflared's proxy-keepalive-timeout (default 90s). At
+             uvicorn's 5s default, WE close every idle origin connection, so each
+             one lands in TIME_WAIT with local port 8000 — and this box does not
+             reap those. They accumulate until a share of new connects to 8000
+             stop completing their handshake (app looks "down" while serving
+             accepted requests in ~1ms). Closing last keeps TIME_WAIT on
+             cloudflared's ephemeral ports instead of piling up on port 8000. -->
+        <string>--timeout-keep-alive</string>
+        <string>120</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>

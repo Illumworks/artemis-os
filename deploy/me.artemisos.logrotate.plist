@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Artemis log rotation: bounds the always-on logs (nothing else rotates them).
+     Install: cp to ~/Library/LaunchAgents/ then
+     `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.artemisos.logrotate.plist`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.artemisos.logrotate</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/artemis/Artemis/artemis-os/scripts/rotate_artemis_logs.sh</string>
+    </array>
+    <!-- Daily at 04:15 local. RunAtLoad is deliberately omitted: rotation is never
+         urgent, and running it at every login/reboot just adds noise. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/artemis/Library/Logs/artemisos/logrotate.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/artemis/Library/Logs/artemisos/logrotate.err.log</string>
+</dict>
+</plist>
