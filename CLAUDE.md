@@ -89,6 +89,58 @@ uv run pytest
 ./scripts/check.sh
 ```
 
+## Operational visibility — READ THIS BEFORE DIAGNOSING ANYTHING
+
+**Start here, always:**
+
+```bash
+uv run python -m artemis.ops
+```
+
+One consolidated health report: service/process state, per-agent activity, the
+marketing funnel, in-flight pipeline runs, and derived findings. Read-only, safe
+against prod, and works even when the app is down (it only needs Postgres).
+
+**Why this exists — the trap it prevents.** Agent activity is written to **six
+unrelated stores**, and reading any single one gives a confidently wrong answer:
+
+| Store | Records |
+|---|---|
+| `floating_artemis_messages` | conversational turns only |
+| `morning_brief_deliveries` | scheduled briefs / OKR check-ins |
+| `memory_observations` (`category='callie_signal_push'`) | Callie's autonomous signal cards |
+| `agent_traces` | any provider call |
+| `slack_inbound_messages` | keyword-mention triage **only** — not DMs |
+| `pipeline_runs` | pipeline executions |
+
+On 2026-08-10 a session read the first store, found nothing for Artemis since
+2026-07-21, and reported that she had been down for 20 days — while she was
+delivering the morning brief every single weekday and Callie was pushing signal
+cards daily through two other stores. **An agent is alive if ANY path is recent.
+Never judge liveness from one table.**
+
+**Logging.** `artemis/logging_setup.py` wires `settings.log_level` into Python's
+logging module from `main.lifespan`. Before it existed, that setting was defined
+and set in `.env` but consumed by nothing, so every `logger.info`/`logger.debug`
+in the codebase was silently discarded in production and the app emitted ~6 log
+lines a day. Two rules:
+
+- Do not remove the `configure_logging()` call in `main.lifespan`.
+- Keep it **additive** — it must never strip root's handlers (`dictConfig` does),
+  or pytest's `caplog` goes blind in the 27 test modules that rely on it.
+
+To trace a Slack message end to end (every arrival and every drop decision logs
+at INFO):
+
+```bash
+grep "slack event" ~/Library/Logs/artemisos/app.err.log | tail -20
+```
+
+**A wedged pipeline run is silent.** A run left in `awaiting_approval` /
+`running` blocks every future scheduled run of that pipeline — no error, no
+alert, the pipeline just stops. `marketing.main` sat wedged from 2026-06-06 for
+two months without anyone noticing. The health report flags these as `!!`.
+
 ## Module layout
 
 ```

@@ -18,6 +18,13 @@ From your phone:
    our normal sessions — completely independent of the Artemis app being up.
 
 ### Common fixes (or just let the Claude session drive)
+- **FIRST, always — one command tells you what's actually wrong:**
+  `uv run python -m artemis.ops`
+  Consolidated health: service state, each agent's activity across all its write
+  paths, the marketing funnel, wedged pipeline runs, and a findings list. Works
+  even when the app is down (needs only Postgres). Exit code 1 = something wedged.
+- **Trace a Slack message** (arrivals + every drop decision log at INFO):
+  `grep "slack event" ~/Library/Logs/artemisos/app.err.log | tail -20`
 - **Restart (REQUIRES `-k`):** `launchctl kickstart -k gui/$(id -u)/me.artemisos.app`
   — plain `kickstart` is a NO-OP on a running service. **ALWAYS verify the pid changed:**
   `launchctl print gui/$(id -u)/me.artemisos.app | grep 'pid ='`
