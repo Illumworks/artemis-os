@@ -160,7 +160,9 @@ async def _run_backfill(session: AsyncSession, dry_run: bool = False) -> None:
                 continue
 
             state, bill_number, year = parsed
-            change_hash = await _fetch_change_hash(http, api_key, state, bill_number, year, source_url)
+            change_hash = await _fetch_change_hash(
+                http, api_key, state, bill_number, year, source_url
+            )
             if change_hash is None:
                 logger.warning("Row %s (%s): change_hash not found — skipping.", row_id, source_url)
                 skipped_count += 1

@@ -404,7 +404,13 @@ def _cli() -> None:
         print(f"Backup file: {info['backup_file']}")
         print(f"TOC entries: {info['toc_line_count']}")
         print("\nRow counts:")
-        for table, count in info["row_counts"].items():
+        # restore_backup() is declared `-> dict[str, object]`, so the checker
+        # only knows this value as `object`. The shape is fixed by that
+        # function's docstring contract ({table: int}); narrow rather than
+        # widen the return type, which memory_drill.py also consumes.
+        row_counts = info["row_counts"]
+        assert isinstance(row_counts, dict)
+        for table, count in row_counts.items():
             status = str(count) if count >= 0 else "TABLE NOT FOUND"
             print(f"  {table:<30} {status}")
         print("\nRecommended next steps:")

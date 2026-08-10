@@ -169,7 +169,7 @@ async def exchange_code_for_tokens(
 
         # connected_email is display-only — a userinfo failure must NOT fail the
         # connect (otherwise a missing email scope 502s the whole OAuth callback).
-        userinfo: dict = {}
+        userinfo: dict[str, Any] = {}
         try:
             info_resp = await http.get(
                 _GOOGLE_USERINFO_URL,

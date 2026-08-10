@@ -17,6 +17,7 @@ WHERE provider IS NULL OR provider = ''
 ORDER BY agent_id
 """
 
+
 async def main() -> None:
     from artemis.db import SessionLocal
 
@@ -27,7 +28,10 @@ async def main() -> None:
         return
     print(f"agent provider audit: {len(rows)} violation(s)")
     for r in rows:
-        print(f"- {r['agent_id']}: provider={r['provider']!r} fallback={r['fallback_provider']!r}/{r['fallback_model']!r}")
+        print(
+            f"- {r['agent_id']}: provider={r['provider']!r} fallback={r['fallback_provider']!r}/{r['fallback_model']!r}"
+        )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

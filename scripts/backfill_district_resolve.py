@@ -47,9 +47,7 @@ from sqlalchemy import select, update
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-TERMINAL_STATUSES = frozenset(
-    ["archived", "rejected_hard_filter", "suppressed_stale"]
-)
+TERMINAL_STATUSES = frozenset(["archived", "rejected_hard_filter", "suppressed_stale"])
 
 
 async def run_backfill() -> None:
@@ -61,8 +59,8 @@ async def run_backfill() -> None:
     async with _db.SessionLocal() as session:
         # Load all districts once (same pattern as resolve_district())
         district_rows = (
-            await session.execute(select(District).order_by(District.id))
-        ).scalars().all()
+            (await session.execute(select(District).order_by(District.id))).scalars().all()
+        )
         districts = list(district_rows)
         logger.info("Loaded %d districts from DB", len(districts))
 

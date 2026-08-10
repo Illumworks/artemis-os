@@ -31,7 +31,7 @@ from artemis.pipelines import repository as pipeline_repo
 
 BASE_URL = os.environ.get("LEAD_APP_URL", "http://localhost:8765")
 HAPPY_TARGET_STATE = "TX"  # Has seeded contacts
-SKIP_TARGET_STATE = "VT"   # No seeded contacts in test setup
+SKIP_TARGET_STATE = "VT"  # No seeded contacts in test setup
 
 
 async def _seed_gate2_scenario(
@@ -103,8 +103,13 @@ async def _seed_gate2_scenario(
         session,
         name=f"e2e Gate-2 — {label}",
         nodes=[
-            {"id": "trigger", "type": "trigger_manual", "label": "trigger",
-             "config": {}, "position": {"x": 0.0, "y": 0.0}},
+            {
+                "id": "trigger",
+                "type": "trigger_manual",
+                "label": "trigger",
+                "config": {},
+                "position": {"x": 0.0, "y": 0.0},
+            },
             {
                 "id": "gate_2_approval_drawer",
                 "type": "human_gate",
@@ -116,16 +121,29 @@ async def _seed_gate2_scenario(
                 },
                 "position": {"x": 0.0, "y": 0.0},
             },
-            {"id": "after_gate", "type": "agent_invocation", "label": "after_gate",
-             "config": {"agent_id": "mock.post.gate"}, "position": {"x": 0.0, "y": 0.0}},
+            {
+                "id": "after_gate",
+                "type": "agent_invocation",
+                "label": "after_gate",
+                "config": {"agent_id": "mock.post.gate"},
+                "position": {"x": 0.0, "y": 0.0},
+            },
         ],
         edges=[
-            {"id": "e1", "source_node_id": "trigger",
-             "target_node_id": "gate_2_approval_drawer",
-             "condition": None, "data_shape": None},
-            {"id": "e2", "source_node_id": "gate_2_approval_drawer",
-             "target_node_id": "after_gate",
-             "condition": None, "data_shape": None},
+            {
+                "id": "e1",
+                "source_node_id": "trigger",
+                "target_node_id": "gate_2_approval_drawer",
+                "condition": None,
+                "data_shape": None,
+            },
+            {
+                "id": "e2",
+                "source_node_id": "gate_2_approval_drawer",
+                "target_node_id": "after_gate",
+                "condition": None,
+                "data_shape": None,
+            },
         ],
     )
     run = await pipeline_repo.create_pipeline_run(
@@ -146,18 +164,14 @@ async def _seed_gate2_scenario(
         ),
         {
             "sid": f"{run.id}:gate_2_approval_drawer",
-            "ctx": json.dumps(
-                {"pipeline_run_id": run.id, "node_id": "gate_2_approval_drawer"}
-            ),
+            "ctx": json.dumps({"pipeline_run_id": run.id, "node_id": "gate_2_approval_drawer"}),
         },
     )
     approval_id = int(approval_id_row.scalar_one())
 
     # Mark the gate node as awaiting_approval in node_states
     await session.execute(
-        text(
-            "UPDATE pipeline_runs SET node_states = CAST(:ns AS jsonb) WHERE id = :id"
-        ),
+        text("UPDATE pipeline_runs SET node_states = CAST(:ns AS jsonb) WHERE id = :id"),
         {
             "id": run.id,
             "ns": json.dumps(
@@ -180,15 +194,19 @@ async def _snapshot(session: AsyncSession, *, deliverable_id: int) -> dict[str, 
     deliverable = await session.get(CampaignDeliverable, deliverable_id)
     assert deliverable is not None
     sends = (
-        await session.execute(
-            text(
-                "SELECT id, status, recipients, skip_reason, sent_at, sent_by, "
-                "transport, transport_log FROM campaign_sends "
-                "WHERE deliverable_id = :did ORDER BY id"
-            ),
-            {"did": deliverable_id},
+        (
+            await session.execute(
+                text(
+                    "SELECT id, status, recipients, skip_reason, sent_at, sent_by, "
+                    "transport, transport_log FROM campaign_sends "
+                    "WHERE deliverable_id = :did ORDER BY id"
+                ),
+                {"did": deliverable_id},
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     return {
         "deliverable_status": deliverable.status,
         "campaign_sends": [dict(r) for r in sends],
@@ -234,8 +252,10 @@ async def run_happy() -> dict[str, Any]:
             session, state=HAPPY_TARGET_STATE, label="happy-tx"
         )
         before = await _snapshot(session, deliverable_id=deliverable.id)
-    print(f"[seed] candidate_id={candidate.id} deliverable_id={deliverable.id} "
-          f"run_id={run_id} approval_id={approval_id}")
+    print(
+        f"[seed] candidate_id={candidate.id} deliverable_id={deliverable.id} "
+        f"run_id={run_id} approval_id={approval_id}"
+    )
     print(f"[before] {json.dumps(before, default=str)}")
 
     decide = await _post_decide(approval_id)
@@ -248,18 +268,24 @@ async def run_happy() -> dict[str, Any]:
 
     queued = await _get_queued()
     sends_for_us = [s for s in queued["body"] if s.get("deliverableId") == deliverable.id]
-    print(f"[GET /sends?status=queued] count_total={len(queued['body'])} "
-          f"count_for_us={len(sends_for_us)}")
+    print(
+        f"[GET /sends?status=queued] count_total={len(queued['body'])} "
+        f"count_for_us={len(sends_for_us)}"
+    )
     if not sends_for_us:
         return {"status": "FAIL_no_queued_for_us", "queued": queued}
     send = sends_for_us[0]
-    print(f"  send.id={send['id']} recipients={send['recipientCount']} "
-          f"districts={send['districtNames']}")
+    print(
+        f"  send.id={send['id']} recipients={send['recipientCount']} "
+        f"districts={send['districtNames']}"
+    )
 
     sent = await _post_send(send["id"])
     print(f"[POST /sends/{send['id']}/send] {sent['status_code']}")
-    print(f"  body.status={sent['body'].get('status')} "
-          f"transport_log keys={list((sent['body'].get('transport_log') or {}).keys())}")
+    print(
+        f"  body.status={sent['body'].get('status')} "
+        f"transport_log keys={list((sent['body'].get('transport_log') or {}).keys())}"
+    )
 
     async with artemis_db.SessionLocal() as session:
         after_send = await _snapshot(session, deliverable_id=deliverable.id)
@@ -267,8 +293,10 @@ async def run_happy() -> dict[str, Any]:
 
     # Idempotency check
     again = await _post_send_again(send["id"])
-    print(f"[POST /sends/{send['id']}/send AGAIN] {again['status_code']} "
-          f"body.code={(again['body'] or {}).get('detail', {}).get('code') if isinstance(again['body'].get('detail'), dict) else (again['body'] or {}).get('code')}")
+    print(
+        f"[POST /sends/{send['id']}/send AGAIN] {again['status_code']} "
+        f"body.code={(again['body'] or {}).get('detail', {}).get('code') if isinstance(again['body'].get('detail'), dict) else (again['body'] or {}).get('code')}"
+    )
 
     return {
         "candidate_id": candidate.id,
@@ -290,8 +318,10 @@ async def run_skip() -> dict[str, Any]:
             session, state=SKIP_TARGET_STATE, label="skip-vt"
         )
         before = await _snapshot(session, deliverable_id=deliverable.id)
-    print(f"[seed] candidate_id={candidate.id} deliverable_id={deliverable.id} "
-          f"approval_id={approval_id}")
+    print(
+        f"[seed] candidate_id={candidate.id} deliverable_id={deliverable.id} "
+        f"approval_id={approval_id}"
+    )
 
     decide = await _post_decide(approval_id)
     print(f"[POST /approvals/{approval_id}/decision] {decide['status_code']}")
@@ -330,13 +360,21 @@ async def main() -> None:
     skip = await run_skip()
 
     print("\n══════════════════════════════ SUMMARY ══════════════════════════════")
-    print(f"HAPPY: deliverable_status before='draft_ready' "
-          f"after_approve={happy.get('after_approve', {}).get('deliverable_status', 'N/A')} "
-          f"after_send={happy.get('after_send', {}).get('deliverable_status', 'N/A')}")
-    print(f"  send statuses: {[s['status'] for s in happy.get('after_send', {}).get('campaign_sends', [])]}")
-    print(f"SKIP:  deliverable_status after_approve="
-          f"{skip.get('after_approve', {}).get('deliverable_status', 'N/A')}")
-    print(f"  send statuses: {[s['status'] for s in skip.get('after_approve', {}).get('campaign_sends', [])]}")
+    print(
+        f"HAPPY: deliverable_status before='draft_ready' "
+        f"after_approve={happy.get('after_approve', {}).get('deliverable_status', 'N/A')} "
+        f"after_send={happy.get('after_send', {}).get('deliverable_status', 'N/A')}"
+    )
+    print(
+        f"  send statuses: {[s['status'] for s in happy.get('after_send', {}).get('campaign_sends', [])]}"
+    )
+    print(
+        f"SKIP:  deliverable_status after_approve="
+        f"{skip.get('after_approve', {}).get('deliverable_status', 'N/A')}"
+    )
+    print(
+        f"  send statuses: {[s['status'] for s in skip.get('after_approve', {}).get('campaign_sends', [])]}"
+    )
 
 
 if __name__ == "__main__":

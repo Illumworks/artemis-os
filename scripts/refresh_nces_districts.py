@@ -56,6 +56,7 @@ LOADER STEP (run after the script to stamp district_data_meta):
   Signal Playbook freshness panel stays accurate.  Derive it from --year as
   f'{year}-{str(year+1)[2:]}'.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -104,11 +105,7 @@ def main() -> int:
         w.writerow(["nces_id", "name", "state", "enrollment"])
         for r in rows:
             enr = r.get("enrollment")
-            if (
-                r.get("agency_type") not in KEEP_AGENCY_TYPES
-                or not isinstance(enr, int)
-                or enr < 0
-            ):
+            if r.get("agency_type") not in KEEP_AGENCY_TYPES or not isinstance(enr, int) or enr < 0:
                 skipped += 1
                 continue
             leaid = str(r.get("leaid") or "").strip()
@@ -120,7 +117,10 @@ def main() -> int:
             w.writerow([leaid, name, state, enr])
             kept += 1
 
-    print(f"Wrote {kept} districts to {args.out} (skipped {skipped}). Source year {args.year} ({sy}).", file=sys.stderr)
+    print(
+        f"Wrote {kept} districts to {args.out} (skipped {skipped}). Source year {args.year} ({sy}).",
+        file=sys.stderr,
+    )
     return 0
 
 
