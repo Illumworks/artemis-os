@@ -31,7 +31,7 @@ def _make_request_row(
     district_key: str = "TX-001",
     channel_id: str = "C123",
     team_id: str = "T456",
-    signal: dict | None = None,
+    signal: dict[str, Any] | None = None,
     triggering_signal_id: str | None = None,
     status: str = "pending",
     attempts: int = 0,

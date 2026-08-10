@@ -55,6 +55,11 @@ _DIM_TOOLS: dict[str, list[str]] = {
 # Model for synthesis.  Haiku-class is fast and cheap; synthesis is lightweight.
 _SYNTHESIS_MODEL = "claude-haiku-4-5"
 
+# Per-tool timeout: a single hanging external call must not stretch the whole
+# ~54s budget indefinitely.  15s is generous for an HTTP fetch; if a source is
+# down it returns empty in under 15s so the other tools can still complete.
+_TOOL_TIMEOUT_S = 15.0
+
 # ── Per-tool fetch helpers ─────────────────────────────────────────────────────
 
 
@@ -283,11 +288,17 @@ async def _gather_tool_results(
     district_key: str,
     dimensions: list[str],
     signal: dict[str, Any] | None,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, list[dict[str, Any]]]:
     """Fetch all needed tools in parallel; return results keyed by tool name.
 
     Each tool is fetched at most once even if multiple dimensions need it.
     Tool failures are caught per-tool -- a failure in one never blocks others.
+
+    Values are LISTS of items: every `_fetch_*` helper returns
+    `list[dict[str, Any]]`, and both failure paths in `_safe_fetch` return `[].
+    This was annotated `dict[str, dict[str, Any]]` for a while, which made
+    correct assertions in test_argus_core_loop.py (`results["news_api"] == []`)
+    look like impossible comparisons to the type checker.
     """
     needed_tools: set[str] = set()
     for dim in dimensions:
@@ -303,11 +314,6 @@ async def _gather_tool_results(
         "usaspending": _fetch_usaspending,
         "state_doe": _fetch_state_doe,
     }
-
-    # Per-tool timeout: a single hanging external call must not stretch the whole
-    # ~54s budget indefinitely.  15s is generous for an HTTP fetch; if a source
-    # is down it returns empty in under 15s so the other tools can still complete.
-    _TOOL_TIMEOUT_S = 15.0
 
     async def _safe_fetch(name: str) -> tuple[str, Any]:
         fetcher = _tool_fetchers.get(name)

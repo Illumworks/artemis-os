@@ -20,6 +20,8 @@ incremental consolidator's conflict detection apply automatically.  Argus does
 NOT reimplement dedup — it rides the memory layer.
 """
 
+from typing import Any
+
 from artemis.argus.drawer import read_district_drawer, write_district_findings
 
 __all__ = [
@@ -29,7 +31,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     # Lazy-load research_district to break a circular import: flow -> research ->
     # providers.fallback -> claude_code.adapter, which (via mcp_server ->
     # tool_registry -> argus_tools -> argus.models -> this __init__) re-enters the

@@ -403,9 +403,6 @@ async def test_gather_tool_results_catches_individual_tool_failure() -> None:
     """_gather_tool_results catches per-tool exceptions and returns partial results."""
     import artemis.argus.research as _research_mod
 
-    original_fetch_news = _research_mod._fetch_news
-    original_fetch_state_doe = _research_mod._fetch_state_doe
-
     async def raises(*args, **kwargs):
         raise RuntimeError("boom")
 

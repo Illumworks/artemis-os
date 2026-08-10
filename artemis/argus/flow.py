@@ -107,7 +107,10 @@ async def research_district(
             "gap_dimensions": [],
             "new_findings": 0,
             "written_obs_ids": [],
-            "recommended_angle": existing.get(Dimension.RECOMMENDED_ANGLE, {}).value
+            # Index directly: the `in existing` guard already proves presence,
+            # and the old `.get(..., {})` default would have called `.value` on
+            # a plain dict if it ever fired.
+            "recommended_angle": existing[Dimension.RECOMMENDED_ANGLE].value
             if Dimension.RECOMMENDED_ANGLE in existing
             else None,
         }
