@@ -26,7 +26,14 @@ class MeetingSummary(Base):
     gcal_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    action_items: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # A JSON ARRAY of action-item dicts, not an object. The annotation said
+    # `dict` for a long time while every write path stored a list
+    # (`summarizer.py` builds `[item.model_dump() for item in ...]`), which is
+    # why `proactivity/okr_checkin.py` grew an isinstance(list)/isinstance(dict)
+    # branch to tolerate both. Verified against prod: all 37 non-null rows are
+    # `jsonb_typeof = 'array'`, zero objects. The dict half of that branch is
+    # dead code.
+    action_items: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_input_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
