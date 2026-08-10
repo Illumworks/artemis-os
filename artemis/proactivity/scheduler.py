@@ -463,10 +463,7 @@ async def _fire_commitment_urgency_nudge() -> None:
                         continue
                     due_dt = commitment.due.astimezone(UTC)
                     hours_left = max(0, (due_dt - now_utc).total_seconds() / 3600)
-                    if hours_left < 1:
-                        time_label = "less than an hour"
-                    else:
-                        time_label = f"~{int(hours_left)}h"
+                    time_label = "less than an hour" if hours_left < 1 else f"~{int(hours_left)}h"
 
                     text = str(
                         lint_agent_text(
