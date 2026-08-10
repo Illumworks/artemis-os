@@ -299,11 +299,16 @@ async def list_observations(
     returned.  Caller-supplied filters are intersected with the allowance.
     """
     # M3: validate caller-supplied filter against allowance.
-    if allowance is not None and not allowance.allow_all and not allowance.denied:
-        if scope_kind is not None and scope_id is not None:
-            if not allowance.permits(scope_kind, scope_id):
-                scope_kind = None
-                scope_id = None
+    if (
+        allowance is not None
+        and not allowance.allow_all
+        and not allowance.denied
+        and scope_kind is not None
+        and scope_id is not None
+        and not allowance.permits(scope_kind, scope_id)
+    ):
+        scope_kind = None
+        scope_id = None
 
     base = select(MemoryObservation)
     count_base = select(func.count()).select_from(MemoryObservation)
