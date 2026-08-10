@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import Header, HTTPException, Request
 
-from artemis.config import settings
+from artemis.config import settings as settings  # re-exported: tests monkeypatch _auth.settings
 from artemis.identity.dependencies import resolve_request_identity
 from artemis.identity.scope_policy import OWNER_EMAIL
 

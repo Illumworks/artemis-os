@@ -1071,7 +1071,7 @@ async def _run_compose_job(job_id: str, draft_id: int, body: dict[str, Any]) -> 
         job.result = result
         job.status = "done"
     except HTTPException as exc:
-        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        detail: dict[str, Any] = exc.detail if isinstance(exc.detail, dict) else {}
         job.error = {
             "error": detail.get("error", str(exc.detail)),
             "code": detail.get("code", "compose_error"),
@@ -1985,7 +1985,13 @@ def _read_optional_folder_parent_id(body: dict[str, Any]) -> object:
     parent_folder_id = (
         body["parent_folder_id"] if "parent_folder_id" in body else body.get("parentFolderId")
     )
-    if parent_folder_id is not None and not isinstance(parent_folder_id, int):
+    # bool is a subclass of int in Python, so isinstance(x, int) alone would let
+    # `{"parentFolderId": true}` silently pass validation and later get coerced
+    # by int() to folder id 1 — nesting the folder under whatever folder 1 is
+    # instead of rejecting the request. Exclude bool explicitly.
+    if parent_folder_id is not None and (
+        isinstance(parent_folder_id, bool) or not isinstance(parent_folder_id, int)
+    ):
         raise bad_request(
             "parent_folder_id must be an integer or null",
             "invalid_parent_folder_id",
@@ -2013,7 +2019,16 @@ async def _validate_folder_parent_assignment(
     if parent_folder_id is _MISSING or parent_folder_id is None:
         return
 
-    numeric_parent_id = int(parent_folder_id)
+    # _read_optional_folder_parent_id (the only caller-side producer of this
+    # value) guarantees int|None|_MISSING, never bool — but the sentinel keeps
+    # the parameter typed as `object`, so narrow for real here rather than
+    # asserting the contract away for mypy's benefit.
+    if not isinstance(parent_folder_id, int) or isinstance(parent_folder_id, bool):
+        raise bad_request(
+            "parent_folder_id must be an integer or null",
+            "invalid_parent_folder_id",
+        )
+    numeric_parent_id = parent_folder_id
     parent_folder = await wr_repo.get_folder(session, numeric_parent_id)
     if parent_folder is None:
         raise not_found(f"Folder {numeric_parent_id} not found", "folder_not_found")

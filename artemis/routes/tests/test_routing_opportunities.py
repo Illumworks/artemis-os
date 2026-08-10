@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -401,7 +402,7 @@ async def test_gemini_unavailable_shows_setup_required(
     )
     await db_session.commit()
 
-    def _health(p: str) -> dict:
+    def _health(p: str) -> dict[str, Any]:
         return {
             "provider": p,
             "available": p not in ("gemini", "openai", "anthropic"),

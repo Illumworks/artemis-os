@@ -433,7 +433,6 @@ def test_swimlane_keeps_zero_ticket_team_member_lane() -> None:
                     "priority": "Medium",
                     "labels": [],
                     "created": "2026-01-01",
-                    "assigneeId": "U1",
                     "commentCount": 0,
                     "attachmentCount": 0,
                     "worklogTotal": 0,
@@ -462,7 +461,6 @@ def test_swimlane_filters_out_ad_hoc_assignee_with_zero_tickets() -> None:
     """
     # GUEST99 appears in the people map because they had a ticket, but after
     # filtering only people with tickets (plus pinned) remain.
-    roster = [{"id": "U1", "name": "Alice"}]
     columns = [
         {"key": "todo", "items": []},
         {"key": "prog", "items": []},

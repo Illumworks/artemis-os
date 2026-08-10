@@ -86,7 +86,7 @@ async def _make_summary(
     return row
 
 
-def _fake_adapter_returning(candidates: list[dict]) -> Any:
+def _fake_adapter_returning(candidates: list[dict[str, Any]]) -> Any:
     """Build a fake ModelAdapter whose run_turn returns a JSON array."""
     from artemis.agent.client import CompletionResponse
     from artemis.agent.types import Message, TextBlock, Usage
@@ -291,6 +291,10 @@ async def test_skill_injection_and_usage_tracking(db_session: AsyncSession) -> N
 
     assert len(injected) == 1
     assert injected[0].slug == "inject-test-skill"
+    # _inject_skills_into_prompt only returns None when no skill qualified (it
+    # falls back to the original prompt in that case); injected is non-empty
+    # here, so the updated prompt is guaranteed to be a real string.
+    assert updated_prompt is not None
     assert "Learned skills" in updated_prompt
     assert "Step 1: search memory." in updated_prompt
 
@@ -368,6 +372,9 @@ async def test_learning_loop_closes_end_to_end(db_session: AsyncSession) -> None
             db_session, agent_row, "base prompt"
         )
     assert any(s.slug == "loop-close-skill" for s in injected)
+    # Non-empty injected implies a real (non-None) updated prompt — see the
+    # same invariant noted above.
+    assert updated_prompt is not None
     assert "Step 1: search memory" in updated_prompt
 
     async with db_session.begin():

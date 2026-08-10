@@ -129,11 +129,15 @@ async def jira_overview(
             _roster_coro = client.get_assignable_users(project_key, team_filter=team_ids)
             # return_exceptions so a roster-fetch failure can NEVER take down the
             # board — the roster is secondary enrichment (pinned empty lanes).
-            result, roster_raw = await asyncio.gather(
+            # asyncio.gather(..., return_exceptions=True) loses the per-awaitable
+            # result types, so the tuple unpacks as Any; re-narrow explicitly
+            # below rather than let that Any leak into the function's return type.
+            overview_or_exc, roster_raw = await asyncio.gather(
                 _overview_coro, _roster_coro, return_exceptions=True
             )
-            if isinstance(result, BaseException):
-                raise result  # the overview itself failing IS a real error
+            if isinstance(overview_or_exc, BaseException):
+                raise overview_or_exc  # the overview itself failing IS a real error
+            result: dict[str, Any] = overview_or_exc
             if isinstance(roster_raw, BaseException):
                 logger.warning(
                     "jira teamRoster fetch failed; board renders without roster: %s", roster_raw

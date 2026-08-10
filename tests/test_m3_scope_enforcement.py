@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import artemis.db as db_module
 from artemis.db import attach_pgvector_codec
+from artemis.identity.scope_policy import OWNER_EMAIL
 
 DB_URL = os.environ.get(
     "ARTEMIS_TEST_DB_URL",
@@ -49,8 +50,6 @@ _TRUNCATE = text(
     "memory_conflicts, floating_artemis_sessions, floating_artemis_messages, "
     "floating_artemis_page_context, users RESTART IDENTITY CASCADE"
 )
-
-from artemis.identity.scope_policy import OWNER_EMAIL
 
 MARKETING_EMAIL = "marketer@amiralearning.com"
 
@@ -440,7 +439,7 @@ async def test_http_owner_sees_all_scopes(db_session, client):
     import artemis.identity.dependencies as id_dep
 
     owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
-    mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
+    await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
     personal_obs_id = await _seed_observation(
         db_session, "personal", str(owner_id), "Owner personal note"
@@ -474,7 +473,7 @@ async def test_http_marketing_cannot_see_owner_personal(db_session, client):
     import artemis.identity.dependencies as id_dep
 
     owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
-    mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
+    await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
     personal_obs_id = await _seed_observation(
         db_session, "personal", str(owner_id), "Owner personal note SECRET"
@@ -549,7 +548,7 @@ async def test_http_marketing_reads_own_personal(db_session, client):
     """Marketing user can read their OWN personal:<user_id> observations."""
     import artemis.identity.dependencies as id_dep
 
-    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_user(db_session, OWNER_EMAIL, "Jon")
     mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
     own_personal_obs_id = await _seed_observation(
@@ -577,7 +576,7 @@ async def test_http_observation_detail_404_for_marketing_on_personal(db_session,
     import artemis.identity.dependencies as id_dep
 
     owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
-    mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
+    await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
     personal_obs_id = await _seed_observation(
         db_session, "personal", str(owner_id), "Owner personal note SECRET"
@@ -628,7 +627,7 @@ async def test_http_scopes_endpoint_filtered_for_marketing(db_session, client):
     import artemis.identity.dependencies as id_dep
 
     owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
-    mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
+    await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
     await _seed_observation(db_session, "personal", str(owner_id), "Owner personal")
     await _seed_observation(db_session, "agent", "artemis", "Artemis mem")
@@ -822,7 +821,7 @@ async def test_marketing_regression_can_read_workspace_marketing(db_session, cli
     import artemis.identity.dependencies as id_dep
 
     await _seed_user(db_session, OWNER_EMAIL, "Jon")
-    mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
+    await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
     mktg_obs_id = await _seed_observation(
         db_session, "workspace", "marketing", "Marketing workspace obs"
@@ -855,7 +854,7 @@ async def test_marketing_regression_can_read_agent_callie(db_session, client):
     import artemis.identity.dependencies as id_dep
 
     await _seed_user(db_session, OWNER_EMAIL, "Jon")
-    mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
+    await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
     callie_obs_id = await _seed_observation(db_session, "agent", "callie", "Callie marketing obs")
 
@@ -952,9 +951,7 @@ class TestQueryMemoryToolGating:
 async def test_tool_callie_denied_personal_scope(db_session):
     """SMOKE: Callie calling query_memory(scope='personal:1') gets NO personal content."""
     owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
-    personal_obs_id = await _seed_observation_full(
-        db_session, "personal", str(owner_id), "PERSONAL SECRET"
-    )
+    await _seed_observation_full(db_session, "personal", str(owner_id), "PERSONAL SECRET")
     # Also seed marketing content to confirm Callie gets THAT but not personal.
     await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
 
@@ -1077,7 +1074,7 @@ async def test_tool_unknown_agent_fail_closed(db_session):
 @pytest.mark.asyncio
 async def test_tool_none_agent_fail_closed(db_session):
     """SMOKE: None agent_id → fail-closed → no results returned."""
-    owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
+    await _seed_user(db_session, OWNER_EMAIL, "Jon")
     await _seed_observation_full(db_session, "workspace", "marketing", "MARKETING PUBLIC")
 
     from artemis.floating_artemis.tools.core import _make_query_memory
