@@ -523,9 +523,7 @@ def test_recent_outbound_extraction_caps_at_four() -> None:
     history = []
     for i in range(6):
         history.append(Message(role="user", content=[TextBlock(text=f"Q{i}")]))
-        history.append(
-            Message(role="assistant", content=[TextBlock(text=f"Answer number {i}")])
-        )
+        history.append(Message(role="assistant", content=[TextBlock(text=f"Answer number {i}")]))
 
     recent_outbound_texts: list[str] = []
     for msg in reversed(history):

@@ -408,7 +408,11 @@ class ClaudeCodeAdapter:
 
         agent_tools = [tool.name for tool in request.tools or []]
 
-        if builder_session_id is None and floating_session_id is None and forge_project_path is None:
+        if (
+            builder_session_id is None
+            and floating_session_id is None
+            and forge_project_path is None
+        ):
             raise ProviderAPIError(
                 0,
                 "_complete_with_tools called but no tool-session contextvar is set. "

@@ -217,7 +217,9 @@ def format_report_text(data: dict[str, Any]) -> str:
     lines: list[str] = []
     total = data["total_real_moves"]
     states = data["states_covered"]
-    lines.append(f"*Screen-Time & AI-Policy Watch* — {total} real move(s) across {states} state(s).")
+    lines.append(
+        f"*Screen-Time & AI-Policy Watch* — {total} real move(s) across {states} state(s)."
+    )
 
     sc = data["stance_counts"]
     lines.append(

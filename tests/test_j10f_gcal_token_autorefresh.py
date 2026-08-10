@@ -36,9 +36,7 @@ async def test_gcal_client_refresh_success_calls_callback() -> None:
 
     callback_args: list[dict[str, Any]] = []
 
-    async def on_refreshed(
-        access_token: str, refresh_token: str, expires_at: float
-    ) -> None:
+    async def on_refreshed(access_token: str, refresh_token: str, expires_at: float) -> None:
         callback_args.append(
             {
                 "access_token": access_token,
@@ -108,9 +106,7 @@ async def test_gcal_client_refresh_400_raises_auth_dead() -> None:
     mock_resp.status_code = 400
     mock_resp.is_success = False
     mock_resp.text = '{"error":"invalid_grant"}'
-    mock_resp.raise_for_status = MagicMock(
-        side_effect=Exception("should not be called")
-    )
+    mock_resp.raise_for_status = MagicMock(side_effect=Exception("should not be called"))
 
     with patch("httpx.AsyncClient") as mock_http_cls:
         mock_http = AsyncMock()
@@ -354,8 +350,7 @@ async def test_sync_personal_google_integrations_writes_expires_at() -> None:
     mock_credential.access_token = "at123"
     mock_credential.refresh_token = "rt456"
     mock_credential.scope = (
-        "https://www.googleapis.com/auth/calendar "
-        "https://www.googleapis.com/auth/calendar.events"
+        "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events"
     )
 
     captured_creds: list[dict[str, Any]] = []
@@ -405,8 +400,7 @@ async def test_sync_personal_google_integrations_fallback_expires_at() -> None:
     mock_credential.access_token = "at123"
     mock_credential.refresh_token = "rt456"
     mock_credential.scope = (
-        "https://www.googleapis.com/auth/calendar "
-        "https://www.googleapis.com/auth/calendar.events"
+        "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events"
     )
 
     captured_creds: list[dict[str, Any]] = []
@@ -458,9 +452,7 @@ async def test_gcal_client_refresh_rotates_refresh_token() -> None:
 
     callback_args: list[dict[str, Any]] = []
 
-    async def on_refreshed(
-        access_token: str, refresh_token: str, expires_at: float
-    ) -> None:
+    async def on_refreshed(access_token: str, refresh_token: str, expires_at: float) -> None:
         callback_args.append({"access_token": access_token, "refresh_token": refresh_token})
 
     client = GCalClient(

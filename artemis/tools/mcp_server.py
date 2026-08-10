@@ -1068,6 +1068,7 @@ async def _serve_floating_artemis(
         if _fa_agent_id is None:
             try:
                 from artemis.floating_artemis.chat import _load_session_context
+
                 _fa_ctx = await _load_session_context(
                     session_id=floating_session_id,
                     db_session=session,
@@ -1080,7 +1081,9 @@ async def _serve_floating_artemis(
                     floating_session_id,
                 )
 
-        tool_set = await build_floating_artemis_tool_set(set(tool_names or []), agent_id=_fa_agent_id)
+        tool_set = await build_floating_artemis_tool_set(
+            set(tool_names or []), agent_id=_fa_agent_id
+        )
         logger.info(
             "artemis MCP server (floating_artemis) bound to session=%s agent_id=%s tools=%s",
             floating_session_id,

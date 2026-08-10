@@ -89,4 +89,8 @@ def install() -> None:
         pass
     asyncio.create_task(_heartbeat(), name="diag-heartbeat")
     threading.Thread(target=_watch, name="diag-loop-watch", daemon=True).start()
-    print("=== DIAG loop_diag installed (heartbeat + stuck-watch thread) ===", file=sys.stderr, flush=True)
+    print(
+        "=== DIAG loop_diag installed (heartbeat + stuck-watch thread) ===",
+        file=sys.stderr,
+        flush=True,
+    )

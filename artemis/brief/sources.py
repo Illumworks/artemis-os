@@ -149,7 +149,7 @@ async def _safe_brief_exclusions(session: AsyncSession) -> set[str]:
             content = obs.content or ""
             if not content.startswith(_PREFIX):
                 continue
-            rest = content[len(_PREFIX):]
+            rest = content[len(_PREFIX) :]
             parts = rest.split(None, 1)
             ticket_key = parts[0].upper() if parts else ""
             if not ticket_key:

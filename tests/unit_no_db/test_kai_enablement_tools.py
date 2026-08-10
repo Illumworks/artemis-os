@@ -230,6 +230,7 @@ class TestKaiScopePolicy:
 
     def test_kai_only_enablement_scope(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("kai")
         assert a.allow_all is False
         assert a.denied is False
@@ -238,6 +239,7 @@ class TestKaiScopePolicy:
 
     def test_kai_denied_personal(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("kai")
         assert not a.permits("personal", "1")
         assert not a.permits("personal", "99")
@@ -245,12 +247,14 @@ class TestKaiScopePolicy:
 
     def test_kai_denied_agent_artemis(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("kai")
         assert not a.permits("agent", "artemis")
         assert not a.permits("agent", "floating-artemis")
 
     def test_kai_denied_marketing_scopes(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("kai")
         assert not a.permits("workspace", "marketing")
         assert not a.permits("campaign_family", "any")
@@ -260,12 +264,14 @@ class TestKaiScopePolicy:
     def test_kai_agent_id_permitted(self):
         """agent:kai scope is permitted (Kai's own agent memory if it ever exists)."""
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("kai")
         assert a.permits("agent", "kai")
 
     def test_callie_unchanged(self):
         """Callie's allowance is not affected by Kai's addition."""
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("callie")
         assert a.permits("workspace", "marketing")
         assert a.permits("agent", "callie")
@@ -275,17 +281,20 @@ class TestKaiScopePolicy:
 
     def test_unknown_agent_denied(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("unknown-agent")
         assert a.denied is True
         assert not a.permits("enablement", "anything")
 
     def test_empty_agent_id_denied(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("")
         assert a.denied is True
 
     def test_none_agent_id_denied(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent(None)  # type: ignore[arg-type]
         assert a.denied is True
 
@@ -323,9 +332,7 @@ class TestKaiToolRegistry:
         from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
 
         # Even with marketing surfaces, Kai gets no marketing tools
-        reg = build_authorized_tool_registry(
-            {"marketing-os", "signal-queue"}, agent_id="kai"
-        )
+        reg = build_authorized_tool_registry({"marketing-os", "signal-queue"}, agent_id="kai")
         assert "post_analyst_message" not in reg
         assert "list_signals" not in reg
         assert "approve_signal" not in reg
@@ -397,7 +404,10 @@ class TestKaiSessionScope:
         assert result == set(), f"Kai must get empty surface set, got: {result}"
 
     def test_callie_surface_allowlist_unchanged(self):
-        from artemis.floating_artemis.session_scope import _AGENT_SURFACE_ALLOWLIST, _MARKETING_SURFACES
+        from artemis.floating_artemis.session_scope import (
+            _AGENT_SURFACE_ALLOWLIST,
+            _MARKETING_SURFACES,
+        )
 
         assert _AGENT_SURFACE_ALLOWLIST["callie"] == _MARKETING_SURFACES
 
@@ -453,4 +463,6 @@ class TestKaiPersonality:
 
         profile = load_agent_profile("callie")
         assert profile.display_name == "Callie"
-        assert "marketing" in profile.persona_core.lower() or "callie" in profile.persona_core.lower()
+        assert (
+            "marketing" in profile.persona_core.lower() or "callie" in profile.persona_core.lower()
+        )

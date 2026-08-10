@@ -28,7 +28,6 @@ from artemis.scouts.starbridge_researcher import StarbridgeResearcherScout
 # ---------------------------------------------------------------------------
 
 
-
 # Minimal raw finding that survives canonical Finding normalization
 # (emit_signals now drops findings that can't be normalized).
 _RAW_FINDING: dict[str, Any] = {

@@ -26,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 _RECONNECT_URL = "https://app.artemisos.me/connectors"
 _ALERT_TEXT = (
-    "⚠️ Google Calendar is disconnected — meeting summaries are paused. "
-    f"Reconnect: {_RECONNECT_URL}"
+    f"⚠️ Google Calendar is disconnected — meeting summaries are paused. Reconnect: {_RECONNECT_URL}"
 )
 
 
@@ -45,9 +44,7 @@ async def handle_gcal_auth_dead(session: AsyncSession, integration_id: int) -> N
         already_alerted = False
 
     await repo.mark_needs_reauth(session, integration_id)
-    logger.error(
-        "gcal_auth_dead: integration_id=%d marked needs_reauth", integration_id
-    )
+    logger.error("gcal_auth_dead: integration_id=%d marked needs_reauth", integration_id)
 
     if already_alerted:
         # Already sent the DM on a previous tick — don't spam.

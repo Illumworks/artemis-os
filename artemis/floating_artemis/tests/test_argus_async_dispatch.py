@@ -40,7 +40,8 @@ def _make_summary(
 ) -> dict[str, Any]:
     return {
         "new_findings": new_findings,
-        "gap_dimensions": gap_dimensions or ["current_vendor", "procurement_timing", "decision_makers"],
+        "gap_dimensions": gap_dimensions
+        or ["current_vendor", "procurement_timing", "decision_makers"],
         "existing_dimensions": existing_dimensions or [],
         "recommended_angle": recommended_angle,
         "written_obs_ids": list(range(new_findings)),
@@ -162,7 +163,9 @@ async def test_dispatch_research_adds_task_to_background_tasks_set() -> None:
         await task_started.wait()
 
         # While the task is still running, it must be in _BACKGROUND_TASKS
-        task_was_live.append(any("argus_bg_TX-002" in (t.get_name() or "") for t in _BACKGROUND_TASKS))
+        task_was_live.append(
+            any("argus_bg_TX-002" in (t.get_name() or "") for t in _BACKGROUND_TASKS)
+        )
 
         # Release the task
         task_can_finish.set()
@@ -230,7 +233,9 @@ async def test_background_task_posts_callie_voiced_argus_credited_message() -> N
             new_callable=AsyncMock,
             return_value=fake_agent_cfg,
         ),
-        patch("artemis.floating_artemis.repository.get_session_by_id", mock_fa_repo.get_session_by_id),
+        patch(
+            "artemis.floating_artemis.repository.get_session_by_id", mock_fa_repo.get_session_by_id
+        ),
     ):
         await _research_and_post(
             session_id="slack-callie-TABC-C9999-_",
@@ -357,7 +362,9 @@ async def test_thin_findings_posts_graceful_note() -> None:
             new_callable=AsyncMock,
             return_value=fake_agent_cfg,
         ),
-        patch("artemis.floating_artemis.repository.get_session_by_id", mock_fa_repo.get_session_by_id),
+        patch(
+            "artemis.floating_artemis.repository.get_session_by_id", mock_fa_repo.get_session_by_id
+        ),
     ):
         await _research_and_post(
             session_id="slack-callie-TABC-C5555-_",

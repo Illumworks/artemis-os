@@ -260,8 +260,7 @@ async def ingest_meeting_commitments(
         # AND the item has a deadline.  Items that miss either condition are
         # still written to memory below (lossless), but do NOT get a commitment.
         owner_is_owner = (
-            canonical_owner_user_id is not None
-            and owner_user_id == canonical_owner_user_id
+            canonical_owner_user_id is not None and owner_user_id == canonical_owner_user_id
         )
         had_due = due_value is not None
 
@@ -539,8 +538,7 @@ async def _build_decision_features(
     """
     canonical_owner_id = await _resolve_canonical_owner_user_id(session)
     owner_is_owner = (
-        canonical_owner_id is not None
-        and commitment.owner_user_id == canonical_owner_id
+        canonical_owner_id is not None and commitment.owner_user_id == canonical_owner_id
     )
     return {
         "owner_is_owner": owner_is_owner,
@@ -650,7 +648,11 @@ async def send_commitment_proposals_digest(
     existing_crumb = await repo.get_live_proposals_breadcrumb(session, recipient_id)
     if existing_crumb is not None:
         # Guard: only skip if the existing breadcrumb was created less than 24h ago.
-        age = current_time - existing_crumb.created_at.replace(tzinfo=UTC) if existing_crumb.created_at.tzinfo is None else current_time - existing_crumb.created_at
+        age = (
+            current_time - existing_crumb.created_at.replace(tzinfo=UTC)
+            if existing_crumb.created_at.tzinfo is None
+            else current_time - existing_crumb.created_at
+        )
         if age.total_seconds() < 86400:
             logger.info(
                 "send_commitment_proposals_digest: unanswered digest already exists "
@@ -672,9 +674,7 @@ async def send_commitment_proposals_digest(
         limit=_PROPOSALS_DIGEST_LIMIT,
     )
     if not proposed:
-        logger.info(
-            "send_commitment_proposals_digest: no proposed commitments -- nothing to send"
-        )
+        logger.info("send_commitment_proposals_digest: no proposed commitments -- nothing to send")
         return ProposalsDigestSummary(
             proposed_count=0,
             sent=False,
@@ -712,8 +712,7 @@ async def send_commitment_proposals_digest(
     await session.commit()
 
     logger.info(
-        "send_commitment_proposals_digest: sent digest with %d items to %s "
-        "(commitment_ids=%s)",
+        "send_commitment_proposals_digest: sent digest with %d items to %s (commitment_ids=%s)",
         len(proposed),
         recipient_id,
         [c.id for c in proposed],
@@ -766,9 +765,7 @@ async def try_apply_proposals_reply(
 
     # Map of valid numbers from the breadcrumb.
     commitment_map: dict[str, int] = {
-        str(k): int(v)
-        for k, v in (crumb.commitment_map or {}).items()
-        if str(k).isdigit()
+        str(k): int(v) for k, v in (crumb.commitment_map or {}).items() if str(k).isdigit()
     }
     all_ids = list(commitment_map.values())
 
@@ -779,9 +776,7 @@ async def try_apply_proposals_reply(
         raw = _TRACK_NUMS_RE.match(normalized).group(1)  # type: ignore[union-attr]
         tokens = re.split(r"[,\s]+", raw.strip())
         selected_nums: list[str] = [t.strip() for t in tokens if t.strip().isdigit()]
-        selected_ids = [
-            commitment_map[n] for n in selected_nums if n in commitment_map
-        ]
+        selected_ids = [commitment_map[n] for n in selected_nums if n in commitment_map]
         if not selected_ids and selected_nums:
             # Numbers mentioned but none valid — likely a mis-parse.
             return None
@@ -815,10 +810,7 @@ async def try_apply_proposals_reply(
     if left_count == 0:
         return f"Tracking {len(approved_ids)} {approved_word}. I'll follow up as they come due."
     elif left_count == 1:
-        return (
-            f"Tracking {len(approved_ids)} {approved_word}. "
-            f"The other 1 I'll leave for now."
-        )
+        return f"Tracking {len(approved_ids)} {approved_word}. The other 1 I'll leave for now."
     else:
         return (
             f"Tracking {len(approved_ids)} {approved_word}. "

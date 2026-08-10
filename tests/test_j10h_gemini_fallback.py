@@ -83,7 +83,10 @@ async def test_gemini_adapter_raises_rate_limit_error_on_429() -> None:
     adapter = _gemini_adapter()
     request = _make_request()
 
-    with _mock_gemini_http(429, {"error": "rate limited"}), pytest.raises(GeminiRateLimitError) as exc_info:
+    with (
+        _mock_gemini_http(429, {"error": "rate limited"}),
+        pytest.raises(GeminiRateLimitError) as exc_info,
+    ):
         await adapter.complete(request)
 
     assert exc_info.value.status_code == 429
@@ -96,7 +99,10 @@ async def test_gemini_adapter_raises_rate_limit_error_on_503() -> None:
     adapter = _gemini_adapter()
     request = _make_request()
 
-    with _mock_gemini_http(503, {"error": "Service Unavailable"}), pytest.raises(GeminiRateLimitError) as exc_info:
+    with (
+        _mock_gemini_http(503, {"error": "Service Unavailable"}),
+        pytest.raises(GeminiRateLimitError) as exc_info,
+    ):
         await adapter.complete(request)
 
     assert exc_info.value.status_code == 503
@@ -108,7 +114,10 @@ async def test_gemini_adapter_raises_plain_api_error_on_400() -> None:
     adapter = _gemini_adapter()
     request = _make_request()
 
-    with _mock_gemini_http(400, {"error": {"message": "bad request"}}), pytest.raises(ProviderAPIError) as exc_info:
+    with (
+        _mock_gemini_http(400, {"error": {"message": "bad request"}}),
+        pytest.raises(ProviderAPIError) as exc_info,
+    ):
         await adapter.complete(request)
 
     assert exc_info.value.status_code == 400
@@ -265,13 +274,9 @@ async def test_lm_studio_not_in_default_cascade() -> None:
     assert "lm-studio" in source, "lm-studio guard text must remain in fallback.py"
     assert "ValueError" in source, "ValueError guard must exist"
     # The default fallback= parameter must be claude-code, not lm-studio.
-    assert 'fallback: str = "lm-studio"' not in source, (
-        "fallback= must never default to lm-studio"
-    )
+    assert 'fallback: str = "lm-studio"' not in source, "fallback= must never default to lm-studio"
     # The function must default fallback to claude-code.
-    assert 'fallback: str = "claude-code"' in source, (
-        "fallback= should default to claude-code"
-    )
+    assert 'fallback: str = "claude-code"' in source, "fallback= should default to claude-code"
 
 
 # ── Passthrough when primary == fallback ──────────────────────────────────────

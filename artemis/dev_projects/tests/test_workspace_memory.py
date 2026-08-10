@@ -56,9 +56,7 @@ from artemis.dev_projects.workspace_memory import (  # noqa: E402
     update_workspace_memory,
 )
 
-_TRUNCATE = text(
-    "TRUNCATE project_workspace_memory, dev_projects RESTART IDENTITY CASCADE"
-)
+_TRUNCATE = text("TRUNCATE project_workspace_memory, dev_projects RESTART IDENTITY CASCADE")
 _INSERT_PROJECT = text(
     "INSERT INTO dev_projects (name, path) VALUES ('Test Project', '/tmp/test-proj') RETURNING id"
 )

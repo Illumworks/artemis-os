@@ -173,9 +173,7 @@ def _parse_esbd_json(payload: dict[str, Any]) -> list[dict[str, Any]]:
         posted_date = _parse_esbd_date(str(item.get("startDate", "")))
         due_date = _parse_esbd_date(str(item.get("endDate", "")))
 
-        source_url = (
-            f"{ESBD_LIST_URL}/{internal_id}" if internal_id else ESBD_LIST_URL
-        )
+        source_url = f"{ESBD_LIST_URL}/{internal_id}" if internal_id else ESBD_LIST_URL
 
         postings.append(
             {
@@ -264,9 +262,7 @@ async def fetch_esbd_opportunities(
         return []
 
     if resp.status_code != 200:
-        _logger.warning(
-            "ESBD: unexpected HTTP %d from %s", resp.status_code, ESBD_SERVICE_URL
-        )
+        _logger.warning("ESBD: unexpected HTTP %d from %s", resp.status_code, ESBD_SERVICE_URL)
         return []
 
     try:

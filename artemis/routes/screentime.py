@@ -46,11 +46,56 @@ _logger = logging.getLogger(__name__)
 # The 50 states + DC. The single source of truth for "render every state" so a
 # state with no signals shows honest no-info gray, never a gap in the map.
 US_STATES: tuple[str, ...] = (
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "AL",
+    "AK",
+    "AZ",
+    "AR",
+    "CA",
+    "CO",
+    "CT",
+    "DE",
+    "FL",
+    "GA",
+    "HI",
+    "ID",
+    "IL",
+    "IN",
+    "IA",
+    "KS",
+    "KY",
+    "LA",
+    "ME",
+    "MD",
+    "MA",
+    "MI",
+    "MN",
+    "MS",
+    "MO",
+    "MT",
+    "NE",
+    "NV",
+    "NH",
+    "NJ",
+    "NM",
+    "NY",
+    "NC",
+    "ND",
+    "OH",
+    "OK",
+    "OR",
+    "PA",
+    "RI",
+    "SC",
+    "SD",
+    "TN",
+    "TX",
+    "UT",
+    "VT",
+    "VA",
+    "WA",
+    "WV",
+    "WI",
+    "WY",
     "DC",
 )
 
@@ -160,19 +205,19 @@ async def list_signals(
     for cond in conditions:
         base = base.where(cond)
 
-    total = (
-        await session.execute(
-            select(func.count()).select_from(base.subquery())
-        )
-    ).scalar_one()
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
     rows = (
-        await session.execute(
-            base.order_by(ScreentimeSignal.discovered_at.desc(), ScreentimeSignal.id.desc())
-            .limit(limit)
-            .offset(offset)
+        (
+            await session.execute(
+                base.order_by(ScreentimeSignal.discovered_at.desc(), ScreentimeSignal.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     signals = [
         {

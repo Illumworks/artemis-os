@@ -68,6 +68,7 @@ If no procedures qualify, respond with an empty JSON array: []
 
 # ── Dedup helpers ────────────────────────────────────────────────────────────
 
+
 def _normalize_slug(s: str) -> str:
     return s.lower().strip()
 
@@ -79,8 +80,7 @@ async def _pending_proposal_slugs(session: AsyncSession) -> set[str]:
     from artemis.builders.models import DefinitionProposal
 
     result = await session.execute(
-        select(DefinitionProposal.proposed_definition)
-        .where(
+        select(DefinitionProposal.proposed_definition).where(
             DefinitionProposal.kind == "skill",
             DefinitionProposal.status == "pending",
         )
@@ -135,14 +135,15 @@ async def distill_skill_candidates(
     try:
         existing_skills: list[dict[str, Any]] = await read_existing("skill", db_session=session)
     except Exception:
-        logger.warning("skill_distiller: failed to load existing skills — proceeding without dedup context", exc_info=True)
+        logger.warning(
+            "skill_distiller: failed to load existing skills — proceeding without dedup context",
+            exc_info=True,
+        )
         existing_skills = []
 
     # 3. Build existing slug set for hard dedup (catalog + pending proposals).
     existing_slugs: set[str] = {
-        _normalize_slug(str(s.get("slug", "")))
-        for s in existing_skills
-        if s.get("slug")
+        _normalize_slug(str(s.get("slug", ""))) for s in existing_skills if s.get("slug")
     }
     pending_slugs = await _pending_proposal_slugs(session)
     all_known_slugs = existing_slugs | pending_slugs

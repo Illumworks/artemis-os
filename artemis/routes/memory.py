@@ -89,6 +89,7 @@ async def _get_allowance(
 
 async def _get_user_for_identity(session: AsyncSession, email: str, name: str | None) -> User:
     from artemis.identity.repository import get_or_create_user
+
     user = await get_or_create_user(session, email, name)
     await session.commit()
     await session.refresh(user)
@@ -98,7 +99,11 @@ async def _get_user_for_identity(session: AsyncSession, email: str, name: str | 
 # ── GET /api/memory/conflicts ─────────────────────────────────────────────────
 
 
-@router.get("/conflicts", response_model=list[Conflict], dependencies=[Depends(require_token), Depends(require_owner)])
+@router.get(
+    "/conflicts",
+    response_model=list[Conflict],
+    dependencies=[Depends(require_token), Depends(require_owner)],
+)
 async def list_conflicts(
     scope_id: Annotated[str | None, Query(description="Filter by scope_id")] = None,
     status: Annotated[str | None, Query(description="'unresolved' (default) or 'all'")] = None,
@@ -115,7 +120,11 @@ async def list_conflicts(
 # ── POST /api/memory/conflicts/{id}/resolve ───────────────────────────────────
 
 
-@router.post("/conflicts/{conflict_id}/resolve", response_model=Conflict, dependencies=[Depends(require_token), Depends(require_owner)])
+@router.post(
+    "/conflicts/{conflict_id}/resolve",
+    response_model=Conflict,
+    dependencies=[Depends(require_token), Depends(require_owner)],
+)
 async def resolve_conflict_endpoint(
     conflict_id: int,
     body: ConflictResolveRequest,
@@ -158,7 +167,11 @@ async def resolve_conflict_endpoint(
 # ── GET /api/memory/observations/{id}/history ─────────────────────────────────
 
 
-@router.get("/observations/{observation_id}/history", response_model=list[Observation], dependencies=[Depends(require_token), Depends(require_owner)])
+@router.get(
+    "/observations/{observation_id}/history",
+    response_model=list[Observation],
+    dependencies=[Depends(require_token), Depends(require_owner)],
+)
 async def observation_history(
     observation_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008

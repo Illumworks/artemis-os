@@ -264,9 +264,9 @@ AGENT_BUILDER_TOOL_SPECS: list[dict[str, Any]] = [
                         "cadence_seconds (int — run interval in seconds, e.g. 3600 = hourly), "
                         "lifecycle_status (str — e.g. 'active', 'paused', 'draft'), "
                         "urgency_tiers (OBJECT keyed by tier name — e.g. "
-                        "{\"hot\": \"Signal score >80 — run within 5 min\", "
-                        "\"standard\": \"Score 40-80 — run within 1 hr\", "
-                        "\"low\": \"Score <40 — run in next daily batch\"}), "
+                        '{"hot": "Signal score >80 — run within 5 min", '
+                        '"standard": "Score 40-80 — run within 1 hr", '
+                        '"low": "Score <40 — run in next daily batch"}), '
                         "failure_modes (array of {name: str, description: str}), "
                         "inputs_required (array of {key: str, kind: str, description: str}), "
                         "db_tables_touched (array of table-name strings), "

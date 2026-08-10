@@ -293,7 +293,10 @@ async def test_add_comment_sends_attachment_refs_in_adf_body() -> None:
                                 "marks": [
                                     {
                                         "type": "link",
-                                        "attrs": {"href": att_ref["url"], "title": att_ref["filename"]},
+                                        "attrs": {
+                                            "href": att_ref["url"],
+                                            "title": att_ref["filename"],
+                                        },
                                     }
                                 ],
                             }

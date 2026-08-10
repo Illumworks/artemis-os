@@ -13,6 +13,7 @@ Covers:
 10. try_apply_proposals_reply: unrelated text -> returns None (breadcrumb untouched).
 11. Lint-clean output: no em-dashes, no emojis in digest text.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -237,9 +238,7 @@ async def test_no_live_breadcrumb_returns_none() -> None:
         "artemis.proactivity.commitments.repo.get_live_proposals_breadcrumb",
         new=AsyncMock(return_value=None),
     ):
-        result = await try_apply_proposals_reply(
-            session, text="track 1", slack_user_id="U12345"
-        )
+        result = await try_apply_proposals_reply(session, text="track 1", slack_user_id="U12345")
     assert result is None
 
 
@@ -263,9 +262,7 @@ async def test_track_none_completes_crumb_no_approvals() -> None:
             new=AsyncMock(),
         ) as mock_approve,
     ):
-        result = await try_apply_proposals_reply(
-            session, text="track none", slack_user_id="U12345"
-        )
+        result = await try_apply_proposals_reply(session, text="track none", slack_user_id="U12345")
 
     assert result is not None
     assert "leave" in result.lower() or "left" in result.lower() or "for now" in result.lower()
@@ -293,9 +290,7 @@ async def test_skip_completes_crumb_no_approvals() -> None:
             new=AsyncMock(),
         ) as mock_approve,
     ):
-        result = await try_apply_proposals_reply(
-            session, text="skip", slack_user_id="U12345"
-        )
+        result = await try_apply_proposals_reply(session, text="skip", slack_user_id="U12345")
 
     assert result is not None
     mock_complete.assert_awaited_once_with(session, crumb.id)
@@ -329,9 +324,7 @@ async def test_track_all_approves_all() -> None:
             new=fake_approve,
         ),
     ):
-        result = await try_apply_proposals_reply(
-            session, text="track all", slack_user_id="U12345"
-        )
+        result = await try_apply_proposals_reply(session, text="track all", slack_user_id="U12345")
 
     assert result is not None
     assert "2" in result  # "Tracking 2 commitments"
@@ -364,9 +357,7 @@ async def test_track_nums_comma_separated_approves_selected() -> None:
             new=fake_approve,
         ),
     ):
-        result = await try_apply_proposals_reply(
-            session, text="track 1,3", slack_user_id="U12345"
-        )
+        result = await try_apply_proposals_reply(session, text="track 1,3", slack_user_id="U12345")
 
     assert result is not None
     assert sorted(approved) == [101, 103]
@@ -401,9 +392,7 @@ async def test_track_nums_space_separated_approves_selected() -> None:
             new=fake_approve,
         ),
     ):
-        result = await try_apply_proposals_reply(
-            session, text="track 1 3", slack_user_id="U12345"
-        )
+        result = await try_apply_proposals_reply(session, text="track 1 3", slack_user_id="U12345")
 
     assert result is not None
     assert sorted(approved) == [101, 103]
@@ -456,9 +445,7 @@ async def test_track_single_item_singular_grammar() -> None:
             new=fake_approve,
         ),
     ):
-        result = await try_apply_proposals_reply(
-            session, text="track all", slack_user_id="U12345"
-        )
+        result = await try_apply_proposals_reply(session, text="track all", slack_user_id="U12345")
 
     assert result is not None
     assert "1 commitment" in result  # singular

@@ -221,11 +221,7 @@ async def stats_agent_metrics(
             "total_cost": float(row.total_cost) if row.total_cost is not None else 0.0,
             "total_input_tokens": int(row.total_input_tokens) if row.total_input_tokens else 0,
             "total_output_tokens": int(row.total_output_tokens) if row.total_output_tokens else 0,
-            "last_run_at": (
-                row.last_run_at.isoformat()
-                if row.last_run_at is not None
-                else None
-            ),
+            "last_run_at": (row.last_run_at.isoformat() if row.last_run_at is not None else None),
         }
         for row in agents_rows
     ]

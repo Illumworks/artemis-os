@@ -162,9 +162,7 @@ async def test_expire_old_signals(db_session):
     await db_session.flush()
     # Backdate the "old" one beyond retention.
     await db_session.execute(
-        text(
-            "UPDATE screentime_signals SET discovered_at = :ts WHERE title='old'"
-        ),
+        text("UPDATE screentime_signals SET discovered_at = :ts WHERE title='old'"),
         {"ts": datetime.now(UTC) - timedelta(days=90)},
     )
     await db_session.flush()

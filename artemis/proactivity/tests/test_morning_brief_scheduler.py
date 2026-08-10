@@ -69,7 +69,9 @@ async def test_fire_morning_brief_generates_and_delivers_once(db_session: AsyncS
     brief = {
         "_snapshotId": 42,
         "summary": "Focus on pipeline cleanup today.",
-        "top_priorities": [{"item": "Review candidates", "rationale": "Gate is waiting", "urgency": "high"}],
+        "top_priorities": [
+            {"item": "Review candidates", "rationale": "Gate is waiting", "urgency": "high"}
+        ],
         "waiting_on_you": [{"who": "Angela", "context": "Reply needed re: pipeline"}],
         "okr_at_risk": None,
         "confidence": "high",

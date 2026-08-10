@@ -157,9 +157,7 @@ async def _process_integration(session: object, integration: Integration, now: d
         # For GCal, capture the pre-mark status so we can decide whether to DM
         # after marking (avoids a second get_by_id inside handle_gcal_auth_dead
         # that would see the row already in needs_reauth state).
-        _gcal_was_active = (
-            integration.provider == "gcal" and integration.status != "needs_reauth"
-        )
+        _gcal_was_active = integration.provider == "gcal" and integration.status != "needs_reauth"
         await repo.mark_needs_reauth(session, integration.id)  # type: ignore[arg-type]
         if _gcal_was_active:
             # First time this integration is marked dead — send the owner DM once.

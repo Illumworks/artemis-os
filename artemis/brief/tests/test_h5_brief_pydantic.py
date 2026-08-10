@@ -34,7 +34,11 @@ _VALID_BRIEF_DICT: dict[str, Any] = {
     "top_priorities": [
         {"item": "Complete sprint review", "rationale": "Due this week", "urgency": "high"},
         {"item": "Update OKR progress", "rationale": None, "urgency": "medium"},
-        {"item": "Reply to Angela re: pipeline", "rationale": "Blocked downstream", "urgency": "medium"},
+        {
+            "item": "Reply to Angela re: pipeline",
+            "rationale": "Blocked downstream",
+            "urgency": "medium",
+        },
     ],
     "waiting_on_you": [
         {"who": "Angela", "context": "Waiting on pipeline approval"},
@@ -66,13 +70,15 @@ def test_valid_brief_passes_model_validate_json() -> None:
 
 def test_valid_brief_empty_optional_fields() -> None:
     """DailyBrief accepts empty optional fields (no waiting, no okr_at_risk)."""
-    brief = DailyBrief.model_validate({
-        "summary": "Quiet day.",
-        "top_priorities": [],
-        "waiting_on_you": [],
-        "okr_at_risk": None,
-        "confidence": "low",
-    })
+    brief = DailyBrief.model_validate(
+        {
+            "summary": "Quiet day.",
+            "top_priorities": [],
+            "waiting_on_you": [],
+            "okr_at_risk": None,
+            "confidence": "low",
+        }
+    )
     assert brief.summary == "Quiet day."
     assert brief.top_priorities == []
     assert brief.okr_at_risk is None

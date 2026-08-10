@@ -182,7 +182,9 @@ async def generate_brief(session: AsyncSession) -> dict[str, Any]:
 
             brief_model = brief_model.model_copy(
                 update={
-                    "top_priorities": [BriefPriority.model_validate(p) for p in weighted_priorities],
+                    "top_priorities": [
+                        BriefPriority.model_validate(p) for p in weighted_priorities
+                    ],
                     "waiting_on_you": [WaitingItem.model_validate(w) for w in weighted_waiting],
                 }
             )
@@ -193,7 +195,9 @@ async def generate_brief(session: AsyncSession) -> dict[str, Any]:
                 len(engagement_weights),
             )
         except Exception:
-            logger.warning("Brief engagement weighting failed — using unweighted brief", exc_info=True)
+            logger.warning(
+                "Brief engagement weighting failed — using unweighted brief", exc_info=True
+            )
 
     brief: dict[str, Any] = brief_model.model_dump(mode="json")
 

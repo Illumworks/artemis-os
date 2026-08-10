@@ -182,8 +182,7 @@ async def complete_with_fallback(
         fallback_adapter = get_adapter(fallback)
     except Exception as fb_exc:
         logger.error(
-            "complete_with_fallback: fallback %r also unavailable (%s); "
-            "re-raising primary error",
+            "complete_with_fallback: fallback %r also unavailable (%s); re-raising primary error",
             fallback,
             fb_exc,
         )
@@ -212,4 +211,8 @@ def _looks_like_gemini_model(model: str) -> bool:
     the fallback (claude-code) uses its own default instead of failing on an
     unrecognised model id.
     """
-    return model.startswith("gemini-") or model.startswith("gemini-flash") or model.startswith("gemini-pro")
+    return (
+        model.startswith("gemini-")
+        or model.startswith("gemini-flash")
+        or model.startswith("gemini-pro")
+    )

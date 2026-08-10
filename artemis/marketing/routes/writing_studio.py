@@ -1077,9 +1077,7 @@ async def _run_compose_job(job_id: str, draft_id: int, body: dict[str, Any]) -> 
         }
         job.status = "error"
     except Exception as exc:  # noqa: BLE001
-        _logger.warning(
-            "compose job %s failed for draft_id=%s", job_id, draft_id, exc_info=True
-        )
+        _logger.warning("compose job %s failed for draft_id=%s", job_id, draft_id, exc_info=True)
         job.error = {"error": f"Compose failed: {exc}", "code": "compose_error"}
         job.status = "error"
 

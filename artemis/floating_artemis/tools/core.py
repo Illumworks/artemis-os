@@ -537,9 +537,7 @@ async def _clear_brief_exclusion(inp: dict[str, Any]) -> str:
     )
     if "failed" in result.lower():
         return result
-    return (
-        f"Done — {ticket_key} will show up in your morning brief again starting tomorrow."
-    )
+    return f"Done — {ticket_key} will show up in your morning brief again starting tomorrow."
 
 
 # ── Tool definitions ──────────────────────────────────────────────────────────

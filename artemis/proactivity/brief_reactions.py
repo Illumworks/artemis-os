@@ -104,9 +104,13 @@ def make_reaction_content(item_type: str, label: str, reaction: str) -> str:
         ValueError: If item_type or reaction is invalid.
     """
     if item_type not in _VALID_ITEM_TYPES:
-        raise ValueError(f"Invalid item_type {item_type!r}; must be one of {sorted(_VALID_ITEM_TYPES)}")
+        raise ValueError(
+            f"Invalid item_type {item_type!r}; must be one of {sorted(_VALID_ITEM_TYPES)}"
+        )
     if reaction not in _VALID_REACTIONS:
-        raise ValueError(f"Invalid reaction {reaction!r}; must be one of {sorted(_VALID_REACTIONS)}")
+        raise ValueError(
+            f"Invalid reaction {reaction!r}; must be one of {sorted(_VALID_REACTIONS)}"
+        )
     return f"{_REACTION_PREFIX}{make_item_key(item_type, label)}:{reaction}"
 
 
@@ -135,7 +139,7 @@ def parse_reaction_observations(observations: list[Any]) -> dict[str, float]:
         if not content.startswith(_REACTION_PREFIX):
             continue
         # Format: brief_reaction:<item_type>:<item_key>:<reaction>
-        rest = content[len(_REACTION_PREFIX):]
+        rest = content[len(_REACTION_PREFIX) :]
         # Split from the right to isolate the reaction token
         parts = rest.rsplit(":", 1)
         if len(parts) != 2:

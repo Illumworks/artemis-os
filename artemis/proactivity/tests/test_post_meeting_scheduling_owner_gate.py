@@ -39,7 +39,9 @@ _OWNER_ID = 42
 _OTHER_ID = 99
 
 
-def _meeting(*, granola_id: str, owner: str | None, text: str = "Schedule a training") -> MeetingSummary:
+def _meeting(
+    *, granola_id: str, owner: str | None, text: str = "Schedule a training"
+) -> MeetingSummary:
     return MeetingSummary(
         granola_id=granola_id,
         title="Weekly sync",

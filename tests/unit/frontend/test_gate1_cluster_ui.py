@@ -7,6 +7,7 @@ escapeHtml dependency and re-exports the helper implementations verbatim.
 The cluster rendering code is self-contained (only needs esc/escapeHtml)
 so we can test it without loading all of marketing-os.js.
 """
+
 from __future__ import annotations
 
 import json

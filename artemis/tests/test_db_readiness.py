@@ -107,8 +107,9 @@ async def test_gives_up_after_bound_and_raises() -> None:
     async def _fake_sleep(delay: float) -> None:
         sleep_calls.append(delay)
 
-    with patch("artemis.db.asyncio.sleep", side_effect=_fake_sleep), pytest.raises(
-        RuntimeError, match="not ready after"
+    with (
+        patch("artemis.db.asyncio.sleep", side_effect=_fake_sleep),
+        pytest.raises(RuntimeError, match="not ready after"),
     ):
         await wait_for_db_ready(
             max_wait=max_wait,

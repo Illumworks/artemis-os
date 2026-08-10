@@ -115,7 +115,9 @@ def test_forge_command_headless_print_json() -> None:
 
 
 def test_forge_command_model_is_passed() -> None:
-    cmd = _build_forge_command(binary="claude", model="claude-haiku-4-6", project_path=_PROJECT_PATH)
+    cmd = _build_forge_command(
+        binary="claude", model="claude-haiku-4-6", project_path=_PROJECT_PATH
+    )
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "claude-haiku-4-6"
 
@@ -294,9 +296,7 @@ async def test_run_subprocess_passes_cwd_in_forge_mode(tmp_path: Path) -> None:
         captured_kwargs.update(kwargs)
         return proc
 
-    forge_cmd = _build_forge_command(
-        binary=str(binary), model=_MODEL, project_path=_PROJECT_PATH
-    )
+    forge_cmd = _build_forge_command(binary=str(binary), model=_MODEL, project_path=_PROJECT_PATH)
 
     with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=_capture_exec)):
         await adapter._run_subprocess(

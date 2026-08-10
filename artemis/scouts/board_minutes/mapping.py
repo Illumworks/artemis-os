@@ -146,8 +146,7 @@ def _classify(combined: str) -> tuple[str, str]:
 
     # Formal RFP authorization for literacy/reading/assessment/tutoring
     if "rfp" in lower and any(
-        kw in lower
-        for kw in ("literacy", "reading", "curriculum", "assessment", "tutoring", "ela")
+        kw in lower for kw in ("literacy", "reading", "curriculum", "assessment", "tutoring", "ela")
     ):
         if any(kw in lower for kw in ("approved", "authorization", "authorize")):
             return _RC_PROCUREMENT_RFP, "hot"
@@ -156,7 +155,14 @@ def _classify(combined: str) -> tuple[str, str]:
     # Named competitor + negative action → hot VENDOR_DISSATISFACTION
     # (vendor non-renewal/replacement without the generic "vendor" word in title)
     _named_vendors = ("iready", "lexia", "amplify", "imagine learning", "ucsf multitudes")
-    _negative_actions = ("non-renewal", "non renewal", "not renew", "replace", "terminate", "end contract")
+    _negative_actions = (
+        "non-renewal",
+        "non renewal",
+        "not renew",
+        "replace",
+        "terminate",
+        "end contract",
+    )
     if any(v in lower for v in _named_vendors) and any(a in lower for a in _negative_actions):
         return _RC_VENDOR_DISSATISFACTION, "hot"
 

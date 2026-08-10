@@ -83,9 +83,7 @@ def _report_marker(signal_id: int) -> str:
     return f"{_REPORT_OBS_PREFIX}{signal_id}:"
 
 
-async def _already_reported_ids(
-    session: AsyncSession, signal_ids: list[int]
-) -> set[int]:
+async def _already_reported_ids(session: AsyncSession, signal_ids: list[int]) -> set[int]:
     """Return the subset of *signal_ids* that already have a reported-marker.
 
     One query for the whole batch (vs. N point lookups). Matches the marker
@@ -124,9 +122,7 @@ async def _is_reported(session: AsyncSession, signal_id: int) -> bool:
     return result.scalar_one_or_none() is not None
 
 
-async def _mark_reported(
-    session: AsyncSession, signal_id: int, *, mode: str, title: str
-) -> None:
+async def _mark_reported(session: AsyncSession, signal_id: int, *, mode: str, title: str) -> None:
     """Write the durable "already reported" marker for *signal_id*.
 
     ``mode`` is "digest" or "alert" (recorded for audit; the marker is the same
@@ -134,10 +130,7 @@ async def _mark_reported(
     """
     from artemis.memory.store import write_observation
 
-    content = (
-        f"{_report_marker(signal_id)}mode={mode}:"
-        f"signal_id={signal_id} title={title!r}"
-    )
+    content = f"{_report_marker(signal_id)}mode={mode}:signal_id={signal_id} title={title!r}"
     await write_observation(
         session,
         scope=_CALLIE_SCOPE,
@@ -160,12 +153,16 @@ async def _select_unreported_real_moves(
     excludes anything already reported via the dedup marker.
     """
     rows = (
-        await session.execute(
-            select(ScreentimeSignal)
-            .where(ScreentimeSignal.is_real_move.is_(True))
-            .order_by(ScreentimeSignal.discovered_at.desc())
+        (
+            await session.execute(
+                select(ScreentimeSignal)
+                .where(ScreentimeSignal.is_real_move.is_(True))
+                .order_by(ScreentimeSignal.discovered_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not rows:
         return []
     reported = await _already_reported_ids(session, [s.id for s in rows])
@@ -284,15 +281,11 @@ def _fallback_digest_text(signals: list[ScreentimeSignal]) -> str:
     fav = [s for s in signals if (s.stance or "").lower() == STANCE_FAVORABLE]
     unf = [s for s in signals if (s.stance or "").lower() == STANCE_UNFAVORABLE]
     other = [
-        s
-        for s in signals
-        if (s.stance or "").lower() not in (STANCE_FAVORABLE, STANCE_UNFAVORABLE)
+        s for s in signals if (s.stance or "").lower() not in (STANCE_FAVORABLE, STANCE_UNFAVORABLE)
     ]
 
     lines: list[str] = []
-    lines.append(
-        f"*Screen-Time Watch — {len(signals)} new real move(s)*"
-    )
+    lines.append(f"*Screen-Time Watch — {len(signals)} new real move(s)*")
 
     def _group(label: str, group: list[ScreentimeSignal]) -> None:
         if not group:
@@ -303,9 +296,7 @@ def _fallback_digest_text(signals: list[ScreentimeSignal]) -> str:
             emoji = _stance_emoji(s.stance)
             where = s.state + (f"/{s.district_name}" if s.district_name else "")
             angle = f" — {s.amira_angle}" if s.amira_angle else ""
-            lines.append(
-                f"{emoji} *{where}* ({s.status}): {_source_link(s)}{angle}"
-            )
+            lines.append(f"{emoji} *{where}* ({s.status}): {_source_link(s)}{angle}")
 
     _group("*Unfavorable (blanket restrictions — watch):*", unf)
     _group("*Favorable (carve-outs we can lean on):*", fav)
@@ -331,9 +322,7 @@ def _fallback_alert_text(signal: ScreentimeSignal) -> str:
     )
 
 
-async def _compose_digest_text(
-    session: AsyncSession, signals: list[ScreentimeSignal]
-) -> str:
+async def _compose_digest_text(session: AsyncSession, signals: list[ScreentimeSignal]) -> str:
     """Compose the digest in Callie's voice via a cheap provider; fall back to
     the deterministic builder on any failure (never raises).
 
@@ -462,9 +451,7 @@ async def post_screentime_digest(session: AsyncSession) -> int:
         )
         return len(signals)
     except Exception:
-        _log.warning(
-            "screentime_report: non-fatal error posting digest", exc_info=True
-        )
+        _log.warning("screentime_report: non-fatal error posting digest", exc_info=True)
         return 0
 
 
@@ -528,9 +515,7 @@ async def maybe_alert_big_move_by_hash(session: AsyncSession, content_hash: str)
     try:
         signal = (
             await session.execute(
-                select(ScreentimeSignal).where(
-                    ScreentimeSignal.content_hash == content_hash
-                )
+                select(ScreentimeSignal).where(ScreentimeSignal.content_hash == content_hash)
             )
         ).scalar_one_or_none()
         if signal is None:

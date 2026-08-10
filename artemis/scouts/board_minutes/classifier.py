@@ -151,9 +151,7 @@ async def classify_mention(
     try:
         response = await adapter.complete(request)
         parts = [
-            block.text
-            for block in response.message.content
-            if getattr(block, "type", "") == "text"
+            block.text for block in response.message.content if getattr(block, "type", "") == "text"
         ]
         raw = "".join(parts).strip()
         if raw.startswith("```"):

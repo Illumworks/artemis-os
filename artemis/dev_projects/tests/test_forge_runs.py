@@ -57,16 +57,13 @@ from artemis.dev_projects.forge_runs import (  # noqa: E402
 )
 
 _TRUNCATE = text(
-    "TRUNCATE forge_run_log, forge_runs, dev_sessions, dev_projects "
-    "RESTART IDENTITY CASCADE"
+    "TRUNCATE forge_run_log, forge_runs, dev_sessions, dev_projects RESTART IDENTITY CASCADE"
 )
 _INSERT_PROJECT = text(
-    "INSERT INTO dev_projects (name, path) VALUES ('Forge Test', '/tmp/forge-test')"
-    " RETURNING id"
+    "INSERT INTO dev_projects (name, path) VALUES ('Forge Test', '/tmp/forge-test') RETURNING id"
 )
 _INSERT_SESSION = text(
-    "INSERT INTO dev_sessions (project_id, provider) VALUES (:pid, 'claude-code')"
-    " RETURNING id"
+    "INSERT INTO dev_sessions (project_id, provider) VALUES (:pid, 'claude-code') RETURNING id"
 )
 
 
@@ -188,9 +185,7 @@ async def test_complete_run_clears_active(db_session: AsyncSession) -> None:
 
     from artemis.dev_projects.models import ForgeRun  # noqa: PLC0415
 
-    result = await db_session.execute(
-        select(ForgeRun).where(ForgeRun.run_id == "run_test_003")
-    )
+    result = await db_session.execute(select(ForgeRun).where(ForgeRun.run_id == "run_test_003"))
     run = result.scalar_one()
     assert run.status == "completed"
     assert run.completed_at is not None

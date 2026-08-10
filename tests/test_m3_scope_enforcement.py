@@ -50,6 +50,7 @@ _TRUNCATE = text(
 )
 
 from artemis.identity.scope_policy import OWNER_EMAIL
+
 MARKETING_EMAIL = "marketer@amiralearning.com"
 
 
@@ -68,9 +69,7 @@ async def db_session():
 
     engine = create_async_engine(DB_URL, echo=False, poolclass=NullPool)
     attach_pgvector_codec(engine)
-    session_factory = async_sessionmaker(
-        bind=engine, expire_on_commit=False, class_=AsyncSession
-    )
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     # Also patch the module-level SessionLocal so the app uses the same DB.
     old_session_local = db_module.SessionLocal
     old_engine = db_module.engine
@@ -154,6 +153,7 @@ async def _seed_observation_full(
 async def _seed_user(db_session: AsyncSession, email: str, name: str = "Test User") -> int:
     """Upsert a user row and return their id."""
     from artemis.identity.repository import get_or_create_user
+
     user = await get_or_create_user(db_session, email, name)
     await db_session.commit()
     return user.id
@@ -176,18 +176,21 @@ def _make_identity_headers(email: str) -> dict[str, str]:
 class TestResolver:
     def test_owner_gets_all(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+
         a = allowed_scopes_for_email(OWNER_EMAIL, 1)
         assert a.allow_all is True
         assert not a.denied
 
     def test_owner_permits_personal(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+
         a = allowed_scopes_for_email(OWNER_EMAIL, 1)
         assert a.permits("personal", "1")
         assert a.permits("personal", "9999")
 
     def test_owner_permits_agent_artemis(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+
         a = allowed_scopes_for_email(OWNER_EMAIL, 1)
         assert a.permits("agent", "artemis")
         assert a.permits("agent", "floating-artemis")
@@ -195,6 +198,7 @@ class TestResolver:
 
     def test_marketing_human_cannot_read_owner_personal(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+
         owner_id = 1
         marketing_user_id = 42
         owner_allowance = allowed_scopes_for_email(OWNER_EMAIL, owner_id)
@@ -206,23 +210,27 @@ class TestResolver:
 
     def test_marketing_human_reads_own_personal(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email
+
         mktg_user_id = 42
         a = allowed_scopes_for_email(MARKETING_EMAIL, mktg_user_id)
         assert a.permits("personal", str(mktg_user_id))
 
     def test_marketing_human_cannot_read_agent_artemis(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email
+
         a = allowed_scopes_for_email(MARKETING_EMAIL, 42)
         assert not a.permits("agent", "artemis")
         assert not a.permits("agent", "floating-artemis")
 
     def test_marketing_human_can_read_agent_callie(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email
+
         a = allowed_scopes_for_email(MARKETING_EMAIL, 42)
         assert a.permits("agent", "callie")
 
     def test_marketing_human_reads_marketing_scopes(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email
+
         a = allowed_scopes_for_email(MARKETING_EMAIL, 42)
         assert a.permits("workspace", "marketing")
         assert a.permits("campaign_family", "any-family")
@@ -230,18 +238,21 @@ class TestResolver:
 
     def test_callie_agent_cannot_read_personal(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("callie")
         assert not a.permits("personal", "1")
         assert not a.permits("personal", "42")
 
     def test_callie_agent_cannot_read_agent_artemis(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("callie")
         assert not a.permits("agent", "artemis")
         assert not a.permits("agent", "floating-artemis")
 
     def test_callie_agent_reads_marketing(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("callie")
         assert a.permits("agent", "callie")
         assert a.permits("workspace", "marketing")
@@ -250,6 +261,7 @@ class TestResolver:
 
     def test_artemis_agent_gets_all(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("artemis")
         assert a.allow_all is True
         assert a.permits("personal", "1")
@@ -257,23 +269,27 @@ class TestResolver:
 
     def test_floating_artemis_alias_gets_all(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("floating-artemis")
         assert a.allow_all is True
 
     def test_unknown_agent_denied(self):
         from artemis.identity.scope_policy import allowed_scopes_for_agent
+
         a = allowed_scopes_for_agent("unknown-bot")
         assert a.denied is True
         assert not a.permits("agent", "callie")
 
     def test_unknown_identity_denied(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email
+
         # Blank email → deny
         a = allowed_scopes_for_email("", 1)
         assert a.denied is True
 
     def test_invalid_user_id_denied(self):
         from artemis.identity.scope_policy import allowed_scopes_for_email
+
         # Non-owner email with bad user_id → deny
         a = allowed_scopes_for_email(MARKETING_EMAIL, -1)
         assert a.denied is True
@@ -282,22 +298,27 @@ class TestResolver:
 
     def test_d11_owner_gets_artemis_agent(self):
         from artemis.identity.scope_policy import resolve_agent_id_from_email, OWNER_EMAIL
+
         assert resolve_agent_id_from_email(OWNER_EMAIL) == "artemis"
 
     def test_d11_marketing_gets_callie_agent(self):
         from artemis.identity.scope_policy import resolve_agent_id_from_email
+
         assert resolve_agent_id_from_email(MARKETING_EMAIL) == "callie"
 
     def test_d11_blank_email_gets_callie(self):
         from artemis.identity.scope_policy import resolve_agent_id_from_email
+
         assert resolve_agent_id_from_email("") == "callie"
 
     def test_d11_none_email_gets_callie(self):
         from artemis.identity.scope_policy import resolve_agent_id_from_email
+
         assert resolve_agent_id_from_email(None) == "callie"  # type: ignore[arg-type]
 
     def test_allowance_denied_permits_nothing(self):
         from artemis.identity.scope_policy import allowance_denied
+
         a = allowance_denied()
         assert not a.permits("global", "global")
         assert not a.permits("personal", "1")
@@ -312,38 +333,54 @@ class TestAgentScopeEnforcement:
     def test_callie_cannot_read_agent_artemis(self):
         from artemis.floating_artemis.memory import _enforce_agent_scope_set
         from artemis.memory.schemas import Scope
-        result = _enforce_agent_scope_set("callie", [
-            Scope(scope_kind="agent", scope_id="artemis"),
-        ])
+
+        result = _enforce_agent_scope_set(
+            "callie",
+            [
+                Scope(scope_kind="agent", scope_id="artemis"),
+            ],
+        )
         assert result == []
 
     def test_callie_cannot_read_personal(self):
         from artemis.floating_artemis.memory import _enforce_agent_scope_set
         from artemis.memory.schemas import Scope
-        result = _enforce_agent_scope_set("callie", [
-            Scope(scope_kind="personal", scope_id="1"),
-            Scope(scope_kind="personal", scope_id="42"),
-        ])
+
+        result = _enforce_agent_scope_set(
+            "callie",
+            [
+                Scope(scope_kind="personal", scope_id="1"),
+                Scope(scope_kind="personal", scope_id="42"),
+            ],
+        )
         assert result == []
 
     def test_callie_can_read_callie_scope(self):
         from artemis.floating_artemis.memory import _enforce_agent_scope_set
         from artemis.memory.schemas import Scope
-        result = _enforce_agent_scope_set("callie", [
-            Scope(scope_kind="agent", scope_id="callie"),
-        ])
+
+        result = _enforce_agent_scope_set(
+            "callie",
+            [
+                Scope(scope_kind="agent", scope_id="callie"),
+            ],
+        )
         assert len(result) == 1
         assert result[0].scope_id == "callie"
 
     def test_callie_mixed_scope_filters_correctly(self):
         from artemis.floating_artemis.memory import _enforce_agent_scope_set
         from artemis.memory.schemas import Scope
-        result = _enforce_agent_scope_set("callie", [
-            Scope(scope_kind="agent", scope_id="callie"),
-            Scope(scope_kind="agent", scope_id="artemis"),   # should be dropped
-            Scope(scope_kind="personal", scope_id="1"),      # should be dropped
-            Scope(scope_kind="workspace", scope_id="marketing"),  # OK
-        ])
+
+        result = _enforce_agent_scope_set(
+            "callie",
+            [
+                Scope(scope_kind="agent", scope_id="callie"),
+                Scope(scope_kind="agent", scope_id="artemis"),  # should be dropped
+                Scope(scope_kind="personal", scope_id="1"),  # should be dropped
+                Scope(scope_kind="workspace", scope_id="marketing"),  # OK
+            ],
+        )
         scopes_str = [(s.scope_kind, s.scope_id) for s in result]
         assert ("agent", "artemis") not in scopes_str
         assert ("personal", "1") not in scopes_str
@@ -353,6 +390,7 @@ class TestAgentScopeEnforcement:
     def test_artemis_gets_all_scopes(self):
         from artemis.floating_artemis.memory import _enforce_agent_scope_set
         from artemis.memory.schemas import Scope
+
         scopes = [
             Scope(scope_kind="agent", scope_id="floating-artemis"),
             Scope(scope_kind="personal", scope_id="1"),
@@ -364,9 +402,13 @@ class TestAgentScopeEnforcement:
     def test_unknown_agent_gets_empty(self):
         from artemis.floating_artemis.memory import _enforce_agent_scope_set
         from artemis.memory.schemas import Scope
-        result = _enforce_agent_scope_set("unknown-bot", [
-            Scope(scope_kind="agent", scope_id="callie"),
-        ])
+
+        result = _enforce_agent_scope_set(
+            "unknown-bot",
+            [
+                Scope(scope_kind="agent", scope_id="callie"),
+            ],
+        )
         assert result == []
 
 
@@ -401,9 +443,7 @@ async def test_http_owner_sees_all_scopes(db_session, client):
     personal_obs_id = await _seed_observation(
         db_session, "personal", str(owner_id), "Owner personal note"
     )
-    artemis_obs_id = await _seed_observation(
-        db_session, "agent", "artemis", "Artemis agent memory"
-    )
+    artemis_obs_id = await _seed_observation(db_session, "agent", "artemis", "Artemis agent memory")
     mktg_obs_id = await _seed_observation(
         db_session, "workspace", "marketing", "Marketing observation"
     )
@@ -412,7 +452,9 @@ async def test_http_owner_sees_all_scopes(db_session, client):
     original = id_dep._DEV_USER_EMAIL
     try:
         id_dep._DEV_USER_EMAIL = OWNER_EMAIL
-        resp = await client.get("/api/memory/observations", headers={"Authorization": "Bearer test"})
+        resp = await client.get(
+            "/api/memory/observations", headers={"Authorization": "Bearer test"}
+        )
     finally:
         id_dep._DEV_USER_EMAIL = original
 
@@ -445,7 +487,9 @@ async def test_http_marketing_cannot_see_owner_personal(db_session, client):
     original = id_dep._DEV_USER_EMAIL
     try:
         id_dep._DEV_USER_EMAIL = MARKETING_EMAIL
-        resp = await client.get("/api/memory/observations", headers={"Authorization": "Bearer test"})
+        resp = await client.get(
+            "/api/memory/observations", headers={"Authorization": "Bearer test"}
+        )
     finally:
         id_dep._DEV_USER_EMAIL = original
 
@@ -493,9 +537,9 @@ async def test_http_marketing_cannot_widen_via_scope_filter(db_session, client):
     assert personal_obs_id not in obs_ids, "Cannot widen via query param to owner personal scope"
     # All returned observations must be within the marketing user's allowance
     for obs in body["observations"]:
-        assert obs["scope_kind"] != "personal" or obs["scope_id"] == str(
-            mktg_id
-        ), "Returned observations must only include caller's permitted scopes"
+        assert obs["scope_kind"] != "personal" or obs["scope_id"] == str(mktg_id), (
+            "Returned observations must only include caller's permitted scopes"
+        )
 
 
 @pytest.mark.asyncio
@@ -513,7 +557,9 @@ async def test_http_marketing_reads_own_personal(db_session, client):
     original = id_dep._DEV_USER_EMAIL
     try:
         id_dep._DEV_USER_EMAIL = MARKETING_EMAIL
-        resp = await client.get("/api/memory/observations", headers={"Authorization": "Bearer test"})
+        resp = await client.get(
+            "/api/memory/observations", headers={"Authorization": "Bearer test"}
+        )
     finally:
         id_dep._DEV_USER_EMAIL = original
 
@@ -645,6 +691,7 @@ class TestFailClosed:
 
     def test_denied_permits_nothing(self):
         from artemis.identity.scope_policy import allowance_denied
+
         a = allowance_denied()
         for sk in ["personal", "agent", "workspace", "global", "campaign_family"]:
             for sid in ["1", "callie", "artemis", "marketing", "global"]:
@@ -653,6 +700,7 @@ class TestFailClosed:
     def test_resolver_error_returns_denied(self):
         """Passing bad args should return denied, not raise."""
         from artemis.identity.scope_policy import allowed_scopes_for_email, allowed_scopes_for_agent
+
         # None email
         a = allowed_scopes_for_email(None, 1)  # type: ignore[arg-type]
         assert a.denied is True
@@ -781,14 +829,14 @@ async def test_marketing_regression_can_read_workspace_marketing(db_session, cli
     campaign_obs_id = await _seed_observation(
         db_session, "campaign_family", "email-nurture", "Campaign family obs"
     )
-    global_obs_id = await _seed_observation(
-        db_session, "global", "global", "Global obs"
-    )
+    global_obs_id = await _seed_observation(db_session, "global", "global", "Global obs")
 
     original = id_dep._DEV_USER_EMAIL
     try:
         id_dep._DEV_USER_EMAIL = MARKETING_EMAIL
-        resp = await client.get("/api/memory/observations", headers={"Authorization": "Bearer test"})
+        resp = await client.get(
+            "/api/memory/observations", headers={"Authorization": "Bearer test"}
+        )
     finally:
         id_dep._DEV_USER_EMAIL = original
 
@@ -808,14 +856,14 @@ async def test_marketing_regression_can_read_agent_callie(db_session, client):
     await _seed_user(db_session, OWNER_EMAIL, "Jon")
     mktg_id = await _seed_user(db_session, MARKETING_EMAIL, "Marketer")
 
-    callie_obs_id = await _seed_observation(
-        db_session, "agent", "callie", "Callie marketing obs"
-    )
+    callie_obs_id = await _seed_observation(db_session, "agent", "callie", "Callie marketing obs")
 
     original = id_dep._DEV_USER_EMAIL
     try:
         id_dep._DEV_USER_EMAIL = MARKETING_EMAIL
-        resp = await client.get("/api/memory/observations", headers={"Authorization": "Bearer test"})
+        resp = await client.get(
+            "/api/memory/observations", headers={"Authorization": "Bearer test"}
+        )
     finally:
         id_dep._DEV_USER_EMAIL = original
 
@@ -838,15 +886,18 @@ class TestQueryMemoryToolGating:
     def test_callie_make_query_memory_denies_personal_scope(self):
         """_make_query_memory for callie returns a deny-function for personal scope."""
         from artemis.floating_artemis.tools.core import _make_query_memory
+
         fn = _make_query_memory("callie")
         # The function is a coroutine — verify it's callable and the impl is correct.
         import asyncio, inspect
+
         assert inspect.iscoroutinefunction(fn)
 
     def test_artemis_make_query_memory_passes_all_scopes(self):
         """_make_query_memory for artemis returns allow-all implementation."""
         from artemis.floating_artemis.tools.core import _make_query_memory
         import inspect
+
         fn = _make_query_memory("artemis")
         assert inspect.iscoroutinefunction(fn)
 
@@ -854,6 +905,7 @@ class TestQueryMemoryToolGating:
         """_make_query_memory for unknown agent should fail closed."""
         from artemis.floating_artemis.tools.core import _make_query_memory
         import inspect
+
         fn = _make_query_memory("unknown-hacker")
         assert inspect.iscoroutinefunction(fn)
 
@@ -861,6 +913,7 @@ class TestQueryMemoryToolGating:
         """register_core_tools(registry, agent_id=...) does not raise."""
         from artemis.floating_artemis.tools.core import register_core_tools
         from artemis.floating_artemis.authority import AuthorizedToolRegistry
+
         registry = AuthorizedToolRegistry()
         register_core_tools(registry, agent_id="callie")
         assert "query_memory" in registry
@@ -869,6 +922,7 @@ class TestQueryMemoryToolGating:
         """register_core_tools with no agent_id registers a fail-closed impl."""
         from artemis.floating_artemis.tools.core import register_core_tools
         from artemis.floating_artemis.authority import AuthorizedToolRegistry
+
         registry = AuthorizedToolRegistry()
         register_core_tools(registry, agent_id=None)
         assert "query_memory" in registry
@@ -876,6 +930,7 @@ class TestQueryMemoryToolGating:
     def test_build_authorized_tool_registry_threads_agent_id(self):
         """build_authorized_tool_registry accepts and threads agent_id."""
         from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
+
         registry = build_authorized_tool_registry(set(), agent_id="callie")
         assert "query_memory" in registry
         registry2 = build_authorized_tool_registry(set(), agent_id=None)
@@ -942,15 +997,15 @@ async def test_tool_callie_allowed_marketing_scope(db_session):
     from artemis.floating_artemis.tools.core import _make_query_memory
 
     callie_qm = _make_query_memory("callie")
-    result = await callie_qm({"query": "MARKETING PUBLIC", "scope": "workspace:marketing", "limit": 10})
+    result = await callie_qm(
+        {"query": "MARKETING PUBLIC", "scope": "workspace:marketing", "limit": 10}
+    )
 
     # Callie is permitted to read workspace:marketing — must find it.
     assert result != "No relevant memory found.", (
         f"Callie must be allowed workspace:marketing scope, got: {result!r}"
     )
-    assert "MARKETING PUBLIC" in result, (
-        f"Callie must see marketing content, got: {result!r}"
-    )
+    assert "MARKETING PUBLIC" in result, f"Callie must see marketing content, got: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -1026,9 +1081,7 @@ async def test_tool_none_agent_fail_closed(db_session):
 
     none_qm = _make_query_memory(None)
     result = await none_qm({"query": "PUBLIC", "scope": "workspace:marketing", "limit": 10})
-    assert result == "No relevant memory found.", (
-        f"None agent_id must fail closed, got: {result!r}"
-    )
+    assert result == "No relevant memory found.", f"None agent_id must fail closed, got: {result!r}"
 
 
 # ── 9. Provenance re-run (_emit_memory_read_event) scope gating ───────────────
@@ -1050,6 +1103,7 @@ async def test_emit_memory_read_event_callie_denied_personal(db_session):
     await _emit_memory_read_event(session_id, inp, agent_id="callie")
     # The cache should have been populated (even if empty).
     from artemis.floating_artemis.memory_read_cache import get as cache_get
+
     event = cache_get(session_id)
     if event is not None:
         # If an event was cached, its observations must not contain personal content.
@@ -1289,9 +1343,7 @@ async def test_smoke_marketing_on_artemis_session_denied_personal(db_session):
     )
 
     # Attempt 2: agent:artemis scope — must be denied
-    result_artemis = await callie_qm(
-        {"query": "SECRET", "scope": "agent:artemis", "limit": 10}
-    )
+    result_artemis = await callie_qm({"query": "SECRET", "scope": "agent:artemis", "limit": 10})
     assert "ARTEMIS SECRET" not in result_artemis, (
         f"Marketing identity on artemis-metadata session must NOT see agent:artemis content, "
         f"got: {result_artemis!r}"

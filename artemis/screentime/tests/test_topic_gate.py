@@ -45,6 +45,7 @@ def _cand(title: str, summary: str = "") -> CandidateSignal:
 
 # --- DROPS the exact noise we saw -------------------------------------------
 
+
 def test_reading_retention_dropped():
     c = _cand(
         "HB 1: third grade reading retention",
@@ -78,6 +79,7 @@ def test_test_scores_item_dropped():
 
 
 # --- DROPS the screenings / budget-study noise (v2 tightening) --------------
+
 
 def test_behavioral_health_screening_dropped():
     c = _cand(
@@ -121,6 +123,7 @@ def test_real_bills_still_pass_the_gate():
 
 # --- KEEPS real screen-time items -------------------------------------------
 
+
 def test_instructional_screen_time_limit_kept():
     c = _cand(
         "Bill to limit instructional screen time",
@@ -139,6 +142,7 @@ def test_evidence_based_tool_exemption_to_screentime_rule_kept():
 
 # --- prescreen tri-state ----------------------------------------------------
 
+
 def test_prescreen_keep_drop_ambiguous():
     assert topic_prescreen("limits screen time in classrooms", TOPIC) == TOPIC_KEEP
     assert topic_prescreen("a literacy and phonics mandate", TOPIC) == TOPIC_DROP
@@ -148,6 +152,7 @@ def test_prescreen_keep_drop_ambiguous():
 
 
 # --- "exempt" no longer favorable: dropped at the gate ----------------------
+
 
 def test_reading_retention_exempt_dropped_by_gate_not_classified():
     """The first-run false-favorable: a reading-retention exemption.
@@ -174,6 +179,7 @@ def test_screentime_exempt_still_favorable():
 
 
 # --- Tunability: changing the config flips a borderline item ----------------
+
 
 def test_tunable_require_term_flips_borderline_item():
     text = "Policy on classroom tablet minutes for young students."

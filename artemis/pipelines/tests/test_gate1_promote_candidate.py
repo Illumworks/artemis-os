@@ -42,9 +42,7 @@ _TRUNCATE_MARKETING = text(
     "TRUNCATE campaign_candidate_signals, campaign_candidates, signal_queue, "
     "district_tier_bands, districts RESTART IDENTITY CASCADE"
 )
-_TRUNCATE_PIPELINES = text(
-    "TRUNCATE pipeline_runs, pipelines, approvals RESTART IDENTITY CASCADE"
-)
+_TRUNCATE_PIPELINES = text("TRUNCATE pipeline_runs, pipelines, approvals RESTART IDENTITY CASCADE")
 
 
 async def _reset(session: AsyncSession) -> None:
@@ -215,10 +213,14 @@ async def test_promote_qualified_signals_for_run_creates_candidate(
     # Signals are approved (checked outside the above begin block to avoid nesting)
     async with db_session.begin():
         sigs = (
-            await db_session.execute(
-                select(SignalQueue).where(SignalQueue.pipeline_run_id == run_id)
+            (
+                await db_session.execute(
+                    select(SignalQueue).where(SignalQueue.pipeline_run_id == run_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for sig in sigs:
             assert sig.signal_status == "approved", (
                 f"Signal {sig.id} should be approved; got {sig.signal_status}"
@@ -281,21 +283,29 @@ async def test_pipeline_gate1_approval_promotes_candidate(
     # Verify signals are attached to the candidate
     async with db_session.begin():
         links = (
-            await db_session.execute(
-                select(CampaignCandidateSignal).where(
-                    CampaignCandidateSignal.candidate_id == cand.id
+            (
+                await db_session.execute(
+                    select(CampaignCandidateSignal).where(
+                        CampaignCandidateSignal.candidate_id == cand.id
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(links) >= 1, f"Candidate {cand.id} has no signal links"
 
     # Verify all signals are marked approved
     async with db_session.begin():
         sigs = (
-            await db_session.execute(
-                select(SignalQueue).where(SignalQueue.pipeline_run_id == run_id)
+            (
+                await db_session.execute(
+                    select(SignalQueue).where(SignalQueue.pipeline_run_id == run_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for sig in sigs:
             assert sig.signal_status == "approved", (
                 f"Signal {sig.id} should be approved; got {sig.signal_status}"
@@ -356,8 +366,7 @@ async def test_gate1_approval_idempotent(
 
     # The second call finds 0 qualified signals (all already approved)
     assert len(results2) == 0, (
-        "Second call should find 0 qualified signals (already approved); "
-        f"got {len(results2)}"
+        f"Second call should find 0 qualified signals (already approved); got {len(results2)}"
     )
 
     async with db_session.begin():
@@ -441,7 +450,5 @@ async def test_promote_signal_to_candidate_idempotent_when_already_approved(
         assert sig_v2 is not None
         res2 = await promote_signal_to_candidate(db_session, sig_v2)
 
-    assert res2.candidate.id == first_candidate_id, (
-        "Second call should return the same candidate"
-    )
+    assert res2.candidate.id == first_candidate_id, "Second call should return the same candidate"
     assert res2.created is False, "Should not report a new creation on second call"

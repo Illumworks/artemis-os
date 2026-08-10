@@ -41,7 +41,9 @@ def _mock_http(
 
 
 @pytest.mark.asyncio
-async def test_procurement_no_key_skips_sam_returns_bonfire(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_procurement_no_key_skips_sam_returns_bonfire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """When SAM_API_KEY is absent, SAM.gov is skipped and Bonfire is still attempted.
 
     With a mock returning an empty RSS feed, the result is [] (valid JSON),

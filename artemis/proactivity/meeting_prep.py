@@ -167,7 +167,7 @@ def parse_already_sent_event_ids(observations: list[Any]) -> set[str]:
     for obs in observations:
         content = obs.content or ""
         if content.startswith(_PREP_SENT_PREFIX):
-            event_id = content[len(_PREP_SENT_PREFIX):].strip()
+            event_id = content[len(_PREP_SENT_PREFIX) :].strip()
             if event_id:
                 sent.add(event_id)
     return sent
@@ -240,11 +240,7 @@ async def fetch_today_upcoming_events(session: Any) -> list[UpcomingEvent]:
                 except (ValueError, AttributeError):
                     pass
 
-            attendees = [
-                a.email
-                for a in (event.attendees or [])
-                if getattr(a, "email", None)
-            ]
+            attendees = [a.email for a in (event.attendees or []) if getattr(a, "email", None)]
 
             result.append(
                 UpcomingEvent(
@@ -309,10 +305,32 @@ async def fetch_related_commitments(session: Any, *, title: str) -> list[dict[st
 
         # Extract meaningful words (3+ chars) from the title.
         import re
-        keywords = [w.lower() for w in re.findall(r"\b\w{3,}\b", title) if w.lower() not in {
-            "the", "and", "for", "with", "that", "this", "are", "was", "its",
-            "from", "have", "has", "had", "not", "but", "what", "all", "when",
-        }][:5]
+
+        keywords = [
+            w.lower()
+            for w in re.findall(r"\b\w{3,}\b", title)
+            if w.lower()
+            not in {
+                "the",
+                "and",
+                "for",
+                "with",
+                "that",
+                "this",
+                "are",
+                "was",
+                "its",
+                "from",
+                "have",
+                "has",
+                "had",
+                "not",
+                "but",
+                "what",
+                "all",
+                "when",
+            }
+        ][:5]
 
         if not keywords:
             return []
@@ -369,7 +387,10 @@ async def fetch_memory_snippets(session: Any, *, query: str) -> list[str]:
         for obs in results:
             content = obs.content or ""
             # Skip dedup/system observations (pre_meeting_prep_sent, brief_exclusion, etc.)
-            if any(content.startswith(pfx) for pfx in (_PREP_SENT_PREFIX, "brief_exclusion:", "brief_reaction:")):
+            if any(
+                content.startswith(pfx)
+                for pfx in (_PREP_SENT_PREFIX, "brief_exclusion:", "brief_reaction:")
+            ):
                 continue
             if content:
                 snippets.append(content)

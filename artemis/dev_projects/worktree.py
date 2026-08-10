@@ -111,18 +111,14 @@ async def _git(
     except TimeoutError as exc:
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        raise WorktreeError(
-            f"git {' '.join(args[:3])} timed out after {timeout}s"
-        ) from exc
+        raise WorktreeError(f"git {' '.join(args[:3])} timed out after {timeout}s") from exc
 
     rc = proc.returncode if proc.returncode is not None else -1
     stdout = raw_out.decode(errors="replace").strip()
     stderr = raw_err.decode(errors="replace").strip()
 
     if check and rc != 0:
-        raise WorktreeError(
-            f"git {' '.join(args[:4])} failed (rc={rc}): {stderr or stdout}"
-        )
+        raise WorktreeError(f"git {' '.join(args[:4])} failed (rc={rc}): {stderr or stdout}")
     return rc, stdout, stderr
 
 
@@ -169,7 +165,10 @@ async def ensure_worktree(project_path: str, session_id: int) -> str:
     # --- Idempotency check: if the dir exists and git recognises it, reuse it.
     if wt_path.exists():
         rc, _, _ = await _git(
-            "-C", str(wt_path), "rev-parse", "--is-inside-work-tree",
+            "-C",
+            str(wt_path),
+            "rev-parse",
+            "--is-inside-work-tree",
             check=False,
         )
         if rc == 0:
@@ -185,7 +184,10 @@ async def ensure_worktree(project_path: str, session_id: int) -> str:
 
     # --- Confirm project_path is a git repo before doing anything else.
     rc, _, stderr = await _git(
-        "-C", project_path, "rev-parse", "--is-inside-work-tree",
+        "-C",
+        project_path,
+        "rev-parse",
+        "--is-inside-work-tree",
         check=False,
     )
     if rc != 0:
@@ -199,7 +201,11 @@ async def ensure_worktree(project_path: str, session_id: int) -> str:
 
     # --- Determine whether the branch already exists in the project repo.
     _rc, branch_list, _ = await _git(
-        "-C", project_path, "branch", "--list", branch,
+        "-C",
+        project_path,
+        "branch",
+        "--list",
+        branch,
         check=False,
     )
     branch_exists = bool(branch_list.strip())
@@ -231,15 +237,25 @@ async def _worktree_add(
     if branch_exists:
         # Branch already exists: attach without -b.
         rc, stdout, stderr = await _git(
-            "-C", project_path, "worktree", "add",
-            str(wt_path), branch,
+            "-C",
+            project_path,
+            "worktree",
+            "add",
+            str(wt_path),
+            branch,
             check=False,
         )
     else:
         # New branch: create from HEAD.
         rc, stdout, stderr = await _git(
-            "-C", project_path, "worktree", "add",
-            "-b", branch, str(wt_path), "HEAD",
+            "-C",
+            project_path,
+            "worktree",
+            "add",
+            "-b",
+            branch,
+            str(wt_path),
+            "HEAD",
             check=False,
         )
 
@@ -256,9 +272,7 @@ async def _worktree_add(
         or "is already checked out" in combined
     )
     if is_stale and not _retry:
-        logger.warning(
-            "worktree: add failed (stale state?), pruning and retrying: %s", stderr
-        )
+        logger.warning("worktree: add failed (stale state?), pruning and retrying: %s", stderr)
         await _git("-C", project_path, "worktree", "prune", check=False)
         # Clean up any remnant directory from the failed add.
         shutil.rmtree(wt_path, ignore_errors=True)
@@ -271,9 +285,7 @@ async def _worktree_add(
         )
         return
 
-    raise WorktreeError(
-        f"git worktree add failed (rc={rc}): {stderr or stdout}"
-    )
+    raise WorktreeError(f"git worktree add failed (rc={rc}): {stderr or stdout}")
 
 
 async def _apply_push_block(wt_path: Path) -> None:
@@ -284,7 +296,11 @@ async def _apply_push_block(wt_path: Path) -> None:
     """
     # Step 1: enable per-worktree config layer (required for --worktree flag).
     rc, _, err = await _git(
-        "-C", str(wt_path), "config", "extensions.worktreeConfig", "true",
+        "-C",
+        str(wt_path),
+        "config",
+        "extensions.worktreeConfig",
+        "true",
         check=False,
     )
     if rc != 0:
@@ -295,7 +311,9 @@ async def _apply_push_block(wt_path: Path) -> None:
     #         This is a safety check -- tmp repos in tests and projects that
     #         have never had a remote should not get a spurious config write.
     rc_remotes, remotes_out, _ = await _git(
-        "-C", str(wt_path), "remote",
+        "-C",
+        str(wt_path),
+        "remote",
         check=False,
     )
     if rc_remotes != 0:
@@ -312,8 +330,12 @@ async def _apply_push_block(wt_path: Path) -> None:
     # --worktree writes to .git/worktrees/<id>/config.worktree, NOT to
     # .git/config.  The main tree and all other worktrees are unaffected.
     rc, _, err = await _git(
-        "-C", str(wt_path),
-        "config", "--worktree", "remote.origin.pushurl", "no_push",
+        "-C",
+        str(wt_path),
+        "config",
+        "--worktree",
+        "remote.origin.pushurl",
+        "no_push",
         check=False,
     )
     if rc != 0:
@@ -339,7 +361,12 @@ async def remove_worktree(
     # 1. Ask git to unregister and remove the worktree.
     try:
         rc, _, stderr = await _git(
-            "-C", project_path, "worktree", "remove", "--force", str(wt_path),
+            "-C",
+            project_path,
+            "worktree",
+            "remove",
+            "--force",
+            str(wt_path),
             check=False,
         )
         if rc != 0:
@@ -347,12 +374,15 @@ async def remove_worktree(
             if "not a working tree" in msg or "does not exist" in msg:
                 logger.debug(
                     "worktree: remove for session=%s already gone: %s",
-                    session_id, stderr,
+                    session_id,
+                    stderr,
                 )
             else:
                 logger.warning(
                     "worktree: remove --force for session=%s failed (rc=%s): %s",
-                    session_id, rc, stderr,
+                    session_id,
+                    rc,
+                    stderr,
                 )
     except WorktreeError as exc:
         logger.warning("worktree: remove_worktree git call failed: %s", exc)
@@ -361,19 +391,23 @@ async def remove_worktree(
     if delete_branch:
         try:
             rc, _, stderr = await _git(
-                "-C", project_path, "branch", "-D", branch,
+                "-C",
+                project_path,
+                "branch",
+                "-D",
+                branch,
                 check=False,
             )
             if rc != 0:
                 msg = stderr.lower()
                 if "not found" in msg or "no branch" in msg:
-                    logger.debug(
-                        "worktree: branch %s already gone: %s", branch, stderr
-                    )
+                    logger.debug("worktree: branch %s already gone: %s", branch, stderr)
                 else:
                     logger.warning(
                         "worktree: branch -D %s failed (rc=%s): %s",
-                        branch, rc, stderr,
+                        branch,
+                        rc,
+                        stderr,
                     )
         except WorktreeError as exc:
             logger.warning("worktree: branch delete failed: %s", exc)
@@ -442,9 +476,7 @@ async def startup_sweep(
             try:
                 dir_session_id = int(session_dir.name)
             except ValueError:
-                logger.debug(
-                    "worktree: startup_sweep skipping non-integer dir %s", session_dir
-                )
+                logger.debug("worktree: startup_sweep skipping non-integer dir %s", session_dir)
                 continue
 
             # When no resolver is provided, leave the dirs alone.
@@ -464,9 +496,7 @@ async def startup_sweep(
                 shutil.rmtree(session_dir, ignore_errors=True)
                 pruned += 1
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "worktree: startup_sweep rmtree(%s) failed: %s", session_dir, exc
-                )
+                logger.warning("worktree: startup_sweep rmtree(%s) failed: %s", session_dir, exc)
                 continue
 
             # Best-effort git worktree prune on whatever is one level above.
@@ -477,7 +507,10 @@ async def startup_sweep(
             # NOTE: run against slug_dir (the per-project slug folder) in case
             # the user happens to have placed worktrees adjacent to a git repo.
             _rc_unused, _so, _se = await _git(
-                "-C", str(slug_dir), "worktree", "prune",
+                "-C",
+                str(slug_dir),
+                "worktree",
+                "prune",
                 check=False,
             )
 

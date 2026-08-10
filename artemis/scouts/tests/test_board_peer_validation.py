@@ -161,7 +161,10 @@ def test_strip_html_removes_tags_and_scripts() -> None:
 async def test_fetch_agenda_item_body_primary_path() -> None:
     http = _FakeHttp()
     body = await fetch_agenda_item_body(
-        "https://go.boarddocs.com/fl/pcsfl/Board.nsf", "ITEM1", "C1", http  # type: ignore[arg-type]
+        "https://go.boarddocs.com/fl/pcsfl/Board.nsf",
+        "ITEM1",
+        "C1",
+        http,  # type: ignore[arg-type]
     )
     assert "screen time limits" in body
     assert "<p>" not in body
@@ -174,7 +177,10 @@ async def test_fetch_agenda_item_body_falls_back_to_goto() -> None:
     ]
     http = _FakeHttp(routes)
     body = await fetch_agenda_item_body(
-        "https://go.boarddocs.com/fl/pcsfl/Board.nsf", "ITEM1", "C1", http  # type: ignore[arg-type]
+        "https://go.boarddocs.com/fl/pcsfl/Board.nsf",
+        "ITEM1",
+        "C1",
+        http,  # type: ignore[arg-type]
     )
     assert "screen time limits" in body
     # Both endpoints were attempted, in order.
@@ -186,7 +192,10 @@ async def test_fetch_agenda_item_body_falls_back_to_goto() -> None:
 async def test_fetch_agenda_item_body_returns_empty_on_total_failure() -> None:
     http = _FakeHttp(routes=[])  # everything 404s
     body = await fetch_agenda_item_body(
-        "https://go.boarddocs.com/fl/pcsfl/Board.nsf", "ITEM1", "C1", http  # type: ignore[arg-type]
+        "https://go.boarddocs.com/fl/pcsfl/Board.nsf",
+        "ITEM1",
+        "C1",
+        http,  # type: ignore[arg-type]
     )
     assert body == ""
 
@@ -295,7 +304,9 @@ async def test_classify_mention_missing_sentiment_coerces_to_neutral() -> None:
 
 async def test_classify_mention_none_relevant_coerces_to_false() -> None:
     """Same class of bug for 'relevant' — None must default to False, not crash."""
-    adapter = _adapter_returning(json.dumps({"relevant": None, "topics": [], "sentiment": "neutral"}))
+    adapter = _adapter_returning(
+        json.dumps({"relevant": None, "topics": [], "sentiment": "neutral"})
+    )
     result = await classify_mention("t", "b", adapter=adapter)
     assert result is not None
     assert result.relevant is False
@@ -478,7 +489,9 @@ async def test_gather_findings_respects_district_cap() -> None:
 async def test_gather_findings_continues_on_district_error() -> None:
     d2 = {**_DISTRICT, "district_id": "TX_dallas"}
 
-    async def _boom_then_ok(district: dict[str, Any], http: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    async def _boom_then_ok(
+        district: dict[str, Any], http: Any, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         if district["district_id"] == "FL_pinellas":
             raise RuntimeError("network error")
         return [_item()]
@@ -538,7 +551,11 @@ def test_default_watch_list_broadened_2026_07_11_priority_states() -> None:
 
 def test_load_watch_list_roundtrip(tmp_path: Any) -> None:
     seed = [
-        {"district_id": "CA_x", "state": "CA", "boarddocs_url": "https://go.boarddocs.com/ca/x/Board.nsf/Public"},
+        {
+            "district_id": "CA_x",
+            "state": "CA",
+            "boarddocs_url": "https://go.boarddocs.com/ca/x/Board.nsf/Public",
+        },
         {"district_id": "", "boarddocs_url": "https://bad"},  # malformed → skipped
         "not-a-dict",
     ]

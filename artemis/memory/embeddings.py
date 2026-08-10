@@ -74,14 +74,10 @@ class MiniLMProvider:
             if self._load_error is not None:
                 raise self._load_error
             if self._model is None:
-                _logger.info(
-                    "Loading embedding model %s (first call, device=cpu)", _MODEL_NAME
-                )
+                _logger.info("Loading embedding model %s (first call, device=cpu)", _MODEL_NAME)
                 loop = asyncio.get_running_loop()
                 try:
-                    self._model = await loop.run_in_executor(
-                        None, _load_model_sync, _MODEL_NAME
-                    )
+                    self._model = await loop.run_in_executor(None, _load_model_sync, _MODEL_NAME)
                     _logger.info("Embedding model loaded successfully")
                 except Exception as exc:
                     _logger.error(

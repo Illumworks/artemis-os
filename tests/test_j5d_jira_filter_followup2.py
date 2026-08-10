@@ -100,9 +100,7 @@ async def test_jira_overview_includes_team_roster_with_team_and_project() -> Non
         mock_http.__aenter__ = AsyncMock(return_value=mock_http)
         mock_http.__aexit__ = AsyncMock(return_value=False)
         # /myself → ME123; /user/assignable/search → team list
-        mock_http.get = AsyncMock(
-            side_effect=[_myself_response(), assignable_resp]
-        )
+        mock_http.get = AsyncMock(side_effect=[_myself_response(), assignable_resp])
         mock_http.post = AsyncMock(return_value=_empty_search())
         mock_cls.return_value = mock_http
 
@@ -243,8 +241,8 @@ UNASSIGNED_ID = "__unassigned__"
 
 def _build_people_list(
     *,
-    team_roster: list[dict],       # [{id, name}]
-    columns: list[dict],            # [{items: [{assigneeId, assignee}]}]
+    team_roster: list[dict],  # [{id, name}]
+    columns: list[dict],  # [{items: [{assigneeId, assignee}]}]
     current_user_id: str = "",
     current_user_name: str = "",
 ) -> list[dict]:
@@ -293,7 +291,8 @@ def _build_swimlanes(
         for key in col_keys:
             col = col_by_key.get(key, {})
             items = [
-                i for i in col.get("items", [])
+                i
+                for i in col.get("items", [])
                 if (person["id"] == UNASSIGNED_ID and not i.get("assigneeId"))
                 or i.get("assigneeId") == person["id"]
             ]
@@ -333,9 +332,12 @@ def test_people_list_includes_ticket_assignee_not_in_roster() -> None:
     """Assignees on tickets who are NOT in the team roster must still appear."""
     roster = [{"id": "U1", "name": "Alice"}]
     columns = [
-        {"key": "todo", "items": [
-            {"assigneeId": "GUEST99", "assignee": "External Guest"},
-        ]},
+        {
+            "key": "todo",
+            "items": [
+                {"assigneeId": "GUEST99", "assignee": "External Guest"},
+            ],
+        },
         {"key": "prog", "items": []},
         {"key": "blocked", "items": []},
         {"key": "review", "items": []},
@@ -385,8 +387,12 @@ def test_people_list_always_includes_current_user() -> None:
 def test_people_list_always_ends_with_unassigned() -> None:
     """Unassigned sentinel must always be the last entry."""
     roster = [{"id": "U1", "name": "Alice"}]
-    columns = [{"key": "todo", "items": []}, {"key": "prog", "items": []},
-               {"key": "blocked", "items": []}, {"key": "review", "items": []}]
+    columns = [
+        {"key": "todo", "items": []},
+        {"key": "prog", "items": []},
+        {"key": "blocked", "items": []},
+        {"key": "review", "items": []},
+    ]
     people = _build_people_list(team_roster=roster, columns=columns)
     assert people[-1]["id"] == UNASSIGNED_ID, "Unassigned must be last"
 
@@ -417,18 +423,30 @@ def test_swimlane_keeps_zero_ticket_team_member_lane() -> None:
         {"id": "ANGELA", "name": "Angela Miata"},
     ]
     columns = [
-        {"key": "todo", "items": [{"assigneeId": "U1", "assignee": "Alice", "key": "T-1",
-                                    "title": "Task", "priority": "Medium", "labels": [],
-                                    "created": "2026-01-01", "assigneeId": "U1",
-                                    "commentCount": 0, "attachmentCount": 0, "worklogTotal": 0,
-                                    "sprint": ""}]},
+        {
+            "key": "todo",
+            "items": [
+                {
+                    "assigneeId": "U1",
+                    "assignee": "Alice",
+                    "key": "T-1",
+                    "title": "Task",
+                    "priority": "Medium",
+                    "labels": [],
+                    "created": "2026-01-01",
+                    "assigneeId": "U1",
+                    "commentCount": 0,
+                    "attachmentCount": 0,
+                    "worklogTotal": 0,
+                    "sprint": "",
+                }
+            ],
+        },
         {"key": "prog", "items": []},
         {"key": "blocked", "items": []},
         {"key": "review", "items": []},
     ]
-    people = _build_people_list(
-        team_roster=roster, columns=columns, current_user_id="U1"
-    )
+    people = _build_people_list(team_roster=roster, columns=columns, current_user_id="U1")
     team_roster_ids = {"U1", "ANGELA"}
     lanes = _build_swimlanes(
         people=people, columns=columns, team_roster_ids=team_roster_ids, owner_id="U1"

@@ -36,9 +36,7 @@ logger = logging.getLogger(__name__)
 
 # The connective comment template Artemis posts in-channel.
 # %s = display name of the originating agent (e.g. "Kai", "Callie").
-_TERMINAL_COMMENT_TEMPLATE = (
-    "@{agent_display}, I'll take this — escalating to Jon."
-)
+_TERMINAL_COMMENT_TEMPLATE = "@{agent_display}, I'll take this — escalating to Jon."
 
 
 @dataclass

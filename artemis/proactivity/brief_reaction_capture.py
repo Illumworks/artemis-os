@@ -80,7 +80,11 @@ def _extract_manifest_items(brief: dict[str, Any]) -> list[dict[str, str]]:
             items.append({"type": "waiting_on", "label": label})
 
     # okr_at_risk is a single string (or None), so the line itself is the label.
-    okr_line = (brief.get("okr_at_risk") or "").strip() if isinstance(brief.get("okr_at_risk"), str) else ""
+    okr_line = (
+        (brief.get("okr_at_risk") or "").strip()
+        if isinstance(brief.get("okr_at_risk"), str)
+        else ""
+    )
     if okr_line:
         items.append({"type": "okr", "label": okr_line})
 
@@ -156,7 +160,7 @@ async def _load_recent_manifest(session: Any, max_age_hours: int = 36) -> list[d
             content = obs.content or ""
             if not content.startswith(_MANIFEST_PREFIX):
                 continue
-            rest = content[len(_MANIFEST_PREFIX):]
+            rest = content[len(_MANIFEST_PREFIX) :]
             bracket = rest.find("[")
             if bracket <= 0:
                 continue
@@ -206,7 +210,7 @@ def _build_classify_prompt(items: list[dict], message_text: str) -> str:
     ]
     for i, it in enumerate(items, start=1):
         label = str(it.get("label", "")).strip()
-        lines.append(f'{i}. [{it.get("type", "")}] {label}')
+        lines.append(f"{i}. [{it.get('type', '')}] {label}")
     lines.extend(
         [
             "",
@@ -238,7 +242,7 @@ def _parse_classify_json(raw: str) -> list[dict]:
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else ""
         if text.endswith("```"):
-            text = text[: -3]
+            text = text[:-3]
         text = text.strip()
     # Locate the first JSON array.
     start = text.find("[")

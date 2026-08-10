@@ -122,9 +122,7 @@ async def _forge_create_run(run_id: str, dev_session_id: int, project_id: int) -
         logger.exception("forge_run: create_run failed for run_id=%s (non-fatal)", run_id)
 
 
-async def _forge_append_log(
-    run_id: str, kind: str, payload: dict[str, Any]
-) -> None:
+async def _forge_append_log(run_id: str, kind: str, payload: dict[str, Any]) -> None:
     """Append one event to ForgeRunLog. Swallows all exceptions."""
     try:
         from artemis.dev_projects.forge_runs import append_log  # lazy import
@@ -216,7 +214,7 @@ async def run_turn(
     )
 
     # --- 2. Determine write mode ---
-    write_mode = (_forge_mode == "write")
+    write_mode = _forge_mode == "write"
 
     # --- 3. Create ForgeRun (failure-isolated) ---
     run_id = f"run_{uuid.uuid4().hex}"
@@ -249,8 +247,7 @@ async def run_turn(
                         {
                             "type": "text",
                             "text": (
-                                "Forge write mode could not create the isolated worktree: "
-                                f"{wt_exc}"
+                                f"Forge write mode could not create the isolated worktree: {wt_exc}"
                             ),
                         }
                     ],
@@ -304,7 +301,11 @@ async def run_turn(
 
 
 async def _maybe_run_local_tool(
-    *, session_id: int, project_path: str, user_text: str, bypass: bool,
+    *,
+    session_id: int,
+    project_path: str,
+    user_text: str,
+    bypass: bool,
     run_id: str | None = None,
 ) -> bool:
     lower = user_text.lower()
@@ -656,9 +657,10 @@ async def _run_forge_turn(
     # -- 6. Extract final text -----------------------------------------------
     from artemis.agent.types import TextBlock as ATextBlock
 
-    final_text = " ".join(
-        b.text for b in response.message.content if isinstance(b, ATextBlock)
-    ).strip() or "(No response.)"
+    final_text = (
+        " ".join(b.text for b in response.message.content if isinstance(b, ATextBlock)).strip()
+        or "(No response.)"
+    )
 
     # -- 7. Persist + broadcast via the existing Phase-1 path ---------------
     final_content: list[dict[str, Any]] = [{"type": "text", "text": final_text}]

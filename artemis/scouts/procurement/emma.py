@@ -303,9 +303,7 @@ async def fetch_emma_opportunities(
         return []
 
     if resp.status_code != 200:
-        _logger.warning(
-            "eMMA: unexpected HTTP %d from %s", resp.status_code, EMMA_SEARCH_URL
-        )
+        _logger.warning("eMMA: unexpected HTTP %d from %s", resp.status_code, EMMA_SEARCH_URL)
         return []
 
     try:

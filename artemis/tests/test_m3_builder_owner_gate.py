@@ -58,9 +58,7 @@ async def test_require_owner_cf_owner_email_case_insensitive(monkeypatch):
     monkeypatch.setattr(_auth.settings, "cf_access_enabled", True, raising=False)
 
     async def _fake_identity(_request, _jwt):
-        return RequestIdentity(
-            email=OWNER_EMAIL.upper(), name="Owner", claims={}, source="test"
-        )
+        return RequestIdentity(email=OWNER_EMAIL.upper(), name="Owner", claims={}, source="test")
 
     monkeypatch.setattr(_auth, "resolve_request_identity", _fake_identity)
     await _auth.require_owner(_FakeRequest(), "jwt")  # no raise

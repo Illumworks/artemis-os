@@ -293,15 +293,11 @@ async def test_different_messages_both_dispatch() -> None:
     _reset_dedup_cache()
 
     ev1 = _make_channel_event(ts="400.001", client_msg_id="cm_first")
-    dispatched1 = await _run_handle_mentionable(
-        event=ev1, payload=_make_payload(event_id="Ev_1")
-    )
+    dispatched1 = await _run_handle_mentionable(event=ev1, payload=_make_payload(event_id="Ev_1"))
     assert len(dispatched1) == 1
 
     ev2 = _make_channel_event(ts="400.002", client_msg_id="cm_second")
-    dispatched2 = await _run_handle_mentionable(
-        event=ev2, payload=_make_payload(event_id="Ev_2")
-    )
+    dispatched2 = await _run_handle_mentionable(event=ev2, payload=_make_payload(event_id="Ev_2"))
     assert len(dispatched2) == 1
 
 

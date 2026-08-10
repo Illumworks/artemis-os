@@ -55,9 +55,7 @@ def _is_blocked_ip(ip: _IPAddress) -> bool:
 
 def _check_ip(ip: _IPAddress, url: str) -> None:
     if _is_blocked_ip(ip):
-        raise EgressBlockedError(
-            f"blocked egress to non-public address {ip} (url={url!r})"
-        )
+        raise EgressBlockedError(f"blocked egress to non-public address {ip} (url={url!r})")
 
 
 def validate_url(

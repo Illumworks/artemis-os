@@ -54,6 +54,4 @@ class ArgusResearchRequest(Base):
         nullable=False,
         server_default=func.now(),
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

@@ -69,9 +69,7 @@ def _make_artemis_registry() -> Any:
 def test_dispatch_research_present_for_callie() -> None:
     """dispatch_research is registered when agent_id='callie'."""
     registry = _make_callie_registry()
-    assert "dispatch_research" in registry, (
-        "dispatch_research must be present in Callie's registry"
-    )
+    assert "dispatch_research" in registry, "dispatch_research must be present in Callie's registry"
 
 
 def test_dispatch_research_absent_for_artemis() -> None:
@@ -106,26 +104,34 @@ def test_dispatch_research_absent_for_unknown_agent() -> None:
 
 def test_parse_synthesis_output_valid_json_lines() -> None:
     """_parse_synthesis_output parses well-formed JSON lines into DistrictFindings."""
-    raw = "\n".join([
-        json.dumps({
-            "dimension": "current_vendor",
-            "value": "Uses Lexia Reading Core5",
-            "source": "Argus/news_api",
-            "url": "https://example.com/article",
-        }),
-        json.dumps({
-            "dimension": "procurement_timing",
-            "value": "RFP expected Q1 FY2027",
-            "source": "Argus/board_minutes",
-            "url": None,
-        }),
-        json.dumps({
-            "dimension": "recommended_angle",
-            "value": "Position Amira as complement to Lexia. Timing is now.",
-            "source": "Argus",
-            "url": None,
-        }),
-    ])
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "dimension": "current_vendor",
+                    "value": "Uses Lexia Reading Core5",
+                    "source": "Argus/news_api",
+                    "url": "https://example.com/article",
+                }
+            ),
+            json.dumps(
+                {
+                    "dimension": "procurement_timing",
+                    "value": "RFP expected Q1 FY2027",
+                    "source": "Argus/board_minutes",
+                    "url": None,
+                }
+            ),
+            json.dumps(
+                {
+                    "dimension": "recommended_angle",
+                    "value": "Position Amira as complement to Lexia. Timing is now.",
+                    "source": "Argus",
+                    "url": None,
+                }
+            ),
+        ]
+    )
     findings = _parse_synthesis_output(raw, "TX-001")
     dims = {f.dimension for f in findings}
     assert "current_vendor" in dims
@@ -138,12 +144,21 @@ def test_parse_synthesis_output_valid_json_lines() -> None:
 
 def test_parse_synthesis_output_skips_bad_lines() -> None:
     """_parse_synthesis_output skips unparseable lines and continues."""
-    raw = "\n".join([
-        "this is not json",
-        json.dumps({"dimension": "district_profile", "value": "Enrollment 5000", "source": "Argus", "url": None}),
-        "```",
-        "{ broken json",
-    ])
+    raw = "\n".join(
+        [
+            "this is not json",
+            json.dumps(
+                {
+                    "dimension": "district_profile",
+                    "value": "Enrollment 5000",
+                    "source": "Argus",
+                    "url": None,
+                }
+            ),
+            "```",
+            "{ broken json",
+        ]
+    )
     findings = _parse_synthesis_output(raw, "TX-001")
     assert len(findings) == 1
     assert findings[0].dimension == "district_profile"
@@ -151,10 +166,16 @@ def test_parse_synthesis_output_skips_bad_lines() -> None:
 
 def test_parse_synthesis_output_deduplicates_same_dimension() -> None:
     """_parse_synthesis_output keeps only the first occurrence of a duplicate dimension."""
-    raw = "\n".join([
-        json.dumps({"dimension": "current_vendor", "value": "First", "source": "Argus", "url": None}),
-        json.dumps({"dimension": "current_vendor", "value": "Second", "source": "Argus", "url": None}),
-    ])
+    raw = "\n".join(
+        [
+            json.dumps(
+                {"dimension": "current_vendor", "value": "First", "source": "Argus", "url": None}
+            ),
+            json.dumps(
+                {"dimension": "current_vendor", "value": "Second", "source": "Argus", "url": None}
+            ),
+        ]
+    )
     findings = _parse_synthesis_output(raw, "TX-001")
     vendor_findings = [f for f in findings if f.dimension == "current_vendor"]
     assert len(vendor_findings) == 1
@@ -163,12 +184,14 @@ def test_parse_synthesis_output_deduplicates_same_dimension() -> None:
 
 def test_parse_synthesis_output_prefixes_non_argus_source() -> None:
     """_parse_synthesis_output ensures source always starts with 'Argus'."""
-    raw = json.dumps({
-        "dimension": "decision_makers",
-        "value": "Dr. Smith, Superintendent",
-        "source": "news_api",  # missing Argus/ prefix
-        "url": None,
-    })
+    raw = json.dumps(
+        {
+            "dimension": "decision_makers",
+            "value": "Dr. Smith, Superintendent",
+            "source": "news_api",  # missing Argus/ prefix
+            "url": None,
+        }
+    )
     findings = _parse_synthesis_output(raw, "TX-001")
     assert len(findings) == 1
     assert findings[0].source.startswith("Argus")
@@ -199,7 +222,9 @@ async def test_research_dimensions_calls_synthesis_with_tool_results() -> None:
 
     # Mock _gather_tool_results to return synthetic data
     mock_tool_results = {
-        "news_api": [{"title": "District adopts Lexia", "link": "https://x.com", "published": today}],
+        "news_api": [
+            {"title": "District adopts Lexia", "link": "https://x.com", "published": today}
+        ],
         "board_minutes": [],
     }
     # Mock _run_synthesis to return pre-built findings
@@ -214,8 +239,16 @@ async def test_research_dimensions_calls_synthesis_with_tool_results() -> None:
     ]
 
     with (
-        patch("artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value=mock_tool_results),
-        patch("artemis.argus.research._run_synthesis", new_callable=AsyncMock, return_value=expected_findings),
+        patch(
+            "artemis.argus.research._gather_tool_results",
+            new_callable=AsyncMock,
+            return_value=mock_tool_results,
+        ),
+        patch(
+            "artemis.argus.research._run_synthesis",
+            new_callable=AsyncMock,
+            return_value=expected_findings,
+        ),
     ):
         result = await research_dimensions(
             "TX-001",
@@ -233,7 +266,9 @@ async def test_research_dimensions_calls_synthesis_with_tool_results() -> None:
 async def test_research_dimensions_skips_no_tool_dims_without_crashing() -> None:
     """Dimensions with no tool mapping (prior_amira_relationship) get a fallback finding."""
     with (
-        patch("artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value={}),
+        patch(
+            "artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value={}
+        ),
         patch("artemis.argus.research._run_synthesis", new_callable=AsyncMock, return_value=[]),
     ):
         result = await research_dimensions(
@@ -256,17 +291,53 @@ async def test_research_dimensions_all_findings_tagged_argus() -> None:
     today = datetime.now(UTC).date().isoformat()
 
     synth_findings = [
-        DistrictFinding(dimension=Dimension.CURRENT_VENDOR, value="V1", source="Argus/news_api", researched_at=today),
-        DistrictFinding(dimension=Dimension.PROCUREMENT_TIMING, value="Q1", source="Argus/board_minutes", researched_at=today),
-        DistrictFinding(dimension=Dimension.DISTRICT_PROFILE, value="Large", source="Argus/usaspending", researched_at=today),
-        DistrictFinding(dimension=Dimension.DECISION_MAKERS, value="Dr. Smith", source="Argus/news_api", researched_at=today),
-        DistrictFinding(dimension=Dimension.COMPETITOR_COMMITMENTS, value="None found", source="Argus", researched_at=today),
-        DistrictFinding(dimension=Dimension.RECOMMENDED_ANGLE, value="Go now", source="Argus", researched_at=today),
+        DistrictFinding(
+            dimension=Dimension.CURRENT_VENDOR,
+            value="V1",
+            source="Argus/news_api",
+            researched_at=today,
+        ),
+        DistrictFinding(
+            dimension=Dimension.PROCUREMENT_TIMING,
+            value="Q1",
+            source="Argus/board_minutes",
+            researched_at=today,
+        ),
+        DistrictFinding(
+            dimension=Dimension.DISTRICT_PROFILE,
+            value="Large",
+            source="Argus/usaspending",
+            researched_at=today,
+        ),
+        DistrictFinding(
+            dimension=Dimension.DECISION_MAKERS,
+            value="Dr. Smith",
+            source="Argus/news_api",
+            researched_at=today,
+        ),
+        DistrictFinding(
+            dimension=Dimension.COMPETITOR_COMMITMENTS,
+            value="None found",
+            source="Argus",
+            researched_at=today,
+        ),
+        DistrictFinding(
+            dimension=Dimension.RECOMMENDED_ANGLE,
+            value="Go now",
+            source="Argus",
+            researched_at=today,
+        ),
     ]
 
     with (
-        patch("artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value={}),
-        patch("artemis.argus.research._run_synthesis", new_callable=AsyncMock, return_value=synth_findings),
+        patch(
+            "artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value={}
+        ),
+        patch(
+            "artemis.argus.research._run_synthesis",
+            new_callable=AsyncMock,
+            return_value=synth_findings,
+        ),
     ):
         result = await research_dimensions("TX-002", PRIMARY_DIMENSIONS)
 
@@ -288,10 +359,14 @@ async def test_research_dimensions_tool_failure_does_not_crash() -> None:
         raise RuntimeError("news API timeout")
 
     async def ok_state_doe(district_key, signal):
-        return [{"title": "Literacy grant awarded", "link": "https://state.edu", "published": today}]
+        return [
+            {"title": "Literacy grant awarded", "link": "https://state.edu", "published": today}
+        ]
 
     partial_tool_results = {
-        "state_doe": [{"title": "Literacy grant awarded", "link": "https://state.edu", "published": today}],
+        "state_doe": [
+            {"title": "Literacy grant awarded", "link": "https://state.edu", "published": today}
+        ],
     }
     synth_result = [
         DistrictFinding(
@@ -304,8 +379,16 @@ async def test_research_dimensions_tool_failure_does_not_crash() -> None:
 
     # _gather_tool_results handles per-tool failures internally; mock it to return partial data
     with (
-        patch("artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value=partial_tool_results),
-        patch("artemis.argus.research._run_synthesis", new_callable=AsyncMock, return_value=synth_result),
+        patch(
+            "artemis.argus.research._gather_tool_results",
+            new_callable=AsyncMock,
+            return_value=partial_tool_results,
+        ),
+        patch(
+            "artemis.argus.research._run_synthesis",
+            new_callable=AsyncMock,
+            return_value=synth_result,
+        ),
     ):
         result = await research_dimensions(
             "TX-003",
@@ -372,7 +455,11 @@ async def test_research_district_writes_through_drawer_pipeline() -> None:
 
     with (
         patch("artemis.argus.flow.read_district_drawer", new_callable=AsyncMock, return_value={}),
-        patch("artemis.argus.flow.write_district_findings", new_callable=AsyncMock, return_value=[1, 2, 3]) as mock_write,
+        patch(
+            "artemis.argus.flow.write_district_findings",
+            new_callable=AsyncMock,
+            return_value=[1, 2, 3],
+        ) as mock_write,
     ):
         await research_district(
             session,
@@ -395,11 +482,22 @@ async def test_research_dimensions_fills_missing_dims_with_fallback() -> None:
     today = datetime.now(UTC).date().isoformat()
 
     with (
-        patch("artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value={}),
-        patch("artemis.argus.research._run_synthesis", new_callable=AsyncMock, return_value=[
-            DistrictFinding(dimension=Dimension.CURRENT_VENDOR, value="Lexia", source="Argus", researched_at=today),
-            # PROCUREMENT_TIMING intentionally missing from LLM output
-        ]),
+        patch(
+            "artemis.argus.research._gather_tool_results", new_callable=AsyncMock, return_value={}
+        ),
+        patch(
+            "artemis.argus.research._run_synthesis",
+            new_callable=AsyncMock,
+            return_value=[
+                DistrictFinding(
+                    dimension=Dimension.CURRENT_VENDOR,
+                    value="Lexia",
+                    source="Argus",
+                    researched_at=today,
+                ),
+                # PROCUREMENT_TIMING intentionally missing from LLM output
+            ],
+        ),
     ):
         result = await research_dimensions(
             "TX-006",
@@ -412,7 +510,10 @@ async def test_research_dimensions_fills_missing_dims_with_fallback() -> None:
 
     # Fallback should note insufficient data
     procurement_finding = next(f for f in result if f.dimension == Dimension.PROCUREMENT_TIMING)
-    assert "insufficient" in procurement_finding.value.lower() or "no data" in procurement_finding.value.lower()
+    assert (
+        "insufficient" in procurement_finding.value.lower()
+        or "no data" in procurement_finding.value.lower()
+    )
     assert procurement_finding.source.startswith("Argus")
 
 

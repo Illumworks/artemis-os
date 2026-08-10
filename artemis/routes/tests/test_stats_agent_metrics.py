@@ -143,7 +143,9 @@ async def test_agent_metrics_non_empty_after_seed(
     # 3 completed + 1 failed for board_minutes
     for _ in range(3):
         await _seed_run(builders_session, "marketing.scout.board_minutes", status="completed")
-    await _seed_run(builders_session, "marketing.scout.board_minutes", status="failed", completed=False)
+    await _seed_run(
+        builders_session, "marketing.scout.board_minutes", status="failed", completed=False
+    )
 
     # 2 completed for qualifier
     for _ in range(2):
@@ -163,14 +165,14 @@ async def test_agent_metrics_non_empty_after_seed(
 
     # overview
     assert data["overview"]["total_runs"] == 6  # 3+1+2 (ephemeral excluded)
-    assert data["overview"]["completed"] == 5   # 3+2
+    assert data["overview"]["completed"] == 5  # 3+2
 
     # agents[] — two rows
     assert len(data["agents"]) == 2
     agent_map = {r["agent_id"]: r for r in data["agents"]}
 
     bm = agent_map["marketing.scout.board_minutes"]
-    assert bm["runs"] == 4        # 3 completed + 1 failed (ephemeral excluded)
+    assert bm["runs"] == 4  # 3 completed + 1 failed (ephemeral excluded)
     assert bm["successes"] == 3
     assert bm["agent_title"] == "Board Minutes Scout"
     # avg_duration should be populated (we set completed_at = started_at + 5s)

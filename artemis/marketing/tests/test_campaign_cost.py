@@ -75,9 +75,7 @@ async def _attach_signal(
     session: AsyncSession, candidate: CampaignCandidate, signal: SignalQueue
 ) -> None:
     session.add(
-        CampaignCandidateSignal(
-            candidate_id=candidate.id, signal_id=signal.id, is_primary=True
-        )
+        CampaignCandidateSignal(candidate_id=candidate.id, signal_id=signal.id, is_primary=True)
     )
     await session.flush()
 
@@ -275,9 +273,7 @@ async def test_scout_allocation_returns_null_when_no_seeding_signals(
 
 
 @pytest.mark.asyncio
-async def test_two_campaigns_isolated(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_two_campaigns_isolated(client: AsyncClient, db_session: AsyncSession) -> None:
     """A row tagged to candidate A must not appear in candidate B's rollup."""
     a = await _seed_candidate(db_session)
     b = await _seed_candidate(db_session)
@@ -323,9 +319,7 @@ async def test_districts_basis_target_audience_when_no_sends(
 
 
 @pytest.mark.asyncio
-async def test_cost_per_district_math(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_cost_per_district_math(client: AsyncClient, db_session: AsyncSession) -> None:
     """costPerDistrict = totalUsd / districtsContacted, null when 0 districts."""
     await _seed_districts(db_session, [10, 20])
     candidate = await _seed_candidate(

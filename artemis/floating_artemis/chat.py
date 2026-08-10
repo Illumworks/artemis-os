@@ -159,8 +159,8 @@ def _build_system_prompt(
         "operator confirms, so calling IS how you propose. Don't write a prose proposal "
         "instead of calling.\n"
         "- Never tell the operator something is done, or that you've started it (e.g. "
-        "\"it's on it\", \"I've queued it\"), unless you actually called the tool this turn.\n"
-        "- Never claim a capability is missing or \"not wired.\" If a tool is in your "
+        '"it\'s on it", "I\'ve queued it"), unless you actually called the tool this turn.\n'
+        '- Never claim a capability is missing or "not wired." If a tool is in your '
         "toolset, use it. If the call errors, report the actual error — don't invent a "
         "limitation."
     )
@@ -1053,7 +1053,9 @@ async def handle_turn(
     # Non-blocking; failure is swallowed inside capture_trace. Records a
     # structured per-turn trace row for the self-evolution data foundation.
     try:
-        _fa_provider = "claude-code" if "ClaudeCodeAdapter" in type(adapter).__name__ else "anthropic"
+        _fa_provider = (
+            "claude-code" if "ClaudeCodeAdapter" in type(adapter).__name__ else "anthropic"
+        )
         _fa_model = getattr(adapter, "_default_model", None) or "claude-sonnet-4-6"
         # Collect distinct tool names from the turn's assistant messages.
         _tools_used: list[str] = []
@@ -1083,7 +1085,9 @@ async def handle_turn(
             owner_user_id=owner_user_id,
         )
     except Exception:
-        logger.debug("P6 trace capture setup failed (non-fatal) session_id=%s", session_id, exc_info=True)
+        logger.debug(
+            "P6 trace capture setup failed (non-fatal) session_id=%s", session_id, exc_info=True
+        )
 
     # ── 10. Broadcast completion ──────────────────────────────────────────────
     await _broadcast(

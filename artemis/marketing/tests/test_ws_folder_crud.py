@@ -356,9 +356,7 @@ class TestDeleteFolder:
 
         ov_after = await client.get("/api/writing-studio/overview")
         after_ids = [f["id"] for f in ov_after.json()["folders"]]
-        assert folder_id not in after_ids, (
-            "Deleted campaign folder must not respawn after backfill"
-        )
+        assert folder_id not in after_ids, "Deleted campaign folder must not respawn after backfill"
 
     async def test_delete_user_folder_not_in_db(
         self, db_session: AsyncSession, client: AsyncClient

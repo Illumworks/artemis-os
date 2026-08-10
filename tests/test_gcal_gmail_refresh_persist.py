@@ -78,12 +78,8 @@ async def test_gcal_client_401_triggers_refresh_and_callback() -> None:
 
     callback_called: list[dict[str, Any]] = []
 
-    async def on_refreshed(
-        access_token: str, refresh_token: str, expires_at: float
-    ) -> None:
-        callback_called.append(
-            {"access_token": access_token, "refresh_token": refresh_token}
-        )
+    async def on_refreshed(access_token: str, refresh_token: str, expires_at: float) -> None:
+        callback_called.append({"access_token": access_token, "refresh_token": refresh_token})
 
     client = GCalClient(
         access_token="expired_tok",
@@ -282,12 +278,8 @@ async def test_people_client_refresh_calls_callback() -> None:
 
     callback_args: list[dict[str, Any]] = []
 
-    async def on_refreshed(
-        access_token: str, refresh_token: str, expires_at: float
-    ) -> None:
-        callback_args.append(
-            {"access_token": access_token, "refresh_token": refresh_token}
-        )
+    async def on_refreshed(access_token: str, refresh_token: str, expires_at: float) -> None:
+        callback_args.append({"access_token": access_token, "refresh_token": refresh_token})
 
     client = PeopleClient(
         access_token="old_at",

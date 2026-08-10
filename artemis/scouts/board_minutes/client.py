@@ -93,9 +93,7 @@ _BOARDDOCS_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
-_BOARDDOCS_ACCEPT = (
-    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-)
+_BOARDDOCS_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 
 # HTML entity substitutions for common board-document titles.
 _HTML_ENTITIES = re.compile(r"&#(\d+);|&amp;|&lt;|&gt;|&quot;|&apos;|&#x([0-9a-fA-F]+);")

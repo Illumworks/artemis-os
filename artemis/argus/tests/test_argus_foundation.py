@@ -137,8 +137,7 @@ def test_identify_gaps_all_present_and_fresh() -> None:
     """All dimensions present with today's date → no gaps."""
     today = datetime.now(UTC).date().isoformat()
     existing = {
-        dim: _make_finding(dimension=dim, researched_at=today)
-        for dim in PRIMARY_DIMENSIONS
+        dim: _make_finding(dimension=dim, researched_at=today) for dim in PRIMARY_DIMENSIONS
     }
     gaps = identify_gaps(existing)
     assert gaps == []
@@ -146,13 +145,10 @@ def test_identify_gaps_all_present_and_fresh() -> None:
 
 def test_identify_gaps_stale_dimension_returned() -> None:
     """A dimension older than STALENESS_DAYS is returned as a gap."""
-    stale_date = (
-        datetime.now(UTC) - timedelta(days=STALENESS_DAYS + 10)
-    ).date().isoformat()
+    stale_date = (datetime.now(UTC) - timedelta(days=STALENESS_DAYS + 10)).date().isoformat()
     today = datetime.now(UTC).date().isoformat()
     existing = {
-        dim: _make_finding(dimension=dim, researched_at=today)
-        for dim in PRIMARY_DIMENSIONS
+        dim: _make_finding(dimension=dim, researched_at=today) for dim in PRIMARY_DIMENSIONS
     }
     # Make one dimension stale
     existing[Dimension.CURRENT_VENDOR] = _make_finding(
@@ -191,8 +187,12 @@ async def test_write_district_findings_calls_write_observation_and_write_drawer(
     fake_obs.id = 201
 
     with (
-        patch("artemis.argus.drawer.write_drawer", new_callable=AsyncMock, return_value=fake_drawer) as mock_wd,
-        patch("artemis.argus.drawer.write_observation", new_callable=AsyncMock, return_value=fake_obs) as mock_wo,
+        patch(
+            "artemis.argus.drawer.write_drawer", new_callable=AsyncMock, return_value=fake_drawer
+        ) as mock_wd,
+        patch(
+            "artemis.argus.drawer.write_observation", new_callable=AsyncMock, return_value=fake_obs
+        ) as mock_wo,
         patch("artemis.argus.drawer.link_evidence", new_callable=AsyncMock) as mock_le,
     ):
         findings = [_make_finding(dimension=Dimension.CURRENT_VENDOR, value="Lexia")]
@@ -223,19 +223,20 @@ async def test_write_district_findings_with_signal_links_signal_evidence() -> No
     fake_obs.id = 202
 
     with (
-        patch("artemis.argus.drawer.write_drawer", new_callable=AsyncMock, return_value=fake_drawer),
-        patch("artemis.argus.drawer.write_observation", new_callable=AsyncMock, return_value=fake_obs),
+        patch(
+            "artemis.argus.drawer.write_drawer", new_callable=AsyncMock, return_value=fake_drawer
+        ),
+        patch(
+            "artemis.argus.drawer.write_observation", new_callable=AsyncMock, return_value=fake_obs
+        ),
         patch("artemis.argus.drawer.link_evidence", new_callable=AsyncMock) as mock_le,
     ):
         findings = [_make_finding(dimension=Dimension.PROCUREMENT_TIMING, value="Q1 FY2027")]
-        await write_district_findings(
-            session, "TX-001", findings, triggering_signal_id="42"
-        )
+        await write_district_findings(session, "TX-001", findings, triggering_signal_id="42")
 
     # There should be a call with source_kind="signal_queue" and source_id="42"
     signal_calls = [
-        c for c in mock_le.call_args_list
-        if c.kwargs.get("source_kind") == "signal_queue"
+        c for c in mock_le.call_args_list if c.kwargs.get("source_kind") == "signal_queue"
     ]
     assert len(signal_calls) == 1
     assert signal_calls[0].kwargs["source_id"] == "42"
@@ -320,7 +321,9 @@ async def test_research_district_reads_existing_identifies_gaps_calls_research_w
     fake_read_result = {Dimension.CURRENT_VENDOR: existing_finding}
 
     # Stub research fn: returns one finding per gap dimension
-    async def fake_research(district_key: str, dimensions: list[str], signal: Any) -> list[DistrictFinding]:
+    async def fake_research(
+        district_key: str, dimensions: list[str], signal: Any
+    ) -> list[DistrictFinding]:
         return [
             DistrictFinding(
                 dimension=dim,
@@ -338,8 +341,16 @@ async def test_research_district_reads_existing_identifies_gaps_calls_research_w
     fake_drawer.id = 500
 
     with (
-        patch("artemis.argus.flow.read_district_drawer", new_callable=AsyncMock, return_value=fake_read_result),
-        patch("artemis.argus.flow.write_district_findings", new_callable=AsyncMock, return_value=[400, 401, 402, 403, 404, 405]) as mock_write,
+        patch(
+            "artemis.argus.flow.read_district_drawer",
+            new_callable=AsyncMock,
+            return_value=fake_read_result,
+        ),
+        patch(
+            "artemis.argus.flow.write_district_findings",
+            new_callable=AsyncMock,
+            return_value=[400, 401, 402, 403, 404, 405],
+        ) as mock_write,
     ):
         result = await research_district(
             session,
@@ -367,7 +378,9 @@ async def test_research_district_reads_existing_identifies_gaps_calls_research_w
     written_findings: list[DistrictFinding] = write_call.args[2]
     for f in written_findings:
         if f.dimension != Dimension.RECOMMENDED_ANGLE:
-            assert f.source == "Argus", f"Expected source='Argus', got {f.source!r} for dim={f.dimension}"
+            assert f.source == "Argus", (
+                f"Expected source='Argus', got {f.source!r} for dim={f.dimension}"
+            )
 
 
 @pytest.mark.asyncio
@@ -376,7 +389,9 @@ async def test_research_district_findings_have_argus_source_tag() -> None:
     session = _mock_session()
     today = datetime.now(UTC).date().isoformat()
 
-    async def fake_research(district_key: str, dimensions: list[str], signal: Any) -> list[DistrictFinding]:
+    async def fake_research(
+        district_key: str, dimensions: list[str], signal: Any
+    ) -> list[DistrictFinding]:
         return [
             DistrictFinding(
                 dimension=dim,
@@ -389,7 +404,11 @@ async def test_research_district_findings_have_argus_source_tag() -> None:
 
     with (
         patch("artemis.argus.flow.read_district_drawer", new_callable=AsyncMock, return_value={}),
-        patch("artemis.argus.flow.write_district_findings", new_callable=AsyncMock, return_value=[1, 2]) as mock_write,
+        patch(
+            "artemis.argus.flow.write_district_findings",
+            new_callable=AsyncMock,
+            return_value=[1, 2],
+        ) as mock_write,
     ):
         await research_district(
             session,
@@ -414,18 +433,21 @@ async def test_research_district_skips_research_when_all_dims_fresh() -> None:
     today = datetime.now(UTC).date().isoformat()
 
     full_drawer = {
-        dim: _make_finding(dimension=dim, researched_at=today)
-        for dim in PRIMARY_DIMENSIONS
+        dim: _make_finding(dimension=dim, researched_at=today) for dim in PRIMARY_DIMENSIONS
     }
 
     research_called = False
 
-    async def fake_research(district_key: str, dimensions: list[str], signal: Any) -> list[DistrictFinding]:
+    async def fake_research(
+        district_key: str, dimensions: list[str], signal: Any
+    ) -> list[DistrictFinding]:
         nonlocal research_called
         research_called = True
         return []
 
-    with patch("artemis.argus.flow.read_district_drawer", new_callable=AsyncMock, return_value=full_drawer):
+    with patch(
+        "artemis.argus.flow.read_district_drawer", new_callable=AsyncMock, return_value=full_drawer
+    ):
         result = await research_district(
             session,
             district_key="TX-003",
@@ -464,7 +486,11 @@ async def test_write_district_findings_skips_failed_finding() -> None:
 
     with (
         patch("artemis.argus.drawer.write_drawer", side_effect=fake_write_drawer),
-        patch("artemis.argus.drawer.write_observation", new_callable=AsyncMock, return_value=fake_obs_ok),
+        patch(
+            "artemis.argus.drawer.write_observation",
+            new_callable=AsyncMock,
+            return_value=fake_obs_ok,
+        ),
         patch("artemis.argus.drawer.link_evidence", new_callable=AsyncMock),
     ):
         findings = [
@@ -494,13 +520,18 @@ async def test_write_goes_through_memory_pipeline_not_raw_sql() -> None:
     fake_obs = MagicMock(id=900)
 
     with (
-        patch("artemis.argus.drawer.write_drawer", new_callable=AsyncMock, return_value=fake_drawer) as mock_wd,
-        patch("artemis.argus.drawer.write_observation", new_callable=AsyncMock, return_value=fake_obs) as mock_wo,
+        patch(
+            "artemis.argus.drawer.write_drawer", new_callable=AsyncMock, return_value=fake_drawer
+        ) as mock_wd,
+        patch(
+            "artemis.argus.drawer.write_observation", new_callable=AsyncMock, return_value=fake_obs
+        ) as mock_wo,
         patch("artemis.argus.drawer.link_evidence", new_callable=AsyncMock),
     ):
         await write_district_findings(
-            session, "TX-005",
-            [_make_finding(dimension=Dimension.DISTRICT_PROFILE, value="Enrollment: 5000")]
+            session,
+            "TX-005",
+            [_make_finding(dimension=Dimension.DISTRICT_PROFILE, value="Enrollment: 5000")],
         )
 
     # The memory pipeline functions must have been called

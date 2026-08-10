@@ -35,11 +35,7 @@ async def pending_asks_brief_section(session: AsyncSession) -> str:
         asks = await hub_repo.list_unresolved(session)
         # Exclude asks that have already been escalated (Jon has been DM-notified)
         # and exclude Artemis's own asks (she routes directly).
-        items = [
-            a
-            for a in asks
-            if a.agent_id != "artemis" and a.escalated_at is None
-        ]
+        items = [a for a in asks if a.agent_id != "artemis" and a.escalated_at is None]
         if not items:
             return ""
 

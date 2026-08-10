@@ -120,13 +120,13 @@ _DETECTION_SYSTEM = (
     "it). 'Jon' / 'Me' refers to the account owner using this system; anyone "
     "else is a different person.\n\n"
     "Return ONLY a JSON object, no prose, with keys:\n"
-    '  is_scheduling (bool)\n'
+    "  is_scheduling (bool)\n"
     '  title (str: a concise event title, e.g. "Writing Studio training")\n'
     '  attendees (array of str: people/teams named, e.g. ["my team", "Angela"]; '
     "[] if none named)\n"
-    '  duration_minutes (int: stated length, else 60)\n'
+    "  duration_minutes (int: stated length, else 60)\n"
     '  timeframe (str: when, e.g. "next week"; "" if unstated)\n'
-    '  confidence (number 0..1)\n'
+    "  confidence (number 0..1)\n"
     '  owner_is_operator (bool: true ONLY if the stated owner is Jon/"Me" '
     "(the account owner) — false if the owner is someone else or unstated)\n"
 )
@@ -136,8 +136,10 @@ def build_detection_prompt(
     *, action_item_text: str, meeting_title: str, owner: str | None = None
 ) -> str:
     """Render the user prompt for the detection classify call (pure)."""
-    owner_line = f'Owner (who committed to this): "{owner}"' if owner else (
-        "Owner (who committed to this): unstated"
+    owner_line = (
+        f'Owner (who committed to this): "{owner}"'
+        if owner
+        else ("Owner (who committed to this): unstated")
     )
     return (
         f"Meeting: {meeting_title}\n"
@@ -172,11 +174,15 @@ def parse_detection_response(raw: str) -> SchedulingIntent:
         confidence = 0.0
 
     attendees_raw = data.get("attendees") or []
-    attendees = [
-        str(a).strip()
-        for a in attendees_raw
-        if isinstance(a, (str, int, float)) and str(a).strip()
-    ] if isinstance(attendees_raw, list) else []
+    attendees = (
+        [
+            str(a).strip()
+            for a in attendees_raw
+            if isinstance(a, (str, int, float)) and str(a).strip()
+        ]
+        if isinstance(attendees_raw, list)
+        else []
+    )
 
     try:
         duration = int(data.get("duration_minutes") or DEFAULT_DURATION_MINUTES)
@@ -525,9 +531,7 @@ def build_proposal_preview(proposal: SlotProposal, *, tz: ZoneInfo) -> str:
     first = format_slot_label(proposal.slots[0], tz=tz)
     title = proposal.intent.title or "a meeting"
     invitees = (
-        " (" + ", ".join(proposal.resolved_attendees) + ")"
-        if proposal.resolved_attendees
-        else ""
+        " (" + ", ".join(proposal.resolved_attendees) + ")" if proposal.resolved_attendees else ""
     )
     return f"create '{title}'{invitees} at {first}"
 
@@ -643,9 +647,7 @@ async def build_slot_proposal(
                 time_max=window_end.isoformat(),
                 calendar_ids=calendars_to_query,
             )
-            busy, unreadable = parse_freebusy_response(
-                data, requested_calendars=calendars_to_query
-            )
+            busy, unreadable = parse_freebusy_response(data, requested_calendars=calendars_to_query)
             # The owner calendar being unreadable is a hard problem (bad creds);
             # attendee calendars being unreadable is the expected coworker case.
             availability_pending = [c for c in unreadable if c != owner_cal]
@@ -849,8 +851,7 @@ async def run_post_meeting_scheduling_sweep(
             # people to a meeting on Jon's behalf for someone else's commitment.
             owner_user_id = await _resolve_owner_user_id(session, owner_label)
             owner_is_owner = (
-                canonical_owner_user_id is not None
-                and owner_user_id == canonical_owner_user_id
+                canonical_owner_user_id is not None and owner_user_id == canonical_owner_user_id
             )
             if not owner_is_owner:
                 skipped_not_owner += 1
@@ -917,9 +918,7 @@ async def run_post_meeting_scheduling_sweep(
                 session,
                 message=message + f"\n\n_(reply *yes A{action.id}* to confirm)_",
             )
-            await _mark_proposed(
-                session, dedup_content=dedup, granola_id=meeting.granola_id
-            )
+            await _mark_proposed(session, dedup_content=dedup, granola_id=meeting.granola_id)
             proposals_sent += 1
 
     if not dry_run:

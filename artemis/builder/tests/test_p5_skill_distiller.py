@@ -54,6 +54,7 @@ async def _make_agent(session: AsyncSession, agent_id: str = "test-agent-p5") ->
 
 async def _make_run(session: AsyncSession, agent_id: str) -> AgentRun:
     import uuid
+
     run = AgentRun(
         run_id=str(uuid.uuid4()),
         agent_id=agent_id,
@@ -147,9 +148,7 @@ async def test_distill_creates_proposal_from_repeated_procedure(
     fake_adapter = _fake_adapter_returning([candidate])
 
     async with db_session.begin():
-        result = await distill_skill_candidates(
-            db_session, agent.agent_id, adapter=fake_adapter
-        )
+        result = await distill_skill_candidates(db_session, agent.agent_id, adapter=fake_adapter)
 
     assert result["n_proposed"] == 1
     assert result["n_skipped"] == 0
@@ -160,6 +159,7 @@ async def test_distill_creates_proposal_from_repeated_procedure(
     proposal_id = result["proposal_ids"][0]
     async with db_session.begin():
         from sqlalchemy import select
+
         row = (
             await db_session.execute(
                 select(DefinitionProposal).where(DefinitionProposal.id == proposal_id)
@@ -200,17 +200,13 @@ async def test_distill_dedup_no_second_proposal(db_session: AsyncSession) -> Non
 
     # First run — creates proposal.
     async with db_session.begin():
-        r1 = await distill_skill_candidates(
-            db_session, agent.agent_id, adapter=fake_adapter
-        )
+        r1 = await distill_skill_candidates(db_session, agent.agent_id, adapter=fake_adapter)
     assert r1["n_proposed"] == 1
 
     # Second run — same adapter, same output.
     fake_adapter2 = _fake_adapter_returning([candidate])
     async with db_session.begin():
-        r2 = await distill_skill_candidates(
-            db_session, agent.agent_id, adapter=fake_adapter2
-        )
+        r2 = await distill_skill_candidates(db_session, agent.agent_id, adapter=fake_adapter2)
     # Dedup: the slug is already in pending proposals — zero new proposals.
     assert r2["n_proposed"] == 0
     assert r2["n_skipped"] == 1
@@ -224,7 +220,9 @@ async def test_approve_proposal_creates_skill_row(db_session: AsyncSession) -> N
     async with db_session.begin():
         agent = await _make_agent(db_session, "test-agent-approve")
         run1 = await _make_run(db_session, agent.agent_id)
-        await _make_summary(db_session, run1.id, what_worked="Called memory.search then wrote result.")
+        await _make_summary(
+            db_session, run1.id, what_worked="Called memory.search then wrote result."
+        )
 
     candidate = {
         "slug": "approve-test-skill",
@@ -281,10 +279,9 @@ async def test_skill_injection_and_usage_tracking(db_session: AsyncSession) -> N
 
     async with db_session.begin():
         from sqlalchemy import select
+
         agent_row = (
-            await db_session.execute(
-                select(Agent).where(Agent.agent_id == "test-agent-inject")
-            )
+            await db_session.execute(select(Agent).where(Agent.agent_id == "test-agent-inject"))
         ).scalar_one()
 
         prompt_before = "You are a test agent."
@@ -355,9 +352,7 @@ async def test_learning_loop_closes_end_to_end(db_session: AsyncSession) -> None
             f"expected approved, got {skill.status if skill else None}"
         )
         agent_row = (
-            await db_session.execute(
-                select(Agent).where(Agent.agent_id == "loop-close-agent")
-            )
+            await db_session.execute(select(Agent).where(Agent.agent_id == "loop-close-agent"))
         ).scalar_one()
         assigned = await repo.list_skills_for_agent(db_session, agent_row.id)
     assert any(s.slug == "loop-close-skill" for s in assigned), (
@@ -367,9 +362,7 @@ async def test_learning_loop_closes_end_to_end(db_session: AsyncSession) -> None
     # Injection now picks it up at runtime → instructions in prompt + usage++.
     async with db_session.begin():
         agent_row = (
-            await db_session.execute(
-                select(Agent).where(Agent.agent_id == "loop-close-agent")
-            )
+            await db_session.execute(select(Agent).where(Agent.agent_id == "loop-close-agent"))
         ).scalar_one()
         updated_prompt, injected = await _inject_skills_into_prompt(
             db_session, agent_row, "base prompt"
@@ -419,14 +412,11 @@ async def test_injection_tool_overlap_filter(db_session: AsyncSession) -> None:
 
     async with db_session.begin():
         from sqlalchemy import select
+
         agent_row = (
-            await db_session.execute(
-                select(Agent).where(Agent.agent_id == "test-agent-overlap")
-            )
+            await db_session.execute(select(Agent).where(Agent.agent_id == "test-agent-overlap"))
         ).scalar_one()
-        _, injected = await _inject_skills_into_prompt(
-            db_session, agent_row, "base prompt"
-        )
+        _, injected = await _inject_skills_into_prompt(db_session, agent_row, "base prompt")
 
     injected_slugs = {s.slug for s in injected}
     assert "slack-skill" in injected_slugs
@@ -457,10 +447,9 @@ async def test_injection_hard_cap_3_skills(db_session: AsyncSession) -> None:
 
     async with db_session.begin():
         from sqlalchemy import select
+
         agent_row = (
-            await db_session.execute(
-                select(Agent).where(Agent.agent_id == "test-agent-cap")
-            )
+            await db_session.execute(select(Agent).where(Agent.agent_id == "test-agent-cap"))
         ).scalar_one()
         _, injected = await _inject_skills_into_prompt(db_session, agent_row, "prompt")
 
@@ -477,10 +466,9 @@ async def test_no_qualifying_skills_prompt_unchanged(db_session: AsyncSession) -
 
     async with db_session.begin():
         from sqlalchemy import select
+
         agent_row = (
-            await db_session.execute(
-                select(Agent).where(Agent.agent_id == "test-agent-no-skills")
-            )
+            await db_session.execute(select(Agent).where(Agent.agent_id == "test-agent-no-skills"))
         ).scalar_one()
         original = "You are a test agent."
         updated, injected = await _inject_skills_into_prompt(db_session, agent_row, original)
@@ -515,9 +503,7 @@ async def test_distiller_error_returns_zero_no_crash(db_session: AsyncSession) -
     broken_adapter.complete = AsyncMock(side_effect=RuntimeError("simulated LLM failure"))
 
     async with db_session.begin():
-        result = await distill_skill_candidates(
-            db_session, agent.agent_id, adapter=broken_adapter
-        )
+        result = await distill_skill_candidates(db_session, agent.agent_id, adapter=broken_adapter)
 
     assert result["n_proposed"] == 0
     assert "error" in result
@@ -549,9 +535,7 @@ async def test_distiller_llm_returns_invalid_json_zero_proposals(
     bad_adapter.complete = AsyncMock(side_effect=fake_complete)
 
     async with db_session.begin():
-        result = await distill_skill_candidates(
-            db_session, agent.agent_id, adapter=bad_adapter
-        )
+        result = await distill_skill_candidates(db_session, agent.agent_id, adapter=bad_adapter)
 
     assert result["n_proposed"] == 0
     assert "error" in result
@@ -590,6 +574,7 @@ async def test_injection_status_filter_only_approved(db_session: AsyncSession) -
 
     async with db_session.begin():
         from sqlalchemy import select
+
         agent_row = (
             await db_session.execute(
                 select(Agent).where(Agent.agent_id == "test-agent-status-filter")

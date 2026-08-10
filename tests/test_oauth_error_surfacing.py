@@ -208,9 +208,7 @@ async def test_complete_google_oauth_returns_502_on_network_error() -> None:
         ),
         patch(
             "artemis.google_integration.exchange_code_for_tokens",
-            new=AsyncMock(
-                side_effect=httpx.ConnectError("Connection refused")
-            ),
+            new=AsyncMock(side_effect=httpx.ConnectError("Connection refused")),
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:

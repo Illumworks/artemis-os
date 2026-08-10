@@ -171,7 +171,9 @@ async def classify_signal(
         from artemis.agent.types import Message, TextBlock
         from artemis.providers.fallback import complete_with_fallback
     except Exception:  # pragma: no cover - import guard
-        _logger.warning("screentime.classify: provider import failed; using rules only", exc_info=True)
+        _logger.warning(
+            "screentime.classify: provider import failed; using rules only", exc_info=True
+        )
         return Classification(rule_stance, _rule_angle(rule_stance, candidate), served_by=None)
 
     prompt = (
@@ -203,7 +205,9 @@ async def classify_signal(
             serving_provider_out=served,
         )
     except Exception:
-        _logger.warning("screentime.classify: provider call failed; using rules only", exc_info=True)
+        _logger.warning(
+            "screentime.classify: provider call failed; using rules only", exc_info=True
+        )
         return Classification(rule_stance, _rule_angle(rule_stance, candidate), served_by=None)
 
     answer = ""

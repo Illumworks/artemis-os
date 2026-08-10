@@ -123,9 +123,7 @@ async def test_dismiss_closes_commitment_and_leaves_open_list(
     assert refreshed.snoozed_until is None
 
     # Active list (what followup sweep sees) must not include this commitment.
-    result = await db_session.execute(
-        select(Commitment).where(Commitment.status == "active")
-    )
+    result = await db_session.execute(select(Commitment).where(Commitment.status == "active"))
     active_ids = [c.id for c in result.scalars()]
     assert commitment.id not in active_ids
 
@@ -430,4 +428,6 @@ async def test_followup_sweep_skips_dismissed(db_session: AsyncSession) -> None:
 
     candidate_ids = [c.id for c in candidates]
     assert active_c.id in candidate_ids, "Active commitment must be in followup candidates"
-    assert dismissed_c.id not in candidate_ids, "Dismissed commitment must NOT be in followup candidates"
+    assert dismissed_c.id not in candidate_ids, (
+        "Dismissed commitment must NOT be in followup candidates"
+    )

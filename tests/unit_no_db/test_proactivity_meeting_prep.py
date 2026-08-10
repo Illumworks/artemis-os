@@ -77,10 +77,10 @@ def test_filter_excludes_already_sent() -> None:
 def test_filter_multiple_events_picks_due_ones() -> None:
     now = datetime.now(UTC)
     events = [
-        _event(event_id="e1", minutes_from_now=10),   # in window
-        _event(event_id="e2", minutes_from_now=45),   # too far
-        _event(event_id="e3", minutes_from_now=25),   # in window
-        _event(event_id="e4", minutes_from_now=2),    # too soon
+        _event(event_id="e1", minutes_from_now=10),  # in window
+        _event(event_id="e2", minutes_from_now=45),  # too far
+        _event(event_id="e3", minutes_from_now=25),  # in window
+        _event(event_id="e4", minutes_from_now=2),  # too soon
     ]
     result = filter_events_needing_prep(events, now=now, already_sent=set())
     ids = {e.event_id for e in result}

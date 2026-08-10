@@ -154,9 +154,7 @@ class LegiScanClient:
         # and in the campaign pipeline) silently yielded zero bills. Collect the
         # numbered bill dicts, skipping the "summary" metadata entry.
         searchresult = data.get("searchresult", {})
-        raw_results = [
-            v for k, v in searchresult.items() if k != "summary" and isinstance(v, dict)
-        ]
+        raw_results = [v for k, v in searchresult.items() if k != "summary" and isinstance(v, dict)]
         summaries: list[BillSummary] = []
         for raw in raw_results:
             try:

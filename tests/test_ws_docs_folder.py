@@ -42,14 +42,13 @@ def _make_transport(
 
         # Create doc
         if url == "https://docs.googleapis.com/v1/documents":
-            return httpx.Response(
-                200, json={"documentId": _DOC_ID, "title": "Test Doc"}
-            )
+            return httpx.Response(200, json={"documentId": _DOC_ID, "title": "Test Doc"})
 
         # Drive files.update (move or rename) — identified by PATCH on drive URL
-        if url.startswith(
-            f"https://www.googleapis.com/drive/v3/files/{_DOC_ID}"
-        ) and request.method == "PATCH":
+        if (
+            url.startswith(f"https://www.googleapis.com/drive/v3/files/{_DOC_ID}")
+            and request.method == "PATCH"
+        ):
             params = dict(request.url.params)
             record["drive_patch_params"] = params
             record["drive_patch_called"] = True
@@ -58,9 +57,7 @@ def _make_transport(
                 raise httpx.ConnectError("network error")
             return httpx.Response(
                 folder_move_status,
-                json={"id": _DOC_ID, "parents": [_FOLDER_ID]}
-                if folder_move_status < 300
-                else {},
+                json={"id": _DOC_ID, "parents": [_FOLDER_ID]} if folder_move_status < 300 else {},
                 text="" if folder_move_status < 300 else "403 Forbidden",
             )
 
@@ -213,4 +210,6 @@ async def test_no_move_patch_when_folder_id_empty(
 
     assert result.document_id == _DOC_ID
     assert result.created is True
-    assert not record.get("drive_patch_called"), "Drive PATCH must NOT be issued when folder_id is empty"
+    assert not record.get("drive_patch_called"), (
+        "Drive PATCH must NOT be issued when folder_id is empty"
+    )

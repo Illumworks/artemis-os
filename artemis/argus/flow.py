@@ -124,9 +124,7 @@ async def research_district(
     # ── 3. RESEARCH ──────────────────────────────────────────────────────────
     research_fn = _research_fn or research_dimensions
     try:
-        raw_findings: list[DistrictFinding] = await research_fn(
-            district_key, gaps, signal
-        )
+        raw_findings: list[DistrictFinding] = await research_fn(district_key, gaps, signal)
     except Exception:
         _logger.error(
             "Argus: research step failed for district_key=%r (non-fatal; will write no findings)",

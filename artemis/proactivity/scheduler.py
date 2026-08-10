@@ -384,9 +384,7 @@ async def _fire_pre_meeting_prep() -> None:
                         (event.start_utc - now_utc).total_seconds() / 60,
                     )
                 except Exception:
-                    logger.exception(
-                        "pre_meeting_prep: failed for event_id=%s", event.event_id
-                    )
+                    logger.exception("pre_meeting_prep: failed for event_id=%s", event.event_id)
                     await session.rollback()
         except Exception:
             logger.exception("pre_meeting_prep: sweep failed")
@@ -428,7 +426,8 @@ async def _fire_commitment_urgency_nudge() -> None:
             rows = (await session.execute(stmt)).scalars().all()
 
             eligible = [
-                c for c in rows
+                c
+                for c in rows
                 if (
                     c.last_notified_at is None
                     or c.last_notified_at.replace(tzinfo=UTC) < renotify_cutoff
@@ -469,15 +468,18 @@ async def _fire_commitment_urgency_nudge() -> None:
                     else:
                         time_label = f"~{int(hours_left)}h"
 
-                    text = str(lint_agent_text(
-                        f":alarm_clock: *Commitment due in {time_label}:* {commitment.text}\n"
-                        f"Reply 'done {commitment.id}' to close, "
-                        f"'snooze {commitment.id} 2h' to snooze."
-                    ))
+                    text = str(
+                        lint_agent_text(
+                            f":alarm_clock: *Commitment due in {time_label}:* {commitment.text}\n"
+                            f"Reply 'done {commitment.id}' to close, "
+                            f"'snooze {commitment.id} 2h' to snooze."
+                        )
+                    )
 
                     await slack_client.post_dm(user=recipient_id, text=text)
                     await session.execute(
-                        __import__("sqlalchemy", fromlist=["update"]).update(Commitment)
+                        __import__("sqlalchemy", fromlist=["update"])
+                        .update(Commitment)
                         .where(Commitment.id == commitment.id)
                         .values(last_notified_at=now_utc)
                     )

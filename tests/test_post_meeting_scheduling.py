@@ -62,7 +62,7 @@ def test_parse_detection_clean_json():
 
 
 def test_parse_detection_with_code_fence_and_prose():
-    raw = "Here you go:\n```json\n{\"is_scheduling\": false, \"confidence\": 0.1}\n```"
+    raw = 'Here you go:\n```json\n{"is_scheduling": false, "confidence": 0.1}\n```'
     intent = parse_detection_response(raw)
     assert intent.is_scheduling is False
 
@@ -85,9 +85,7 @@ def test_parse_detection_bad_duration_defaults():
 
 
 def test_build_detection_prompt_includes_inputs():
-    prompt = build_detection_prompt(
-        action_item_text="schedule training", meeting_title="Team sync"
-    )
+    prompt = build_detection_prompt(action_item_text="schedule training", meeting_title="Team sync")
     assert "schedule training" in prompt
     assert "Team sync" in prompt
 
@@ -134,9 +132,7 @@ async def test_classify_returns_scheduling_intent():
 
 @pytest.mark.asyncio
 async def test_classify_low_confidence_treated_as_no():
-    adapter = _FakeAdapter(
-        '{"is_scheduling": true, "title": "Maybe", "confidence": 0.3}'
-    )
+    adapter = _FakeAdapter('{"is_scheduling": true, "title": "Maybe", "confidence": 0.3}')
     intent = await classify_action_item(
         action_item_text="ambiguous", meeting_title="Sync", adapter=adapter
     )
@@ -149,9 +145,7 @@ async def test_classify_adapter_failure_fails_closed():
         async def complete(self, request):
             raise RuntimeError("provider down")
 
-    intent = await classify_action_item(
-        action_item_text="x", meeting_title="y", adapter=_Boom()
-    )
+    intent = await classify_action_item(action_item_text="x", meeting_title="y", adapter=_Boom())
     assert intent.is_scheduling is False
 
 
@@ -245,11 +239,7 @@ def test_find_free_slots_respects_working_hours():
 def test_parse_freebusy_busy_intervals():
     data = {
         "calendars": {
-            "primary": {
-                "busy": [
-                    {"start": "2026-06-18T15:00:00Z", "end": "2026-06-18T16:00:00Z"}
-                ]
-            }
+            "primary": {"busy": [{"start": "2026-06-18T15:00:00Z", "end": "2026-06-18T16:00:00Z"}]}
         }
     }
     busy, unreadable = parse_freebusy_response(data, requested_calendars=["primary"])
@@ -264,9 +254,7 @@ def test_parse_freebusy_coworker_unreadable_is_flagged_not_free():
     data = {
         "calendars": {
             "primary": {"busy": []},
-            "coworker@org.com": {
-                "errors": [{"domain": "global", "reason": "notFound"}]
-            },
+            "coworker@org.com": {"errors": [{"domain": "global", "reason": "notFound"}]},
         }
     }
     busy, unreadable = parse_freebusy_response(
@@ -288,9 +276,7 @@ def test_parse_freebusy_omitted_calendar_is_unreadable():
 
 
 def test_split_attendees_emails_vs_names():
-    emails, labels = split_resolved_attendees(
-        ["alice@org.com", "my team", "bob@org.com", "Angela"]
-    )
+    emails, labels = split_resolved_attendees(["alice@org.com", "my team", "bob@org.com", "Angela"])
     assert emails == ["alice@org.com", "bob@org.com"]
     assert labels == ["my team", "Angela"]
 

@@ -87,5 +87,7 @@ def test_tunable_action_keyword_flips_borderline():
     # Default: "curtailing" is not a known action verb → anchor-only → neutral.
     assert classify_by_rules(text, RULES) == STANCE_NEUTRAL
     tuned = copy.deepcopy(DEFAULT_STANCE_RULES)
-    tuned["restriction_action_keywords"] = tuned["restriction_action_keywords"] + ["curtailing screen"]
+    tuned["restriction_action_keywords"] = tuned["restriction_action_keywords"] + [
+        "curtailing screen"
+    ]
     assert classify_by_rules(text, tuned) == STANCE_UNFAVORABLE

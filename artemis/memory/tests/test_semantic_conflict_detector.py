@@ -165,13 +165,9 @@ class TestJudgePair:
     async def test_json_parse_error_degrades_to_unrelated(self) -> None:
         """Malformed JSON from judge → UNRELATED (fail safe)."""
         mock_adapter = MagicMock()
-        mock_adapter.complete = AsyncMock(
-            return_value=self._make_response("not valid json at all")
-        )
+        mock_adapter.complete = AsyncMock(return_value=self._make_response("not valid json at all"))
 
-        verdict, confidence, _reason = await _judge_pair(
-            mock_adapter, "obs a", "obs b"
-        )
+        verdict, confidence, _reason = await _judge_pair(mock_adapter, "obs a", "obs b")
         assert verdict == "UNRELATED"
         assert confidence == 0.0
 
@@ -181,9 +177,7 @@ class TestJudgePair:
         mock_adapter = MagicMock()
         mock_adapter.complete = AsyncMock(side_effect=RuntimeError("connection reset"))
 
-        verdict, confidence, _reason = await _judge_pair(
-            mock_adapter, "obs a", "obs b"
-        )
+        verdict, confidence, _reason = await _judge_pair(mock_adapter, "obs a", "obs b")
         assert verdict == "UNRELATED"
         assert confidence == 0.0
 
@@ -230,15 +224,17 @@ class TestSemanticCasesWithMockedJudge:
             '{"verdict": "CONTRADICT", "confidence": 0.91, "reason": "CMO vs sales lead are incompatible roles"}'
         )
 
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[(existing, 0.78)]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(return_value=mock_adapter),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[(existing, 0.78)]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(return_value=mock_adapter),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -265,15 +261,17 @@ class TestSemanticCasesWithMockedJudge:
             '{"verdict": "CONTRADICT", "confidence": 0.88, "reason": "paused vs actively running are incompatible states"}'
         )
 
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[(existing, 0.74)]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(return_value=mock_adapter),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[(existing, 0.74)]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(return_value=mock_adapter),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -297,15 +295,17 @@ class TestSemanticCasesWithMockedJudge:
             '{"verdict": "CONTRADICT", "confidence": 0.72, "reason": "Boston vs New York, but uncertain"}'
         )
 
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[(existing, 0.68)]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(return_value=mock_adapter),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[(existing, 0.68)]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(return_value=mock_adapter),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -329,15 +329,17 @@ class TestSemanticCasesWithMockedJudge:
             '{"verdict": "REFINE", "confidence": 0.80, "reason": "B adds specifics to A"}'
         )
 
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[(existing, 0.82)]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(return_value=mock_adapter),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[(existing, 0.82)]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(return_value=mock_adapter),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -357,15 +359,17 @@ class TestSemanticCasesWithMockedJudge:
         new = _obs(2, "Jon is CMO")
         existing = _obs(1, "Jon leads sales")
 
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[(existing, 0.75)]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(side_effect=NoProviderAvailableError("no adapter")),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[(existing, 0.75)]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(side_effect=NoProviderAvailableError("no adapter")),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -390,12 +394,13 @@ class TestSemanticCasesWithMockedJudge:
 
         # The shortlist returns empty for active_unrelated (low sim) — so the detector
         # gets past the scope filter but returns no candidates from the LLM shortlist.
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[]),
-        ) as mock_shortlist, patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[]),
+            ) as mock_shortlist,
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -456,15 +461,17 @@ class TestPrecisionFalsePositives:
             '{"verdict": "UNRELATED", "confidence": 0.05, "reason": "different attributes of same entity"}'
         )
 
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[(existing, 0.65)]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(return_value=mock_adapter),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[(existing, 0.65)]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(return_value=mock_adapter),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -485,15 +492,17 @@ class TestPrecisionFalsePositives:
             '{"verdict": "REFINE", "confidence": 0.65, "reason": "sequential roles, not simultaneous contradiction"}'
         )
 
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[(existing, 0.72)]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(return_value=mock_adapter),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[(existing, 0.72)]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(return_value=mock_adapter),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()
@@ -511,15 +520,17 @@ class TestPrecisionFalsePositives:
         existing = _obs(1, "FlatironSchool offers coding bootcamps")
 
         # Simulate shortlist returning empty (low similarity)
-        with patch(
-            "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
-            new=AsyncMock(return_value=[]),
-        ), patch(
-            "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
-            new=AsyncMock(side_effect=AssertionError("should not be called")),
-        ), patch(
-            "artemis.db.SessionLocal"
-        ) as mock_session_local:
+        with (
+            patch(
+                "artemis.memory.semantic_conflict_detector._shortlist_by_embedding",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "artemis.memory.semantic_conflict_detector.resolve_adapter_async",
+                new=AsyncMock(side_effect=AssertionError("should not be called")),
+            ),
+            patch("artemis.db.SessionLocal") as mock_session_local,
+        ):
             mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_session = MagicMock()

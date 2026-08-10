@@ -152,8 +152,7 @@ async def _maybe_refresh_row(
             connected_email=row.connected_email,
         )
         logger.info(
-            "google_credentials_tick: refreshed google_credential id=%d "
-            "(user_id=%d, purpose=%r)",
+            "google_credentials_tick: refreshed google_credential id=%d (user_id=%d, purpose=%r)",
             row.id,
             row.user_id,
             row.purpose,

@@ -89,9 +89,7 @@ async def test_commit_agent_create_full_blueprint(db_session: AsyncSession) -> N
     agent_db_id = result["id"]
 
     # Read the row back from DB
-    row_result = await db_session.execute(
-        sa_select(Agent).where(Agent.id == agent_db_id).limit(1)
-    )
+    row_result = await db_session.execute(sa_select(Agent).where(Agent.id == agent_db_id).limit(1))
     agent = row_result.scalar_one()
 
     # Core fields
@@ -198,9 +196,7 @@ async def test_commit_agent_update_partial_is_lossless(db_session: AsyncSession)
 
     # Expire the session cache so we get a fresh DB read
     db_session.expire_all()
-    row_result = await db_session.execute(
-        sa_select(Agent).where(Agent.id == agent_db_id).limit(1)
-    )
+    row_result = await db_session.execute(sa_select(Agent).where(Agent.id == agent_db_id).limit(1))
     agent = row_result.scalar_one()
 
     # Goal was updated

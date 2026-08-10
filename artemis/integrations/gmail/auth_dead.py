@@ -28,8 +28,7 @@ logger = logging.getLogger(__name__)
 
 _RECONNECT_URL = "https://app.artemisos.me/connectors"
 _ALERT_TEXT = (
-    "⚠️ Google account is disconnected — Gmail access is paused. "
-    f"Reconnect: {_RECONNECT_URL}"
+    f"⚠️ Google account is disconnected — Gmail access is paused. Reconnect: {_RECONNECT_URL}"
 )
 
 
@@ -81,9 +80,7 @@ async def _send_owner_dm(session: AsyncSession) -> None:
 
         token = await _get_slack_token_for_agent(session, agent_id="artemis")
         if not token:
-            logger.warning(
-                "gmail_auth_dead: no active Slack token for agent_id='artemis'; skip DM"
-            )
+            logger.warning("gmail_auth_dead: no active Slack token for agent_id='artemis'; skip DM")
             return
 
         recipient_id = await _resolve_artemis_dm_recipient(session)

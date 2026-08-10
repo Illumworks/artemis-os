@@ -209,7 +209,9 @@ def test_tool_registered_for_callie_only() -> None:
     )
     assert "get_screentime_report" in callie_registry
     assert "record_screentime_feedback" in callie_registry
-    assert callie_registry.is_auto_invoke("get_screentime_report"), "read-only tool must auto-invoke"
+    assert callie_registry.is_auto_invoke("get_screentime_report"), (
+        "read-only tool must auto-invoke"
+    )
 
     for other_agent in ("artemis", "kai", "ares"):
         other_registry = build_authorized_tool_registry(
@@ -383,7 +385,9 @@ async def test_record_screentime_feedback_tool_end_to_end(db_session: AsyncSessi
     )
     assert "down-weighted" in denied
 
-    missing = await _record_screentime_feedback({"signal_id": 999999, "not_relevant": True, "reason": "x"})
+    missing = await _record_screentime_feedback(
+        {"signal_id": 999999, "not_relevant": True, "reason": "x"}
+    )
     assert "No screen-time signal found" in missing
 
     no_reason = await _record_screentime_feedback({"signal_id": sid, "not_relevant": True})

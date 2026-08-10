@@ -132,7 +132,5 @@ async def mark_escalated(
     """Stamp the escalated_at timestamp so the sweep doesn't fire again."""
     ts = escalated_at or datetime.now(UTC)
     await session.execute(
-        update(AgentPendingAsk)
-        .where(AgentPendingAsk.id == ask_id)
-        .values(escalated_at=ts)
+        update(AgentPendingAsk).where(AgentPendingAsk.id == ask_id).values(escalated_at=ts)
     )

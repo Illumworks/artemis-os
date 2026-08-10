@@ -160,7 +160,13 @@ async def test_dedup_prevents_second_push(db_session: AsyncSession) -> None:
         patch("artemis.integrations.slack.client.SlackClient", return_value=fake_client),
     )
 
-    with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4]:
+    with (
+        common_patches[0],
+        common_patches[1],
+        common_patches[2],
+        common_patches[3],
+        common_patches[4],
+    ):
         first = await push_top_tier_signal(
             db_session,
             signal_id=2001,
@@ -473,6 +479,4 @@ async def test_argus_dispatch_endpoint_non_hot_returns_400(db_session: AsyncSess
     with pytest.raises(fastapi.HTTPException) as exc_info:
         await dispatch_argus_for_signal(signal_id=signal_id, session=db_session)
 
-    assert exc_info.value.status_code == 400, (
-        f"Expected 400, got {exc_info.value.status_code}"
-    )
+    assert exc_info.value.status_code == 400, f"Expected 400, got {exc_info.value.status_code}"

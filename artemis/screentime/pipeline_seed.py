@@ -22,7 +22,9 @@ from artemis.pipelines.schemas import PipelineCreate
 from artemis.screentime import PIPELINE_ID
 
 
-def _node(node_id: str, node_type: str, label: str, x: int, y: int, **config: Any) -> dict[str, Any]:
+def _node(
+    node_id: str, node_type: str, label: str, x: int, y: int, **config: Any
+) -> dict[str, Any]:
     return {
         "id": node_id,
         "type": node_type,
@@ -45,7 +47,14 @@ def build_screentime_pipeline() -> dict[str, Any]:
 
     scout_labels = ["legislative", "state_doe", "board_minutes", "regional_news"]
     nodes: list[dict[str, Any]] = [
-        _node("trigger_scheduled", "trigger_scheduled", "National Sweep (cron)", 700, 40, **trigger_config),
+        _node(
+            "trigger_scheduled",
+            "trigger_scheduled",
+            "National Sweep (cron)",
+            700,
+            40,
+            **trigger_config,
+        ),
     ]
     # Scout fan-out nodes (national, screen-time tuned) — display only.
     nodes += [

@@ -582,7 +582,9 @@ async def _detect_base_branch(project_path: str) -> str:
     3. Hard fallback: ``"main"``
     """
     rc, out, _ = await _run_git(
-        "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
+        "symbolic-ref",
+        "--short",
+        "refs/remotes/origin/HEAD",
         cwd=project_path,
     )
     if rc == 0 and out.strip():
@@ -674,7 +676,9 @@ async def get_worktree_status(
 
     # Commits introduced on branch since it diverged from base.
     rc, log_out, _ = await _run_git(
-        "log", "--oneline", f"{base}..{branch}",
+        "log",
+        "--oneline",
+        f"{base}..{branch}",
         cwd=project_path,
     )
     commits: list[WorktreeCommitEntry] = []
@@ -690,9 +694,7 @@ async def get_worktree_status(
 
     # Uncommitted changes sitting in the worktree checkout.
     rc2, status_out, _ = await _run_git("status", "--porcelain", cwd=str(wt_path))
-    dirty_files = (
-        len([ln for ln in status_out.splitlines() if ln.strip()]) if rc2 == 0 else 0
-    )
+    dirty_files = len([ln for ln in status_out.splitlines() if ln.strip()]) if rc2 == 0 else 0
 
     return WorktreeStatusResponse(
         exists=True,
@@ -730,19 +732,16 @@ async def get_worktree_diff(
     base = await _detect_base_branch(project_path)
 
     if not wt_path.exists():
-        return WorktreeDiffResponse(
-            diff="", truncated=False, branch=branch, base=base
-        ).model_dump()
+        return WorktreeDiffResponse(diff="", truncated=False, branch=branch, base=base).model_dump()
 
     rc, diff_out, _ = await _run_git(
-        "diff", f"{base}...{branch}",
+        "diff",
+        f"{base}...{branch}",
         cwd=project_path,
         timeout=60.0,
     )
     if rc != 0:
-        return WorktreeDiffResponse(
-            diff="", truncated=False, branch=branch, base=base
-        ).model_dump()
+        return WorktreeDiffResponse(diff="", truncated=False, branch=branch, base=base).model_dump()
 
     truncated = len(diff_out) > _DIFF_MAX_CHARS
     return WorktreeDiffResponse(
@@ -818,7 +817,9 @@ async def merge_worktree(
     if merge_req.squash:
         # Stage all commits as a single diff, then commit manually.
         rc_m, merge_out, merge_err = await _run_git(
-            "merge", "--squash", branch,
+            "merge",
+            "--squash",
+            branch,
             cwd=project_path,
             timeout=60.0,
         )
@@ -834,7 +835,9 @@ async def merge_worktree(
             )
         commit_msg = merge_req.message or f"Squash merge {branch} into {base}"
         rc_c, _, commit_err = await _run_git(
-            "commit", "-m", commit_msg,
+            "commit",
+            "-m",
+            commit_msg,
             cwd=project_path,
             timeout=30.0,
         )

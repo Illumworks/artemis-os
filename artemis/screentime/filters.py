@@ -68,10 +68,19 @@ _REAL_MOVE_STATUSES: frozenset[str] = frozenset(
 
 # Phrases that mark an actual legislative/board action (vs. a headline/opinion).
 _ACTION_PATTERNS: list[tuple[str, str]] = [
-    (r"\bpassed\b|\benacted\b|\bsigned into law\b|\benrolled\b|\bapproved\b|\badopted\b", STATUS_PASSED),
+    (
+        r"\bpassed\b|\benacted\b|\bsigned into law\b|\benrolled\b|\bapproved\b|\badopted\b",
+        STATUS_PASSED,
+    ),
     (r"\bamend(ed|ment)\b|\bsubstitut(e|ed)\b|\brevis(ed|ion)\b", STATUS_AMENDED),
-    (r"\bintroduc(ed|tion)\b|\bfiled\b|\bproposed\b|\bbill\b|\bhb ?\d|\bsb ?\d|\bprefiled\b", STATUS_PROPOSED),
-    (r"\bguidance\b|\bmemo\b|\bdirective\b|\bpolicy\b|\brule\b|\bregulation\b|\bstandards?\b", STATUS_GUIDANCE),
+    (
+        r"\bintroduc(ed|tion)\b|\bfiled\b|\bproposed\b|\bbill\b|\bhb ?\d|\bsb ?\d|\bprefiled\b",
+        STATUS_PROPOSED,
+    ),
+    (
+        r"\bguidance\b|\bmemo\b|\bdirective\b|\bpolicy\b|\brule\b|\bregulation\b|\bstandards?\b",
+        STATUS_GUIDANCE,
+    ),
 ]
 
 # Opinion / headline markers — even if other words match, these alone never qualify.
@@ -163,14 +172,13 @@ def normalize_finding(finding: dict[str, Any]) -> CandidateSignal | None:
     ).strip()
 
     district_name = (
-        finding.get("district_name")
-        or meta.get("district_name")
-        or meta.get("source_name")
-        or None
+        finding.get("district_name") or meta.get("district_name") or meta.get("source_name") or None
     )
     level = LEVEL_DISTRICT if (source_type == "board_minutes" or district_name) else LEVEL_STATE
 
-    published_at = _parse_dt(meta.get("published_at") or meta.get("date") or finding.get("published_at"))
+    published_at = _parse_dt(
+        meta.get("published_at") or meta.get("date") or finding.get("published_at")
+    )
 
     status = _classify_status(f"{title} {summary}", source_type, meta)
 
@@ -366,7 +374,9 @@ async def _llm_topic_relevant(
         from artemis.agent.types import Message, TextBlock
         from artemis.providers.fallback import complete_with_fallback
     except Exception:  # pragma: no cover - import guard
-        _logger.warning("screentime.topic_gate: provider import failed; keeping ambiguous item", exc_info=True)
+        _logger.warning(
+            "screentime.topic_gate: provider import failed; keeping ambiguous item", exc_info=True
+        )
         return None
 
     system = (
@@ -400,7 +410,9 @@ async def _llm_topic_relevant(
             feature_tag="screentime_topic_gate",
         )
     except Exception:
-        _logger.warning("screentime.topic_gate: provider call failed; keeping ambiguous item", exc_info=True)
+        _logger.warning(
+            "screentime.topic_gate: provider call failed; keeping ambiguous item", exc_info=True
+        )
         return None
 
     answer = ""

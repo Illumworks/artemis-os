@@ -170,7 +170,10 @@ def test_ai_item_passes_topic_gate():
 
 def test_generic_off_topic_item_dropped_by_gate():
     finding = item_to_finding(
-        {"title": "Florida schools adopt new reading retention curriculum", "summary": "Literacy mandate."},
+        {
+            "title": "Florida schools adopt new reading retention curriculum",
+            "summary": "Literacy mandate.",
+        },
         "FL",
     )
     candidate = normalize_finding(finding)
@@ -223,9 +226,7 @@ async def test_gather_national_policy_news_default_sweeps_all_provided_states():
     fake_http.get.return_value.status_code = 200
     fake_http.get.return_value.text = _SAMPLE_RSS
 
-    findings, next_cursor = await gather_national_policy_news(
-        states=["FL", "TX"], http=fake_http
-    )
+    findings, next_cursor = await gather_national_policy_news(states=["FL", "TX"], http=fake_http)
     assert next_cursor == 0
     assert len(findings) == 4  # 2 items per state x 2 states
     assert fake_http.get.await_count == 2

@@ -36,9 +36,7 @@ async def test_gmail_client_refresh_success_calls_callback() -> None:
 
     callback_args: list[dict[str, Any]] = []
 
-    async def on_refreshed(
-        access_token: str, refresh_token: str, expires_at: float
-    ) -> None:
+    async def on_refreshed(access_token: str, refresh_token: str, expires_at: float) -> None:
         callback_args.append(
             {
                 "access_token": access_token,
@@ -100,9 +98,7 @@ async def test_gmail_client_refresh_rotates_refresh_token() -> None:
 
     callback_args: list[dict[str, Any]] = []
 
-    async def on_refreshed(
-        access_token: str, refresh_token: str, expires_at: float
-    ) -> None:
+    async def on_refreshed(access_token: str, refresh_token: str, expires_at: float) -> None:
         callback_args.append({"access_token": access_token, "refresh_token": refresh_token})
 
     client = GmailClient(
@@ -157,9 +153,7 @@ async def test_gmail_client_refresh_400_raises_auth_dead() -> None:
     mock_resp.status_code = 400
     mock_resp.is_success = False
     mock_resp.text = '{"error":"invalid_grant"}'
-    mock_resp.raise_for_status = MagicMock(
-        side_effect=Exception("should not be called")
-    )
+    mock_resp.raise_for_status = MagicMock(side_effect=Exception("should not be called"))
 
     with patch("httpx.AsyncClient") as mock_http_cls:
         mock_http = AsyncMock()
@@ -287,8 +281,7 @@ async def test_fetch_gmail_awaiting_reply_auth_dead_triggers_handler() -> None:
     mock_credential.refresh_token = "rt"
     mock_credential.expiry = future_expiry
     mock_credential.scope = (
-        "https://www.googleapis.com/auth/gmail.readonly "
-        "https://www.googleapis.com/auth/gmail.send"
+        "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send"
     )
 
     mock_db_result = MagicMock()
@@ -347,8 +340,7 @@ async def test_resolve_gmail_creds_uses_google_credentials_table() -> None:
     mock_credential.refresh_token = "refresh_tok_xyz"
     mock_credential.expiry = future_expiry
     mock_credential.scope = (
-        "https://www.googleapis.com/auth/gmail.readonly "
-        "https://www.googleapis.com/auth/calendar"
+        "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar"
     )
 
     mock_db_result = MagicMock()

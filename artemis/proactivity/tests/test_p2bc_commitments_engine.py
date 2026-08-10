@@ -114,7 +114,9 @@ async def test_meeting_ingest_writes_commitment_and_memory_and_dedupes(
     assert second.deduped == 1
     assert len(rows) == 1
     assert rows[0].owner_user_id == owner_id
-    assert rows[0].status == "proposed"  # opt-in: owner+deadline items land proposed, not auto-active
+    assert (
+        rows[0].status == "proposed"
+    )  # opt-in: owner+deadline items land proposed, not auto-active
     assert rows[0].sensitivity == "personal_ops"
     assert rows[0].due == datetime(2026, 6, 15, 21, 0, tzinfo=UTC)
 

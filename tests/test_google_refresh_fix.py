@@ -46,7 +46,9 @@ async def test_gcal_client_refresh_401_logs_error_body() -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 401
     mock_resp.is_success = False
-    mock_resp.text = '{"error":"invalid_client","error_description":"The OAuth client was not found."}'
+    mock_resp.text = (
+        '{"error":"invalid_client","error_description":"The OAuth client was not found."}'
+    )
     mock_resp.raise_for_status = MagicMock(
         side_effect=httpx.HTTPStatusError(
             "401 Unauthorized",
@@ -91,7 +93,7 @@ async def test_client_from_row_uses_db_client_not_stale_blob() -> None:
     stale_creds = {
         "access_token": "at",
         "refresh_token": "rt",
-        "client_id": "STALE_CLIENT",       # wrong — from old env override
+        "client_id": "STALE_CLIENT",  # wrong — from old env override
         "client_secret": "STALE_SECRET",
         "expires_at": time.time() + 3600,
     }
@@ -412,7 +414,9 @@ async def test_refresh_google_credentials_tick_handles_expired_refresh_token() -
     mock_bad_resp = MagicMock()
     mock_bad_resp.status_code = 400
     mock_bad_resp.is_success = False
-    mock_bad_resp.text = '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+    mock_bad_resp.text = (
+        '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+    )
     mock_bad_resp.json.return_value = {
         "error": "invalid_grant",
         "error_description": "Token has been expired or revoked.",

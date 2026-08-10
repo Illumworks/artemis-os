@@ -195,7 +195,9 @@ async def test_handle_turn_uses_callie_profile_from_session_metadata() -> None:
         patch("artemis.floating_artemis.chat._persist_messages"),
         patch("artemis.floating_artemis.chat.get_status", return_value={"available_surfaces": []}),
         patch("artemis.floating_artemis.chat._broadcast"),
-        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **k: a[0]),
+        patch(
+            "artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **k: a[0]
+        ),
         patch("artemis.floating_artemis.repository.get_session_by_id", return_value=session_row),
     ):
         result = await handle_turn(
@@ -298,7 +300,9 @@ async def test_handle_turn_persists_assistant_tool_use_and_resume_keeps_prior_re
             "artemis.floating_artemis.chat._persist_messages", new_callable=AsyncMock
         ) as mock_persist,
         patch("artemis.floating_artemis.chat.get_status", return_value={"available_surfaces": []}),
-        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **k: a[0]),
+        patch(
+            "artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **k: a[0]
+        ),
         patch("artemis.floating_artemis.chat._get_recent_meeting_context", return_value=None),
         patch("artemis.floating_artemis.chat._broadcast"),
         patch("artemis.floating_artemis.chat.write_turn_drawer"),
@@ -397,7 +401,9 @@ async def test_handle_turn_claude_code_tool_turn_sets_session_context() -> None:
             return_value={"available_surfaces": ["okr"]},
         ),
         patch("artemis.floating_artemis.chat._broadcast"),
-        patch("artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **k: a[0]),
+        patch(
+            "artemis.floating_artemis.chat.inject_memory_context", side_effect=lambda *a, **k: a[0]
+        ),
         patch("artemis.floating_artemis.chat._get_recent_meeting_context", return_value=None),
         patch("artemis.floating_artemis.chat.write_turn_drawer"),
     ):

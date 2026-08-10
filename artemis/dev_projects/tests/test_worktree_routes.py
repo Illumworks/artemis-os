@@ -56,8 +56,7 @@ artemis.db.SessionLocal = async_sessionmaker(
 from artemis.main import app  # noqa: E402
 
 _TRUNCATE = text(
-    "TRUNCATE forge_run_log, forge_runs, dev_sessions, dev_projects "
-    "RESTART IDENTITY CASCADE"
+    "TRUNCATE forge_run_log, forge_runs, dev_sessions, dev_projects RESTART IDENTITY CASCADE"
 )
 
 
@@ -132,9 +131,7 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
-async def project_and_session(
-    tmp_path: Path, db_session: AsyncSession
-) -> dict[str, Any]:
+async def project_and_session(tmp_path: Path, db_session: AsyncSession) -> dict[str, Any]:
     """Insert a DevProject pointing at a real tmp git repo + a forge-mode session.
 
     Returns a dict with keys: project_id, session_id, repo_path.
@@ -144,9 +141,7 @@ async def project_and_session(
     repo = _make_repo(tmp_path)
 
     proj = await db_session.execute(
-        text(
-            "INSERT INTO dev_projects (name, path) VALUES (:n, :p) RETURNING id"
-        ),
+        text("INSERT INTO dev_projects (name, path) VALUES (:n, :p) RETURNING id"),
         {"n": "wt-test-project", "p": str(repo)},
     )
     project_id = proj.scalar_one()
@@ -169,9 +164,7 @@ async def project_and_session(
 # ---------------------------------------------------------------------------
 
 
-async def _setup_worktree_with_commit(
-    repo_path: Path, session_id: int
-) -> None:
+async def _setup_worktree_with_commit(repo_path: Path, session_id: int) -> None:
     """Create the forge worktree and add a commit to it."""
     from artemis.dev_projects.worktree import ensure_worktree
 

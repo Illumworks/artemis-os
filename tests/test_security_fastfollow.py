@@ -115,9 +115,7 @@ async def test_ws_local_dev_allows(ws_routes: Any) -> None:
     assert allowed
 
 
-async def test_ws_shared_token_query_param(
-    ws_routes: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_ws_shared_token_query_param(ws_routes: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARTEMIS_TOKEN", "secret-token")
     ok, _ = await ws_routes._authorize_ws(_fake_ws(query={"token": "secret-token"}))
     assert ok
@@ -221,9 +219,7 @@ async def test_ws_cf_enabled_misconfigured_verifier_fails_closed(
         raise CfAccessConfigurationError("not configured")
 
     monkeypatch.setattr(ws_routes, "get_cf_access_verifier", _boom)
-    ok, _ = await ws_routes._authorize_ws(
-        _fake_ws(headers={"Cf-Access-Jwt-Assertion": "eyJ-any"})
-    )
+    ok, _ = await ws_routes._authorize_ws(_fake_ws(headers={"Cf-Access-Jwt-Assertion": "eyJ-any"}))
     assert not ok
 
 
@@ -269,8 +265,7 @@ def test_egress_https_only_mode() -> None:
 def _resolver_returning(*ips: str) -> Any:
     def _resolve(host: str, port: int, **kwargs: Any) -> list[Any]:
         return [
-            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, port))
-            for ip in ips
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, port)) for ip in ips
         ]
 
     return _resolve

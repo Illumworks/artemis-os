@@ -149,9 +149,7 @@ async def run_screentime_pipeline(
         topical: list[Any] = []
         for c in candidates:
             try:
-                keep = await filters.passes_topic_gate_async(
-                    c, topic_rules, session=session
-                )
+                keep = await filters.passes_topic_gate_async(c, topic_rules, session=session)
             except Exception:
                 _logger.warning(
                     "screentime: topic gate failed for %r — keeping (failsafe)",
@@ -318,7 +316,9 @@ def register_screentime_schedule(scheduler: Any) -> None:
 
     from artemis.config import settings
 
-    trigger = CronTrigger.from_crontab(settings.screentime_cron, timezone=settings.screentime_cron_tz)
+    trigger = CronTrigger.from_crontab(
+        settings.screentime_cron, timezone=settings.screentime_cron_tz
+    )
     scheduler.add_job(
         run_scheduled,
         trigger=trigger,
@@ -327,7 +327,9 @@ def register_screentime_schedule(scheduler: Any) -> None:
         max_instances=1,
         coalesce=True,
     )
-    _logger.info("screentime: registered cron %s (%s)", settings.screentime_cron, settings.screentime_cron_tz)
+    _logger.info(
+        "screentime: registered cron %s (%s)", settings.screentime_cron, settings.screentime_cron_tz
+    )
 
 
 def register_board_sweep_schedule(scheduler: Any) -> None:

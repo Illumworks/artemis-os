@@ -266,6 +266,7 @@ async def slack_verify(
 
 # ── GCal OAuth ────────────────────────────────────────────────────────────────
 
+
 def _gcal_redirect_uri() -> str:
     return os.environ.get(
         "GCAL_REDIRECT_URI",

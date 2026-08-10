@@ -71,8 +71,12 @@ def _make_finding(
 def _make_context(*, with_argus: bool = True) -> dict[str, Any]:
     """Minimal context dict for prompt-builder tests."""
     ctx: dict[str, Any] = {
-        "candidate": {"id": 1, "campaign_family": "obc", "decision_state": "approved",
-                      "predecessor_id": None},
+        "candidate": {
+            "id": 1,
+            "campaign_family": "obc",
+            "decision_state": "approved",
+            "predecessor_id": None,
+        },
         "signals": [],
         "predecessor": None,
         "default_target_scope": {"base": "all"},
@@ -153,9 +157,7 @@ async def test_a5_read_returns_none_for_none_district_key() -> None:
 async def test_a6_read_returns_none_for_empty_drawer() -> None:
     """A6 — Empty drawer → returns None."""
     session = AsyncMock()
-    with patch(
-        "artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock
-    ) as mock_read:
+    with patch("artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock) as mock_read:
         mock_read.return_value = {}
         result = await _read_argus_context(session, "TX-042")
     assert result is None
@@ -167,12 +169,9 @@ async def test_a7_read_returns_structured_dict_with_findings() -> None:
     session = AsyncMock()
     findings = {
         "current_vendor": _make_finding(dimension="current_vendor", value="Lexia"),
-        "procurement_timing": _make_finding(dimension="procurement_timing",
-                                             value="Q1 FY2027"),
+        "procurement_timing": _make_finding(dimension="procurement_timing", value="Q1 FY2027"),
     }
-    with patch(
-        "artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock
-    ) as mock_read:
+    with patch("artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock) as mock_read:
         mock_read.return_value = findings
         result = await _read_argus_context(session, "TX-042")
 
@@ -197,9 +196,7 @@ async def test_a8_read_separates_recommended_angle_from_findings() -> None:
             value="Position as complement.",
         ),
     }
-    with patch(
-        "artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock
-    ) as mock_read:
+    with patch("artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock) as mock_read:
         mock_read.return_value = findings
         result = await _read_argus_context(session, "TX-042")
 
@@ -215,9 +212,7 @@ async def test_a9_read_returns_none_on_exception(caplog: Any) -> None:
     import logging
 
     session = AsyncMock()
-    with patch(
-        "artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock
-    ) as mock_read:
+    with patch("artemis.argus.drawer.read_district_drawer", new_callable=AsyncMock) as mock_read:
         mock_read.side_effect = RuntimeError("simulated DB failure")
         with caplog.at_level(logging.WARNING, logger="artemis.marketing.brief_assembler"):
             result = await _read_argus_context(session, "TX-042")
@@ -291,22 +286,34 @@ async def test_b1_context_includes_argus_research_when_drawer_populated() -> Non
             return_value={
                 "district_key": "TX-042",
                 "attributed_to": "Argus",
-                "findings": {"current_vendor": {"value": "Lexia", "source": "Argus",
-                                                 "researched_at": "2026-06-17"}},
+                "findings": {
+                    "current_vendor": {
+                        "value": "Lexia",
+                        "source": "Argus",
+                        "researched_at": "2026-06-17",
+                    }
+                },
                 "recommended_angle": "Position as complement.",
             },
         ),
         patch("artemis.marketing.repository.get_candidate", repo_mocks["get_candidate"]),
-        patch("artemis.marketing.repository.get_candidate_signal_rows",
-              repo_mocks["get_candidate_signal_rows"]),
-        patch("artemis.marketing.repository.get_candidate_primary_signal",
-              repo_mocks["get_candidate_primary_signal"]),
-        patch("artemis.marketing.repository.get_candidate_predecessor_context",
-              repo_mocks["get_candidate_predecessor_context"]),
-        patch("artemis.marketing.repository.list_deliverable_types",
-              repo_mocks["list_deliverable_types"]),
-        patch("artemis.marketing.repository.get_district",
-              repo_mocks["get_district"]),
+        patch(
+            "artemis.marketing.repository.get_candidate_signal_rows",
+            repo_mocks["get_candidate_signal_rows"],
+        ),
+        patch(
+            "artemis.marketing.repository.get_candidate_primary_signal",
+            repo_mocks["get_candidate_primary_signal"],
+        ),
+        patch(
+            "artemis.marketing.repository.get_candidate_predecessor_context",
+            repo_mocks["get_candidate_predecessor_context"],
+        ),
+        patch(
+            "artemis.marketing.repository.list_deliverable_types",
+            repo_mocks["list_deliverable_types"],
+        ),
+        patch("artemis.marketing.repository.get_district", repo_mocks["get_district"]),
     ):
         context = await build_campaign_initiation_context(session, candidate_id=1)
 
@@ -333,16 +340,23 @@ async def test_b2_context_omits_argus_research_when_drawer_empty() -> None:
             return_value=None,
         ),
         patch("artemis.marketing.repository.get_candidate", repo_mocks["get_candidate"]),
-        patch("artemis.marketing.repository.get_candidate_signal_rows",
-              repo_mocks["get_candidate_signal_rows"]),
-        patch("artemis.marketing.repository.get_candidate_primary_signal",
-              repo_mocks["get_candidate_primary_signal"]),
-        patch("artemis.marketing.repository.get_candidate_predecessor_context",
-              repo_mocks["get_candidate_predecessor_context"]),
-        patch("artemis.marketing.repository.list_deliverable_types",
-              repo_mocks["list_deliverable_types"]),
-        patch("artemis.marketing.repository.get_district",
-              repo_mocks["get_district"]),
+        patch(
+            "artemis.marketing.repository.get_candidate_signal_rows",
+            repo_mocks["get_candidate_signal_rows"],
+        ),
+        patch(
+            "artemis.marketing.repository.get_candidate_primary_signal",
+            repo_mocks["get_candidate_primary_signal"],
+        ),
+        patch(
+            "artemis.marketing.repository.get_candidate_predecessor_context",
+            repo_mocks["get_candidate_predecessor_context"],
+        ),
+        patch(
+            "artemis.marketing.repository.list_deliverable_types",
+            repo_mocks["list_deliverable_types"],
+        ),
+        patch("artemis.marketing.repository.get_district", repo_mocks["get_district"]),
     ):
         context = await build_campaign_initiation_context(session, candidate_id=1)
 
@@ -369,16 +383,23 @@ async def test_b3_context_omits_argus_research_when_no_district() -> None:
             return_value=None,
         ),
         patch("artemis.marketing.repository.get_candidate", repo_mocks["get_candidate"]),
-        patch("artemis.marketing.repository.get_candidate_signal_rows",
-              repo_mocks["get_candidate_signal_rows"]),
-        patch("artemis.marketing.repository.get_candidate_primary_signal",
-              repo_mocks["get_candidate_primary_signal"]),
-        patch("artemis.marketing.repository.get_candidate_predecessor_context",
-              repo_mocks["get_candidate_predecessor_context"]),
-        patch("artemis.marketing.repository.list_deliverable_types",
-              repo_mocks["list_deliverable_types"]),
-        patch("artemis.marketing.repository.get_district",
-              repo_mocks["get_district"]),
+        patch(
+            "artemis.marketing.repository.get_candidate_signal_rows",
+            repo_mocks["get_candidate_signal_rows"],
+        ),
+        patch(
+            "artemis.marketing.repository.get_candidate_primary_signal",
+            repo_mocks["get_candidate_primary_signal"],
+        ),
+        patch(
+            "artemis.marketing.repository.get_candidate_predecessor_context",
+            repo_mocks["get_candidate_predecessor_context"],
+        ),
+        patch(
+            "artemis.marketing.repository.list_deliverable_types",
+            repo_mocks["list_deliverable_types"],
+        ),
+        patch("artemis.marketing.repository.get_district", repo_mocks["get_district"]),
     ):
         context = await build_campaign_initiation_context(session, candidate_id=1)
 

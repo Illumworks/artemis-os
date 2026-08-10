@@ -246,7 +246,5 @@ def test_signal_engagement_multiplier_centres_on_neutral() -> None:
 
     # Only attributes WITH evidence count — an absent code doesn't dilute the
     # present family signal.
-    m = _signal_engagement_multiplier(
-        {"family:obc": 1.0}, "obc", ["NEVER_SEEN_CODE"]
-    )
+    m = _signal_engagement_multiplier({"family:obc": 1.0}, "obc", ["NEVER_SEEN_CODE"])
     assert m == pytest.approx(2.0)

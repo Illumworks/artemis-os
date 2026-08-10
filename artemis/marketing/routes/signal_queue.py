@@ -520,9 +520,7 @@ async def approve_signal(
     # Record engagement: if Callie had proactively pushed this signal, this
     # approval counts as Jon having "acted" on it (not just ignored it).
     # Non-fatal: any failure is swallowed so the approval response is unaffected.
-    _asyncio.create_task(
-        _record_engage_from_approval(session, updated)
-    )
+    _asyncio.create_task(_record_engage_from_approval(session, updated))
 
     return {
         "signal": _serialize_signal(updated),
@@ -581,9 +579,7 @@ async def reject_signal(
     # Engagement learning: only record when a non-empty reason is given.
     # A reason-less reject is ambiguous — do not down-weight anything.
     if reason and reason.strip():
-        _asyncio.create_task(
-            _record_engage_from_rejection(session, updated)
-        )
+        _asyncio.create_task(_record_engage_from_rejection(session, updated))
 
     return _serialize_signal(updated)
 
@@ -693,9 +689,7 @@ async def dispatch_argus_for_signal(
     # Record engagement so the learning loop knows Jon acted on this signal
     import asyncio as _asyncio
 
-    _asyncio.create_task(
-        _record_engage_from_signal(session, signal, outcome="acted")
-    )
+    _asyncio.create_task(_record_engage_from_signal(session, signal, outcome="acted"))
 
     # Fire async Argus dispatch (returns immediately with dispatched payload)
     from artemis.floating_artemis.tools.argus_tools import (

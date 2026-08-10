@@ -166,9 +166,7 @@ class TestWritingHandoffRoute:
     ) -> None:
         """If an assembled Campaign Brief exists, its formatted text appears in briefText."""
         clear_subscribers()
-        candidate = await _make_candidate(
-            db_session, family="obc", name="Campaign With Brief"
-        )
+        candidate = await _make_candidate(db_session, family="obc", name="Campaign With Brief")
         # Insert an assembled brief with a signal section
         await create_campaign_brief(
             db_session,

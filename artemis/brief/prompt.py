@@ -96,7 +96,9 @@ def _build_context_string(sources: dict[str, Any]) -> str:
                 for t in filtered_prog[:4]:
                     priority = t.get("priority") or "–"
                     title = t.get("title") or t.get("summary") or ""
-                    lines.append(f"  - [{t.get('key', '?')}] {title} (status: In Progress, priority: {priority})")
+                    lines.append(
+                        f"  - [{t.get('key', '?')}] {title} (status: In Progress, priority: {priority})"
+                    )
         if review:
             filtered_review = [t for t in review if t.get("key") not in excluded_keys]
             if filtered_review:
@@ -112,7 +114,9 @@ def _build_context_string(sources: dict[str, Any]) -> str:
                     title = t.get("title") or t.get("summary") or ""
                     lines.append(f"  - [{t.get('key', '?')}] {title} (status: Blocked)")
         if excluded_keys:
-            lines.append(f"## Suppressed — do NOT surface these tickets: {', '.join(sorted(excluded_keys))}")
+            lines.append(
+                f"## Suppressed — do NOT surface these tickets: {', '.join(sorted(excluded_keys))}"
+            )
 
     # Calendar
     calendar = sources.get("calendar")

@@ -452,9 +452,7 @@ async def test_backfill_legacy_deliverable_becomes_readable(db_session: AsyncSes
 
     # Before backfill: _latest_draft_content returns empty (the pre-fix bug).
     content_before = _latest_draft_content(legacy_row)
-    assert content_before == "", (
-        f"Pre-backfill content should be empty, got {content_before!r}"
-    )
+    assert content_before == "", f"Pre-backfill content should be empty, got {content_before!r}"
 
     # Apply the backfill (mirrors the 0079 migration logic in Python).
     backfilled_meta = dict(legacy_meta)

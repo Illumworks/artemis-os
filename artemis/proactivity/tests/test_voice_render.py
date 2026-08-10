@@ -172,7 +172,9 @@ async def test_render_brief_with_voice_contains_grounded_facts() -> None:
     """Voice output contains facts from the grounded brief (not invented)."""
     brief: dict[str, Any] = {
         "summary": "Pipeline cleanup day. AMIRA-123 is merged.",
-        "top_priorities": [{"item": "Ship AMIRA-456", "rationale": "Sprint end", "urgency": "high"}],
+        "top_priorities": [
+            {"item": "Ship AMIRA-456", "rationale": "Sprint end", "urgency": "high"}
+        ],
         "waiting_on_you": [],
         "okr_at_risk": "AMIRA-789 blocked",
     }

@@ -563,9 +563,7 @@ class JiraClient:
             resp = await client.post(
                 f"{self._base}/rest/api/3/issue/{enc}/comment",
                 headers=self._headers("application/json"),
-                json={
-                    "body": _build_adf(text, mentions or [], attachment_refs or [])
-                },
+                json={"body": _build_adf(text, mentions or [], attachment_refs or [])},
             )
         if not resp.is_success:
             raise JiraAPIError("add_comment", resp.status_code, resp.text[:200])

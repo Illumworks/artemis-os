@@ -248,9 +248,7 @@ def _parse_ndjson_output(raw: str) -> tuple[str, Usage]:
                 input_tokens = int(usage_data.get("input_tokens", input_tokens))
                 output_tokens = int(usage_data.get("output_tokens", output_tokens))
                 # codex names this "cached_input_tokens"; map to our field name.
-                cache_read_tokens = int(
-                    usage_data.get("cached_input_tokens", cache_read_tokens)
-                )
+                cache_read_tokens = int(usage_data.get("cached_input_tokens", cache_read_tokens))
 
         # Legacy / fallback: older schema used type=="result" or a "result" key.
         elif obj_type in ("result", "message") or "result" in obj:

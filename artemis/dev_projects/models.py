@@ -125,9 +125,7 @@ class ProjectWorkspaceMemory(Base):
         JSONB, nullable=False, server_default="[]"
     )
     # newest-wins snapshot: {path: purpose}
-    file_map: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
+    file_map: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
     # newest-wins status text
     progress: Mapped[str | None] = mapped_column(Text)
     # unresolved items: [{"text": "<str>", ...}, ...]
@@ -191,9 +189,7 @@ class ForgeRunLog(Base):
     """
 
     __tablename__ = "forge_run_log"
-    __table_args__ = (
-        Index("ix_forge_run_log_run_seq", "run_id", "seq"),
-    )
+    __table_args__ = (Index("ix_forge_run_log_run_seq", "run_id", "seq"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(
@@ -201,9 +197,7 @@ class ForgeRunLog(Base):
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -35,14 +35,14 @@ OWNER_EMAIL = "jon.fila@amiralearning.com"
 # ScopeKind literals that are marketing-shared without a specific scope_id constraint.
 _MARKETING_SCOPE_KINDS: frozenset[str] = frozenset(
     {
-        "workspace",        # workspace:marketing (and any other workspace:* currently)
+        "workspace",  # workspace:marketing (and any other workspace:* currently)
         "campaign_family",  # campaign_family:*
-        "district",         # district:*
-        "account",          # account:*
-        "person",           # person:*
-        "global",           # global:*
-        "pipeline",         # pipeline:*
-        "meeting",          # meeting:*
+        "district",  # district:*
+        "account",  # account:*
+        "person",  # person:*
+        "global",  # global:*
+        "pipeline",  # pipeline:*
+        "meeting",  # meeting:*
     }
 )
 
@@ -50,9 +50,7 @@ _MARKETING_SCOPE_KINDS: frozenset[str] = frozenset(
 _PERSONAL_SCOPE_KINDS: frozenset[str] = frozenset({"personal"})
 
 # scope_kind=agent, scope_id values that are personal/owner-only.
-_AGENT_PERSONAL_SCOPE_IDS: frozenset[str] = frozenset(
-    {"artemis", "floating-artemis"}
-)
+_AGENT_PERSONAL_SCOPE_IDS: frozenset[str] = frozenset({"artemis", "floating-artemis"})
 
 # scope_kind=agent, scope_id values that are marketing-shared.
 _AGENT_MARKETING_SCOPE_IDS: frozenset[str] = frozenset({"callie"})
@@ -284,9 +282,7 @@ def build_scope_sql_clauses(
 
     # agent:<id> for each permitted agent
     for agent_id in sorted(allowance.allowed_agent_ids):
-        clauses.append(
-            f"({scope_kind_col} = 'agent' AND {scope_id_col} = '{agent_id}')"
-        )
+        clauses.append(f"({scope_kind_col} = 'agent' AND {scope_id_col} = '{agent_id}')")
 
     # blanket scope-kind access
     for sk in sorted(allowance.allowed_scope_kinds):

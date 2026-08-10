@@ -194,13 +194,13 @@ def _allowance_clauses(allowance: "ScopeAllowance | None", model: Any) -> list[A
     # personal:<user_id> — only their own
     if allowance.personal_user_id is not None:
         from sqlalchemy import and_
-        clauses.append(
-            and_(sk == "personal", sid == str(allowance.personal_user_id))
-        )
+
+        clauses.append(and_(sk == "personal", sid == str(allowance.personal_user_id)))
 
     # agent:<id> for each permitted agent
     for agent_id in sorted(allowance.allowed_agent_ids):
         from sqlalchemy import and_
+
         clauses.append(and_(sk == "agent", sid == agent_id))
 
     # blanket scope-kind access
@@ -210,6 +210,7 @@ def _allowance_clauses(allowance: "ScopeAllowance | None", model: Any) -> list[A
     if not clauses:
         # allowance is non-deny, non-all, but has no permitted scopes — deny
         from sqlalchemy import false as sa_false
+
         return [sa_false()]
 
     return clauses
@@ -494,9 +495,11 @@ async def get_memory_stats(
     obs_acl = _allowance_clauses(allowance, MemoryObservation)
     if drawer_acl:
         from sqlalchemy import or_ as _or_
+
         drawer_base = drawer_base.where(_or_(*drawer_acl) if len(drawer_acl) > 1 else drawer_acl[0])
     if obs_acl:
         from sqlalchemy import or_ as _or_
+
         obs_base = obs_base.where(_or_(*obs_acl) if len(obs_acl) > 1 else obs_acl[0])
 
     total_drawers: int = (await session.execute(drawer_base)).scalar_one()
@@ -516,10 +519,14 @@ async def get_memory_stats(
     )
     if obs_acl:
         from sqlalchemy import or_ as _or_
+
         obs_scope_q = obs_scope_q.where(_or_(*obs_acl) if len(obs_acl) > 1 else obs_acl[0])
     if drawer_acl:
         from sqlalchemy import or_ as _or_
-        drawer_scope_q = drawer_scope_q.where(_or_(*drawer_acl) if len(drawer_acl) > 1 else drawer_acl[0])
+
+        drawer_scope_q = drawer_scope_q.where(
+            _or_(*drawer_acl) if len(drawer_acl) > 1 else drawer_acl[0]
+        )
     scope_count_result = await session.execute(
         select(func.count()).select_from(obs_scope_q.union(drawer_scope_q).subquery())
     )
@@ -532,6 +539,7 @@ async def get_memory_stats(
     ).group_by(MemoryObservation.scope_kind)
     if obs_acl:
         from sqlalchemy import or_ as _or_
+
         by_kind_q = by_kind_q.where(_or_(*obs_acl) if len(obs_acl) > 1 else obs_acl[0])
     by_kind_result = await session.execute(by_kind_q)
     by_scope_kind: dict[str, int] = {r.scope_kind: r.cnt for r in by_kind_result}

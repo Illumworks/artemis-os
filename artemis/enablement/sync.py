@@ -53,9 +53,7 @@ _TAB_NAME = "ENABLEMENT_DB"
 # gid=0 is the first sheet; we resolve it dynamically by title if needed.
 # For now we export the full spreadsheet as CSV (only works for single-sheet
 # or yields the first sheet); if the tab isn't first we pass &gid= explicitly.
-_DRIVE_EXPORT_URL = (
-    "https://www.googleapis.com/drive/v3/files/{file_id}/export"
-)
+_DRIVE_EXPORT_URL = "https://www.googleapis.com/drive/v3/files/{file_id}/export"
 
 # Column name → EnablementAsset attribute mapping (case-insensitive, normalised).
 # Extra sheet columns not listed here land in ``extra`` JSONB.
@@ -229,8 +227,7 @@ async def _fetch_sheet_csv(access_token: str) -> str | None:
             )
         else:
             _logger.warning(
-                "enablement sync: Sheets metadata returned %s — "
-                "falling back to first sheet",
+                "enablement sync: Sheets metadata returned %s — falling back to first sheet",
                 meta_resp.status_code,
             )
     except Exception as exc:  # noqa: BLE001
@@ -369,11 +366,7 @@ def _parse_csv(raw_csv: str) -> tuple[list[str], list[dict[str, Any]]]:
     header = [col.strip() for col in rows_raw[0]]
     if not any(header):
         return [], []
-    data_rows = [
-        _map_row(header, row)
-        for row in rows_raw[1:]
-        if any(v.strip() for v in row)
-    ]
+    data_rows = [_map_row(header, row) for row in rows_raw[1:] if any(v.strip() for v in row)]
     return header, data_rows
 
 

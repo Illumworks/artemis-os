@@ -65,9 +65,7 @@ async def append_log(
     This is the only write path for ForgeRunLog; there is no update or delete.
     """
     result = await session.execute(
-        select(func.coalesce(func.max(ForgeRunLog.seq), -1)).where(
-            ForgeRunLog.run_id == run_id
-        )
+        select(func.coalesce(func.max(ForgeRunLog.seq), -1)).where(ForgeRunLog.run_id == run_id)
     )
     current_max: int = result.scalar_one()
     next_seq = current_max + 1
@@ -97,9 +95,7 @@ async def complete_run(
 
     Flushes but does not commit.
     """
-    result = await session.execute(
-        select(ForgeRun).where(ForgeRun.run_id == run_id)
-    )
+    result = await session.execute(select(ForgeRun).where(ForgeRun.run_id == run_id))
     run = result.scalar_one()
     run.status = status
     run.completed_at = datetime.now(UTC)
@@ -131,8 +127,6 @@ async def get_run_log(
 ) -> list[ForgeRunLog]:
     """Return all log entries for *run_id* ordered by seq ascending."""
     result = await session.execute(
-        select(ForgeRunLog)
-        .where(ForgeRunLog.run_id == run_id)
-        .order_by(ForgeRunLog.seq.asc())
+        select(ForgeRunLog).where(ForgeRunLog.run_id == run_id).order_by(ForgeRunLog.seq.asc())
     )
     return list(result.scalars().all())

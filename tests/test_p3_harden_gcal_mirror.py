@@ -54,9 +54,7 @@ db_module.SessionLocal = async_sessionmaker(
     class_=AsyncSession,
 )
 
-_TRUNCATE_SQL = text(
-    "TRUNCATE integrations, google_credentials RESTART IDENTITY CASCADE"
-)
+_TRUNCATE_SQL = text("TRUNCATE integrations, google_credentials RESTART IDENTITY CASCADE")
 
 _EMAIL = "jon.fila@amiralearning.com"
 _CALENDAR_SCOPE = (

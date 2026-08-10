@@ -30,7 +30,11 @@ def test_jql_assignee_clause_present_no_project() -> None:
     # Patch /myself endpoint to return a minimal user object.
     fake_me = MagicMock()
     fake_me.is_success = True
-    fake_me.json.return_value = {"accountId": "acc1", "displayName": "Jon", "emailAddress": "j@e.com"}
+    fake_me.json.return_value = {
+        "accountId": "acc1",
+        "displayName": "Jon",
+        "emailAddress": "j@e.com",
+    }
 
     async def _fake_get(url: str, **kwargs: Any) -> Any:
         return fake_me
@@ -69,7 +73,11 @@ def test_jql_assignee_clause_with_project() -> None:
 
     fake_me = MagicMock()
     fake_me.is_success = True
-    fake_me.json.return_value = {"accountId": "acc1", "displayName": "Jon", "emailAddress": "j@e.com"}
+    fake_me.json.return_value = {
+        "accountId": "acc1",
+        "displayName": "Jon",
+        "emailAddress": "j@e.com",
+    }
 
     fake_http_client = MagicMock()
     fake_http_client.__aenter__ = AsyncMock(return_value=fake_http_client)
@@ -113,7 +121,7 @@ def test_chunk_long_text_produces_multiple_chunks() -> None:
     # Build a text that is definitely over the limit.
     # Use distinct sections separated by \n\n so we can verify section-boundary splitting.
     section = "A" * 1000
-    text = ("\n\n".join([section] * 6))  # 6 * 1000 + 10 = ~6010 chars
+    text = "\n\n".join([section] * 6)  # 6 * 1000 + 10 = ~6010 chars
     assert len(text) > _SLACK_MAX
 
     chunks = _chunk_slack_text(text)
@@ -231,7 +239,9 @@ async def test_safe_brief_exclusions_returns_excluded_keys(monkeypatch: pytest.M
         _make_obs("brief_exclusion:MT-999 reason=other"),
     ]
 
-    async def _fake_search(session: Any, scope_set: Any, query: str, limit: int, modes: Any) -> list[Any]:
+    async def _fake_search(
+        session: Any, scope_set: Any, query: str, limit: int, modes: Any
+    ) -> list[Any]:
         return obs_list
 
     monkeypatch.setattr("artemis.brief.sources.search_observations", _fake_search, raising=False)
@@ -256,7 +266,9 @@ async def test_safe_brief_exclusions_scope_matches_tool_scope() -> None:
 
     queried_scopes: list[Any] = []
 
-    async def _capture_search(session: Any, scope_set: Any, query: str, limit: int, modes: Any) -> list[Any]:
+    async def _capture_search(
+        session: Any, scope_set: Any, query: str, limit: int, modes: Any
+    ) -> list[Any]:
         queried_scopes.extend(scope_set)
         return []
 

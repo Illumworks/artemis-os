@@ -40,10 +40,10 @@ def md_to_mrkdwn(text: str) -> str:
     # Protected = fenced code blocks, inline code, existing Slack link spans (<…>).
     # Transformations only apply to unprotected segments.
     _PROTECTED_RE = re.compile(
-        r"```[\s\S]*?```"          # fenced code block
-        r"|`[^`\n]+`"              # inline code
-        r"|<[^>]+\|[^>]+>"        # existing Slack link  <url|label>
-        r"|<https?://[^>]+>",     # bare Slack URL  <https://…>
+        r"```[\s\S]*?```"  # fenced code block
+        r"|`[^`\n]+`"  # inline code
+        r"|<[^>]+\|[^>]+>"  # existing Slack link  <url|label>
+        r"|<https?://[^>]+>",  # bare Slack URL  <https://…>
         re.MULTILINE,
     )
 
@@ -82,6 +82,7 @@ def md_to_mrkdwn(text: str) -> str:
         return s
 
     return "".join(_convert_free(seg) if kind == "free" else seg for kind, seg in segments)
+
 
 _PROTECTED_SPAN_RE = re.compile(
     r"```[\s\S]*?```|`[^`\n]+`|https?://[^\s<>()]+",

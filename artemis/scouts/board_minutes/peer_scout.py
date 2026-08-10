@@ -370,8 +370,7 @@ class BoardPeerValidationScout(BaseScout):
         """
         try:
             exclude = {
-                normalize_district_id(d)
-                for d in await self._exclusions.get_customer_district_ids()
+                normalize_district_id(d) for d in await self._exclusions.get_customer_district_ids()
             }
         except Exception:
             _logger.exception(

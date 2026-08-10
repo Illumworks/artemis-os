@@ -391,8 +391,12 @@ async def test_startup_recovery_refires_pending_rows() -> None:
     """recover_pending_requests re-fires background tasks for all pending rows."""
     from artemis.floating_artemis.tools import argus_tools
 
-    row1 = _make_request_row(id=10, district_key="TX-001", channel_id="C1", team_id="T1", attempts=0)
-    row2 = _make_request_row(id=11, district_key="TX-002", channel_id="C2", team_id="T2", attempts=1)
+    row1 = _make_request_row(
+        id=10, district_key="TX-001", channel_id="C1", team_id="T1", attempts=0
+    )
+    row2 = _make_request_row(
+        id=11, district_key="TX-002", channel_id="C2", team_id="T2", attempts=1
+    )
 
     fired: list[str] = []
 

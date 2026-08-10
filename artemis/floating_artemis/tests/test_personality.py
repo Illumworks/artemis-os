@@ -250,8 +250,8 @@ def test_build_system_prompt_artemis_profile_matches_legacy_output() -> None:
             "operator confirms, so calling IS how you propose. Don't write a prose proposal "
             "instead of calling.\n"
             "- Never tell the operator something is done, or that you've started it (e.g. "
-            "\"it's on it\", \"I've queued it\"), unless you actually called the tool this turn.\n"
-            "- Never claim a capability is missing or \"not wired.\" If a tool is in your "
+            '"it\'s on it", "I\'ve queued it"), unless you actually called the tool this turn.\n'
+            '- Never claim a capability is missing or "not wired." If a tool is in your '
             "toolset, use it. If the call errors, report the actual error — don't invent a "
             "limitation."
         )

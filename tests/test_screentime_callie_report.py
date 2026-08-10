@@ -414,9 +414,7 @@ async def test_big_move_alert_dormant_when_channel_unset(db_session: AsyncSessio
     from artemis.screentime.models import ScreentimeSignal
     from artemis.screentime.reporting import maybe_alert_big_move
 
-    sid = await _insert_signal(
-        db_session, state="CA", title="CA passed blanket restriction"
-    )
+    sid = await _insert_signal(db_session, state="CA", title="CA passed blanket restriction")
     await db_session.commit()
     signal = await db_session.get(ScreentimeSignal, sid)
 

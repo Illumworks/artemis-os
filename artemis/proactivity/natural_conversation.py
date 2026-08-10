@@ -251,7 +251,9 @@ async def assemble_pending_context(
     commitments_result = await session.execute(
         select(Commitment)
         .where(Commitment.status.in_(("active", "snoozed")))
-        .order_by(Commitment.due.asc().nulls_last(), Commitment.created_at.asc(), Commitment.id.asc())
+        .order_by(
+            Commitment.due.asc().nulls_last(), Commitment.created_at.asc(), Commitment.id.asc()
+        )
         .limit(_COMMITMENT_LIMIT)
     )
     open_commitments = [
@@ -476,7 +478,9 @@ async def _decide_pending_reply(
                     reason="confirm_classifier:neither",
                 )
         except Exception:
-            logger.debug("natural_pending_router: confirm classifier fallback failed", exc_info=True)
+            logger.debug(
+                "natural_pending_router: confirm classifier fallback failed", exc_info=True
+            )
 
     if adapter is None:
         try:
@@ -613,7 +617,9 @@ def _validate_decision(
                 reply_text=_default_clarification(context),
                 reason="proposal_action_unknown_id",
             )
-        if context.has_mixed_domains and not _has_explicit_domain_reference(text, context, decision):
+        if context.has_mixed_domains and not _has_explicit_domain_reference(
+            text, context, decision
+        ):
             return PendingDecision(
                 intent="clarify",
                 proposal_ids=[],
@@ -632,7 +638,9 @@ def _validate_decision(
                 reply_text=_default_clarification(context),
                 reason="okr_action_without_staged_updates",
             )
-        if context.has_mixed_domains and not _has_explicit_domain_reference(text, context, decision):
+        if context.has_mixed_domains and not _has_explicit_domain_reference(
+            text, context, decision
+        ):
             return PendingDecision(
                 intent="clarify",
                 proposal_ids=[],
@@ -689,7 +697,9 @@ def _deterministic_fallback(context: PendingContext, text: str) -> PendingDecisi
         if any("slack" in p.action_type for p in context.proposals) and "slack" in normalized:
             matched = [p.id for p in context.proposals if "slack" in p.action_type]
             if matched:
-                intent = "reject_proposals" if _REJECT_RE.search(normalized) else "approve_proposals"
+                intent = (
+                    "reject_proposals" if _REJECT_RE.search(normalized) else "approve_proposals"
+                )
                 if _AFFIRM_RE.search(normalized) or _REJECT_RE.search(normalized):
                     return PendingDecision(
                         intent=intent,
@@ -703,7 +713,9 @@ def _deterministic_fallback(context: PendingContext, text: str) -> PendingDecisi
         ):
             matched = [p.id for p in context.proposals if "gmail" in p.action_type]
             if matched:
-                intent = "reject_proposals" if _REJECT_RE.search(normalized) else "approve_proposals"
+                intent = (
+                    "reject_proposals" if _REJECT_RE.search(normalized) else "approve_proposals"
+                )
                 if _AFFIRM_RE.search(normalized) or _REJECT_RE.search(normalized):
                     return PendingDecision(
                         intent=intent,
@@ -905,9 +917,7 @@ def _default_clarification(context: PendingContext) -> str:
     proposal_labels = [item.short_label for item in context.proposals]
     if context.proposals and context.staged_okr_updates:
         if len(proposal_labels) == 1:
-            return (
-                f"Did you mean approve {proposal_labels[0]}, or apply the staged OKR updates?"
-            )
+            return f"Did you mean approve {proposal_labels[0]}, or apply the staged OKR updates?"
         return "Did you mean one of the pending proposals, or the staged OKR updates?"
     if len(proposal_labels) == 1:
         return f"Did you mean approve {proposal_labels[0]}, or skip it?"

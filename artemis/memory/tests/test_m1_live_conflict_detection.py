@@ -62,9 +62,7 @@ def _unrelated_adapter() -> MagicMock:
 
     from artemis.agent.types import TextBlock
 
-    payload = json.dumps(
-        {"verdict": "UNRELATED", "confidence": 0.05, "reason": "different facts"}
-    )
+    payload = json.dumps({"verdict": "UNRELATED", "confidence": 0.05, "reason": "different facts"})
     mock_response = MagicMock()
     mock_response.message.content = [TextBlock(text=payload)]
     mock_adapter = MagicMock()
@@ -78,9 +76,7 @@ def _refine_adapter() -> MagicMock:
 
     from artemis.agent.types import TextBlock
 
-    payload = json.dumps(
-        {"verdict": "REFINE", "confidence": 0.70, "reason": "B adds detail to A"}
-    )
+    payload = json.dumps({"verdict": "REFINE", "confidence": 0.70, "reason": "B adds detail to A"})
     mock_response = MagicMock()
     mock_response.message.content = [TextBlock(text=payload)]
     mock_adapter = MagicMock()
@@ -103,9 +99,7 @@ def _patch_semantic_adapter(mock_adapter: MagicMock):
     mock_session_local = MagicMock()
     mock_session_local.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
     mock_session_local.return_value.__aexit__ = AsyncMock(return_value=None)
-    stack.enter_context(
-        patch("artemis.db.SessionLocal", new=mock_session_local)
-    )
+    stack.enter_context(patch("artemis.db.SessionLocal", new=mock_session_local))
     return stack
 
 
@@ -203,11 +197,7 @@ async def test_apply_consolidation_detects_rule_based_conflict(
     )
 
     # 2. Conflict type should be incompatible_values (same 4-word prefix)
-    matching = [
-        c
-        for c in conflicts
-        if (c.observation_a_id, c.observation_b_id) == expected_pair
-    ]
+    matching = [c for c in conflicts if (c.observation_a_id, c.observation_b_id) == expected_pair]
     assert matching[0].conflict_type == "incompatible_values"
 
     # 3. obs A should still be active (confidence_delta < 0.3 for auto-supersede)
@@ -302,9 +292,7 @@ async def test_apply_consolidation_detects_semantic_conflict_via_live_path(
 
     # 2. A semantic_contradiction conflict row must exist
     result = await db_session.execute(
-        select(MemoryConflict).where(
-            MemoryConflict.conflict_type == "semantic_contradiction"
-        )
+        select(MemoryConflict).where(MemoryConflict.conflict_type == "semantic_contradiction")
     )
     sem_conflicts = list(result.scalars())
     assert len(sem_conflicts) >= 1, "Expected at least one semantic_contradiction row"
@@ -556,11 +544,7 @@ async def test_apply_consolidation_no_provider_fail_safe(
 
     # No semantic conflict rows
     result = await db_session.execute(
-        select(MemoryConflict).where(
-            MemoryConflict.conflict_type == "semantic_contradiction"
-        )
+        select(MemoryConflict).where(MemoryConflict.conflict_type == "semantic_contradiction")
     )
     sem_rows = list(result.scalars())
-    assert len(sem_rows) == 0, (
-        "FAIL SAFE: no semantic conflict rows when provider unavailable"
-    )
+    assert len(sem_rows) == 0, "FAIL SAFE: no semantic conflict rows when provider unavailable"

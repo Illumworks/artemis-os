@@ -12,6 +12,7 @@ from typing import Any
 from artemis.agent.types import Tool
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
 
+
 def _slack_token(creds: dict[str, Any]) -> str:
     """Return the usable bearer token from a decrypted Slack credential.
 

@@ -160,7 +160,9 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
             "cannot post Argus findings back to Slack",
             session_id,
         )
-        return json.dumps({"status": "dispatched", "district": district_key, "warning": "no_channel_resolved"})
+        return json.dumps(
+            {"status": "dispatched", "district": district_key, "warning": "no_channel_resolved"}
+        )
 
     # ── Persist a pending row BEFORE firing the task ───────────────────────────
     request_id = await _insert_pending_request(
@@ -215,9 +217,7 @@ async def _resolve_channel_and_team(session_id: str | None) -> tuple[str | None,
         async with _db.SessionLocal() as _sess:
             try:
                 row = await fa_repo.get_session_by_id(_sess, session_id)
-                metadata: dict[str, Any] = (
-                    row.metadata_ if isinstance(row.metadata_, dict) else {}
-                )
+                metadata: dict[str, Any] = row.metadata_ if isinstance(row.metadata_, dict) else {}
             except Exception:
                 metadata = {}
 
@@ -633,9 +633,7 @@ async def _callie_summarize(
         lines.append(f"*Recommended angle:* {angle}")
     if gap_dims:
         lines.append(f"*Dimensions covered:* {', '.join(gap_dims)}")
-    lines.append(
-        "Findings are in the district drawer (workspace:marketing scope). Source: Argus."
-    )
+    lines.append("Findings are in the district drawer (workspace:marketing scope). Source: Argus.")
     return "\n\n".join(lines)
 
 

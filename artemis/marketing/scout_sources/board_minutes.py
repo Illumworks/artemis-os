@@ -87,9 +87,7 @@ async def _fetch_all_items() -> list[tuple[dict[str, Any], dict[str, Any]]]:
                 if not items and district.get("district_site_url"):
                     items = await fetch_district_site(district, http)
 
-                logger.info(
-                    "BoardMinutesAdapter: %s → %d items", district_id, len(items)
-                )
+                logger.info("BoardMinutesAdapter: %s → %d items", district_id, len(items))
                 for item in items:
                     all_pairs.append((district, item))
 

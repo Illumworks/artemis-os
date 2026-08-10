@@ -251,7 +251,9 @@ async def sync_directory_from_calendar(session: Any, *, months_back: int = 6) ->
                     "full_name": func.coalesce(
                         func.nullif(DirectoryPerson.full_name, ""), stmt.excluded.full_name
                     ),
-                    "first_name": func.coalesce(DirectoryPerson.first_name, stmt.excluded.first_name),
+                    "first_name": func.coalesce(
+                        DirectoryPerson.first_name, stmt.excluded.first_name
+                    ),
                     "last_name": func.coalesce(DirectoryPerson.last_name, stmt.excluded.last_name),
                     "is_active": True,
                     "updated_at": ts,

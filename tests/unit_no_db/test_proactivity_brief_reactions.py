@@ -220,10 +220,7 @@ def test_weight_priorities_drops_muted_items() -> None:
 
 
 def test_weight_priorities_max_3() -> None:
-    priorities = [
-        {"item": f"Item {i}", "urgency": "medium"}
-        for i in range(6)
-    ]
+    priorities = [{"item": f"Item {i}", "urgency": "medium"} for i in range(6)]
     result = weight_priorities(priorities, weights={})
     assert len(result) <= 3
 

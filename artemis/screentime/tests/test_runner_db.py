@@ -107,9 +107,7 @@ async def test_fixtured_run_stores_real_moves_and_uses_codex(db_session, fake_ch
     # Per-state rollup populated.
     stance_states = {
         r[0]
-        for r in (
-            await db_session.execute(text("SELECT state FROM screentime_state_stance"))
-        ).all()
+        for r in (await db_session.execute(text("SELECT state FROM screentime_state_stance"))).all()
     }
     assert {"TN", "CA"} <= stance_states
 

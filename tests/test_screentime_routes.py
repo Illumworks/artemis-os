@@ -178,11 +178,17 @@ async def test_state_stance_reflects_seeded_rows(db_session, client) -> None:
 async def test_signals_list_shape_and_order(db_session, client) -> None:
     now = datetime.now(UTC)
     await _insert_signal(
-        db_session, state="TN", title="Older bill", content_hash="h-old",
+        db_session,
+        state="TN",
+        title="Older bill",
+        content_hash="h-old",
         discovered_at=now - timedelta(days=2),
     )
     await _insert_signal(
-        db_session, state="CA", title="Newer bill", content_hash="h-new",
+        db_session,
+        state="CA",
+        title="Newer bill",
+        content_hash="h-new",
         discovered_at=now,
     )
 
@@ -195,8 +201,15 @@ async def test_signals_list_shape_and_order(db_session, client) -> None:
     assert body["signals"][0]["title"] == "Newer bill"
     row = body["signals"][0]
     for key in (
-        "id", "title", "state", "status", "stance", "source_type",
-        "source_url", "amira_angle", "discovered_at",
+        "id",
+        "title",
+        "state",
+        "status",
+        "stance",
+        "source_type",
+        "source_url",
+        "amira_angle",
+        "discovered_at",
     ):
         assert key in row
 
@@ -206,22 +219,40 @@ async def test_signals_list_shape_and_order(db_session, client) -> None:
 
 async def test_signals_filters(db_session, client) -> None:
     await _insert_signal(
-        db_session, state="TN", title="TN favorable carve-out", stance="favorable",
-        status="passed", summary="exemption for evidence-based tools", content_hash="h1",
+        db_session,
+        state="TN",
+        title="TN favorable carve-out",
+        stance="favorable",
+        status="passed",
+        summary="exemption for evidence-based tools",
+        content_hash="h1",
     )
     await _insert_signal(
-        db_session, state="CA", title="CA blanket ban", stance="unfavorable",
-        status="passed", summary="blanket restriction on screens",
-        amira_angle="Restricts broadly.", content_hash="h2",
+        db_session,
+        state="CA",
+        title="CA blanket ban",
+        stance="unfavorable",
+        status="passed",
+        summary="blanket restriction on screens",
+        amira_angle="Restricts broadly.",
+        content_hash="h2",
     )
     await _insert_signal(
-        db_session, state="TN", title="TN proposed neutral", stance="neutral",
-        status="proposed", summary="study committee", content_hash="h3",
+        db_session,
+        state="TN",
+        title="TN proposed neutral",
+        stance="neutral",
+        status="proposed",
+        summary="study committee",
+        content_hash="h3",
     )
 
     # state filter
     res = await client.get("/api/screentime/signals", params={"state": "tn"})
-    assert {s["title"] for s in res.json()["signals"]} == {"TN favorable carve-out", "TN proposed neutral"}
+    assert {s["title"] for s in res.json()["signals"]} == {
+        "TN favorable carve-out",
+        "TN proposed neutral",
+    }
     assert res.json()["total"] == 2
 
     # state + stance AND
@@ -247,7 +278,10 @@ async def test_signals_filters(db_session, client) -> None:
 async def test_signals_pagination(db_session, client) -> None:
     for i in range(5):
         await _insert_signal(
-            db_session, state="NY", title=f"bill {i}", content_hash=f"hp{i}",
+            db_session,
+            state="NY",
+            title=f"bill {i}",
+            content_hash=f"hp{i}",
             discovered_at=datetime.now(UTC) - timedelta(minutes=i),
         )
 

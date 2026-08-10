@@ -101,8 +101,7 @@ async def _pushes_today(session: AsyncSession) -> int:
     # prefix, so we use a substring search (% on both sides).
     day_fragment = f"{_PUSH_OBS_PREFIX}day:{today}:"
     result = await session.execute(
-        select(MemoryObservation)
-        .where(
+        select(MemoryObservation).where(
             MemoryObservation.scope_kind == _CALLIE_SCOPE.scope_kind,
             MemoryObservation.scope_id == _CALLIE_SCOPE.scope_id,
             MemoryObservation.content.like(f"%{day_fragment}%"),
@@ -158,7 +157,9 @@ def _build_push_text(
     state_label = f" ({state})" if state else ""
     where = f"{district_label}{state_label}".strip() if (district_label or state_label) else ""
 
-    family_label = (campaign_family or "").replace("_", " ").title() if campaign_family else "Campaign"
+    family_label = (
+        (campaign_family or "").replace("_", " ").title() if campaign_family else "Campaign"
+    )
     score_pct = int(top_score * 100)
 
     code_list = [rc.get("code", "") for rc in (reason_codes or []) if rc.get("code")][:3]
@@ -168,9 +169,7 @@ def _build_push_text(
     lines.append(f"*Top-tier signal:* {headline}")
     if where:
         lines.append(f"*Where:* {where}")
-    lines.append(
-        f"*Best angle:* {family_label} campaign ({score_pct}% fit)"
-    )
+    lines.append(f"*Best angle:* {family_label} campaign ({score_pct}% fit)")
     if codes_text:
         lines.append(f"*Signals:* {codes_text}")
 
@@ -178,9 +177,7 @@ def _build_push_text(
     signal_url = f"{app_base_url}/#marketing?signal={signal_id}" if app_base_url else ""
     view_part = f"  <{signal_url}|View signal>" if signal_url else ""
 
-    lines.append(
-        f"Want me to dig deeper with Argus, or kick off a brief?{view_part}"
-    )
+    lines.append(f"Want me to dig deeper with Argus, or kick off a brief?{view_part}")
 
     return "\n".join(lines)
 
@@ -435,8 +432,7 @@ async def get_engagement_weights(
     trace-based version is slated for P6.
     """
     result = await session.execute(
-        select(MemoryObservation)
-        .where(
+        select(MemoryObservation).where(
             MemoryObservation.scope_kind == _CALLIE_SCOPE.scope_kind,
             MemoryObservation.scope_id == _CALLIE_SCOPE.scope_id,
             MemoryObservation.content.like(f"{_ENGAGE_OBS_PREFIX}%"),

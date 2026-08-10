@@ -509,9 +509,7 @@ async def _reject_signal(inp: dict[str, Any]) -> str:
 
         async with _db.SessionLocal() as session:
             if reason and reason.strip():
-                await repo.update_signal(
-                    session, int(signal_id), rejected_reason=reason
-                )
+                await repo.update_signal(session, int(signal_id), rejected_reason=reason)
             updated = await transition(
                 session, "signal", int(signal_id), SignalState.REJECTED_AT_GATE_1
             )

@@ -98,7 +98,7 @@ def _rerank_enablement_(assets: list[Any], query: str) -> list[Any]:
         tags = " ".join(getattr(a, "tags", None) or []).lower()
         name = (getattr(a, "asset_name", "") or "").lower()
         hay = f"{title} {tags} {name}"
-        phrase = 3 if (q and q in hay) else 0          # whole query appears
+        phrase = 3 if (q and q in hay) else 0  # whole query appears
         title_hits = sum(1 for t in terms if t in title)  # title matches weighted
         any_hits = sum(1 for t in terms if t in hay)
         type_hit = 3 if (getattr(a, "type", "") or "") in wanted_types else 0

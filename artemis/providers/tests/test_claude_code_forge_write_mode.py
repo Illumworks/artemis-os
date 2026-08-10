@@ -103,9 +103,7 @@ def test_write_mode_disallowed_contains_web_tools() -> None:
     start = cmd.index("--disallowed-tools") + 1
     disallowed_in_cmd = cmd[start:]
     for tool in _FORGE_WRITE_DISALLOWED:
-        assert tool in disallowed_in_cmd, (
-            f"{tool} missing from write-mode --disallowed-tools"
-        )
+        assert tool in disallowed_in_cmd, f"{tool} missing from write-mode --disallowed-tools"
 
 
 def test_write_mode_has_add_dir() -> None:
@@ -288,9 +286,7 @@ async def test_complete_with_tools_write_mode_false_builds_readonly_argv(tmp_pat
     start_dis = cmd.index("--disallowed-tools") + 1
     disallowed_in_cmd = cmd[start_dis:]
     for tool in ("Bash", "Write", "Edit"):
-        assert tool in disallowed_in_cmd, (
-            f"{tool} must be in --disallowed-tools for read-only mode"
-        )
+        assert tool in disallowed_in_cmd, f"{tool} must be in --disallowed-tools for read-only mode"
 
 
 @pytest.mark.asyncio
@@ -336,6 +332,9 @@ async def test_complete_with_tools_write_mode_var_unset_defaults_readonly(
 
     # argv must be identical to the explicit write_mode=False build.
     expected = _build_forge_command(
-        binary=str(binary), model=adapter._default_model, project_path=_PROJECT_PATH, write_mode=False
+        binary=str(binary),
+        model=adapter._default_model,
+        project_path=_PROJECT_PATH,
+        write_mode=False,
     )
     assert cmd == expected, "Default path must be byte-identical to write_mode=False argv"

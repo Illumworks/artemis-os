@@ -50,8 +50,7 @@ from artemis.dev_projects.forge_runs import append_log, create_run  # noqa: E402
 from artemis.main import app  # noqa: E402
 
 _TRUNCATE = text(
-    "TRUNCATE forge_run_log, forge_runs, dev_sessions, dev_projects "
-    "RESTART IDENTITY CASCADE"
+    "TRUNCATE forge_run_log, forge_runs, dev_sessions, dev_projects RESTART IDENTITY CASCADE"
 )
 _INSERT_PROJECT = text(
     "INSERT INTO dev_projects (name, path) VALUES ('AR Test', '/tmp/ar-test') RETURNING id"
@@ -91,9 +90,7 @@ async def _make_project_and_session(session: AsyncSession) -> tuple[int, int]:
 # ── no active run ─────────────────────────────────────────────────────────────
 
 
-async def test_active_run_none_when_no_run(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_active_run_none_when_no_run(client: AsyncClient, db_session: AsyncSession) -> None:
     """Session exists but has no ForgeRun -> active_run is null."""
     _, dev_session_id = await _make_project_and_session(db_session)
 

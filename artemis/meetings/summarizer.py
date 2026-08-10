@@ -364,9 +364,7 @@ async def _llm_summarize(
         async with _db.SessionLocal() as _override_session:
             from artemis.providers.routing_repository import get_routing_override_for_feature
 
-            override = await get_routing_override_for_feature(
-                _override_session, "meeting_summary"
-            )
+            override = await get_routing_override_for_feature(_override_session, "meeting_summary")
             _primary = (
                 override.cascade[0].get("provider", "claude-code")
                 if override and override.cascade

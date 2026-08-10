@@ -108,10 +108,7 @@ def test_headings_and_bullets_with_dashes() -> None:
 def test_compose_path_strips_dash_from_chat_message() -> None:
     """The conversational part of a compose reply loses em-dashes."""
     llm_response = (
-        "Here's a draft — have a look.\n\n"
-        "```artemis-draft\n"
-        "The body copy goes here.\n"
-        "```"
+        "Here's a draft — have a look.\n\n```artemis-draft\nThe body copy goes here.\n```"
     )
     chat_message, draft_copy = parse_draft_fence(llm_response)
     chat_message = lint_agent_text(chat_message)

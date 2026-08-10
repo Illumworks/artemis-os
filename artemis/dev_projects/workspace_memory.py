@@ -34,9 +34,7 @@ async def get_workspace_memory(
 ) -> ProjectWorkspaceMemory | None:
     """Return the workspace memory drawer for *project_id*, or None if absent."""
     result = await session.execute(
-        select(ProjectWorkspaceMemory).where(
-            ProjectWorkspaceMemory.project_id == project_id
-        )
+        select(ProjectWorkspaceMemory).where(ProjectWorkspaceMemory.project_id == project_id)
     )
     return result.scalar_one_or_none()
 

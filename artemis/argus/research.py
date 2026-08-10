@@ -47,9 +47,9 @@ _DIM_TOOLS: dict[str, list[str]] = {
     Dimension.PROCUREMENT_TIMING: ["procurement", "board_minutes"],
     Dimension.DISTRICT_PROFILE: ["usaspending", "state_doe"],
     Dimension.DECISION_MAKERS: ["news_api", "board_minutes"],
-    Dimension.PRIOR_AMIRA_RELATIONSHIP: [],          # internal lookup; no external tool yet
+    Dimension.PRIOR_AMIRA_RELATIONSHIP: [],  # internal lookup; no external tool yet
     Dimension.COMPETITOR_COMMITMENTS: ["news_api", "board_minutes"],
-    Dimension.RECOMMENDED_ANGLE: [],                 # synthesised from other dims; no fetch
+    Dimension.RECOMMENDED_ANGLE: [],  # synthesised from other dims; no fetch
 }
 
 # Model for synthesis.  Haiku-class is fast and cheap; synthesis is lightweight.
@@ -86,18 +86,22 @@ async def _fetch_news(district_key: str, signal: dict[str, Any] | None) -> list[
             title_el = item_el.find("title")
             link_el = item_el.find("link")
             pub_el = item_el.find("pubDate")
-            items.append({
-                "title": (title_el.text or "").strip() if title_el is not None else "",
-                "link": (link_el.text or "").strip() if link_el is not None else "",
-                "published": (pub_el.text or "").strip() if pub_el is not None else "",
-            })
+            items.append(
+                {
+                    "title": (title_el.text or "").strip() if title_el is not None else "",
+                    "link": (link_el.text or "").strip() if link_el is not None else "",
+                    "published": (pub_el.text or "").strip() if pub_el is not None else "",
+                }
+            )
         return items
     except Exception as exc:
         _logger.warning("Argus._fetch_news: error for district_key=%r -- %s", district_key, exc)
         return []
 
 
-async def _fetch_board_minutes(district_key: str, signal: dict[str, Any] | None) -> list[dict[str, Any]]:
+async def _fetch_board_minutes(
+    district_key: str, signal: dict[str, Any] | None
+) -> list[dict[str, Any]]:
     """Fetch BoardDocs minutes for a district if boarddocs_url is known from signal."""
     boarddocs_url: str | None = None
     if signal and isinstance(signal.get("provenance"), dict):
@@ -135,7 +139,9 @@ async def _fetch_board_minutes(district_key: str, signal: dict[str, Any] | None)
         return []
 
 
-async def _fetch_procurement(district_key: str, signal: dict[str, Any] | None) -> list[dict[str, Any]]:
+async def _fetch_procurement(
+    district_key: str, signal: dict[str, Any] | None
+) -> list[dict[str, Any]]:
     """Fetch procurement opportunities relevant to a district."""
     state = (signal or {}).get("state", "")
     keyword = f"{district_key} literacy reading"
@@ -150,7 +156,8 @@ async def _fetch_procurement(district_key: str, signal: dict[str, Any] | None) -
         # Filter to roughly relevant items (by district name fragment or state)
         key_lower = district_key.lower().replace("-", " ").replace("_", " ")
         filtered = [
-            p for p in postings
+            p
+            for p in postings
             if key_lower in (p.get("agency", "") + p.get("title", "")).lower()
             or (state and state.upper() == p.get("state", "").upper())
         ]
@@ -172,7 +179,9 @@ async def _fetch_procurement(district_key: str, signal: dict[str, Any] | None) -
         return []
 
 
-async def _fetch_usaspending(district_key: str, signal: dict[str, Any] | None) -> list[dict[str, Any]]:
+async def _fetch_usaspending(
+    district_key: str, signal: dict[str, Any] | None
+) -> list[dict[str, Any]]:
     """Fetch federal grant awards relevant to a district's state."""
     state = (signal or {}).get("state", "")
     states = [state.upper()] if state else []
@@ -192,14 +201,22 @@ async def _fetch_usaspending(district_key: str, signal: dict[str, Any] | None) -
         body: dict[str, Any] = {
             "filters": {
                 "award_type_codes": _GRANT_AWARD_TYPES,
-                "recipient_locations": _build_recipient_locations(states) if states else [{"country": "USA"}],
+                "recipient_locations": _build_recipient_locations(states)
+                if states
+                else [{"country": "USA"}],
                 "time_period": _build_time_period(365),
                 "program_numbers": _EDUCATION_CFDA,
             },
             "fields": [
-                "Award ID", "Recipient Name", "recipient_location_state_code",
-                "Award Amount", "cfda_number", "cfda_program_title",
-                "Start Date", "End Date", "Description",
+                "Award ID",
+                "Recipient Name",
+                "recipient_location_state_code",
+                "Award Amount",
+                "cfda_number",
+                "cfda_program_title",
+                "Start Date",
+                "End Date",
+                "Description",
             ],
             "sort": "Last Modified Date",
             "order": "desc",
@@ -224,7 +241,9 @@ async def _fetch_usaspending(district_key: str, signal: dict[str, Any] | None) -
                 award = _parse_result(raw)
                 # Only include if recipient name loosely matches district
                 recipient = award.get("recipient_name", "").lower()
-                if key_lower in recipient or (states and award.get("recipient_state", "") in states):
+                if key_lower in recipient or (
+                    states and award.get("recipient_state", "") in states
+                ):
                     awards.append(award)
             except Exception:
                 pass
@@ -236,7 +255,9 @@ async def _fetch_usaspending(district_key: str, signal: dict[str, Any] | None) -
         return []
 
 
-async def _fetch_state_doe(district_key: str, signal: dict[str, Any] | None) -> list[dict[str, Any]]:
+async def _fetch_state_doe(
+    district_key: str, signal: dict[str, Any] | None
+) -> list[dict[str, Any]]:
     """Fetch state DOE RSS items for a district's state."""
     state = (signal or {}).get("state", "").upper()
     if not state:
@@ -250,7 +271,9 @@ async def _fetch_state_doe(district_key: str, signal: dict[str, Any] | None) -> 
     except Exception as exc:
         _logger.warning(
             "Argus._fetch_state_doe: error for state=%r district_key=%r -- %s",
-            state, district_key, exc,
+            state,
+            district_key,
+            exc,
         )
         return []
 
@@ -306,9 +329,7 @@ async def _gather_tool_results(
             )
             return name, []
         except Exception as exc:
-            _logger.warning(
-                "Argus._gather_tool_results: tool=%r raised -- %s (skipped)", name, exc
-            )
+            _logger.warning("Argus._gather_tool_results: tool=%r raised -- %s (skipped)", name, exc)
             return name, []
 
     pairs = await asyncio.gather(*(_safe_fetch(t) for t in sorted(needed_tools)))
@@ -329,9 +350,7 @@ def _build_synthesis_prompt(
     if signal:
         headline = signal.get("headline", "")
         state = signal.get("state", "")
-        signal_section = (
-            f"Triggering signal:\n  headline: {headline}\n  state: {state}\n\n"
-        )
+        signal_section = f"Triggering signal:\n  headline: {headline}\n  state: {state}\n\n"
 
     tool_section_parts: list[str] = []
     for tool_name, results in tool_results.items():
@@ -417,9 +436,7 @@ async def _run_synthesis(
         )
         return []
 
-    raw_text = "".join(
-        block.text for block in resp.message.content if isinstance(block, TextBlock)
-    )
+    raw_text = "".join(block.text for block in resp.message.content if isinstance(block, TextBlock))
 
     return _parse_synthesis_output(raw_text, district_key)
 
@@ -448,9 +465,11 @@ def _parse_synthesis_output(raw_text: str, district_key: str) -> list[DistrictFi
             end = line.rfind("}")
             if start >= 0 and end > start:
                 try:
-                    obj = json.loads(line[start:end + 1])
+                    obj = json.loads(line[start : end + 1])
                 except json.JSONDecodeError:
-                    _logger.debug("Argus._parse_synthesis_output: skipping unparseable line: %r", line[:80])
+                    _logger.debug(
+                        "Argus._parse_synthesis_output: skipping unparseable line: %r", line[:80]
+                    )
                     continue
             else:
                 continue
@@ -534,7 +553,8 @@ async def research_dimensions(
     # Exclude RECOMMENDED_ANGLE and PRIOR_AMIRA_RELATIONSHIP from synthesis prompt
     # (angle is synthesised from other dims; prior relationship has no external tool yet).
     synth_dims = [
-        d for d in dimensions
+        d
+        for d in dimensions
         if d not in (Dimension.RECOMMENDED_ANGLE, Dimension.PRIOR_AMIRA_RELATIONSHIP)
     ]
 
@@ -689,7 +709,7 @@ def _parse_date(date_str: str | None) -> datetime | None:
         return None
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S+00:00"):
         try:
-            return datetime.strptime(date_str[:19], fmt[:len(date_str[:19])])
+            return datetime.strptime(date_str[:19], fmt[: len(date_str[:19])])
         except ValueError:
             continue
     return None

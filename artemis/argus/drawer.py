@@ -90,9 +90,7 @@ class DistrictFinding:
     value: str
     source: str = "Argus"
     url: str | None = None
-    researched_at: str = field(
-        default_factory=lambda: datetime.now(UTC).date().isoformat()
-    )
+    researched_at: str = field(default_factory=lambda: datetime.now(UTC).date().isoformat())
     raw_notes: dict[str, Any] = field(default_factory=dict)
 
 
@@ -155,7 +153,7 @@ def _content_to_finding(district_key: str, content: str) -> DistrictFinding | No
         _, dimension, dk = header.split("|", 2)
         if dk != district_key:
             return None
-        value = first[bracket_end + 2:]  # skip "] "
+        value = first[bracket_end + 2 :]  # skip "] "
     except (ValueError, IndexError):
         return None
 

@@ -356,8 +356,23 @@ def test_state_doe_sources_covers_screentime_priority_states() -> None:
     original seven (FL, IN, MD, MO, MI, IL, TX).
     """
     priority = {
-        "CA", "OR", "NY", "FL", "SC", "MO", "TX", "UT", "AL", "MD",
-        "OH", "TN", "MS", "NC", "CO", "LA", "VA",
+        "CA",
+        "OR",
+        "NY",
+        "FL",
+        "SC",
+        "MO",
+        "TX",
+        "UT",
+        "AL",
+        "MD",
+        "OH",
+        "TN",
+        "MS",
+        "NC",
+        "CO",
+        "LA",
+        "VA",
     }
     assert priority.issubset(set(STATE_DOE_SOURCES.keys()))
     assert len(STATE_DOE_SOURCES) >= 20

@@ -158,9 +158,10 @@ async def test_get_overview_team_list_jql_structure() -> None:
     for jql in jqls:
         # All three conditions must sit inside a single parenthesised OR group.
         import re
+
         # Look for (assignee IN (...) OR assignee = currentUser() OR assignee IS EMPTY)
         assert re.search(
-            r'\(assignee IN \(.*?\)\s+OR\s+assignee = currentUser\(\)\s+OR\s+assignee IS EMPTY\)',
+            r"\(assignee IN \(.*?\)\s+OR\s+assignee = currentUser\(\)\s+OR\s+assignee IS EMPTY\)",
             jql,
         ), f"Expected grouped OR structure in: {jql}"
 

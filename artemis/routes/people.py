@@ -77,6 +77,7 @@ async def _fetch_gcal_people(
     When integration_id is provided an on_tokens_refreshed callback is wired up
     so any on-the-fly token refresh is persisted back to the DB.
     """
+
     async def _on_tokens_refreshed(
         access_token: str, refresh_token: str, expires_at: float
     ) -> None:

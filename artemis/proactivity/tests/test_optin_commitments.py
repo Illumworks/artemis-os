@@ -15,6 +15,7 @@ Tests cover:
 4. dismiss_commitment → status='dismissed', decision row inserted with decision='dismiss'.
 5. upsert_commitment status param defaults to 'active' (back-compat).
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -187,7 +188,7 @@ async def test_gate_non_owner_no_commitment_but_observation_written() -> None:
     assert summary.deduped == 0
 
     mock_upsert.assert_not_awaited()  # Gate blocked commitment creation
-    mock_obs.assert_awaited_once()    # Observation still written (lossless)
+    mock_obs.assert_awaited_once()  # Observation still written (lossless)
 
 
 @pytest.mark.asyncio
@@ -232,7 +233,9 @@ async def test_gate_dismissed_item_skipped_entirely() -> None:
     )
 
     with (
-        patch("artemis.proactivity.commitments.repo.upsert_commitment", new=AsyncMock()) as mock_upsert,
+        patch(
+            "artemis.proactivity.commitments.repo.upsert_commitment", new=AsyncMock()
+        ) as mock_upsert,
         patch("artemis.proactivity.commitments.write_observation", new=AsyncMock()) as mock_obs,
     ):
         summary = await ingest_meeting_commitments(
@@ -295,9 +298,7 @@ async def test_followup_candidates_status_active_filter() -> None:
     assert len(captured_queries) == 1
     query_str = captured_queries[0]
     # The WHERE clause must contain a literal 'active' filter
-    assert "'active'" in query_str, (
-        f"Expected 'active' in compiled query but got:\n{query_str}"
-    )
+    assert "'active'" in query_str, f"Expected 'active' in compiled query but got:\n{query_str}"
     # 'proposed' must NOT appear — it is not a value searched for
     assert "'proposed'" not in query_str, (
         "Query must not reference 'proposed' — it should be excluded by the 'active' filter"
@@ -335,8 +336,8 @@ async def test_approve_commitment_sets_active_and_records_decision() -> None:
     call_kwargs = mock_approve.call_args.kwargs
     assert call_kwargs["commitment_id"] == 1
     features = call_kwargs["features"]
-    assert features["owner_is_owner"] is True   # commitment.owner_user_id == _OWNER_ID
-    assert features["had_due"] is True           # commitment.due is set
+    assert features["owner_is_owner"] is True  # commitment.owner_user_id == _OWNER_ID
+    assert features["had_due"] is True  # commitment.due is set
     assert features["sensitivity"] == "personal_ops"
     assert features["source_type"] == "granola_meeting"
     assert features["source_id"] == "g-123"
@@ -437,7 +438,7 @@ async def test_upsert_commitment_status_param_defaults_active() -> None:
         call_count[0] += 1
         if call_count[0] == 1:
             return inserted_id_result  # INSERT on_conflict → no row (conflict)
-        return select_result           # SELECT to fetch existing row
+        return select_result  # SELECT to fetch existing row
 
     session.execute = execute_side
     session.get = AsyncMock(return_value=None)

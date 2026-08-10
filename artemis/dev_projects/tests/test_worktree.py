@@ -127,9 +127,7 @@ async def test_worktree_does_not_affect_main_tree(
 
     # Main HEAD must be unchanged.
     main_head_after = _git("rev-parse", "HEAD", cwd=project_path)
-    assert main_head_before == main_head_after, (
-        "main HEAD changed after a commit in the worktree"
-    )
+    assert main_head_before == main_head_after, "main HEAD changed after a commit in the worktree"
 
 
 async def test_ensure_worktree_is_idempotent(

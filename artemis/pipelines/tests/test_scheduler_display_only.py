@@ -21,7 +21,9 @@ def _pipeline(**kw) -> Pipeline:
     base = dict(
         id="test-pipeline",
         name="Test",
-        nodes=[{"id": "trigger_scheduled", "type": "trigger_scheduled", "label": "t", "config": {}}],
+        nodes=[
+            {"id": "trigger_scheduled", "type": "trigger_scheduled", "label": "t", "config": {}}
+        ],
         edges=[],
         trigger_config={"type": "scheduled", "cron": "0 11 * * *", "timezone": "UTC"},
         status="active",
@@ -52,5 +54,7 @@ def test_display_only_false_does_not_suppress_registration():
 
 
 def test_pipeline_without_scheduled_trigger_node_is_never_registered():
-    p = _pipeline(nodes=[{"id": "n1", "type": "skill_call", "label": "x", "config": {}}], metadata_=None)
+    p = _pipeline(
+        nodes=[{"id": "n1", "type": "skill_call", "label": "x", "config": {}}], metadata_=None
+    )
     assert _has_scheduled_trigger(p) is False

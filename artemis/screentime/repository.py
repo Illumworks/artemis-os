@@ -260,7 +260,9 @@ async def reclassify_stored_signals(session: AsyncSession) -> int:
             reclassified += 1
         except Exception:
             _logger.warning(
-                "reclassify_stored_signals: skipped a row (id=%s)", getattr(row, "id", "?"), exc_info=True
+                "reclassify_stored_signals: skipped a row (id=%s)",
+                getattr(row, "id", "?"),
+                exc_info=True,
             )
             continue
 
@@ -307,10 +309,14 @@ async def purge_screentime_data(session: AsyncSession) -> dict[str, str]:
 
 
 async def signal_count(session: AsyncSession) -> int:
-    return int((await session.execute(select(func.count()).select_from(ScreentimeSignal))).scalar_one())
+    return int(
+        (await session.execute(select(func.count()).select_from(ScreentimeSignal))).scalar_one()
+    )
 
 
 async def state_stance_count(session: AsyncSession) -> int:
     return int(
-        (await session.execute(select(func.count()).select_from(ScreentimeStateStance))).scalar_one()
+        (
+            await session.execute(select(func.count()).select_from(ScreentimeStateStance))
+        ).scalar_one()
     )

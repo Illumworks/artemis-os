@@ -88,9 +88,7 @@ def _fake_summarize_adapter() -> FakeAdapter:
     does not fail with unexpected MagicMock values.  Provides 20 scripted
     replies — enough for any single test.
     """
-    raw = json.dumps(
-        {"what_worked": "OK", "what_stalled": None, "what_was_missing": None}
-    )
+    raw = json.dumps({"what_worked": "OK", "what_stalled": None, "what_was_missing": None})
     # Supply enough replies for any single test (the summarizer consumes 1-2).
     return FakeAdapter([ScriptedReply(text=raw)] * 20)
 
@@ -279,9 +277,7 @@ async def test_auto_trigger_does_not_re_fire_on_run6(db_session: AsyncSession) -
     ):
         await _safe_maybe_auto_distill(agent.agent_id, "dummy-run-id")
 
-    assert not distiller_called, (
-        "Distiller should not re-fire at run 6 (only at multiples of N=5)"
-    )
+    assert not distiller_called, "Distiller should not re-fire at run 6 (only at multiples of N=5)"
 
 
 @pytest.mark.asyncio
@@ -387,6 +383,4 @@ async def test_failed_run_does_not_trigger_distiller(db_session: AsyncSession) -
         await summarize(snapshot, adapter=fake_adapter, db_session=db_session)
         await asyncio.sleep(0)
 
-    assert not distiller_called, (
-        "Distiller task should not be scheduled for a failed run"
-    )
+    assert not distiller_called, "Distiller task should not be scheduled for a failed run"
