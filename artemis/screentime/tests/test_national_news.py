@@ -139,6 +139,7 @@ def test_item_to_finding_no_title_returns_none():
 def test_finding_normalizes_with_correct_state():
     items = parse_news_rss(_SAMPLE_RSS)
     finding = item_to_finding(items[0], "FL")
+    assert finding is not None
     candidate = normalize_finding(finding)
     assert candidate is not None
     assert candidate.state == "FL"
@@ -157,14 +158,18 @@ def test_finding_normalizes_with_correct_state():
 def test_screentime_item_passes_topic_gate():
     items = parse_news_rss(_SAMPLE_RSS)
     finding = item_to_finding(items[0], "FL")
+    assert finding is not None
     candidate = normalize_finding(finding)
+    assert candidate is not None
     assert passes_topic_gate(candidate.text, DEFAULT_TOPIC_RULES) is True
 
 
 def test_ai_item_passes_topic_gate():
     items = parse_news_rss(_SAMPLE_RSS)
     finding = item_to_finding(items[1], "FL")
+    assert finding is not None
     candidate = normalize_finding(finding)
+    assert candidate is not None
     assert passes_topic_gate(candidate.text, DEFAULT_TOPIC_RULES) is True
 
 
@@ -176,7 +181,9 @@ def test_generic_off_topic_item_dropped_by_gate():
         },
         "FL",
     )
+    assert finding is not None
     candidate = normalize_finding(finding)
+    assert candidate is not None
     assert passes_topic_gate(candidate.text, DEFAULT_TOPIC_RULES) is False
 
 

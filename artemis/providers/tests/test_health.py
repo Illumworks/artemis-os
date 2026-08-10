@@ -12,6 +12,8 @@ Test numbers match the brief:
 from __future__ import annotations
 
 import time
+from collections.abc import Generator
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,7 +29,7 @@ from artemis.providers.health import (
 
 
 @pytest.fixture(autouse=True)
-def reset_cache() -> None:
+def reset_cache() -> Generator[None, None, None]:
     """Clear the health cache before each test so probes don't bleed through."""
     clear_health_cache()
     yield
@@ -174,7 +176,7 @@ async def test_cache_ttl_two_calls_same_result() -> None:
 
     original_do_probe = health_module._do_probe
 
-    async def _counted_probe(provider: str) -> dict:
+    async def _counted_probe(provider: str) -> dict[str, Any]:
         nonlocal probe_count
         probe_count += 1
         return await original_do_probe(provider)
@@ -192,7 +194,7 @@ async def test_cache_expires_after_ttl() -> None:
     probe_count = 0
     original_do_probe = health_module._do_probe
 
-    async def _counted_probe(provider: str) -> dict:
+    async def _counted_probe(provider: str) -> dict[str, Any]:
         nonlocal probe_count
         probe_count += 1
         return await original_do_probe(provider)

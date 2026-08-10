@@ -438,8 +438,10 @@ def _parse_relevant(text: str) -> bool | None:
     if start != -1 and end != -1 and end > start:
         try:
             obj = json.loads(text[start : end + 1])
-            if isinstance(obj, dict) and isinstance(obj.get("relevant"), bool):
-                return obj["relevant"]
+            if isinstance(obj, dict):
+                relevant = obj.get("relevant")
+                if isinstance(relevant, bool):
+                    return relevant
         except (json.JSONDecodeError, ValueError):
             pass
     # Fallback: a bare yes/no in the text.

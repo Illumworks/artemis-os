@@ -585,6 +585,16 @@ class ClaudeCodeAdapter:
         """
         timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
         env = _mcp_eager_env(claude_config_dir=claude_config_dir) if tool_run else None
+        # A test (test_run_subprocess_no_cwd_when_project_path_none) pins that the
+        # `cwd` kwarg must be entirely absent from the call when project_path is
+        # None, not merely None-valued, so the conditional-dict-unpack is kept as
+        # the mechanism. Annotated as dict[str, Any] (was the narrower, inferred
+        # dict[str, str]) because create_subprocess_exec's full kwarg signature
+        # mirrors subprocess.Popen's many differently-typed params (close_fds,
+        # preexec_fn, umask, ...); mypy checks a **dict unpack against all of
+        # them, and only a dict[str, Any] value type is trivially compatible with
+        # every one of those parameter types.
+        extra_kwargs: dict[str, Any] = {"cwd": project_path} if project_path is not None else {}
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -592,7 +602,7 @@ class ClaudeCodeAdapter:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
-                **({"cwd": project_path} if project_path is not None else {}),
+                **extra_kwargs,
             )
         except OSError as exc:
             raise ProviderAPIError(0, f"failed to launch claude CLI: {exc}") from exc

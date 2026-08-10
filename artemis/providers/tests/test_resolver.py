@@ -263,7 +263,7 @@ def test_strict_raises_does_not_return_codex_adapter() -> None:
         ),
         pytest.raises(NoProviderAvailableError),
     ):
-        result = resolve_adapter("claude-code", strict=True)
+        resolve_adapter("claude-code", strict=True)
         # If we somehow get here (we shouldn't), assert it's not codex.
         # The pytest.raises context manager ensures the line below is unreachable,
         # but the pattern is kept for documentation purposes.
