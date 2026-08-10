@@ -12,6 +12,7 @@ Acceptance criteria:
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -31,6 +32,10 @@ from artemis.proactivity.radar import (
     format_radar_nudge,
     gather_radar_items,
 )
+
+# Gmail creds are mocked as already-valid so the refresh path never runs.
+_FAR_FUTURE_EXPIRY = time.time() + 3600.0
+
 
 pytestmark = pytest.mark.asyncio
 
@@ -268,12 +273,18 @@ async def test_gmail_thread_awaiting_reply_surfaces(db_session: AsyncSession) ->
     with (
         patch(
             "artemis.proactivity.radar._resolve_gmail_creds",
-            return_value={
-                "access_token": "ya29-fake",
-                "refresh_token": "refresh-fake",
-                "client_id": "client-id",
-                "client_secret": "client-secret",
-            },
+            # Real signature is `-> tuple[dict[str, str], float] | None`
+            # (creds, expires_at). Mocking a bare dict made radar.py's
+            # `creds, expires_at = resolved` unpack the dict's KEYS and fail.
+            return_value=(
+                {
+                    "access_token": "ya29-fake",
+                    "refresh_token": "refresh-fake",
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                },
+                _FAR_FUTURE_EXPIRY,
+            ),
         ),
         patch(
             "artemis.integrations.gmail.client.GmailClient.list_recent_messages",
@@ -335,12 +346,18 @@ async def test_gmail_thread_jon_replied_last_does_not_surface(db_session: AsyncS
     with (
         patch(
             "artemis.proactivity.radar._resolve_gmail_creds",
-            return_value={
-                "access_token": "ya29-fake",
-                "refresh_token": "refresh-fake",
-                "client_id": "client-id",
-                "client_secret": "client-secret",
-            },
+            # Real signature is `-> tuple[dict[str, str], float] | None`
+            # (creds, expires_at). Mocking a bare dict made radar.py's
+            # `creds, expires_at = resolved` unpack the dict's KEYS and fail.
+            return_value=(
+                {
+                    "access_token": "ya29-fake",
+                    "refresh_token": "refresh-fake",
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                },
+                _FAR_FUTURE_EXPIRY,
+            ),
         ),
         patch(
             "artemis.integrations.gmail.client.GmailClient.list_recent_messages",
@@ -388,12 +405,18 @@ async def test_gmail_noreply_filtered_out(db_session: AsyncSession) -> None:
     with (
         patch(
             "artemis.proactivity.radar._resolve_gmail_creds",
-            return_value={
-                "access_token": "ya29-fake",
-                "refresh_token": "refresh-fake",
-                "client_id": "client-id",
-                "client_secret": "client-secret",
-            },
+            # Real signature is `-> tuple[dict[str, str], float] | None`
+            # (creds, expires_at). Mocking a bare dict made radar.py's
+            # `creds, expires_at = resolved` unpack the dict's KEYS and fail.
+            return_value=(
+                {
+                    "access_token": "ya29-fake",
+                    "refresh_token": "refresh-fake",
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                },
+                _FAR_FUTURE_EXPIRY,
+            ),
         ),
         patch(
             "artemis.integrations.gmail.client.GmailClient.list_recent_messages",

@@ -197,7 +197,7 @@ async def test_dismissal_record_is_preserved(
     # meetings/summarizer.py) actually stores a *list* of dicts — the model's type
     # annotation has drifted from the real column shape. Out of this domain's
     # scope (artemis/memory + artemis/proactivity only) to fix; flagged in the PR.
-    assert summary_reloaded.action_items[0]["text"] == _ACTION_TEXT  # type: ignore[index]
+    assert summary_reloaded.action_items[0]["text"] == _ACTION_TEXT
 
 
 # ── 4. done and snooze remain DISTINCT from dismiss ───────────────────────────
