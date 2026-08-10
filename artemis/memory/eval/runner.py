@@ -1067,8 +1067,8 @@ async def _duplicate_for_scale(target_session: AsyncSession, factor: int) -> dic
         ).scalars()
     )
     embedding_by_obs: dict[int, list[MemoryEmbedding]] = defaultdict(list)
-    for row in original_embeddings:
-        embedding_by_obs[row.target_id].append(row)
+    for embedding_row in original_embeddings:
+        embedding_by_obs[embedding_row.target_id].append(embedding_row)
 
     original_entities: list[MemoryEntity] = list(
         (await target_session.execute(select(MemoryEntity).order_by(MemoryEntity.id))).scalars()
@@ -1182,38 +1182,38 @@ async def _duplicate_for_scale(target_session: AsyncSession, factor: int) -> dic
 
         entity_id_map: dict[int, int] = {}
         pending_entities: list[tuple[MemoryEntity, MemoryEntity]] = []
-        for original in original_entities:
-            clone = MemoryEntity(
-                entity_kind=original.entity_kind,
-                canonical_name=original.canonical_name,
-                name_slug=_to_slug(original.canonical_name),
-                scope_kind=original.scope_kind,
-                scope_id=f"{original.scope_id}{suffix}",
-                attributes=original.attributes,
-                first_seen_at=original.first_seen_at,
-                last_seen_at=original.last_seen_at,
-                mention_count=original.mention_count,
-                confidence=original.confidence,
+        for original_entity in original_entities:
+            entity_clone = MemoryEntity(
+                entity_kind=original_entity.entity_kind,
+                canonical_name=original_entity.canonical_name,
+                name_slug=_to_slug(original_entity.canonical_name),
+                scope_kind=original_entity.scope_kind,
+                scope_id=f"{original_entity.scope_id}{suffix}",
+                attributes=original_entity.attributes,
+                first_seen_at=original_entity.first_seen_at,
+                last_seen_at=original_entity.last_seen_at,
+                mention_count=original_entity.mention_count,
+                confidence=original_entity.confidence,
                 superseded_by=None,
-                valid_from=original.valid_from,
-                valid_until=original.valid_until,
-                entity_evidence_count=original.entity_evidence_count,
+                valid_from=original_entity.valid_from,
+                valid_until=original_entity.valid_until,
+                entity_evidence_count=original_entity.entity_evidence_count,
                 entity_supersedes=None,
             )
-            target_session.add(clone)
-            pending_entities.append((original, clone))
+            target_session.add(entity_clone)
+            pending_entities.append((original_entity, entity_clone))
         await target_session.flush()
-        for original, clone in pending_entities:
-            entity_id_map[original.id] = clone.id
-        for original, clone in pending_entities:
-            clone.superseded_by = (
-                entity_id_map[original.superseded_by]
-                if original.superseded_by is not None
+        for original_entity, entity_clone in pending_entities:
+            entity_id_map[original_entity.id] = entity_clone.id
+        for original_entity, entity_clone in pending_entities:
+            entity_clone.superseded_by = (
+                entity_id_map[original_entity.superseded_by]
+                if original_entity.superseded_by is not None
                 else None
             )
-            clone.entity_supersedes = (
-                entity_id_map[original.entity_supersedes]
-                if original.entity_supersedes is not None
+            entity_clone.entity_supersedes = (
+                entity_id_map[original_entity.entity_supersedes]
+                if original_entity.entity_supersedes is not None
                 else None
             )
         await target_session.flush()
