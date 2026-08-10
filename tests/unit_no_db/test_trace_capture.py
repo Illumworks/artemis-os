@@ -61,7 +61,7 @@ async def test_record_trace_fields() -> None:
     """record_trace inserts an AgentTrace with the correct field values."""
     session = _make_session()
 
-    row = await record_trace(
+    await record_trace(
         session,
         agent_id="artemis",
         feature_tag="floating_artemis",

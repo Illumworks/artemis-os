@@ -181,19 +181,14 @@ async def test_dispatch_research_adds_task_to_background_tasks_set() -> None:
 @pytest.mark.asyncio
 async def test_background_task_posts_callie_voiced_argus_credited_message() -> None:
     """_research_and_post posts a Callie-voiced, md_to_mrkdwn-processed message
-    that credits Argus, to the captured channel_id."""
+    that credits Argus, to the given channel_id.
+
+    channel_id/team_id are resolved in-turn by _dispatch_research (before the
+    background task is scheduled) and passed straight through here -- this
+    function no longer does session_id resolution itself."""
     from artemis.floating_artemis.tools.argus_tools import _research_and_post
 
     posted_calls: list[dict[str, Any]] = []
-
-    # Mock FA session row with channel/team in metadata
-    mock_fa_row = MagicMock()
-    mock_fa_row.metadata_ = {
-        "surface": "slack",
-        "agent_id": "callie",
-        "team_id": "TABC",
-        "channel_id": "C9999",
-    }
 
     # Fake SlackClient
     async def fake_post_message(channel: str, text: str, **kwargs: Any) -> dict[str, Any]:
@@ -213,8 +208,6 @@ async def test_background_task_posts_callie_voiced_argus_credited_message() -> N
     )
 
     mock_db, mock_session = _make_db_mock()
-    mock_fa_repo = MagicMock()
-    mock_fa_repo.get_session_by_id = AsyncMock(return_value=mock_fa_row)
 
     mock_research_district = AsyncMock(return_value=_make_summary())
 
@@ -232,12 +225,11 @@ async def test_background_task_posts_callie_voiced_argus_credited_message() -> N
             new_callable=AsyncMock,
             return_value=fake_agent_cfg,
         ),
-        patch(
-            "artemis.floating_artemis.repository.get_session_by_id", mock_fa_repo.get_session_by_id
-        ),
     ):
         await _research_and_post(
-            session_id="slack-callie-TABC-C9999-_",
+            request_id=None,
+            channel_id="C9999",
+            team_id="TABC",
             district_key="TX-001",
             triggering_signal_id=None,
             signal=None,
@@ -270,7 +262,9 @@ async def test_background_task_swallows_failure() -> None:
     ):
         # Must NOT raise
         await _safe_research_and_post(
-            session_id="slack-callie-TABC-C9999-_",
+            request_id=None,
+            channel_id="C9999",
+            team_id="TABC",
             district_key="TX-003",
             triggering_signal_id=None,
             signal=None,
@@ -282,29 +276,42 @@ async def test_background_task_swallows_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_no_channel_id_skips_slack_post() -> None:
-    """When session_id is None (no channel_id can be resolved), no Slack post
-    is attempted."""
-    from artemis.floating_artemis.tools.argus_tools import _research_and_post
+    """When channel_id cannot be resolved, dispatch_research returns a warning
+    payload and never schedules the background research/post task.
 
-    post_was_called = False
+    channel_id/team_id resolution now happens in-turn inside _dispatch_research
+    (via _resolve_channel_and_team) before the background task would be
+    scheduled, rather than inside _research_and_post itself -- so this is
+    exercised at the _dispatch_research level, not by passing a missing
+    channel_id into _research_and_post (whose channel_id param is non-optional)."""
+    from artemis.floating_artemis.tools.argus_tools import _dispatch_research
 
-    async def unexpected_post(**kwargs: Any) -> None:
-        nonlocal post_was_called
-        post_was_called = True
+    safe_post_was_called = False
 
-    with patch(
-        "artemis.floating_artemis.tools.argus_tools._post_as_callie",
-        side_effect=unexpected_post,
+    async def unexpected_safe_post(**kwargs: Any) -> None:
+        nonlocal safe_post_was_called
+        safe_post_was_called = True
+
+    with (
+        patch(
+            "artemis.floating_artemis.tools.argus_tools._resolve_channel_and_team",
+            new_callable=AsyncMock,
+            return_value=(None, ""),
+        ),
+        patch(
+            "artemis.floating_artemis.tools.argus_tools._safe_research_and_post",
+            side_effect=unexpected_safe_post,
+        ),
+        patch("artemis.floating_artemis.context.floating_session_id_var") as mock_var,
     ):
-        # session_id=None → cannot resolve channel_id
-        await _research_and_post(
-            session_id=None,
-            district_key="TX-004",
-            triggering_signal_id=None,
-            signal=None,
-        )
+        mock_var.get.return_value = None
 
-    assert not post_was_called, "Should not post when channel_id is unknown"
+        result_str = await _dispatch_research({"district_key": "TX-004"})
+
+    result = json.loads(result_str)
+    assert result["status"] == "dispatched"
+    assert result["warning"] == "no_channel_resolved"
+    assert not safe_post_was_called, "Should not post when channel_id is unknown"
 
 
 # ── T6: thin findings → graceful fallback note is still posted ────────────────
@@ -318,16 +325,6 @@ async def test_thin_findings_posts_graceful_note() -> None:
 
     posted_calls: list[dict[str, Any]] = []
     thin_summary = _make_summary(new_findings=0, gap_dimensions=[], recommended_angle=None)
-
-    mock_fa_row = MagicMock()
-    mock_fa_row.metadata_ = {
-        "surface": "slack",
-        "agent_id": "callie",
-        "team_id": "TABC",
-        "channel_id": "C5555",
-    }
-    mock_fa_repo = MagicMock()
-    mock_fa_repo.get_session_by_id = AsyncMock(return_value=mock_fa_row)
 
     thin_note = (
         "Argus came back light on TX-005 -- no new material surfaced this pass. "
@@ -361,12 +358,11 @@ async def test_thin_findings_posts_graceful_note() -> None:
             new_callable=AsyncMock,
             return_value=fake_agent_cfg,
         ),
-        patch(
-            "artemis.floating_artemis.repository.get_session_by_id", mock_fa_repo.get_session_by_id
-        ),
     ):
         await _research_and_post(
-            session_id="slack-callie-TABC-C5555-_",
+            request_id=None,
+            channel_id="C5555",
+            team_id="TABC",
             district_key="TX-005",
             triggering_signal_id=None,
             signal=None,

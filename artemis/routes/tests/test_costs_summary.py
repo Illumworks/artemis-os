@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -111,7 +112,7 @@ def _row(
     cache_write_rate_per_million: float = 3.75,
     cache_read_rate_per_million: float = 0.30,
     cost_usd: float | None = None,
-) -> dict:
+) -> dict[str, Any]:
     if cost_usd is None:
         cost_usd = (
             input_tokens * input_rate_per_million / 1_000_000

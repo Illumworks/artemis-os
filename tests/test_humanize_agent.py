@@ -305,7 +305,7 @@ async def test_channel_join_always_pings_joiner_regardless_of_recent_message() -
         ),
         patch(
             "artemis.routes.integrations_slack_events.route_inbound",
-        ) as mock_route,
+        ),
         patch(
             "artemis.integrations.slack.triage.classify_mention_type",
             return_value="channel_message",

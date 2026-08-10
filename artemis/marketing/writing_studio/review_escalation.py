@@ -96,7 +96,9 @@ async def _load_pending_review_rows(
         )
         .order_by(Approval.created_at.asc(), CampaignDeliverable.id.asc())
     )
-    return list(result.all())
+    # .tuples() converts the Row objects to plain tuples so the return type
+    # matches list[tuple[...]] exactly (Row is tuple-like but not a tuple).
+    return list(result.tuples().all())
 
 
 async def _record_escalation_result(

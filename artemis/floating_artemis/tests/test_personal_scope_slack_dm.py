@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
 from artemis.agent.types import Message, TextBlock
 from artemis.floating_artemis.chat import _build_system_prompt, _build_tool_registry, handle_turn
@@ -188,7 +189,7 @@ async def test_handle_turn_personal_slack_dm_scopes_prompt_tools_and_history() -
 
     original_complete = adapter.complete
 
-    async def capturing_complete(req: object) -> object:
+    async def capturing_complete(req: CompletionRequest) -> CompletionResponse:
         captured_requests.append(req)
         return await original_complete(req)
 

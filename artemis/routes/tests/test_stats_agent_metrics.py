@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -101,7 +102,7 @@ async def _seed_run(
     completed: bool = True,
 ) -> str:
     run_id = str(uuid.uuid4())
-    kwargs: dict = {
+    kwargs: dict[str, Any] = {
         "run_id": run_id,
         "agent_id": agent_id,
         "status": status,

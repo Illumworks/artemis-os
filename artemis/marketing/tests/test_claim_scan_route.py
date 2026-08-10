@@ -38,14 +38,14 @@ async def _create_draft(client: AsyncClient, candidate_id: int | None = None) ->
             json={"title": "Dismiss test draft"},
         )
     assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
+    return int(resp.json()["id"])
 
 
 async def _ensure_candidate(client: AsyncClient) -> int:
     """Return a campaign candidate id, creating one if needed."""
     resp = await client.get("/api/campaign-ops/campaigns")
     if resp.status_code == 200 and resp.json():
-        return resp.json()[0]["id"]
+        return int(resp.json()[0]["id"])
 
     # Create a minimal candidate via the campaign-ops API.
     resp = await client.post(
@@ -57,7 +57,7 @@ async def _ensure_candidate(client: AsyncClient) -> int:
         },
     )
     if resp.status_code in (200, 201):
-        return resp.json()["id"]
+        return int(resp.json()["id"])
     # Fallback: return 1 and let the draft creation handle the FK.
     return 1
 

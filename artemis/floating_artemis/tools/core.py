@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from artemis.agent.types import Tool
+from artemis.agent.types import Tool, ToolImpl
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -292,7 +292,7 @@ def register_ares_coding_tools(
 # ── Tool implementations ──────────────────────────────────────────────────────
 
 
-def _make_query_memory(agent_id: str | None) -> Any:
+def _make_query_memory(agent_id: str | None) -> ToolImpl:
     """Return a ``_query_memory`` implementation gated to ``agent_id``'s allowance.
 
     M3 FAIL-CLOSED: the agent's allowance is resolved once at registration time

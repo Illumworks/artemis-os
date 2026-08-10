@@ -72,7 +72,7 @@ async def test_get_overview_me_only_uses_current_user_jql() -> None:
         mock_http.post = AsyncMock(return_value=_empty_search_response())
         mock_cls.return_value = mock_http
 
-        result = await client.get_overview()
+        await client.get_overview()
 
     jqls = _captured_jql_calls(mock_http)
     assert len(jqls) == 4, "Expected 4 column fetches"
@@ -95,7 +95,7 @@ async def test_get_overview_explicit_me_string_uses_current_user_jql() -> None:
         mock_http.post = AsyncMock(return_value=_empty_search_response())
         mock_cls.return_value = mock_http
 
-        result = await client.get_overview(assignee_filter="me")
+        await client.get_overview(assignee_filter="me")
 
     jqls = _captured_jql_calls(mock_http)
     for jql in jqls:
@@ -123,7 +123,7 @@ async def test_get_overview_team_list_uses_in_and_is_empty_jql() -> None:
         mock_http.post = AsyncMock(return_value=_empty_search_response())
         mock_cls.return_value = mock_http
 
-        result = await client.get_overview(assignee_filter=team)
+        await client.get_overview(assignee_filter=team)
 
     jqls = _captured_jql_calls(mock_http)
     assert len(jqls) == 4
@@ -200,7 +200,7 @@ async def test_get_overview_none_filter_omits_assignee_clause() -> None:
         mock_http.post = AsyncMock(return_value=_empty_search_response())
         mock_cls.return_value = mock_http
 
-        result = await client.get_overview(assignee_filter=None)
+        await client.get_overview(assignee_filter=None)
 
     jqls = _captured_jql_calls(mock_http)
     assert len(jqls) == 4
@@ -224,7 +224,7 @@ async def test_get_overview_empty_list_omits_assignee_clause() -> None:
         mock_http.post = AsyncMock(return_value=_empty_search_response())
         mock_cls.return_value = mock_http
 
-        result = await client.get_overview(assignee_filter=[])
+        await client.get_overview(assignee_filter=[])
 
     jqls = _captured_jql_calls(mock_http)
     for jql in jqls:

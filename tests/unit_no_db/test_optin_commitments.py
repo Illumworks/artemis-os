@@ -158,10 +158,10 @@ async def test_gate_owner_and_due_creates_proposed_commitment() -> None:
 @pytest.mark.asyncio
 async def test_gate_non_owner_no_commitment_but_observation_written() -> None:
     """owner != Jon → NO commitment created, observation still written (lossless)."""
-    _OTHER_ID = 99
+    other_id = 99
     session = _make_ingest_session(
         canonical_owner_id=_OWNER_ID,
-        item_owner_id=_OTHER_ID,
+        item_owner_id=other_id,
     )
 
     with (

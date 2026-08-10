@@ -56,14 +56,16 @@ async def test_exchange_code_raises_token_exchange_error_on_google_400() -> None
     mock_http.__aexit__ = AsyncMock(return_value=False)
     mock_http.post = AsyncMock(return_value=fake_resp)
 
-    with patch("artemis.google_docs.client._make_http_client", return_value=mock_http):
-        with pytest.raises(GoogleTokenExchangeError) as exc_info:
-            await exchange_code_for_tokens(
-                code="bad-code",
-                client_id="client-id",
-                client_secret="client-secret",
-                redirect_uri="https://example.com/callback",
-            )
+    with (
+        patch("artemis.google_docs.client._make_http_client", return_value=mock_http),
+        pytest.raises(GoogleTokenExchangeError) as exc_info,
+    ):
+        await exchange_code_for_tokens(
+            code="bad-code",
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="https://example.com/callback",
+        )
 
     exc = exc_info.value
     assert exc.status == 400
@@ -86,14 +88,16 @@ async def test_exchange_code_raises_token_exchange_error_on_google_401() -> None
     mock_http.__aexit__ = AsyncMock(return_value=False)
     mock_http.post = AsyncMock(return_value=fake_resp)
 
-    with patch("artemis.google_docs.client._make_http_client", return_value=mock_http):
-        with pytest.raises(GoogleTokenExchangeError) as exc_info:
-            await exchange_code_for_tokens(
-                code="any-code",
-                client_id="bad-client-id",
-                client_secret="bad-secret",
-                redirect_uri="https://example.com/callback",
-            )
+    with (
+        patch("artemis.google_docs.client._make_http_client", return_value=mock_http),
+        pytest.raises(GoogleTokenExchangeError) as exc_info,
+    ):
+        await exchange_code_for_tokens(
+            code="any-code",
+            client_id="bad-client-id",
+            client_secret="bad-secret",
+            redirect_uri="https://example.com/callback",
+        )
 
     exc = exc_info.value
     assert exc.status == 401
@@ -111,14 +115,16 @@ async def test_exchange_code_handles_non_json_error_body() -> None:
     mock_http.__aexit__ = AsyncMock(return_value=False)
     mock_http.post = AsyncMock(return_value=fake_resp)
 
-    with patch("artemis.google_docs.client._make_http_client", return_value=mock_http):
-        with pytest.raises(GoogleTokenExchangeError) as exc_info:
-            await exchange_code_for_tokens(
-                code="any-code",
-                client_id="id",
-                client_secret="secret",
-                redirect_uri="https://example.com/callback",
-            )
+    with (
+        patch("artemis.google_docs.client._make_http_client", return_value=mock_http),
+        pytest.raises(GoogleTokenExchangeError) as exc_info,
+    ):
+        await exchange_code_for_tokens(
+            code="any-code",
+            client_id="id",
+            client_secret="secret",
+            redirect_uri="https://example.com/callback",
+        )
 
     exc = exc_info.value
     assert exc.status == 400
@@ -166,15 +172,15 @@ async def test_complete_google_oauth_returns_400_on_google_rejection() -> None:
                 )
             ),
         ),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await complete_google_oauth(
-                session=AsyncMock(),
-                current_user_id=1,
-                code="any-code",
-                state=state,
-                redirect_uri="https://wrong.example.com/callback",
-            )
+        await complete_google_oauth(
+            session=AsyncMock(),
+            current_user_id=1,
+            code="any-code",
+            state=state,
+            redirect_uri="https://wrong.example.com/callback",
+        )
 
     http_exc = exc_info.value
     assert http_exc.status_code == 400

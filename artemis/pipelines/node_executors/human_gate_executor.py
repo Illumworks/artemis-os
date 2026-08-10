@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -393,10 +394,16 @@ def _cluster_score(
         qual = sig.qualification_json or {}
         if isinstance(qual, dict):
             raw = qual.get("fit_score") or qual.get("adjustedScore") or qual.get("rawScore")
-            try:
-                fit_scores.append(float(raw))
-            except (TypeError, ValueError):
+            # All three keys can be absent (raw is None) — that's the common
+            # case for a freshly-ingested signal, not an error, so it's
+            # branched separately rather than relying on float(None)'s TypeError.
+            if raw is None:
                 fit_scores.append(0.5)
+            else:
+                try:
+                    fit_scores.append(float(raw))
+                except (TypeError, ValueError):
+                    fit_scores.append(0.5)
         else:
             fit_scores.append(0.5)
 
@@ -439,7 +446,7 @@ def _cluster_score(
 
 
 def _build_clusters(
-    rows: list[Any],
+    rows: Sequence[Any],
     district_cache: dict[int, Any],
 ) -> list[dict[str, Any]]:
     """Group qualified signals into cluster objects by (resolved_district_id, campaign_family).
@@ -466,10 +473,12 @@ def _build_clusters(
             qual = s.qualification_json or {}
             if isinstance(qual, dict):
                 raw = qual.get("fit_score") or qual.get("adjustedScore") or qual.get("rawScore")
-                try:
-                    return float(raw)
-                except (TypeError, ValueError):
-                    pass
+                # raw is legitimately None when none of the three keys are set.
+                if raw is not None:
+                    try:
+                        return float(raw)
+                    except (TypeError, ValueError):
+                        pass
             return 0.0
 
         sorted_signals = sorted(signals, key=lambda s: (-_sig_fit(s), s.id))

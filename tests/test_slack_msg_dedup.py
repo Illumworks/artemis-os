@@ -271,7 +271,6 @@ async def test_same_channel_ts_no_client_msg_id_second_dropped() -> None:
     _reset_dedup_cache()
 
     shared_ts = "300.001"
-    channel = "C_MARKETING"
 
     ev1 = _make_channel_event(event_type="app_mention", channel_type="", ts=shared_ts)
     dispatched1 = await _run_handle_mentionable(
