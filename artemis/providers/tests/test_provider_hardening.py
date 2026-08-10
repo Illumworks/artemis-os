@@ -196,7 +196,10 @@ async def test_anthropic_adapter_forwards_tools_to_sdk(monkeypatch: pytest.Monke
         captured_kwargs.update(kwargs)
         return mock_response
 
-    adapter._client.messages.create = _mock_create
+    # monkeypatch.setattr (rather than direct assignment) sidesteps mypy's
+    # "Cannot assign to a method" on the SDK client's bound method, and
+    # auto-reverts after the test.
+    monkeypatch.setattr(adapter._client.messages, "create", _mock_create)
 
     tool = Tool(
         name="signal_queue.write",

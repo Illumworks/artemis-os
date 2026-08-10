@@ -248,27 +248,24 @@ def _mapper_outputs() -> list[tuple[str, dict[str, Any]]]:
         )
     )
 
-    pairs.append(
-        (
-            "linkedin_observer",
-            post_to_finding(
-                {
-                    "url": "https://linkedin.com/posts/abc",
-                    "post_id": "p1",
-                    "profile_id": "https://linkedin.com/in/supe",
-                    "posted_at": "2026-06-20T12:00:00Z",
-                    "text": "Proud of our literacy tutoring gains this year!",
-                },
-                {
-                    "district_id": "TX_dallas",
-                    "state": "TX",
-                    "name": "Jane Doe",
-                    "role": "Superintendent",
-                    "profile_id": "https://linkedin.com/in/supe",
-                },
-            ),
-        )
+    linkedin_finding = post_to_finding(
+        {
+            "url": "https://linkedin.com/posts/abc",
+            "post_id": "p1",
+            "profile_id": "https://linkedin.com/in/supe",
+            "posted_at": "2026-06-20T12:00:00Z",
+            "text": "Proud of our literacy tutoring gains this year!",
+        },
+        {
+            "district_id": "TX_dallas",
+            "state": "TX",
+            "name": "Jane Doe",
+            "role": "Superintendent",
+            "profile_id": "https://linkedin.com/in/supe",
+        },
     )
+    assert linkedin_finding is not None
+    pairs.append(("linkedin_observer", linkedin_finding))
 
     pairs.append(
         (
@@ -367,7 +364,7 @@ async def test_emit_signals_drops_unsalvageable_finding_and_reports() -> None:
 
     good = meeting_item_to_finding(_board_item(), _DISTRICT)
     assert good is not None
-    bad = {"metadata": {}}  # nothing derivable
+    bad: dict[str, Any] = {"metadata": {}}  # nothing derivable
 
     result = await scout.emit_signals([bad, good])
 

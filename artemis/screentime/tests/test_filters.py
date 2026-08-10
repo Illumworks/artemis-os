@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from artemis.screentime.filters import (
     STATUS_VETOED_FAILED,
     CandidateSignal,
@@ -16,8 +18,8 @@ from artemis.screentime.stance_config import DEFAULT_STANCE_RULES
 RULES = DEFAULT_STANCE_RULES
 
 
-def _cand(**kw):
-    base = dict(
+def _cand(**kw: Any):
+    base: dict[str, Any] = dict(
         state="TN",
         title="t",
         summary="s",

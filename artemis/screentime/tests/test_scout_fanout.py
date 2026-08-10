@@ -9,6 +9,7 @@ pre-composed ADAS boolean OR expression.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from artemis.screentime.scout_fanout import (
@@ -251,7 +252,7 @@ async def test_gather_board_peer_validation_concurrent_defaults_to_full_watch_li
     from artemis.scouts.board_minutes.peer_scout import _DEFAULT_PEER_WATCH_LIST
     from artemis.screentime.scout_fanout import _gather_board_peer_validation_concurrent
 
-    seen_watch_lists: list[list[dict]] = []
+    seen_watch_lists: list[list[dict[str, Any]]] = []
 
     class _FakeScout:
         def __init__(self, *_args, watch_list=None, max_districts_per_run=None, **_kwargs):
