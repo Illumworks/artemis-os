@@ -62,24 +62,31 @@ async def _make_client():
 # ── (a) Retry safety ───────────────────────────────────────────────────────────
 
 
-async def test_slack_retry_header_causes_early_200_skip() -> None:
-    """X-Slack-Retry-Num: 1 must return 200 immediately without calling route_inbound."""
-    payload = {
+def _retry_payload(event_id: str) -> dict[str, Any]:
+    # A DM: Artemis's dispatch gate accepts channel_type="im", so whether the
+    # handler runs is decided by the retry guard alone -- which is what these
+    # tests are about.  A channel message would be dropped at the gate instead,
+    # masking the behaviour under test.
+    return {
         "type": "event_callback",
-        "event_id": "Ev-retry-01",
+        "event_id": event_id,
         "team_id": "T001",
         "event": {
             "type": "message",
-            "channel_type": "channel",
-            "channel": "C001",
+            "channel_type": "im",
+            "channel": "D001",
             "user": "U001",
             "text": "hello again",
             "ts": "10.0",
         },
     }
+
+
+async def _post_retry(*, event_id: str, already_processed: bool) -> tuple[int, AsyncMock]:
+    """POST a retry delivery; return (status_code, the mocked handler)."""
     secret = "test-secret"
     body_bytes, headers = _make_signed_request(
-        payload, secret=secret, extra_headers={"X-Slack-Retry-Num": "1"}
+        _retry_payload(event_id), secret=secret, extra_headers={"X-Slack-Retry-Num": "1"}
     )
 
     from artemis.db import get_session
@@ -93,13 +100,14 @@ async def test_slack_retry_header_causes_early_200_skip() -> None:
         with (
             patch.dict("os.environ", {"SLACK_SIGNING_SECRET": secret}),
             patch(
+                "artemis.routes.integrations_slack_events.repo.slack_inbound_exists",
+                new_callable=AsyncMock,
+                return_value=already_processed,
+            ),
+            patch(
                 "artemis.routes.integrations_slack_events._handle_mentionable_event",
                 new_callable=AsyncMock,
             ) as mock_handle,
-            patch(
-                "artemis.routes.integrations_slack_events.route_inbound",
-                new_callable=AsyncMock,
-            ) as mock_route,
         ):
             async with await _make_client() as client:
                 resp = await client.post(
@@ -107,12 +115,33 @@ async def test_slack_retry_header_causes_early_200_skip() -> None:
                     content=body_bytes,
                     headers=headers,
                 )
-            assert resp.status_code == 200
-            # Neither the handler nor route_inbound should be called on a retry
-            mock_handle.assert_not_called()
-            mock_route.assert_not_called()
+        return resp.status_code, mock_handle
     finally:
         app.dependency_overrides.pop(get_session, None)
+
+
+async def test_slack_retry_of_already_processed_event_is_skipped() -> None:
+    """A retry whose event_id is already recorded must not be handled twice."""
+    status, mock_handle = await _post_retry(event_id="Ev-retry-01", already_processed=True)
+
+    assert status == 200
+    mock_handle.assert_not_called()
+
+
+async def test_slack_retry_of_never_processed_event_is_recovered() -> None:
+    """A retry with NO prior record must be processed, not silently dropped.
+
+    Regression guard: the guard used to blanket-skip every retry_num >= 1 on
+    the assumption that retry 0 had already succeeded.  When the original
+    delivery hit a restarting app, that assumption was false and every retry
+    was discarded -- losing the message permanently.  A restart is precisely
+    the common reason the first 200 never lands, so this was the case most in
+    need of recovery and the one being thrown away.
+    """
+    status, mock_handle = await _post_retry(event_id="Ev-retry-lost", already_processed=False)
+
+    assert status == 200
+    mock_handle.assert_called_once()
 
 
 async def test_slack_retry_header_zero_proceeds_normally() -> None:

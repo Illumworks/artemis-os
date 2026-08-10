@@ -404,7 +404,7 @@ def _cli() -> None:
         print(f"Backup file: {info['backup_file']}")
         print(f"TOC entries: {info['toc_line_count']}")
         print("\nRow counts:")
-        for table, count in info["row_counts"].items():  # type: ignore[union-attr]
+        for table, count in info["row_counts"].items():
             status = str(count) if count >= 0 else "TABLE NOT FOUND"
             print(f"  {table:<30} {status}")
         print("\nRecommended next steps:")

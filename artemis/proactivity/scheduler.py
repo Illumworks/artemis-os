@@ -455,6 +455,13 @@ async def _fire_commitment_urgency_nudge() -> None:
 
             for commitment in eligible:
                 try:
+                    if commitment.due is None:
+                        # The query filters `due IS NOT NULL`, so this cannot
+                        # fire today -- but the guarantee lives in SQL where the
+                        # type checker can't see it, and a later edit to that
+                        # WHERE clause would turn this into an AttributeError
+                        # inside a scheduled sweep.
+                        continue
                     due_dt = commitment.due.astimezone(UTC)
                     hours_left = max(0, (due_dt - now_utc).total_seconds() / 3600)
                     if hours_left < 1:

@@ -44,7 +44,7 @@ async def test_registered_tool_is_called(db_session: AsyncSession) -> None:
         impl_calls.append(arguments)
         return "fake-result"
 
-    def fake_factory(ctx):  # type: ignore[no-untyped-def]
+    def fake_factory(ctx):
         return (fake_tool_def, fake_impl)
 
     try:

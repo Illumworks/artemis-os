@@ -136,7 +136,7 @@ async def test_claude_code_run_with_tools_called_on_tool_using_run(tmp_path: Pat
     class _OtherAdapter:
         async def complete(self, request: Any) -> Any: ...
 
-    assert not _is_claude_code_tool_run(_OtherAdapter(), registry)  # type: ignore[arg-type]
+    assert not _is_claude_code_tool_run(_OtherAdapter(), registry)
 
 
 # ---------------------------------------------------------------------------

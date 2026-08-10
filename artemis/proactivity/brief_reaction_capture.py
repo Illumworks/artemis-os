@@ -153,7 +153,7 @@ async def _load_recent_manifest(session: Any, max_age_hours: int = 36) -> list[d
         best_items: list[dict] | None = None
 
         for obs in results:
-            content = (obs.content if hasattr(obs, "content") else obs.get("content", "")) or ""
+            content = obs.content or ""
             if not content.startswith(_MANIFEST_PREFIX):
                 continue
             rest = content[len(_MANIFEST_PREFIX):]

@@ -174,7 +174,7 @@ async def update_session(
     if archived is not None:
         row.archived_at = _now() if archived else None
     if forge_mode is not _UNSET:
-        row.forge_mode = forge_mode if forge_mode in ("read", "write") else None  # type: ignore[assignment]
+        row.forge_mode = forge_mode if forge_mode in ("read", "write") else None
     row.last_active_at = _now()
     await session.flush()
     await session.refresh(row)

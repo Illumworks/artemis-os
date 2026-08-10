@@ -63,7 +63,7 @@ async def test_resolve_no_override_returns_default(db_session: AsyncSession) -> 
     """resolve_adapter_async with feature_tag but no DB override uses catalog default."""
     captured_provider: list[str] = []
 
-    def _fake_get_adapter(provider_id: str, **_):  # type: ignore[return]
+    def _fake_get_adapter(provider_id: str, **_):
         captured_provider.append(provider_id)
         raise MissingApiKeyError("no key")
 
@@ -99,7 +99,7 @@ async def test_resolve_with_active_override_uses_override(db_session: AsyncSessi
 
     captured_provider: list[str] = []
 
-    def _fake_get_adapter(provider_id: str, **_):  # type: ignore[return]
+    def _fake_get_adapter(provider_id: str, **_):
         captured_provider.append(provider_id)
         raise MissingApiKeyError("no key")
 
@@ -131,7 +131,7 @@ async def test_resolve_inactive_override_falls_back_to_default(db_session: Async
 
     captured_provider: list[str] = []
 
-    def _fake_get_adapter(provider_id: str, **_):  # type: ignore[return]
+    def _fake_get_adapter(provider_id: str, **_):
         captured_provider.append(provider_id)
         raise MissingApiKeyError("no key")
 
@@ -161,7 +161,7 @@ def test_resolve_without_feature_tag_uses_old_behavior() -> None:
     """
     captured: list[str] = []
 
-    def _fake_get_adapter(provider_id: str, **_):  # type: ignore[return]
+    def _fake_get_adapter(provider_id: str, **_):
         captured.append(provider_id)
         raise MissingApiKeyError("no key")
 
@@ -207,7 +207,7 @@ async def test_override_changes_resolved_adapter(db_session: AsyncSession) -> No
     # Track which providers the resolver attempts
     captured_provider: list[str] = []
 
-    def _fake_get_adapter(provider_id: str, **_):  # type: ignore[return]
+    def _fake_get_adapter(provider_id: str, **_):
         captured_provider.append(provider_id)
         raise MissingApiKeyError("no key")
 
@@ -233,7 +233,7 @@ async def test_resolve_async_without_feature_tag_same_as_sync() -> None:
     """resolve_adapter_async without feature_tag behaves like resolve_adapter."""
     captured: list[str] = []
 
-    def _fake_get_adapter(provider_id: str, **_):  # type: ignore[return]
+    def _fake_get_adapter(provider_id: str, **_):
         captured.append(provider_id)
         raise MissingApiKeyError("no key")
 

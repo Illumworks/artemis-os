@@ -34,7 +34,7 @@ def _make_ping(*, fail_times: int, exc: Exception | None = None) -> AsyncMock:
         nonlocal call_count
         call_count += 1
         if call_count <= fail_times:
-            raise exc  # type: ignore[misc]
+            raise exc
 
     return AsyncMock(side_effect=_ping)
 

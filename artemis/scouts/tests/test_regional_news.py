@@ -603,7 +603,7 @@ async def test_fetch_news_articles_query_includes_screen_time_and_ai_terms() -> 
     http = _make_http_mock({"articles": []})
     await fetch_news_articles("Pinellas County Schools", http, api_key="test-key")
 
-    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]
     query = sent_params["q"]
     assert "screen time" in query
     assert "artificial intelligence" in query
@@ -619,7 +619,7 @@ async def test_fetch_news_articles_query_topics_override() -> None:
         "Pinellas County Schools", http, api_key="test-key", query_topics=["ai moratorium"]
     )
 
-    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]
     assert sent_params["q"] == '"Pinellas County Schools" AND (ai moratorium)'
 
 
@@ -632,7 +632,7 @@ async def test_fetch_news_articles_domains_param_sent_when_provided() -> None:
         "Pinellas County Schools", http, api_key="test-key", domains=NEWS_OUTLET_DOMAINS
     )
 
-    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]
     assert sent_params["domains"] == ",".join(NEWS_OUTLET_DOMAINS)
 
 
@@ -643,7 +643,7 @@ async def test_fetch_news_articles_no_domains_param_by_default() -> None:
     http = _make_http_mock({"articles": []})
     await fetch_news_articles("Pinellas County Schools", http, api_key="test-key")
 
-    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]  # type: ignore[union-attr]
+    sent_params = typing.cast(AsyncMock, http._client).request.call_args.kwargs["params"]
     assert "domains" not in sent_params
 
 

@@ -562,8 +562,8 @@ async def slack_user_oauth_callback(
         raise HTTPException(status_code=400, detail="Slack did not return a user access token.")
 
     user_scopes_granted = str(authed_user.get("scope") or "").split(",")
-    team_id = str((data.get("team") or {}).get("id") or "")  # type: ignore[union-attr]
-    team_name = str((data.get("team") or {}).get("name") or team_id)  # type: ignore[union-attr]
+    team_id = str((data.get("team") or {}).get("id") or "")
+    team_name = str((data.get("team") or {}).get("name") or team_id)
 
     from artemis.integrations.crypto import encrypt_credentials
 

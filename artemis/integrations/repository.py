@@ -333,6 +333,22 @@ async def upsert_slack_inbound(
     return bool(getattr(result, "rowcount", 0))
 
 
+async def slack_inbound_exists(session: AsyncSession, *, event_id: str) -> bool:
+    """True if this Slack event_id was already recorded (i.e. actually processed).
+
+    Used by the retry guard.  Slack retries a delivery when it doesn't get a
+    timely 200, so a retry means one of two very different things: either we
+    already handled the original and the ack was lost (skip), or the original
+    hit a restarting/dead app and was never handled at all (process it, or the
+    message is lost forever).  The presence of this row is what tells them
+    apart.
+    """
+    result = await session.execute(
+        select(SlackInboundMessage.event_id).where(SlackInboundMessage.event_id == event_id)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 # ── Slack user / channel name caches (J9b) ────────────────────────────────────
 
 

@@ -92,7 +92,7 @@ async def test_no_agent_run_select(db_session: AsyncSession) -> None:
     original_execute = db_session.execute
     execute_calls: list[str] = []
 
-    async def spy_execute(stmt, *args, **kwargs):  # type: ignore[no-untyped-def]
+    async def spy_execute(stmt, *args, **kwargs):
         # Capture the compiled SQL string (lowercased) for assertion.
         try:
             compiled = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()

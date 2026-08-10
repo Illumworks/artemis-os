@@ -146,7 +146,7 @@ async def _safe_brief_exclusions(session: AsyncSession) -> set[str]:
         seen: dict[str, str] = {}  # ticket_key -> "excluded" | "cleared"
         _PREFIX = "brief_exclusion:"
         for obs in results:
-            content = (obs.content if hasattr(obs, "content") else obs.get("content", "")) or ""
+            content = obs.content or ""
             if not content.startswith(_PREFIX):
                 continue
             rest = content[len(_PREFIX):]

@@ -122,7 +122,7 @@ async def test_probe_lm_studio_uses_config_base_url() -> None:
 
     captured_urls: list[str] = []
 
-    async def _fake_get(url: str, **_kw: object) -> AsyncMock:  # type: ignore[return]
+    async def _fake_get(url: str, **_kw: object) -> AsyncMock:
         captured_urls.append(url)
         raise httpx.ConnectError("not running (test)")
 

@@ -372,7 +372,12 @@ class _SlackAgentConfig:
     allowed_user_ids: tuple[str, ...]
     allowed_channel_ids: tuple[str, ...]
     listen_channel_messages: bool
-    always_respond_in_channels: bool
+    # Opt-in, and only Ares sets it today.  Defaulted because it was added to a
+    # dataclass that four test modules construct positionally/by-keyword, and a
+    # required field silently broke all of them.  False is the fail-closed
+    # value (stay quiet), so defaulting cannot make an agent chattier than
+    # intended.  `_resolve_agent_slack_config` always passes it explicitly.
+    always_respond_in_channels: bool = False
 
     def is_user_allowed(self, user_id: str) -> bool:
         return bool(user_id) and user_id in self.allowed_user_ids
@@ -1405,26 +1410,48 @@ async def _slack_events(
     if not _verify_slack_signature(raw_body, timestamp, signature, agent_cfg.signing_secret):
         return JSONResponse(status_code=401, content={"error": "invalid signature"})
 
-    # ── 4b. Retry safety (belt-and-suspenders) ────────────────────────────────
-    # Slack retries a delivery when it doesn't receive a 200 in time.  Our
-    # background-task model means we always reply 200 quickly, but if a network
-    # hiccup drops the response, Slack retries with X-Slack-Retry-Num >= 1.
-    # The event_id DB-dedup inside _handle_mentionable_event prevents double
-    # dispatch for any retry that reaches the upsert; this early-exit prevents
-    # even starting the heavier processing path for known retries.
-    retry_num_raw = request.headers.get("X-Slack-Retry-Num", "")
-    if retry_num_raw.strip():
+    # ── 4b. Retry safety ──────────────────────────────────────────────────────
+    # Slack retries a delivery when it doesn't receive a 200 in time.  A retry
+    # therefore means one of two very different things:
+    #
+    #   (a) we already handled the original and only the ACK was lost  -> skip
+    #   (b) the original hit a restarting/dead app and was NEVER handled -> we
+    #       must process it, or the message is lost forever
+    #
+    # This used to blanket-skip every retry_num >= 1, which silently discarded
+    # case (b): exactly the messages most likely to need recovery, since a
+    # restart is the common reason the original 200 never landed.  The
+    # `slack_inbound_messages` row is written only once the event reaches real
+    # processing, so its presence is what distinguishes (a) from (b).
+    #
+    # Events dropped BEFORE that upsert (bot-authored, non-user subtypes) have
+    # no row, so they re-enter the pipeline on retry -- harmless, because the
+    # same guards drop them again.
+    retry_num_raw = request.headers.get("X-Slack-Retry-Num", "").strip()
+    if retry_num_raw:
+        event_id_for_retry = str(payload.get("event_id", ""))
         try:
-            if int(retry_num_raw.strip()) >= 1:
+            is_retry = int(retry_num_raw) >= 1
+        except ValueError:
+            is_retry = False  # Malformed header — process normally.
+
+        if is_retry and event_id_for_retry:
+            already_processed = await repo.slack_inbound_exists(
+                session, event_id=event_id_for_retry
+            )
+            if already_processed:
                 logger.info(
-                    "Slack retry detected (X-Slack-Retry-Num=%s, event_id=%s) — acking 200, skipping reprocess",
-                    retry_num_raw.strip(),
-                    str(payload.get("event_id", "")),
+                    "slack event_id=%s DROPPED: retry %s of an event already processed",
+                    event_id_for_retry,
+                    retry_num_raw,
                 )
                 return JSONResponse(status_code=200, content={"ok": True})
-        except ValueError:
-            # Malformed header — ignore and continue normal processing
-            pass
+            logger.info(
+                "slack event_id=%s: retry %s with NO prior record — the original "
+                "delivery was never processed, so handling it now",
+                event_id_for_retry,
+                retry_num_raw,
+            )
 
     # ── 5. Dispatch by type ───────────────────────────────────────────────────
     if event_type == "event_callback":

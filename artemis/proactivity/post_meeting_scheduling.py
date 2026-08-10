@@ -692,7 +692,7 @@ async def _already_proposed(session: Any, *, dedup_content: str) -> bool:
             modes=["fts"],
         )
         for obs in results:
-            content = (obs.content if hasattr(obs, "content") else obs.get("content", "")) or ""
+            content = obs.content or ""
             if content.strip() == dedup_content:
                 return True
         return False

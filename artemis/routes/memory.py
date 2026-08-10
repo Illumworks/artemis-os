@@ -25,10 +25,16 @@ Shell UI read layer (M6) — all read-only:
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    # Annotation-only: `from __future__ import annotations` keeps this out of
+    # the runtime import graph, but the name must still resolve for type
+    # checkers (and for anything calling typing.get_type_hints()).
+    from artemis.identity.models import User
 
 from artemis.db import get_session
 from artemis.identity.dependencies import resolve_request_identity

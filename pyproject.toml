@@ -56,6 +56,23 @@ python_version = "3.11"
 strict = true
 plugins = ["pydantic.mypy"]
 
+# Test modules keep strict type CHECKING (arg-type, attr-defined and friends
+# still fire — those catch real drift between a test and the code it covers)
+# but are exempt from mandatory annotations.  Requiring `-> None` on every
+# pytest function produced 172 of the 344 errors in the tree without ever
+# catching a defect, and that noise is why the gate was left red long enough
+# for genuine findings to hide in it.
+[[tool.mypy.overrides]]
+module = ["tests.*", "artemis.tests.*", "artemis.*.tests.*", "artemis.*.*.tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+# Third-party packages that ship no type information.
+[[tool.mypy.overrides]]
+module = ["defusedxml.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Both fixture and test loops use the same per-function scope. Session-scoped

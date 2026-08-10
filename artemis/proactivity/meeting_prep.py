@@ -165,7 +165,7 @@ def parse_already_sent_event_ids(observations: list[Any]) -> set[str]:
     """
     sent: set[str] = set()
     for obs in observations:
-        content = (obs.content if hasattr(obs, "content") else obs.get("content", "")) or ""
+        content = obs.content or ""
         if content.startswith(_PREP_SENT_PREFIX):
             event_id = content[len(_PREP_SENT_PREFIX):].strip()
             if event_id:
@@ -367,7 +367,7 @@ async def fetch_memory_snippets(session: Any, *, query: str) -> list[str]:
         )
         snippets: list[str] = []
         for obs in results:
-            content = (obs.content if hasattr(obs, "content") else obs.get("content", "")) or ""
+            content = obs.content or ""
             # Skip dedup/system observations (pre_meeting_prep_sent, brief_exclusion, etc.)
             if any(content.startswith(pfx) for pfx in (_PREP_SENT_PREFIX, "brief_exclusion:", "brief_reaction:")):
                 continue

@@ -37,7 +37,7 @@ if "artemis_test" not in _DB_URL:
 
 _test_engine = create_async_engine(_DB_URL, echo=False, poolclass=NullPool)
 artemis.db.engine = _test_engine
-artemis.db.SessionLocal = async_sessionmaker(  # type: ignore[assignment]
+artemis.db.SessionLocal = async_sessionmaker(
     _test_engine,
     class_=AsyncSession,
     expire_on_commit=False,
