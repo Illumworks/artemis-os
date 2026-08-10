@@ -96,9 +96,7 @@ async def _capture_brief_reactions_bg(message_text: str) -> None:
         async with db.SessionLocal() as session:
             await capture_brief_reactions_from_message(session, message_text)
     except Exception:
-        logger.debug(
-            "route_inbound: brief-reaction capture task failed (non-fatal)", exc_info=True
-        )
+        logger.debug("route_inbound: brief-reaction capture task failed (non-fatal)", exc_info=True)
 
 
 def _spawn_brief_reaction_capture(message_text: str) -> None:
@@ -505,7 +503,9 @@ async def _resolve_agent_slack_config(
             metadata.get("listen_channel_messages", creds.get("listen_channel_messages", False))
         )
         always_respond_in_channels = bool(
-            metadata.get("always_respond_in_channels", creds.get("always_respond_in_channels", False))
+            metadata.get(
+                "always_respond_in_channels", creds.get("always_respond_in_channels", False)
+            )
         )
 
     if normalized_agent == "artemis" and not signing_secret:
@@ -1159,8 +1159,28 @@ async def _handle_mentionable_event(
     # message, which previously made the agent reply again to the edit.
     _subtype: str = str(event.get("subtype", ""))
     is_channel_join: bool = _subtype == "channel_join"
+
+    # Arrival marker.  Every drop decision below logs at INFO too, so the pair
+    # "arrived / decided" is always readable in app.err.log.  Without this, an
+    # unanswered message is indistinguishable from one that never arrived --
+    # which is exactly how "the agents are down" got diagnosed wrongly.
+    # Metadata only: never log message text here.
+    logger.info(
+        "slack event received: agent=%s event_id=%s channel=%s type=%s subtype=%s user=%s",
+        agent_id,
+        event_id,
+        channel_id,
+        inner_type,
+        _subtype or "-",
+        user_id,
+    )
+
     if _subtype in {"message_changed", "message_deleted", "message_replied"}:
-        logger.debug("Slack message subtype=%s ignored (not a new user message)", _subtype)
+        logger.info(
+            "slack event_id=%s DROPPED: subtype=%s is not a new user message",
+            event_id,
+            _subtype,
+        )
         return
 
     try:
@@ -1176,7 +1196,7 @@ async def _handle_mentionable_event(
 
     # ── Guard 1: bot-self filter — drop bot-authored events (no record, no loop) ─
     if _is_bot_authored(event, agent_cfg.bot_user_id):
-        logger.debug("Slack event_id=%s is bot-authored — dropped (echo guard)", event_id)
+        logger.info("slack event_id=%s DROPPED: bot-authored (echo guard)", event_id)
         return
 
     # Strip bot-mention prefix from app_mention messages
@@ -1199,7 +1219,7 @@ async def _handle_mentionable_event(
     await session.commit()
 
     if not is_new:
-        logger.debug("Duplicate Slack event_id=%s — ignored", event_id)
+        logger.info("slack event_id=%s DROPPED: duplicate event_id already processed", event_id)
         return
 
     # ── Guard 1b: message-identity dedup — prevent dual dispatch for the
@@ -1209,15 +1229,13 @@ async def _handle_mentionable_event(
     # We use a process-local async TTL cache checked atomically under an asyncio
     # lock so the two near-simultaneous deliveries cannot both win the race.
     _client_msg_id: str = str(event.get("client_msg_id", ""))
-    msg_dedup_key: str = (
-        _client_msg_id if _client_msg_id else f"{channel_id}:{ts}"
-    )
+    msg_dedup_key: str = _client_msg_id if _client_msg_id else f"{channel_id}:{ts}"
     is_first_for_message = await _check_and_set_msg_dedup(msg_dedup_key)
     if not is_first_for_message:
-        logger.debug(
-            "Duplicate Slack message identity key=%r (event_id=%s, type=%s) — ignored",
-            msg_dedup_key,
+        logger.info(
+            "slack event_id=%s DROPPED: duplicate message identity key=%r (type=%s)",
             event_id,
+            msg_dedup_key,
             inner_type,
         )
         return
@@ -1431,8 +1449,11 @@ async def _slack_events(
                 inner_type=inner_type,
             )
         else:
-            logger.debug(
-                "Unhandled Slack inner event type=%r channel_type=%r — ignoring",
+            # INFO, not debug: this gate is a silent drop, and "the agent never
+            # answered" needs to be distinguishable from "the event never came".
+            logger.info(
+                "slack event agent=%s DROPPED at dispatch gate: inner_type=%r channel_type=%r",
+                agent_cfg.agent_id,
                 inner_type,
                 channel_type,
             )

@@ -7,6 +7,7 @@ any other module reads `os.environ`.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,6 +34,7 @@ from artemis.integrations.token_refresh.scheduler import (
     start_token_refresh_scheduler,
     stop_token_refresh_scheduler,
 )
+from artemis.logging_setup import configure_logging
 from artemis.marketing.routes import (
     approvals,
     campaign_cost,
@@ -114,6 +116,17 @@ PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # FIRST: give `artemis.*` loggers a real handler at the configured level.
+    # Without this, everything below logger.warning is discarded in prod --
+    # including the whole Slack routing path, which logs at debug. Runs here
+    # rather than at import so bare `import artemis.main` (tests) is unaffected.
+    _log_level = configure_logging()
+    logging.getLogger(__name__).info(
+        "artemis %s starting up (log level %s, env %s)",
+        __version__,
+        _log_level,
+        settings.env,
+    )
     # SECURITY: refuse to boot a production deploy whose identity layer would
     # fall open to the dev shim (cf_access_enabled defaults False). No-op for
     # env=development/test.
@@ -158,6 +171,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Recover any Argus research requests orphaned by a previous process restart.
     # Non-blocking: fires background tasks and returns immediately.
     from artemis.floating_artemis.tools.argus_tools import recover_pending_requests
+
     asyncio.create_task(recover_pending_requests())
     try:
         yield
