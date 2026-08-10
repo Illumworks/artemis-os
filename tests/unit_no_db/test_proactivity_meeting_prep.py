@@ -8,9 +8,7 @@ by mocking their return values.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
+from unittest.mock import MagicMock
 
 from artemis.proactivity.meeting_prep import (
     MeetingPrepContext,
@@ -20,7 +18,6 @@ from artemis.proactivity.meeting_prep import (
     parse_already_sent_event_ids,
     prep_dedup_key,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

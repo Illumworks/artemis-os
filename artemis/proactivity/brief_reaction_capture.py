@@ -294,8 +294,8 @@ async def capture_brief_reactions_from_message(
         # ── LLM classify (lazy provider import — circular-import rule) ─────────
         from artemis.agent.client import CompletionRequest
         from artemis.agent.types import Message, TextBlock
-        from artemis.providers.fallback import complete_with_fallback
         from artemis.proactivity.brief_reactions import record_reaction
+        from artemis.providers.fallback import complete_with_fallback
 
         prompt = _build_classify_prompt(items, message_text)
         req = CompletionRequest(

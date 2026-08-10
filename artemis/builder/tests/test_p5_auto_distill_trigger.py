@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -20,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.agent.tests.fake_adapter import FakeAdapter, ScriptedReply
 from artemis.builder.trajectory_summarizer import (
-    AgentRunSnapshot,
     _DISTILL_AFTER_N_RUNS,
+    AgentRunSnapshot,
     _count_runs_since_last_distill,
     _safe_maybe_auto_distill,
     summarize,
@@ -162,7 +161,6 @@ async def test_count_excludes_failed_runs(db_session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_count_resets_after_distillation(db_session: AsyncSession) -> None:
     """After a distillation proposal is created, the count resets."""
-    import datetime
 
     async with db_session.begin():
         agent = await _make_agent(db_session)
@@ -204,7 +202,6 @@ async def test_auto_trigger_fires_at_n5(db_session: AsyncSession) -> None:
     with 5 completed+summarized runs in the DB.  This avoids relying on
     async task scheduling timing across a NullPool DB connection.
     """
-    from artemis.builder.trajectory_summarizer import _safe_maybe_auto_distill
 
     async with db_session.begin():
         agent = await _make_agent(db_session)
@@ -231,7 +228,6 @@ async def test_auto_trigger_fires_at_n5(db_session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_auto_trigger_does_not_fire_before_n5(db_session: AsyncSession) -> None:
     """_safe_maybe_auto_distill does NOT fire when fewer than N runs exist."""
-    from artemis.builder.trajectory_summarizer import _safe_maybe_auto_distill
 
     async with db_session.begin():
         agent = await _make_agent(db_session)
@@ -257,7 +253,6 @@ async def test_auto_trigger_does_not_fire_before_n5(db_session: AsyncSession) ->
 @pytest.mark.asyncio
 async def test_auto_trigger_does_not_re_fire_on_run6(db_session: AsyncSession) -> None:
     """_safe_maybe_auto_distill does NOT fire at run 6 (only at multiples of N)."""
-    from artemis.builder.trajectory_summarizer import _safe_maybe_auto_distill
 
     async with db_session.begin():
         agent = await _make_agent(db_session)
@@ -283,7 +278,6 @@ async def test_auto_trigger_does_not_re_fire_on_run6(db_session: AsyncSession) -
 @pytest.mark.asyncio
 async def test_auto_trigger_fires_again_at_n10(db_session: AsyncSession) -> None:
     """_safe_maybe_auto_distill fires again at 10 (second multiple of N=5)."""
-    from artemis.builder.trajectory_summarizer import _safe_maybe_auto_distill
 
     async with db_session.begin():
         agent = await _make_agent(db_session)

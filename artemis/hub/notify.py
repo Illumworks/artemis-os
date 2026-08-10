@@ -69,9 +69,11 @@ async def notify_jon(
         logger.info("notify_jon: DM to Jon — %s", text[:200])
 
     try:
-        from artemis.proactivity.scheduler import _get_slack_token_for_agent
-        from artemis.proactivity.scheduler import _resolve_morning_brief_recipient
         from artemis.integrations.slack.client import SlackClient
+        from artemis.proactivity.scheduler import (
+            _get_slack_token_for_agent,
+            _resolve_morning_brief_recipient,
+        )
 
         token = await _get_slack_token_for_agent(session, agent_id=_ARTEMIS_AGENT_ID)
         if not token:

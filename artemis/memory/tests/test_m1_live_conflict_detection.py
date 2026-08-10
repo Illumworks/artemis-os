@@ -14,7 +14,6 @@ prove the detectors run on the live path (apply_consolidation).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

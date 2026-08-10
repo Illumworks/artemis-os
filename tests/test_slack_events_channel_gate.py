@@ -29,7 +29,6 @@ from artemis.routes.integrations_slack_events import (
     should_respond_to_channel_message,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

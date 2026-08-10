@@ -309,8 +309,8 @@ async def _call_llm(adapter: Any, prompt: str) -> list[dict[str, Any]]:
 
     Raises on network/parse errors — caller handles fail-safe.
     """
-    from artemis.agent.loop import user_message as make_user_message
     from artemis.agent.loop import run_turn
+    from artemis.agent.loop import user_message as make_user_message
     from artemis.agent.types import TextBlock
 
     result = await run_turn(

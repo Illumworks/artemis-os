@@ -68,7 +68,7 @@ _VALID_RESOLUTIONS = frozenset(
 async def _get_allowance(
     request: Request,
     session: AsyncSession,
-) -> "Any":
+) -> Any:
     """Resolve the caller's scope allowance from their identity.
 
     M3 fail-closed: any error → deny (return a denied allowance, not all scopes).

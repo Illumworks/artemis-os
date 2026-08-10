@@ -31,10 +31,8 @@ from artemis.argus.drawer import (
     write_district_findings,
 )
 from artemis.argus.research import (
-    PRIMARY_DIMENSIONS,
     identify_gaps,
     research_dimensions,
-    stub_research_dimensions,
 )
 
 _logger = logging.getLogger(__name__)

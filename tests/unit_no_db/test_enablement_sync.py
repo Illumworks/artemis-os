@@ -12,14 +12,13 @@ Tests:
 
 from __future__ import annotations
 
+# ── minimal env so artemis.config doesn't blow up ────────────────────────────
+import os
 import textwrap
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-# ── minimal env so artemis.config doesn't blow up ────────────────────────────
-import os
 
 os.environ.setdefault("ARTEMIS_DB_URL", "postgresql+asyncpg://test:test@localhost/test_unit")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-real")
@@ -27,12 +26,10 @@ os.environ.setdefault("FERNET_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 from artemis.enablement.sync import (  # noqa: E402
     _build_embedding_text,
-    _map_row,
     _parse_csv,
     _slugify,
     sync_enablement_index,
 )
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

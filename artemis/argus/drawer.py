@@ -40,16 +40,15 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.memory.models import MemoryObservation
-from artemis.memory.schemas import Scope, SourceQualityHint
+from artemis.memory.schemas import Scope, Source
 from artemis.memory.store import link_evidence, write_drawer, write_observation
-from artemis.memory.schemas import Source
 
 _logger = logging.getLogger(__name__)
 

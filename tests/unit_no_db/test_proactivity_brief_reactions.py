@@ -18,7 +18,6 @@ from artemis.proactivity.brief_reactions import (
     weight_waiting_on,
 )
 
-
 # ── _slugify ──────────────────────────────────────────────────────────────────
 
 

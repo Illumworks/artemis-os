@@ -10,20 +10,14 @@ Tests cover:
 
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from artemis.agent.types import TextBlock
 from artemis.memory.schemas import Observation
 from artemis.memory.semantic_conflict_detector import (
-    SemanticConflictCandidate,
-    _AUTO_SUPERSEDE_THRESHOLD,
-    _EMBEDDING_SHORTLIST_THRESHOLD,
     _cosine_sim,
     _judge_pair,
 )
@@ -214,8 +208,9 @@ class TestSemanticCasesWithMockedJudge:
         These have different prefixes so _detect_incompatible_values won't fire.
         Semantic judge should catch it.
         """
-        from artemis.memory.semantic_conflict_detector import detect_semantic_conflicts
         from unittest.mock import AsyncMock, MagicMock, patch
+
+        from artemis.memory.semantic_conflict_detector import detect_semantic_conflicts
 
         new = _obs(2, "Jon Fila leads the sales team at Amira Learning")
         existing = _obs(1, "Jon Fila serves as Chief Marketing Officer at Amira Learning")

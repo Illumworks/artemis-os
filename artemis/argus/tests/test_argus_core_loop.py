@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -28,12 +28,9 @@ from artemis.argus.research import (
     PRIMARY_DIMENSIONS,
     _gather_tool_results,
     _parse_synthesis_output,
-    identify_gaps,
     research_dimensions,
     stub_research_dimensions,
 )
-from artemis.floating_artemis.tools.argus_tools import DISPATCH_RESEARCH
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -28,7 +28,8 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import UTC, datetime
 from typing import Any
 

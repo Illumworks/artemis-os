@@ -19,8 +19,6 @@ Run with:
 
 from __future__ import annotations
 
-import pytest
-
 from artemis.marketing.writing_studio.compose_engine import parse_draft_fence
 from artemis.writing_rules.agent_lint import lint_agent_text
 

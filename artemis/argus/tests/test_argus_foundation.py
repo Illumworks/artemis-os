@@ -23,13 +23,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from artemis.argus.drawer import (
     ARGUS_CATEGORY,
-    ARGUS_SCOPE,
     Dimension,
     DistrictFinding,
     _content_to_finding,
@@ -43,7 +42,6 @@ from artemis.argus.research import (
     STALENESS_DAYS,
     identify_gaps,
 )
-
 
 # ── Shared fixtures ────────────────────────────────────────────────────────────
 

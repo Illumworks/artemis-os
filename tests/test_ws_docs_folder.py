@@ -5,8 +5,8 @@ All HTTP is mocked via httpx.MockTransport — no DB, no .env required.
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 
 pytestmark = pytest.mark.asyncio
 
@@ -90,8 +90,8 @@ async def test_move_patch_issued_when_folder_id_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When folder_id is set + create succeeds, Drive PATCH is issued with correct params."""
-    from artemis.google_docs import client as gc
     from artemis.config import settings
+    from artemis.google_docs import client as gc
 
     record: dict = {}
     monkeypatch.setattr(
@@ -126,8 +126,9 @@ async def test_doc_returned_when_move_fails_with_non_2xx(
 ) -> None:
     """When Drive PATCH returns non-2xx, create_document still returns the doc (no raise)."""
     import logging
-    from artemis.google_docs import client as gc
+
     from artemis.config import settings
+    from artemis.google_docs import client as gc
 
     record: dict = {}
     monkeypatch.setattr(
@@ -159,8 +160,9 @@ async def test_doc_returned_when_move_raises_exception(
 ) -> None:
     """When the Drive PATCH raises a network exception, create_document still returns the doc."""
     import logging
-    from artemis.google_docs import client as gc
+
     from artemis.config import settings
+    from artemis.google_docs import client as gc
 
     monkeypatch.setattr(
         gc,
@@ -188,8 +190,8 @@ async def test_no_move_patch_when_folder_id_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When folder_id is empty string, no Drive PATCH is issued."""
-    from artemis.google_docs import client as gc
     from artemis.config import settings
+    from artemis.google_docs import client as gc
 
     record: dict = {}
     monkeypatch.setattr(

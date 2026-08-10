@@ -34,7 +34,6 @@ from artemis.integrations.jira.client import (
     adf_to_text,
 )
 
-
 # ── adf_to_text: link mark ─────────────────────────────────────────────────────
 
 

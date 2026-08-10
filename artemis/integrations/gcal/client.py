@@ -14,7 +14,7 @@ _GCAL_BASE = "https://www.googleapis.com/calendar/v3"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
-def _extract_google_error(resp: "httpx.Response") -> str:
+def _extract_google_error(resp: httpx.Response) -> str:
     """Return a short diagnostic string from a Google error response.
 
     Google token-endpoint errors carry a JSON body like::

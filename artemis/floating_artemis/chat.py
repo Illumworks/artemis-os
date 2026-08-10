@@ -15,8 +15,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
-
-from artemis.trace.capture import capture_trace, elapsed_ms, start_timer
 from uuid import uuid4
 
 from artemis.agent.client import AnthropicAdapter, ModelAdapter
@@ -53,6 +51,7 @@ from artemis.floating_artemis.tool_registry import build_authorized_tool_registr
 from artemis.providers import get_adapter
 from artemis.providers.errors import MissingApiKeyError, UnknownProviderError
 from artemis.routes.status import get_status
+from artemis.trace.capture import capture_trace, elapsed_ms, start_timer
 from artemis.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -299,12 +299,12 @@ async def fetch_related_commitments(session: Any, *, title: str) -> list[dict[st
         List of commitment dicts with at least 'text' and optionally 'due'.
     """
     try:
-        from sqlalchemy import or_, select
-
-        from artemis.proactivity.models import Commitment
-
         # Extract meaningful words (3+ chars) from the title.
         import re
+
+        from sqlalchemy import select
+
+        from artemis.proactivity.models import Commitment
 
         keywords = [
             w.lower()

@@ -18,7 +18,6 @@ import pytest
 
 from artemis.google_docs.client import GoogleTokenExchangeError, exchange_code_for_tokens
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -210,15 +209,15 @@ async def test_complete_google_oauth_returns_502_on_network_error() -> None:
             "artemis.google_integration.exchange_code_for_tokens",
             new=AsyncMock(side_effect=httpx.ConnectError("Connection refused")),
         ),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await complete_google_oauth(
-                session=AsyncMock(),
-                current_user_id=2,
-                code="any-code",
-                state=state,
-                redirect_uri="https://example.com/callback",
-            )
+        await complete_google_oauth(
+            session=AsyncMock(),
+            current_user_id=2,
+            code="any-code",
+            state=state,
+            redirect_uri="https://example.com/callback",
+        )
 
     http_exc = exc_info.value
     assert http_exc.status_code == 502

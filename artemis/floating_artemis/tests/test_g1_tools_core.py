@@ -10,7 +10,6 @@ from artemis.floating_artemis.authority import AuthorizedToolRegistry
 from artemis.floating_artemis.tools.core import (
     _REPO_ROOT,
     _propose_edit,
-    _query_memory,
     _read_file,
     _safe_repo_path,
     _set_pref,

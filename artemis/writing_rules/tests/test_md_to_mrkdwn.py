@@ -8,10 +8,7 @@ Run with:
 
 from __future__ import annotations
 
-import pytest
-
 from artemis.writing_rules.agent_lint import md_to_mrkdwn
-
 
 # ── Bold ─────────────────────────────────────────────────────────────────────
 

@@ -88,7 +88,6 @@ async def _escalate_one(ask: AgentPendingAsk) -> bool:
 
     Returns True on full success, False if either Slack call failed.
     """
-    from datetime import UTC, datetime
 
     async with _db.SessionLocal() as session:
         # Stamp escalated_at first — prevents double-fire even if Slack calls
@@ -157,8 +156,8 @@ async def _post_in_channel(*, channel_id: str, text: str) -> bool:
     """Post Artemis's terminal comment in the given channel."""
     try:
         async with _db.SessionLocal() as session:
-            from artemis.proactivity.scheduler import _get_slack_token_for_agent
             from artemis.integrations.slack.client import SlackClient
+            from artemis.proactivity.scheduler import _get_slack_token_for_agent
 
             token = await _get_slack_token_for_agent(session, agent_id="artemis")
             if not token:

@@ -163,7 +163,7 @@ async def get_observation_history(
 _PREVIEW_LEN = 200
 
 
-def _allowance_clauses(allowance: "ScopeAllowance | None", model: Any) -> list[Any]:
+def _allowance_clauses(allowance: ScopeAllowance | None, model: Any) -> list[Any]:
     """Return SQLAlchemy WHERE expressions that enforce *allowance* on *model*.
 
     Returns an empty list when allowance is None (no enforcement — internal paths).
@@ -223,7 +223,7 @@ async def list_drawers(
     scope_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
-    allowance: "ScopeAllowance | None" = None,
+    allowance: ScopeAllowance | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Paginated list of drawers with content_preview.
 
@@ -289,7 +289,7 @@ async def list_observations(
     scope_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
-    allowance: "ScopeAllowance | None" = None,
+    allowance: ScopeAllowance | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Paginated list of observations with content_preview.
 
@@ -345,7 +345,7 @@ async def get_observation_detail(
     session: AsyncSession,
     observation_id: int,
     *,
-    allowance: "ScopeAllowance | None" = None,
+    allowance: ScopeAllowance | None = None,
 ) -> dict[str, Any] | None:
     """Full observation row plus evidence chain with source previews.
 
@@ -424,7 +424,7 @@ async def get_observation_detail(
 async def list_scopes(
     session: AsyncSession,
     *,
-    allowance: "ScopeAllowance | None" = None,
+    allowance: ScopeAllowance | None = None,
 ) -> list[dict[str, Any]]:
     """Distinct scopes with drawer_count and observation_count.
 
@@ -479,7 +479,7 @@ async def list_scopes(
 
 async def get_memory_stats(
     session: AsyncSession,
-    allowance: "ScopeAllowance | None" = None,
+    allowance: ScopeAllowance | None = None,
 ) -> dict[str, Any]:
     """Overall memory counts for the dashboard header, optionally scoped.
 

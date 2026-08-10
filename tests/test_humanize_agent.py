@@ -52,8 +52,9 @@ def _make_signed_request(
 
 
 async def _make_client():
-    from artemis.main import app
     from httpx import ASGITransport, AsyncClient
+
+    from artemis.main import app
 
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
@@ -255,9 +256,9 @@ async def test_channel_join_always_pings_joiner_regardless_of_recent_message() -
     gap), which normally suppresses the ping.  For a channel_join the ping should
     fire unconditionally so every new joiner is greeted with @mention.
     """
-    from artemis.routes.integrations_slack_events import _handle_mentionable_event
-    from artemis.integrations.config_resolver import SlackConfig
     from unittest.mock import MagicMock
+
+    from artemis.routes.integrations_slack_events import _handle_mentionable_event
 
     # Simulate a recent session message (30 seconds ago) — normally suppresses ping
     recent_ts = datetime.now(UTC) - timedelta(seconds=30)
@@ -476,7 +477,7 @@ def test_build_system_prompt_human_voice_nudge_present_for_all_agents() -> None:
 
 def test_recent_outbound_extraction_from_history() -> None:
     """Verify recent_outbound_texts are extracted correctly from a message history list."""
-    from artemis.agent.types import Message, TextBlock, ToolUseBlock
+    from artemis.agent.types import Message, TextBlock
 
     # Build a fake history with alternating user/assistant messages
     history = [

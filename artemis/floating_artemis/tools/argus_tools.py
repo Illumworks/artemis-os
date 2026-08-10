@@ -50,11 +50,12 @@ import asyncio
 import logging
 from typing import Any
 
+from sqlalchemy import select
+
 import artemis.db as _db
 from artemis.agent.types import Tool
 from artemis.argus.models import ArgusResearchRequest
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
-from sqlalchemy import select
 
 _logger = logging.getLogger(__name__)
 

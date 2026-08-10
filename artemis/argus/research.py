@@ -187,8 +187,6 @@ async def _fetch_usaspending(
     states = [state.upper()] if state else []
 
     try:
-        from datetime import date, timedelta
-
         from artemis.tools.usaspending import (
             _EDUCATION_CFDA,
             _GRANT_AWARD_TYPES,
@@ -321,7 +319,7 @@ async def _gather_tool_results(
                 timeout=_TOOL_TIMEOUT_S,
             )
             return name, result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _logger.warning(
                 "Argus._gather_tool_results: tool=%r timed out after %.0fs (skipped)",
                 name,

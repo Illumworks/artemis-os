@@ -31,7 +31,6 @@ from artemis.google_integration import (
     scopes_for_google_purpose,
 )
 from artemis.identity.dependencies import get_current_user
-from artemis.marketing.routes._auth import require_owner
 from artemis.identity.models import User
 from artemis.integrations import repository as repo
 from artemis.integrations.config_resolver import (
@@ -42,6 +41,7 @@ from artemis.integrations.config_resolver import (
 from artemis.integrations.gcal.provider import GCalProvider
 from artemis.integrations.models import _KNOWN_PROVIDERS, Integration
 from artemis.integrations.slack.provider import SlackProvider
+from artemis.marketing.routes._auth import require_owner
 
 logger = logging.getLogger(__name__)
 

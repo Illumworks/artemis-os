@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,7 +16,7 @@ import pytest
 
 def test_jql_assignee_clause_present_no_project() -> None:
     """Each status clause must contain 'assignee = currentUser()' when no project given."""
-    from artemis.integrations.jira.client import JiraClient, _status_in_clause
+    from artemis.integrations.jira.client import JiraClient
 
     client = JiraClient(site_url="https://jira.example.com", email="j@e.com", api_token="tok")
     # We can test the JQL string by examining _fetch_column call args.
@@ -106,7 +105,7 @@ def test_jql_assignee_clause_with_project() -> None:
 
 def test_chunk_short_text_returns_single_chunk() -> None:
     """A brief that fits in one chunk is returned as a list of one."""
-    from artemis.proactivity.scheduler import _SLACK_MAX, _chunk_slack_text
+    from artemis.proactivity.scheduler import _chunk_slack_text
 
     text = "Hello world\n\nThis is a short brief."
     chunks = _chunk_slack_text(text)

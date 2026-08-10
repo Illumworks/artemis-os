@@ -31,8 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.db import get_session
 from artemis.floating_artemis import repository as repo
 from artemis.floating_artemis.authority import confirmation_store
-from artemis.identity.dependencies import resolve_request_identity
-from artemis.identity.scope_policy import resolve_agent_id_from_email
 from artemis.floating_artemis.chat import handle_turn, resume_after_confirm
 from artemis.floating_artemis.memory_read_cache import get as memory_cache_get
 from artemis.floating_artemis.schemas import (
@@ -48,6 +46,8 @@ from artemis.floating_artemis.schemas import (
     ToolConfirmResponse,
     TurnRequest,
 )
+from artemis.identity.dependencies import resolve_request_identity
+from artemis.identity.scope_policy import resolve_agent_id_from_email
 from artemis.marketing.routes._auth import require_token
 from artemis.marketing.routes._errors import bad_request, conflict, not_found
 from artemis.providers import list_providers

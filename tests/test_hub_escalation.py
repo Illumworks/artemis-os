@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # 1. Detection helpers
 # ────────────────────────────────────────────────────────────────────────────
@@ -93,7 +92,7 @@ class TestExtractSummary:
 
         text = "Here is the overview.\nShould we proceed with Option A?"
         result = extract_summary(text)
-        assert "Should we proceed with Option A?" == result
+        assert result == "Should we proceed with Option A?"
 
     def test_falls_back_to_truncation(self) -> None:
         from artemis.hub.detection import extract_summary

@@ -16,6 +16,7 @@ DB setup:
 from __future__ import annotations
 
 import os
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import NullPool, text
@@ -64,7 +65,8 @@ async def db_session():
     Uses a fresh engine per test to avoid asyncio event-loop / asyncpg
     connection conflicts when running many tests in sequence.
     """
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
     from artemis.db import attach_pgvector_codec
 
     engine = create_async_engine(DB_URL, echo=False, poolclass=NullPool)
@@ -90,6 +92,7 @@ async def db_session():
 async def client(db_session):
     """ASGI test client with identity shim overrideable via state."""
     from httpx import ASGITransport, AsyncClient
+
     from artemis.main import app
 
     transport = ASGITransport(app=app)
@@ -175,21 +178,21 @@ def _make_identity_headers(email: str) -> dict[str, str]:
 
 class TestResolver:
     def test_owner_gets_all(self):
-        from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+        from artemis.identity.scope_policy import OWNER_EMAIL, allowed_scopes_for_email
 
         a = allowed_scopes_for_email(OWNER_EMAIL, 1)
         assert a.allow_all is True
         assert not a.denied
 
     def test_owner_permits_personal(self):
-        from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+        from artemis.identity.scope_policy import OWNER_EMAIL, allowed_scopes_for_email
 
         a = allowed_scopes_for_email(OWNER_EMAIL, 1)
         assert a.permits("personal", "1")
         assert a.permits("personal", "9999")
 
     def test_owner_permits_agent_artemis(self):
-        from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+        from artemis.identity.scope_policy import OWNER_EMAIL, allowed_scopes_for_email
 
         a = allowed_scopes_for_email(OWNER_EMAIL, 1)
         assert a.permits("agent", "artemis")
@@ -197,7 +200,7 @@ class TestResolver:
         assert a.permits("agent", "callie")
 
     def test_marketing_human_cannot_read_owner_personal(self):
-        from artemis.identity.scope_policy import allowed_scopes_for_email, OWNER_EMAIL
+        from artemis.identity.scope_policy import OWNER_EMAIL, allowed_scopes_for_email
 
         owner_id = 1
         marketing_user_id = 42
@@ -297,7 +300,7 @@ class TestResolver:
         assert a2.denied is True
 
     def test_d11_owner_gets_artemis_agent(self):
-        from artemis.identity.scope_policy import resolve_agent_id_from_email, OWNER_EMAIL
+        from artemis.identity.scope_policy import OWNER_EMAIL, resolve_agent_id_from_email
 
         assert resolve_agent_id_from_email(OWNER_EMAIL) == "artemis"
 
@@ -421,7 +424,6 @@ class TestAgentScopeEnforcement:
 async def _with_identity(app_client, email: str, user_id_cache: dict):
     """Context helper: monkey-patch the dev shim identity for the next requests."""
     import artemis.identity.dependencies as id_dep
-    import artemis.config as cfg_mod
 
     # Override the dev-shim email
     original_email = id_dep._DEV_USER_EMAIL
@@ -699,7 +701,7 @@ class TestFailClosed:
 
     def test_resolver_error_returns_denied(self):
         """Passing bad args should return denied, not raise."""
-        from artemis.identity.scope_policy import allowed_scopes_for_email, allowed_scopes_for_agent
+        from artemis.identity.scope_policy import allowed_scopes_for_agent, allowed_scopes_for_email
 
         # None email
         a = allowed_scopes_for_email(None, 1)  # type: ignore[arg-type]
@@ -714,7 +716,6 @@ class TestFailClosed:
 @pytest.mark.asyncio
 async def test_http_blank_email_denied_no_personal_rows(db_session, client):
     """Blank email identity → deny → zero personal rows returned."""
-    import artemis.identity.dependencies as id_dep
 
     owner_id = await _seed_user(db_session, OWNER_EMAIL, "Jon")
     await _seed_observation(db_session, "personal", str(owner_id), "Private")
@@ -723,8 +724,8 @@ async def test_http_blank_email_denied_no_personal_rows(db_session, client):
     # Blank email → allowed_scopes_for_email("", ...) → denied allowance.
     # However the dev shim fills in _DEV_USER_EMAIL so we test via resolver directly.
     # Validate that a denied allowance returns empty via repository.
-    from artemis.memory.repository import list_observations
     from artemis.identity.scope_policy import allowance_denied
+    from artemis.memory.repository import list_observations
 
     rows, total = await list_observations(db_session, allowance=allowance_denied())
     assert total == 0, "Denied allowance must return zero observations"
@@ -889,30 +890,32 @@ class TestQueryMemoryToolGating:
 
         fn = _make_query_memory("callie")
         # The function is a coroutine — verify it's callable and the impl is correct.
-        import asyncio, inspect
+        import inspect
 
         assert inspect.iscoroutinefunction(fn)
 
     def test_artemis_make_query_memory_passes_all_scopes(self):
         """_make_query_memory for artemis returns allow-all implementation."""
-        from artemis.floating_artemis.tools.core import _make_query_memory
         import inspect
+
+        from artemis.floating_artemis.tools.core import _make_query_memory
 
         fn = _make_query_memory("artemis")
         assert inspect.iscoroutinefunction(fn)
 
     def test_unknown_agent_make_query_memory_is_deny(self):
         """_make_query_memory for unknown agent should fail closed."""
-        from artemis.floating_artemis.tools.core import _make_query_memory
         import inspect
+
+        from artemis.floating_artemis.tools.core import _make_query_memory
 
         fn = _make_query_memory("unknown-hacker")
         assert inspect.iscoroutinefunction(fn)
 
     def test_register_core_tools_accepts_agent_id(self):
         """register_core_tools(registry, agent_id=...) does not raise."""
-        from artemis.floating_artemis.tools.core import register_core_tools
         from artemis.floating_artemis.authority import AuthorizedToolRegistry
+        from artemis.floating_artemis.tools.core import register_core_tools
 
         registry = AuthorizedToolRegistry()
         register_core_tools(registry, agent_id="callie")
@@ -920,8 +923,8 @@ class TestQueryMemoryToolGating:
 
     def test_register_core_tools_no_agent_id_fails_closed(self):
         """register_core_tools with no agent_id registers a fail-closed impl."""
-        from artemis.floating_artemis.tools.core import register_core_tools
         from artemis.floating_artemis.authority import AuthorizedToolRegistry
+        from artemis.floating_artemis.tools.core import register_core_tools
 
         registry = AuthorizedToolRegistry()
         register_core_tools(registry, agent_id=None)
@@ -1102,7 +1105,6 @@ async def test_emit_memory_read_event_callie_denied_personal(db_session):
     # Should not raise; should emit an empty MemoryReadEvent (scope denied).
     await _emit_memory_read_event(session_id, inp, agent_id="callie")
     # The cache should have been populated (even if empty).
-    from artemis.floating_artemis.memory_read_cache import get as cache_get
 
     event = cache_get(session_id)
     if event is not None:

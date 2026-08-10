@@ -251,17 +251,19 @@ def test_strict_raises_when_named_provider_unavailable_not_codex() -> None:
 def test_strict_raises_does_not_return_codex_adapter() -> None:
     """Return value is never a non-claude-code adapter under strict=True."""
     codex_sentinel = _Sentinel("codex")
-    with patch(
-        "artemis.providers.resolver.get_adapter",
-        side_effect=_make_builders(
-            {
-                "claude-code": MissingCliBinaryError("claude-code", "claude"),
-                "codex": codex_sentinel,
-            }
+    with (
+        patch(
+            "artemis.providers.resolver.get_adapter",
+            side_effect=_make_builders(
+                {
+                    "claude-code": MissingCliBinaryError("claude-code", "claude"),
+                    "codex": codex_sentinel,
+                }
+            ),
         ),
+        pytest.raises(NoProviderAvailableError),
     ):
-        with pytest.raises(NoProviderAvailableError):
-            result = resolve_adapter("claude-code", strict=True)
+        result = resolve_adapter("claude-code", strict=True)
         # If we somehow get here (we shouldn't), assert it's not codex.
         # The pytest.raises context manager ensures the line below is unreachable,
         # but the pattern is kept for documentation purposes.

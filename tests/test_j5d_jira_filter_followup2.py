@@ -25,8 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from artemis.integrations.jira.client import JiraAPIError, JiraClient
-
+from artemis.integrations.jira.client import JiraClient
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 

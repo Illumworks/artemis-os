@@ -32,7 +32,6 @@ from artemis.proactivity.commitments import (
 )
 from artemis.proactivity.models import Commitment
 
-
 # ─── helpers ────────────────────────────────────────────────────────────────
 
 _OWNER_ID = 42
@@ -263,6 +262,7 @@ async def test_followup_candidates_status_active_filter() -> None:
     'proposed' commitments are structurally excluded.
     """
     from sqlalchemy.dialects import postgresql
+
     from artemis.proactivity.repository import list_commitment_followup_candidates
 
     active_c = _make_commitment(id=2, status="active")

@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from artemis.memory.schemas import Scope, ScopeKind
+from artemis.memory.schemas import Scope
 
 _logger = logging.getLogger(__name__)
 
