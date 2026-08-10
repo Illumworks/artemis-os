@@ -13,6 +13,7 @@ Acceptance criteria:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -214,7 +215,7 @@ async def test_jon_replied_in_thread_false() -> None:
 
 async def test_gmail_thread_awaiting_reply_surfaces(db_session: AsyncSession) -> None:
     """A thread where someone else sent the last message should surface."""
-    creds = {
+    creds: dict[str, object] = {
         "access_token": "ya29-fake",
         "refresh_token": "refresh-fake",
         "client_id": "client-id",
@@ -569,7 +570,12 @@ async def test_radar_section_appended_to_brief(db_session: AsyncSession) -> None
 
     from artemis.proactivity.scheduler import _format_brief_for_slack
 
-    brief: dict = {"summary": "A slow day.", "highlights": [], "priorities": [], "next_actions": []}
+    brief: dict[str, Any] = {
+        "summary": "A slow day.",
+        "highlights": [],
+        "priorities": [],
+        "next_actions": [],
+    }
     base_text = _format_brief_for_slack(brief, delivery_date=date.today())
 
     nudge = format_radar_nudge([_make_item("slack_mention", "alice", "#general")])
