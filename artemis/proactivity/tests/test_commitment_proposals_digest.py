@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -305,7 +305,7 @@ async def test_track_all_approves_all() -> None:
 
     approved: list[int] = []
 
-    async def fake_approve(sess: Any, commitment_id: int) -> MagicMock:
+    async def fake_approve(sess: Any, commitment_id: int) -> Commitment:
         approved.append(commitment_id)
         c = _make_commitment(id=commitment_id, status="active")
         return c
@@ -339,7 +339,7 @@ async def test_track_nums_comma_separated_approves_selected() -> None:
 
     approved: list[int] = []
 
-    async def fake_approve(sess: Any, commitment_id: int) -> MagicMock:
+    async def fake_approve(sess: Any, commitment_id: int) -> Commitment:
         approved.append(commitment_id)
         return _make_commitment(id=commitment_id, status="active")
 
@@ -374,7 +374,7 @@ async def test_track_nums_space_separated_approves_selected() -> None:
 
     approved: list[int] = []
 
-    async def fake_approve(sess: Any, commitment_id: int) -> MagicMock:
+    async def fake_approve(sess: Any, commitment_id: int) -> Commitment:
         approved.append(commitment_id)
         return _make_commitment(id=commitment_id, status="active")
 
@@ -428,7 +428,7 @@ async def test_track_single_item_singular_grammar() -> None:
     crumb = _make_breadcrumb(commitment_map={"1": 101})
     session = AsyncMock()
 
-    async def fake_approve(sess: Any, commitment_id: int) -> MagicMock:
+    async def fake_approve(sess: Any, commitment_id: int) -> Commitment:
         return _make_commitment(id=commitment_id, status="active")
 
     with (
