@@ -201,6 +201,7 @@ async def test_fire_okr_checkin_proposal_includes_cited_krs(db_session: AsyncSes
         await _fire_okr_checkin()
 
     assert mock_post_dm.await_count == 1
+    assert mock_post_dm.await_args is not None
     slack_text = str(mock_post_dm.await_args.kwargs["text"])
     # Digest-based opener: the in-motion KR should appear by name and progress.
     assert "Increase pipeline coverage" in slack_text

@@ -195,6 +195,7 @@ async def test_followups_dm_artemis_and_skip_snoozed_done_and_dedupe(
     assert second.sent == 0
     post_dm_mock.assert_awaited_once()
     args = post_dm_mock.await_args
+    assert args is not None
     assert args.kwargs["user"] == "U_JON"
     assert "done" in args.kwargs["text"]
     assert "snooze" in args.kwargs["text"]
@@ -233,6 +234,7 @@ async def test_followups_route_marketing_to_callie_channel(
     assert summary.sent == 1
     post_message_mock.assert_awaited_once()
     args = post_message_mock.await_args
+    assert args is not None
     assert args.kwargs["channel"] == "C_MARKETING"
     assert f"C{commitment.id}" in args.kwargs["text"]
 

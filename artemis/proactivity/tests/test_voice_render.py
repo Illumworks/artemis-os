@@ -490,6 +490,7 @@ async def test_fire_morning_brief_uses_voice_text_when_available(db_session: Any
         await _fire_morning_brief()
 
     assert mock_dm.await_count == 1
+    assert mock_dm.await_args is not None
     delivered = str(mock_dm.await_args.kwargs["text"])
     assert delivered == voice_text
 
@@ -543,6 +544,7 @@ async def test_fire_morning_brief_falls_back_when_voice_fails(db_session: Any) -
         await _fire_morning_brief()
 
     assert mock_dm.await_count == 1
+    assert mock_dm.await_args is not None
     delivered = str(mock_dm.await_args.kwargs["text"])
     # Falls back to plain rendering — should contain labeled section content.
     assert "Morning brief" in delivered
@@ -591,6 +593,7 @@ async def test_fire_okr_checkin_uses_voice_text_when_available(db_session: Any) 
         await _fire_okr_checkin()
 
     assert mock_dm.await_count == 1
+    assert mock_dm.await_args is not None
     delivered = str(mock_dm.await_args.kwargs["text"])
     assert delivered == voice_text
 
@@ -635,6 +638,7 @@ async def test_fire_okr_checkin_falls_back_when_voice_fails(db_session: Any) -> 
         await _fire_okr_checkin()
 
     assert mock_dm.await_count == 1
+    assert mock_dm.await_args is not None
     delivered = str(mock_dm.await_args.kwargs["text"])
     # Plain fallback — should mention word-dump.
     assert "word-dump" in delivered.lower() or "Friday" in delivered

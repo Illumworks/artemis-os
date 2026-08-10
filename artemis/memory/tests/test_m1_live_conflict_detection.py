@@ -182,8 +182,8 @@ async def test_apply_consolidation_detects_rule_based_conflict(
     # ── ASSERT DB EFFECTS ──────────────────────────────────────────────────────
 
     # 1. A memory_conflicts row must exist for (obs_a, new_obs_b)
-    result = await db_session.execute(select(MemoryConflict))
-    conflicts = list(result.scalars())
+    conflict_result = await db_session.execute(select(MemoryConflict))
+    conflicts = list(conflict_result.scalars())
     assert len(conflicts) >= 1, (
         f"Expected at least one conflict row; got none. "
         f"obs_a_id={obs_a_id}, new_obs_b.id={new_obs_b.id}"
@@ -200,10 +200,10 @@ async def test_apply_consolidation_detects_rule_based_conflict(
     assert matching[0].conflict_type == "incompatible_values"
 
     # 3. obs A should still be active (confidence_delta < 0.3 for auto-supersede)
-    result = await db_session.execute(
+    obs_result = await db_session.execute(
         select(MemoryObservation).where(MemoryObservation.id == obs_a_id)
     )
-    obs_a_after = result.scalar_one()
+    obs_a_after = obs_result.scalar_one()
     assert obs_a_after.superseded_by is None, (
         "obs A should NOT be auto-superseded when confidence_delta is too small"
     )
@@ -280,20 +280,20 @@ async def test_apply_consolidation_detects_semantic_conflict_via_live_path(
     # ── ASSERT DB EFFECTS ──────────────────────────────────────────────────────
 
     # 1. obs A must be superseded by new_obs_b
-    result = await db_session.execute(
+    obs_result = await db_session.execute(
         select(MemoryObservation).where(MemoryObservation.id == obs_a_id)
     )
-    obs_a_after = result.scalar_one()
+    obs_a_after = obs_result.scalar_one()
     assert obs_a_after.superseded_by == new_obs_b.id, (
         f"HEADLINE: obs A (id={obs_a_id}) should be superseded by new_obs_b "
         f"(id={new_obs_b.id}), got superseded_by={obs_a_after.superseded_by}"
     )
 
     # 2. A semantic_contradiction conflict row must exist
-    result = await db_session.execute(
+    conflict_result = await db_session.execute(
         select(MemoryConflict).where(MemoryConflict.conflict_type == "semantic_contradiction")
     )
-    sem_conflicts = list(result.scalars())
+    sem_conflicts = list(conflict_result.scalars())
     assert len(sem_conflicts) >= 1, "Expected at least one semantic_contradiction row"
 
     pair = {sem_conflicts[0].observation_a_id, sem_conflicts[0].observation_b_id}
@@ -378,16 +378,16 @@ async def test_apply_consolidation_additive_facts_no_conflict(
 
     # ── ASSERT: zero conflicts, obs A still active ──────────────────────────
 
-    result = await db_session.execute(select(MemoryConflict))
-    conflicts = list(result.scalars())
+    conflict_result = await db_session.execute(select(MemoryConflict))
+    conflicts = list(conflict_result.scalars())
     assert len(conflicts) == 0, (
         f"PRECISION: No conflict rows expected for additive facts; got {len(conflicts)}"
     )
 
-    result = await db_session.execute(
+    obs_result = await db_session.execute(
         select(MemoryObservation).where(MemoryObservation.id == obs_a_id)
     )
-    obs_a_after = result.scalar_one()
+    obs_a_after = obs_result.scalar_one()
     assert obs_a_after.superseded_by is None, (
         "PRECISION: obs A should remain active for additive (non-contradictory) facts"
     )
@@ -446,17 +446,17 @@ async def test_apply_consolidation_temporal_refinement_no_conflict(
             )
 
     # No conflict rows expected
-    result = await db_session.execute(select(MemoryConflict))
-    conflicts = list(result.scalars())
+    conflict_result = await db_session.execute(select(MemoryConflict))
+    conflicts = list(conflict_result.scalars())
     assert len(conflicts) == 0, (
         f"PRECISION: Temporal refinement (REFINE verdict) should not produce conflict "
         f"rows; got {len(conflicts)}"
     )
 
-    result = await db_session.execute(
+    obs_result = await db_session.execute(
         select(MemoryObservation).where(MemoryObservation.id == obs_a_id)
     )
-    obs_a_after = result.scalar_one()
+    obs_a_after = obs_result.scalar_one()
     assert obs_a_after.superseded_by is None, (
         "PRECISION: obs A should not be superseded by a temporal refinement"
     )

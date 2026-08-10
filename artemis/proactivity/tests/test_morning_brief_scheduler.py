@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
@@ -110,7 +111,7 @@ async def test_fire_morning_brief_generates_and_delivers_once(db_session: AsyncS
 
 def test_format_brief_for_slack_lints_tables_and_banned_chars() -> None:
     delivery_date = datetime(2026, 6, 11, tzinfo=ZoneInfo("America/New_York")).date()
-    brief = {
+    brief: dict[str, Any] = {
         "summary": "| Topic | Note |\n| --- | --- |\n| Pipeline | Needs review |\n\nShip it — today 😀",
         "top_priorities": [],
         "waiting_on_you": [],

@@ -12,6 +12,7 @@ Ship-gate tests:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -191,7 +192,12 @@ async def test_dismissal_record_is_preserved(
     assert summary_reloaded.action_items is not None
     assert len(summary_reloaded.action_items) == 1
     # The raw action item text still lives in the JSONB column.
-    assert summary_reloaded.action_items[0]["text"] == _ACTION_TEXT
+    # NOTE: MeetingSummary.action_items is declared Mapped[dict[str, Any] | None]
+    # in artemis/meetings/models.py, but every write path (this test included, and
+    # meetings/summarizer.py) actually stores a *list* of dicts — the model's type
+    # annotation has drifted from the real column shape. Out of this domain's
+    # scope (artemis/memory + artemis/proactivity only) to fix; flagged in the PR.
+    assert summary_reloaded.action_items[0]["text"] == _ACTION_TEXT  # type: ignore[index]
 
 
 # ── 4. done and snooze remain DISTINCT from dismiss ───────────────────────────
@@ -203,7 +209,7 @@ async def test_done_and_snooze_distinct_from_dismiss(
     """done → status='done'; snooze → status='snoozed'; dismiss → status='dismissed'."""
     now = datetime(2026, 6, 13, 15, 0, tzinfo=UTC)
 
-    def _make_commitment(source_id: str) -> dict:
+    def _make_commitment(source_id: str) -> dict[str, Any]:
         return {
             "source_type": "granola_meeting",
             "source_id": source_id,

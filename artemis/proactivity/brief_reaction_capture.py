@@ -127,7 +127,9 @@ async def persist_brief_manifest(session: Any, brief: dict[str, Any]) -> None:
         return
 
 
-async def _load_recent_manifest(session: Any, max_age_hours: int = 36) -> list[dict] | None:
+async def _load_recent_manifest(
+    session: Any, max_age_hours: int = 36
+) -> list[dict[str, Any]] | None:
     """Load the newest brief manifest within ``max_age_hours``.
 
     Mirrors ``brief_reactions.read_engagement_weights``: FTS search the
@@ -154,7 +156,7 @@ async def _load_recent_manifest(session: Any, max_age_hours: int = 36) -> list[d
         )
 
         best_ts: datetime | None = None
-        best_items: list[dict] | None = None
+        best_items: list[dict[str, Any]] | None = None
 
         for obs in results:
             content = obs.content or ""
@@ -201,7 +203,7 @@ async def _load_recent_manifest(session: Any, max_age_hours: int = 36) -> list[d
 # ── Reaction capture from a reply ────────────────────────────────────────────────
 
 
-def _build_classify_prompt(items: list[dict], message_text: str) -> str:
+def _build_classify_prompt(items: list[dict[str, Any]], message_text: str) -> str:
     """Build the strict-JSON classification prompt for the reply."""
     lines: list[str] = [
         "You classify how Jon reacted to specific items from his morning brief.",
@@ -230,7 +232,7 @@ def _build_classify_prompt(items: list[dict], message_text: str) -> str:
     return "\n".join(lines)
 
 
-def _parse_classify_json(raw: str) -> list[dict]:
+def _parse_classify_json(raw: str) -> list[dict[str, Any]]:
     """Parse the model's JSON reply robustly (strip code fences, tolerate junk).
 
     Returns a list of dicts, or [] on any parse failure.
@@ -327,8 +329,13 @@ async def capture_brief_reactions_from_message(
             reaction = str(d.get("reaction", "")).strip().lower()
             if reaction not in {"engage", "mute"}:
                 continue
+            # d.get("index") is Any | None — a missing/malformed "index" key means
+            # the model omitted it; skip rather than crash int(None).
+            index_value = d.get("index")
+            if index_value is None:
+                continue
             try:
-                idx = int(d.get("index"))
+                idx = int(index_value)
             except (TypeError, ValueError):
                 continue
             # 1-based index into the manifest; ignore out-of-range / duplicates.
