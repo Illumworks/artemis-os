@@ -293,7 +293,11 @@ async def expire_old_signals(session: AsyncSession, retention_days: int) -> int:
         text("DELETE FROM screentime_signals WHERE discovered_at < :cutoff"),
         {"cutoff": cutoff},
     )
-    return int(result.rowcount or 0)
+    # `session.execute(text(...))` is statically typed as the base `Result`,
+    # but a DELETE executed this way returns a `CursorResult` at runtime, which
+    # is where `rowcount` actually lives. Matches the getattr(...) idiom used
+    # for the same gap elsewhere (floating_artemis/repository.py, etc.).
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def purge_screentime_data(session: AsyncSession) -> dict[str, str]:

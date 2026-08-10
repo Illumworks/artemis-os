@@ -6,6 +6,17 @@ import re
 
 # ── Markdown → Slack mrkdwn converter ────────────────────────────────────────
 
+# Protected-span splitter regex, shared across calls to `md_to_mrkdwn`.
+# Protected = fenced code blocks, inline code, existing Slack link spans (<…>).
+# Transformations only apply to unprotected segments.
+_PROTECTED_RE = re.compile(
+    r"```[\s\S]*?```"  # fenced code block
+    r"|`[^`\n]+`"  # inline code
+    r"|<[^>]+\|[^>]+>"  # existing Slack link  <url|label>
+    r"|<https?://[^>]+>",  # bare Slack URL  <https://…>
+    re.MULTILINE,
+)
+
 
 def md_to_mrkdwn(text: str) -> str:
     """Convert standard Markdown to Slack mrkdwn syntax.
@@ -36,18 +47,10 @@ def md_to_mrkdwn(text: str) -> str:
         return text
 
     # ── Protected-span splitter ────────────────────────────────────────────────
-    # We split the text into alternating unprotected / protected segments.
-    # Protected = fenced code blocks, inline code, existing Slack link spans (<…>).
-    # Transformations only apply to unprotected segments.
-    _PROTECTED_RE = re.compile(
-        r"```[\s\S]*?```"  # fenced code block
-        r"|`[^`\n]+`"  # inline code
-        r"|<[^>]+\|[^>]+>"  # existing Slack link  <url|label>
-        r"|<https?://[^>]+>",  # bare Slack URL  <https://…>
-        re.MULTILINE,
-    )
-
-    segments: list[str] = []
+    # We split the text into alternating unprotected / protected segments,
+    # using the module-level `_PROTECTED_RE`. Transformations only apply to
+    # unprotected segments.
+    segments: list[tuple[str, str]] = []
     cursor = 0
     for m in _PROTECTED_RE.finditer(text):
         segments.append(("free", text[cursor : m.start()]))
