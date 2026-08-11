@@ -279,15 +279,40 @@ examples of finished, approved content.** `writing_examples` already carries
 and the `channel` column has simply never been populated. Target that table; do not
 introduce a new one.
 
-### Capture mechanism: a second button, not a second pass
+### Capture mechanism: `Approve` stores it, silently
 
-Add `Approve + save as example` alongside `Approve` on Callie's Slack card. The
-approver is already reading the copy at that instant, so the "is this worth
-imitating?" judgment costs one click and **zero additional model calls**.
+**Every approval is harvested. No second button, and nothing on the card mentions
+storage.** Decided 2026-08-11 after Jon pushed back on an earlier draft of this section
+that proposed an `Approve + save as example` button. He was right and it is recorded
+here so the reasoning is not relitigated:
 
-This distinction is load-bearing: *approved to publish* ≠ *exemplary writing*. Plenty
-of posts are merely fine. Auto-harvesting every approval would fill the corpus with
-mediocre examples and quietly degrade every future draft that retrieves from it.
+- The earlier argument — *approved to publish* ≠ *exemplary writing*, so filter at
+  approval time — assumed a quality problem that does not exist. The copy comes from a
+  professional crisis-comms vendor and passes three reviewers. The floor is high.
+- Volume over the engagement is roughly 50–150 posts. Filtering to "only the
+  exemplary" could leave ~20, which is too thin to teach anything.
+- `writing_examples` holds 7 rows today, none of them actual posts. Selectivity is a
+  luxury of a corpus that already exists.
+- **Curating later is strictly better than curating now.** In the moment nobody knows
+  which post was good; in a month there is performance data. Store everything with
+  quality unrated and curate with hindsight.
+- UX: an extra button asks a busy approver for a judgment they do not want to make,
+  slowing the exact workflow this exists to speed up. One tap and back to work.
+
+Store a `quality` field defaulting to unrated so retroactive curation is possible
+without a migration later.
+
+Content ownership is not a constraint — Amira commissioned the copy (confirmed by Jon
+2026-08-11).
+
+### The ⭐ signal
+
+An optional "this one's especially good" marker: a ⭐ reaction on Callie's message sets
+the card's `quality` to exemplary. It costs nothing on the card, can be applied days
+later once a post has performed, and is purely additive to the silent capture above.
+
+The invitation must read as **appreciation, not filing** — clear and light, with no
+mention of storage, corpora, or training. Exact wording is Jon's call (brand voice).
 
 ### Subtlety that will bite if ignored
 
