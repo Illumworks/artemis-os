@@ -30,6 +30,10 @@ from artemis.builder.routes import router as builder_router
 from artemis.config import assert_production_auth_config, settings
 from artemis.connectors.routes import agents_router as connectors_agents_router
 from artemis.connectors.routes import router as connectors_router
+from artemis.crisis_content.poller import (
+    start_crisis_content_scheduler,
+    stop_crisis_content_scheduler,
+)
 from artemis.integrations.token_refresh.scheduler import (
     start_token_refresh_scheduler,
     stop_token_refresh_scheduler,
@@ -169,6 +173,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # channel posting is wired here; that stays off by owner decision unless
     # settings.screentime_report_channel is explicitly set).
     start_screentime_scheduler()
+    # Start the crisis-comms content-approval doc poller (CCA4). DM-to-Jon only
+    # today -- see artemis/crisis_content/poller.py and
+    # docs/crisis-content-approval-pipeline.md.
+    start_crisis_content_scheduler()
     # Recover any Argus research requests orphaned by a previous process restart.
     # Non-blocking: fires background tasks and returns immediately.
     from artemis.floating_artemis.tools.argus_tools import recover_pending_requests
@@ -189,6 +197,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_memory_scheduler()
         stop_proactivity_scheduler()
         stop_screentime_scheduler()
+        stop_crisis_content_scheduler()
 
 
 app = FastAPI(
