@@ -245,10 +245,72 @@ trap in `CLAUDE.md`). Every one of these alerts Jon rather than going quiet:
   card with copy inline and Approve / Request-changes, both routes, any-one quorum.
 - **C — write-back + notify.** Doc text line, Drive `@mention` comment, Gmail
   fallback, and the authorization widening below.
+- **D — harvest approved copy into Writing Studio.** See below. Cheap only if built
+  alongside C; expensive as a later backfill.
 
 Ship A→B and run it on real posts before starting C. Notify-only is genuinely useful
 on its own; writing into a doc we do not own is the one step that can damage someone
 else's work.
+
+## Slice D — harvest approved copy into Writing Studio
+
+**Why it belongs here and not in a later project:** at the moment of approval the
+pipeline already holds the final copy, the platform, the topic, the approver, and the
+asset link. Capturing it costs one insert. Reconstructing the same corpus after the
+vendor engagement ends means re-reading and re-classifying every post, which is a
+genuine cost in calls and tokens for information we already had in hand.
+
+### The existing substrate — do not build a parallel store
+
+State read 2026-08-11:
+
+| Table | Rows | What it actually holds |
+|---|---|---|
+| `writing_examples` | 7 | **All** `example_type` `reference`/`template` — glossary, proof pack, claims register, message compass. **`channel` is NULL on every row.** |
+| `writing_training_candidates` | 41 | 38 `rule`/`proposed` (Angela's review queue), 3 decided |
+| `writing_sources` | 9 | Reference docs only (`master_prompt`, `glossary`, `claims_register`, …) |
+| `writing_profiles` | 1 | `Amira Marketing Voice` — "Shared writing profile for Angela and the marketing team" |
+| `writing_rules` | 3 | Standing guidance |
+| `floating_artemis_voice_corpus` | 0 | Unused |
+
+The gap is precise: **Writing Studio has reference material and rules but zero
+examples of finished, approved content.** `writing_examples` already carries
+`example_type`, `asset_type`, `channel`, and `body` — it is shaped for exactly this
+and the `channel` column has simply never been populated. Target that table; do not
+introduce a new one.
+
+### Capture mechanism: a second button, not a second pass
+
+Add `Approve + save as example` alongside `Approve` on Callie's Slack card. The
+approver is already reading the copy at that instant, so the "is this worth
+imitating?" judgment costs one click and **zero additional model calls**.
+
+This distinction is load-bearing: *approved to publish* ≠ *exemplary writing*. Plenty
+of posts are merely fine. Auto-harvesting every approval would fill the corpus with
+mediocre examples and quietly degrade every future draft that retrieves from it.
+
+### Subtlety that will bite if ignored
+
+Capture the copy **as it reads at approval time**, by re-reading the card — not the
+text captured when the notification fired. Jen can and will edit copy between "Ready"
+and someone clicking approve, and the corpus must hold what was actually approved.
+
+Follow the `content_hash` dedup pattern already used by `writing_sources`, so
+re-approval or a re-parse cannot duplicate a row.
+
+### Open decision — Jon's call (voice/brand judgment)
+
+The single existing profile is `Amira Marketing Voice`, and its material is
+whitepaper/enablement register. Social posts are a different voice. Because
+`writing_rules` are **profile-scoped**, mixing them means social conventions ("Link in
+bio", hashtags, character limits) would leak into document drafting guidance.
+
+Recommendation: a separate `Amira Social` profile, with `channel` distinguishing
+platforms inside it. Not yet decided.
+
+Also unresolved: whether Writing Studio retrieval over `writing_examples` is semantic
+(needs an embedding on insert) or a profile-scoped fetch-all. With 7 rows today it may
+well be the latter; confirm before assuming an embedding is required.
 
 ## Authorization change required
 
