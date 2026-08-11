@@ -345,8 +345,35 @@ B2 must pick one:
 2. **URL buttons into the Artemis web UI** — works today with no Slack config, matches
    how approvals already happen, but costs the approver a page load instead of a tap.
 
-Option 1 is the better fit for the "we are busy, approve from Slack" premise this
-pipeline exists to serve. Not yet decided — it is a config/cutover moment for Jon.
+**Decided 2026-08-11: option 1.** Build the interactivity endpoint.
+
+Smaller than it first appeared — the pieces already exist:
+
+- `_verify_slack_signature` (`artemis/routes/integrations_slack_events.py:604`) already
+  does HMAC-SHA256 with timestamp freshness and `hmac.compare_digest`. Reuse it; do not
+  write a second verifier.
+- Signing secrets resolve per agent via `artemis/integrations/config_resolver.py`, with
+  a `SLACK_SIGNING_SECRET` env fallback. Already populated.
+
+Because Slack allows **one** Interactivity Request URL per app and this workspace runs
+multiple bots (`/events/callie`, `/events/kai`), the endpoint is per-agent to match:
+
+```
+POST /api/integrations/slack/interactivity/{agent_id}
+```
+
+Callie's Slack app therefore points at:
+
+```
+https://app.artemisos.me/api/integrations/slack/interactivity/callie
+```
+
+Setting that URL in the Slack app config is Jon's action — it cannot be done from this
+repo. Until it is set, the endpoint is live and unit-tested but no click ever reaches it.
+
+This is slice B2a (`briefs/cca3-slack-interactivity.md`), split out ahead of Callie's
+card because it is security-sensitive shared infrastructure and it repairs the existing
+dead buttons in the human-gate flow at the same time.
 
 ### Subtlety that will bite if ignored
 
