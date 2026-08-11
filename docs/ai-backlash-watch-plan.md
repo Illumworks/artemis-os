@@ -99,6 +99,55 @@ Not a new system — a second **lane** through the existing pipeline.
   about that bill / that article" and extend it if not — this is the "expandable" half of Jon's
   requirement and it needs no new surface.
 
+### Stream D — State risk scoring: "get smarter over time" (after A and B; the strategic half)
+
+Jon's ask: something that gets smarter and **narrows down where to focus**, rather than 51 states
+of undifferentiated feed. This is the piece that turns a crisis tool into the market-strategy
+asset (goal 2).
+
+**The key asset is that NM is a labeled example.** We know the outcome. So we can ask the only
+question that matters: *what did NM look like three and six months before it broke?* — then look
+for that shape elsewhere.
+
+**Design principles, in priority order:**
+
+1. **Transparent beats clever.** Every state score must decompose into "these four signals drove
+   it," with the source links. A number Jon cannot interrogate is useless in a crisis and will
+   not be trusted twice. No opaque model.
+2. **Hand-tuned first, learned later.** v1 is an explicit weighted score over components we can
+   name. Do not reach for ML.
+3. **Back-test before believing.** Run the score over NM's own history. If it does not rise
+   ahead of the crisis, the components are wrong — fix them before shipping the number. This is
+   the honest validation and it is available today.
+
+**Candidate components** (each independently visible):
+- Signal **velocity** — rate of new items, not just volume. Acceleration is the tell.
+- **Stance trend** — is the unfavorable share rising?
+- **Legislative movement** — bills introduced → advancing → passed, weighted by stage.
+- **Tier-1 competitor removals in-state** — per the ICP tiering, a Closest-ICP competitor being
+  pulled is the strongest leading indicator we have that Amira is next.
+- **Escalation level** — district → county → state. NM went statewide; that jump is the signal.
+- **Amira's own exposure** — a state with 40 Amira districts matters more than one with 2.
+
+⚠ **Dependency:** that last component needs Amira's customer footprint, which is the same
+Salesforce/customer-list blocker that has stalled the board peer-validation scout. Build the
+score so it works without it and improves with it — do not block on Salesforce.
+
+**How it actually gets smarter (the honest version):**
+
+- **n=1 today.** One labeled example is a hypothesis, not a model. Say so plainly rather than
+  implying prediction.
+- **Human labels are the real fuel.** When Jon or Josh marks a state "this is real" or "false
+  alarm," record it. The reaction-learning mechanism from `callie_push` already does exactly this
+  shape (reasoned-reject teaches, silent ignore teaches nothing) — reuse it rather than inventing
+  a second one.
+- **Re-tune as states resolve.** Each state that moves — or conspicuously does not — is another
+  label. The score improves with evidence, not with cleverness.
+
+**What it produces:** a ranked watchlist — "these 5 states are heating up, here is why, here is
+what changed this week" — which is the "narrow down where to focus" Jon asked for, and it feeds
+straight into the daily read as its top section.
+
 ### Stream C — Team-visible surface (Ares's project)
 
 The heat map plus per-item detail, as a standalone app reading the database. See
@@ -118,10 +167,37 @@ wait on an agent that has never completed a task — you would be finding out du
 The surface (Stream C) is standalone, visual, judgeable in ten seconds, multi-session, and
 carries zero production risk. Both halves are real work; only one is urgent.
 
-## Open questions
+## The watch list (from Jon's "Amira Competitors" sheet, 2026-08-11)
 
-1. **The competitor list.** Who exactly beyond iReady — Lexia, Istation, Amplify, HMH? Josh or
-   Mark likely have the canonical set.
+Source: `docs.google.com/spreadsheets/d/18uvVHqoSUdcnGUqYjdX9jJ73RgvBe7FupaeWOmg-2PA`
+
+The sheet's **ICP Overlap** column is the monitoring priority — a removal at a Closest-ICP
+competitor is a leading indicator for Amira in a way that a Less-Aligned one is not.
+
+**Tier 1 — Closest ICP Match** (watch hardest; their removals predict ours)
+i-Ready (Curriculum Associates) · Amplify · Renaissance (Star Reading) · Lexia Learning ·
+Magic School AI · Brisk Teaching
+
+**Tier 2 — Moderate ICP Alignment**
+Imagine Learning · FastBridge / Acadience
+
+**Tier 3 — Less Aligned ICP**
+Multitudes · SchoolAI · Newsela · IXL · Edmentum · Savvas · EPS · Amplify CKLA · Khanmigo
+
+⚠ Rows 12–13 were truncated in the screenshot — confirm the full membership of the
+"Newsela / IXL / Edmentum / Savvas" and "EPS / Amplify CKLA / Khanmigo" groups against the sheet
+before seeding.
+
+**Tier 0 — the left-field lane (Mark's point).** Mark counts general **AI companies** as
+competitors: they could ship learning software and blindside Amira from outside the ed-tech
+category. Watch OpenAI, Anthropic, Google/Gemini, Microsoft/Copilot, Meta and Khan Academy —
+but **only** on education-entry intent (`k-12`, `schools`, `district`, `literacy`, `reading`,
+`teacher`, `curriculum`), never on general AI news, or the lane will drown everything else.
+
+This is cheap to add and genuinely different from the others: Tiers 1–3 answer *"is the backlash
+reaching us?"*, Tier 0 answers *"is someone about to enter our market?"*
+
+## Open questions
 2. **Which states after NM?** Watching all 51 for brand hits is cheap. If there is a known
    next-most-likely set, they warrant board + procurement coverage too, which costs more.
 3. **Social.** The agency owns social, and coworkers are finding posts there. Do we capture it
