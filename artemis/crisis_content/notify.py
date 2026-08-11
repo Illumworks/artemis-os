@@ -37,15 +37,29 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "TESTING_LINE",
+    "TESTING_LINE_ASSET",
+    "testing_line_for_route",
     "render_char_count_line",
     "render_transition_message",
     "post_transition_card",
 ]
 
-# Kept verbatim per the brief -- this is the guard against anyone mistaking
-# testing traffic for the live workflow. Stays on every card until routing is
-# deliberately flipped (a future slice).
+# The guard against anyone mistaking testing traffic for the live workflow.
+# Stays on every card until routing is deliberately flipped (a future slice).
+#
+# Route-specific on purpose: per the routing table in
+# docs/crisis-content-approval-pipeline.md, Jon approves visuals and the three
+# copy approvers never see the asset route. A single shared line claiming
+# "Live: Angela, Hannah, Jaclyn" on an asset card would state the opposite of
+# the actual design.
 TESTING_LINE = "⚠️ Testing — routed to you only. Live: Angela, Hannah, Jaclyn."
+TESTING_LINE_ASSET = "⚠️ Testing — routed to you only. Live: you (visuals)."
+
+
+def testing_line_for_route(route: str) -> str:
+    """The testing footer for one route. See TESTING_LINE above for why."""
+    return TESTING_LINE_ASSET if route == "asset" else TESTING_LINE
+
 
 _DOC_URL = f"https://docs.google.com/document/d/{TARGET_DOCUMENT_ID}/edit"
 
@@ -146,7 +160,7 @@ def render_transition_message(transition: Transition) -> str:
 
     lines.append(f"Open the doc: {_DOC_URL}")
     lines.append("")
-    lines.append(TESTING_LINE)
+    lines.append(testing_line_for_route(transition.route))
     return "\n".join(lines)
 
 

@@ -464,3 +464,26 @@ async def test_post_transition_card_never_posts_to_a_channel(
     assert "C0BM9TL63TL" not in text
     assert notify.TESTING_LINE in text
     assert "action_id" not in text  # no interactive buttons
+
+
+def test_testing_line_is_route_specific() -> None:
+    """An asset card must not claim the copy approvers are the live audience.
+
+    Per the routing table in docs/crisis-content-approval-pipeline.md, Jon
+    approves visuals and Angela/Hannah/Jaclyn never see the asset route. A
+    single shared footer would tell the reader the opposite of the design.
+    """
+    from artemis.crisis_content.notify import (
+        TESTING_LINE,
+        TESTING_LINE_ASSET,
+        testing_line_for_route,
+    )
+
+    assert testing_line_for_route("copy") == TESTING_LINE
+    assert testing_line_for_route("asset") == TESTING_LINE_ASSET
+    assert "Angela" in TESTING_LINE
+    assert "Angela" not in TESTING_LINE_ASSET
+    # Both must keep the guard against mistaking testing traffic for live.
+    for line in (TESTING_LINE, TESTING_LINE_ASSET):
+        assert "Testing" in line
+        assert "routed to you only" in line
