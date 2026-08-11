@@ -153,6 +153,45 @@ class Settings(BaseSettings):
         ),
     )
 
+    enablement_library_channel_id: str = Field(
+        default="C0BB17EJLKC",
+        validation_alias=AliasChoices(
+            "ARTEMIS_ENABLEMENT_LIBRARY_CHANNEL_ID",
+            "ENABLEMENT_LIBRARY_CHANNEL_ID",
+        ),
+        description=(
+            "Slack channel ID for #enablement-library, where Kai answers and where "
+            "flag_catalog_gap posts. Empty = the flag tool is disabled (fail-closed)."
+        ),
+    )
+    kai_action_authorized_user_ids: str = Field(
+        default="U09F3EPJXSQ,U07CHT0S7UK",
+        validation_alias=AliasChoices(
+            "ARTEMIS_KAI_ACTION_AUTHORIZED_USER_IDS",
+            "KAI_ACTION_AUTHORIZED_USER_IDS",
+        ),
+        description=(
+            "Comma-separated Slack user IDs permitted to trigger Kai's ONE "
+            "side-effecting tool (flag_catalog_gap). Owner decision 2026-08-10: "
+            "Jon Fila (U09F3EPJXSQ) and Missy Dahlberg (U07CHT0S7UK) only; everyone "
+            "else is information-only. Resolved server-side from the Slack event's "
+            "user id, never from message text. Empty = nobody is authorized "
+            "(fail-closed)."
+        ),
+    )
+    kai_catalog_owner_user_ids: str = Field(
+        default="U07926XP0FR,U07CHT0S7UK",
+        validation_alias=AliasChoices(
+            "ARTEMIS_KAI_CATALOG_OWNER_USER_IDS",
+            "KAI_CATALOG_OWNER_USER_IDS",
+        ),
+        description=(
+            "Comma-separated Slack user IDs @-mentioned on a flag_catalog_gap post: "
+            "Sara Erickson (U07926XP0FR) and Missy Dahlberg (U07CHT0S7UK), who own "
+            "the enablement catalog. Empty = the gap posts without tagging anyone."
+        ),
+    )
+
     # M1: lossless memory — archive + backup paths and parameters
     archive_dir: Path = Field(
         default=Path.home() / ".artemis" / "archive",

@@ -24,21 +24,32 @@ from artemis.integrations.gmail.tools import register_gmail_tools
 from artemis.integrations.slack.tools import register_slack_tools
 
 
-def _build_kai_tool_registry() -> AuthorizedToolRegistry:
-    """Build Kai's registry: enablement read-only tools ONLY.
+def _build_kai_tool_registry(speaker_id: str | None = None) -> AuthorizedToolRegistry:
+    """Build Kai's registry: three read-only enablement tools + one gap flag.
 
-    Kai (Chiron) is enablement-scoped and read-only.  He gets NO personal
+    Kai (Chiron) is enablement-scoped and near-read-only.  He gets NO personal
     scopes, NO agent:artemis, NO creation/agency tools, NO marketing tools,
-    NO gcal/gmail/slack/builders/system tools.  Only the two enablement
-    retrieval tools are registered.
+    NO gcal/gmail/slack/builders/system tools.
 
-    SECURITY: This function is the sole caller of register_enablement_tools.
-    Do NOT add any other tool registrations here.
+    The ONE exception is ``flag_catalog_gap`` (layer 2), which posts a
+    structured gap note into #enablement-library.  It exists because Kai was
+    already claiming to escalate without any tool behind it (2026-08-10
+    "Escalation filed and noted" — nothing was filed).  Its authorization is
+    enforced from ``speaker_id``, the Slack user id resolved from the inbound
+    event, which is bound into the implementation as a closure variable so tool
+    input cannot spoof it.  ``speaker_id=None`` denies (fail-closed), which is
+    what the resume-after-confirm path gets.
+
+    SECURITY: This function is the sole caller of register_enablement_tools and
+    register_enablement_gap_flag_tool.  Do NOT add any other tool registrations
+    here.
     """
+    from artemis.enablement.actions import register_enablement_gap_flag_tool
     from artemis.enablement.tools import register_enablement_tools
 
     registry = AuthorizedToolRegistry()
     register_enablement_tools(registry)
+    register_enablement_gap_flag_tool(registry, speaker_id=speaker_id)
     return registry
 
 
@@ -89,6 +100,7 @@ def build_authorized_tool_registry(
     available_surfaces: set[str],
     agent_id: str | None = None,
     project_path: str | None = None,
+    speaker_id: str | None = None,
 ) -> AuthorizedToolRegistry:
     """Build the Floating Artemis tool catalog for the given agent and surfaces.
 
@@ -100,17 +112,24 @@ def build_authorized_tool_registry(
     (read_project_file, list_project_dir, git_status, git_diff) are added to
     his registry.  Ignored for all other agents.
 
+    ``speaker_id`` is Kai-only: the Slack user id of whoever is speaking this
+    turn, used to authorize his single side-effecting tool (flag_catalog_gap).
+    Must come from the resolved Slack event, never from model output. Omitting
+    it denies that tool (fail-closed). Ignored for all other agents.
+
     Special case — Kai:
-      Kai's registry contains ONLY search_enablement_assets + get_enablement_asset.
-      He receives none of the unconditional tools (core/builders/system/slack/gcal/gmail).
-      This enforces the security-critical scope_policy: enablement-scoped, read-only.
+      Kai's registry contains ONLY the three read-only enablement tools plus
+      flag_catalog_gap. He receives none of the unconditional tools
+      (core/builders/system/slack/gcal/gmail). This enforces the
+      security-critical scope_policy: enablement-scoped, near-read-only.
     """
     normalized_agent = (agent_id or "").strip().lower()
 
-    # SECURITY: Kai gets only the two read-only enablement retrieval tools.
+    # SECURITY: Kai gets only the three read-only enablement retrieval tools
+    # plus the identity-gated flag_catalog_gap.
     # Early return — no fallthrough to the general tool registrations.
     if normalized_agent == "kai":
-        return _build_kai_tool_registry()
+        return _build_kai_tool_registry(speaker_id=speaker_id)
 
     # SECURITY: Ares gets only owner-private read tools + optional Forge coding tools.
     # Early return — no fallthrough to the general tool registrations.

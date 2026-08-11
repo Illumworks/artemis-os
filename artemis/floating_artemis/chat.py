@@ -376,9 +376,15 @@ async def _get_okr_reconcile_context(
 
 
 def _build_tool_registry(
-    available_surfaces: set[str], agent_id: str | None = None
+    available_surfaces: set[str],
+    agent_id: str | None = None,
+    speaker_id: str | None = None,
 ) -> AuthorizedToolRegistry:
-    return build_authorized_tool_registry(available_surfaces, agent_id=agent_id)
+    return build_authorized_tool_registry(
+        available_surfaces,
+        agent_id=agent_id,
+        speaker_id=speaker_id,
+    )
 
 
 # ── WS event helpers ──────────────────────────────────────────────────────────
@@ -838,7 +844,14 @@ async def handle_turn(
     # ── 5. Build tool registry ────────────────────────────────────────────────
     # M3: pass agent_id into the registry builder so query_memory is gated to
     # this session's agent allowance.
-    auth_registry = _build_tool_registry(available_surfaces, agent_id=session_ctx.agent_id)
+    # speaker_id is the Slack user id resolved from the inbound event. It
+    # authorizes Kai's flag_catalog_gap and is bound into that tool as a closure
+    # value, so tool input cannot spoof the requester. None denies (fail-closed).
+    auth_registry = _build_tool_registry(
+        available_surfaces,
+        agent_id=session_ctx.agent_id,
+        speaker_id=speaker_id,
+    )
 
     from artemis.providers.claude_code.adapter import ClaudeCodeAdapter
 

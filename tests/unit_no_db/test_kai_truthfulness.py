@@ -84,10 +84,32 @@ def test_kai_persona_has_no_escalation_affordance() -> None:
 
 
 def test_kai_persona_forbids_claiming_unavailable_actions() -> None:
+    """The cannot-do list must still name every action Kai lacks.
+
+    'flag' left this list in Stream 2 (flag_catalog_gap is real now). Everything
+    else it claimed on 2026-08-10 is still impossible and still named.
+    """
     prompt = _kai_system_prompt().lower()
-    for capability in ("file", "flag", "escalate", "message", "notify"):
+    for capability in ("file", "log", "submit", "ticket", "message", "notify", "ping"):
         assert capability in prompt, f"persona should name {capability!r} in its cannot-do list"
+    assert "escalation" in prompt
     assert "read-only" in prompt
+
+
+def test_kai_persona_describes_the_flag_tool_accurately() -> None:
+    """The one real action must be described as exactly what it does.
+
+    Overstating it recreates F1 with a tool attached: the requester would still
+    walk away believing a ticket exists.
+    """
+    prompt = _kai_system_prompt()
+    assert "flag_catalog_gap" in prompt
+    lowered = prompt.lower()
+    assert "does not create a ticket" in lowered or "not create a ticket" in lowered
+    assert "only jon and missy" in lowered
+    # Truth condition for claiming success is the tool's own return value.
+    assert "posted" in lowered
+    assert "not_authorized" in lowered
 
 
 def test_kai_persona_points_at_humans_instead_of_promising_handoff() -> None:
@@ -129,20 +151,22 @@ def test_kai_persona_carries_the_row_28_worked_example() -> None:
     assert "Summer School Guide" in prompt
 
 
-# ── Security posture: Stream 1 changes no capability ──────────────────────────
+# ── Security posture ──────────────────────────────────────────────────────────
 
 
-def test_kai_registry_is_still_read_only_after_persona_rewrite() -> None:
-    """Stream 1 is prompt-only. The tool surface must be untouched."""
+def test_kai_registry_is_exactly_three_reads_plus_one_flag() -> None:
+    """Kai's whole surface. Widening this is a security change, not a feature."""
     registry = build_authorized_tool_registry(set(), agent_id="kai")
-    names = {entry.tool.name for entry in registry.all_entries()}
-    assert names == {
+    by_name = {entry.tool.name: entry for entry in registry.all_entries()}
+    assert set(by_name) == {
         "search_enablement_assets",
         "get_enablement_asset",
         "list_enablement_facets",
+        "flag_catalog_gap",
     }
-    for entry in registry.all_entries():
-        assert entry.layer == 1, f"{entry.tool.name} must stay layer 1 (read-only)"
+    for name in ("search_enablement_assets", "get_enablement_asset", "list_enablement_facets"):
+        assert by_name[name].layer == 1, f"{name} must stay layer 1 (read-only)"
+    assert by_name["flag_catalog_gap"].layer == 2
 
 
 # ── Voice corpus (regression: curly quotes parsed to zero phrases) ────────────
