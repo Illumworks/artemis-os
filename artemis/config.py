@@ -560,6 +560,36 @@ class Settings(BaseSettings):
         ),
     )
 
+    crisis_content_poll_interval_minutes: int = Field(
+        default=2,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_POLL_INTERVAL_MINUTES",
+            "CRISIS_CONTENT_POLL_INTERVAL_MINUTES",
+        ),
+        description=(
+            "Poll cadence, in minutes, for the crisis-comms content-approval doc "
+            "poller (CCA4 -- see docs/crisis-content-approval-pipeline.md and "
+            "artemis/crisis_content/poller.py)."
+        ),
+    )
+    crisis_content_notify_destination: str = Field(
+        default="dm_jon",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_NOTIFY_DESTINATION",
+            "CRISIS_CONTENT_NOTIFY_DESTINATION",
+        ),
+        description=(
+            "Where Callie's crisis-content review cards are delivered. Only "
+            "'dm_jon' is implemented in this ship-tonight slice (CCA4) -- channel "
+            "C0BM9TL63TL plus the real copy approvers (Angela/Hannah/Jaclyn) is "
+            "explicitly out of scope here and lands in a later slice. This exists "
+            "as a setting now so that later flip is a config change, not a code "
+            "change; any value other than 'dm_jon' logs an ERROR and falls back "
+            "to 'dm_jon' rather than silently doing nothing or posting somewhere "
+            "unintended."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

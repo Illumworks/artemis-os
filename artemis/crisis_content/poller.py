@@ -1,0 +1,420 @@
+"""Poll loop for the crisis-comms content-approval doc (slice B2b, CCA4).
+
+Every ``settings.crisis_content_poll_interval_minutes`` (default 2), on the
+existing automation-style APScheduler pattern (mirrors
+``artemis/automations/scheduler.py`` / ``artemis/integrations/token_refresh/
+scheduler.py``):
+
+    resolve Jon's personal Google access token
+        -> fetch_crisis_content_export_html
+        -> parse_review_cards
+        -> record_observation (per card, see "Commit granularity" below)
+        -> for each transition: post_transition_card, then mark_notified
+
+Two contracts this module exists to honor, both called out in the brief and
+both easy to get backwards:
+
+1. ``record_observation`` / ``mark_notified`` (``artemis.crisis_content.
+   transitions``) flush but never commit. This module is the caller, so it
+   owns every commit -- see ``_run_poll_tick_locked`` below.
+2. ``mark_notified`` is called only *after* ``post_transition_card`` returns
+   without raising -- never before. A delivery failure must never be
+   recorded as delivered, or the retry this module exists to provide never
+   happens.
+
+Commit granularity (a deliberate departure from a naive "commit once at the
+end of the tick"): each CARD's ``record_observation`` call and its
+transitions are committed -- or rolled back -- as one unit, per card, rather
+than the whole tick's cards sharing one commit. Reasoning: ``_evaluate_route``
+(transitions.py) only detects a transition when the freshly observed status
+differs from the row's *stored* previous status. If a card's status
+advancement were committed while ANOTHER card in the same tick then failed
+to post, the failed card's row would already be durably advanced to the new
+status by the shared commit -- so the next poll would see "no change" and
+never re-detect the failed transition, permanently losing a notification the
+Slack-post-failure retry path exists to guarantee. Per-card commit/rollback
+means a failure on one card cannot swallow a sibling card's retry. The
+trade-off (documented, not hidden): if a single card has two routes (asset
++ copy) both transitioning in the same tick and only one route's post fails,
+rolling back that card also undoes the succeeding route's already-flushed
+``mark_notified`` write, so the next poll may re-send the succeeding route's
+notification once more. A rare double-send is preferred over a silent,
+permanent drop -- the failure mode this whole repo keeps getting burned by
+(see CLAUDE.md's six-store liveness trap).
+
+Failure handling is debounced: alert Jon once on entering a failing state,
+once again on recovery, and stay quiet in between (see ``_enter_failure`` /
+``_maybe_recover``). Overlap is guarded by an in-process ``asyncio.Lock``
+(``_poll_lock``): a slow pass causes the next tick to skip, logged at INFO,
+never to queue behind it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+
+import httpx
+from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
+from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import-untyped]
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+import artemis.db as _db
+from artemis.config import settings
+from artemis.crisis_content.export_client import (
+    TARGET_DOCUMENT_ID,
+    fetch_crisis_content_export_html,
+)
+from artemis.crisis_content.models import ReviewCard
+from artemis.crisis_content.notify import post_transition_card
+from artemis.crisis_content.orm import CrisisContentCard
+from artemis.crisis_content.parser import (
+    NoReviewCardsFoundError,
+    SignInPageError,
+    parse_review_cards,
+)
+from artemis.crisis_content.transitions import mark_notified, record_observation
+from artemis.google_docs.client import GoogleReauthRequiredError, refresh_access_token
+from artemis.google_docs.models import GoogleCredential
+from artemis.google_integration import resolve_google_oauth_client_config
+from artemis.integrations.slack.client import SlackClient
+from artemis.proactivity.commitments import (
+    _get_slack_token_for_agent,
+    _resolve_artemis_dm_recipient,
+)
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "start_crisis_content_scheduler",
+    "stop_crisis_content_scheduler",
+    "get_crisis_content_scheduler",
+    "run_poll_tick",
+]
+
+_scheduler: AsyncIOScheduler | None = None
+_JOB_ID = "crisis_content_poll"
+
+# In-process overlap guard: a slow pass must not run concurrently with the
+# next scheduled tick. asyncio.Lock rather than a DB advisory lock -- simple,
+# sufficient for a single-process deployment (this app runs one uvicorn
+# worker; see settings.uvicorn_workers), and testable without a DB round trip.
+_poll_lock = asyncio.Lock()
+
+
+class _CredentialUnavailableError(Exception):
+    """Jon's personal Google credential is missing or could not be refreshed."""
+
+
+@dataclass
+class _FailureState:
+    is_failing: bool = False
+    reason: str | None = None
+
+
+_failure_state = _FailureState()
+
+
+def reset_poller_state_for_tests() -> None:
+    """Test-only: reset the module-level failure-debounce state between tests."""
+    _failure_state.is_failing = False
+    _failure_state.reason = None
+
+
+# ── Scheduler wiring ─────────────────────────────────────────────────────────
+
+
+def get_crisis_content_scheduler() -> AsyncIOScheduler:
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = AsyncIOScheduler()
+    return _scheduler
+
+
+def start_crisis_content_scheduler() -> None:
+    """Register the poll job and start the scheduler. Called from FastAPI lifespan."""
+    scheduler = get_crisis_content_scheduler()
+    scheduler.add_job(
+        run_poll_tick,
+        trigger=IntervalTrigger(minutes=settings.crisis_content_poll_interval_minutes),
+        id=_JOB_ID,
+        replace_existing=True,
+        max_instances=1,  # defense in depth alongside _poll_lock
+        misfire_grace_time=60,
+    )
+    if not scheduler.running:
+        scheduler.start()
+        logger.info(
+            "crisis_content: poll scheduler started (interval=%d min)",
+            settings.crisis_content_poll_interval_minutes,
+        )
+
+
+def stop_crisis_content_scheduler() -> None:
+    """Stop the scheduler. Called from FastAPI lifespan shutdown."""
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        _scheduler.shutdown(wait=False)
+        logger.info("crisis_content: poll scheduler stopped")
+    _scheduler = None
+
+
+# ── Google credential resolution (mirrors routes/google_docs.py::_valid_access_token) ──
+
+
+async def _resolve_access_token(session: AsyncSession) -> str:
+    """Return a valid access token for Jon's personal Google credential.
+
+    Token-refresh mechanics deliberately mirror
+    ``artemis.routes.google_docs._valid_access_token`` rather than
+    reinventing them (per the brief) -- same 60-second expiry leeway, same
+    refresh call, same field updates. Raises ``_CredentialUnavailableError``
+    (never an HTTPException -- there is no request here) on anything that
+    would need Jon to reconnect or that Google itself rejected.
+
+    Credential lookup is BY PURPOSE ("personal"), not by a hardcoded
+    ``user_id`` -- there is exactly one personal Google account in this
+    system today. ``artemis.integrations.gmail.tools._resolve_gmail_client``
+    hardcodes ``user_id=1``, but that id is the dev-shim user
+    ("dev@local"); Jon's real row is a different id. The already-fixed
+    precedent for this exact mistake is
+    ``artemis.proactivity.agency_gate._resolve_personal_gmail_client``,
+    whose docstring notes it "was hardcoded user_id=1, which never matches
+    the real personal account" -- this function follows that fix, not the
+    still-broken gmail/tools.py one.
+    """
+    result = await session.execute(
+        select(GoogleCredential)
+        .where(GoogleCredential.purpose == "personal")
+        .order_by(GoogleCredential.updated_at.desc())
+        .limit(1)
+    )
+    credential = result.scalar_one_or_none()
+    if credential is None:
+        raise _CredentialUnavailableError(
+            "No personal Google credential connected for Jon -- connect via "
+            "/api/google/oauth/start?purpose=personal"
+        )
+
+    now = datetime.now(UTC)
+    if credential.expiry > now + timedelta(seconds=60):
+        return credential.access_token
+
+    if not credential.refresh_token:
+        raise _CredentialUnavailableError(
+            "Personal Google credential has no refresh_token -- Jon must reconnect"
+        )
+
+    client_config = await resolve_google_oauth_client_config(session)
+    try:
+        refreshed = await refresh_access_token(
+            refresh_token=credential.refresh_token,
+            client_id=client_config.client_id,
+            client_secret=client_config.client_secret,
+        )
+    except GoogleReauthRequiredError as exc:
+        raise _CredentialUnavailableError(f"Google reconnect required: {exc}") from exc
+    except httpx.HTTPError as exc:
+        raise _CredentialUnavailableError(f"Google token refresh failed: {exc}") from exc
+
+    credential.access_token = refreshed.access_token
+    credential.refresh_token = refreshed.refresh_token
+    credential.expiry = refreshed.expiry
+    if refreshed.scope:
+        credential.scope = refreshed.scope
+    credential.updated_at = now
+    await session.flush()
+    return credential.access_token
+
+
+# ── Failure debounce + owner alert ──────────────────────────────────────────
+
+
+async def _alert_jon(session: AsyncSession, text: str) -> None:
+    """Best-effort Slack DM to Jon via the Artemis bot. Never raises.
+
+    Reuses the exact owner-alert path the GCal/Gmail token-death handlers use
+    (``artemis.proactivity.commitments._get_slack_token_for_agent`` +
+    ``_resolve_artemis_dm_recipient``) rather than inventing a new one --
+    see ``artemis/integrations/gcal/auth_dead.py`` for the precedent.
+    """
+    try:
+        token = await _get_slack_token_for_agent(session, agent_id="artemis")
+        if not token:
+            logger.warning(
+                "crisis_content: no active Slack token for agent_id='artemis' -- cannot alert Jon"
+            )
+            return
+        recipient_id = await _resolve_artemis_dm_recipient(session)
+        await SlackClient(token=token).post_dm(user=recipient_id, text=text)
+        logger.info("crisis_content: owner alert DM sent (recipient=%s)", recipient_id)
+    except Exception:
+        logger.exception("crisis_content: failed to send owner alert DM")
+
+
+async def _enter_failure(session: AsyncSession, reason: str) -> None:
+    """Log the failure at ERROR always; DM Jon only on entry into failing state.
+
+    Debounce: a 2-minute poll that DMs on every pass for the same ongoing
+    condition sends ~720 messages a day and gets muted -- see the brief.
+    """
+    logger.error("crisis_content poll failing: %s", reason)
+    if _failure_state.is_failing:
+        logger.info("crisis_content: already failing -- suppressing repeat alert")
+        return
+    _failure_state.is_failing = True
+    _failure_state.reason = reason
+    await _alert_jon(
+        session,
+        f"🚨 Crisis-content poller is failing:\n{reason}\n\nI'll let you know when it recovers.",
+    )
+
+
+async def _maybe_recover(session: AsyncSession) -> None:
+    """DM Jon once on the first healthy tick after a failing streak."""
+    if not _failure_state.is_failing:
+        return
+    previous_reason = _failure_state.reason
+    _failure_state.is_failing = False
+    _failure_state.reason = None
+    await _alert_jon(
+        session,
+        f"✅ Crisis-content poller recovered. Previous failure: {previous_reason}",
+    )
+
+
+# ── Card-id lookup (read-only; mirrors the identity lookup in transitions.py) ──
+
+
+async def _resolve_card_id(session: AsyncSession, card: ReviewCard) -> int:
+    """Look up the persisted ``CrisisContentCard.id`` for ``card``'s identity.
+
+    Read-only NULL-safe lookup, mirroring the identity comparison in
+    ``artemis.crisis_content.transitions._resolve_card_row`` (that helper is
+    private to transitions.py and not imported here -- this module only
+    consumes the exported ``CrisisContentCard`` ORM class, per the "no
+    modifications outside adding exports" constraint on the merged slices).
+    Safe to call right after ``record_observation`` has processed this exact
+    card: the row is guaranteed to exist (flushed, even if not yet committed).
+    """
+    _, platform, ordinal = card.identity_key
+    stmt = select(CrisisContentCard.id).where(
+        CrisisContentCard.identity_header == card.header,
+        CrisisContentCard.identity_ordinal == ordinal,
+    )
+    stmt = stmt.where(
+        CrisisContentCard.identity_platform.is_(None)
+        if platform is None
+        else CrisisContentCard.identity_platform == platform
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one()
+
+
+# ── The tick ─────────────────────────────────────────────────────────────────
+
+
+async def run_poll_tick() -> None:
+    """Scheduler entry point. Skips (logs INFO) if the previous tick is still running."""
+    if _poll_lock.locked():
+        logger.info("crisis_content: previous poll tick still running -- skipping this tick")
+        return
+    async with _poll_lock:
+        await _run_poll_tick_locked()
+
+
+async def _run_poll_tick_locked() -> None:
+    async with _db.SessionLocal() as session:
+        try:
+            access_token = await _resolve_access_token(session)
+            await session.commit()
+        except _CredentialUnavailableError as exc:
+            await _enter_failure(session, str(exc))
+            await session.commit()
+            return
+        except Exception as exc:  # pragma: no cover - defensive, matches "loud, not silent"
+            logger.exception("crisis_content: unexpected error resolving Google credential")
+            await _enter_failure(session, f"Unexpected credential error: {exc}")
+            await session.commit()
+            return
+
+        try:
+            html = await fetch_crisis_content_export_html(
+                document_id=TARGET_DOCUMENT_ID, access_token=access_token
+            )
+            cards = parse_review_cards(html)
+        except SignInPageError as exc:
+            await _enter_failure(session, f"Sign-in page returned instead of doc export: {exc}")
+            await session.commit()
+            return
+        except NoReviewCardsFoundError as exc:
+            await _enter_failure(
+                session,
+                "Zero review cards parsed -- a label may have been renamed or the export "
+                f"shape changed (this is NOT 'no work to do'): {exc}",
+            )
+            await session.commit()
+            return
+        except httpx.HTTPStatusError as exc:
+            await _enter_failure(
+                session,
+                f"Export fetch returned HTTP {exc.response.status_code}: {exc}",
+            )
+            await session.commit()
+            return
+        except httpx.HTTPError as exc:
+            await _enter_failure(session, f"Export fetch failed: {exc}")
+            await session.commit()
+            return
+
+        notify_failures: list[str] = await _observe_and_notify(session, cards)
+
+        if notify_failures:
+            await _enter_failure(session, "Slack post failed for: " + "; ".join(notify_failures))
+            await session.commit()
+        else:
+            await _maybe_recover(session)
+            await session.commit()
+
+
+async def _observe_and_notify(session: AsyncSession, cards: list[ReviewCard]) -> list[str]:
+    """Persist + notify one card at a time; return failure descriptions, if any.
+
+    See the module docstring ("Commit granularity") for why this iterates
+    per card with its own commit/rollback rather than sharing one commit
+    across the whole tick.
+    """
+    notify_failures: list[str] = []
+    for card in cards:
+        card_transitions = await record_observation(session, [card])
+        if not card_transitions:
+            await session.commit()
+            continue
+
+        card_failed = False
+        for transition in card_transitions:
+            try:
+                await post_transition_card(session, transition)
+            except Exception as exc:
+                card_failed = True
+                notify_failures.append(f"{transition.card.identity_key} {transition.route}: {exc}")
+                logger.exception(
+                    "crisis_content: Slack post failed for card=%r route=%s -- mark_notified "
+                    "NOT called, next poll will retry",
+                    transition.card.identity_key,
+                    transition.route,
+                )
+                continue
+
+            card_id = await _resolve_card_id(session, transition.card)
+            await mark_notified(session, card_id, transition.route, transition.new_status)
+
+        if card_failed:
+            await session.rollback()
+        else:
+            await session.commit()
+
+    return notify_failures
