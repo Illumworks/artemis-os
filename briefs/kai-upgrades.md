@@ -103,7 +103,59 @@ Kai is performing well on thin data. This is the highest-leverage *content* fix.
 
 Not bugs; hand to Enablement. Evaluar User Guide · ROI / rate-of-improvement norms · ARM
 goal-setting facilitation guide · Assignment Completion walkthrough · custom curriculum map
-submission process · Amira Biliteracy Suite Educator User Manual.
+submission process · Amira Biliteracy Suite Educator User Manual · curriculum remapping doc for
+returning districts · quick-start / implementation-sequence one-pager · IP-address-range
+configuration · Istation Math flyer.
+
+### F5 — Responsiveness is NOT a problem; silent failure is
+
+Worth stating because it is easy to assume otherwise from the DB. `floating_artemis_messages`
+only records turns Kai **answered**, so it hides anything it missed. Pulled the real channel
+(`conversations.history`, 128 messages) and correlated:
+
+**51 of 55 human messages answered within 3 minutes (93%).** Answer rate is uniform across
+people — Sara 30/33, Jon 10/11, Amanda 7/7, Cory 2/2, Missy 2/2 — and @mention makes no
+difference (9/9 mentioned, 42/46 not). There is no routing or favouritism bug.
+
+All 4 misses fall in **one contiguous window, 2026-07-20 12:03 → 2026-07-21 06:50** — three from
+Sara, then Jon's re-ask. That is the known Claude CLI subscription-auth outage (401 on every
+turn) documented in `docs/HANDOFF-2026-08-10-compose-auth-slack.md`. Kai resumed once Jon
+re-authenticated.
+
+**The defect is that the failure was silent.** Sara asked three times and got nothing — no error,
+no "I'm having trouble," no notice to anyone. Jon only noticed by chance and relayed her
+questions manually a day later. Any future provider outage will do the same thing.
+
+→ Kai should post a brief "I can't reach my tools right now" on provider failure rather than
+going quiet, and an outage should surface in the ops health report. (`uv run python -m artemis.ops`
+now covers agent liveness across write paths — extend it to flag an agent that has received
+inbound messages but produced no replies.)
+
+### F6 — Explicit asks from Sara and Missy (build these; they are the customers)
+
+Extracted from the channel, not inferred:
+
+1. **Say why an asset was chosen.** 06-19, Sara: *"Why did you choose option 1 and 2 over option
+   3?"* Kai admitted it had not ranked at all — it listed in arbitrary order and the numbering
+   implied a preference that did not exist. Either rank with a stated reason, or make clear the
+   list is unordered.
+2. **Format awareness.** 06-19, Sara: *"i waas looking for a google slide deck. why didn't you
+   give me that?"* No format field exists (F3). Sara needs to ask for a deck and get a deck.
+3. **"Is this customer-facing?"** 07-20, Sara pasted a Drive link and asked directly. This is the
+   **verified-link** capability Jon flagged on 08-10 — given a URL, tell them whether it is a
+   known catalog asset, its approval status, and whether it is safe to send. Today Kai can only
+   say "that URL isn't in the catalog," which is unhelpful and (per F2) it then over-explains.
+4. **Missy, 07-30 — surface support articles.** *"we should see if Kai can surface support
+   articles; technical questions live there, not in most customer-facing resources I'm
+   creating."* Points at `help.amiralearning.com`. Prompted by Amanda's IP-address-range question
+   that no customer-facing asset covers. **This is a second content source, not a bug fix.**
+5. **Scope, stated by Sara 08-10** (respect it): Kai is **only** for customer-facing training
+   decks, materials, walkthroughs and guides. Product knowledge → Amirabot. Internal knowledge →
+   not solved by AI yet.
+
+⚠ **Note the tension between 4 and 5** and get Jon/Sara/Missy to settle it before building:
+support articles are arguably "product knowledge" (Amirabot's lane) rather than customer-facing
+assets. Missy wants them in Kai; Sara's scope statement points the other way. Do not guess.
 
 ---
 
@@ -144,6 +196,20 @@ broken link in every attempt; her upgrade is a separate, later conversation — 
   widen `_build_kai_tool_registry()` beyond it.
 - Also on Jon's list: a **verified-link section** so Kai can distinguish an Enablement-verified
   link from one a user pasted. Scope with Jon before building.
+
+### Stream 2b — The team's asks (F6). Ship alongside Stream 2; these are what the users requested
+
+- **Answer-shape fix (F6.1):** either rank results with a one-line reason, or say explicitly that
+  the list is unordered. Never let ordering imply a preference that was not computed. Cheap —
+  mostly prompt, plus surfacing whatever relevance score search already produces.
+- **Verified-link lookup (F6.3):** a user pastes a URL; Kai answers *is this a catalog asset,
+  what is its approval status, is it safe to send*. Match on `drive_link` and the `links` JSONB.
+  When there is no match, say exactly that and stop — no speculation about why (see F2).
+- **Format + grade-range awareness (F6.2):** depends on the Stream 3 fields. "Give me the deck,
+  not the PDF" must work.
+- **Support articles (F6.4):** BLOCKED pending the scope decision above. If approved, it is a new
+  ingestion source (`help.amiralearning.com`) with its own `source_scope`, not a change to the
+  sheet pipeline — keep it separable so it can be disabled without touching the catalog.
 
 ### Stream 3 — Catalog enrichment
 
