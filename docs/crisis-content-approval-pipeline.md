@@ -317,8 +317,51 @@ at approval time, so capturing the delta is cheap now and **unreconstructable la
 
 Store the vendor's original alongside the approved final, plus the approver's Slack note
 when changes are requested. Rejections carry the rationale, which is the part that
-teaches. This adds work to slice C — accepted deliberately, because the window closes
-when the engagement ends.
+teaches.
+
+**This pushes work into slice B, not just C.** By the time someone clicks Approve, the
+doc holds only the current text — Jen's original is already overwritten. The before/after
+pair cannot be reconstructed at approval time.
+
+Mechanism: an **append-only copy version log**, one row per `(card_identity, copy_hash)`
+first-seen. The poller already computes `copy_hash` on every pass, so it writes a row
+only when the hash changes — cheap, and it needs no diffing logic. "Jen wrote X, we
+changed it to Y" then falls out of the log by reading the first and last versions for a
+card. Slice B writes the log; slice D reads it.
+
+Record who was observed changing it only to the extent the doc reveals it (the export
+carries no authorship); the approver and their note come from Slack, where we do know.
+
+### Channel normalization — the platform dropdown is not a channel
+
+The `Platform` chip carries **multi-platform combos** as single opaque values:
+`FB/IG`, `All`, `Facebook, IG, X`, `FB, LI, & X`, `Facebook/LinkedIn`,
+`Facebook/IG, LinkedIn…`, plus `TBD`. Writing `FB, LI, & X` straight into
+`writing_examples.channel` would make a retrieval for "LinkedIn examples" miss it
+entirely — the corpus would look emptier than it is.
+
+So harvesting needs an alias map from the vendor's string to a canonical channel set:
+
+| Vendor value | Canonical channels |
+|---|---|
+| `Facebook`, `FB` | `facebook` |
+| `Instagram`, `IG` | `instagram` |
+| `LinkedIn`, `LI` | `linkedin` |
+| `X` (also `Twitter`, `TWITTER(X)` in body text) | `x` |
+| `FB/IG` | `facebook`, `instagram` |
+| `Facebook/LinkedIn` | `facebook`, `linkedin` |
+| `FB, LI, & X` | `facebook`, `linkedin`, `x` |
+| `All` | every canonical channel (define explicitly, do not infer) |
+| `TBD` | none — do not harvest |
+
+**Fan out to one `writing_examples` row per canonical channel.** A combo post really was
+approved for each of those channels, and per-channel rows are what retrieval asks for.
+Dedup therefore keys on `(copy_hash, channel)`, not `copy_hash` alone.
+
+**The list is user-editable, so it will grow.** An unrecognized platform value must
+raise an alert, never be silently dropped or silently harvested as a literal channel —
+otherwise the corpus quietly rots as Jen adds options. Same loud-failure rule as the
+label parsing.
 
 Also unresolved: whether Writing Studio retrieval over `writing_examples` is semantic
 (needs an embedding on insert) or a profile-scoped fetch-all. With 7 rows today it may
