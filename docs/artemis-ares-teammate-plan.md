@@ -169,17 +169,64 @@ Phase 4 connects him to Artemis.
 unverified action layer produce confident reports about work that did not happen — which is the
 exact failure this whole plan exists to end.
 
-## 5. Open questions for Jon
+## 5. Settled (Jon, 2026-08-11)
 
-1. **Where does Ares's sandbox live?** A projects directory on the Mac mini, or per-project repos
-   elsewhere? Affects how the worktree flow is wired.
-2. **Which projects first?** Naming one or two real initiatives makes Phase 1 concrete and
-   testable rather than theoretical.
-3. **`propose_edit`: implement or delete?** It is a stub today. Deleting is honest and cheap;
-   implementing means a real proposal queue with a review surface. Recommendation: delete it in
-   Phase 0, and let Phase 2's branch-and-diff flow be the real answer.
-4. **Should Ares be allowed to run tests and long jobs unattended?** Implied by "without
-   babysitting" but worth confirming, since it means unattended compute.
+1. **Sandbox location:** local on the Mac mini. A projects directory Ares owns, each project its
+   own git repo, each task its own branch/worktree.
+2. **`propose_edit`:** **delete it** in Phase 0. It is a stub, and Phase 2's branch-and-diff flow
+   is the real answer — a proposal queue would be a worse reimplementation of git.
+3. **Unattended long jobs: yes.** This is the point — Ares runs research, builds and test suites
+   without Jon watching. Implications to build for: bounded cost per run, a hard wall-clock cap,
+   progress written to project memory as it goes (so a killed job is resumable, not lost), and a
+   report-with-receipts on completion or failure.
+4. **First test project:** see §6.
+
+---
+
+## 6. First project — State Policy Tracker (screen-time + AI-in-schools)
+
+**A standalone web tracker: one page per US state showing current screen-time and AI-in-schools
+policy activity — bills with real status, recent news, stance, and last-updated.**
+
+### Why this one
+
+- **It is a decision already made, never executed.** The team explicitly chose *not* to scrape
+  Whiteboard Advisors' Tableau tracker (their product, downloads disabled) and to broaden Amira's
+  own scouts instead. This is the deliverable that decision was pointing at.
+- **The data already exists and is live.** `screentime_signals`: 94 signals across 26 states,
+  collecting daily since 2026-06-19, from both `legislative` (17) and `national_news` (77).
+  Ares starts with real material, not a blank page. The coverage gaps are themselves useful
+  output — they show where collection needs work.
+- **Real value.** A publishable artifact for Amira, and the thing a competitor has that Amira
+  does not.
+- **Zero production risk.** Own repo in Ares's sandbox. Reads the DB, writes nothing to it.
+- **It genuinely exercises every capability being built:**
+  - *Durable memory* — multi-session by nature (design → build → data-quality iteration), so
+    "pick up where we left off" gets tested for real rather than theoretically.
+  - *Unattended long jobs* — generating 51 state pages, backfilling classifications.
+  - *Receipts* — every claim on the page traces to a source URL; every build reports what was
+    verified.
+  - *Sandbox → approval → promote* — Jon reviews a running page, not a diff he has to imagine.
+- **Judgeable in ten seconds.** Open it and look. No code reading required to know if it worked.
+
+### Rough shape (Ares should plan this WITH Jon, not receive it as a spec)
+
+A static-generated site is likely right: cheap, no infra, publishable later. One index with a
+50-state map or table, one page per state, a "recently changed" feed, and honest empty states for
+the 25 states with no signal yet. Stance rendering needs care — per the Screen-Time notes, a
+chatbot ban is *not* automatically unfavorable to Amira, so the tracker should show the finding
+and its reasoning rather than a bare good/bad label.
+
+### What success proves
+
+1. Ares held the project across days without being re-briefed.
+2. He ran a long job unattended and reported back with receipts.
+3. Jon reviewed and promoted work he did not supervise.
+4. Amira gets something publishable.
+
+**Deliberately not chosen as the first project:** the session→memory bridge (circular — Ares
+building his own memory), an ops dashboard (touches artemis-os), and closing Kai's content gaps
+(research, not building, and it overlaps work already in flight).
 
 ## 6. Related documents
 
