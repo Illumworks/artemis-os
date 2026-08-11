@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -100,11 +100,15 @@ async def _observe_card(session: AsyncSession, card: ReviewCard) -> list[Transit
     )
     await _maybe_append_copy_version(session, row, card, now)
 
-    if is_new and await _header_rename_guard_triggered(session, row):
-        # Same copy, new identity, and the old identity was already actioned
-        # -- Jen filled in an "August XX" placeholder. Stay quiet for this
-        # card this round; the card + version rows above are still recorded.
-        return []
+    # Same copy, new identity -- Jen filled in an "August XX" placeholder.
+    # Suppress ONLY the routes the prior identity was already notified on. A
+    # blanket suppression would lose a never-notified route permanently: it is
+    # swallowed while the card is new, and afterwards the stored status equals
+    # the observed one, so no transition remains to detect. The card + version
+    # rows above are recorded either way.
+    renamed_suppressed_routes: frozenset[Route] = frozenset()
+    if is_new:
+        renamed_suppressed_routes = await _routes_notified_for_same_copy(session, row)
 
     route_observations: list[tuple[Route, str | None, str | None]] = [
         ("asset", previous_asset_status, card.asset_status),
@@ -112,6 +116,8 @@ async def _observe_card(session: AsyncSession, card: ReviewCard) -> list[Transit
     ]
     card_transitions: list[Transition] = []
     for route, previous_status, new_status in route_observations:
+        if route in renamed_suppressed_routes:
+            continue
         transition = await _evaluate_route(
             session,
             card=card,
@@ -213,25 +219,33 @@ async def _maybe_append_copy_version(
     await session.flush()
 
 
-async def _header_rename_guard_triggered(session: AsyncSession, row: CrisisContentCard) -> bool:
-    """True if some OTHER card with the same ``copy_hash`` has ever been notified.
+async def _routes_notified_for_same_copy(
+    session: AsyncSession, row: CrisisContentCard
+) -> frozenset[Route]:
+    """Routes already notified on some OTHER card with the same ``copy_hash``.
 
     Guards the "August XX" placeholder-becomes-a-real-date rename: see
     ``docs/crisis-content-approval-pipeline.md``, "Card identity". Only
     meaningful for a newly-created row -- an existing card's identity never
     changes underneath it, so this is only called when ``is_new`` is True.
+
+    Returns routes rather than a bool deliberately. Suppressing the whole card
+    would silently drop a route nobody has ever been asked about -- e.g. copy
+    was approved under the old header and the asset went Ready in the same
+    window as the rename. That request would never resurface, because the next
+    poll sees no status change.
     """
     stmt = (
-        select(CrisisContentNotification.id)
+        select(CrisisContentNotification.route)
         .join(CrisisContentCard, CrisisContentNotification.card_id == CrisisContentCard.id)
         .where(
             CrisisContentCard.copy_hash == row.copy_hash,
             CrisisContentCard.id != row.id,
         )
-        .limit(1)
+        .distinct()
     )
     result = await session.execute(stmt)
-    return result.scalar_one_or_none() is not None
+    return frozenset(cast("Route", value) for value in result.scalars().all())
 
 
 async def _evaluate_route(

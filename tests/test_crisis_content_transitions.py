@@ -411,3 +411,54 @@ async def test_platform_less_cards_same_header_do_not_collide(db_session: AsyncS
     await db_session.commit()
     rows_after_second_poll = (await db_session.execute(select(CrisisContentCard))).scalars().all()
     assert len(rows_after_second_poll) == 2
+
+
+async def test_header_rename_suppresses_only_the_notified_route(
+    db_session: AsyncSession,
+) -> None:
+    """A rename must not swallow a route that was never notified.
+
+    Regression: the guard originally returned early for the whole card as
+    soon as ANY route on the matching copy_hash had been notified. That lost
+    an asset request permanently -- suppressed while the card was new, and
+    invisible afterwards because the stored status then equals the observed
+    one, so there is no transition left to detect.
+    """
+    old_header = "August XX, 2026 - Welcome Back blog"
+    new_header = "August 18, 2026 - Welcome Back blog"
+    copy_body = "Copy that survives the date fill-in unchanged."
+
+    # Copy goes Ready under the placeholder header, and we notify on it.
+    first = await record_observation(
+        db_session,
+        [_make_card(header=old_header, copy_body=copy_body, copy_status="Ready")],
+    )
+    await db_session.commit()
+    assert [t.route for t in first] == ["copy"]
+    old_row = (await db_session.execute(select(CrisisContentCard))).scalars().one()
+    await mark_notified(db_session, old_row.id, "copy", "Ready")
+    await db_session.commit()
+
+    # Jen fills in the real date. Same copy, new identity -- and the asset is
+    # now Ready with a visual attached, which nobody has ever been asked about.
+    renamed = _make_card(
+        header=new_header,
+        copy_body=copy_body,
+        copy_status="Ready",
+        asset_status="Ready",
+        asset_url="https://example.com/welcome-back-visual.png",
+    )
+    second = await record_observation(db_session, [renamed])
+    await db_session.commit()
+
+    routes = sorted(t.route for t in second)
+    assert routes == ["asset"], (
+        f"expected the never-notified asset route to emit, got {routes!r} -- "
+        "the copy route must stay suppressed, the asset route must not"
+    )
+
+    # And prove the loss would be permanent: a later identical poll has no
+    # transition left to find, so a suppressed asset request never returns.
+    third = await record_observation(db_session, [renamed])
+    await db_session.commit()
+    assert third == []
