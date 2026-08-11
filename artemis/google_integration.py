@@ -40,6 +40,11 @@ GOOGLE_PERSONAL_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
+    # Full drive (not drive.file) is required for files the app did not create:
+    # Drive returns 404 on an externally-owned doc under drive.file, which blocks
+    # both the export endpoint and comments.create (the @mention path). See the
+    # access note in artemis/enablement/sync.py, which hit the same 403.
+    "https://www.googleapis.com/auth/drive",
 )
 
 _KNOWN_PURPOSES = frozenset({"personal", "marketing"})
