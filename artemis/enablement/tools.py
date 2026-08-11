@@ -63,18 +63,33 @@ def _asset_to_dict(asset: Any) -> dict[str, Any]:
 # ── Implementations ───────────────────────────────────────────────────────────
 
 
-def _rerank_enablement_(assets: list[Any], query: str) -> list[Any]:
-    """Hybrid re-rank: boost assets whose TITLE / tags / name contain the query's
-    terms, so an exact-named asset (e.g. "Instruct-Core Coherent") wins over a
-    semantically-close cousin (e.g. "Assess") that the embedding scored marginally
-    higher. Stable: ties preserve the incoming order (vector distance / recency).
-    Added 2026-06-20 — vector-only ranking surfaced the wrong deck for Sara."""
+def _score_enablement_(assets: list[Any], query: str) -> list[tuple[Any, int]]:
+    """Return (asset, relevance_score) pairs in ranked order.
+
+    Sara, 2026-06-19: "Why did you choose option 1 and 2 over option 3?" Kai had
+    not ranked at all — it listed in arbitrary order, and the numbering implied a
+    preference that did not exist. Exposing the score lets Kai either give a real
+    reason for the order or say plainly that the list is unordered.
+    """
+    ranked = _rerank_enablement_(assets, query)
+    scores = _relevance_scores(ranked, query)
+    return list(zip(ranked, scores, strict=True))
+
+
+def _relevance_scores(assets: list[Any], query: str) -> list[int]:
+    """Score each asset against the query. Higher is a better match.
+
+    Extracted from _rerank_enablement_ so the same numbers can both order the
+    results AND be surfaced to Kai, who has to justify the order he presents.
+    Returns all-zero when the query has no usable terms, which is exactly the
+    case where the list is genuinely unordered.
+    """
     import re as _re
 
     q = (query or "").lower().strip()
     terms = [t for t in _re.split(r"[^a-z0-9]+", q) if len(t) >= 3]
     if not terms:
-        return assets
+        return [0] * len(assets)
 
     # Format intent: when the asker names a format ("video", "deck"), prefer assets
     # of that actual type over a same-words asset of the wrong type (Sara asked for a
@@ -104,7 +119,20 @@ def _rerank_enablement_(assets: list[Any], query: str) -> list[Any]:
         type_hit = 3 if (getattr(a, "type", "") or "") in wanted_types else 0
         return phrase * 4 + title_hits * 2 + any_hits + type_hit
 
-    return sorted(assets, key=_score, reverse=True)
+    return [_score(a) for a in assets]
+
+
+def _rerank_enablement_(assets: list[Any], query: str) -> list[Any]:
+    """Hybrid re-rank: boost assets whose TITLE / tags / name contain the query's
+    terms, so an exact-named asset (e.g. "Instruct-Core Coherent") wins over a
+    semantically-close cousin (e.g. "Assess") that the embedding scored marginally
+    higher. Stable: ties preserve the incoming order (vector distance / recency).
+    Added 2026-06-20 — vector-only ranking surfaced the wrong deck for Sara."""
+    scores = _relevance_scores(assets, query)
+    if not any(scores):
+        return assets
+    # sorted() is stable, so equal scores keep vector-distance / recency order.
+    return [a for a, _ in sorted(zip(assets, scores, strict=True), key=lambda p: -p[1])]
 
 
 async def _search_enablement_assets(inp: dict[str, Any]) -> str:
@@ -214,16 +242,40 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
 
         # Hybrid re-rank (keyword/title boost over the vector pool), then trim.
         # Use the expanded text so the product-name boost (e.g. "Enseñar") applies.
-        assets = _rerank_enablement_(assets, search_text)[:limit]
+        scored = _score_enablement_(assets, search_text)[:limit]
 
-        if not assets:
+        if not scored:
             return json.dumps({"results": [], "count": 0, "query": query})
+
+        # Answer-shape honesty (Sara, 2026-06-19): the position of a result must
+        # never imply a preference that was not computed. When every candidate
+        # scores the same, the list IS arbitrary and Kai has to say so.
+        distinct = {score for _, score in scored}
+        ordering = "ranked_by_relevance" if len(distinct) > 1 else "unordered_tied"
+
+        results: list[dict[str, Any]] = []
+        for position, (asset, score) in enumerate(scored, start=1):
+            record = _asset_to_dict(asset)
+            record["rank"] = position
+            record["relevance"] = score
+            results.append(record)
 
         return json.dumps(
             {
-                "results": [_asset_to_dict(a) for a in assets],
-                "count": len(assets),
+                "results": results,
+                "count": len(results),
                 "query": query,
+                "ordering": ordering,
+                "ordering_note": (
+                    "Ranked by relevance to the query (title, tags, name, and "
+                    "format match). Position 1 is the strongest match, and you "
+                    "can say why in one line."
+                    if ordering == "ranked_by_relevance"
+                    else "These all scored EQUALLY. The order is arbitrary. Do "
+                    "not present one as the best match or imply a preference "
+                    "you did not compute. Say the list is unordered, or ask one "
+                    "narrowing question."
+                ),
             },
             default=str,
         )
@@ -232,43 +284,176 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
         return f"search_enablement_assets failed: {exc}"
 
 
+def _looks_like_url(value: str) -> bool:
+    return value.lower().startswith(("http://", "https://"))
+
+
+def _normalize_url(value: str) -> str:
+    """Canonical form for comparing two URLs.
+
+    Lowercases the scheme+host, drops a trailing slash, and strips the query
+    string and fragment (Drive and HubSpot links routinely carry ?usp=sharing,
+    #page=2, tracking params). Deliberately conservative: it never rewrites the
+    path, so two genuinely different documents cannot collapse into one.
+    """
+    trimmed = value.strip()
+    for separator in ("?", "#"):
+        if separator in trimmed:
+            trimmed = trimmed.split(separator, 1)[0]
+    trimmed = trimmed.rstrip("/")
+    # Scheme and host are case-insensitive; the path is not.
+    if "://" in trimmed:
+        scheme, rest = trimmed.split("://", 1)
+        host, _, path = rest.partition("/")
+        return f"{scheme.lower()}://{host.lower()}" + (f"/{path}" if path else "")
+    return trimmed
+
+
+def _match_link_in_asset(asset: Any, target: str) -> dict[str, Any] | None:
+    """Return the asset's own link record matching ``target``, if any."""
+    wanted = _normalize_url(target)
+    if asset.drive_link and _normalize_url(str(asset.drive_link)) == wanted:
+        return {
+            "url": asset.drive_link,
+            "label": "Default catalog link",
+            "role": "drive_link",
+            "visibility": "customer",
+            "on_request": False,
+            "make_copy": bool(asset.requires_copy),
+        }
+    for link in asset.links or []:
+        if not isinstance(link, dict):
+            continue
+        url = link.get("url")
+        if url and _normalize_url(str(url)) == wanted:
+            return dict(link)
+    return None
+
+
 async def _get_enablement_asset(inp: dict[str, Any]) -> str:
-    """Single asset lookup by drive_file_id or title."""
+    """Single asset lookup by drive_file_id, name, title, or URL.
+
+    The URL path is the "is this customer-facing?" capability Sara asked for on
+    2026-07-20 by pasting a Drive link. Matching is against drive_link AND every
+    entry in the links JSONB, so a link pasted from any surface resolves. The
+    matched link's own ``visibility`` flag answers the safe-to-send question,
+    rather than anything inferred from the URL.
+    """
     identifier = str(inp.get("drive_file_id_or_name", "")).strip()
     if not identifier:
         return "Error: drive_file_id_or_name is required"
 
+    is_url = _looks_like_url(identifier)
+
     try:
         from sqlalchemy import or_, select
+        from sqlalchemy import text as sa_text
 
         import artemis.db as _db
         from artemis.enablement.models import EnablementAsset
 
+        scope_filter = or_(
+            EnablementAsset.source_scope == "enablement",
+            EnablementAsset.source_scope == "shared",
+        )
+
         async with _db.SessionLocal() as session:
-            stmt = (
-                select(EnablementAsset)
-                .where(
-                    or_(
-                        EnablementAsset.source_scope == "enablement",
-                        EnablementAsset.source_scope == "shared",
+            if is_url:
+                # Narrow to rows whose drive_link or links JSONB mentions the
+                # URL's distinctive path, then confirm in Python with the
+                # normalizer (SQL LIKE cannot do query-string-insensitive
+                # comparison safely).
+                probe = _normalize_url(identifier)
+                like_probe = f"%{probe.split('://', 1)[-1]}%"
+                stmt = (
+                    select(EnablementAsset)
+                    .where(scope_filter)
+                    .where(
+                        or_(
+                            EnablementAsset.drive_link.ilike(like_probe),
+                            sa_text("CAST(links AS text) ILIKE :probe").bindparams(
+                                probe=like_probe
+                            ),
+                        )
                     )
+                    .limit(25)
                 )
-                .where(
-                    or_(
-                        EnablementAsset.drive_file_id == identifier,
-                        EnablementAsset.asset_name == identifier,
-                        EnablementAsset.title == identifier,
+                candidates = list((await session.execute(stmt)).scalars().all())
+                asset = None
+                matched_link: dict[str, Any] | None = None
+                for candidate in candidates:
+                    matched_link = _match_link_in_asset(candidate, identifier)
+                    if matched_link is not None:
+                        asset = candidate
+                        break
+            else:
+                stmt = (
+                    select(EnablementAsset)
+                    .where(scope_filter)
+                    .where(
+                        or_(
+                            EnablementAsset.drive_file_id == identifier,
+                            EnablementAsset.asset_name == identifier,
+                            EnablementAsset.title == identifier,
+                        )
                     )
+                    .limit(1)
                 )
-                .limit(1)
-            )
-            result = await session.execute(stmt)
-            asset = result.scalar_one_or_none()
+                asset = (await session.execute(stmt)).scalar_one_or_none()
+                matched_link = None
 
         if asset is None:
-            return json.dumps({"found": False, "identifier": identifier})
+            payload: dict[str, Any] = {"found": False, "identifier": identifier}
+            if is_url:
+                payload["lookup_type"] = "url"
+                payload["verdict"] = "not_a_catalog_asset"
+                payload["guidance"] = (
+                    "This URL does not match any link in the catalog. Say exactly "
+                    "that and stop. You cannot tell whether it is safe to send, "
+                    "because you have no record for it. Do NOT speculate about why "
+                    "it is missing, and do not infer anything from the URL itself. "
+                    "If they want it added, Sara and Missy own the catalog."
+                )
+            return json.dumps(payload)
 
-        return json.dumps({"found": True, "asset": _asset_to_dict(asset)}, default=str)
+        record = _asset_to_dict(asset)
+        if not is_url:
+            return json.dumps({"found": True, "asset": record}, default=str)
+
+        visibility = str((matched_link or {}).get("visibility", "")).lower()
+        is_archived = str(asset.status or "").lower() == "archived"
+        customer_facing = visibility == "customer" and not is_archived
+
+        if is_archived:
+            verdict = "archived_do_not_send"
+        elif visibility == "customer":
+            verdict = "customer_facing"
+        elif visibility == "internal":
+            verdict = "internal_only"
+        else:
+            verdict = "unknown_visibility"
+
+        return json.dumps(
+            {
+                "found": True,
+                "lookup_type": "url",
+                "verdict": verdict,
+                "customer_facing": customer_facing,
+                "matched_link": matched_link,
+                "status": asset.status,
+                "asset": record,
+                "guidance": (
+                    "Report the verdict from `verdict` and `matched_link.visibility` "
+                    "only. 'customer_facing' means this exact link is the "
+                    "customer-facing one and is safe to send. 'internal_only' means "
+                    "do NOT send it to a customer; point them at the customer link "
+                    "on this asset instead. 'archived_do_not_send' means the record "
+                    "is archived. 'unknown_visibility' means the record does not say, "
+                    "so tell them it needs verification rather than guessing."
+                ),
+            },
+            default=str,
+        )
     except Exception as exc:
         _logger.exception("get_enablement_asset failed")
         return f"get_enablement_asset failed: {exc}"
@@ -371,6 +556,10 @@ SEARCH_ENABLEMENT_ASSETS = Tool(
         "and `make_copy` (view-only; remind the user to make a copy). `requires_copy` flags "
         "copy-first assets. Default to surfacing the customer-visible, non-on_request links. "
         "Use to find decks, handouts, one-pagers, videos, walkthroughs, or any enablement collateral. "
+        "Each result carries `rank` and `relevance`, and the response carries `ordering`: "
+        "'ranked_by_relevance' means position 1 really is the strongest match and you should say "
+        "why in one line; 'unordered_tied' means every result scored the same and the order is "
+        "ARBITRARY, so you must not imply a preference you did not compute. "
         "Optional filters: `audience` (e.g. 'Teacher', 'Admin'), `asset_type` "
         "(e.g. 'training_deck', 'student_video', 'walkthrough', 'teacher_resource', 'doc', "
         "'demo_account'), and `tags` (array of values that must ALL be present — product names like "
@@ -429,9 +618,17 @@ SEARCH_ENABLEMENT_ASSETS = Tool(
 GET_ENABLEMENT_ASSET = Tool(
     name="get_enablement_asset",
     description=(
-        "Look up a single enablement asset by its Google Drive file ID, asset name, or title. "
-        "Returns the full asset record including Drive link, summary, confidence label, "
-        "audience, and transcript link. Returns found=false when no match exists. "
+        "Look up a single enablement asset by its Google Drive file ID, asset name, title, "
+        "OR a URL. Returns the full asset record including Drive link, summary, confidence "
+        "label, audience, and transcript link. Returns found=false when no match exists. "
+        "USE THIS WHENEVER SOMEONE PASTES A LINK AND ASKS WHAT IT IS, WHETHER IT IS CURRENT, "
+        "OR WHETHER IT IS SAFE TO SEND A CUSTOMER. Given a URL it matches against the default "
+        "drive_link and every entry in the asset's `links`, and adds `verdict` "
+        "('customer_facing' = this exact link is safe to send, 'internal_only' = do NOT send "
+        "it to a customer, 'archived_do_not_send', 'unknown_visibility' = the record does not "
+        "say, so it needs verification, 'not_a_catalog_asset' = no match). Report the verdict "
+        "the tool returns. Never infer safety from what the URL looks like, and when there is "
+        "no match say exactly that and stop rather than speculating about why. "
         f"{_SURFACE_TAG} [layer:1]"
     ),
     input_schema={
@@ -440,8 +637,10 @@ GET_ENABLEMENT_ASSET = Tool(
             "drive_file_id_or_name": {
                 "type": "string",
                 "description": (
-                    "The Drive file ID, asset_name, or title of the asset to retrieve. "
-                    "Exact match only — use search_enablement_assets for fuzzy lookup."
+                    "The Drive file ID, asset_name, title, or a full URL "
+                    "(https://...) that someone pasted. Exact match only for "
+                    "ids/names — use search_enablement_assets for fuzzy lookup. "
+                    "URL matching ignores query strings and trailing slashes."
                 ),
             },
         },
