@@ -46,7 +46,7 @@ Across the channel Kai has said "Escalation filed and noted," "I'll escalate it 
 **Kai cannot escalate. There is no such tool.** Nothing was ever filed. Verify:
 
 ```bash
-psql -d artemis_os -c "SELECT id, agent_id, LEFT(summary,60), created_at FROM agent_pending_asks WHERE agent_id='kai' ORDER BY created_at DESC LIMIT 5;"
+PGPASSWORD=artemis psql -h 127.0.0.1 -U artemis -d artemis_os -c "SELECT id, agent_id, LEFT(summary,60), created_at FROM agent_pending_asks WHERE agent_id='kai' ORDER BY created_at DESC LIMIT 5;"
 ```
 
 The most recent Kai row is 2026-08-10 **09:18** — nothing for the 15:08 "escalation." Kai also
@@ -66,10 +66,10 @@ spreadsheet."* Kai apologised and produced a confident diagnosis:
 
 ```bash
 # Row 28 IS indexed — it is the "Summer School Guide", a different asset
-psql -d artemis_os -c "SELECT source_row, title FROM enablement_assets WHERE source_sheet='teacher_resources_internal' AND source_row IN ('28','143','145');"
+PGPASSWORD=artemis psql -h 127.0.0.1 -U artemis -d artemis_os -c "SELECT source_row, title FROM enablement_assets WHERE source_sheet='teacher_resources_internal' AND source_row IN ('28','143','145');"
 
 # The Biliteracy manual is in ZERO records, and in no link field
-psql -d artemis_os -c "SELECT count(*) FROM enablement_assets WHERE COALESCE(drive_link,'')||COALESCE(links::text,'')||COALESCE(searchable_text,'') ILIKE '%Biliteracy_Suite_Educator%';"
+PGPASSWORD=artemis psql -h 127.0.0.1 -U artemis -d artemis_os -c "SELECT count(*) FROM enablement_assets WHERE COALESCE(drive_link,'')||COALESCE(links::text,'')||COALESCE(searchable_text,'') ILIKE '%Biliteracy_Suite_Educator%';"
 ```
 
 F1 and F2 are the same underlying defect: **Kai produces confident, plausible, unverified claims
@@ -83,7 +83,7 @@ surface that ambiguity, not resolve it by invention.)
 ### F3 — 100% of the catalog has no summary (severity: high, content not code)
 
 ```bash
-psql -d artemis_os -c "SELECT count(*) AS total, count(*) FILTER (WHERE summary IS NULL OR summary='') AS no_summary, count(*) FILTER (WHERE audience IS NULL OR audience='') AS no_audience FROM enablement_assets;"
+PGPASSWORD=artemis psql -h 127.0.0.1 -U artemis -d artemis_os -c "SELECT count(*) AS total, count(*) FILTER (WHERE summary IS NULL OR summary='') AS no_summary, count(*) FILTER (WHERE audience IS NULL OR audience='') AS no_audience FROM enablement_assets;"
 # => 416 | 416 | 129
 ```
 
@@ -210,6 +210,19 @@ broken link in every attempt; her upgrade is a separate, later conversation — 
 - **Support articles (F6.4):** BLOCKED pending the scope decision above. If approved, it is a new
   ingestion source (`help.amiralearning.com`) with its own `source_scope`, not a change to the
   sheet pipeline — keep it separable so it can be disabled without touching the catalog.
+
+### Stream 2c — Stop failing silently (F5). Small, and it pays off beyond Kai
+
+When a provider call fails, Kai currently says nothing at all — Sara asked three times into the
+void during the July auth outage.
+
+- On tool/provider failure, post one short line in-channel ("I can't reach my catalog right now
+  — flagging this so you're not left waiting") instead of going quiet. Do not invent a cause
+  (F2); "I can't reach my tools" is the whole message.
+- Extend `artemis/ops/health.py` to flag **inbound-with-no-replies**: an agent that received
+  Slack events in a window but produced no assistant turns. That is the signature of exactly
+  this outage and nothing currently detects it.
+- This generalises — Artemis and Callie fail the same silent way. Build it agent-agnostic.
 
 ### Stream 3 — Catalog enrichment
 
