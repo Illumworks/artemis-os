@@ -734,6 +734,119 @@ async def resume_run(
 _slack_callback_router = APIRouter(tags=["pipelines"])
 
 
+async def apply_pipeline_approval_slack_action(
+    session: AsyncSession,
+    *,
+    action_id: str,
+    value: str,
+    decided_by: str,
+    source: str = "slack_callback",
+) -> dict[str, Any]:
+    """Apply a ``pipeline_approval_{approve,reject}`` Slack button click.
+
+    Shared dispatch for every Slack seam that can produce this action: the
+    legacy unauthenticated callback below and the signature-verified
+    per-agent interactivity endpoint (``artemis/routes/integrations_slack_interactivity.py``).
+    Both must persist decisions through the exact same path the HTTP resume
+    route uses — crucially including ``flag_modified(run, "node_states")``
+    inside ``_prepare_pipeline_resume`` — or a shallow-copy + in-place nested
+    mutation of ``node_states`` never marks the JSONB column dirty and the
+    decision silently fails to persist.
+
+    Never raises. Every expected failure mode (unrelated action_id, malformed
+    button value, unknown run, already-decided approval, gate not suspended)
+    comes back as ``{"handled": False, "reason": <code>}`` so callers can ack
+    Slack with a 200 instead of a 500 — Slack retries on failure responses,
+    and a retry storm on a dead button is worse than a silent no-op.
+
+    Returns:
+      ``{"handled": True, "run_id", "node_id", "decision"}`` on success.
+      ``{"handled": False, "reason": <code>}`` otherwise. ``reason`` is one of
+      ``"unknown_action_id"``, ``"malformed_value"``, ``"invalid_decision"``,
+      or an ``_errors`` code such as ``"approval_not_pending"`` /
+      ``"pipeline_run_not_found"`` bubbled up from the decision path.
+    """
+    if action_id not in ("pipeline_approval_approve", "pipeline_approval_reject"):
+        return {"handled": False, "reason": "unknown_action_id"}
+
+    parts = value.split(":", 2)
+    if len(parts) != 3:
+        logger.warning("Invalid pipeline approval button value: %r", value)
+        return {"handled": False, "reason": "malformed_value"}
+
+    run_id, node_id, decision = parts
+    if decision not in ("approved", "rejected"):
+        return {"handled": False, "reason": "invalid_decision"}
+
+    from artemis.marketing.routes.approvals import (
+        apply_approval_decision,
+        find_pending_pipe4_approval,
+        find_pipe4_approval,
+    )
+
+    subject_id = f"{run_id}:{node_id}"
+    approval = await find_pending_pipe4_approval(session, subject_id=subject_id)
+    if approval is None:
+        # No PENDING approval — either this gate never had an Approval row
+        # (the node_states-only fallback below legitimately applies), or it
+        # did and it's already been decided. Tell those apart: a decided row
+        # means this is a duplicate delivery (Slack retry) or a genuine
+        # double-click, and it must ack as already-handled rather than
+        # falling through to _prepare_pipeline_resume, which has no idea an
+        # Approval row exists and would happily re-stage the same gate again
+        # (nothing in node_states itself flips gate status away from
+        # "suspended" until the pipeline executor actually consumes it).
+        existing = await find_pipe4_approval(session, subject_id=subject_id)
+        if existing is not None and existing.status != "pending":
+            return {
+                "handled": False,
+                "reason": "approval_not_pending",
+                "run_id": run_id,
+                "node_id": node_id,
+            }
+
+    try:
+        if approval is not None:
+            await apply_approval_decision(
+                session,
+                approval=approval,
+                decision=decision,
+                decided_by=decided_by,
+                decision_payload={
+                    **(
+                        dict(approval.decision_payload)
+                        if isinstance(approval.decision_payload, dict)
+                        else {}
+                    ),
+                    "decision": decision,
+                    "decided_by": decided_by,
+                    "decided_at": datetime.now(UTC).isoformat(),
+                    "source": source,
+                },
+            )
+        else:
+            await _prepare_pipeline_resume(
+                session,
+                run_id,
+                node_id=node_id,
+                decision=decision,
+                actor=decided_by,
+            )
+            await session.commit()
+    except HTTPException as exc:
+        # Unknown run, gate not suspended, already-decided approval, or
+        # invalid decision: ack silently. Slack interaction endpoints must
+        # always 200 or the button shows the user an error and Slack retries.
+        detail: dict[str, Any] = exc.detail if isinstance(exc.detail, dict) else {}
+        reason = str(detail.get("code") or "decision_rejected")
+        return {"handled": False, "reason": reason, "run_id": run_id, "node_id": node_id}
+
+    if approval is None:
+        _dispatch_execution(run_id)
+
+    return {"handled": True, "run_id": run_id, "node_id": node_id, "decision": decision}
+
+
 @_slack_callback_router.post("/api/slack/pipeline-approval-callback", status_code=200)
 async def slack_pipeline_approval_callback(
     request: Request,
@@ -746,6 +859,14 @@ async def slack_pipeline_approval_callback(
 
     This endpoint is unauthenticated (Slack doesn't send our auth token);
     validate via the action_id prefix to ensure it's a pipeline approval action.
+
+    Superseded by ``/api/integrations/slack/interactivity/{agent_id}``, which
+    verifies the Slack request signature before touching any of this. Slack
+    has never actually delivered to this URL in production (only Jon's
+    Interactivity Request URL, once set, will point at the verified route) —
+    kept as-is, unauthenticated, for backward compatibility with anything
+    else that might already call it directly. Do not point Slack's
+    Interactivity Request URL here.
     """
     import json
 
@@ -769,16 +890,7 @@ async def slack_pipeline_approval_callback(
     if not action_id.startswith("pipeline_approval"):
         return {"ok": True}
 
-    if action_id == "pipeline_approval_view":
-        return {"ok": True}
-
     value: str = action.get("value", "")
-    parts = value.split(":", 2)
-    if len(parts) != 3:
-        logger.warning("Invalid pipeline approval button value: %r", value)
-        return {"ok": True}
-
-    run_id, node_id, decision = parts
     actor_email = ""
     try:
         user_obj = payload.get("user", {})
@@ -786,58 +898,12 @@ async def slack_pipeline_approval_callback(
     except Exception:
         actor_email = "slack_user"
 
-    if decision not in ("approved", "rejected"):
-        return {"ok": True}
-
-    # Stage the gate release through the shared helper so the Slack seam honors
-    # the same contract as the HTTP resume route — crucially including
-    # ``flag_modified(run, "node_states")``. Without it, the shallow-copy +
-    # in-place nested mutation this endpoint used to do never marked the JSONB
-    # column dirty (the mutated gate dict is shared with the loaded value, so
-    # SQLAlchemy detected no change), the decision never persisted, and the run
-    # silently re-suspended on resume.
-    from artemis.marketing.routes.approvals import (
-        apply_approval_decision,
-        find_pending_pipe4_approval,
+    await apply_pipeline_approval_slack_action(
+        session,
+        action_id=action_id,
+        value=value,
+        decided_by=actor_email or "slack_user",
     )
-
-    try:
-        approval = await find_pending_pipe4_approval(session, subject_id=f"{run_id}:{node_id}")
-        if approval is not None:
-            await apply_approval_decision(
-                session,
-                approval=approval,
-                decision=decision,
-                decided_by=actor_email or "slack_user",
-                decision_payload={
-                    **(
-                        dict(approval.decision_payload)
-                        if isinstance(approval.decision_payload, dict)
-                        else {}
-                    ),
-                    "decision": decision,
-                    "decided_by": actor_email or "slack_user",
-                    "decided_at": datetime.now(UTC).isoformat(),
-                    "source": "slack_callback",
-                },
-            )
-        else:
-            await _prepare_pipeline_resume(
-                session,
-                run_id,
-                node_id=node_id,
-                decision=decision,
-                actor=actor_email or "slack_user",
-            )
-            await session.commit()
-    except HTTPException:
-        # Unknown run, gate not suspended, or invalid decision: ack silently.
-        # Slack interaction endpoints must always 200 or the button errors out.
-        return {"ok": True}
-
-    if approval is None:
-        _dispatch_execution(run_id)
-
     return {"ok": True}
 
 
