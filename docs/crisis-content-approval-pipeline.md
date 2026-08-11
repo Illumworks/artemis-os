@@ -298,15 +298,27 @@ and someone clicking approve, and the corpus must hold what was actually approve
 Follow the `content_hash` dedup pattern already used by `writing_sources`, so
 re-approval or a re-parse cannot duplicate a row.
 
-### Open decision — Jon's call (voice/brand judgment)
+### Decided 2026-08-11 — separate profile
 
-The single existing profile is `Amira Marketing Voice`, and its material is
-whitepaper/enablement register. Social posts are a different voice. Because
-`writing_rules` are **profile-scoped**, mixing them means social conventions ("Link in
-bio", hashtags, character limits) would leak into document drafting guidance.
+Social copy gets its own `Amira Social` writing profile, with `channel` distinguishing
+platforms inside it. The existing `Amira Marketing Voice` profile is built from
+whitepapers, product overviews and enablement docs — a different register — and
+because `writing_rules` are **profile-scoped**, sharing one profile would leak social
+conventions ("Link in bio", hashtags, character limits) into document drafting.
 
-Recommendation: a separate `Amira Social` profile, with `channel` distinguishing
-platforms inside it. Not yet decided.
+Angela owns the existing profile and its 38 pending rule proposals; the new profile
+leaves her queue untouched.
+
+### Decided 2026-08-11 — capture edits and rejections, not just approvals
+
+`Jen wrote X, we changed it to Y` is a stronger training signal than approved-only
+examples: it is the house style actually being applied. The pipeline sees both versions
+at approval time, so capturing the delta is cheap now and **unreconstructable later**.
+
+Store the vendor's original alongside the approved final, plus the approver's Slack note
+when changes are requested. Rejections carry the rationale, which is the part that
+teaches. This adds work to slice C — accepted deliberately, because the window closes
+when the engagement ends.
 
 Also unresolved: whether Writing Studio retrieval over `writing_examples` is semantic
 (needs an embedding on insert) or a profile-scoped fetch-all. With 7 rows today it may
