@@ -103,6 +103,9 @@ from artemis.routes.floating_artemis import router as fa_router
 from artemis.routes.floating_artemis import ws_router as fa_ws_router
 from artemis.routes.integrations import router as integrations_router
 from artemis.routes.integrations_slack_events import router as slack_events_router
+from artemis.routes.integrations_slack_interactivity import (
+    router as slack_interactivity_router,
+)
 from artemis.routes.memory import router as memory_router
 from artemis.routes.routing import router as routing_router
 from artemis.routes.slack import router as slack_router
@@ -330,6 +333,9 @@ app.include_router(dev_projects_routes.ws_router)
 # Phase J1 — Slack integration (OAuth, CRUD, events)
 app.include_router(integrations_router)
 app.include_router(slack_events_router)
+
+# CCA3 — Slack interactivity (button clicks on approval cards)
+app.include_router(slack_interactivity_router)
 
 # J8 — Slack signals (Focus Rail card)
 app.include_router(slack_router)

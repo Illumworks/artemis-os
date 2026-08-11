@@ -267,6 +267,40 @@ async def find_pending_pipe4_approval(
     return result.scalar_one_or_none()
 
 
+async def find_pipe4_approval(
+    session: AsyncSession,
+    *,
+    subject_id: str,
+) -> Approval | None:
+    """Return the newest PIPE4 approval row for ``run_id:node_id`` in ANY status.
+
+    Unlike ``find_pending_pipe4_approval``, this does not filter on
+    ``status == "pending"``. It exists so a caller can distinguish two cases
+    that both look like "no pending approval found":
+
+    1. This gate never had an Approval row at all (older/non-PIPE4 resume
+       paths that only ever touch ``node_states`` directly).
+    2. This gate had an Approval row and it has already been decided — a
+       duplicate delivery (Slack retry) or a genuine double-click.
+
+    Case 2 must NOT fall through to the ``node_states``-only resume path:
+    that path has no idea an Approval row exists and would happily re-stage
+    the same gate a second time, since nothing in ``node_states`` itself
+    flips away from ``"suspended"`` until the pipeline executor actually
+    consumes the gate (an async, non-immediate step).
+    """
+    result = await session.execute(
+        select(Approval)
+        .where(
+            Approval.subject_id == subject_id,
+            Approval.kind.in_(tuple(_PIPE4_GATE_KINDS)),
+        )
+        .order_by(Approval.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def _resume_automation_run(run_id: str) -> None:
     """In-process callback: dispatch an automation_run that was awaiting approval."""
     import artemis.db as _db
