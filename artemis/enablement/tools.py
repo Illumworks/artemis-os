@@ -45,6 +45,13 @@ def _asset_to_dict(asset: Any) -> dict[str, Any]:
         "asset_name": asset.asset_name,
         "title": asset.title,
         "summary": asset.summary,
+        # An "ai_draft" summary was written by a model and NOT reviewed by
+        # Enablement. Kai must caveat it rather than state it as catalog fact --
+        # otherwise AI-drafted speed just recreates the 2026-08-10 problem of
+        # confident unverified claims.
+        "summary_status": asset.summary_status,
+        "format": asset.format,
+        "grade_range": asset.grade_range,
         "drive_link": asset.drive_link,
         "links": asset.links or [],
         "requires_copy": bool(asset.requires_copy),
@@ -155,6 +162,10 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
     audience_filter: str | None = inp.get("audience")
     asset_type_filter: str | None = inp.get("asset_type")
     tags_filter: list[str] | None = inp.get("tags")
+    # F6.2: Sara asked for a Google Slides deck and got a PDF, because format
+    # was never captured. Grade range answers "K-8 or PK-8?".
+    format_filter: str | None = inp.get("format")
+    grade_range_filter: str | None = inp.get("grade_range")
 
     try:
         from sqlalchemy import func, or_, select
@@ -171,6 +182,14 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
             if tags_filter:
                 # Row's tags array must contain ALL provided values (@> in Postgres).
                 stmt = stmt.where(EnablementAsset.tags.contains(tags_filter))
+            if format_filter:
+                stmt = stmt.where(
+                    func.lower(EnablementAsset.format) == format_filter.strip().lower()
+                )
+            if grade_range_filter:
+                stmt = stmt.where(
+                    func.upper(EnablementAsset.grade_range) == grade_range_filter.strip().upper()
+                )
             return stmt
 
         # Attempt vector search first; fall back to keyword if embeddings unavailable.
@@ -608,6 +627,27 @@ SEARCH_ENABLEMENT_ASSETS = Tool(
                     "(case-sensitive). Product names (Assess/Instruct/Tutor), grade, "
                     "language, persona, category, and micro-intervention facets are "
                     "stored as tags. Use list_enablement_facets to discover valid values."
+                ),
+            },
+            "format": {
+                "type": "string",
+                "description": (
+                    "Filter on the actual file format. One of: google_slides, "
+                    "google_doc, pdf, video, google_sheet, web_page, form, "
+                    "demo_account, other. USE THIS when someone asks for a "
+                    "specific format ('a deck, not a PDF', 'the slides', 'a "
+                    "video'). Not every asset has it recorded yet, so an empty "
+                    "result may mean 'not captured' rather than 'does not exist' "
+                    "- retry without the filter before concluding anything."
+                ),
+            },
+            "grade_range": {
+                "type": "string",
+                "description": (
+                    "Filter on grade band: PK-2, K-2, PK-5, K-5, K-8, PK-8, 3-5, "
+                    "6-8, 9-12, K-12. Most assets have no grade range recorded, "
+                    "so use this only when the person asks about grades, and "
+                    "retry without it if nothing comes back."
                 ),
             },
         },

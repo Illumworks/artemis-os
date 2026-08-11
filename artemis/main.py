@@ -77,6 +77,7 @@ from artemis.routes import costs_routing as costs_routing_routes
 from artemis.routes import daily_brief as daily_brief_routes
 from artemis.routes import dev_projects as dev_projects_routes
 from artemis.routes import enablement as enablement_routes
+from artemis.routes import enablement_review as enablement_review_routes
 from artemis.routes import gmail as gmail_routes
 from artemis.routes import google_docs as google_docs_routes
 from artemis.routes import health, okr, parallel, status, writing_rules, writing_studio_tags
@@ -349,6 +350,9 @@ app.include_router(daily_brief_routes.router)
 
 # Enablement indexing — Apps Script ingest webhook (feeds Kai's enablement_assets)
 app.include_router(enablement_routes.router)
+
+# Enablement summary review — Sara/Missy approve, edit, or send back AI drafts
+app.include_router(enablement_review_routes.router)
 
 # Screen-Time Watch — internal dashboard (state-stance heat map + signal repo + purge)
 app.include_router(screentime_routes.router)

@@ -46,6 +46,8 @@ class EnablementAsset(Base):
         Index("idx_enablement_assets_source_scope", "source_scope"),
         Index("idx_enablement_assets_updated_at", "updated_at"),
         Index("idx_enablement_assets_source_sheet", "source_sheet"),
+        Index("idx_enablement_assets_summary_status", "summary_status"),
+        Index("idx_enablement_assets_format", "format"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -83,6 +85,28 @@ class EnablementAsset(Base):
     source_row: Mapped[str | None] = mapped_column(Text, nullable=True)
     # View-only decks/handouts the CSM must copy before editing.
     requires_copy: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    # --- AI-drafted enrichment + human review (0105) ---
+    # NULL | "ai_draft" | "enablement_verified" | "needs_revision".
+    # An "ai_draft" summary is NOT catalog fact: Kai must caveat it. This field
+    # is what keeps the speed of AI-written summaries from recreating the
+    # 2026-08-10 problem of confident unverified claims.
+    summary_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_reviewed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_reviewed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    # Reviewer's note when sending a draft back; feeds the regeneration prompt.
+    summary_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_generated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    # --- facets that produced visible misses in #enablement-library (0105) ---
+    # Sara asked for a Google Slides deck and got a PDF: format was never captured.
+    format: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # "Reading Risk report: K-8 or PK-8?" was unanswerable with no grade metadata.
+    grade_range: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # --- embedding (384-dim, all-MiniLM-L6-v2, same as memory keystone) ---
     embedding: Mapped[Any] = mapped_column(Vector(384), nullable=True)
