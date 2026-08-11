@@ -138,3 +138,90 @@ def test_render_is_stable_and_mentions_each_agent() -> None:
     assert "artemis" in text
     assert "never" in text, "missing timestamps should read 'never', not crash"
     assert "OK -- nothing needs attention" in text
+
+
+# ── inbound-with-no-replies (the silent-outage detector) ──────────────────────
+#
+# 2026-07-20: Sara asked Kai three questions over 19 hours during a Claude CLI
+# auth outage. Every turn 401'd, so no assistant row was ever written -- and
+# because `floating_artemis_messages` only records turns that SUCCEEDED, the
+# miss left no trace anywhere. Sara wrote "Looks like Kai fell asleep at the
+# wheel here"; the human noticed, the system did not. Nothing in this report
+# detected it until now.
+
+
+def test_unanswered_direct_question_is_flagged() -> None:
+    report = _report(
+        agents=[
+            AgentActivity(
+                "kai",
+                last_conversation=_ago(days=14),
+                last_trace=_ago(days=14),
+                last_proactive=None,
+                last_push=None,
+                last_direct_inbound=_ago(hours=17),
+            )
+        ]
+    )
+    findings = derive_findings(report)
+    assert any("has NOT" in f.message and "kai" in f.message for f in findings)
+    assert any(f.severity == "stuck" for f in findings)
+
+
+def test_reply_after_the_question_clears_it() -> None:
+    """Answered is answered, however old the exchange is."""
+    activity = AgentActivity(
+        "kai",
+        last_conversation=_ago(hours=2),
+        last_trace=_ago(hours=2),
+        last_proactive=None,
+        last_push=None,
+        last_direct_inbound=_ago(hours=3),
+    )
+    assert activity.unanswered_for is None
+    assert not any("has NOT" in f.message for f in derive_findings(_report(agents=[activity])))
+
+
+def test_recent_question_is_not_yet_a_finding() -> None:
+    """Normal latency is ~3 minutes; a few minutes outstanding is just in flight."""
+    activity = AgentActivity(
+        "kai",
+        last_conversation=_ago(hours=5),
+        last_trace=_ago(hours=5),
+        last_proactive=None,
+        last_push=None,
+        last_direct_inbound=_ago(minutes=4),
+    )
+    assert activity.unanswered_for is not None  # outstanding
+    assert not any("has NOT" in f.message for f in derive_findings(_report(agents=[activity])))
+
+
+def test_agent_that_never_replied_at_all_is_flagged() -> None:
+    activity = AgentActivity(
+        "kai",
+        last_conversation=None,
+        last_trace=None,
+        last_proactive=None,
+        last_push=None,
+        last_direct_inbound=_ago(hours=6),
+    )
+    assert activity.unanswered_for is not None
+    assert any("has NOT" in f.message for f in derive_findings(_report(agents=[activity])))
+
+
+def test_no_inbound_means_nothing_outstanding() -> None:
+    """A quiet channel is not a broken agent."""
+    activity = AgentActivity("ares", _ago(days=52), _ago(days=52), None, None, None)
+    assert activity.unanswered_for is None
+
+
+def test_waiting_column_renders_the_outstanding_question() -> None:
+    report = _report(
+        agents=[
+            AgentActivity("kai", _ago(days=14), _ago(days=14), None, None, _ago(hours=17)),
+            AgentActivity("ares", _ago(days=52), _ago(days=52), None, None, None),
+        ]
+    )
+    out = render(report)
+    assert "waiting" in out
+    assert "!! 17h" in out

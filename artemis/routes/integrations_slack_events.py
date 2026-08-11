@@ -707,6 +707,72 @@ async def _post_slack_message(
         )
 
 
+# One short line, posted when a turn dies before it can produce a reply.
+# Deliberately says nothing about WHY. The agent has no visibility into provider
+# health, and inventing a cause is the 2026-08-10 failure mode ("the search
+# pipeline is missing it", "the agent-to-agent channel isn't reachable"). "I
+# can't reach my tools" is the whole honest message.
+_TURN_FAILURE_NOTICE = (
+    "I hit an error on that one and can't get to my tools right now, so I don't "
+    "have an answer for you. Not ignoring you. Worth trying again in a bit, and "
+    "if it keeps happening it needs Jon."
+)
+
+# Per-session throttle so a burst of messages during one outage does not produce
+# a wall of identical apologies. First failure in a session speaks; repeats
+# inside the window stay quiet (the log still records every one).
+_FAILURE_NOTICE_WINDOW = timedelta(minutes=15)
+_failure_notice_sent_at: dict[str, datetime] = {}
+
+
+async def _post_turn_failure_notice(
+    *,
+    session_id: str,
+    normalized_agent: str,
+    team_id: str,
+    channel_id: str,
+    reply_thread_ts: str | None,
+) -> None:
+    """Tell the channel the turn failed, instead of going silent.
+
+    Agent-agnostic on purpose: Artemis and Callie fail the same silent way.
+    Best-effort throughout — this runs on an error path, so it must never raise
+    and never mask the original exception.
+    """
+    try:
+        now = datetime.now(UTC)
+        last_sent = _failure_notice_sent_at.get(session_id)
+        if last_sent is not None and now - last_sent < _FAILURE_NOTICE_WINDOW:
+            logger.info(
+                "route_inbound: turn failed for session %s (notice throttled, last sent %s)",
+                session_id,
+                last_sent.isoformat(),
+            )
+            return
+        _failure_notice_sent_at[session_id] = now
+
+        await _post_slack_message(
+            session_id=session_id,
+            normalized_agent=normalized_agent,
+            team_id=team_id,
+            channel_id=channel_id,
+            reply_thread_ts=reply_thread_ts,
+            outbound_text=_TURN_FAILURE_NOTICE,
+        )
+        logger.info(
+            "route_inbound: posted turn-failure notice for session %s agent=%s",
+            session_id,
+            normalized_agent,
+        )
+    except Exception:
+        # If even the notice cannot be posted, Slack itself is likely the
+        # problem. Log and move on; the health report catches the pattern.
+        logger.exception(
+            "route_inbound: could not post turn-failure notice for session %s",
+            session_id,
+        )
+
+
 async def route_inbound(
     event_data: dict[str, object],
     *,
@@ -1039,6 +1105,18 @@ async def route_inbound(
         )
     except Exception:
         logger.exception("route_inbound: handle_turn failed for session %s", session_id)
+        # Say something. Going quiet here is what made the 2026-07-20 provider
+        # outage invisible: Sara asked Kai three questions over 19 hours and got
+        # nothing back, no error and no notice, and Jon only noticed by chance a
+        # day later. The turn is already lost; the person should not also be left
+        # waiting on a reply that is never coming.
+        await _post_turn_failure_notice(
+            session_id=session_id,
+            normalized_agent=normalized_agent,
+            team_id=team_id,
+            channel_id=channel_id,
+            reply_thread_ts=reply_thread_ts,
+        )
         return
 
     # ── Brief-reaction capture (fire-and-forget, never blocks the reply) ──────

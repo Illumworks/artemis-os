@@ -32,6 +32,11 @@ STALENESS_BUDGET: dict[str, timedelta] = {
 # A pipeline run this old that still counts as in-flight is a wedge, not work.
 STUCK_RUN_AFTER = timedelta(days=1)
 
+# An agent that was asked something directly and has not answered since. 93% of
+# real questions get answered inside 3 minutes, so an hour is well clear of
+# normal latency while still catching an outage the same morning it starts.
+UNANSWERED_INBOUND_AFTER = timedelta(hours=1)
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -55,6 +60,15 @@ class AgentActivity:
     last_trace: datetime | None
     last_proactive: datetime | None
     last_push: datetime | None
+    last_direct_inbound: datetime | None = None
+    """Newest message that unambiguously demanded a reply (DM or @mention).
+
+    Paired with `last_conversation`, this is the only way to see the failure
+    mode from 2026-07-20: three questions to Kai over 19 hours, no replies, no
+    error, nobody notified. Every other signal in this report looked fine,
+    because `floating_artemis_messages` only records turns that SUCCEEDED --
+    a missed question leaves no row anywhere.
+    """
 
     @property
     def freshest(self) -> datetime | None:
@@ -65,6 +79,23 @@ class AgentActivity:
             self.last_push,
         ]
         return max((s for s in stamps if s is not None), default=None)
+
+    @property
+    def unanswered_for(self) -> timedelta | None:
+        """How long a direct question has been sitting without a reply.
+
+        None when there is nothing outstanding. Deliberately ignores keyword
+        mentions in channels: those are the relevance gate's to drop, and
+        counting them would flag Callie constantly for working as designed.
+        """
+        if self.last_direct_inbound is None:
+            return None
+        if (
+            self.last_conversation is not None
+            and self.last_conversation >= self.last_direct_inbound
+        ):
+            return None
+        return _age(self.last_direct_inbound)
 
 
 @dataclass(frozen=True)
@@ -191,6 +222,12 @@ async def _timestamp(session: AsyncSession, sql: str, **params: object) -> datet
     return value if isinstance(value, datetime) else None
 
 
+async def _flag(session: AsyncSession, sql: str, **params: object) -> bool:
+    """Read a single boolean. Missing row / NULL means False."""
+    value = (await session.execute(text(sql), params)).scalar()
+    return bool(value)
+
+
 async def _count(session: AsyncSession, sql: str, **params: object) -> int:
     value = (await session.execute(text(sql), params)).scalar()
     return int(value) if isinstance(value, int) else 0
@@ -251,6 +288,54 @@ async def collect_agents(session: AsyncSession) -> list[AgentActivity]:
                 """,
             )
 
+        # 5. Newest inbound that DEMANDED an answer, in a channel this agent
+        #    actually works in.  slack_inbound_messages has no agent column and
+        #    routed_to_session_id is never populated (0 of 364 rows), so the
+        #    agent-to-channel link comes from the session key:
+        #    slack-{agent}-{team}-{channel}-{bucket}.
+        #
+        #    Which inbound "demanded" an answer depends on how the agent is
+        #    configured, mirroring _needs_relevance_gate in
+        #    routes/integrations_slack_events.py (the source of truth):
+        #
+        #      gated (listen_channel_messages AND NOT always_respond_in_channels,
+        #      i.e. Callie) -> only direct @mentions and DMs. Her un-mentioned
+        #      channel messages are dropped BY DESIGN, and counting them would
+        #      flag her constantly for working correctly.
+        #
+        #      ungated (Kai, Artemis) -> every recorded inbound in its channels.
+        #      This matters: on 2026-07-20 all three of Sara's unanswered
+        #      questions were mention_type='keyword'. A direct-mentions-only rule
+        #      would have missed the exact outage this finding exists to catch.
+        gated = await _flag(
+            session,
+            """
+            SELECT COALESCE((metadata->>'listen_channel_messages')::boolean, false)
+               AND NOT COALESCE((metadata->>'always_respond_in_channels')::boolean, false)
+            FROM integrations
+            WHERE agent_id = :agent AND provider = 'slack'
+            LIMIT 1
+            """,
+            agent=agent,
+        )
+        demanded_answer = (
+            "(i.mention_type = 'direct' OR i.channel_id LIKE 'D%')" if gated else "TRUE"
+        )
+        last_direct_inbound = await _timestamp(
+            session,
+            f"""
+            SELECT max(i.received_at)
+            FROM slack_inbound_messages i
+            WHERE {demanded_answer}
+              AND i.channel_id IN (
+                  SELECT DISTINCT split_part(s.session_id, '-', 4)
+                  FROM floating_artemis_sessions s
+                  WHERE s.session_id LIKE :prefix
+              )
+            """,  # noqa: S608 - demanded_answer is a literal chosen above, never user input
+            prefix=f"slack-{agent}-%",
+        )
+
         activity.append(
             AgentActivity(
                 agent=agent,
@@ -258,6 +343,7 @@ async def collect_agents(session: AsyncSession) -> list[AgentActivity]:
                 last_trace=last_trace,
                 last_proactive=last_proactive,
                 last_push=last_push,
+                last_direct_inbound=last_direct_inbound,
             )
         )
 
@@ -345,6 +431,20 @@ def derive_findings(report: Report) -> list[Finding]:
     for agent in report.agents:
         if agent.freshest is None:
             findings.append(Finding("warn", f"{agent.agent}: no recorded activity on any path"))
+        # Inbound-with-no-replies: the signature of a silent provider outage.
+        # Nothing else in this report detects it, because a turn that never
+        # completed writes no row anywhere.
+        unanswered = agent.unanswered_for
+        if unanswered is not None and unanswered > UNANSWERED_INBOUND_AFTER:
+            findings.append(
+                Finding(
+                    "stuck",
+                    f"{agent.agent}: was asked directly "
+                    f"{_fmt_duration(agent.last_direct_inbound)} ago and has NOT "
+                    "replied since -- someone is waiting on an answer that is "
+                    "not coming",
+                )
+            )
         if _is_stale(agent.last_proactive, STALENESS_BUDGET["morning_brief"]):
             findings.append(
                 Finding(
@@ -423,19 +523,26 @@ def render(report: Report) -> str:
 
     add("")
     add("NAMED AGENTS -- an agent is alive if ANY column is recent")
-    add(f"  {'agent':<9} {'conversation':<15} {'trace':<15} {'scheduled':<15} {'push':<15}")
+    add(
+        f"  {'agent':<9} {'conversation':<15} {'trace':<15} "
+        f"{'scheduled':<15} {'push':<15} {'waiting':<15}"
+    )
     for agent in report.agents:
+        unanswered = agent.unanswered_for
+        waiting = "-" if unanswered is None else f"!! {_fmt_duration(agent.last_direct_inbound)}"
         add(
             f"  {agent.agent:<9} "
             f"{_fmt_age(agent.last_conversation):<15} "
             f"{_fmt_age(agent.last_trace):<15} "
             f"{_fmt_age(agent.last_proactive):<15} "
-            f"{_fmt_age(agent.last_push):<15}"
+            f"{_fmt_age(agent.last_push):<15} "
+            f"{waiting:<15}"
         )
     add("  conversation = replied to an inbound Slack message")
     add("  trace        = made any provider call")
     add("  scheduled    = delivered a cron-driven brief / check-in")
     add("  push         = posted an unprompted signal card")
+    add("  waiting      = asked directly (DM/@mention) with NO reply since")
 
     funnel = report.funnel
     add("")
