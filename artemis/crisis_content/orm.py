@@ -12,6 +12,10 @@ this module; nothing here calls ``Base.metadata.create_all()``.
 ``CrisisContentNotification`` -- the dedup ledger for "have we already
     notified on this (card, route, status)". Written only by
     ``artemis.crisis_content.transitions.mark_notified``.
+``CrisisContentDecision`` -- append-only decision log (slice B2c, CCA5).
+    Written only by ``artemis.crisis_content.decisions.record_decision``.
+    Same lossless-memory rule as the copy version log: no UPDATE, no DELETE,
+    anywhere. See ``alembic/versions/0107_crisis_content_decisions.py``.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ __all__ = [
     "CrisisContentCard",
     "CrisisContentCopyVersion",
     "CrisisContentNotification",
+    "CrisisContentDecision",
 ]
 
 
@@ -123,5 +128,48 @@ class CrisisContentNotification(Base):
     route: Mapped[str] = mapped_column(Text, nullable=False)
     status_value: Mapped[str] = mapped_column(Text, nullable=False)
     notified_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CrisisContentDecision(Base):
+    """Append-only decision log -- never UPDATEd, never DELETEd (slice B2c, CCA5).
+
+    One row per Approve / Request-changes click, ever. Deliberately NO
+    unique constraint on ``(card_id, route)``: a route can legitimately go
+    ``changes_requested`` -> ``approved`` later, and both rows must survive
+    (``CLAUDE.md`` rule 3, lossless memory) -- see
+    ``artemis.crisis_content.decisions`` for the "is this a genuine
+    duplicate click, or a legitimate later decision" business rule, which
+    lives entirely in code, never as a DB constraint that would make the
+    legitimate case impossible to write.
+
+    ``decided_by_slack_user_id`` comes ONLY from the verified Slack
+    interactivity payload's top-level ``user.id`` -- never from a button
+    ``value`` or a modal's ``private_metadata``. See
+    ``artemis/routes/integrations_slack_interactivity.py`` and
+    ``artemis/crisis_content/slack_actions.py``.
+    """
+
+    __tablename__ = "crisis_content_decisions"
+    __table_args__ = (
+        Index("ix_crisis_content_decisions_card_route", "card_id", "route"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    card_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "crisis_content_cards.id", name="fk_crisis_content_decisions_card", ondelete="CASCADE"
+        ),
+        nullable=False,
+    )
+    route: Mapped[str] = mapped_column(Text, nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_by_slack_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_by_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    slack_message_ts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )

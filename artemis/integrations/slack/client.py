@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 
 import httpx
 
@@ -70,11 +71,26 @@ class SlackClient:
             kwargs["blocks"] = blocks
         return await self._post("chat.postMessage", **kwargs)
 
-    async def post_dm(self, user: str, text: str) -> dict[str, object]:
+    async def post_dm(
+        self, user: str, text: str, blocks: Sequence[object] | None = None
+    ) -> dict[str, object]:
         open_resp = await self._post("conversations.open", users=user)
         channel_raw = open_resp["channel"]
         channel_id = str(channel_raw["id"]) if isinstance(channel_raw, dict) else str(channel_raw)
-        return await self._post("chat.postMessage", channel=channel_id, text=text)
+        kwargs: dict[str, object] = {"channel": channel_id, "text": text}
+        if blocks is not None:
+            kwargs["blocks"] = blocks
+        return await self._post("chat.postMessage", **kwargs)
+
+    async def views_open(self, trigger_id: str, view: dict[str, object]) -> dict[str, object]:
+        """Open a modal (``views.open``) in response to a ``trigger_id``.
+
+        ``trigger_id`` is single-use and expires quickly (Slack's ~3-second
+        interactivity window) -- callers must call this immediately after
+        receiving the block_actions payload that carried it, not after any
+        slower work (e.g. persistence).
+        """
+        return await self._post("views.open", trigger_id=trigger_id, view=view)
 
     async def get_channel_history(self, channel: str, limit: int = 20) -> list[dict[str, object]]:
         data = await self._post("conversations.history", channel=channel, limit=limit)

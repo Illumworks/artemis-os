@@ -589,6 +589,41 @@ class Settings(BaseSettings):
             "unintended."
         ),
     )
+    crisis_content_asset_approver_emails: str = Field(
+        default="jon.fila@amiralearning.com",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_ASSET_APPROVER_EMAILS",
+            "CRISIS_CONTENT_ASSET_APPROVER_EMAILS",
+        ),
+        description=(
+            "Comma-separated emails permitted to decide the 'asset' route on a "
+            "crisis-content card (CCA5 -- see "
+            "docs/crisis-content-approval-pipeline.md 'Routing' and "
+            "artemis/crisis_content/authorization.py). Jon only, by design: he "
+            "approves visuals; the copy approvers below are deliberately "
+            "rejected on this route. A pipeline-scoped allowlist -- does not "
+            "touch or widen artemis.enablement.actions' Jon-and-Missy "
+            "authorization helper. Empty = nobody is authorized (fail-closed)."
+        ),
+    )
+    crisis_content_copy_approver_emails: str = Field(
+        default=(
+            "angela.miata@amiralearning.com,"
+            "hannah.slater@amiralearning.com,"
+            "jaclyn.wright@amiralearning.com"
+        ),
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_COPY_APPROVER_EMAILS",
+            "CRISIS_CONTENT_COPY_APPROVER_EMAILS",
+        ),
+        description=(
+            "Comma-separated emails permitted to decide the 'copy' route on a "
+            "crisis-content card (CCA5). Angela, Hannah, and Jaclyn -- any ONE "
+            "is sufficient (quorum-of-one). Jon is deliberately NOT on this "
+            "list: per docs/crisis-content-approval-pipeline.md 'Routing', Jon "
+            "does not approve copy. Empty = nobody is authorized (fail-closed)."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)
