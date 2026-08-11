@@ -312,7 +312,41 @@ the card's `quality` to exemplary. It costs nothing on the card, can be applied 
 later once a post has performed, and is purely additive to the silent capture above.
 
 The invitation must read as **appreciation, not filing** — clear and light, with no
-mention of storage, corpora, or training. Exact wording is Jon's call (brand voice).
+mention of storage, corpora, or training. Wording chosen by Jon 2026-08-11:
+
+> Loved it? Drop a ⭐
+
+### Blocker for slice B2 — Slack interactivity does not exist yet
+
+Found while scoping B2, and it affects more than this pipeline. Existing approval cards
+in `artemis/integrations/slack/messages.py` render **interactive** buttons carrying
+`action_id` values (`_CALLBACK_ACTION_ID_PREFIX` at lines ~143, 261, 354, 361). Slack
+delivers those clicks to an Interactivity Request URL as a `block_actions` payload.
+
+**Nothing in this repo handles that payload.** `grep -rn "block_actions"` returns
+nothing; `_CALLBACK_ACTION_ID_PREFIX` has no consumer outside the file that defines it;
+the only Slack POST routes are the two Events API endpoints. Confirmed against real
+traffic — `grep -oE '"POST /[^ ]*' ~/Library/Logs/artemisos/app.out.log | sort | uniq -c`
+shows Slack has only ever hit `/events`, never an interactivity path. Real approvals go
+through the web UI (`POST /api/enablement/review/3/approve`).
+
+So today's Slack "Approve"/"Reject" buttons are dead controls, and the ⭐ reaction has the
+same dependency: reaction events arrive over the Events API (`reaction_added`), which
+does work, but the buttons do not.
+
+B2 must pick one:
+
+1. **Build the interactivity endpoint** — form-encoded `payload`, verifying
+   `X-Slack-Signature` / `X-Slack-Request-Timestamp` against the signing secret
+   (reject stale timestamps, `hmac.compare_digest`), dispatch on `action_id`, respond
+   inside Slack's 3-second window. Gives true one-tap approval from a phone, and fixes
+   the existing dead buttons across the human-gate flow as a side effect. **Requires Jon
+   to set the Interactivity Request URL in the Slack app config** — an owner action.
+2. **URL buttons into the Artemis web UI** — works today with no Slack config, matches
+   how approvals already happen, but costs the approver a page load instead of a tap.
+
+Option 1 is the better fit for the "we are busy, approve from Slack" premise this
+pipeline exists to serve. Not yet decided — it is a config/cutover moment for Jon.
 
 ### Subtlety that will bite if ignored
 
