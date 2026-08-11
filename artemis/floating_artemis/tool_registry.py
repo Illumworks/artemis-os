@@ -25,7 +25,7 @@ from artemis.integrations.slack.tools import register_slack_tools
 
 
 def _build_kai_tool_registry(speaker_id: str | None = None) -> AuthorizedToolRegistry:
-    """Build Kai's registry: three read-only enablement tools + one gap flag.
+    """Build Kai's registry: three read-only enablement tools + two gated writes.
 
     Kai (Chiron) is enablement-scoped and near-read-only.  He gets NO personal
     scopes, NO agent:artemis, NO creation/agency tools, NO marketing tools,
@@ -40,16 +40,26 @@ def _build_kai_tool_registry(speaker_id: str | None = None) -> AuthorizedToolReg
     input cannot spoof it.  ``speaker_id=None`` denies (fail-closed), which is
     what the resume-after-confirm path gets.
 
-    SECURITY: This function is the sole caller of register_enablement_tools and
-    register_enablement_gap_flag_tool.  Do NOT add any other tool registrations
-    here.
+    A second identity-gated tool, ``update_asset_summary`` (layer 2), lets the
+    people who own the catalog correct a summary in conversation and have it
+    re-indexed immediately.  Added 2026-08-11 when the bulk-review model was
+    dropped: nobody has time to sift 400+ generated summaries, so corrections
+    happen live instead.  Its allowlist is Jon, Sara, and Missy.
+
+    SECURITY: This function is the sole caller of register_enablement_tools,
+    register_enablement_gap_flag_tool, and register_enablement_summary_edit_tool.
+    Do NOT add any other tool registrations here.
     """
-    from artemis.enablement.actions import register_enablement_gap_flag_tool
+    from artemis.enablement.actions import (
+        register_enablement_gap_flag_tool,
+        register_enablement_summary_edit_tool,
+    )
     from artemis.enablement.tools import register_enablement_tools
 
     registry = AuthorizedToolRegistry()
     register_enablement_tools(registry)
     register_enablement_gap_flag_tool(registry, speaker_id=speaker_id)
+    register_enablement_summary_edit_tool(registry, speaker_id=speaker_id)
     return registry
 
 
@@ -113,20 +123,21 @@ def build_authorized_tool_registry(
     his registry.  Ignored for all other agents.
 
     ``speaker_id`` is Kai-only: the Slack user id of whoever is speaking this
-    turn, used to authorize his single side-effecting tool (flag_catalog_gap).
-    Must come from the resolved Slack event, never from model output. Omitting
-    it denies that tool (fail-closed). Ignored for all other agents.
+    turn, used to authorize his two side-effecting tools (flag_catalog_gap,
+    update_asset_summary). Must come from the resolved Slack event, never from
+    model output. Omitting it denies both (fail-closed). Ignored for all other
+    agents.
 
     Special case — Kai:
       Kai's registry contains ONLY the three read-only enablement tools plus
-      flag_catalog_gap. He receives none of the unconditional tools
-      (core/builders/system/slack/gcal/gmail). This enforces the
-      security-critical scope_policy: enablement-scoped, near-read-only.
+      flag_catalog_gap and update_asset_summary. He receives none of the
+      unconditional tools (core/builders/system/slack/gcal/gmail). This enforces
+      the security-critical scope_policy: enablement-scoped, near-read-only.
     """
     normalized_agent = (agent_id or "").strip().lower()
 
     # SECURITY: Kai gets only the three read-only enablement retrieval tools
-    # plus the identity-gated flag_catalog_gap.
+    # plus the two identity-gated writes.
     # Early return — no fallthrough to the general tool registrations.
     if normalized_agent == "kai":
         return _build_kai_tool_registry(speaker_id=speaker_id)

@@ -25,6 +25,7 @@ from artemis.enablement.enrichment import (
     AssetFacts,
     apply_enrichment,
     generate_enrichment,
+    reembed,
 )
 from artemis.enablement.models import EnablementAsset
 
@@ -78,6 +79,10 @@ async def backfill(*, limit: int, write: bool, redraft: bool = False) -> int:
 
             if write:
                 apply_enrichment(asset, enrichment)
+                # Re-embed AFTER applying, so the new summary is in the vector.
+                # Without this the summary only ever reaches keyword search.
+                if not await reembed(asset):
+                    print("        (warning: re-embed failed; vector left stale)")
 
         if write:
             await session.commit()

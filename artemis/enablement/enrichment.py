@@ -329,6 +329,60 @@ async def generate_enrichment(
         return None
 
 
+def embedding_text_for(asset: Any) -> str:
+    """Rebuild the text an asset is embedded from.
+
+    Mirrors ``_embedding_text`` in routes/enablement.py, which is the ingest-time
+    source of truth: title + summary + tags + audience + searchable_text.
+    """
+    parts: list[str] = []
+    if asset.title:
+        parts.append(str(asset.title))
+    if asset.summary:
+        parts.append(str(asset.summary))
+    for tag in asset.tags or []:
+        if tag:
+            parts.append(str(tag))
+    if asset.audience:
+        parts.append(str(asset.audience))
+    if asset.searchable_text:
+        parts.append(str(asset.searchable_text)[:4000])
+    return " ".join(parts).strip()
+
+
+async def reembed(asset: Any) -> bool:
+    """Recompute the asset's vector after its summary changed.
+
+    THIS IS THE POINT OF WRITING SUMMARIES. ``summary`` is part of the embedding
+    input at ingest, but the embedding is only computed there -- so writing a
+    summary straight to the row left the vector stale and the new text did
+    nothing for semantic search. It reached keyword search (summary is in the
+    LIKE clause) and nothing else. Found 2026-08-11 when Jon asked what the
+    summaries were actually for.
+
+    Returns True when the vector was updated. Never raises: a failed re-embed
+    leaves the old vector in place, which is exactly the previous behaviour.
+    """
+    text = embedding_text_for(asset)
+    if not text:
+        return False
+    try:
+        from artemis.memory.embeddings import MiniLMProvider
+
+        vector = await MiniLMProvider().embed(text)
+    except Exception:
+        _logger.warning(
+            "enrichment: re-embed failed for %s; vector left stale",
+            getattr(asset, "drive_file_id", "?"),
+            exc_info=True,
+        )
+        return False
+    if not vector:
+        return False
+    asset.embedding = vector
+    return True
+
+
 def apply_enrichment(asset: Any, enrichment: AssetEnrichment) -> None:
     """Write a draft onto the row. ALWAYS lands as ai_draft, never verified.
 

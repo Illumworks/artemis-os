@@ -235,13 +235,103 @@ def test_tool_output_exposes_the_status_kai_must_caveat_on() -> None:
     assert record["grade_range"] is None
 
 
-def test_persona_tells_kai_how_to_treat_each_status() -> None:
+def test_persona_no_longer_parrots_the_ai_draft_caveat() -> None:
+    """Owner decision 2026-08-11: nobody has time to review 400+ summaries, so
+    Kai stops announcing provenance on every answer. The hedge was noise."""
     from artemis.floating_artemis import personality as pm
 
-    core = pm.load_agent_profile("kai").persona_core.lower()
-    assert "summary_status" in core
-    assert "ai-drafted, not enablement-verified" in core
-    assert "needs_revision" in core
-    # And the format/grade guidance that depends on these fields.
-    assert "grade_range" in core
-    assert "without the filter" in core
+    core = pm.load_agent_profile("kai").persona_core
+    lowered = core.lower()
+    assert "do not announce" in lowered
+    assert "needs_revision" in lowered  # the one status that still suppresses text
+    # The format/grade guidance that depends on the 0105 fields.
+    assert "grade_range" in lowered
+    assert "without the filter" in lowered
+
+
+def test_persona_still_forbids_the_claims_a_summary_cannot_support() -> None:
+    """Dropping the caveat must NOT drop the truthfulness rules underneath it."""
+    core = (
+        __import__("artemis.floating_artemis.personality", fromlist=["x"])
+        .load_agent_profile("kai")
+        .persona_core.lower()
+    )
+    assert "approved, current, the latest version, or effective" in core
+    assert "is not evidence" in core  # hold-your-ground survives
+
+
+# ── Re-embed: the reason summaries exist at all ──────────────────────────────
+#
+# summary is part of _embedding_text at ingest, but the embedding is only
+# computed there. Writing a summary straight to the row left the vector stale,
+# so generated summaries reached keyword search and nothing else -- i.e. they
+# did almost nothing for the AI retrieval they were written for. Found
+# 2026-08-11 when Jon asked what the summaries were actually for.
+
+
+def test_embedding_text_matches_the_ingest_time_recipe() -> None:
+    """If these drift, re-embedded rows stop being comparable to ingested ones."""
+    import inspect
+
+    from artemis.enablement.enrichment import embedding_text_for
+    from artemis.routes.enablement import _embedding_text
+
+    source = inspect.getsource(_embedding_text)
+    for field in ("title", "summary", "tags", "audience", "searchable_text"):
+        assert field in source, f"ingest recipe changed: {field}"
+
+    row = SimpleNamespace(
+        title="T", summary="S", tags=["a", "b"], audience="Teacher", searchable_text="BODY"
+    )
+    assert embedding_text_for(row) == "T S a b Teacher BODY"
+
+
+def test_embedding_text_includes_the_summary() -> None:
+    """The whole point: the new summary must reach the vector."""
+    from artemis.enablement.enrichment import embedding_text_for
+
+    row = SimpleNamespace(
+        title="T", summary="a distinctive phrase", tags=[], audience=None, searchable_text=None
+    )
+    assert "a distinctive phrase" in embedding_text_for(row)
+
+
+async def test_reembed_writes_a_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    from artemis.enablement import enrichment as enr
+
+    class _Provider:
+        async def embed(self, text: str) -> list[float]:
+            return [0.5] * 384
+
+    monkeypatch.setattr("artemis.memory.embeddings.MiniLMProvider", _Provider)
+    row = SimpleNamespace(
+        title="T", summary="S", tags=[], audience=None, searchable_text=None, embedding=None
+    )
+    assert await enr.reembed(row) is True
+    assert row.embedding == [0.5] * 384
+
+
+async def test_reembed_failure_leaves_the_old_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed re-embed must degrade to the previous behaviour, not corrupt the row."""
+    from artemis.enablement import enrichment as enr
+
+    class _Boom:
+        async def embed(self, text: str) -> list[float]:
+            raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr("artemis.memory.embeddings.MiniLMProvider", _Boom)
+    row = SimpleNamespace(
+        title="T", summary="S", tags=[], audience=None, searchable_text=None, embedding=["old"]
+    )
+    assert await enr.reembed(row) is False
+    assert row.embedding == ["old"]
+
+
+async def test_reembed_skips_an_empty_record() -> None:
+    from artemis.enablement import enrichment as enr
+
+    row = SimpleNamespace(
+        title=None, summary=None, tags=[], audience=None, searchable_text=None, embedding=None
+    )
+    assert await enr.reembed(row) is False
+    assert row.embedding is None

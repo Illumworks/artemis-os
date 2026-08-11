@@ -261,8 +261,16 @@ def test_match_link_tolerates_malformed_link_entries() -> None:
 
 
 def test_stream_2b_added_no_tools() -> None:
-    """The verified-link capability rides on an existing tool by design."""
+    """The verified-link capability rides on an existing tool by design.
+
+    Asserted as "no link-lookup tool exists" rather than a total count, so this
+    keeps testing its own claim as Kai's surface changes elsewhere. The total is
+    pinned in test_kai_truthfulness.py, which is where a surface change belongs.
+    """
     from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
 
     reg = build_authorized_tool_registry(set(), agent_id="kai", speaker_id="U09F3EPJXSQ")
-    assert len(reg) == 4
+    names = {e.tool.name for e in reg.all_entries()}
+    for invented in ("check_link", "verify_link", "lookup_url", "is_customer_facing"):
+        assert invented not in names
+    assert "get_enablement_asset" in names

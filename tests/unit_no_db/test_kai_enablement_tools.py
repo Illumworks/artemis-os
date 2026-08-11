@@ -303,19 +303,20 @@ class TestKaiScopePolicy:
 
 
 class TestKaiToolRegistry:
-    def test_kai_registry_has_exactly_four_tools(self):
+    def test_kai_registry_has_exactly_five_tools(self):
         from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
 
         # Kai's locked-down registry: search + get + the facet/filter tool,
         # plus the single identity-gated flag_catalog_gap added 2026-08-11.
         # If this count changes again, it is a security decision — not a refactor.
         reg = build_authorized_tool_registry(set(), agent_id="kai")
-        assert len(reg) == 4
+        assert len(reg) == 5
         assert {e.tool.name for e in reg.all_entries()} == {
             "search_enablement_assets",
             "get_enablement_asset",
             "list_enablement_facets",
             "flag_catalog_gap",
+            "update_asset_summary",
         }
 
     def test_kai_registry_has_search_tool(self):
@@ -373,7 +374,7 @@ class TestKaiToolRegistry:
 
         reg = build_authorized_tool_registry(set(), agent_id="kai")
         for entry in reg.all_entries():
-            if entry.tool.name == "flag_catalog_gap":
+            if entry.tool.name in ("flag_catalog_gap", "update_asset_summary"):
                 assert entry.layer == 2
                 continue
             assert entry.layer == 1, (
@@ -381,13 +382,13 @@ class TestKaiToolRegistry:
                 f"{entry.tool.name!r} is layer {entry.layer}"
             )
 
-    def test_kai_has_no_side_effecting_tool_beyond_the_gap_flag(self):
-        """Exactly one non-read capability. Adding a second is a security change."""
+    def test_kai_has_no_side_effecting_tool_beyond_the_two_gated_writes(self):
+        """Exactly two non-read capabilities. Adding a third is a security change."""
         from artemis.floating_artemis.tool_registry import build_authorized_tool_registry
 
         reg = build_authorized_tool_registry(set(), agent_id="kai")
         non_read = {e.tool.name for e in reg.all_entries() if e.layer > 1}
-        assert non_read == {"flag_catalog_gap"}
+        assert non_read == {"flag_catalog_gap", "update_asset_summary"}
 
     def test_callie_registry_unchanged_no_enablement(self):
         """Callie's registry must not include enablement tools after Kai's addition."""

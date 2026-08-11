@@ -34,6 +34,7 @@ from artemis.enablement.enrichment import (
     AssetFacts,
     apply_enrichment,
     generate_enrichment,
+    reembed,
 )
 from artemis.enablement.models import EnablementAsset
 
@@ -201,6 +202,9 @@ async def approve_summary(asset_id: int, body: ApproveRequest) -> ReviewResult:
         asset.summary_reviewed_by = body.reviewer.strip()
         asset.summary_reviewed_at = datetime.now(UTC)
         asset.summary_feedback = None
+        # A reviewer's rewrite changes the retrieval text, so the vector must
+        # follow it. Facet edits (audience) are in the embedding input too.
+        await reembed(asset)
         await session.commit()
 
         _logger.info(
@@ -249,6 +253,7 @@ async def send_back_summary(asset_id: int, body: SendBackRequest) -> ReviewResul
             )
 
         apply_enrichment(asset, enrichment)
+        await reembed(asset)
         # Keep the note visible on the fresh draft so the reviewer can see
         # whether it was actually addressed.
         asset.summary_feedback = body.feedback.strip()
@@ -276,6 +281,7 @@ async def regenerate_summary(asset_id: int) -> ReviewResult:
         if enrichment is None:
             raise HTTPException(status_code=502, detail="could not generate a usable draft")
         apply_enrichment(asset, enrichment)
+        await reembed(asset)
         await session.commit()
         return ReviewResult(
             id=asset.id,
