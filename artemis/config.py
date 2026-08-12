@@ -818,6 +818,31 @@ class Settings(BaseSettings):
             "is unaffected either way."
         ),
     )
+    crisis_content_harvest_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_HARVEST_ENABLED",
+            "CRISIS_CONTENT_HARVEST_ENABLED",
+        ),
+        description=(
+            "Kill switch for CCA14 -- harvesting approved crisis-content copy into "
+            "Writing Studio's writing_examples table, under a dedicated 'Amira "
+            "Social' profile (see docs/crisis-content-approval-pipeline.md 'Slice "
+            "D' and artemis/crisis_content/harvest.py). Decisions still record "
+            "normally either way; this only gates the harvest INSERT that follows "
+            "an 'approved' decision.\n\n"
+            "Defaults True (unlike crisis_content_writeback_enabled's original "
+            "False default): this write never leaves the app -- no external "
+            "vendor doc, no email, no Slack post -- it is an internal DB insert "
+            "into our own Writing Studio corpus, so the 'writing into someone "
+            "else's live document is an owner decision' reasoning that justified "
+            "writeback's cautious default does not apply here. Test cards "
+            "(CrisisContentCard.is_test) are never harvested regardless of this "
+            "setting.\n\n"
+            "Set False to stop the harvest immediately with no deploy, e.g. if a "
+            "bad channel mapping is writing bad rows into the corpus."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

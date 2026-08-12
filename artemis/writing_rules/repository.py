@@ -142,6 +142,18 @@ async def get_active_profile(session: AsyncSession) -> WritingProfile | None:
     return result.scalar_one_or_none()
 
 
+async def get_profile_by_name(session: AsyncSession, name: str) -> WritingProfile | None:
+    """Exact-match lookup by name -- used by CCA14's get-or-create for the
+    'Amira Social' profile (``artemis.crisis_content.harvest``). Not scoped
+    to ``status`` on purpose: a matching profile that happens to be archived
+    should still be found rather than silently doubled.
+    """
+    result = await session.execute(
+        select(WritingProfile).where(WritingProfile.name == name).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def create_profile(session: AsyncSession, **kwargs: Any) -> WritingProfile:
     profile = WritingProfile(**kwargs)
     session.add(profile)
@@ -562,6 +574,23 @@ async def list_examples(
 
 async def get_example(session: AsyncSession, example_id: int) -> WritingExample | None:
     return await session.get(WritingExample, example_id)
+
+
+async def get_example_by_copy_hash_channel(
+    session: AsyncSession, copy_hash: str, channel: str
+) -> WritingExample | None:
+    """Idempotency lookup for CCA14's harvest (``artemis.crisis_content.harvest``).
+
+    Dedup key is ``(copy_hash, channel)``, not ``copy_hash`` alone -- one
+    approved post fans out to one row per canonical channel, and each of
+    those rows must independently be re-run-safe.
+    """
+    result = await session.execute(
+        select(WritingExample)
+        .where(WritingExample.copy_hash == copy_hash, WritingExample.channel == channel)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_example_by_profile_title_type(
