@@ -41,12 +41,32 @@ deliberately carrying no identity: see
 ``artemis/routes/integrations_slack_interactivity.py`` and
 ``artemis/crisis_content/slack_actions.py`` for why identity comes only from
 the verified payload's ``user.id``, never from Block Kit content.
+
+**Opener voice (CCA8).** The old bare ``"📝 Copy ready for review -- X"`` /
+``"🎨 Asset ready for review -- X"`` line is now a conversational, varied
+opener -- see ``render_opener`` and the ``_COPY_OPENERS`` / ``_ASSET_OPENERS``
+constants. Selection is a stable ``sha256`` hash of the card's
+``identity_key`` plus route, reduced modulo the variant count --
+deliberately NOT ``random``: the card is re-rendered when it repaints after a
+decision (see ``render_decision_message`` callers), and a random pick would
+rewrite the opener under the reader's eyes at exactly the moment they are
+acting on it. The platform, previously named in that line, is now folded into
+the date line right beneath it (``"{date} · {title} -- {platform}"``) so it
+stays visible without a second machine-toned line.
+
+Jen is named in plain text on every ready-for-review opener, never
+``@``-mentioned -- she is an external Slack Connect vendor, and a real ping
+on every single card would be grating well before card forty. A real
+``<@…>`` mention is only for the moment she must genuinely act: CCA9's
+change-request notification, via ``jen_mention()``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -69,6 +89,8 @@ __all__ = [
     "ACTION_REQUEST_CHANGES",
     "testing_line_for_route",
     "render_char_count_line",
+    "render_opener",
+    "jen_mention",
     "render_transition_message",
     "render_transition_blocks",
     "render_decision_message",
@@ -102,6 +124,89 @@ TESTING_LINE_ASSET = "⚠️ Testing — routed to you only. Live: you (visuals)
 def testing_line_for_route(route: str) -> str:
     """The testing footer for one route. See TESTING_LINE above for why."""
     return TESTING_LINE_ASSET if route == "asset" else TESTING_LINE
+
+
+# CCA8: the conversational opener that replaces the old bare
+# "📝 Copy ready for review -- X" / "🎨 Asset ready for review -- X" line.
+# Module constants, not inline in a render function, so adding or editing a
+# variant is a one-line change. Jon wrote #1 of each list; the rest follow
+# its register -- warm, brief, human, no exclamation-mark spam.
+#
+# `{approvers}` is the only placeholder, and only the copy list has one --
+# the asset route has no approver list to fold in (Jon is the only asset
+# approver, and naming him in a DM to himself would be odd; see
+# `render_opener` below).
+_COPY_OPENERS: tuple[str, ...] = (
+    "Thanks Jen — {approvers}, we've got another copy piece ready to approve.",
+    "New one in from Jen. {approvers} — ready for your eyes.",
+    "Jen just sent this over. {approvers}, ready when one of you is.",
+    "Fresh copy from Jen. {approvers} — whoever gets there first.",
+    "Thanks Jen! {approvers}, another one ready to approve.",
+    "Jen has this one ready. {approvers} — over to you.",
+)
+_ASSET_OPENERS: tuple[str, ...] = (
+    "Thanks Jen — the visual's ready for your eyes.",
+    "New visual in from Jen, ready when you are.",
+    "Jen attached the asset for this one — over to you.",
+)
+
+
+def _select_variant(
+    identity_key: tuple[str, str | None, int], route: str, variants: Sequence[str]
+) -> str:
+    """Deterministically pick one of ``variants`` for ``(identity_key, route)``.
+
+    ``sha256(f"{identity_key}:{route}")`` reduced modulo the variant count --
+    NOT ``random``. The card is re-rendered every time it repaints after a
+    decision (see ``render_decision_message``'s callers), and a random pick
+    would rewrite the opener under the reader's eyes at exactly the moment
+    they are acting on it. Same card + route always lands on the same
+    variant; different cards land on different variants (different sha256
+    digests), so a channel full of cards does not read like a mail merge.
+    """
+    digest = hashlib.sha256(f"{identity_key}:{route}".encode()).hexdigest()
+    return variants[int(digest, 16) % len(variants)]
+
+
+def render_opener(
+    identity_key: tuple[str, str | None, int], route: str, *, approvers: str = ""
+) -> str:
+    """The conversational opener line for one card, deterministically chosen.
+
+    ``route == "asset"`` picks from ``_ASSET_OPENERS`` (addressed to Jon
+    alone; no approver list). Anything else picks from ``_COPY_OPENERS`` and
+    fills ``{approvers}`` with the already-resolved mention text (the same
+    ``"<@U…>, <@U…> or <@U…>"`` style used for the live "Any one of ..."
+    footer -- see ``_join_mentions``). An empty ``approvers`` (the `dm_jon`
+    rollback override does not resolve the copy approvers a second time --
+    the ``⚠️ Testing`` footer it restores already names them) falls back to
+    the generic "the team" rather than leaving a dangling comma.
+
+    Jen is always the plain word "Jen" here, on purpose -- see the module
+    docstring's "Opener voice (CCA8)" and ``jen_mention()``.
+    """
+    if route == "asset":
+        return _select_variant(identity_key, route, _ASSET_OPENERS)
+    template = _select_variant(identity_key, route, _COPY_OPENERS)
+    return template.format(approvers=approvers or "the team")
+
+
+def jen_mention() -> str:
+    """A real ``<@…>`` mention for Jen -- for the moment she must genuinely act.
+
+    Not used by any ready-for-review card (those use the plain word "Jen";
+    see ``render_opener``). This is for CCA9's change-request notification,
+    which this slice does not send -- it only adds the helper CCA9 will call.
+
+    ``settings.crisis_content_jen_slack_user_id`` is CONFIGURED, not resolved
+    by email -- see that setting's docstring for why ``users.lookupByEmail``
+    silently returns ``None`` forever for her. An empty setting falls back to
+    the plain word "Jen" rather than rendering a broken ``<@>`` mention.
+    """
+    jen_id = settings.crisis_content_jen_slack_user_id.strip()
+    if not jen_id:
+        return "Jen"
+    return f"<@{jen_id}>"
 
 
 # Email -> Slack user id. Module-level and process-lifetime on purpose: the
@@ -149,13 +254,21 @@ def copy_mention_emails() -> list[str]:
     return [e for e in emails if e.lower() != JON_EMAIL.lower()]
 
 
+def _join_mentions(mention_tags: list[str]) -> str:
+    """``"<@U1>, <@U2> or <@U3>"`` for however many resolved.
+
+    Shared by the live footer's "Any one of ..." line below and CCA8's
+    opener ``{approvers}`` slot (``render_opener``) -- same names, same
+    join style, in both places on the same card.
+    """
+    if len(mention_tags) == 1:
+        return mention_tags[0]
+    return ", ".join(mention_tags[:-1]) + " or " + mention_tags[-1]
+
+
 def _copy_live_footer(mention_tags: list[str]) -> str:
     """``"Any one of <@U1>, <@U2> or <@U3> can approve."`` for however many resolved."""
-    if len(mention_tags) == 1:
-        who = mention_tags[0]
-    else:
-        who = ", ".join(mention_tags[:-1]) + " or " + mention_tags[-1]
-    return f"Any one of {who} can approve."
+    return f"Any one of {_join_mentions(mention_tags)} can approve."
 
 
 async def _resolve_copy_mentions(client: SlackClient) -> tuple[list[str], list[str]]:
@@ -244,15 +357,15 @@ def _copy_status_line(card: ReviewCard) -> str:
     return card.copy_status
 
 
-def render_transition_message(transition: Transition, *, footer: str) -> str:
+def render_transition_message(transition: Transition, *, footer: str, approvers: str = "") -> str:
     """Render the full Slack DM/channel text for one transition.
 
     Full copy inline, never truncated -- the point is approving without
     opening the doc. Always notes the OTHER route's status too, so the
     reader can tell whether the post is actually shippable end to end.
 
-    The card BODY (heading, copy, char count, other-route status, doc link)
-    is unchanged since CCA4 and stays that way (Jon has approved the current
+    The card BODY (copy, char count, other-route status, doc link) is
+    unchanged since CCA4 and stays that way (Jon has approved the current
     format). ``footer`` is the one part of the rendered text CCA6 makes
     caller-controlled: the trailing line was already route-specific before
     this slice (``testing_line_for_route``); CCA6 extends the same seam so a
@@ -260,23 +373,33 @@ def render_transition_message(transition: Transition, *, footer: str) -> str:
     line, or "" (no footer at all, for the live asset route) without
     touching anything above it. An empty ``footer`` omits the line AND the
     blank line that would otherwise separate it from the doc link.
+
+    ``approvers`` is CCA8's equivalent seam for the opener's ``{approvers}``
+    slot on a copy-route card (ignored for the asset route, which has no
+    approver list) -- see ``render_opener``. The first line is now that
+    conversational opener rather than the old bare "📝 Copy ready for review
+    -- X" line; the platform it used to carry is folded into the date line
+    right beneath it instead, so it stays visible without a second
+    machine-toned line.
     """
     card = transition.card
     platform = card.platform or "unspecified platform"
     heading_date = f"{card.date_text} · {card.title}" if card.date_text else card.title
+    heading_line = f"{heading_date} — {platform}"
+    opener = render_opener(card.identity_key, transition.route, approvers=approvers)
 
     lines: list[str] = []
     if transition.route == "copy":
-        lines.append(f"📝 Copy ready for review — {platform}")
-        lines.append(heading_date)
+        lines.append(opener)
+        lines.append(heading_line)
         lines.append("")
         lines.append(card.copy_body)
         lines.append("")
         lines.append(render_char_count_line(card.copy_body, card.platform))
         lines.append(f"Asset: {_asset_status_line(card)}")
     else:
-        lines.append(f"🎨 Asset ready for review — {platform}")
-        lines.append(heading_date)
+        lines.append(opener)
+        lines.append(heading_line)
         lines.append("")
         lines.append(card.copy_body)
         lines.append("")
@@ -292,16 +415,17 @@ def render_transition_message(transition: Transition, *, footer: str) -> str:
 
 
 def render_transition_blocks(
-    transition: Transition, card_id: int, *, footer: str
+    transition: Transition, card_id: int, *, footer: str, approvers: str = ""
 ) -> list[dict[str, Any]]:
     """Block Kit body for one transition: the card text, plus decision buttons.
 
     The ``section`` block's mrkdwn text is byte-for-byte
-    ``render_transition_message(transition, footer=footer)``'s output -- this
-    function only ADDS the ``actions`` block Slack needs to render working
-    buttons; it never restyles the body (see the module docstring, "Buttons
-    (CCA5)"). ``footer`` is passed straight through -- see
-    ``render_transition_message`` for what it controls.
+    ``render_transition_message(transition, footer=footer, approvers=approvers)``'s
+    output -- this function only ADDS the ``actions`` block Slack needs to
+    render working buttons; it never restyles the body (see the module
+    docstring, "Buttons (CCA5)"). ``footer`` and ``approvers`` are passed
+    straight through -- see ``render_transition_message`` for what each
+    controls.
 
     The button ``value`` is ``f"{card_id}:{route}"``, carrying no identity --
     see ``artemis/routes/integrations_slack_interactivity.py`` and
@@ -314,7 +438,7 @@ def render_transition_blocks(
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": render_transition_message(transition, footer=footer),
+                "text": render_transition_message(transition, footer=footer, approvers=approvers),
             },
         },
         {
@@ -382,7 +506,16 @@ def render_decision_message(
 async def _post_dm_jon_override(
     client: SlackClient, transition: Transition, card_id: int
 ) -> None:
-    """The ``dm_jon`` rollback: every route DMs Jon, testing footer restored."""
+    """The ``dm_jon`` rollback: every route DMs Jon, testing footer restored.
+
+    Deliberately does not resolve the copy approvers a second time for the
+    opener's ``{approvers}`` slot (CCA8) -- ``render_opener`` falls back to
+    "the team" when ``approvers`` is empty, and the ``⚠️ Testing`` footer
+    this path restores already names them by name ("Live: Angela, Hannah,
+    Jaclyn"). This is the emergency-rollback path; it should not grow a new
+    way to fail (an all-approvers-unresolvable case) that the live path
+    doesn't already have to handle.
+    """
     jon_slack_id = await _resolve_slack_id_cached(client, JON_EMAIL)
     if not jon_slack_id:
         raise RuntimeError(
@@ -448,9 +581,10 @@ async def _post_live_copy(
         )
 
     channel = settings.crisis_content_copy_notify_channel
+    approvers = _join_mentions(mention_tags)
     footer = _copy_live_footer(mention_tags)
-    text = render_transition_message(transition, footer=footer)
-    blocks = render_transition_blocks(transition, card_id, footer=footer)
+    text = render_transition_message(transition, footer=footer, approvers=approvers)
+    blocks = render_transition_blocks(transition, card_id, footer=footer, approvers=approvers)
     try:
         # SlackClient.post_message declares `blocks: list[object] | None`,
         # invariant -- `list[dict[str, Any]]` (what render_transition_blocks
