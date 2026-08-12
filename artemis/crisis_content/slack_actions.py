@@ -13,6 +13,10 @@ this package's "Request changes" modal produces. This module owns:
     (``artemis.crisis_content.decisions.is_blocked_by_existing_decision``)
   - persisting the decision (``artemis.crisis_content.decisions.record_decision``)
   - updating the original card in place after a decision
+  - scheduling the write-back + Jen notification (CCA7,
+    ``artemis.crisis_content.writeback.schedule_decision_writeback``) once a
+    decision has actually been recorded -- fire-and-forget, off this
+    request's path (see that module for why)
 
 Identity is taken ONLY from the verified payload's top-level ``user.id`` --
 this module never reads a button ``value`` or a modal's ``private_metadata``
@@ -52,6 +56,7 @@ from artemis.crisis_content.notify import (
     render_decision_message,
 )
 from artemis.crisis_content.transitions import Route
+from artemis.crisis_content.writeback import schedule_decision_writeback
 from artemis.directory.models import DirectoryPerson
 from artemis.integrations.slack.client import SlackClient
 
@@ -295,6 +300,7 @@ async def _handle_block_action(
         decided_by_email=email,
         slack_message_ts=message_ts,
     )
+    schedule_decision_writeback(row.id)
     text, blocks = render_decision_message(
         decision="approved",
         actor_label=_display_label(email, slack_user_id),
@@ -466,6 +472,7 @@ async def _handle_view_submission(
         note=note,
         slack_message_ts=message_ts,
     )
+    schedule_decision_writeback(row.id)
 
     text, blocks = render_decision_message(
         decision="changes_requested",

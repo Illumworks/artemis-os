@@ -656,6 +656,48 @@ class Settings(BaseSettings):
             "the two routes; the asset route remains Jon-only."
         ),
     )
+    crisis_content_writeback_jen_emails: str = Field(
+        default="jen@justrightstrategy.com,jen@digigeeks.com",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_WRITEBACK_JEN_EMAILS",
+            "CRISIS_CONTENT_WRITEBACK_JEN_EMAILS",
+        ),
+        description=(
+            "Comma-separated emails to @mention (Drive comment) and email "
+            "(Gmail backup) on the crisis-content write-back (CCA7 -- see "
+            "docs/crisis-content-approval-pipeline.md and "
+            "artemis/crisis_content/writeback.py). Jen has two addresses on "
+            "the doc -- justrightstrategy.com (the owner) and digigeeks.com (a "
+            "writer) -- and it is not obvious which she watches, so both are "
+            "notified by default. A settings value rather than an inline "
+            "literal so the list is a config change, not a code edit, matching "
+            "crisis_content_copy_approver_emails above."
+        ),
+    )
+    crisis_content_writeback_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_WRITEBACK_ENABLED",
+            "CRISIS_CONTENT_WRITEBACK_ENABLED",
+        ),
+        description=(
+            "Kill switch for the CCA7 write-back that runs after a crisis-content "
+            "decision lands: the Google Doc line insert, the Drive @mention "
+            "comment, and the Gmail backup. Decisions still record normally in "
+            "crisis_content_decisions either way; this only gates the three "
+            "notification side effects, never the decision itself.\n\n"
+            "**Defaults False, deliberately.** Turning this on means the next "
+            "approval writes into a document owned by an external vendor while "
+            "she is editing it, and emails her. Jon authorised building this; he "
+            "has not yet authorised the first live write, and that is his call to "
+            "make rather than something to infer from 'ship it'. The code is "
+            "merged and tested so enabling it is a one-setting change with no "
+            "deploy -- which is also the emergency-off path if a write ever looks "
+            "wrong. See the safety section of "
+            "briefs/cca7-writeback-and-notify-jen.md ('treat every write as the "
+            "riskiest line of code in this repo')."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)
