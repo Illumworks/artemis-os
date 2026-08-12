@@ -158,7 +158,9 @@ async def _has_note_in_thread(session: AsyncSession, card_id: int, thread_ts: st
     return result.scalar_one_or_none() is not None
 
 
-async def _resolve_directory_email(session: AsyncSession, slack_user_id: str) -> str | None:
+async def _resolve_directory_email(
+    session: AsyncSession, slack_user_id: str, *, access_token: str = ""
+) -> str | None:
     """Best-effort Slack user id -> directory email. ``None`` on any miss.
 
     A separate, small copy of the same lookup
@@ -178,8 +180,28 @@ async def _resolve_directory_email(session: AsyncSession, slack_user_id: str) ->
         logger.exception(
             "crisis_content: directory lookup failed for slack_user_id=%s", slack_user_id
         )
+        email = None
+    if email:
+        return str(email)
+
+    # Same users.info fallback slack_actions._resolve_email got after the
+    # 2026-08-12 postmortem, and for the same reason: every real approver is in
+    # directory_people with slack_user_id = NULL, so the directory alone always
+    # misses. Without this, author_email on every thread note from a real
+    # approver stays NULL forever -- which quietly guts the Writing Studio
+    # harvest, whose whole value is knowing WHO changed what.
+    #
+    # Unlike slack_actions._resolve_email this gates nothing: a miss here means
+    # an unattributed note, never "unauthorized". So it stays best-effort.
+    if not access_token:
         return None
-    return str(email) if email else None
+    try:
+        return await SlackClient(token=access_token).lookup_user_email(slack_user_id)
+    except Exception:
+        logger.exception(
+            "crisis_content: users.info lookup failed for slack_user_id=%s", slack_user_id
+        )
+        return None
 
 
 async def handle_thread_reply(
@@ -315,7 +337,7 @@ async def maybe_handle_thread_reply(
     if target is None:
         return False
 
-    author_email = await _resolve_directory_email(session, slack_user_id)
+    author_email = await _resolve_directory_email(session, slack_user_id, access_token=access_token)
 
     note_id = await handle_thread_reply(
         session,

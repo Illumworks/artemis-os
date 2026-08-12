@@ -123,7 +123,9 @@ def _copy_hash(lines: list[str]) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def _card_table(*, header: str, copy_lines: list[str], status_end_index: int = 500) -> dict[str, Any]:
+def _card_table(
+    *, header: str, copy_lines: list[str], status_end_index: int = 500
+) -> dict[str, Any]:
     return {
         "tableRows": [
             {"tableCells": [{"content": [_para(header)]}]},
@@ -268,10 +270,16 @@ class _FakeSlackClient:
         self.permalink_calls.append((channel, message_ts))
         if self._permalink_error is not None:
             raise self._permalink_error
-        return self._permalinks.get(message_ts, f"https://amira.slack.com/archives/{channel}/p{message_ts}")
+        return self._permalinks.get(
+            message_ts, f"https://amira.slack.com/archives/{channel}/p{message_ts}"
+        )
 
     async def post_message(
-        self, channel: str, text: str, thread_ts: str | None = None, blocks: list[object] | None = None
+        self,
+        channel: str,
+        text: str,
+        thread_ts: str | None = None,
+        blocks: list[object] | None = None,
     ) -> dict[str, object]:
         self.message_calls.append((channel, text, thread_ts))
         return {"ok": True}
@@ -450,7 +458,9 @@ async def test_attachment_note_delivers_permalink_line_and_one_confirmation(
     assert "🖼" in line_text
     assert "Asset in Slack" in line_text
     assert len(client.instances[-1].message_calls) == 1
-    assert client.instances[-1].message_calls[0][2] == _THREAD_TS  # confirmation replied in the card's thread
+    assert (
+        client.instances[-1].message_calls[0][2] == _THREAD_TS
+    )  # confirmation replied in the card's thread
     assert await _ledger_rows(db_session) == {note_id}
 
 
@@ -491,7 +501,9 @@ async def test_note_without_attachment_delivers_nothing(
         text_="looks good, no attachment here",
     )
 
-    doc = _document({"t1": [_card_table(header=header, copy_lines=["Default copy body line one."])]})
+    doc = _document(
+        {"t1": [_card_table(header=header, copy_lines=["Default copy body line one."])]}
+    )
     insert_calls: list[dict[str, Any]] = []
     _patch_docs_api(monkeypatch, doc, insert_calls)
     client = _patch_slack(monkeypatch)
@@ -604,7 +616,9 @@ async def test_card_not_locatable_writes_nothing_logs_error_alerts_jon(
     note_id = await _seed_note(db_session, card_id=card_id, message_ts="1700000000.000210")
 
     # The live doc no longer has any table with this header.
-    doc = _document({"t1": [_decoy_table(), _card_table(header="A totally different post", copy_lines=["x"])]})
+    doc = _document(
+        {"t1": [_decoy_table(), _card_table(header="A totally different post", copy_lines=["x"])]}
+    )
     insert_calls: list[dict[str, Any]] = []
     alerts: list[str] = []
     _patch_docs_api(monkeypatch, doc, insert_calls)
@@ -698,7 +712,9 @@ async def test_permalink_uses_replys_own_ts_not_parent_cards(
         db_session, header=header, copy_lines=copy_lines, message_ts=_THREAD_TS
     )
     reply_ts = "1700000000.000999"
-    note_id = await _seed_note(db_session, card_id=card_id, message_ts=reply_ts, thread_ts=_THREAD_TS)
+    note_id = await _seed_note(
+        db_session, card_id=card_id, message_ts=reply_ts, thread_ts=_THREAD_TS
+    )
 
     doc = _document({"t1": [_card_table(header=header, copy_lines=copy_lines)]})
     insert_calls: list[dict[str, Any]] = []
@@ -777,7 +793,7 @@ async def test_disabled_via_settings_does_nothing(
 # behaviour so the gap doesn't get bigger without someone noticing.
 
 
-async def test_legacy_note_with_null_channel_id_fails_silently_no_jon_alert(
+async def test_legacy_note_with_null_channel_id_alerts_jon(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A pre-CCA10 thread note has ``has_attachment=True`` but ``channel_id
@@ -800,14 +816,12 @@ async def test_legacy_note_with_null_channel_id_fails_silently_no_jon_alert(
 
     assert outcome == "failed"
     assert any("no channel_id recorded" in record.message for record in caplog.records)
-    assert alerts == [], (
-        "deliver_image_link does not alert Jon for a missing channel_id -- "
-        "this pins that gap; if it starts alerting, update this assertion"
-    )
+    assert len(alerts) == 1, "a legacy note that can't be linked must not fail silently"
+    assert "channel_id" in alerts[0]
     assert await _ledger_rows(db_session) == set()  # not marked delivered -- retriable
 
 
-async def test_no_active_callie_token_fails_silently_no_jon_alert(
+async def test_no_active_callie_token_alerts_jon(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Callie's Slack integration has no active token (revoked, uninstalled,
@@ -823,9 +837,7 @@ async def test_no_active_callie_token_fails_silently_no_jon_alert(
     ) -> object:
         return SimpleNamespace(access_token="")
 
-    monkeypatch.setattr(
-        image_link, "_resolve_agent_slack_config", fake_resolve_agent_slack_config
-    )
+    monkeypatch.setattr(image_link, "_resolve_agent_slack_config", fake_resolve_agent_slack_config)
     alerts: list[str] = []
     _patch_alert(monkeypatch, alerts)
 
@@ -834,14 +846,11 @@ async def test_no_active_callie_token_fails_silently_no_jon_alert(
 
     assert outcome == "failed"
     assert any("no active Slack token" in record.message for record in caplog.records)
-    assert alerts == [], (
-        "deliver_image_link does not alert Jon when Callie has no active "
-        "token -- this pins that gap; if it starts alerting, update this "
-        "assertion"
-    )
+    assert len(alerts) == 1, "a missing Callie token must not fail silently"
+    assert "Slack token" in alerts[0]
 
 
-async def test_permalink_failure_also_sends_no_jon_alert(
+async def test_permalink_failure_alerts_jon(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Companion to ``test_permalink_failure_writes_nothing_no_ledger_row_
@@ -867,11 +876,11 @@ async def test_permalink_failure_also_sends_no_jon_alert(
     outcome = await deliver_image_link(db_session, note_id)
 
     assert outcome == "failed"
-    assert alerts == [], (
-        "deliver_image_link does not alert Jon when chat.getPermalink keeps "
-        "failing -- this pins that gap; if it starts alerting, update this "
-        "assertion"
+    assert len(alerts) == 1, (
+        "a persistent chat.getPermalink failure means images silently never get "
+        "linked, forever -- it must alert"
     )
+    assert "permalink" in alerts[0].lower()
 
 
 # ── Structural regression guards -- CRITICAL CONSTRAINTS 1 & 2 in code ──────
@@ -922,7 +931,11 @@ async def test_reply_with_attachment_schedules_image_link_for_the_right_note(
             self.token = token
 
         async def post_message(
-            self, channel: str, text: str, thread_ts: str | None = None, blocks: list[object] | None = None
+            self,
+            channel: str,
+            text: str,
+            thread_ts: str | None = None,
+            blocks: list[object] | None = None,
         ) -> dict[str, object]:
             posted.append((channel, text, thread_ts))
             return {"ok": True}
@@ -959,7 +972,9 @@ async def test_reply_without_attachment_schedules_nothing(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scheduled: list[int] = []
-    monkeypatch.setattr(thread_notes, "schedule_image_link_delivery", lambda note_id: scheduled.append(note_id))
+    monkeypatch.setattr(
+        thread_notes, "schedule_image_link_delivery", lambda note_id: scheduled.append(note_id)
+    )
 
     posted: list[tuple[str, str, str | None]] = []
 
@@ -968,7 +983,11 @@ async def test_reply_without_attachment_schedules_nothing(
             self.token = token
 
         async def post_message(
-            self, channel: str, text: str, thread_ts: str | None = None, blocks: list[object] | None = None
+            self,
+            channel: str,
+            text: str,
+            thread_ts: str | None = None,
+            blocks: list[object] | None = None,
         ) -> dict[str, object]:
             posted.append((channel, text, thread_ts))
             return {"ok": True}
@@ -999,14 +1018,20 @@ async def test_retried_reply_with_attachment_schedules_the_same_existing_note(
     thread_note_id) is what keeps this from ever producing a second line.
     """
     scheduled: list[int] = []
-    monkeypatch.setattr(thread_notes, "schedule_image_link_delivery", lambda note_id: scheduled.append(note_id))
+    monkeypatch.setattr(
+        thread_notes, "schedule_image_link_delivery", lambda note_id: scheduled.append(note_id)
+    )
 
     class _FakeNudgeSlackClient:
         def __init__(self, token: str) -> None:
             self.token = token
 
         async def post_message(
-            self, channel: str, text: str, thread_ts: str | None = None, blocks: list[object] | None = None
+            self,
+            channel: str,
+            text: str,
+            thread_ts: str | None = None,
+            blocks: list[object] | None = None,
         ) -> dict[str, object]:
             return {"ok": True}
 
@@ -1028,9 +1053,15 @@ async def test_retried_reply_with_attachment_schedules_the_same_existing_note(
     await thread_notes.maybe_handle_thread_reply(db_session, **kwargs)  # type: ignore[arg-type]
 
     notes = (
-        await db_session.execute(
-            select(CrisisContentThreadNote).where(CrisisContentThreadNote.message_ts == "1700000000.000212")
+        (
+            await db_session.execute(
+                select(CrisisContentThreadNote).where(
+                    CrisisContentThreadNote.message_ts == "1700000000.000212"
+                )
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(notes) == 1  # ON CONFLICT DO NOTHING -- still just one row
     assert scheduled == [notes[0].id, notes[0].id]  # scheduled both times, same note id

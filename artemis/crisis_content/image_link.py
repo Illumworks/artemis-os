@@ -350,6 +350,11 @@ async def deliver_image_link(session: AsyncSession, thread_note_id: int) -> Deli
     note = await _load_note(session, thread_note_id)
     if note is None:
         logger.error("crisis_content image_link: no thread note row for id=%s", thread_note_id)
+        await _alert_jon(
+            session,
+            f"Tried to link a thread image into the doc but thread note {thread_note_id} "
+            "no longer exists. Nothing was written.",
+        )
         return "failed"
 
     if not note.has_attachment or note.file_count < 1:
@@ -365,6 +370,13 @@ async def deliver_image_link(session: AsyncSession, thread_note_id: int) -> Deli
             "cannot resolve a permalink",
             thread_note_id,
         )
+        await _alert_jon(
+            session,
+            "An image was attached to a crisis-content thread, but the note has no "
+            "channel_id recorded, so I can't link it into the doc. This is the legacy "
+            "row shape from before migration 0110 — the attachment is still in Slack, "
+            "it just won't appear in the document.",
+        )
         return "failed"
 
     card = await _load_card(session, note.card_id)
@@ -375,6 +387,12 @@ async def deliver_image_link(session: AsyncSession, thread_note_id: int) -> Deli
             "crisis_content image_link: no active Slack token for agent_id='callie' -- "
             "thread_note_id=%s",
             thread_note_id,
+        )
+        await _alert_jon(
+            session,
+            "An image was attached to a crisis-content thread, but Callie has no active "
+            "Slack token, so I can't link it into the doc. Reconnect her Slack "
+            "integration.",
         )
         return "failed"
 
@@ -387,6 +405,12 @@ async def deliver_image_link(session: AsyncSession, thread_note_id: int) -> Deli
             "crisis_content image_link: chat.getPermalink failed thread_note_id=%s: %s",
             thread_note_id,
             exc,
+        )
+        await _alert_jon(
+            session,
+            "An image was attached to a crisis-content thread, but I couldn't get a "
+            f"Slack permalink for it ({exc}), so it isn't linked in the doc. Usually "
+            "means Callie lost access to the channel or the message was deleted.",
         )
         return "failed"
 
@@ -465,7 +489,9 @@ async def deliver_image_link(session: AsyncSession, thread_note_id: int) -> Deli
     logger.info("crisis_content image_link: delivered thread_note_id=%s", thread_note_id)
 
     try:
-        await slack.post_message(channel=note.channel_id, text=_CONFIRM_TEXT, thread_ts=note.thread_ts)
+        await slack.post_message(
+            channel=note.channel_id, text=_CONFIRM_TEXT, thread_ts=note.thread_ts
+        )
     except Exception:
         logger.exception(
             "crisis_content image_link: doc line delivered but the confirmation reply "
@@ -510,7 +536,6 @@ async def _run_image_link_background(thread_note_id: int) -> None:
             )
     except Exception:
         logger.exception(
-            "crisis_content image_link: unhandled error in background task for "
-            "thread_note_id=%s",
+            "crisis_content image_link: unhandled error in background task for thread_note_id=%s",
             thread_note_id,
         )
