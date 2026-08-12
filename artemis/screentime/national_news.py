@@ -152,6 +152,32 @@ _CORE_NEWS_TERMS: tuple[str, ...] = (
     "artificial intelligence",
 )
 
+# ── Brand lane query terms (2026-08-12) ──────────────────────────────────────
+# The policy query above cannot surface a vendor-removal story: "district drops
+# Amira reading program" contains none of those four phrases. That blind spot
+# produced ZERO New Mexico signals during an active NM crisis, so the brand lane
+# gets its own query rather than more terms bolted onto the policy one (a single
+# OR-group of 12+ phrases dilutes Google News relevance ranking for both).
+#
+# Scoped to Amira + the Tier-1 "Closest ICP Match" competitors from Jon's
+# competitor sheet: a removal at one of these is the strongest leading indicator
+# that Amira is next. Tiers 2-3 are gate-only (caught if they appear in the
+# policy feed) — querying every vendor per state would triple the request count
+# for progressively weaker signal.
+#
+# Names that are ordinary English words are qualified here for the same reason
+# they are in topic_config.brand_any: an unqualified "Amplify" or "Renaissance"
+# query returns concerts and fairs.
+_BRAND_NEWS_TERMS: tuple[str, ...] = (
+    "Amira Learning",
+    "i-Ready",
+    "Lexia",
+    "Amplify reading",
+    "Renaissance Learning",
+    "MagicSchool AI",
+    "Brisk Teaching",
+)
+
 # Reason codes — mirrors artemis/scouts/regional_news/mapping.py's vocabulary
 # so downstream provenance stays consistent across scouts (kept as local
 # string constants rather than a cross-module import to avoid coupling this
@@ -217,9 +243,30 @@ def build_state_news_query(state_abbr: str) -> str:
     return f"{name} schools ({or_group})"
 
 
+def build_state_brand_query(state_abbr: str) -> str:
+    """Return the BRAND-lane search query for *state_abbr*.
+
+    Shape: ``<State> schools ("Amira Learning" OR "i-Ready" OR ...)`` — same
+    school-scoping as the policy query, but the OR-group is Amira + the Tier-1
+    competitors instead of policy phrases. See ``_BRAND_NEWS_TERMS``.
+
+    Raises ``KeyError`` for an unknown abbreviation (same fail-loud contract as
+    ``build_state_news_query``).
+    """
+    name = STATE_NAMES[state_abbr.upper()]
+    or_group = " OR ".join(f'"{t}"' for t in _BRAND_NEWS_TERMS)
+    return f"{name} schools ({or_group})"
+
+
 def build_state_news_rss_url(state_abbr: str) -> str:
     """Build the Google News RSS URL for *state_abbr* (same shape as state_doe)."""
     query = build_state_news_query(state_abbr)
+    return f"{_GOOGLE_NEWS_RSS_BASE}?q={quote(query)}&hl=en-US&gl=US&ceid=US%3Aen"
+
+
+def build_state_brand_rss_url(state_abbr: str) -> str:
+    """Build the Google News RSS URL for the brand lane for *state_abbr*."""
+    query = build_state_brand_query(state_abbr)
     return f"{_GOOGLE_NEWS_RSS_BASE}?q={quote(query)}&hl=en-US&gl=US&ceid=US%3Aen"
 
 
@@ -318,19 +365,57 @@ def item_to_finding(item: dict[str, Any], state_abbr: str) -> dict[str, Any] | N
     }
 
 
-async def gather_state_news(state_abbr: str, http: ScoutHttpClient) -> list[dict[str, Any]]:
-    """Fetch + normalize findings for one state. Fail-safe: [] on any error."""
+async def fetch_state_brand_items(state_abbr: str, http: ScoutHttpClient) -> list[dict[str, Any]]:
+    """Fetch + parse the BRAND-lane feed for one state. Fail-safe: [] on error."""
+    url = build_state_brand_rss_url(state_abbr)
     try:
-        items = await fetch_state_news_items(state_abbr, http)
-    except Exception as exc:  # pragma: no cover - fetch_state_news_items already guards
-        _logger.warning("gather_state_news(%s): error — %s", state_abbr, exc)
+        resp = await http.get(url)
+        if resp.status_code != 200:
+            _logger.warning(
+                "fetch_state_brand_items(%s): HTTP %d from %s", state_abbr, resp.status_code, url
+            )
+            return []
+        return parse_news_rss(resp.text)
+    except Exception as exc:
+        _logger.warning("fetch_state_brand_items(%s): error — %s", state_abbr, exc)
         return []
 
+
+async def gather_state_news(state_abbr: str, http: ScoutHttpClient) -> list[dict[str, Any]]:
+    """Fetch + normalize findings for one state, across BOTH lanes.
+
+    Two feeds per state: the policy query and the brand query. They are merged
+    and de-duplicated by link here; the downstream topic gate, dedup and
+    real-move filter are unchanged and handle the combined stream identically.
+
+    Each lane is independently fail-safe, so a brand-feed outage cannot take
+    policy coverage down with it.
+    """
+    items: list[dict[str, Any]] = []
+    try:
+        items.extend(await fetch_state_news_items(state_abbr, http))
+    except Exception as exc:  # pragma: no cover - fetch_state_news_items already guards
+        _logger.warning("gather_state_news(%s): policy lane error — %s", state_abbr, exc)
+    try:
+        items.extend(await fetch_state_brand_items(state_abbr, http))
+    except Exception as exc:  # pragma: no cover - fetch_state_brand_items already guards
+        _logger.warning("gather_state_news(%s): brand lane error — %s", state_abbr, exc)
+
     findings: list[dict[str, Any]] = []
+    seen_links: set[str] = set()
     for item in items:
         finding = item_to_finding(item, state_abbr)
-        if finding is not None:
-            findings.append(finding)
+        if finding is None:
+            continue
+        # The two lanes overlap (an "AI policy" story naming a vendor hits
+        # both). Dedup on link here so the same URL is not normalized twice;
+        # items with no link fall through to the downstream content-hash dedup.
+        link = str(item.get("link") or "").strip()
+        if link:
+            if link in seen_links:
+                continue
+            seen_links.add(link)
+        findings.append(finding)
     return findings
 
 

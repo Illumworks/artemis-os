@@ -67,7 +67,7 @@ TOPIC_CONFIG_NAME = "topic"
 # v3 widens require_any to also admit AI-in-schools policy, per the owner's "rein
 # in the technology" framing — screen-time and AI-in-schools are ONE story now).
 DEFAULT_TOPIC_RULES: dict[str, Any] = {
-    "version": 3,
+    "version": 4,
     # At least ONE of these must appear for an item to be relevant. Two anchor
     # families, either is sufficient on its own:
     #   1. explicit screen/device-time anchors — NOT generic "limit"/"evidence
@@ -160,6 +160,84 @@ DEFAULT_TOPIC_RULES: dict[str, Any] = {
         "commissions a study",
         "feasibility study",
         "funding study",
+    ],
+    # ── v4: the BRAND lane ────────────────────────────────────────────────────
+    # A named ed-tech vendor is ALWAYS topic-relevant: it bypasses both the
+    # require-anchor test and the exclude list.  This exists because the NM
+    # crisis is a BRAND/procurement story, not a policy story, and the policy
+    # gate above structurally cannot see it -- "New Mexico district drops Amira
+    # reading program" carries no screen-time anchor and trips the "literacy"
+    # exclude.  Zero NM signals were captured during an active NM crisis.
+    #
+    # DISAMBIGUATION IS MANDATORY, for exactly the reason a bare "ai" anchor is
+    # banned above: the gate does plain substring matching.  Several vendors are
+    # ordinary English words -- amplify, renaissance, brisk, multitudes -- and a
+    # bare token would match "amplify the message", "renaissance fair", "brisk
+    # pace".  Every such name below is qualified.  Only genuinely distinctive
+    # tokens (lexia, iready, newsela, edmentum, khanmigo) stand alone.
+    "brand_any": [
+        # -- Amira itself --
+        "amira learning",
+        "amira reading",
+        "amira",  # distinctive enough inside a school-scoped feed
+        # -- Tier 1: closest ICP match (their removals lead ours) --
+        "i-ready",
+        "iready",
+        "curriculum associates",
+        "amplify reading",
+        "amplify education",
+        "amplify ckla",
+        "amplify literacy",
+        "mclass",
+        "dibels",
+        "renaissance learning",
+        "star reading",
+        "lexia",
+        "magic school ai",
+        "magicschool",
+        "brisk teaching",
+        # -- Tier 2: moderate ICP alignment --
+        "imagine learning",
+        "fastbridge",
+        "acadience",
+        # -- Tier 3: less aligned ICP --
+        "schoolai",
+        "school ai platform",
+        "newsela",
+        "edmentum",
+        "savvas",
+        "khanmigo",
+        "istation",
+        "ixl learning",
+    ],
+    # ── v4: the ENTRANT lane (Mark's "left field" concern) ────────────────────
+    # General AI companies count as competitors because they could ship learning
+    # software and blindside us from outside the ed-tech category.  Unlike
+    # `brand_any` these do NOT stand alone -- an entrant term only counts when an
+    # education-context term is ALSO present.  Watching OpenAI or Google on
+    # general AI news would bury every other lane within a day.
+    "entrant_any": [
+        "openai",
+        "anthropic",
+        "chatgpt",
+        "gemini",
+        "copilot",
+        "khan academy",
+        "meta ai",
+    ],
+    # The education-context proof an `entrant_any` hit requires.
+    "entrant_context_any": [
+        "school",
+        "district",
+        "classroom",
+        "teacher",
+        "student",
+        "k-12",
+        "k12",
+        "curriculum",
+        "literacy",
+        "reading instruction",
+        "education",
     ],
     # Per-config toggle for the cheap LLM tie-break on mixed-signal items. The
     # settings.screentime_topic_llm_tiebreak flag ALSO gates it (both must be on).

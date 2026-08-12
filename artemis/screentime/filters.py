@@ -282,6 +282,12 @@ def _topic_terms(rules: dict[str, Any], key: str) -> list[str]:
 def topic_prescreen(text: str, topic_rules: dict[str, Any]) -> str:
     """Pure keyword pre-screen → TOPIC_KEEP | TOPIC_DROP | TOPIC_AMBIGUOUS.
 
+    Lanes are evaluated in order; the first two short-circuit:
+      BRAND    : a named ed-tech vendor (``brand_any``) → KEEP unconditionally.
+      ENTRANT  : a general AI company (``entrant_any``) → KEEP only when an
+                 education-context term (``entrant_context_any``) is also there.
+      POLICY   : the original screen-time / AI-in-schools anchor logic below.
+
     KEEP       : a require-term (screen/device-time anchor) is present and no
                  excluded ed-policy theme is present.
     AMBIGUOUS  : a require-term AND an excluded theme are both present (e.g. a
@@ -292,6 +298,24 @@ def topic_prescreen(text: str, topic_rules: dict[str, Any]) -> str:
                  excluded theme with no anchor.
     """
     lower = text.lower()
+
+    # BRAND lane (v4) — checked FIRST and short-circuits both the anchor test
+    # and the exclude list. A named ed-tech vendor is always relevant to us:
+    # "district drops Amira reading program" carries no screen-time anchor and
+    # trips the "literacy" exclude, so the policy gate below would drop the
+    # single most important class of item we have. See topic_config brand_any.
+    if any(term in lower for term in _topic_terms(topic_rules, "brand_any")):
+        return TOPIC_KEEP
+
+    # ENTRANT lane (v4) — a general AI company counts only WITH education
+    # context. Unqualified, these would match every mainstream AI story and
+    # bury the rest of the feed.
+    entrants = _topic_terms(topic_rules, "entrant_any")
+    if entrants and any(term in lower for term in entrants):
+        context = _topic_terms(topic_rules, "entrant_context_any")
+        if context and any(term in lower for term in context):
+            return TOPIC_KEEP
+
     require = _topic_terms(topic_rules, "require_any")
     exclude = _topic_terms(topic_rules, "exclude_any")
 

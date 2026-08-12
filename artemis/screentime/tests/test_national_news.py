@@ -233,10 +233,15 @@ async def test_gather_national_policy_news_default_sweeps_all_provided_states():
     fake_http.get.return_value.status_code = 200
     fake_http.get.return_value.text = _SAMPLE_RSS
 
-    findings, next_cursor = await gather_national_policy_news(states=["FL", "TX"], http=fake_http)
+    states = ["FL", "TX"]
+    findings, next_cursor = await gather_national_policy_news(states=states, http=fake_http)
     assert next_cursor == 0
-    assert len(findings) == 4  # 2 items per state x 2 states
-    assert fake_http.get.await_count == 2
+    # 2 items per state x 2 states. Both lanes return the same _SAMPLE_RSS here,
+    # so this also asserts gather_state_news dedups the overlap by link rather
+    # than double-counting it.
+    assert len(findings) == 4
+    # Two feeds per state since the brand lane landed (policy + brand).
+    assert fake_http.get.await_count == 2 * len(states)
 
 
 async def test_gather_national_policy_news_rotation_mode_returns_advanced_cursor():
@@ -248,7 +253,8 @@ async def test_gather_national_policy_news_rotation_mode_returns_advanced_cursor
         states=["FL", "TX", "CA"], states_per_run=2, cursor=0, http=fake_http
     )
     assert next_cursor == 2
-    assert fake_http.get.await_count == 2  # only 2 of 3 states hit this run
+    # Only 2 of 3 states hit this run, x2 feeds each (policy + brand lanes).
+    assert fake_http.get.await_count == 2 * 2
 
 
 async def test_gather_state_news_failure_is_isolated():
