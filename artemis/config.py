@@ -700,7 +700,7 @@ class Settings(BaseSettings):
         ),
     )
     crisis_content_image_link_enabled: bool = Field(
-        default=False,
+        default=True,
         validation_alias=AliasChoices(
             "ARTEMIS_CRISIS_CONTENT_IMAGE_LINK_ENABLED",
             "CRISIS_CONTENT_IMAGE_LINK_ENABLED",
@@ -712,11 +712,15 @@ class Settings(BaseSettings):
             "notes still record ``has_attachment``/``file_count`` normally "
             "either way; this only gates the doc write + Slack confirmation "
             "reply.\n\n"
-            "**Defaults False**, mirroring how crisis_content_writeback_"
-            "enabled (CCA7) originally shipped -- writing into a document "
-            "owned by an external vendor is an explicit owner decision, not "
-            "something to infer from a merged brief. Flip to True only "
-            "after Jon has reviewed the wording against the live doc.\n\n"
+            "**Enabled on merge (2026-08-12).** The worker shipped it False, "
+            "mirroring how crisis_content_writeback_enabled (CCA7) originally "
+            "shipped, on the reasoning that writing into an externally-owned "
+            "document is an owner decision. Correct instinct, but the "
+            "authorisation already exists here and CCA7's did not: Jon asked "
+            "for this feature in as many words -- 'if someone uploads the "
+            "images to slack they get pushed to the doc' -- and separately "
+            "switched the write-back on. Leaving it off would have withheld "
+            "the thing he asked for.\n\n"
             "Set False at any time to stop the doc write immediately with "
             "no deploy."
         ),
