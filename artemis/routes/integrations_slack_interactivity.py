@@ -47,11 +47,7 @@ from artemis.crisis_content.slack_actions import (
     CRISIS_CONTENT_ACTION_IDS as _CRISIS_CONTENT_ACTION_IDS,
 )
 from artemis.crisis_content.slack_actions import (
-    CRISIS_CONTENT_VIEW_CALLBACK_ID as _CRISIS_CONTENT_VIEW_CALLBACK_ID,
-)
-from artemis.crisis_content.slack_actions import (
     handle_crisis_content_block_action,
-    handle_crisis_content_view_submission,
 )
 from artemis.directory.models import DirectoryPerson
 from artemis.routes.integrations_slack_events import (
@@ -190,22 +186,6 @@ async def slack_interactivity(
             "slack interactivity: payload is not an object for agent_id=%s", normalized_agent
         )
         return JSONResponse(status_code=400, content={"error": "invalid payload shape"})
-
-    # ── Dispatch branch (CCA5): crisis-content decisions. `view_submission`
-    # payloads (the "Request changes" modal's Submit) have no top-level
-    # `actions` key at all — the generic `actions`-list handling a few lines
-    # down would otherwise just warn-and-ack it as "no actions in payload".
-    # Caught here, before that happens, and handed to the crisis_content
-    # package, which owns everything about this decision — this route still
-    # only verifies + dispatches; see artemis/crisis_content/slack_actions.py.
-    payload_type = str(payload.get("type") or "")
-    if payload_type == "view_submission":
-        view_obj = payload.get("view")
-        if isinstance(view_obj, dict) and view_obj.get("callback_id") == _CRISIS_CONTENT_VIEW_CALLBACK_ID:
-            return await handle_crisis_content_view_submission(
-                session, payload=payload, access_token=agent_cfg.access_token
-            )
-        return JSONResponse(status_code=200, content={})
 
     # ── 4. Identity comes ONLY from the verified payload's user object —
     # never from the button's `value`, which is just Block Kit content the

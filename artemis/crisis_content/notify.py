@@ -32,15 +32,32 @@ three lookups it already has the answer to; only successful resolutions are
 cached, so a currently-unresolvable email (e.g. a new hire mid-onboarding)
 is retried on the next tick rather than permanently assumed missing.
 
-**Buttons (CCA5).** ``render_transition_blocks`` wraps
-``render_transition_message``'s UNCHANGED text in a ``section`` block and
-appends an ``actions`` block with the two decision buttons -- the card body
-itself is not restyled (Jon has approved the current format). The button
-``value`` is ``f"{card_id}:{route}"`` -- enough to identify the target, and
-deliberately carrying no identity: see
+**Buttons (CCA5, ``Edit in doc`` replaces ``Request changes`` in CCA12).**
+``render_transition_blocks`` wraps ``render_transition_message``'s UNCHANGED
+text in a ``section`` block and appends an ``actions`` block with the two
+decision buttons -- the card body itself is not restyled (Jon has approved
+the current format). The button ``value`` is ``f"{card_id}:{route}"`` --
+enough to identify the target, and deliberately carrying no identity: see
 ``artemis/routes/integrations_slack_interactivity.py`` and
 ``artemis/crisis_content/slack_actions.py`` for why identity comes only from
 the verified payload's ``user.id``, never from Block Kit content.
+
+**CCA12: ``Edit in doc`` carries BOTH ``url`` and ``action_id``.** Per
+Slack's own docs for the button element's ``url`` field: "If you're using
+``url``, you'll still receive an interaction payload and will need to send
+an acknowledgement response." One tap opens the doc in the browser AND
+delivers the same ``block_actions`` interaction ``Approve`` gets, which is
+what lets ``artemis/crisis_content/slack_actions.py`` record a decision
+without asking anyone to type prose -- see that module's docstring for what
+happens on click, and its "Do NOT notify Jen" section for the one thing this
+click deliberately does NOT do. The ``url`` is
+``f"{_DOC_URL}?tab={transition.tab_id}"`` when ``transition.tab_id`` is set,
+else the bare ``_DOC_URL`` -- see ``Transition.tab_id``'s docstring
+(``artemis.crisis_content.transitions``) for why that field is ``None`` for
+every real transition today and what would need to change to populate it.
+The modal this button replaced (``views.open``, its ``view_submission``
+handler, ``private_metadata``, ``CRISIS_CONTENT_VIEW_CALLBACK_ID``) has been
+deleted entirely, along with the tests that covered it.
 
 **Opener voice (CCA8).** The old bare ``"📝 Copy ready for review -- X"`` /
 ``"🎨 Asset ready for review -- X"`` line is now a conversational, varied
@@ -87,7 +104,7 @@ __all__ = [
     "TESTING_LINE",
     "TESTING_LINE_ASSET",
     "ACTION_APPROVE",
-    "ACTION_REQUEST_CHANGES",
+    "ACTION_EDIT_IN_DOC",
     "testing_line_for_route",
     "render_char_count_line",
     "render_opener",
@@ -96,6 +113,7 @@ __all__ = [
     "render_transition_message",
     "render_transition_blocks",
     "render_decision_message",
+    "render_editing_in_doc_message",
     "PostedCardMessage",
     "post_transition_card",
     "copy_mention_emails",
@@ -107,7 +125,10 @@ __all__ = [
 # slack_actions.py also imports render_decision_message from this module, so
 # defining them there instead would make the two modules import each other.
 ACTION_APPROVE = "crisis_content_approve"
-ACTION_REQUEST_CHANGES = "crisis_content_request_changes"
+# CCA12: replaces the old ACTION_REQUEST_CHANGES ("crisis_content_request_changes"),
+# which opened the now-deleted modal. Renamed, not aliased, so nothing can
+# accidentally still reference the retired action_id.
+ACTION_EDIT_IN_DOC = "crisis_content_edit_in_doc"
 
 # The guard against anyone mistaking testing traffic for the live workflow.
 # Used only under the `dm_jon` rollback override (CCA6) -- see
@@ -321,6 +342,22 @@ async def _resolve_copy_mentions(client: SlackClient) -> tuple[list[str], list[s
 
 _DOC_URL = f"https://docs.google.com/document/d/{TARGET_DOCUMENT_ID}/edit"
 
+
+def _doc_url_for(tab_id: str | None) -> str:
+    """The "Edit in doc" button's ``url`` -- ``?tab=<tab_id>`` when known.
+
+    CCA12: Docs has no per-row anchor, so the tab is the best available
+    precision -- this is deliberately NOT a per-card constant; it is
+    computed from whatever ``tab_id`` the caller (``render_transition_blocks``,
+    from ``transition.tab_id``) actually has for THIS card, never a
+    hardcoded literal. ``None`` (every real transition today -- see
+    ``Transition.tab_id``'s docstring) falls back to the bare ``_DOC_URL``,
+    identical to the doc link every card has always shown in its body text.
+    """
+    if tab_id:
+        return f"{_DOC_URL}?tab={tab_id}"
+    return _DOC_URL
+
 # t.co wraps every URL in an X post to exactly 23 characters regardless of its
 # real length. A naive len() on copy containing a long URL produces false
 # "over 280" alarms -- see docs/crisis-content-approval-pipeline.md and the
@@ -458,6 +495,11 @@ def render_transition_blocks(
     see ``artemis/routes/integrations_slack_interactivity.py`` and
     ``artemis/crisis_content/slack_actions.py`` for why the clicking user's
     identity comes ONLY from the verified payload's ``user.id``.
+
+    ``Edit in doc`` (CCA12) carries BOTH ``url`` (``_doc_url_for(transition.tab_id)``
+    -- see the module docstring's "CCA12" section) AND ``action_id`` --
+    Slack still sends a ``block_actions`` interaction for a ``url`` button,
+    which is what lets one tap both open the doc and record the decision.
     """
     value = f"{card_id}:{transition.route}"
     return [
@@ -480,8 +522,9 @@ def render_transition_blocks(
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "Request changes"},
-                    "action_id": ACTION_REQUEST_CHANGES,
+                    "text": {"type": "plain_text", "text": "Edit in doc"},
+                    "action_id": ACTION_EDIT_IN_DOC,
+                    "url": _doc_url_for(transition.tab_id),
                     "value": value,
                 },
             ],
@@ -527,6 +570,39 @@ def render_decision_message(
     ]
     if note:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": note}})
+    return text, blocks
+
+
+def render_editing_in_doc_message(
+    *, actor_mention: str, decided_at: datetime
+) -> tuple[str, list[dict[str, Any]]]:
+    """Render the post-"Edit in doc"-click replacement for Callie's card (CCA12).
+
+    Deliberately its OWN function rather than another branch of
+    ``render_decision_message`` above: that function's ``"changes_requested"``
+    wording ("Changes requested by X") describes the OLD modal flow, where an
+    approver typed a description of what needed to change. This click
+    records the same ``decision`` value in the DB (see
+    ``artemis.crisis_content.slack_actions._handle_edit_in_doc``), but there
+    is no description -- the approver went straight to the document -- so
+    the card must say a different, accurate thing: who is editing, not what
+    they asked for. Conflating the two wordings would make it look like a
+    change was described when nothing was.
+
+    ``actor_mention`` is a real Slack ``<@U…>`` mention (per
+    ``briefs/cca12-edit-in-doc-button.md``'s literal example), not the
+    email-preferring ``_display_label`` the Approve path uses -- this card
+    renders in Slack, where a mention resolves to a display name, and the
+    brief's worked example is explicit about the ``<@…>`` form.
+
+    No ``note`` parameter: this decision's ``note`` is always ``NULL`` (see
+    ``_handle_edit_in_doc``), so there is nothing to render as a second block.
+    """
+    stamp = decided_at.strftime("%-I:%M%p").lower()
+    text = f"✏️ {actor_mention} is editing in the doc · {stamp}"
+    blocks: list[dict[str, Any]] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+    ]
     return text, blocks
 
 

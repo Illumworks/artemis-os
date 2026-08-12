@@ -1,10 +1,24 @@
-"""CCA5 — crisis-content decision loop tests.
+"""CCA5 — crisis-content decision loop tests (CCA12 — modal replaced by a button).
 
 Covers every item in ``briefs/cca5-approval-loop.md`` "Tests" section:
 authenticated + authorized Approve clicks (both routes, both directions),
 the unknown-user path, identity-from-verified-payload-not-value, the
-Request-changes modal + its view_submission, the double-click guard, and
-the append-only "changes_requested then later approved" survival guarantee.
+double-click guard, and the append-only "changes_requested then later
+approved" survival guarantee.
+
+**CCA12.** The "Request changes" modal + its ``view_submission`` handler are
+gone (``briefs/cca12-edit-in-doc-button.md``) -- replaced by an ``Edit in
+doc`` button that carries both ``url`` and ``action_id`` and records the
+same ``changes_requested`` decision (with ``note = NULL``) directly from the
+``block_actions`` click, no modal round-trip. The tests that covered the
+modal (opening it, its ``view_submission`` persisting a note, and the CCA9
+Jen-in-thread mention that only that path could produce) are removed rather
+than left asserting dead behaviour; this file's "Edit in doc" section below
+covers the click's actual new behaviour, including the one property the
+brief calls out as safety-critical: this decision must NOT schedule the
+CCA7 write-back (doc line + Drive @mention + email) that a
+``changes_requested`` decision otherwise triggers, or Jen would be pinged
+before a single edit exists in the document.
 
 POST /api/integrations/slack/interactivity/{agent_id} — same endpoint
 ``tests/test_slack_interactivity.py`` covers for the pre-existing
@@ -37,7 +51,6 @@ from sqlalchemy import NullPool, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import artemis.db
-from artemis.config import settings
 from artemis.crisis_content import slack_actions
 from artemis.crisis_content.orm import (
     CrisisContentCard,
@@ -209,27 +222,6 @@ def _click_payload(
         "response_url": response_url,
         "trigger_id": trigger_id,
         "container": {"type": "message", "message_ts": message_ts},
-    }
-
-
-def _view_submission_payload(
-    *, private_metadata: dict[str, Any], note: str | None, slack_user_id: str
-) -> dict[str, Any]:
-    values: dict[str, Any] = {}
-    if note is not None:
-        values = {
-            slack_actions._NOTE_BLOCK_ID: {
-                slack_actions._NOTE_ACTION_ID: {"type": "plain_text_input", "value": note}
-            }
-        }
-    return {
-        "type": "view_submission",
-        "user": {"id": slack_user_id, "username": "clicker"},
-        "view": {
-            "callback_id": slack_actions.CRISIS_CONTENT_VIEW_CALLBACK_ID,
-            "private_metadata": json.dumps(private_metadata),
-            "state": {"values": values},
-        },
     }
 
 
@@ -503,23 +495,40 @@ async def test_identity_comes_from_verified_payload_not_action_value(
     assert rows[0].decided_by_slack_user_id != "UATTACKER_FAKE"
 
 
-# ── Request changes: modal + view_submission ────────────────────────────────
+# ── CCA12: Edit in doc ───────────────────────────────────────────────────────
 
 
-async def test_request_changes_opens_modal_with_private_metadata(
-    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    opened: list[tuple[str, dict[str, Any]]] = []
+def _fake_post_message_slack_client(
+    posted: list[tuple[str, str, str | None]],
+) -> type:
+    """A fake ``slack_actions.SlackClient`` -- captures every ``post_message`` call.
+
+    Used by every "Edit in doc" test below that needs to observe the
+    CCA12 thread-invitation reply (``_reply_edit_invitation``).
+    """
 
     class _FakeSlackClient:
         def __init__(self, token: str) -> None:
             self.token = token
 
-        async def views_open(self, trigger_id: str, view: dict[str, Any]) -> dict[str, Any]:
-            opened.append((trigger_id, view))
+        async def post_message(
+            self,
+            channel: str,
+            text: str,
+            thread_ts: str | None = None,
+            blocks: Any = None,
+        ) -> dict[str, Any]:
+            posted.append((channel, text, thread_ts))
             return {"ok": True}
 
-    monkeypatch.setattr(slack_actions, "SlackClient", _FakeSlackClient)
+    return _FakeSlackClient
+
+
+async def test_edit_in_doc_records_one_changes_requested_decision_with_null_note(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_post_message_slack_client(posted))
 
     await _seed_callie_integration(db_session)
     await _seed_directory(db_session)
@@ -528,38 +537,40 @@ async def test_request_changes_opens_modal_with_private_metadata(
     resp = await _post(
         client,
         _click_payload(
-            action_id="crisis_content_request_changes",
+            action_id="crisis_content_edit_in_doc",
             card_id=card_id,
             route="copy",
-            slack_user_id=_HANNAH[1],
-            trigger_id="TRIGGER_XYZ",
+            slack_user_id=_ANGELA[1],
         ),
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {}
-    assert len(opened) == 1
-    trigger_id, view = opened[0]
-    assert trigger_id == "TRIGGER_XYZ"
-    assert view["callback_id"] == slack_actions.CRISIS_CONTENT_VIEW_CALLBACK_ID
-    metadata = json.loads(view["private_metadata"])
-    assert metadata["card_id"] == card_id
-    assert metadata["route"] == "copy"
+    assert resp.json().get("replace_original") is True
 
-    # No decision yet -- opening the modal must not itself decide anything.
     rows = await _decisions_for(db_session, card_id, "copy")
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].decision == "changes_requested"
+    assert rows[0].note is None
+    assert rows[0].decided_by_email == _ANGELA[0]
+    assert rows[0].decided_by_slack_user_id == _ANGELA[1]
 
 
-async def test_view_submission_persists_note(
+async def test_edit_in_doc_does_not_schedule_the_writeback(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    updates: list[tuple[str, list[Any]]] = []
+    """The safety-critical assertion from ``briefs/cca12-edit-in-doc-button.md``:
+    a ``changes_requested`` decision normally schedules the CCA7 write-back
+    (doc line + Drive @mention + email to Jen) -- ``Edit in doc`` must NOT,
+    or Jen is pinged before a single edit exists in the document. Proven
+    directly by replacing ``schedule_decision_writeback`` with a spy and
+    asserting it is never called, rather than inferring "no side effect"
+    from the absence of a Google/Slack credential in the test DB.
+    """
+    scheduled_for: list[int] = []
+    monkeypatch.setattr(slack_actions, "schedule_decision_writeback", scheduled_for.append)
 
-    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
-        updates.append((text, blocks))
-
-    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_post_message_slack_client(posted))
 
     await _seed_callie_integration(db_session)
     await _seed_directory(db_session)
@@ -567,27 +578,239 @@ async def test_view_submission_persists_note(
 
     resp = await _post(
         client,
-        _view_submission_payload(
-            private_metadata={
-                "card_id": card_id,
-                "route": "copy",
-                "response_url": "https://hooks.slack.test/actions/FAKE2",
-                "message_ts": "1700000000.000100",
-            },
-            note="Cut the second sentence, it reads as a promise we can't keep.",
+        _click_payload(
+            action_id="crisis_content_edit_in_doc",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_ANGELA[1],
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert scheduled_for == []  # the write-back scheduler was never called
+
+    # The decision itself still recorded normally -- only the notification
+    # side effect is suppressed, not the decision.
+    rows = await _decisions_for(db_session, card_id, "copy")
+    assert len(rows) == 1
+    assert rows[0].decision == "changes_requested"
+
+
+async def test_edit_in_doc_repaints_card_to_editing_state_with_no_buttons(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_post_message_slack_client(posted))
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)
+
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_edit_in_doc",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_HANNAH[1],
+        ),
+    )
+
+    body = resp.json()
+    assert body.get("replace_original") is True
+    assert "is editing in the doc" in body.get("text", "")
+    assert f"<@{_HANNAH[1]}>" in body.get("text", "")
+    # No actions block anywhere in the repaint -- the buttons are gone. CCA9's
+    # reopen logic brings the card back automatically once the copy actually
+    # changes, which is why removing the buttons here is safe.
+    for block in body.get("blocks", []):
+        assert block.get("type") != "actions"
+
+
+async def test_edit_in_doc_threads_one_invitation_reply_second_click_produces_no_second(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ephemeral_calls: list[str] = []
+
+    async def fake_ephemeral(response_url: str | None, text: str) -> None:
+        ephemeral_calls.append(text)
+
+    monkeypatch.setattr(slack_actions, "_post_ephemeral", fake_ephemeral)
+
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_post_message_slack_client(posted))
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)
+
+    # CCA9: where the card was posted -- what `find_posted_location` reads
+    # to know which thread to reply into.
+    async with db_session.begin():
+        await mark_notified(
+            db_session,
+            card_id,
+            "copy",
+            "Ready",
+            copy_hash="irrelevant-for-this-test",
+            channel_id="C0BM9TL63TL",
+            message_ts="1700000000.000100",
+        )
+
+    first = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_edit_in_doc",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_ANGELA[1],
+        ),
+    )
+    assert first.status_code == 200
+    assert len(posted) == 1
+    channel, reply_text, thread_ts = posted[0]
+    assert channel == "C0BM9TL63TL"
+    assert thread_ts == "1700000000.000100"
+    assert "drop it here" in reply_text.lower()
+
+    # A second click on the SAME (card, route) -- already decided
+    # (changes_requested -> changes_requested is blocked; see
+    # is_blocked_by_existing_decision) -- must not thread a second reply.
+    second = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_edit_in_doc",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_HANNAH[1],
+        ),
+    )
+    assert second.status_code == 200
+    assert second.json() == {}  # no replace_original -- already-decided ack
+    assert len(posted) == 1  # still just the one reply
+    assert len(ephemeral_calls) == 1
+    assert "already decided" in ephemeral_calls[0].lower()
+
+    rows = await _decisions_for(db_session, card_id, "copy")
+    assert len(rows) == 1
+
+
+async def test_edit_in_doc_with_no_posted_location_skips_thread_reply_without_crashing(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ``crisis_content_notifications`` row for this card+route (e.g. a
+    card actioned before CCA9) -> the request still succeeds and records the
+    decision; there is simply nothing to thread the invitation onto.
+    """
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_post_message_slack_client(posted))
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)  # no mark_notified call -- no posted location
+
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_edit_in_doc",
+            card_id=card_id,
+            route="copy",
             slack_user_id=_JACLYN[1],
         ),
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {}
+    assert posted == []  # nothing to thread onto -- skipped, not crashed
 
     rows = await _decisions_for(db_session, card_id, "copy")
     assert len(rows) == 1
     assert rows[0].decision == "changes_requested"
-    assert rows[0].note == "Cut the second sentence, it reads as a promise we can't keep."
-    assert rows[0].decided_by_email == _JACLYN[0]
-    assert len(updates) == 1  # the original card was updated via response_url
+
+
+async def test_edit_in_doc_authorization_and_routes_are_unchanged(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per the brief: "Same authorization check, same route rules" -- pins
+    that Edit in doc reuses ``is_authorized_for_route`` unchanged: Angela
+    (a copy approver, never an asset approver) is refused on the ``asset``
+    route, same as she always has been for Approve. (The brief's own
+    wording here -- "Jon refused on asset... he is allowed on both today" --
+    is self-contradictory; see the CCA12 report's flags. Jon IS allowed on
+    both routes today, so there is no "Jon refused" case to assert.)
+    """
+    ephemeral_calls: list[str] = []
+
+    async def fake_ephemeral(response_url: str | None, text: str) -> None:
+        ephemeral_calls.append(text)
+
+    monkeypatch.setattr(slack_actions, "_post_ephemeral", fake_ephemeral)
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)
+
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_edit_in_doc",
+            card_id=card_id,
+            route="asset",
+            slack_user_id=_ANGELA[1],
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {}  # refused -- no replace_original, card untouched
+    rows = await _decisions_for(db_session, card_id, "asset")
+    assert rows == []
+    assert len(ephemeral_calls) == 1
+    assert "not an approver" in ephemeral_calls[0].lower()
+
+
+async def test_unauthorized_ephemeral_reply_explicitly_sets_replace_original_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact regression from production, 2026-08-12 (see
+    ``slack_actions._post_ephemeral``'s own comment): without an EXPLICIT
+    ``replace_original: false`` on the ephemeral POST to ``response_url``, a
+    rejected click can replace the whole card with the one-line rejection
+    text, destroying the post's copy in a live channel -- Slack's docs do
+    not pin a default for this field. Exercises ``_post_ephemeral`` directly
+    (rather than through the full HTTP endpoint) so the assertion is against
+    the literal JSON body this app sends to Slack, not against a mocked
+    stand-in that would hide a regression here.
+    """
+    calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeAsyncClient:
+        def __init__(self, timeout: float | int) -> None:
+            pass
+
+        async def __aenter__(self) -> _FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        async def post(self, url: str, *, json: dict[str, Any]) -> _FakeResponse:
+            calls.append({"url": url, "json": json})
+            return _FakeResponse()
+
+    monkeypatch.setattr(slack_actions.httpx, "AsyncClient", _FakeAsyncClient)
+
+    await slack_actions._post_ephemeral(
+        "https://hooks.slack.test/actions/FAKE_REPLACE_ORIGINAL",
+        "You're not an approver for the asset route, so this click wasn't recorded.",
+    )
+
+    assert len(calls) == 1
+    body = calls[0]["json"]
+    assert body["replace_original"] is False
+    assert body["response_type"] == "ephemeral"
 
 
 # ── Double-click guard / append-only survival ───────────────────────────────
@@ -642,57 +865,38 @@ async def test_second_click_on_decided_card_no_duplicate_row(
     assert "already decided" in ephemeral_calls[0].lower()
 
 
-async def test_changes_requested_then_later_approved_both_rows_survive(
+async def test_edit_in_doc_then_later_approved_both_rows_survive(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    opened: list[tuple[str, dict[str, Any]]] = []
-
-    class _FakeSlackClient:
-        def __init__(self, token: str) -> None:
-            self.token = token
-
-        async def views_open(self, trigger_id: str, view: dict[str, Any]) -> dict[str, Any]:
-            opened.append((trigger_id, view))
-            return {"ok": True}
-
-    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
-        pass
-
-    monkeypatch.setattr(slack_actions, "SlackClient", _FakeSlackClient)
-    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
+    """CCA12's version of the append-only survival guarantee: an ``Edit in
+    doc`` decision (``changes_requested``, ``note=None``) followed by a
+    later ``approved`` decision must leave BOTH rows on record, same as the
+    old modal-driven ``changes_requested`` -> ``approved`` sequence did.
+    """
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_post_message_slack_client(posted))
 
     await _seed_callie_integration(db_session)
     await _seed_directory(db_session)
     card_id = await _seed_card(db_session)
 
-    # 1. Request changes, by Angela.
+    # 1. Edit in doc, by Angela.
     click_resp = await _post(
         client,
         _click_payload(
-            action_id="crisis_content_request_changes",
+            action_id="crisis_content_edit_in_doc",
             card_id=card_id,
             route="copy",
             slack_user_id=_ANGELA[1],
         ),
     )
     assert click_resp.status_code == 200
-    assert len(opened) == 1
-    _, view = opened[0]
-    metadata = json.loads(view["private_metadata"])
-
-    submit_resp = await _post(
-        client,
-        _view_submission_payload(
-            private_metadata=metadata,
-            note="Please cut the last line.",
-            slack_user_id=_ANGELA[1],
-        ),
-    )
-    assert submit_resp.status_code == 200
+    assert click_resp.json().get("replace_original") is True
 
     rows_after_first = await _decisions_for(db_session, card_id, "copy")
     assert len(rows_after_first) == 1
     assert rows_after_first[0].decision == "changes_requested"
+    assert rows_after_first[0].note is None
 
     # 2. Later, Hannah approves the same card+route.
     approve_resp = await _post(
@@ -710,192 +914,10 @@ async def test_changes_requested_then_later_approved_both_rows_survive(
     rows_after_second = await _decisions_for(db_session, card_id, "copy")
     assert len(rows_after_second) == 2  # BOTH rows survive -- nothing updated or deleted
     assert rows_after_second[0].decision == "changes_requested"
-    assert rows_after_second[0].note == "Please cut the last line."
+    assert rows_after_second[0].note is None
     assert rows_after_second[0].decided_by_email == _ANGELA[0]
     assert rows_after_second[1].decision == "approved"
     assert rows_after_second[1].decided_by_email == _HANNAH[0]
-
-
-# ── CCA9: @-mention Jen in-thread on changes_requested only ─────────────────
-
-
-def _fake_slack_post_message_client(
-    posted: list[tuple[str, str, str | None]],
-) -> type:
-    class _FakeSlackClient:
-        def __init__(self, token: str) -> None:
-            self.token = token
-
-        async def post_message(
-            self,
-            channel: str,
-            text: str,
-            thread_ts: str | None = None,
-            blocks: Any = None,
-        ) -> dict[str, Any]:
-            posted.append((channel, text, thread_ts))
-            return {"ok": True}
-
-    return _FakeSlackClient
-
-
-async def test_changes_requested_mentions_jen_in_thread_with_note_text(
-    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A changes_requested decision threads a real ``<@…>`` mention for Jen,
-    in the card's own thread, carrying the approver's note text.
-    """
-    monkeypatch.setattr(settings, "crisis_content_jen_slack_user_id", "U016P00LP08")
-
-    posted: list[tuple[str, str, str | None]] = []
-    monkeypatch.setattr(slack_actions, "SlackClient", _fake_slack_post_message_client(posted))
-
-    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
-        pass
-
-    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
-
-    await _seed_callie_integration(db_session)
-    await _seed_directory(db_session)
-    card_id = await _seed_card(db_session)
-
-    # CCA9: where the card was posted -- what `find_posted_location` reads
-    # to know which thread to post Jen's mention into.
-    async with db_session.begin():
-        await mark_notified(
-            db_session,
-            card_id,
-            "copy",
-            "Ready",
-            copy_hash="irrelevant-for-this-test",
-            channel_id="C0BM9TL63TL",
-            message_ts="1700000000.000100",
-        )
-
-    resp = await _post(
-        client,
-        _view_submission_payload(
-            private_metadata={
-                "card_id": card_id,
-                "route": "copy",
-                "response_url": "https://hooks.slack.test/actions/FAKE3",
-                "message_ts": "1700000000.000100",
-            },
-            note="tighten the second paragraph",
-            slack_user_id=_ANGELA[1],
-        ),
-    )
-
-    assert resp.status_code == 200
-    assert resp.json() == {}
-    assert len(posted) == 1
-    channel, jen_text, thread_ts = posted[0]
-    assert channel == "C0BM9TL63TL"
-    assert thread_ts == "1700000000.000100"
-    assert "<@U016P00LP08>" in jen_text
-    assert "tighten the second paragraph" in jen_text
-
-    # Ready-for-review cards say the plain word Jen elsewhere (CCA8) -- this
-    # message is the ONE exception where a real mention is correct; that
-    # doesn't relax anywhere else, which is covered by
-    # tests/test_crisis_content_voice.py's own tests, left untouched here.
-
-
-async def test_changes_requested_with_empty_jen_setting_posts_without_broken_mention(
-    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Empty ``crisis_content_jen_slack_user_id`` -> the message still posts,
-    naming Jen in plain text, never a broken ``<@>``.
-    """
-    monkeypatch.setattr(settings, "crisis_content_jen_slack_user_id", "")
-
-    posted: list[tuple[str, str, str | None]] = []
-    monkeypatch.setattr(slack_actions, "SlackClient", _fake_slack_post_message_client(posted))
-
-    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
-        pass
-
-    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
-
-    await _seed_callie_integration(db_session)
-    await _seed_directory(db_session)
-    card_id = await _seed_card(db_session)
-
-    async with db_session.begin():
-        await mark_notified(
-            db_session,
-            card_id,
-            "copy",
-            "Ready",
-            copy_hash="irrelevant-for-this-test",
-            channel_id="C0BM9TL63TL",
-            message_ts="1700000000.000200",
-        )
-
-    resp = await _post(
-        client,
-        _view_submission_payload(
-            private_metadata={
-                "card_id": card_id,
-                "route": "copy",
-                "response_url": "https://hooks.slack.test/actions/FAKE4",
-                "message_ts": "1700000000.000200",
-            },
-            note="cut the CTA, it's too pushy",
-            slack_user_id=_HANNAH[1],
-        ),
-    )
-
-    assert resp.status_code == 200
-    assert len(posted) == 1
-    _channel, jen_text, _thread_ts = posted[0]
-    assert "<@" not in jen_text
-    assert "Jen" in jen_text
-    assert "cut the CTA, it's too pushy" in jen_text
-
-
-async def test_changes_requested_with_no_posted_location_skips_jen_mention_without_crashing(
-    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No ``crisis_content_notifications`` row for this card+route (e.g. a
-    card actioned before CCA9, or a poller path that never recorded one) ->
-    the request still succeeds and records the decision; there is simply
-    nothing to thread Jen's mention onto. Regression guard for every OTHER
-    test in this file, all of which seed a bare card with no notification
-    row and must keep passing unchanged.
-    """
-    posted: list[tuple[str, str, str | None]] = []
-    monkeypatch.setattr(slack_actions, "SlackClient", _fake_slack_post_message_client(posted))
-
-    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
-        pass
-
-    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
-
-    await _seed_callie_integration(db_session)
-    await _seed_directory(db_session)
-    card_id = await _seed_card(db_session)  # no mark_notified call -- no posted location
-
-    resp = await _post(
-        client,
-        _view_submission_payload(
-            private_metadata={
-                "card_id": card_id,
-                "route": "copy",
-                "response_url": "https://hooks.slack.test/actions/FAKE5",
-                "message_ts": "1700000000.000300",
-            },
-            note="no notification row exists for this card",
-            slack_user_id=_JACLYN[1],
-        ),
-    )
-
-    assert resp.status_code == 200
-    assert posted == []  # nothing to thread onto -- skipped, not crashed
-
-    rows = await _decisions_for(db_session, card_id, "copy")
-    assert len(rows) == 1
-    assert rows[0].decision == "changes_requested"
 
 
 async def test_reopened_card_buttons_work_again(
