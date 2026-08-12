@@ -1126,26 +1126,17 @@ async def test_post_ephemeral_sends_replace_original_false(
     assert body["text"] == "not an approver"
 
 
-async def test_update_card_via_response_url_sends_replace_original_true(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The companion writer in this module: after a GENUINE decision, the
-    card itself must actually be replaced (``True``) -- the opposite of
-    ``_post_ephemeral`` above. Pinning both bodies side by side makes it
-    obvious neither could silently swap with the other.
-    """
-    calls: list[dict[str, Any]] = []
-    monkeypatch.setattr(
-        slack_actions.httpx, "AsyncClient", lambda **kw: _FakeAsyncClient(calls, **kw)
-    )
-
-    await slack_actions._update_card_via_response_url(
-        "https://hooks.slack.test/actions/FAKE_UPDATE",
-        text="Approved by someone",
-        blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": "x"}}],
-    )
-
-    assert len(calls) == 1
-    body = calls[0]["json"]
-    assert body["replace_original"] is True
-    assert body["text"] == "Approved by someone"
+# The companion test that pinned ``_update_card_via_response_url``'s
+# ``replace_original: True`` body was removed with CCA12, which deleted that
+# function: it existed only to repaint the card after a MODAL submission, whose
+# own HTTP response controls the modal rather than the message behind it. With
+# the modal gone, every card repaint rides the interaction's own HTTP response,
+# so there is no second writer left to confuse with the ephemeral one.
+#
+# Kept as a note rather than deleted silently because the pairing was the point:
+# two bodies, side by side, so neither could quietly swap for the other. If a
+# response_url writer is ever reintroduced, restore that test with it.
+#
+# The audit that added it and the slice that deleted the function landed within
+# an hour of each other, and a textual merge produced no conflict at all — the
+# breakage only appeared at test collection.
