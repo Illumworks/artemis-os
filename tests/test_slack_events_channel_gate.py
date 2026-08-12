@@ -848,3 +848,83 @@ def test_session_key_channel_message_matches_app_mention() -> None:
 
     assert session_id_from_handle == expected_session_id
     assert session_id_from_route == expected_session_id
+
+
+def test_app_mention_bypasses_the_channel_allowlist() -> None:
+    """Being @-mentioned is consent, in any channel.
+
+    Reported 2026-08-12: Callie was invited to two channels and answered in
+    neither — including one where Jon @-mentioned her directly. Both events
+    arrived and were "recorded but not routed", silently, because the channel
+    was not in her allowlist.
+
+    "Invite the bot to the channel" is the universal Slack mental model, so a
+    bot that ignores an explicit mention there reads as broken rather than
+    restricted, and nothing in Slack explains why. The allowlist still governs
+    ambient chatter — which is what it was for.
+    """
+    from artemis.routes.integrations_slack_events import (
+        _is_authorized_inbound,
+        _SlackAgentConfig,
+    )
+
+    cfg = _SlackAgentConfig(
+        agent_id="callie",
+        signing_secret="s",
+        access_token="t",
+        bot_user_id="UBOT",
+        authed_user_id="",
+        allowed_user_ids=(),
+        allowed_channel_ids=("C_ALLOWED",),
+        listen_channel_messages=True,
+        always_respond_in_channels=False,
+    )
+
+    # Ambient chatter in an un-allowlisted channel: still blocked.
+    assert not _is_authorized_inbound(
+        agent_cfg=cfg,
+        channel_id="C_NOT_ALLOWED",
+        channel_type="channel",
+        user_id="U1",
+        inner_type="message",
+    )
+    # An explicit @-mention in that same channel: allowed.
+    assert _is_authorized_inbound(
+        agent_cfg=cfg,
+        channel_id="C_NOT_ALLOWED",
+        channel_type="channel",
+        user_id="U1",
+        inner_type="app_mention",
+    )
+
+
+def test_group_dm_is_treated_as_a_dm() -> None:
+    """A group DM (``mpim``) is a deliberate invitation, like a 1:1 DM.
+
+    Same report: Callie also stayed silent in a group chat with Jon and Josh.
+    An mpim channel id does not start with "D", so the old is_dm check missed
+    it and it fell through to the channel allowlist.
+    """
+    from artemis.routes.integrations_slack_events import (
+        _is_authorized_inbound,
+        _SlackAgentConfig,
+    )
+
+    cfg = _SlackAgentConfig(
+        agent_id="callie",
+        signing_secret="s",
+        access_token="t",
+        bot_user_id="UBOT",
+        authed_user_id="",
+        allowed_user_ids=(),
+        allowed_channel_ids=(),
+        listen_channel_messages=False,
+        always_respond_in_channels=False,
+    )
+    assert _is_authorized_inbound(
+        agent_cfg=cfg,
+        channel_id="G0GROUPDM",
+        channel_type="mpim",
+        user_id="U1",
+        inner_type="message",
+    )

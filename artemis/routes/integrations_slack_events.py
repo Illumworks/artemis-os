@@ -538,11 +538,38 @@ def _is_authorized_inbound(
     channel_id: str,
     channel_type: str,
     user_id: str,
+    inner_type: str = "message",
 ) -> bool:
+    """Whether this event may reach the agent loop at all.
+
+    For ``artemis`` this is a USER allowlist (a privacy boundary on a personal
+    assistant). For every other agent it is a CHANNEL allowlist, which stops a
+    bot roaming into conversations nobody invited it to.
+
+    Two things bypass the channel allowlist, because both are unambiguous
+    address rather than ambient chatter:
+
+    - a DM, including a group DM (``mpim``) — someone deliberately opened a
+      conversation with the bot;
+    - an ``app_mention`` — someone typed the bot's name on purpose.
+
+    Reported 2026-08-12: Callie was invited to two channels and answered in
+    neither, including one where Jon @-mentioned her directly. Both events
+    arrived and were "recorded but not routed", silently, because the channel
+    was not in her allowlist. "Invite the bot to the channel" is the universal
+    Slack mental model, so a bot that ignores an explicit @-mention there looks
+    broken rather than restricted — and nothing in Slack tells the person why.
+
+    The allowlist still governs ambient channel chatter, which is what it was
+    for. Being mentioned is consent.
+    """
     is_dm = channel_type == "im" or channel_id.startswith("D")
+    is_group_dm = channel_type == "mpim"
     if agent_cfg.agent_id == "artemis":
         return agent_cfg.is_user_allowed(user_id)
-    if is_dm:
+    if is_dm or is_group_dm:
+        return True
+    if inner_type == "app_mention":
         return True
     return agent_cfg.is_channel_allowed(channel_id)
 
@@ -1404,6 +1431,7 @@ async def _handle_mentionable_event(
         channel_id=channel_id,
         channel_type=channel_type,
         user_id=user_id,
+        inner_type=inner_type,
     ):
         logger.info(
             "Slack inbound for agent=%s was recorded but not routed (user=%s channel=%s event_id=%s)",
