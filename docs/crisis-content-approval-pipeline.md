@@ -536,6 +536,73 @@ only, not a general loosening.
   land at the wrong size in the wrong place, so Jen would redo it. Callie attaches
   the new visual to the email and the Slack thread instead.
 
+## Slice E — mining suggestions into candidate rules (2026-08-12)
+
+Angela and Hannah reviewed every one of Jen's posts in Suggesting mode. Those edits are
+the team's house style making itself visible, so repeated ones become **proposals** in
+Angela's existing review queue — never writes to `writing_rules`. Threshold 3.
+
+**Two rounds of being wrong about the data, both caught by reading a live run rather
+than by a test.** Worth recording because the tests passed at every stage.
+
+*Round one: the wrong unit.* The first extractor paired each deleted run with the
+insertion immediately after it. That is locally correct, it had 15 passing tests, and on
+Jen's real doc it produced four pairs nobody wrote:
+
+| deleted | inserted |
+|---|---|
+| `It's a` | `students` |
+| `can't` | ` or ` |
+| `topic` | `. ` |
+
+Google stores a rewritten sentence as interleaved deletion/insertion runs. The thing a
+person *decided* is the whole rewritten span; run-level pairing slices it and pairs the
+pieces with whatever sat next to them. Fixed by coalescing each uninterrupted cluster of
+suggestion activity into exactly one pair (CCA16).
+
+Coalescing also makes the threshold work rather than merely quieting it: a genuine rule
+like `child` → `student` is a one-word cluster and still reaches 3, while a sentence
+rewrite is unique to its sentence and stays at 1 forever.
+
+*Round two: morphology.* The corrected extractor produced 34 real pairs — including
+`child` → `student` exactly as predicted, plus `people` → `literacy experts`,
+`previewed` → `reviewed`, `is incapable of saying` → `cannot say`. Four were still not
+editing:
+
+    "."  ->  "s"      a noun pluralized
+    "d"  ->  "s"      one word's tail swapped for another's
+    "a"  ->  " "      an article dropped
+    ":"  ->  " is,"   punctuation reflowed
+
+These are **more dangerous than the round-one fragments**, because unlike a unique
+sentence rewrite they recur constantly — pluralizing a noun is one of the commonest edits
+there is — so `d` → `s` would have reached 3 and proposed *prefer "s" over "d"* to Angela
+as house style. Now excluded from counting: a side with no letter at all is punctuation
+reflow, and a single-character side is a word fragment unless it is `a` or `i`, the only
+one-letter words in English. That carve-out is load-bearing — the same pass found a
+genuine `a` → `each` substitution, structurally identical to the rejected `d` → `s`.
+
+**A length guard** withholds (but keeps counting) any pair over 6 words. A standing rule
+is guidance a writer can hold in their head; "prefer X over Y" where X is a sentence is
+one edit, and Angela's queue is not where one edit belongs. Note this currently also
+withholds the one genuine long pair in the live data (`, can't surprise you. Boring, on
+purpose.` → ` Predictable, on purpose. `, 7 words) — defensible, since a 7-word
+substitution recurring three times is boilerplate rather than style, but it is tuning
+only real volume will settle.
+
+**Suggestion authorship is not available.** `documents.get` returns opaque suggestion
+ids with no author, confirmed against Google's own documentation rather than assumed. The
+rationale text on each proposal says so, so a reviewer is not left wondering why nobody
+is credited.
+
+**Mining is a nice-to-have and is wired so it cannot cost anything.** It needs its own
+`documents.get` (it reads suggestions, so it cannot share tab resolution's
+`PREVIEW_WITHOUT_SUGGESTIONS` fetch, whose whole point is that suggestions are absent),
+so it is gated to once an hour and runs last, in its own session, swallowing every
+exception. A mining fault must never reach `_enter_failure`, which alerts Jon and marks
+the pipeline failing — that would stop the approvals Jen and three approvers depend on
+because a rule proposal broke.
+
 ## Open items
 
 - [x] Hannah's and Jaclyn's emails — `hannah.slater@`, `jaclyn.wright@` (2026-08-11).
@@ -558,3 +625,15 @@ only, not a general loosening.
 - [ ] Tell Jen that `Platform:`, `Asset for review`, and `Copy review` are now
       load-bearing label text. Renaming them blinds the parser (we alert, but the
       pipeline stops until the labels are fixed).
+- [ ] **The asset route has never fired end to end — and it is the only route Jon
+      personally approves.** Every test so far exercised Angela's copy path. Two things
+      block it on Jon's `TESTING` card: the asset chip reads `TEST`, which is outside the
+      known vocabulary (`Draft` / `Ready` / `Approved` / `Published`) and so is logged as
+      unrecognized and never notified; and `_evaluate_route` additionally requires
+      `card.asset_url is not None`, so an asset-route card with no image in it cannot
+      notify even at `Ready`. To prove Jon's own path: set the asset chip to `Ready` and
+      put an image in that card.
+
+      Worth noting as a class of gap, not just an item — the route with a single approver
+      is the one least likely to be exercised by accident, and it stayed untested through
+      seven bug fixes on the copy path.
