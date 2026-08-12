@@ -41,6 +41,11 @@ router = APIRouter(prefix="/api/integrations/slack", tags=["slack-events"])
 _BOT_MENTION_RE = re.compile(r"^<@[A-Z0-9]+>\s*", re.IGNORECASE)
 _CALLIE_CAMPAIGN_SIGNALS_CHANNEL = "C0B9CHVC7KQ"
 
+# Cap on how many conversation members are named to the agent. This exists to
+# identify a handful of people in a working channel, not to enumerate a large
+# one -- and each uncached member costs a users.info call the first time.
+_MAX_PARTICIPANTS = 12
+
 # Idle gap after which a re-engagement reply should @mention the asker again.
 # During active flow (last message < this threshold ago) the ping is suppressed.
 _REENGAGE_PING_GAP = timedelta(minutes=5)
@@ -886,6 +891,7 @@ async def route_inbound(
     # Resolve the speaker's display name from the J9b user cache so Artemis knows
     # who she's addressing.  Falls back to the raw id when the user isn't cached.
     speaker_name: str | None = None
+    participants: list[str] = []
     async with _db.SessionLocal() as db_session:
         if slack_user_id:
             cached = await repo.get_slack_user(db_session, slack_user_id)
@@ -924,6 +930,47 @@ async def route_inbound(
                     )
             if cached is not None:
                 speaker_name = cached.real_name or cached.name
+
+        # Who else is in this conversation.
+        #
+        # Callie was asked to "tell Josh the top signals" while Josh Mukai was a
+        # member of that very channel, and answered by fuzzy-matching "Josh"
+        # against the whole company directory -- offering "Josh Smith (0.9
+        # confidence)" and asking which was meant (2026-08-12). The participants
+        # were knowable the whole time; nothing told her to look at them.
+        #
+        # Naming the room turns a directory guess into a fact. Best-effort: any
+        # failure leaves participants empty and the turn proceeds, because an
+        # agent with no participant list is where we already were.
+        try:
+            if channel_id:
+                members_cfg = await _resolve_agent_slack_config(
+                    db_session, agent_id=agent_id, team_id=None
+                )
+                if members_cfg.access_token:
+                    from artemis.integrations.slack.client import SlackClient
+                    from artemis.integrations.slack.triage import resolve_user
+
+                    member_ids = await SlackClient(
+                        token=members_cfg.access_token
+                    ).get_conversation_members(channel_id, limit=_MAX_PARTICIPANTS)
+                    for member_id in member_ids[:_MAX_PARTICIPANTS]:
+                        if member_id == members_cfg.bot_user_id:
+                            continue
+                        resolved = await repo.get_slack_user(db_session, member_id)
+                        if resolved is None:
+                            await resolve_user(db_session, member_id, members_cfg.access_token)
+                            resolved = await repo.get_slack_user(db_session, member_id)
+                        if resolved is not None and not resolved.is_bot:
+                            label = resolved.real_name or resolved.name
+                            if label and label not in participants:
+                                participants.append(label)
+        except Exception:
+            logger.exception(
+                "route_inbound: could not list participants for channel=%s -- the turn "
+                "continues without knowing who else is present",
+                channel_id,
+            )
         try:
             await fa_repo.get_session_by_id(db_session, session_id)
         except ValueError:
@@ -1184,6 +1231,7 @@ async def route_inbound(
             session_id=session_id,
             user_text=text,
             speaker_name=speaker_name,
+            participants=participants or None,
             speaker_id=slack_user_id if slack_user_id else None,
         )
     except Exception:

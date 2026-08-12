@@ -92,6 +92,27 @@ class SlackClient:
         """
         return await self._post("views.open", trigger_id=trigger_id, view=view)
 
+    async def get_conversation_members(self, channel: str, limit: int = 50) -> list[str]:
+        """Slack user ids in a conversation, via ``conversations.members``.
+
+        Used to tell an agent WHO IS IN THE ROOM. Callie was asked to "tell Josh
+        the top signals" while Josh Mukai was a member of that very channel, and
+        answered by fuzzy-matching the name against the whole company directory
+        -- offering "Josh Smith (0.9 confidence)" (2026-08-12). The participants
+        were knowable the entire time.
+
+        First page only, capped: this exists to name a handful of people in a
+        working channel, not to enumerate a 500-member one. Returns an empty
+        list on any failure -- the caller degrades to no participant context
+        rather than failing the turn.
+        """
+        try:
+            data = await self._post("conversations.members", channel=channel, limit=limit)
+        except SlackAPIError:
+            return []
+        members = data.get("members")
+        return [str(m) for m in members] if isinstance(members, list) else []
+
     async def get_channel_history(self, channel: str, limit: int = 20) -> list[dict[str, object]]:
         data = await self._post("conversations.history", channel=channel, limit=limit)
         messages: list[dict[str, object]] = data.get("messages", [])  # type: ignore[assignment]

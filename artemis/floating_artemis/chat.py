@@ -72,6 +72,7 @@ def _build_system_prompt(
     recent_meeting_context: str | None = None,
     session_id: str = "",
     speaker_name: str | None = None,
+    participants: list[str] | None = None,
     is_personal_slack_dm: bool = False,
     okr_reconcile_context: str | None = None,
     recent_outbound_texts: list[str] | None = None,
@@ -179,7 +180,28 @@ def _build_system_prompt(
 
     # Slack-originated session: establish the conversational context.
     if session_id.startswith("slack-"):
-        who = f" The operator is {speaker_name}." if speaker_name else ""
+        if speaker_name:
+            who = f" You are talking to {speaker_name}."
+        else:
+            # Say so explicitly rather than leaving a blank. With nothing here,
+            # Callie addressed Josh as "Jon" -- the model filled the gap with the
+            # only human it had ever been told about (2026-08-12).
+            who = (
+                " You do NOT know who is speaking. Do not guess a name, and do "
+                "not assume it is Jon."
+            )
+        if participants:
+            # Who is in the room, resolved from verified Slack ids. Prefer these
+            # people over any directory name-search: asked to "tell Josh the top
+            # signals" while Josh Mukai sat in that very channel, Callie searched
+            # the whole company and offered "Josh Smith (0.9 confidence)".
+            who += (
+                " People in this conversation: "
+                + ", ".join(participants)
+                + ". When someone refers to a person by first name, resolve it "
+                "against THIS list first -- these are verified participants. Only "
+                "search the wider directory if nobody here matches."
+            )
         parts.append(
             "**You are responding in Slack.** The operator @-mentioned you directly. "
             "**Assume they are addressing you and respond on-topic.** "
@@ -646,6 +668,7 @@ async def handle_turn(
     owner_user_id: int | None = None,
     speaker_name: str | None = None,
     speaker_id: str | None = None,
+    participants: list[str] | None = None,
     db_session: Any | None = None,
     trusted_agent_id: str | None = None,
 ) -> TurnResult:
@@ -804,6 +827,7 @@ async def handle_turn(
         recent_meeting_context=recent_meeting_ctx,
         session_id=session_id,
         speaker_name=speaker_name,
+        participants=participants,
         is_personal_slack_dm=session_ctx.is_personal_slack_dm,
         okr_reconcile_context=okr_reconcile_ctx,
         recent_outbound_texts=recent_outbound_texts if recent_outbound_texts else None,
