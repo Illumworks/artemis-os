@@ -10,6 +10,7 @@ from __future__ import annotations
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
 from artemis.floating_artemis.tools.argus_tools import register_argus_tools
 from artemis.floating_artemis.tools.builders import register_builders_tools
+from artemis.floating_artemis.tools.callie_dm import register_callie_dm_tool
 from artemis.floating_artemis.tools.core import register_core_tools
 from artemis.floating_artemis.tools.directory_tools import register_directory_tools
 from artemis.floating_artemis.tools.granola_tools import register_granola_tools
@@ -159,7 +160,20 @@ def build_authorized_tool_registry(
         register_writing_rules_tools(registry)
     if "marketing-os" in available_surfaces or "signal-queue" in available_surfaces:
         register_marketing_tools(registry)
-    register_slack_tools(registry)
+    # CALLIE-1: send_slack_dm is a raw, unauthenticated-by-content DM tool
+    # gated ONLY by a layer-3 "operator confirmation" — which in the Slack
+    # path is answered by whoever is already chatting with the agent in that
+    # same channel. For Callie specifically, that channel can hold many
+    # people (that is the whole reason her requester allowlist matters —
+    # see tools/callie_dm.py's module docstring), so leaving this tool live
+    # for her alongside send_guarded_dm would make the new guard decorative:
+    # a determined requester (or the model itself) could just ask for
+    # send_slack_dm instead and reach anyone with no allowlist check at all.
+    # Artemis keeps it: her inbound gate is a small, explicit USER allowlist
+    # (a privacy boundary, not a shared channel), so the same proxying risk
+    # does not apply there in the same way, and widening that is out of
+    # scope for CALLIE-1.
+    register_slack_tools(registry, include_dm=normalized_agent != "callie")
     register_gcal_tools(registry)
     register_gmail_tools(registry)
     if "jira-board" in available_surfaces:
@@ -174,4 +188,8 @@ def build_authorized_tool_registry(
         # fires on request (no scheduler, no auto-push). See
         # artemis/screentime/callie_report.py + tools/screentime_tools.py.
         register_screentime_report_tools(registry)
+        # CALLIE-1: her one initiating capability. speaker_id is bound as a
+        # closure so tool input can never spoof the requester (see
+        # tools/callie_dm.py).
+        register_callie_dm_tool(registry, speaker_id=speaker_id)
     return registry

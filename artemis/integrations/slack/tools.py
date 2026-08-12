@@ -218,10 +218,24 @@ LIST_SLACK_CHANNELS = Tool(
 )
 
 
-def register_slack_tools(registry: AuthorizedToolRegistry) -> None:
-    """Register all Slack outbound tools into the provided registry."""
+def register_slack_tools(registry: AuthorizedToolRegistry, *, include_dm: bool = True) -> None:
+    """Register Slack outbound tools into the provided registry.
+
+    ``include_dm`` gates ONLY ``send_slack_dm``. CALLIE-1 (see
+    ``artemis.floating_artemis.tools.callie_dm``) turns this off for Callie
+    specifically: ``send_slack_dm`` is a raw DM tool with no
+    allowlist of its own, gated only by a layer-3 "operator confirmation"
+    that — in the Slack path — is answered by whoever is already chatting
+    with the agent in that same channel. Leaving it live alongside the new
+    guarded, allowlisted send tool would make that guard decorative: anyone
+    who could talk Callie into calling one tool could just as easily ask for
+    the other. Default ``True`` preserves existing behaviour for every other
+    agent (e.g. Artemis, whose inbound gate is already a small explicit user
+    allowlist rather than a shared channel).
+    """
     registry.register(SEND_SLACK_MESSAGE, _send_slack_message, layer=3)
-    registry.register(SEND_SLACK_DM, _send_slack_dm, layer=3)
+    if include_dm:
+        registry.register(SEND_SLACK_DM, _send_slack_dm, layer=3)
     registry.register(READ_SLACK_CHANNEL, _read_slack_channel, layer=2)
     registry.register(REACT_TO_SLACK_MESSAGE, _react_to_slack_message, layer=3)
     registry.register(LIST_SLACK_CHANNELS, _list_slack_channels, layer=2)
