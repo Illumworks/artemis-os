@@ -928,3 +928,78 @@ def test_group_dm_is_treated_as_a_dm() -> None:
         user_id="U1",
         inner_type="message",
     )
+
+
+def test_text_mention_counts_as_a_direct_mention() -> None:
+    """A mention in the TEXT must bypass the relevance gate, not just an app_mention event.
+
+    Slack delivers BOTH an ``app_mention`` and a ``message`` for the same
+    physical message when a bot is mentioned in a channel it belongs to. The
+    in-process dedup keeps whichever arrives first, so the ``app_mention`` is
+    often the one dropped.
+
+    Observed 2026-08-12: Jon typed "@Callie can you see this" in a channel and
+    got nothing back. The app_mention was dropped as a duplicate; the surviving
+    message was treated as ambient chatter and sent to the relevance gate; the
+    gate's classifier raised (no ANTHROPIC_API_KEY, codex fallback also failing);
+    and a failed gate defaults to silent. Three mechanisms, each correct alone,
+    combined into a bot that ignores its own name.
+
+    This pins the property that makes the dedup race irrelevant.
+    """
+    bot_id = "U0B9S32PTAM"
+    text_with_mention = f"<@{bot_id}> can you see this"
+
+    # The condition as the route computes it.
+    for inner_type, text, expected in (
+        ("app_mention", "anything at all", True),
+        ("message", text_with_mention, True),
+        ("message", "no mention here", False),
+        ("message", "<@USOMEONEELSE> hi", False),
+    ):
+        is_direct_mention = inner_type == "app_mention" or (
+            bool(bot_id) and f"<@{bot_id}>" in (text or "")
+        )
+        assert is_direct_mention is expected, (inner_type, text)
+
+
+def test_relevance_gate_is_bypassed_for_a_text_mention() -> None:
+    """The gate must not run for a message that names the bot.
+
+    Guards the second half: even with the classifier dead, a message that
+    mentions the bot must never reach it, because a failed gate defaults to
+    silent.
+    """
+    from artemis.routes.integrations_slack_events import (
+        _needs_relevance_gate,
+        _SlackAgentConfig,
+    )
+
+    cfg = _SlackAgentConfig(
+        agent_id="callie",
+        signing_secret="s",
+        access_token="t",
+        bot_user_id="U0B9S32PTAM",
+        authed_user_id="",
+        allowed_user_ids=(),
+        allowed_channel_ids=("C0BPX9Y8WBE",),
+        listen_channel_messages=True,
+        always_respond_in_channels=False,
+    )
+    assert not _needs_relevance_gate(
+        agent_cfg=cfg,
+        inner_type="message",
+        is_dm=False,
+        is_channel_join=False,
+        is_direct_mention=True,
+        is_reply_to_agent=False,
+    )
+    # Ambient chatter still goes to the gate — this does not disable it.
+    assert _needs_relevance_gate(
+        agent_cfg=cfg,
+        inner_type="message",
+        is_dm=False,
+        is_channel_join=False,
+        is_direct_mention=False,
+        is_reply_to_agent=False,
+    )

@@ -1447,7 +1447,27 @@ async def _handle_mentionable_event(
     # channel_join: the agent must greet every new member; there is nothing to
     # "classify" — the join itself is the trigger.
     is_dm = channel_type == "im" or channel_id.startswith("D")
-    is_direct_mention = inner_type == "app_mention"
+    # A mention is a mention regardless of which of Slack's two events survived.
+    #
+    # Slack delivers BOTH an `app_mention` and a `message` for the same physical
+    # message when the bot is mentioned in a channel it belongs to. The dedup
+    # cache above keeps whichever arrives first, so the `app_mention` is often
+    # the one dropped -- and this used to read `inner_type == "app_mention"`
+    # alone, so the surviving `message` was treated as ambient chatter and sent
+    # to the relevance classifier.
+    #
+    # Observed 2026-08-12: Jon typed "@Callie can you see this" in a channel and
+    # got nothing. The app_mention was dropped as a duplicate, the message went
+    # to the gate, the gate's classifier raised (no ANTHROPIC_API_KEY, and the
+    # codex fallback failed too), and a failed gate defaults to silent. Three
+    # correct-in-isolation mechanisms produced a bot that ignores its own name.
+    #
+    # Reading the text makes the dedup race irrelevant: if the bot's id appears
+    # in the message, someone addressed it on purpose.
+    bot_id = agent_cfg.bot_user_id
+    is_direct_mention = inner_type == "app_mention" or (
+        bool(bot_id) and f"<@{bot_id}>" in (text or "")
+    )
     is_reply_to_agent = _is_reply_to_agent(event, agent_cfg.bot_user_id)
     needs_gate = _needs_relevance_gate(
         agent_cfg=agent_cfg,
