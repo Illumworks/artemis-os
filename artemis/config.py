@@ -675,7 +675,7 @@ class Settings(BaseSettings):
         ),
     )
     crisis_content_writeback_enabled: bool = Field(
-        default=False,
+        default=True,
         validation_alias=AliasChoices(
             "ARTEMIS_CRISIS_CONTENT_WRITEBACK_ENABLED",
             "CRISIS_CONTENT_WRITEBACK_ENABLED",
@@ -686,16 +686,17 @@ class Settings(BaseSettings):
             "comment, and the Gmail backup. Decisions still record normally in "
             "crisis_content_decisions either way; this only gates the three "
             "notification side effects, never the decision itself.\n\n"
-            "**Defaults False, deliberately.** Turning this on means the next "
-            "approval writes into a document owned by an external vendor while "
-            "she is editing it, and emails her. Jon authorised building this; he "
-            "has not yet authorised the first live write, and that is his call to "
-            "make rather than something to infer from 'ship it'. The code is "
-            "merged and tested so enabling it is a one-setting change with no "
-            "deploy -- which is also the emergency-off path if a write ever looks "
-            "wrong. See the safety section of "
-            "briefs/cca7-writeback-and-notify-jen.md ('treat every write as the "
-            "riskiest line of code in this repo')."
+            "**Enabled 2026-08-11 on Jon's explicit authorisation.** It shipped "
+            "defaulting False for one evening because turning it on means writing "
+            "into a document owned by an external vendor while she is editing it, "
+            "and emailing her -- an owner decision, not something to infer from "
+            "'ship it'. Jon then asked for it on, describing it as the fallback "
+            "path so Jen hears a decision even if she misses the doc.\n\n"
+            "Set False to stop all three side effects immediately with no deploy. "
+            "That is the emergency-off path if a write ever looks wrong against "
+            "her live document -- reach for it before debugging. See the safety "
+            "section of briefs/cca7-writeback-and-notify-jen.md ('treat every "
+            "write as the riskiest line of code in this repo')."
         ),
     )
 
