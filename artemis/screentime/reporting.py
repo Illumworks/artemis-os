@@ -414,12 +414,49 @@ async def _post_as_callie(session: AsyncSession, channel: str, text: str) -> boo
 # ── Public entry points ──────────────────────────────────────────────────────
 
 
-async def post_screentime_digest(session: AsyncSession) -> int:
-    """Compose + post the Screen-Time Watch digest to #policy-watch as Callie.
+async def build_screentime_section(session: AsyncSession) -> str | None:
+    """Return the screentime SECTION for the combined daily brief, or None.
 
-    Selects real-move signals not yet reported, composes one Callie-voiced,
-    source-linked digest grouped by stance/state, posts it, and marks each
-    included signal reported (so a re-run posts nothing).
+    Jon's 2026-08-12 decision: #market-signals carries ONE combined daily brief
+    from Callie (top campaign signals + crisis signals + screentime), not one
+    post per feed. This is the screentime contribution to that brief; the
+    combined composer owns the heading, ordering, the Josh/Angela mention and
+    the "nothing today" case.
+
+    Contract agreed with the crisis-content session:
+      - returns the section text, or None when there is nothing to say today
+      - marks its own items reported, so the caller does not have to and a
+        re-run contributes nothing
+
+    That idempotency is the valuable half and is unchanged from the standalone
+    digest it was extracted from: an item reported once — by this section, by a
+    big-move alert, or by a previous brief — is never reported again.
+
+    Failure-safe: returns None on any error rather than raising into the
+    composer, so one feed cannot take down the whole brief.
+    """
+    try:
+        signals = await _select_unreported_real_moves(session)
+        if not signals:
+            _log.debug("screentime_report: no new real moves — no section today")
+            return None
+
+        text = await _compose_digest_text(session, signals)
+        for s in signals:
+            await _mark_reported(session, s.id, mode="digest", title=s.title)
+        _log.info("screentime_report: built section covering %d signal(s)", len(signals))
+        return text
+    except Exception:
+        _log.warning("screentime_report: non-fatal error building section", exc_info=True)
+        return None
+
+
+async def post_screentime_digest(session: AsyncSession) -> int:
+    """Compose + post a STANDALONE Screen-Time digest as Callie.
+
+    NOT used for #market-signals — that channel gets one combined brief (see
+    ``build_screentime_section``). Kept for manual/one-off use and for any
+    future channel that wants only this feed.
 
     Returns the number of signals reported. Returns 0 (silently) when:
       - ``screentime_report_channel`` is unset (feature OFF / dormant), or
@@ -531,6 +568,8 @@ async def maybe_alert_big_move_by_hash(session: AsyncSession, content_hash: str)
 
 
 __all__ = [
+    # The combined-brief contract (see build_screentime_section docstring).
+    "build_screentime_section",
     "post_screentime_digest",
     "maybe_alert_big_move",
     "maybe_alert_big_move_by_hash",

@@ -445,14 +445,23 @@ def get_screentime_scheduler() -> AsyncIOScheduler:
 
 
 def start_screentime_scheduler() -> None:
-    """Start the Screen-Time Watch scheduler and register all three jobs: the
-    daily collection sweep, the daily situational-read digest, and the separate
-    weekly board-peer-validation sweep. Call from the FastAPI lifespan startup,
-    alongside the other schedulers. Idempotent — safe to call more than once.
+    """Start the Screen-Time Watch scheduler: the daily collection sweep and the
+    separate weekly board-peer-validation sweep. Call from the FastAPI lifespan
+    startup, alongside the other schedulers. Idempotent.
+
+    ``register_digest_schedule`` is deliberately NOT registered here. Jon's
+    2026-08-12 decision is ONE combined daily brief in #market-signals — top
+    campaign signals + crisis signals + screentime — composed and posted by the
+    crisis-content session's composer. A standalone screentime cron posting to
+    the same channel would put two posts a day in it and rebuild the exact noise
+    problem that channel was created to solve.
+
+    The screentime contribution is exposed as ``build_screentime_section`` for
+    that composer instead. ``register_digest_schedule`` stays available for
+    standalone/manual use (and for a future channel that wants only this feed).
     """
     scheduler = get_screentime_scheduler()
     register_screentime_schedule(scheduler)
-    register_digest_schedule(scheduler)
     register_board_sweep_schedule(scheduler)
     if not scheduler.running:
         scheduler.start()
