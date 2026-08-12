@@ -412,6 +412,7 @@ async def test_post_transition_card_never_posts_to_a_channel(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from artemis.crisis_content import notify
+    from artemis.crisis_content.orm import CrisisContentCard
     from artemis.crisis_content.transitions import Transition
 
     class _FakeSlackClient:
@@ -419,7 +420,7 @@ async def test_post_transition_card_never_posts_to_a_channel(
 
         def __init__(self, token: str) -> None:
             self.token = token
-            self.dm_calls: list[tuple[str, str]] = []
+            self.dm_calls: list[tuple[str, str, list[object] | None]] = []
             self.message_calls: list[tuple[str, str]] = []
             _FakeSlackClient.instances.append(self)
 
@@ -427,8 +428,10 @@ async def test_post_transition_card_never_posts_to_a_channel(
             assert email == "jon.fila@amiralearning.com"
             return "U_JON_FAKE"
 
-        async def post_dm(self, user: str, text: str) -> dict[str, object]:
-            self.dm_calls.append((user, text))
+        async def post_dm(
+            self, user: str, text: str, blocks: list[object] | None = None
+        ) -> dict[str, object]:
+            self.dm_calls.append((user, text, blocks))
             return {"ok": True}
 
         async def post_message(
@@ -451,6 +454,22 @@ async def test_post_transition_card_never_posts_to_a_channel(
     transition = Transition(
         card=card, route="copy", previous_status="Draft", new_status="Ready", is_new_card=False
     )
+    # post_transition_card (CCA5) resolves the persisted card row to embed
+    # `card_id` in the decision buttons' `value` -- seed the row a real
+    # caller (poller.py, via record_observation) would already have created.
+    db_session.add(
+        CrisisContentCard(
+            identity_header=card.header,
+            identity_platform=card.platform,
+            identity_ordinal=0,
+            title=card.title,
+            asset_status=card.asset_status,
+            copy_status=card.copy_status,
+            asset_url=card.asset_url,
+            copy_hash=card.copy_hash,
+        )
+    )
+    await db_session.commit()
 
     await notify.post_transition_card(db_session, transition)
 
@@ -458,10 +477,18 @@ async def test_post_transition_card_never_posts_to_a_channel(
     client = _FakeSlackClient.instances[0]
     assert client.message_calls == []  # never a channel post
     assert len(client.dm_calls) == 1
-    recipient, text = client.dm_calls[0]
+    recipient, text, blocks = client.dm_calls[0]
     assert recipient == "U_JON_FAKE"
     assert recipient != "C0BM9TL63TL"
     assert "C0BM9TL63TL" not in text
+    assert blocks is not None
+    action_ids = {
+        el["action_id"]
+        for block in blocks
+        if block.get("type") == "actions"
+        for el in block["elements"]
+    }
+    assert action_ids == {"crisis_content_approve", "crisis_content_request_changes"}
     assert notify.TESTING_LINE in text
     assert "action_id" not in text  # no interactive buttons
 

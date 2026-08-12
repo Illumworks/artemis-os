@@ -50,6 +50,7 @@ __all__ = [
     "record_observation",
     "has_notified",
     "mark_notified",
+    "find_card_id",
 ]
 
 Route = Literal["asset", "copy"]
@@ -299,6 +300,38 @@ async def _evaluate_route(
         new_status=new_status,
         is_new_card=is_new_card,
     )
+
+
+async def find_card_id(session: AsyncSession, card: ReviewCard) -> int | None:
+    """Read-only identity lookup for ``card``'s persisted ``CrisisContentCard.id``.
+
+    NULL-safe on the platform column for the same reason ``_resolve_card_row``
+    is above. Returns ``None`` when the card has never been observed, rather
+    than raising -- used by ``artemis.crisis_content.notify.post_transition_card``
+    (slice B2c, CCA5), which needs the row id to build a decision button's
+    ``value`` and treats a miss as a real bug (it always runs after
+    ``record_observation`` has upserted the row) rather than a case to
+    silently swallow.
+
+    Deliberately NOT the same helper as ``poller._resolve_card_id`` (private
+    to that module, and it raises via ``scalar_one()`` because its caller
+    already knows the row must exist) -- see that function's own docstring
+    for why it duplicates this identity comparison rather than importing a
+    shared one; this is the second, public copy for a caller with a
+    different failure contract.
+    """
+    _, platform, ordinal = card.identity_key
+    stmt = select(CrisisContentCard.id).where(
+        CrisisContentCard.identity_header == card.header,
+        CrisisContentCard.identity_ordinal == ordinal,
+    )
+    stmt = stmt.where(
+        CrisisContentCard.identity_platform.is_(None)
+        if platform is None
+        else CrisisContentCard.identity_platform == platform
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def has_notified(session: AsyncSession, card_id: int, route: Route, status_value: str) -> bool:

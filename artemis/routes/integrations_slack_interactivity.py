@@ -43,6 +43,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
+from artemis.crisis_content.slack_actions import (
+    CRISIS_CONTENT_ACTION_IDS as _CRISIS_CONTENT_ACTION_IDS,
+)
+from artemis.crisis_content.slack_actions import (
+    CRISIS_CONTENT_VIEW_CALLBACK_ID as _CRISIS_CONTENT_VIEW_CALLBACK_ID,
+)
+from artemis.crisis_content.slack_actions import (
+    handle_crisis_content_block_action,
+    handle_crisis_content_view_submission,
+)
 from artemis.directory.models import DirectoryPerson
 from artemis.routes.integrations_slack_events import (
     _normalize_agent_id,
@@ -181,6 +191,20 @@ async def slack_interactivity(
         )
         return JSONResponse(status_code=400, content={"error": "invalid payload shape"})
 
+    # ── Dispatch branch (CCA5): crisis-content decisions. `view_submission`
+    # payloads (the "Request changes" modal's Submit) have no top-level
+    # `actions` key at all — the generic `actions`-list handling a few lines
+    # down would otherwise just warn-and-ack it as "no actions in payload".
+    # Caught here, before that happens, and handed to the crisis_content
+    # package, which owns everything about this decision — this route still
+    # only verifies + dispatches; see artemis/crisis_content/slack_actions.py.
+    payload_type = str(payload.get("type") or "")
+    if payload_type == "view_submission":
+        view_obj = payload.get("view")
+        if isinstance(view_obj, dict) and view_obj.get("callback_id") == _CRISIS_CONTENT_VIEW_CALLBACK_ID:
+            return await handle_crisis_content_view_submission(session, payload=payload)
+        return JSONResponse(status_code=200, content={})
+
     # ── 4. Identity comes ONLY from the verified payload's user object —
     # never from the button's `value`, which is just Block Kit content the
     # signature does not vouch for as "who clicked."
@@ -203,6 +227,20 @@ async def slack_interactivity(
 
     action_id = str(action.get("action_id") or "")
     value = str(action.get("value") or "")
+
+    # ── Dispatch branch (CCA5): crisis-content decision buttons. Own action
+    # ids, own module — see artemis/crisis_content/slack_actions.py for the
+    # authorization, already-decided, and persistence logic. Checked before
+    # `_APPROVAL_ACTION_IDS` so the two dispatch tables stay independent and
+    # neither has to know the other's action_ids exist.
+    if action_id in _CRISIS_CONTENT_ACTION_IDS:
+        return await handle_crisis_content_block_action(
+            session,
+            action_id=action_id,
+            value=value,
+            payload=payload,
+            access_token=agent_cfg.access_token,
+        )
 
     if action_id not in _APPROVAL_ACTION_IDS:
         # Unknown/unhandled action_id (includes the url-buttons "_view" and
