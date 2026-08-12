@@ -889,6 +889,39 @@ async def route_inbound(
     async with _db.SessionLocal() as db_session:
         if slack_user_id:
             cached = await repo.get_slack_user(db_session, slack_user_id)
+            if cached is None:
+                # Backfill from Slack on a cache miss.
+                #
+                # This used to read the cache and give up. The cache is only ever
+                # written by the keyword-triage path (`slack/triage.py`), never
+                # by this conversation path, so it held exactly two rows on this
+                # machine: the Artemis bot and Jon. Anyone else who talked to an
+                # agent resolved to None forever.
+                #
+                # That is why Callie addressed Josh as "Jon" (2026-08-12): he was
+                # a cache miss, so she had no name for the person in front of her
+                # and fell back on the only human she had ever been told about.
+                # Slack sends a verified user id on every single event; there was
+                # never any need to guess.
+                #
+                # `resolve_user` is the existing cache-first-then-fetch helper
+                # from the triage path -- reused rather than reimplemented, and
+                # it upserts, so each person is fetched once and then known.
+                try:
+                    speaker_cfg = await _resolve_agent_slack_config(
+                        db_session, agent_id=agent_id, team_id=None
+                    )
+                    if speaker_cfg.access_token:
+                        from artemis.integrations.slack.triage import resolve_user
+
+                        await resolve_user(db_session, slack_user_id, speaker_cfg.access_token)
+                        cached = await repo.get_slack_user(db_session, slack_user_id)
+                except Exception:
+                    logger.exception(
+                        "route_inbound: could not backfill slack user %s -- the turn "
+                        "continues, but the agent will not know who it is talking to",
+                        slack_user_id,
+                    )
             if cached is not None:
                 speaker_name = cached.real_name or cached.name
         try:
