@@ -1323,6 +1323,50 @@ async def _handle_mentionable_event(
         )
         return
 
+    # ── Crisis-content thread hook (CCA9) — deliberately BEFORE Guard 2 ───────
+    # Callie's `allowed_channel_ids` does NOT include the crisis-content
+    # channel (it also carries Jon<->Jen 1:1 traffic Callie must never join
+    # uninvited), so Guard 2 below would otherwise silently drop every reply
+    # to one of her own crisis-content cards — this hook is the ONLY delivery
+    # path for those replies. It fires ONLY when this is a genuine reply
+    # (`thread_ts` set and not the message's own `ts`) whose thread_ts maps to
+    # a `crisis_content_notifications.message_ts` this package itself posted
+    # (`artemis.crisis_content.thread_notes.find_card_thread_target`) — that
+    # DB lookup, not the channel, is the entire gate. Anything else (ordinary
+    # chatter in that channel, a reply in some other thread, an app_mention)
+    # is untouched: `maybe_handle_thread_reply` returns False with NO side
+    # effect, and every guard below runs exactly as it did before this hook
+    # existed. Wrapped in try/except so any unexpected failure here (e.g. a
+    # DB hiccup) degrades to "treat as ordinary event" rather than dropping
+    # the request — matching the other best-effort deterministic paths in
+    # `route_inbound` below.
+    if inner_type == "message" and thread_ts and thread_ts != ts:
+        try:
+            from artemis.crisis_content.thread_notes import maybe_handle_thread_reply
+
+            thread_handled = await maybe_handle_thread_reply(
+                session,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                message_ts=ts,
+                slack_user_id=user_id,
+                text=text or "",
+                has_files=bool(event.get("files")),
+                access_token=agent_cfg.access_token,
+            )
+        except Exception:
+            logger.exception(
+                "crisis_content: thread-reply hook failed for event_id=%s — continuing",
+                event_id,
+            )
+            thread_handled = False
+        if thread_handled:
+            logger.info(
+                "slack event_id=%s HANDLED by crisis-content thread hook (card reply)",
+                event_id,
+            )
+            return
+
     # ── Hub: resolve pending asks when Jon posts in a channel ────────────────
     # If this inbound is from an authorized user (Jon), any unresolved pending
     # asks in this channel are considered answered.  Best-effort, non-blocking.

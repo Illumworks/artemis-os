@@ -25,12 +25,14 @@ import hashlib
 import logging
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import NullPool, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import artemis.db
+from artemis.crisis_content.decisions import record_decision
 from artemis.crisis_content.models import ReviewCard
 from artemis.crisis_content.orm import (
     CrisisContentCard,
@@ -63,6 +65,7 @@ artemis.db.SessionLocal = async_sessionmaker(  # type: ignore[assignment]
 )
 
 _TABLES = (
+    "crisis_content_decisions",
     "crisis_content_notifications",
     "crisis_content_copy_versions",
     "crisis_content_cards",
@@ -254,7 +257,7 @@ async def test_ledger_dedup_prevents_reemit_even_after_status_changes_and_back(
     assert len(first_transitions) == 1
 
     card_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
-    await mark_notified(db_session, card_row.id, "copy", "Ready")
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=ready.copy_hash)
     await db_session.commit()
 
     back_to_draft = _make_card(copy_status="Draft")
@@ -324,7 +327,7 @@ async def test_header_rename_with_old_card_notified_suppresses_new_card(
     assert len(old_transitions) == 1
 
     old_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
-    await mark_notified(db_session, old_row.id, "copy", "Ready")
+    await mark_notified(db_session, old_row.id, "copy", "Ready", copy_hash=ready_old.copy_hash)
     await db_session.commit()
 
     # Jen fills in the real date -- new identity_key, same copy_hash.
@@ -429,14 +432,12 @@ async def test_header_rename_suppresses_only_the_notified_route(
     copy_body = "Copy that survives the date fill-in unchanged."
 
     # Copy goes Ready under the placeholder header, and we notify on it.
-    first = await record_observation(
-        db_session,
-        [_make_card(header=old_header, copy_body=copy_body, copy_status="Ready")],
-    )
+    ready_old = _make_card(header=old_header, copy_body=copy_body, copy_status="Ready")
+    first = await record_observation(db_session, [ready_old])
     await db_session.commit()
     assert [t.route for t in first] == ["copy"]
     old_row = (await db_session.execute(select(CrisisContentCard))).scalars().one()
-    await mark_notified(db_session, old_row.id, "copy", "Ready")
+    await mark_notified(db_session, old_row.id, "copy", "Ready", copy_hash=ready_old.copy_hash)
     await db_session.commit()
 
     # Jen fills in the real date. Same copy, new identity -- and the asset is
@@ -462,3 +463,218 @@ async def test_header_rename_suppresses_only_the_notified_route(
     third = await record_observation(db_session, [renamed])
     await db_session.commit()
     assert third == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CCA9 -- the re-approval fix
+#
+# THE BUG: copy hits Ready -> card posts -> an approver requests changes ->
+# Jen rewrites the copy -> nothing ever happens again. Her chip still says
+# Ready (finding 5 -- we cannot write chip values), so a naive "did the
+# status change" check sees no change, and even if it fired anyway the OLD
+# ledger row `(card, 'copy', 'Ready')` would dedupe it. These tests are
+# written FIRST per the brief's instruction ("There are required tests for
+# both the fires and does-not-fire directions -- write those first") because
+# getting the re-fire condition backwards means Callie re-posts the same
+# card to a channel with colleagues in it every poll tick, forever.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ANGELA_SLACK_ID = "U_ANGELA"
+_ANGELA_EMAIL = "angela.miata@amiralearning.com"
+
+
+async def test_reapproval_after_changes_requested_and_new_copy_version_emits_once(
+    db_session: AsyncSession,
+) -> None:
+    """Ready -> changes_requested -> a genuinely new copy version -> ONE new transition.
+
+    This is the exact bug scenario in the brief, fixed: the chip stays
+    ``Ready`` throughout (there is no Draft/Ready round-trip anywhere in
+    this test), and the re-fire still happens because a revision landed
+    after the decision.
+    """
+    draft = _make_card(copy_status="Draft", copy_body="Original wording.")
+    await record_observation(db_session, [draft])
+    await db_session.commit()
+
+    ready = _make_card(copy_status="Ready", copy_body="Original wording.")
+    first_transitions = await record_observation(db_session, [ready])
+    await db_session.commit()
+    assert len(first_transitions) == 1
+
+    card_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=ready.copy_hash)
+    await db_session.commit()
+
+    decided_at = datetime.now(UTC) - timedelta(minutes=5)
+    await record_decision(
+        db_session,
+        card_id=card_row.id,
+        route="copy",
+        decision="changes_requested",
+        decided_by_slack_user_id=_ANGELA_SLACK_ID,
+        decided_by_email=_ANGELA_EMAIL,
+        note="tighten the second paragraph",
+        decided_at=decided_at,
+    )
+
+    # Jen revises the copy. The chip Jen controls still reads "Ready" -- the
+    # poller observes the SAME copy_status it already stored, only the body
+    # (and therefore copy_hash) changed.
+    revised = _make_card(copy_status="Ready", copy_body="Tightened wording.")
+    second_transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+
+    assert len(second_transitions) == 1
+    transition = second_transitions[0]
+    assert transition.route == "copy"
+    assert transition.new_status == "Ready"
+
+    # Close the loop like the real poller would (post succeeded -> mark
+    # notified for the NEW hash) and prove it settles rather than repeating
+    # every subsequent unchanged poll -- the actual danger the brief warns
+    # about ("Callie re-posts the same card every 2 minutes forever").
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=revised.copy_hash)
+    await db_session.commit()
+
+    settled_transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+    assert settled_transitions == []
+
+
+async def test_no_new_copy_version_after_change_request_does_not_refire(
+    db_session: AsyncSession,
+) -> None:
+    """changes_requested with NO subsequent revision -> no re-fire, ever.
+
+    This is the guard the brief calls out by name: get this backwards and
+    Callie re-pings the channel every poll tick forever.
+    """
+    draft = _make_card(copy_status="Draft", copy_body="Original wording.")
+    await record_observation(db_session, [draft])
+    await db_session.commit()
+
+    ready = _make_card(copy_status="Ready", copy_body="Original wording.")
+    first_transitions = await record_observation(db_session, [ready])
+    await db_session.commit()
+    assert len(first_transitions) == 1
+
+    card_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=ready.copy_hash)
+    await db_session.commit()
+
+    await record_decision(
+        db_session,
+        card_id=card_row.id,
+        route="copy",
+        decision="changes_requested",
+        decided_by_slack_user_id=_ANGELA_SLACK_ID,
+        decided_by_email=_ANGELA_EMAIL,
+        note="tighten the second paragraph",
+    )
+
+    # Re-poll the UNCHANGED card, repeatedly -- same copy_body, same hash, no
+    # new crisis_content_copy_versions row.
+    for _ in range(3):
+        transitions = await record_observation(db_session, [ready])
+        await db_session.commit()
+        assert transitions == []
+
+
+async def test_approved_decision_stays_terminal_even_after_new_copy_version(
+    db_session: AsyncSession,
+) -> None:
+    """approved -> later copy revision -> no re-fire. approved stays terminal.
+
+    Only ``changes_requested`` reopens a route (CLAUDE.md rule cited in the
+    brief); an ``approved`` route must never re-fire no matter what Jen does
+    to the copy afterward.
+    """
+    draft = _make_card(copy_status="Draft", copy_body="Original wording.")
+    await record_observation(db_session, [draft])
+    await db_session.commit()
+
+    ready = _make_card(copy_status="Ready", copy_body="Original wording.")
+    first_transitions = await record_observation(db_session, [ready])
+    await db_session.commit()
+    assert len(first_transitions) == 1
+
+    card_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=ready.copy_hash)
+    await db_session.commit()
+
+    await record_decision(
+        db_session,
+        card_id=card_row.id,
+        route="copy",
+        decision="approved",
+        decided_by_slack_user_id=_ANGELA_SLACK_ID,
+        decided_by_email=_ANGELA_EMAIL,
+    )
+
+    # Jen (or anyone) edits the copy anyway, post-approval.
+    revised = _make_card(copy_status="Ready", copy_body="Edited after approval.")
+    transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+    assert transitions == []
+
+
+async def test_asset_route_reapproval_mirrors_copy_route_rule(
+    db_session: AsyncSession,
+) -> None:
+    """The asset route re-fires under the identical rule -- mirrored, not special-cased.
+
+    There is no asset-specific version log (brief: "no new column is
+    needed"), so the signal that "this post was touched since the
+    decision" is the SAME ``crisis_content_copy_versions`` log, keyed only
+    by ``card_id``. A revision to the COPY text still reopens the ASSET
+    route's ``changes_requested`` decision.
+    """
+    draft = _make_card(
+        asset_status="Draft", copy_status="Draft", asset_url=None, copy_body="V1 copy."
+    )
+    await record_observation(db_session, [draft])
+    await db_session.commit()
+
+    ready = _make_card(
+        asset_status="Ready",
+        copy_status="Draft",
+        asset_url="https://example.com/asset.png",
+        copy_body="V1 copy.",
+    )
+    first_transitions = await record_observation(db_session, [ready])
+    await db_session.commit()
+    assert len(first_transitions) == 1
+    assert first_transitions[0].route == "asset"
+
+    card_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
+    await mark_notified(db_session, card_row.id, "asset", "Ready", copy_hash=ready.copy_hash)
+    await db_session.commit()
+
+    decided_at = datetime.now(UTC) - timedelta(minutes=5)
+    await record_decision(
+        db_session,
+        card_id=card_row.id,
+        route="asset",
+        decision="changes_requested",
+        decided_by_slack_user_id="U_JON",
+        decided_by_email="jon.fila@amiralearning.com",
+        note="crop the visual tighter",
+        decided_at=decided_at,
+    )
+
+    # The VISUAL didn't change (same asset_url, still Ready) -- only the
+    # copy text did, which is enough: a new crisis_content_copy_versions row
+    # for this card, after the asset decision's decided_at.
+    revised = _make_card(
+        asset_status="Ready",
+        copy_status="Draft",
+        asset_url="https://example.com/asset.png",
+        copy_body="V2 copy.",
+    )
+    second_transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+
+    assert len(second_transitions) == 1
+    assert second_transitions[0].route == "asset"
+    assert second_transitions[0].new_status == "Ready"

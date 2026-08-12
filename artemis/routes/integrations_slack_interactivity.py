@@ -202,7 +202,9 @@ async def slack_interactivity(
     if payload_type == "view_submission":
         view_obj = payload.get("view")
         if isinstance(view_obj, dict) and view_obj.get("callback_id") == _CRISIS_CONTENT_VIEW_CALLBACK_ID:
-            return await handle_crisis_content_view_submission(session, payload=payload)
+            return await handle_crisis_content_view_submission(
+                session, payload=payload, access_token=agent_cfg.access_token
+            )
         return JSONResponse(status_code=200, content={})
 
     # ── 4. Identity comes ONLY from the verified payload's user object —

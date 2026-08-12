@@ -241,7 +241,10 @@ async def test_live_copy_route_posts_to_channel_with_all_three_approvers_mention
     assert "<@U_HANNAH>" in msg_text
     assert "<@U_JACLYN>" in msg_text
     assert "<@U_JON>" not in msg_text  # addressed to the three, never Jon
-    assert "can approve" in msg_text.lower()
+    # CCA9: the redundant "Any one of ... can approve." footer is gone --
+    # the opener already names the same three approvers once.
+    assert "Any one of" not in msg_text
+    assert msg_text.splitlines()[-1].startswith("Open the doc:")
     assert notify.TESTING_LINE not in msg_text
     assert "Testing" not in msg_text
     assert blocks is not None

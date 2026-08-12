@@ -53,9 +53,10 @@ from artemis.crisis_content.decisions import (
 from artemis.crisis_content.notify import (
     ACTION_APPROVE,
     ACTION_REQUEST_CHANGES,
+    jen_mention,
     render_decision_message,
 )
-from artemis.crisis_content.transitions import Route
+from artemis.crisis_content.transitions import Route, find_posted_location
 from artemis.crisis_content.writeback import schedule_decision_writeback
 from artemis.directory.models import DirectoryPerson
 from artemis.integrations.slack.client import SlackClient
@@ -186,6 +187,84 @@ async def _update_card_via_response_url(
             resp.raise_for_status()
     except Exception:
         logger.exception("crisis_content: failed to update the original card via response_url")
+
+
+async def _notify_jen_of_change_request(
+    session: AsyncSession,
+    *,
+    card_id: int,
+    route: Route,
+    actor_label: str,
+    note: str,
+    access_token: str,
+) -> None:
+    """Post a real ``<@…>`` mention for Jen in the card's OWN thread (CCA9).
+
+    Section 4 of ``briefs/cca9-card-lifecycle.md``: on a ``changes_requested``
+    decision, thread a message onto the card mentioning Jen so she sees the
+    ask in the same place the conversation is already happening -- separate
+    from (and in addition to) the existing doc-line + Drive-comment + email
+    notification (``artemis.crisis_content.writeback``, CCA7), which is
+    fire-and-forget and off this request's path. This call is synchronous
+    with the decision but never raises back into the caller -- a delivery
+    failure here must not undo (or even look like it undid) a decision that
+    is already committed by the time this runs.
+
+    ``jen_mention()`` already falls back to the plain word "Jen" when
+    ``settings.crisis_content_jen_slack_user_id`` is empty, so this never
+    posts a broken ``<@>``.
+
+    Finds where to thread via ``find_posted_location`` -- the
+    ``crisis_content_notifications`` row CCA9 now populates with
+    ``channel_id``/``message_ts`` at post time (see
+    ``artemis.crisis_content.notify.post_transition_card``). No row (or an
+    incomplete pair) means "nothing to thread onto" and this is skipped with
+    a warning rather than guessing a destination -- notably true for every
+    row seeded directly as a bare ``CrisisContentCard`` (no notification),
+    which is how most of this module's existing tests build their fixtures.
+    """
+    if not access_token:
+        logger.warning(
+            "crisis_content: no Slack token -- cannot notify Jen of change request "
+            "for card_id=%s route=%s",
+            card_id,
+            route,
+        )
+        return
+
+    location = await find_posted_location(session, card_id, route)
+    if location is None:
+        logger.warning(
+            "crisis_content: no posted-location record for card_id=%s route=%s -- "
+            "cannot thread a Jen change-request mention",
+            card_id,
+            route,
+        )
+        return
+    channel_id, message_ts = location
+    if not channel_id or not message_ts:
+        logger.warning(
+            "crisis_content: posted-location incomplete for card_id=%s route=%s "
+            "(channel_id=%r message_ts=%r) -- cannot thread a Jen change-request mention",
+            card_id,
+            route,
+            channel_id,
+            message_ts,
+        )
+        return
+
+    text = f'{jen_mention()} — {actor_label} asked for a change on this one:\n"{note}"'
+    try:
+        await SlackClient(token=access_token).post_message(
+            channel=channel_id, text=text, thread_ts=message_ts
+        )
+    except Exception:
+        logger.exception(
+            "crisis_content: failed to post Jen change-request mention for "
+            "card_id=%s route=%s",
+            card_id,
+            route,
+        )
 
 
 def _message_ts_from_payload(payload: dict[str, Any]) -> str | None:
@@ -375,22 +454,28 @@ async def _open_request_changes_modal(
 
 
 async def handle_crisis_content_view_submission(
-    session: AsyncSession, *, payload: dict[str, Any]
+    session: AsyncSession, *, payload: dict[str, Any], access_token: str = ""
 ) -> JSONResponse:
     """Dispatch a ``view_submission`` from the "Request changes" modal.
 
     Never raises -- see ``handle_crisis_content_block_action``'s docstring
     for the same policy.
+
+    ``access_token`` (CCA9) is Callie's bot token, needed to thread the Jen
+    change-request mention (``_notify_jen_of_change_request``) -- defaults
+    to ``""`` so existing callers that only ever exercised the pre-CCA9
+    behavior keep working; ``_notify_jen_of_change_request`` itself no-ops
+    (with a warning) on an empty token rather than raising.
     """
     try:
-        return await _handle_view_submission(session, payload=payload)
+        return await _handle_view_submission(session, payload=payload, access_token=access_token)
     except Exception:
         logger.exception("crisis_content: unhandled error handling view_submission")
         return JSONResponse(status_code=200, content=_ACK)
 
 
 async def _handle_view_submission(
-    session: AsyncSession, *, payload: dict[str, Any]
+    session: AsyncSession, *, payload: dict[str, Any], access_token: str = ""
 ) -> JSONResponse:
     view = payload.get("view")
     if not isinstance(view, dict):
@@ -474,13 +559,27 @@ async def _handle_view_submission(
     )
     schedule_decision_writeback(row.id)
 
+    actor_label = _display_label(email, slack_user_id)
     text, blocks = render_decision_message(
         decision="changes_requested",
-        actor_label=_display_label(email, slack_user_id),
+        actor_label=actor_label,
         decided_at=row.decided_at,
         note=note,
     )
     await _update_card_via_response_url(response_url, text=text, blocks=blocks)
+
+    # CCA9: mention Jen in-thread on a change request ONLY -- see
+    # briefs/cca9-card-lifecycle.md section 4. Never raises (see the
+    # function's own docstring); a delivery failure here must not affect the
+    # ack Slack already has via the two calls above.
+    await _notify_jen_of_change_request(
+        session,
+        card_id=card_id,
+        route=route_typed,
+        actor_label=actor_label,
+        note=note,
+        access_token=access_token,
+    )
 
     return JSONResponse(status_code=200, content=_ACK)
 
