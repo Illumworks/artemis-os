@@ -499,7 +499,12 @@ async def _maybe_mine_rules(access_token: str) -> None:
         document = await fetch_document_with_suggestions(access_token, TARGET_DOCUMENT_ID)
         pairs = extract_suggestion_pairs(document)
         if not pairs:
-            logger.debug("crisis_content: rule mining found no suggestion pairs")
+            # INFO, not DEBUG: this pass runs once an hour, so one line is not
+            # noise, and "found nothing" and "never ran" must be
+            # distinguishable in the log. Reading a silent path as a dead one
+            # (and vice versa) is this repo's recurring diagnostic failure --
+            # see CLAUDE.md's six-store liveness trap.
+            logger.info("crisis_content: rule mining ran, no suggestion pairs in the doc")
             return
         async with _db.SessionLocal() as session:
             result = await record_and_propose(session, pairs)
