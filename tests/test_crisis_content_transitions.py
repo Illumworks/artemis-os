@@ -32,11 +32,13 @@ from sqlalchemy import NullPool, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import artemis.db
+from artemis.crisis_content import notify
 from artemis.crisis_content.decisions import record_decision
 from artemis.crisis_content.models import ReviewCard
 from artemis.crisis_content.orm import (
     CrisisContentCard,
     CrisisContentCopyVersion,
+    CrisisContentDecision,
 )
 from artemis.crisis_content.transitions import mark_notified, record_observation
 from artemis.db import attach_pgvector_codec
@@ -466,7 +468,7 @@ async def test_header_rename_suppresses_only_the_notified_route(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CCA9 -- the re-approval fix
+# CCA9 -- the re-approval fix (changes_requested only)
 #
 # THE BUG: copy hits Ready -> card posts -> an approver requests changes ->
 # Jen rewrites the copy -> nothing ever happens again. Her chip still says
@@ -581,14 +583,157 @@ async def test_no_new_copy_version_after_change_request_does_not_refire(
         assert transitions == []
 
 
-async def test_approved_decision_stays_terminal_even_after_new_copy_version(
+# ─────────────────────────────────────────────────────────────────────────────
+# CCA11 -- reopen a post whose copy changed AFTER approval
+#
+# `approved` was terminal (see the now-removed
+# test_approved_decision_stays_terminal_even_after_new_copy_version): once
+# someone approved, nothing reopened the route. That was right when all
+# editing happened before approval. It stopped being right once the vendor's
+# team started editing directly in the Google Doc -- an approval that names
+# specific wording, followed by someone changing that wording, is now the
+# expected shape of the workflow, and an approval record that refers to text
+# that no longer exists is an integrity problem for crisis communications.
+#
+# Written with the same "fires / does-not-fire, does-not-fire written twice"
+# discipline as the CCA9 tests above, per the brief's own callout: getting
+# the no-new-version case wrong means Callie re-posts an approved card into
+# a channel with the external vendor in it every two minutes, forever.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _approve_copy_ready_card(
+    db_session: AsyncSession, *, copy_body: str = "Original wording."
+) -> tuple[CrisisContentCard, ReviewCard, datetime]:
+    """Shared setup: a copy card reaches Ready, is notified, then approved.
+
+    Returns ``(card_row, ready_card, decided_at)`` so each test can build its
+    own revision on top without repeating the draft -> ready -> notify ->
+    approve boilerplate four times.
+    """
+    draft = _make_card(copy_status="Draft", copy_body=copy_body)
+    await record_observation(db_session, [draft])
+    await db_session.commit()
+
+    ready = _make_card(copy_status="Ready", copy_body=copy_body)
+    first_transitions = await record_observation(db_session, [ready])
+    await db_session.commit()
+    assert len(first_transitions) == 1
+
+    card_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=ready.copy_hash)
+    await db_session.commit()
+
+    decided_at = datetime.now(UTC) - timedelta(minutes=5)
+    await record_decision(
+        db_session,
+        card_id=card_row.id,
+        route="copy",
+        decision="approved",
+        decided_by_slack_user_id=_ANGELA_SLACK_ID,
+        decided_by_email=_ANGELA_EMAIL,
+        decided_at=decided_at,
+    )
+    return card_row, ready, decided_at
+
+
+async def test_approved_route_with_new_copy_version_refires_once(
     db_session: AsyncSession,
 ) -> None:
-    """approved -> later copy revision -> no re-fire. approved stays terminal.
+    """approved -> a genuine new copy version -> exactly ONE re-fired transition.
 
-    Only ``changes_requested`` reopens a route (CLAUDE.md rule cited in the
-    brief); an ``approved`` route must never re-fire no matter what Jen does
-    to the copy afterward.
+    Jon's decision (2026-08-12): approval is no longer terminal -- an
+    approval that refers to text which no longer exists must reopen for
+    approval. This replaces the old (now-wrong)
+    ``test_approved_decision_stays_terminal_even_after_new_copy_version``.
+    """
+    card_row, _ready, _decided_at = await _approve_copy_ready_card(db_session)
+
+    revised = _make_card(copy_status="Ready", copy_body="Edited after approval.")
+    transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+
+    assert len(transitions) == 1
+    transition = transitions[0]
+    assert transition.route == "copy"
+    assert transition.new_status == "Ready"
+
+    # Close the loop like the real poller would, and prove it settles rather
+    # than repeating on the next unchanged poll -- same discipline as the
+    # CCA9 settle check above.
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=revised.copy_hash)
+    await db_session.commit()
+    settled = await record_observation(db_session, [revised])
+    await db_session.commit()
+    assert settled == []
+
+
+async def test_approved_route_no_new_copy_version_does_not_refire_polled_twice(
+    db_session: AsyncSession,
+) -> None:
+    """approved, NO subsequent revision -> no re-fire, checked on two separate polls.
+
+    This is the guard the brief calls out by name: get this backwards and
+    Callie re-posts an already-approved card into a channel with the
+    external vendor in it every two minutes, forever. Polled twice in a row
+    (not once) to prove the second poll doesn't fire either -- a bug that
+    only shows up on the SECOND identical poll (e.g. a check that looks at
+    "has this ever fired" rather than "is there a genuinely new version")
+    would pass a single-poll test and still spam the channel.
+    """
+    _card_row, ready, _decided_at = await _approve_copy_ready_card(db_session)
+
+    for _ in range(2):
+        transitions = await record_observation(db_session, [ready])
+        await db_session.commit()
+        assert transitions == []
+
+
+async def test_reopen_after_approval_transition_carries_banner_naming_approver_and_date(
+    db_session: AsyncSession,
+) -> None:
+    """The re-fired card names the original approver and date -- and ONLY
+    the approved-reopen case does; a changes_requested reopen (the expected
+    loop) must not be mistaken for a first-time card either, but it also
+    must NOT carry this banner (see the next test).
+    """
+    card_row, _ready, decided_at = await _approve_copy_ready_card(db_session)
+
+    revised = _make_card(copy_status="Ready", copy_body="Edited after approval, take 2.")
+    transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+    assert len(transitions) == 1
+    transition = transitions[0]
+
+    reopened = transition.reopened_after_approval
+    # A Slack MENTION, not the raw email: this banner renders in Slack, where
+    # <@U_ANGELA> resolves to "@Angela M". The doc-facing labels in
+    # writeback.py / image_link.py deliberately prefer the email instead,
+    # because a mention is meaningless literal text inside a Google Doc.
+    assert reopened is not None
+    assert reopened.approved_by == f"<@{_ANGELA_SLACK_ID}>"
+    assert reopened.approved_at == decided_at
+
+    rendered = notify.render_transition_message(transition, footer="")
+    assert "Previously approved" in rendered
+    assert f"<@{_ANGELA_SLACK_ID}>" in rendered
+    assert _ANGELA_EMAIL not in rendered
+    expected_stamp = f"{decided_at.strftime('%b')} {decided_at.day}"
+    assert expected_stamp in rendered
+    # The banner must appear before the card's own body, not buried under it.
+    assert rendered.index("Previously approved") < rendered.index(revised.copy_body)
+
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=revised.copy_hash)
+    await db_session.commit()
+
+
+async def test_reopen_after_changes_requested_does_not_carry_banner(
+    db_session: AsyncSession,
+) -> None:
+    """The expected changes_requested -> revision -> re-fire loop (CCA9) is
+    NOT the CCA11 exception, and must not carry its banner -- collapsing the
+    two would make the routine loop look like a warning, or worse, make a
+    genuine re-review of approved copy look like business as usual.
     """
     draft = _make_card(copy_status="Draft", copy_body="Original wording.")
     await record_observation(db_session, [draft])
@@ -607,16 +752,147 @@ async def test_approved_decision_stays_terminal_even_after_new_copy_version(
         db_session,
         card_id=card_row.id,
         route="copy",
+        decision="changes_requested",
+        decided_by_slack_user_id=_ANGELA_SLACK_ID,
+        decided_by_email=_ANGELA_EMAIL,
+        note="tighten the second paragraph",
+        decided_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    revised = _make_card(copy_status="Ready", copy_body="Tightened wording.")
+    transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+    assert len(transitions) == 1
+    transition = transitions[0]
+
+    assert transition.reopened_after_approval is None
+    rendered = notify.render_transition_message(transition, footer="")
+    assert "Previously approved" not in rendered
+    assert "⚠️" not in rendered
+
+
+async def test_copy_change_reopens_only_the_copy_route_not_asset(
+    db_session: AsyncSession,
+) -> None:
+    """A copy-text revision reopens the approved COPY route, but the ASSET
+    route -- Ready on the same card, but never given a decision of its own
+    -- stays silent. Routes reopen independently: a route with no qualifying
+    decision of its own never reopens, no matter what happened elsewhere on
+    the same card.
+    """
+    draft = _make_card(
+        asset_status="Draft", copy_status="Draft", asset_url=None, copy_body="V1 copy."
+    )
+    await record_observation(db_session, [draft])
+    await db_session.commit()
+
+    ready = _make_card(
+        asset_status="Ready",
+        copy_status="Ready",
+        asset_url="https://example.com/asset.png",
+        copy_body="V1 copy.",
+    )
+    first_transitions = await record_observation(db_session, [ready])
+    await db_session.commit()
+    routes = sorted(t.route for t in first_transitions)
+    assert routes == ["asset", "copy"]
+
+    card_row = (await db_session.execute(select(CrisisContentCard))).scalar_one()
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=ready.copy_hash)
+    await mark_notified(db_session, card_row.id, "asset", "Ready", copy_hash=ready.copy_hash)
+    await db_session.commit()
+
+    # Only the COPY route is ever decided -- the asset was never approved or
+    # sent back, e.g. the visual is still awaiting Jon's attention elsewhere.
+    await record_decision(
+        db_session,
+        card_id=card_row.id,
+        route="copy",
         decision="approved",
         decided_by_slack_user_id=_ANGELA_SLACK_ID,
         decided_by_email=_ANGELA_EMAIL,
+        decided_at=datetime.now(UTC) - timedelta(minutes=5),
     )
 
-    # Jen (or anyone) edits the copy anyway, post-approval.
+    revised = _make_card(
+        asset_status="Ready",
+        copy_status="Ready",
+        asset_url="https://example.com/asset.png",
+        copy_body="V2 copy.",
+    )
+    second_transitions = await record_observation(db_session, [revised])
+    await db_session.commit()
+
+    assert [t.route for t in second_transitions] == ["copy"], (
+        f"expected only the copy route to reopen, got {[t.route for t in second_transitions]!r} "
+        "-- the asset route has no decision of its own and must not reopen"
+    )
+
+
+async def test_two_distinct_copy_versions_required_for_two_refires_across_several_polls(
+    db_session: AsyncSession,
+) -> None:
+    """One revision produces exactly one re-fire -- polling the SAME revision
+    repeatedly must not multiply it, and a SECOND genuinely distinct revision
+    must still get its own re-fire.
+    """
+    card_row, _ready, _decided_at = await _approve_copy_ready_card(db_session)
+
+    revision_one = _make_card(copy_status="Ready", copy_body="Revision one.")
+    first = await record_observation(db_session, [revision_one])
+    await db_session.commit()
+    assert len(first) == 1
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=revision_one.copy_hash)
+    await db_session.commit()
+
+    for _ in range(3):
+        repeat = await record_observation(db_session, [revision_one])
+        await db_session.commit()
+        assert repeat == [], "the same revision must not keep re-firing across repeated polls"
+
+    revision_two = _make_card(copy_status="Ready", copy_body="Revision two.")
+    second = await record_observation(db_session, [revision_two])
+    await db_session.commit()
+    assert len(second) == 1, "a second, genuinely distinct revision must still get its own re-fire"
+    await mark_notified(db_session, card_row.id, "copy", "Ready", copy_hash=revision_two.copy_hash)
+    await db_session.commit()
+
+    for _ in range(3):
+        repeat = await record_observation(db_session, [revision_two])
+        await db_session.commit()
+        assert repeat == []
+
+
+async def test_reopen_after_approval_writes_no_decision_and_prior_decisions_survive(
+    db_session: AsyncSession,
+) -> None:
+    """The reopen itself is read-only w.r.t. decisions: no new
+    ``crisis_content_decisions`` row is written by ``record_observation``,
+    and the original approval row survives untouched (CLAUDE.md rule 3,
+    append-only).
+    """
+    card_row, _ready, decided_at = await _approve_copy_ready_card(db_session)
+
+    before = (
+        (await db_session.execute(select(CrisisContentDecision))).scalars().all()
+    )
+    assert len(before) == 1
+    assert before[0].decision == "approved"
+    assert before[0].decided_at == decided_at
+
     revised = _make_card(copy_status="Ready", copy_body="Edited after approval.")
     transitions = await record_observation(db_session, [revised])
     await db_session.commit()
-    assert transitions == []
+    assert len(transitions) == 1
+
+    after = (
+        (await db_session.execute(select(CrisisContentDecision))).scalars().all()
+    )
+    assert len(after) == 1, "the reopen must not write a decision of its own"
+    assert after[0].id == before[0].id
+    assert after[0].decision == "approved"
+    assert after[0].decided_at == decided_at
+    assert after[0].card_id == card_row.id
 
 
 async def test_asset_route_reapproval_mirrors_copy_route_rule(

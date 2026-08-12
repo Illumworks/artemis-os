@@ -27,6 +27,7 @@ import json
 import os as _os
 import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
 
@@ -38,7 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import artemis.db
 from artemis.config import settings
 from artemis.crisis_content import slack_actions
-from artemis.crisis_content.orm import CrisisContentCard, CrisisContentDecision
+from artemis.crisis_content.orm import (
+    CrisisContentCard,
+    CrisisContentCopyVersion,
+    CrisisContentDecision,
+)
 from artemis.crisis_content.transitions import mark_notified
 from artemis.db import attach_pgvector_codec
 from artemis.directory.models import DirectoryPerson
@@ -269,7 +274,9 @@ async def test_approve_by_allowed_copy_approver_records_and_updates_card(
     assert rows[0].decided_by_slack_user_id == _ANGELA[1]
 
 
-@pytest.mark.parametrize("approver", [_ANGELA, _HANNAH, _JACLYN], ids=["angela", "hannah", "jaclyn"])
+@pytest.mark.parametrize(
+    "approver", [_ANGELA, _HANNAH, _JACLYN], ids=["angela", "hannah", "jaclyn"]
+)
 async def test_copy_route_allows_each_of_angela_hannah_jaclyn(
     client: AsyncClient, db_session: AsyncSession, approver: tuple[str, str]
 ) -> None:
@@ -889,3 +896,85 @@ async def test_changes_requested_with_no_posted_location_skips_jen_mention_witho
     rows = await _decisions_for(db_session, card_id, "copy")
     assert len(rows) == 1
     assert rows[0].decision == "changes_requested"
+
+
+async def test_reopened_card_buttons_work_again(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A re-fired card's buttons must actually work.
+
+    CCA11 re-posts a card whose approved copy was later edited. The worker
+    flagged that the card shipped with live buttons while
+    is_blocked_by_existing_decision still treated `approved` as terminal --
+    so every click on the re-fire answered "Already decided". That is worse
+    than not re-posting at all: it tells the approver something needs
+    re-reviewing and then refuses to let them do it.
+
+    A prior decision only blocks while it is still ABOUT the current copy.
+    Once the copy has been revised past it, the decision is stale and the
+    buttons must be live again.
+    """
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)
+
+    # First approval lands normally.
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_approve",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_ANGELA[1],
+        ),
+    )
+    assert resp.status_code == 200
+    assert len(await _decisions_for(db_session, card_id, "copy")) == 1
+
+    # A second click with the copy UNCHANGED is still correctly blocked.
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_approve",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_HANNAH[1],
+        ),
+    )
+    assert resp.status_code == 200
+    assert len(await _decisions_for(db_session, card_id, "copy")) == 1, (
+        "an unchanged card must stay decided"
+    )
+
+    # Now the copy is revised after the approval -- the card reopens, and the
+    # stale approval must no longer block a fresh decision.
+    row = (
+        await db_session.execute(select(CrisisContentCard).where(CrisisContentCard.id == card_id))
+    ).scalar_one()
+    row.copy_hash = hashlib.sha256(b"revised after approval").hexdigest()
+    db_session.add(
+        CrisisContentCopyVersion(
+            card_id=card_id,
+            copy_hash=row.copy_hash,
+            copy_body="revised after approval",
+            first_seen_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_approve",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_HANNAH[1],
+        ),
+    )
+    assert resp.status_code == 200
+    rows = await _decisions_for(db_session, card_id, "copy")
+    assert len(rows) == 2, (
+        "a card reopened by a post-approval edit must accept a fresh decision — "
+        "got a blocked click instead"
+    )
+    assert rows[-1].decided_by_email == _HANNAH[0]

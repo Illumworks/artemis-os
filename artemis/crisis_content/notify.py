@@ -76,7 +76,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from artemis.config import settings
 from artemis.crisis_content.export_client import TARGET_DOCUMENT_ID
 from artemis.crisis_content.models import ReviewCard
-from artemis.crisis_content.transitions import Transition, find_card_id
+from artemis.crisis_content.transitions import ReopenedAfterApproval, Transition, find_card_id
 from artemis.integrations.slack.client import SlackAPIError, SlackClient
 from artemis.proactivity.radar import JON_EMAIL
 from artemis.routes.integrations_slack_events import _resolve_agent_slack_config
@@ -91,6 +91,7 @@ __all__ = [
     "testing_line_for_route",
     "render_char_count_line",
     "render_opener",
+    "render_reopened_banner",
     "jen_mention",
     "render_transition_message",
     "render_transition_blocks",
@@ -191,6 +192,31 @@ def render_opener(
         return _select_variant(identity_key, route, _ASSET_OPENERS)
     template = _select_variant(identity_key, route, _COPY_OPENERS)
     return template.format(approvers=approvers or "the team")
+
+
+def render_reopened_banner(reopened: ReopenedAfterApproval) -> str:
+    """The "you are re-reviewing something already approved" banner (CCA11).
+
+    Only ever rendered when ``Transition.reopened_after_approval`` is set --
+    i.e. only for a re-fire following an ``approved`` decision, never for the
+    expected ``changes_requested`` -> revision -> re-fire loop (CCA9), which
+    stays silent about being a reopen at all. See
+    ``briefs/cca11-reopen-on-post-approval-edit.md``, "The card must say why
+    it is back": a re-fired card that looks identical to a first-time card
+    is worse than no card, because the approver has no way to tell they are
+    re-reviewing something they already signed off on.
+
+    Date format (``"Aug 11"``) mirrors ``writeback.py``'s /
+    ``image_link.py``'s own ``f"{dt.strftime('%b')} {dt.day}"`` convention,
+    minus the time -- the brief's worked example shows a bare date, and the
+    exact moment of the original approval is already on record in
+    ``crisis_content_decisions`` for anyone who needs it.
+    """
+    stamp = f"{reopened.approved_at.strftime('%b')} {reopened.approved_at.day}"
+    return (
+        f"⚠️ Previously approved by {reopened.approved_by} on {stamp}, "
+        "and the copy has changed since."
+    )
 
 
 def jen_mention() -> str:
@@ -381,6 +407,12 @@ def render_transition_message(transition: Transition, *, footer: str, approvers:
     -- X" line; the platform it used to carry is folded into the date line
     right beneath it instead, so it stays visible without a second
     machine-toned line.
+
+    ``transition.reopened_after_approval`` (CCA11) inserts one more line
+    right after the opener, on BOTH routes -- the "previously approved"
+    warning (``render_reopened_banner``). ``None`` (every transition except
+    a reopen following an ``approved`` decision) adds nothing, so this stays
+    a no-op for every case this function already covered.
     """
     card = transition.card
     platform = card.platform or "unspecified platform"
@@ -388,22 +420,17 @@ def render_transition_message(transition: Transition, *, footer: str, approvers:
     heading_line = f"{heading_date} — {platform}"
     opener = render_opener(card.identity_key, transition.route, approvers=approvers)
 
-    lines: list[str] = []
+    lines: list[str] = [opener]
+    if transition.reopened_after_approval is not None:
+        lines.append(render_reopened_banner(transition.reopened_after_approval))
+    lines.append(heading_line)
+    lines.append("")
+    lines.append(card.copy_body)
+    lines.append("")
+    lines.append(render_char_count_line(card.copy_body, card.platform))
     if transition.route == "copy":
-        lines.append(opener)
-        lines.append(heading_line)
-        lines.append("")
-        lines.append(card.copy_body)
-        lines.append("")
-        lines.append(render_char_count_line(card.copy_body, card.platform))
         lines.append(f"Asset: {_asset_status_line(card)}")
     else:
-        lines.append(opener)
-        lines.append(heading_line)
-        lines.append("")
-        lines.append(card.copy_body)
-        lines.append("")
-        lines.append(render_char_count_line(card.copy_body, card.platform))
         lines.append(f"Copy: {_copy_status_line(card)}")
         lines.append(f"Asset link: {card.asset_url}")
 

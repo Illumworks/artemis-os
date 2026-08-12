@@ -56,7 +56,11 @@ from artemis.crisis_content.notify import (
     jen_mention,
     render_decision_message,
 )
-from artemis.crisis_content.transitions import Route, find_posted_location
+from artemis.crisis_content.transitions import (
+    Route,
+    find_posted_location,
+    find_reopening_decision,
+)
 from artemis.crisis_content.writeback import schedule_decision_writeback
 from artemis.directory.models import DirectoryPerson
 from artemis.integrations.slack.client import SlackClient
@@ -310,8 +314,7 @@ async def _notify_jen_of_change_request(
         )
     except Exception:
         logger.exception(
-            "crisis_content: failed to post Jen change-request mention for "
-            "card_id=%s route=%s",
+            "crisis_content: failed to post Jen change-request mention for card_id=%s route=%s",
             card_id,
             route,
         )
@@ -398,14 +401,25 @@ async def _handle_block_action(
         )
         await _post_ephemeral(
             response_url,
-            f"You're not an approver for the {target.route} route, so this click wasn't "
-            "recorded.",
+            f"You're not an approver for the {target.route} route, so this click wasn't recorded.",
         )
         return JSONResponse(status_code=200, content=_ACK)
 
     attempted: Decision = "approved" if action_id == ACTION_APPROVE else "changes_requested"
     latest = await get_latest_decision(session, target.card_id, target.route)
-    if latest is not None and is_blocked_by_existing_decision(latest, attempted):
+    # A prior decision only blocks while it is still ABOUT the current copy.
+    # If the route has been reopened -- the copy was revised after that
+    # decision (CCA11) -- the old decision refers to text that no longer
+    # exists, so the re-fired card's buttons must work. Without this, a
+    # reopened card posts with live buttons that always answer "Already
+    # decided", which is worse than not re-posting at all: it tells the
+    # approver something needs re-reviewing and then refuses to let them.
+    reopened = await find_reopening_decision(session, target.card_id, target.route)
+    if (
+        latest is not None
+        and reopened is None
+        and is_blocked_by_existing_decision(latest, attempted)
+    ):
         who = _display_label(latest.decided_by_email, latest.decided_by_slack_user_id)
         await _post_ephemeral(
             response_url,
@@ -587,7 +601,19 @@ async def _handle_view_submission(
         )
 
     latest = await get_latest_decision(session, card_id, route_typed)
-    if latest is not None and is_blocked_by_existing_decision(latest, "changes_requested"):
+    # A prior decision only blocks while it is still ABOUT the current copy.
+    # If the route has been reopened -- the copy was revised after that
+    # decision (CCA11) -- the old decision refers to text that no longer
+    # exists, so the re-fired card's buttons must work. Without this, a
+    # reopened card posts with live buttons that always answer "Already
+    # decided", which is worse than not re-posting at all: it tells the
+    # approver something needs re-reviewing and then refuses to let them.
+    reopened = await find_reopening_decision(session, card_id, route_typed)
+    if (
+        latest is not None
+        and reopened is None
+        and is_blocked_by_existing_decision(latest, "changes_requested")
+    ):
         who = _display_label(latest.decided_by_email, latest.decided_by_slack_user_id)
         return JSONResponse(
             status_code=200,

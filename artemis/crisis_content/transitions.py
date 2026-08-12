@@ -28,15 +28,53 @@ we cannot write chip values), so ``_evaluate_route``'s "did the status
 change" check saw no change and emitted nothing, and even if it had, the
 OLD ``(card_id, route, status_value)`` ledger row would have deduped it.
 ``_evaluate_route`` now ALSO re-fires when the status is unchanged at
-``Ready`` but ``_reopened_after_changes_requested`` finds a genuine
-revision (a ``crisis_content_copy_versions`` row newer than the route's
-latest ``changes_requested`` decision) -- and the ledger's unique
-constraint now includes ``copy_hash`` (migration 0109), so the re-fire is
-not itself swallowed as a duplicate of the original notification. See
-``_evaluate_route`` and ``_reopened_after_changes_requested`` below.
-``approved`` stays terminal: ``_reopened_after_changes_requested`` only
-ever returns True for a route whose LATEST decision is
-``changes_requested``.
+``Ready`` but ``find_reopening_decision`` finds a genuine revision (a
+``crisis_content_copy_versions`` row newer than the route's latest
+qualifying decision) -- and the ledger's unique constraint now includes
+``copy_hash`` (migration 0109), so the re-fire is not itself swallowed as a
+duplicate of the original notification. See ``_evaluate_route`` and
+``find_reopening_decision`` below.
+
+**Reopening after approval too (CCA11).** Originally ``approved`` stayed
+terminal here -- ``find_reopening_decision`` (then named
+``_reopened_after_changes_requested``) only ever returned a row for a
+route whose LATEST decision was ``changes_requested``. That was right
+while all editing happened before approval. It stopped being right once
+the vendor's team started putting edits directly in the Google Doc rather
+than describing them in Slack (Steffie Cruz, DigiGeeks, 2026-08-12): an
+approval that names specific wording, followed by someone changing that
+wording, is now the expected shape of the workflow, not an edge case --
+and an approval record that refers to text that no longer exists is an
+integrity problem for crisis communications, where the exact wording is
+the thing being signed off on. ``find_reopening_decision`` now returns the
+latest decision for EITHER ``changes_requested`` OR ``approved`` (still
+gated on a genuine ``crisis_content_copy_versions`` row after
+``decided_at`` -- see "Do not reopen on noise" below); ``_evaluate_route``
+tells the two apart by attaching ``Transition.reopened_after_approval``
+only for the ``approved`` case, so ``artemis.crisis_content.notify`` can
+render the "you are re-reviewing something already approved" warning for
+that case only -- never for a ``changes_requested`` reopen, which is the
+expected loop and stays silent about being a reopen at all.
+
+**Do not reopen on noise.** The re-fire keys ONLY on a genuine new
+``crisis_content_copy_versions`` row, never on a raw document re-read.
+Google's exported hrefs carry ``ust``/``usg`` tracking params that change
+on every fetch, which is why ``copy_hash`` is computed from normalized text
+(``artemis.crisis_content.parser``) rather than from the raw HTML -- any
+comparison that fell back to the raw export would reintroduce that
+instability and re-post every approved card on every poll tick.
+
+**Routes reopen independently.** ``find_reopening_decision`` reads the
+LATEST decision filtered to the one route being evaluated -- a route with
+no decision at all, or whose own latest decision doesn't qualify, never
+reopens, regardless of what the OTHER route's decision is or whether the
+shared copy-version log has a new row. That log is card-level, not
+route-level (there is no asset-specific version log -- see
+``find_reopening_decision``'s own docstring), so if BOTH routes
+independently have a qualifying decision, one genuine revision can reopen
+both; that is the existing CCA9 behavior (see
+``test_asset_route_reapproval_mirrors_copy_route_rule``) and is preserved
+on purpose, not a gap this slice introduces.
 """
 
 from __future__ import annotations
@@ -64,6 +102,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Route",
+    "find_reopening_decision",
+    "ReopenedAfterApproval",
     "Transition",
     "record_observation",
     "has_notified",
@@ -78,12 +118,45 @@ _READY = "Ready"
 
 _NOTIFICATIONS_CONSTRAINT = "uq_crisis_content_notifications_card_route_status"
 
+# A latest decision value that qualifies a route for reopening (CCA9 added
+# "changes_requested"; CCA11 added "approved" -- see the module docstring's
+# "Reopening after approval too (CCA11)"). Any other value (there is
+# currently no third one, but this is defensive) never reopens.
+_REOPENABLE_DECISIONS = ("changes_requested", "approved")
+
+
+class ReopenedAfterApproval(BaseModel):
+    """Present on a ``Transition`` iff this re-fire follows an ``approved``
+    decision (CCA11) -- ``None`` on every other transition, including a
+    ``changes_requested`` reopen (CCA9) and an ordinary first-time ``Ready``
+    transition.
+
+    Carries exactly what ``artemis.crisis_content.notify`` needs to render
+    the "you are re-reviewing something already approved" banner: who
+    approved it (``approved_by``) and when (``approved_at``). See
+    ``briefs/cca11-reopen-on-post-approval-edit.md``, "The card must say why
+    it is back" -- a re-fired card that looks identical to a first-time card
+    is worse than no card, because the approver has no way to tell they are
+    re-reviewing something they already signed off on. This field is the
+    ONLY thing that distinguishes the two reopen reasons for a renderer that
+    must warn for one and stay silent for the other.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    approved_by: str
+    approved_at: datetime
+
 
 class Transition(BaseModel):
     """One status transition slice B2 should consider notifying on.
 
     Carries the full ``ReviewCard`` (not just IDs) so slice B2 can render
     the copy/asset inline without a second lookup.
+
+    ``reopened_after_approval`` is ``None`` for every transition except a
+    CCA11 reopen following an ``approved`` decision -- see
+    ``ReopenedAfterApproval`` above.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -93,6 +166,7 @@ class Transition(BaseModel):
     previous_status: str | None
     new_status: str
     is_new_card: bool
+    reopened_after_approval: ReopenedAfterApproval | None = None
 
 
 async def record_observation(
@@ -282,11 +356,13 @@ async def _evaluate_route(
 
     Emits iff: the status is set, is recognized, is exactly ``Ready``, and
     (for the asset route) an asset is actually attached -- AND EITHER the
-    status differs from the previous observation (the normal case) OR the
-    re-approval fix applies (``_reopened_after_changes_requested`` -- see
-    the module docstring's "The re-approval fix (CCA9)"). An unrecognized
-    non-null status logs a WARNING and never emits -- silence here means
-    Jen added a dropdown option and the pipeline quietly stopped working.
+    status differs from the previous observation (the normal case) OR
+    ``find_reopening_decision`` finds a genuine reopen (a
+    ``changes_requested`` OR ``approved`` decision followed by a revised
+    copy version -- see the module docstring's "The re-approval fix (CCA9)"
+    and "Reopening after approval too (CCA11)"). An unrecognized non-null
+    status logs a WARNING and never emits -- silence here means Jen added a
+    dropdown option and the pipeline quietly stopped working.
     """
     if new_status is None:
         return None
@@ -311,21 +387,33 @@ async def _evaluate_route(
     if route == "asset" and card.asset_url is None:
         return None
 
+    reopening_decision: CrisisContentDecision | None = None
     if new_status == previous_status:
         # The chip never moved -- normally nothing to do. The one exception
-        # is the re-approval fix: a changes_requested decision followed by a
-        # genuine revision. See the module docstring.
-        if not await _reopened_after_changes_requested(session, card_id, route):
+        # is a genuine reopen: a changes_requested OR approved decision
+        # followed by a genuine revision. See the module docstring's "The
+        # re-approval fix (CCA9)" and "Reopening after approval too
+        # (CCA11)".
+        reopening_decision = await find_reopening_decision(session, card_id, route)
+        if reopening_decision is None:
             return None
         logger.info(
-            "crisis_content: re-firing %s route for card_id=%s -- a changes_requested "
-            "decision was followed by a revised copy version",
+            "crisis_content: re-firing %s route for card_id=%s -- a %s decision "
+            "was followed by a revised copy version",
             route,
             card_id,
+            reopening_decision.decision,
         )
 
     if await has_notified(session, card_id, route, new_status, card.copy_hash):
         return None
+
+    reopened_after_approval: ReopenedAfterApproval | None = None
+    if reopening_decision is not None and reopening_decision.decision == "approved":
+        reopened_after_approval = ReopenedAfterApproval(
+            approved_by=_decision_actor_label(reopening_decision),
+            approved_at=reopening_decision.decided_at,
+        )
 
     return Transition(
         card=card,
@@ -333,21 +421,52 @@ async def _evaluate_route(
         previous_status=previous_status,
         new_status=new_status,
         is_new_card=is_new_card,
+        reopened_after_approval=reopened_after_approval,
     )
 
 
-async def _reopened_after_changes_requested(
-    session: AsyncSession, card_id: int, route: Route
-) -> bool:
-    """True iff ``route``'s LATEST decision is ``changes_requested`` AND a
-    ``crisis_content_copy_versions`` row exists for this card with
-    ``first_seen_at`` after that decision's ``decided_at`` -- i.e. Jen has
-    actually revised the copy since. This is the re-approval fix (CCA9);
-    see the module docstring's "The re-approval fix (CCA9)".
+def _decision_actor_label(decision: CrisisContentDecision) -> str:
+    """Best-effort human label for the reopened-after-approval banner.
 
-    ``approved`` stays terminal by construction: this returns False for
-    ANY decision other than ``changes_requested`` -- including no decision
-    at all, or the route's latest decision already being ``approved``.
+    Deliberately the INVERSE preference of ``writeback._actor_label`` /
+    ``image_link._poster_label``, which prefer the email. Those two write into
+    a Google Doc, where ``<@U123>`` is meaningless literal text. This banner
+    renders in Slack, where a mention resolves to the person's display name --
+    "Previously approved by @Angela M" instead of
+    "by angela.miata@amiralearning.com". Same underlying data, different
+    destination, so the right choice differs; keep them distinct rather than
+    unifying them.
+
+    Still invents no display-name resolution (no extra ``users.info`` call):
+    Slack does the rendering for us from the id already on the decision row.
+    """
+    if decision.decided_by_slack_user_id:
+        return f"<@{decision.decided_by_slack_user_id}>"
+    if decision.decided_by_email:
+        return decision.decided_by_email
+    return "unknown"
+
+
+async def find_reopening_decision(
+    session: AsyncSession, card_id: int, route: Route
+) -> CrisisContentDecision | None:
+    """The decision that reopens ``route``, or ``None`` if it should not reopen.
+
+    Renamed from ``_reopened_after_changes_requested`` (CCA11) -- that name
+    stopped being accurate the moment ``approved`` also became reopenable;
+    keeping it would have been a trap for the next reader, who would have
+    had no reason to suspect a function with that name also handles the far
+    more consequential case of an approved route being revised out from
+    under the person who signed off on it.
+
+    Returns the LATEST decision row for ``(card_id, route)`` iff its
+    ``decision`` is ``changes_requested`` OR ``approved``
+    (``_REOPENABLE_DECISIONS``) AND a ``crisis_content_copy_versions`` row
+    exists for this CARD with ``first_seen_at`` after that decision's
+    ``decided_at`` -- i.e. someone has genuinely revised the copy since.
+    Returns ``None`` for no decision at all, a decision value outside
+    ``_REOPENABLE_DECISIONS`` (there is currently no third value, but this
+    is defensive), or no qualifying revision.
 
     Reads ``CrisisContentDecision`` directly with the same
     ``ORDER BY id DESC`` "latest decision" query
@@ -360,12 +479,18 @@ async def _reopened_after_changes_requested(
     either), so reading its ``CrisisContentDecision`` class directly here is
     safe.
 
-    The version check is deliberately card-level, not route-level: there is
-    no asset-specific version log (no new column was added for this --
-    brief section 5), so the SAME ``crisis_content_copy_versions`` log
-    (keyed only by ``card_id``) is the "has this post been touched since
-    the decision" signal for BOTH routes. This mirrors the asset route
-    rather than special-casing it, per the brief.
+    Routes reopen independently BY CONSTRUCTION: the query below filters on
+    ``route == route``, so a route with no decision, or whose own latest
+    decision doesn't qualify, never reopens -- regardless of the OTHER
+    route's decision. The version check IS still card-level, not
+    route-level: there is no asset-specific version log (no new column was
+    added for this -- brief section 5), so the SAME
+    ``crisis_content_copy_versions`` log (keyed only by ``card_id``) is the
+    "has this post been touched since the decision" signal for BOTH routes.
+    This mirrors the asset route rather than special-casing it, per the
+    CCA9 brief -- so if both routes independently have a qualifying
+    decision, one genuine revision CAN reopen both; see
+    ``test_asset_route_reapproval_mirrors_copy_route_rule``.
     """
     stmt = (
         select(CrisisContentDecision)
@@ -375,8 +500,8 @@ async def _reopened_after_changes_requested(
     )
     result = await session.execute(stmt)
     latest = result.scalar_one_or_none()
-    if latest is None or latest.decision != "changes_requested":
-        return False
+    if latest is None or latest.decision not in _REOPENABLE_DECISIONS:
+        return None
 
     version_stmt = (
         select(CrisisContentCopyVersion.id)
@@ -387,7 +512,9 @@ async def _reopened_after_changes_requested(
         .limit(1)
     )
     version_result = await session.execute(version_stmt)
-    return version_result.scalar_one_or_none() is not None
+    if version_result.scalar_one_or_none() is None:
+        return None
+    return latest
 
 
 async def find_card_id(session: AsyncSession, card: ReviewCard) -> int | None:
