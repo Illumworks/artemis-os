@@ -208,8 +208,31 @@ async def _default_channel_classifier(text: str) -> bool:
                 break
         return answer.startswith("YES")
     except Exception:
-        logger.warning("channel gate classifier failed — defaulting to silent", exc_info=True)
-        return False
+        # Fail OPEN, not silent.
+        #
+        # This returned False — stay quiet — which conflates "the classifier
+        # decided no" with "the classifier is broken". Those deserve opposite
+        # treatment: a working NO is a judgement to respect, a crash is an
+        # infrastructure fault that must not masquerade as one.
+        #
+        # And it is not hypothetical. There is no ANTHROPIC_API_KEY on this
+        # machine (Artemis runs on the Claude Code subscription) and the codex
+        # fallback also fails, so this path raises EVERY time — meaning the
+        # gate was permanently muting Callie on every non-mention message in
+        # every channel she had been invited to. Observed 2026-08-12: Josh
+        # asked "Hi Callie, what are the signals for today" in a channel
+        # created for her and got nothing back, with no error anyone could see.
+        #
+        # In a channel someone deliberately invited her into, occasionally
+        # answering something she needn't have is a far smaller cost than being
+        # mute. The allowlist already decided she belongs here; this gate is
+        # only meant to decide whether a given message deserves a reply.
+        logger.warning(
+            "channel gate classifier failed — responding anyway (fail-open); "
+            "a broken classifier must not read as a decision to stay silent",
+            exc_info=True,
+        )
+        return True
 
 
 # Deterministic confirm vocabulary. The confirm decision is a small, bounded

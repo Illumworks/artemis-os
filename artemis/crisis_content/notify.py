@@ -181,6 +181,31 @@ _COPY_OPENERS: tuple[str, ...] = (
     "Thanks Jen! {approvers}, another one ready to approve.",
     "Jen has this one ready. {approvers} — over to you.",
 )
+# A REOPENED card must not credit anyone with the change.
+#
+# The ordinary openers all say "Jen has this one ready" because ordinarily she
+# is the one who wrote it. But a reopen fires because the copy CHANGED, and the
+# person who changed it is very often one of our own reviewers editing in the
+# doc -- Jon hit Edit in doc, made the edits himself, and the card came back
+# saying "Jen has this one ready", which is both wrong and, on repeat, reads
+# like a form letter (reported 2026-08-12).
+#
+# The document export carries no authorship, so we cannot name who edited it and
+# must not guess. These openers name nobody and lead with the fact that matters:
+# the words changed, look again.
+_REOPEN_COPY_OPENERS: tuple[str, ...] = (
+    "Updated copy on this one. {approvers} — another look?",
+    "This one's changed since last time. {approvers}, over to you.",
+    "Fresh version of this. {approvers} — worth a re-read.",
+    "Copy's been revised. {approvers}, back to you.",
+)
+
+_REOPEN_ASSET_OPENERS: tuple[str, ...] = (
+    "The visual on this one has changed — another look?",
+    "Updated asset here, worth a re-check.",
+    "This one's been revised since you last saw it.",
+)
+
 _ASSET_OPENERS: tuple[str, ...] = (
     "Thanks Jen — the visual's ready for your eyes.",
     "New visual in from Jen, ready when you are.",
@@ -206,7 +231,11 @@ def _select_variant(
 
 
 def render_opener(
-    identity_key: tuple[str, str | None, int], route: str, *, approvers: str = ""
+    identity_key: tuple[str, str | None, int],
+    route: str,
+    *,
+    approvers: str = "",
+    is_reopen: bool = False,
 ) -> str:
     """The conversational opener line for one card, deterministically chosen.
 
@@ -221,10 +250,24 @@ def render_opener(
 
     Jen is always the plain word "Jen" here, on purpose -- see the module
     docstring's "Opener voice (CCA8)" and ``jen_mention()``.
+
+    ``is_reopen`` switches to a set that credits NOBODY. A reopen fires because
+    the copy changed, and that is frequently one of our own reviewers editing in
+    the doc rather than Jen -- so "Jen has this one ready" is simply false, and
+    on repeat it reads like a form letter. The export carries no authorship, so
+    naming the editor is not available and guessing is not acceptable.
     """
     if route == "asset":
-        return _select_variant(identity_key, route, _ASSET_OPENERS)
-    template = _select_variant(identity_key, route, _COPY_OPENERS)
+        variants = _REOPEN_ASSET_OPENERS if is_reopen else _ASSET_OPENERS
+        return _select_variant(identity_key, route, variants)
+    template = _select_variant(
+        identity_key,
+        # Vary the reopen wording independently of the first-time wording for the
+        # same card, so a card that comes back does not repeat the sentence it
+        # arrived with.
+        f"{route}:reopen" if is_reopen else route,
+        _REOPEN_COPY_OPENERS if is_reopen else _COPY_OPENERS,
+    )
     return template.format(approvers=approvers or "the team")
 
 
@@ -472,7 +515,17 @@ def render_transition_message(transition: Transition, *, footer: str, approvers:
     platform = card.platform or "unspecified platform"
     heading_date = f"{card.date_text} · {card.title}" if card.date_text else card.title
     heading_line = f"{heading_date} — {platform}"
-    opener = render_opener(card.identity_key, transition.route, approvers=approvers)
+    # A reopen is the ONLY case where we emit a transition whose status did not
+    # change: a first-time card goes None/Draft -> Ready, whereas a reopen fires
+    # on an unchanged "Ready" because the copy underneath it was revised. That
+    # makes this derivation exact, and it needs no new field to carry.
+    is_reopen = (
+        transition.previous_status is not None
+        and transition.previous_status == transition.new_status
+    )
+    opener = render_opener(
+        card.identity_key, transition.route, approvers=approvers, is_reopen=is_reopen
+    )
 
     lines: list[str] = [opener]
     if transition.reopened_after_approval is not None:

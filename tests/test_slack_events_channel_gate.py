@@ -770,8 +770,18 @@ async def test_default_classifier_garbage_returns_false() -> None:
     assert result is False
 
 
-async def test_default_classifier_exception_returns_false() -> None:
-    """Any exception from complete_with_fallback → fail-closed False, no re-raise."""
+async def test_default_classifier_exception_fails_open() -> None:
+    """Any exception from complete_with_fallback → fail OPEN (True), no re-raise.
+
+    This asserted False — stay silent — which conflated "the classifier decided
+    no" with "the classifier is broken". There is no ANTHROPIC_API_KEY on this
+    machine and the codex fallback fails too, so this path raises every time,
+    meaning the gate permanently muted Callie on every non-mention message in
+    every channel she had been invited to. Josh asked her a direct question in a
+    channel created for her and got nothing (2026-08-12).
+
+    A working NO is a judgement to respect. A crash must not impersonate one.
+    """
     from artemis.routes.integrations_slack_events import _default_channel_classifier
 
     with patch(
@@ -781,10 +791,10 @@ async def test_default_classifier_exception_returns_false() -> None:
     ):
         result = await _default_channel_classifier("help me with our campaign")
 
-    assert result is False
+    assert result is True, "a broken classifier must not read as a decision to stay silent"
 
 
-async def test_default_classifier_missing_api_key_returns_false() -> None:
+async def test_default_classifier_missing_api_key_fails_open() -> None:
     """MissingApiKeyError (both providers fail) → fail-closed False."""
     from artemis.providers.errors import MissingApiKeyError
     from artemis.routes.integrations_slack_events import _default_channel_classifier
@@ -796,7 +806,10 @@ async def test_default_classifier_missing_api_key_returns_false() -> None:
     ):
         result = await _default_channel_classifier("anything")
 
-    assert result is False
+    assert result is True, (
+        "a missing API key is the LIVE condition on this machine — if it read as "
+        "'stay silent', Callie is mute on every non-mention message forever"
+    )
 
 
 async def test_default_classifier_model_is_none() -> None:

@@ -136,7 +136,9 @@ def test_different_cards_exercise_the_full_variant_set() -> None:
         notify.render_opener((f"header {i}", "LinkedIn", i), "copy", approvers=_APPROVERS)
         for i in range(40)
     }
-    asset_openers = {notify.render_opener((f"header {i}", "LinkedIn", i), "asset") for i in range(40)}
+    asset_openers = {
+        notify.render_opener((f"header {i}", "LinkedIn", i), "asset") for i in range(40)
+    }
 
     expected_copy = {template.format(approvers=_APPROVERS) for template in notify._COPY_OPENERS}
     assert copy_openers == expected_copy
@@ -217,12 +219,16 @@ def test_asset_route_opener_variants_all_say_jen_never_a_mention() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_jen_mention_returns_a_real_mention_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_jen_mention_returns_a_real_mention_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "crisis_content_jen_slack_user_id", "U016P00LP08")
     assert notify.jen_mention() == "<@U016P00LP08>"
 
 
-def test_jen_mention_falls_back_to_the_plain_word_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_jen_mention_falls_back_to_the_plain_word_when_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "crisis_content_jen_slack_user_id", "")
     mention = notify.jen_mention()
     assert mention == "Jen"
@@ -281,7 +287,9 @@ def test_unspecified_platform_still_shows_a_platform_marker() -> None:
 
 def test_copy_route_body_char_count_asset_status_and_doc_link_are_unchanged() -> None:
     copy_body = "Some approved copy that Jon has already signed off on the format for."
-    transition = _copy_transition(copy_body=copy_body, platform="X", asset_status=None, asset_url=None)
+    transition = _copy_transition(
+        copy_body=copy_body, platform="X", asset_status=None, asset_url=None
+    )
     text = notify.render_transition_message(transition, footer="", approvers=_APPROVERS)
     lines = text.splitlines()
 
@@ -314,7 +322,9 @@ def test_approve_button_is_unchanged() -> None:
     style, and value must read exactly as they did before this slice.
     """
     transition = _copy_transition()
-    blocks = notify.render_transition_blocks(transition, card_id=42, footer="", approvers=_APPROVERS)
+    blocks = notify.render_transition_blocks(
+        transition, card_id=42, footer="", approvers=_APPROVERS
+    )
 
     assert blocks[0]["type"] == "section"
     actions_block = blocks[1]
@@ -337,7 +347,9 @@ def test_edit_in_doc_button_has_both_url_and_action_id() -> None:
     decision.
     """
     transition = _copy_transition()
-    blocks = notify.render_transition_blocks(transition, card_id=42, footer="", approvers=_APPROVERS)
+    blocks = notify.render_transition_blocks(
+        transition, card_id=42, footer="", approvers=_APPROVERS
+    )
     actions_block = blocks[1]
     approve, edit_in_doc = actions_block["elements"]
 
@@ -370,12 +382,16 @@ def test_edit_in_doc_url_carries_the_transitions_own_tab_id_not_hardcoded() -> N
     assert edit_bare["url"] == notify._DOC_URL
 
     tabbed = _copy_transition().model_copy(update={"tab_id": "t.abc123"})
-    blocks_tabbed = notify.render_transition_blocks(tabbed, card_id=1, footer="", approvers=_APPROVERS)
+    blocks_tabbed = notify.render_transition_blocks(
+        tabbed, card_id=1, footer="", approvers=_APPROVERS
+    )
     _approve_tabbed, edit_tabbed = blocks_tabbed[1]["elements"]
     assert edit_tabbed["url"] == f"{notify._DOC_URL}?tab=t.abc123"
 
     other_tab = _copy_transition().model_copy(update={"tab_id": "t.xyz789"})
-    blocks_other = notify.render_transition_blocks(other_tab, card_id=1, footer="", approvers=_APPROVERS)
+    blocks_other = notify.render_transition_blocks(
+        other_tab, card_id=1, footer="", approvers=_APPROVERS
+    )
     _approve_other, edit_other = blocks_other[1]["elements"]
     assert edit_other["url"] != edit_tabbed["url"]
     assert edit_other["url"] == f"{notify._DOC_URL}?tab=t.xyz789"
@@ -460,7 +476,9 @@ def test_copy_opener_falls_back_to_a_generic_phrase_when_no_approvers_supplied()
     or emitting a stray mention.
     """
     transition = _copy_transition()
-    text = notify.render_transition_message(transition, footer=notify.testing_line_for_route("copy"))
+    text = notify.render_transition_message(
+        transition, footer=notify.testing_line_for_route("copy")
+    )
     opener_line = text.splitlines()[0]
     assert "the team" in opener_line
     assert "<@" not in opener_line
@@ -502,3 +520,53 @@ def test_render_editing_in_doc_message_is_distinct_from_render_decision_message(
     assert editing_text != decision_text
     assert "editing in the doc" in editing_text
     assert "Changes requested" not in editing_text
+
+
+def test_reopened_card_does_not_credit_jen() -> None:
+    """A reopened card must not say "Jen has this one ready".
+
+    A reopen fires because the copy CHANGED, and that is frequently one of our
+    own reviewers editing in the doc — Jon hit Edit in doc, made the edits
+    himself, and the card came back crediting Jen (reported 2026-08-12). Wrong,
+    and on repeat it reads like a form letter.
+
+    The document export carries no authorship, so we cannot name the editor and
+    must not guess. The reopen openers name nobody.
+    """
+    from artemis.crisis_content.notify import render_opener
+
+    key = ("August XX, 2026 - More time for books", "TBD", 1)
+    first = render_opener(key, "copy", approvers="<@U1>", is_reopen=False)
+    again = render_opener(key, "copy", approvers="<@U1>", is_reopen=True)
+
+    assert "Jen" in first, "a first-time card still credits Jen, who wrote it"
+    assert "Jen" not in again, f"a reopen must credit nobody, got: {again!r}"
+    assert "<@U1>" in again, "the reopen still addresses the approvers"
+
+
+def test_reopen_wording_differs_from_the_first_send() -> None:
+    """The same card must not repeat its opening sentence when it comes back.
+
+    Selection is deterministic per card, so without varying the reopen wording
+    independently a card that reopens three times would open with the identical
+    sentence every time — the "repetitive" complaint that prompted this.
+    """
+    from artemis.crisis_content.notify import render_opener
+
+    key = ("August XX, 2026 - Not off script", "LinkedIn", 0)
+    first = render_opener(key, "copy", approvers="<@U1>", is_reopen=False)
+    again = render_opener(key, "copy", approvers="<@U1>", is_reopen=True)
+    assert first != again
+
+    # Still deterministic: the same reopen renders identically, so a repaint
+    # cannot rewrite the message someone is mid-way through reading.
+    assert again == render_opener(key, "copy", approvers="<@U1>", is_reopen=True)
+
+
+def test_reopened_asset_card_credits_nobody_either() -> None:
+    """Same rule on the asset route, which has its own opener set."""
+    from artemis.crisis_content.notify import render_opener
+
+    key = ("August XX, 2026 - Welcome Back blog", "X", 0)
+    assert "Jen" in render_opener(key, "asset", is_reopen=False)
+    assert "Jen" not in render_opener(key, "asset", is_reopen=True)
