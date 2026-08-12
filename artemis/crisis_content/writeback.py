@@ -132,7 +132,17 @@ _DELIVERY_CONSTRAINT = "uq_crisis_content_writeback_decision_action"
 
 DeliveryAction = Literal["doc_line", "comment", "email"]
 DeliveryStatus = Literal[
-    "delivered", "already_delivered", "not_located", "damaged", "failed", "disabled"
+    "delivered",
+    "already_delivered",
+    "not_located",
+    "damaged",
+    "failed",
+    "disabled",
+    # A vendor-facing delivery deliberately not made because the card lives on
+    # the TESTING tab (CCA13 + migration 0111). Distinct from "disabled" (the
+    # kill switch is off) and from "failed" (we tried and could not) -- this one
+    # means we chose not to, and nothing is wrong.
+    "skipped_test_card",
 ]
 
 
@@ -450,7 +460,9 @@ def _append_index_for_status_cell(status_cell: dict[str, Any]) -> int:
         raise CardNotLocatedError("Status cell's last element is malformed")
     end_index = last.get("endIndex")
     if not isinstance(end_index, int):
-        raise CardNotLocatedError("Status cell's last element has no endIndex -- refusing to insert")
+        raise CardNotLocatedError(
+            "Status cell's last element has no endIndex -- refusing to insert"
+        )
     return end_index - 1
 
 
@@ -485,7 +497,9 @@ def render_writeback_line(
     silently disagree.
     """
     route_label = _ROUTE_LABELS.get(route, route.capitalize()).lower()
-    stamp = f"{decided_at.strftime('%b')} {decided_at.day}, {decided_at.strftime('%-I:%M%p').lower()}"
+    stamp = (
+        f"{decided_at.strftime('%b')} {decided_at.day}, {decided_at.strftime('%-I:%M%p').lower()}"
+    )
     if decision == "approved":
         head = f"✅ Approved ({route_label}) — {actor_label}, {stamp}"
     else:
@@ -835,7 +849,9 @@ async def _load_card(session: AsyncSession, card_id: int) -> CrisisContentCard:
 # ---------------------------------------------------------------------------
 
 
-async def _deliver_doc_line(session: AsyncSession, decision: CrisisContentDecision) -> DeliveryStatus:
+async def _deliver_doc_line(
+    session: AsyncSession, decision: CrisisContentDecision
+) -> DeliveryStatus:
     if await _has_delivered(session, decision.id, "doc_line"):
         return "already_delivered"
 
@@ -915,11 +931,33 @@ async def _deliver_doc_line(session: AsyncSession, decision: CrisisContentDecisi
     return "delivered"
 
 
-async def _deliver_comment(session: AsyncSession, decision: CrisisContentDecision) -> DeliveryStatus:
+async def _deliver_comment(
+    session: AsyncSession, decision: CrisisContentDecision
+) -> DeliveryStatus:
     if await _has_delivered(session, decision.id, "comment"):
         return "already_delivered"
 
     card = await _load_card(session, decision.card_id)
+    if card.is_test:
+        # A card on the TESTING tab must never reach the external vendor.
+        # CCA13 routes the NOTIFICATION to Jon's DM, but this runs later, off a
+        # decision click, so the check has to happen here too -- reading the
+        # is_test persisted on the card (migration 0111) rather than a
+        # Transition that no longer exists by now.
+        #
+        # The doc LINE still writes (see deliver_decision_writeback): proving
+        # the index math against the live document is the whole point of the
+        # test lane, and it lands in a duplicated card where it is harmless.
+        # What must not happen is Jen being @mentioned and emailed about a post
+        # that does not exist.
+        logger.info(
+            "crisis_content writeback: skipping %s for TEST card_id=%s decision_id=%s",
+            "Drive comment",
+            card.id,
+            decision.id,
+        )
+        return "skipped_test_card"
+
     content = _comment_content(card=card, decision=decision)
 
     try:
@@ -946,6 +984,26 @@ async def _deliver_email(session: AsyncSession, decision: CrisisContentDecision)
         return "already_delivered"
 
     card = await _load_card(session, decision.card_id)
+    if card.is_test:
+        # A card on the TESTING tab must never reach the external vendor.
+        # CCA13 routes the NOTIFICATION to Jon's DM, but this runs later, off a
+        # decision click, so the check has to happen here too -- reading the
+        # is_test persisted on the card (migration 0111) rather than a
+        # Transition that no longer exists by now.
+        #
+        # The doc LINE still writes (see deliver_decision_writeback): proving
+        # the index math against the live document is the whole point of the
+        # test lane, and it lands in a duplicated card where it is harmless.
+        # What must not happen is Jen being @mentioned and emailed about a post
+        # that does not exist.
+        logger.info(
+            "crisis_content writeback: skipping %s for TEST card_id=%s decision_id=%s",
+            "Gmail send",
+            card.id,
+            decision.id,
+        )
+        return "skipped_test_card"
+
     subject, body = _email_content(card=card, decision=decision)
 
     try:
@@ -955,8 +1013,7 @@ async def _deliver_email(session: AsyncSession, decision: CrisisContentDecision)
         logger.exception("crisis_content writeback: Gmail send failed decision_id=%s", decision.id)
         await _alert_jon(
             session,
-            f"🚨 Crisis-content write-back: email to Jen failed for decision "
-            f"#{decision.id}: {exc}",
+            f"🚨 Crisis-content write-back: email to Jen failed for decision #{decision.id}: {exc}",
         )
         return "failed"
 
@@ -1040,9 +1097,7 @@ async def _run_writeback_background(decision_id: int) -> None:
                 )
                 return
             outcome = await deliver_decision_writeback(session, decision)
-            logger.info(
-                "crisis_content writeback: decision_id=%s outcome=%r", decision_id, outcome
-            )
+            logger.info("crisis_content writeback: decision_id=%s outcome=%r", decision_id, outcome)
     except Exception:
         logger.exception(
             "crisis_content writeback: unhandled error in background task for decision_id=%s",

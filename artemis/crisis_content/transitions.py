@@ -292,8 +292,9 @@ async def _observe_card(
     session: AsyncSession, card: ReviewCard, tab_info: CardTabInfo | None = None
 ) -> list[Transition]:
     now = datetime.now(UTC)
+    is_test = tab_info.is_test if tab_info is not None else False
     row, is_new, previous_asset_status, previous_copy_status = await _resolve_card_row(
-        session, card, now
+        session, card, now, is_test=is_test
     )
     await _maybe_append_copy_version(session, row, card, now)
 
@@ -331,7 +332,7 @@ async def _observe_card(
 
 
 async def _resolve_card_row(
-    session: AsyncSession, card: ReviewCard, now: datetime
+    session: AsyncSession, card: ReviewCard, now: datetime, *, is_test: bool = False
 ) -> tuple[CrisisContentCard, bool, str | None, str | None]:
     """Find-or-create the card row for ``card``'s identity.
 
@@ -369,6 +370,7 @@ async def _resolve_card_row(
             copy_status=card.copy_status,
             asset_url=card.asset_url,
             copy_hash=card.copy_hash,
+            is_test=is_test,
             first_seen_at=now,
             last_seen_at=now,
         )
@@ -383,6 +385,7 @@ async def _resolve_card_row(
     row.copy_status = card.copy_status
     row.asset_url = card.asset_url
     row.copy_hash = card.copy_hash
+    row.is_test = is_test
     row.last_seen_at = now
     await session.flush()
     return row, False, previous_asset_status, previous_copy_status

@@ -80,6 +80,11 @@ class CrisisContentCard(Base):
     copy_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     asset_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     copy_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # True iff this card's live table sits on a tab carrying the test marker
+    # (CCA13). Persisted, not merely computed, because the vendor-facing side
+    # effects fire from a decision click that only has a card_id -- see
+    # migration 0111.
+    is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     first_seen_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )

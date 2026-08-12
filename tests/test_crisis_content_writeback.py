@@ -120,7 +120,9 @@ def _copy_hash(lines: list[str]) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def _card_table(*, header: str, copy_lines: list[str], status_end_index: int = 500) -> dict[str, Any]:
+def _card_table(
+    *, header: str, copy_lines: list[str], status_end_index: int = 500
+) -> dict[str, Any]:
     """A signature-matching review-card table: header row + status/copy row."""
     return {
         "tableRows": [
@@ -504,7 +506,9 @@ async def test_target_card_not_locatable_writes_nothing_logs_error_alerts_jon(
 
     # The live doc no longer has any table with this header -- e.g. Jen
     # renamed it, or it moved to a tab that hasn't been polled yet.
-    doc = _document({"t1": [_decoy_table(), _card_table(header="A totally different post", copy_lines=["x"])]})
+    doc = _document(
+        {"t1": [_decoy_table(), _card_table(header="A totally different post", copy_lines=["x"])]}
+    )
     insert_calls: list[dict[str, Any]] = []
     alerts: list[str] = []
     _patch_docs_api(monkeypatch, doc, insert_calls)
@@ -784,3 +788,66 @@ async def test_writeback_disabled_via_settings_does_nothing(
 
 def test_jen_emails_reads_both_addresses_from_settings() -> None:
     assert writeback.jen_emails() == ("jen@justrightstrategy.com", "jen@digigeeks.com")
+
+
+async def test_test_card_never_reaches_the_vendor(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A card on the TESTING tab must not @mention or email the external vendor.
+
+    CCA13 routes the NOTIFICATION for a test card to Jon's DM, but the Drive
+    comment and the Gmail send fire later, from a decision click, in a path that
+    only has a card_id. Its author flagged that gap rather than faking a test
+    for it. Without the is_test column (migration 0111), approving a card on
+    Jon's TESTING tab would have emailed Jen about a post that does not exist.
+
+    The doc LINE still writes on purpose: proving index math against the live
+    document is the entire point of the test lane, and it lands in a duplicated
+    card where it is harmless.
+    """
+    comment_calls: list[str] = []
+    email_calls: list[str] = []
+    monkeypatch.setattr(
+        writeback,
+        "_create_drive_comment",
+        lambda *a, **kw: comment_calls.append("called"),
+    )
+
+    card_id, _ = await _seed_card(db_session)
+    async with db_session.begin():
+        row = (
+            await db_session.execute(
+                select(CrisisContentCard).where(CrisisContentCard.id == card_id)
+            )
+        ).scalar_one()
+        row.is_test = True
+
+    decision = await _seed_decision(db_session, card_id=card_id)
+
+    comment_outcome = await writeback._deliver_comment(db_session, decision)
+    email_outcome = await writeback._deliver_email(db_session, decision)
+
+    assert comment_outcome == "skipped_test_card"
+    assert email_outcome == "skipped_test_card"
+    assert comment_calls == [], "a test card must never produce a Drive comment"
+    assert email_calls == [], "a test card must never email the vendor"
+
+
+async def test_real_card_still_reaches_the_vendor(db_session: AsyncSession) -> None:
+    """The guard must key on is_test, not suppress everything.
+
+    A real card (is_test False, the default for every pre-existing row) must
+    still attempt both vendor-facing deliveries. Without this, the suppression
+    above could silently disable the feature for everyone and every test would
+    still pass.
+    """
+    card_id, _ = await _seed_card(db_session)
+    decision = await _seed_decision(db_session, card_id=card_id)
+
+    # No credential is configured in tests, so these fail rather than deliver --
+    # the point is that they are ATTEMPTED, i.e. not short-circuited as test cards.
+    comment_outcome = await writeback._deliver_comment(db_session, decision)
+    email_outcome = await writeback._deliver_email(db_session, decision)
+
+    assert comment_outcome != "skipped_test_card"
+    assert email_outcome != "skipped_test_card"
