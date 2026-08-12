@@ -27,7 +27,35 @@ import os
 from artemis.agent.client import CompletionRequest, CompletionResponse
 from artemis.agent.types import Message, TextBlock, Usage
 from artemis.providers._bin_path import find_cli_binary
-from artemis.providers.errors import CodexRateLimitError, MissingCliBinaryError, ProviderAPIError
+from artemis.providers.errors import (
+    CodexRateLimitError,
+    MissingCliBinaryError,
+    ProviderAPIError,
+    ProviderUnavailableError,
+)
+
+# Substrings that mean "this account/CLI cannot serve ANY request right now" as
+# opposed to "this particular request failed". Matched case-insensitively
+# against stderr and against turn.failed messages.
+#
+# Drawn from the 2026-08-12 outage: every model returned "The 'gpt-5.4' model is
+# not supported when using Codex with a ChatGPT account", which is an
+# entitlement problem, not a bad request — the correct response is to fail over,
+# not to take the caller down. Kept narrow on purpose: anything not listed here
+# still surfaces as a plain ProviderAPIError so real task failures stay visible.
+_UNAVAILABLE_MARKERS: tuple[str, ...] = (
+    "not supported when using codex",
+    "not authenticated",
+    "please log in",
+    "please run codex login",
+    "unauthorized",
+)
+
+
+def _is_unavailable(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _UNAVAILABLE_MARKERS)
+
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +142,23 @@ class CodexAdapter:
             await proc.wait()
             raise ProviderAPIError(408, "codex CLI timed out after 120 s") from None
 
+        raw = stdout.decode(errors="replace").strip()
+
         if proc.returncode != 0:
+            # Classify from STDOUT first. The real reason lives in the NDJSON
+            # error events; stderr on a failing run is often just the benign
+            # "Reading additional input from stdin..." banner, which says
+            # nothing about why it failed. Observed 2026-08-12: the entitlement
+            # error was in stdout while stderr carried only that banner.
+            _check_for_rate_limit_failure(raw)
+            detail = stderr.decode(errors="replace").strip() or raw[:500]
+            if _is_unavailable(detail):
+                raise ProviderUnavailableError(detail)
             raise ProviderAPIError(
                 proc.returncode or 1,
-                stderr.decode(errors="replace"),
+                detail,
             )
 
-        raw = stdout.decode(errors="replace").strip()
         if not raw:
             raise ProviderAPIError(0, "codex CLI produced no output")
 
@@ -188,6 +226,11 @@ def _check_for_rate_limit_failure(raw: str) -> None:
         lower = message.lower()
         if any(phrase in lower for phrase in _RATE_LIMIT_PHRASES):
             raise CodexRateLimitError(429, message)
+        if _is_unavailable(message):
+            # Account/entitlement problem reported inside the NDJSON stream
+            # rather than on stderr — same meaning, same handling: this provider
+            # cannot serve, so fail over instead of failing the caller.
+            raise ProviderUnavailableError(message)
         # Genuine task failure — raise as plain ProviderAPIError so it is visible.
         raise ProviderAPIError(1, f"codex turn.failed: {message}")
 

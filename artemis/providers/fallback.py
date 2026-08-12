@@ -40,7 +40,21 @@ logger = logging.getLogger(__name__)
 # Status codes that represent transient provider-side problems — safe to retry
 # on the fallback provider.  Non-transient 4xx (400, 401, 403, 404, 422, etc.)
 # are NOT in this set and will re-raise so the caller can see the real bug.
-_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+#
+# 408 is included deliberately: a request timeout means this provider did not
+# serve, which is exactly what a fallback is for.  The codex adapter raises it
+# on CLI timeout.
+_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({408, 429, 500, 502, 503, 504})
+
+# NOTE on CLI adapters: codex and claude-code put a PROCESS EXIT CODE (or 0) in
+# ProviderAPIError.status_code, not an HTTP status. Those values are not in the
+# retryable set, and that is deliberate — a genuine task failure ("Sandbox
+# execution error") must surface rather than be masked by a silent failover.
+#
+# The case that DOES need failover is "this provider cannot serve at all"
+# (auth/entitlement/binary), which adapters must raise as
+# ProviderUnavailableError (status 503) so it lands in the set above. See that
+# class's docstring for the 2026-08-12 outage this distinction was drawn from.
 
 # Construction-time errors that mean "this provider isn't available in this env".
 _CONSTRUCTION_ERRORS: tuple[type[Exception], ...] = (

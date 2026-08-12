@@ -57,6 +57,31 @@ class CodexRateLimitError(ProviderAPIError):
     """
 
 
+class ProviderUnavailableError(ProviderAPIError):
+    """Raised when a provider cannot serve AT ALL — as distinct from a request
+    that reached it and failed.
+
+    The distinction matters for the fallback cascade, and conflating the two
+    caused a real outage. "Sandbox execution error" is a request-level bug and
+    must surface loudly rather than being masked by a silent failover — that is
+    the deliberate design behind ``test_no_fallback_on_codex_non_limit_failure``.
+    But "The 'gpt-5.4' model is not supported when using Codex with a ChatGPT
+    account" is not a bug in the request: the provider is simply unusable, and
+    falling through to another one is exactly right.
+
+    On 2026-08-12 every codex model returned that entitlement error. Because it
+    surfaced as a plain ``ProviderAPIError`` with the process exit code (1) in
+    the status field, ``_is_retryable`` read it as a non-transient 4xx and
+    re-raised — so the cascade never engaged and callers hard-failed instead of
+    degrading to claude-code. Subclasses ``ProviderAPIError`` (status 503) so
+    existing catch sites are unaffected while the fallback treats it as
+    transient.
+    """
+
+    def __init__(self, body: str) -> None:
+        super().__init__(503, body)
+
+
 class MissingCliBinaryError(Exception):
     """Raised at adapter construction time when the required CLI binary is absent.
 
