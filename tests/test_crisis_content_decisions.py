@@ -293,16 +293,21 @@ async def test_copy_route_allows_each_of_angela_hannah_jaclyn(
     assert rows[0].decided_by_email == email
 
 
-async def test_copy_route_rejects_jon(
-    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+async def test_copy_route_allows_jon_as_redundancy(
+    client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    ephemeral_calls: list[str] = []
+    """Jon is on the copy allowlist as a deliberate backstop.
 
-    async def fake_ephemeral(response_url: str | None, text: str) -> None:
-        ephemeral_calls.append(text)
+    Added 2026-08-11 at his request: during a crisis push, copy must not sit
+    unapproved because all three primary approvers happen to be unavailable.
+    He is redundancy, not a routine approver -- cards are still addressed to
+    Angela/Hannah/Jaclyn (see docs/crisis-content-approval-pipeline.md
+    "Routing"), and this is the ONLY overlap between the two routes.
 
-    monkeypatch.setattr(slack_actions, "_post_ephemeral", fake_ephemeral)
-
+    This test previously asserted the opposite (Jon rejected on copy). It was
+    re-pointed rather than deleted, so the reversal stays visible in history
+    instead of looking like coverage that was quietly dropped.
+    """
     await _seed_callie_integration(db_session)
     await _seed_directory(db_session)
     card_id = await _seed_card(db_session)
@@ -314,6 +319,56 @@ async def test_copy_route_rejects_jon(
             card_id=card_id,
             route="copy",
             slack_user_id=_JON[1],
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json().get("replace_original") is True
+    rows = await _decisions_for(db_session, card_id, "copy")
+    assert len(rows) == 1
+    assert rows[0].decided_by_email == _JON[0]
+
+
+async def test_copy_route_still_rejects_an_unlisted_colleague(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adding Jon must not have turned the copy allowlist into "anyone".
+
+    The guard that matters after widening: a real @amiralearning.com address
+    that is not on the list is still refused. An earlier draft of the CCA5
+    brief described the copy approvers as "all @amiralearning.com", which
+    could have been implemented as company-wide authorization -- this pins
+    that it was not.
+    """
+    ephemeral_calls: list[str] = []
+
+    async def fake_ephemeral(response_url: str | None, text: str) -> None:
+        ephemeral_calls.append(text)
+
+    monkeypatch.setattr(slack_actions, "_post_ephemeral", fake_ephemeral)
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    # A real, resolvable colleague at the company domain who is NOT on the
+    # allowlist. Distinct from the unresolvable-user case, which denies for a
+    # different reason -- this one proves the allowlist itself is closed.
+    async with db_session.begin():
+        db_session.add(
+            DirectoryPerson(
+                email="someone.else@amiralearning.com",
+                full_name="Someone Else",
+                slack_user_id="U_SOMEONE_ELSE",
+            )
+        )
+    card_id = await _seed_card(db_session)
+
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_approve",
+            card_id=card_id,
+            route="copy",
+            slack_user_id="U_SOMEONE_ELSE",
         ),
     )
 

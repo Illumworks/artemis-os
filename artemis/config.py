@@ -610,7 +610,8 @@ class Settings(BaseSettings):
         default=(
             "angela.miata@amiralearning.com,"
             "hannah.slater@amiralearning.com,"
-            "jaclyn.wright@amiralearning.com"
+            "jaclyn.wright@amiralearning.com,"
+            "jon.fila@amiralearning.com"
         ),
         validation_alias=AliasChoices(
             "ARTEMIS_CRISIS_CONTENT_COPY_APPROVER_EMAILS",
@@ -619,9 +620,15 @@ class Settings(BaseSettings):
         description=(
             "Comma-separated emails permitted to decide the 'copy' route on a "
             "crisis-content card (CCA5). Angela, Hannah, and Jaclyn -- any ONE "
-            "is sufficient (quorum-of-one). Jon is deliberately NOT on this "
-            "list: per docs/crisis-content-approval-pipeline.md 'Routing', Jon "
-            "does not approve copy. Empty = nobody is authorized (fail-closed)."
+            "is sufficient (quorum-of-one). Empty = nobody is authorized "
+            "(fail-closed).\n\n"
+            "Jon is on this list as a deliberate REDUNDANCY, added 2026-08-11 at "
+            "his request: during a crisis push, copy must not sit unapproved "
+            "because all three primary approvers happen to be unavailable. He is "
+            "a backstop, not a routine approver -- docs/crisis-content-approval-"
+            "pipeline.md 'Routing' still assigns copy to the three of them, and "
+            "cards are addressed to them. Note this is the only overlap between "
+            "the two routes; the asset route remains Jon-only."
         ),
     )
 
