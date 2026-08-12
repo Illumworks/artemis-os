@@ -625,7 +625,43 @@ def is_noise_pair(deleted_text: str, inserted_text: str) -> bool:
     """
     d = " ".join(_normalize_typography(deleted_text).split()).casefold()
     i = " ".join(_normalize_typography(inserted_text).split()).casefold()
-    return d == i
+    if d == i:
+        return True
+    return _is_sub_word_fragment(d) or _is_sub_word_fragment(i)
+
+
+def _is_sub_word_fragment(normalized: str) -> bool:
+    """True iff this side of a pair is a piece of a word, not a word.
+
+    Found by reading the first post-CCA16 live pass rather than from a test.
+    Coalescing fixed the sentence-rewrite fragments, but four pairs mined
+    from Jen's doc were morphology, not editing::
+
+        "."  -> "s"        (singular pluralized: "...book." -> "...books.")
+        "d"  -> "s"        (the tail of one word swapped for another's)
+        "a"  -> " "        (an article dropped)
+        ":"  -> " is,"     (punctuation reflowed)
+
+    These recur constantly -- pluralizing a noun is one of the commonest
+    edits there is -- so unlike a sentence rewrite they WOULD reach the
+    threshold, and "prefer 's' over 'd'" is not a house rule anyone can
+    act on. Two things disqualify a side:
+
+    - It contains no letter at all (``"."``, ``":"``, ``""``). A pair whose
+      deleted side is bare punctuation is a reflow, not a word choice.
+    - It is a single character other than ``a`` or ``i`` -- the only
+      one-letter words in English. This keeps the genuine ``"a" -> "each"``
+      article substitution the same pass also found, while rejecting the
+      ``"d" -> "s"`` word-tail swap.
+
+    Excluded from counting, not merely from proposing: a morphological
+    fragment has no value at any count, so unlike the length guard (which
+    withholds pairs that are real but too long to be guidance) there is
+    nothing here worth accumulating.
+    """
+    if not any(ch.isalpha() for ch in normalized):
+        return True
+    return len(normalized) == 1 and normalized not in ("a", "i")
 
 
 def _word_count(text: str) -> int:

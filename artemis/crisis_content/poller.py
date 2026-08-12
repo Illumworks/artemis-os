@@ -510,12 +510,14 @@ async def _maybe_mine_rules(access_token: str) -> None:
             result = await record_and_propose(session, pairs)
         logger.info(
             "crisis_content: rule mining saw %d pair(s), recorded %d new occurrence(s) "
-            "(skipped %d test-tab, %d noise), proposed %d candidate rule(s)",
+            "(skipped %d test-tab, %d noise), proposed %d candidate rule(s), "
+            "held %d at threshold by the length guard",
             len(pairs),
             result.new_observations,
             result.skipped_test_tab,
             result.skipped_noise,
             len(result.proposed_candidates),
+            result.held_by_length_guard,
         )
     except Exception:  # noqa: BLE001 -- see docstring: must not break notification
         logger.exception(

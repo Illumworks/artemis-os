@@ -1048,3 +1048,47 @@ async def test_migration_0114_clears_rule_mining_rows_leaves_everything_else(
         select(func.count()).select_from(WritingTrainingCandidate)
     )
     assert candidate_total.scalar_one() == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sub-word fragment rejection -- from the first post-CCA16 live pass
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("deleted", "inserted"),
+    [
+        (".", "s"),  # "...book." -> "...books." -- pluralization
+        ("d", "s"),  # one word's tail swapped for another's
+        ("a", " "),  # an article dropped; inserted side is whitespace
+        (":", " is,"),  # punctuation reflowed
+    ],
+)
+def test_live_morphology_fragments_are_noise(deleted: str, inserted: str) -> None:
+    """Every one of these came out of Jen's real doc after coalescing landed.
+
+    They are morphology, not editorial judgment, and unlike a sentence
+    rewrite they recur constantly -- so they WOULD reach the threshold and
+    propose 'prefer "s" over "d"' to Angela as house style.
+    """
+    assert is_noise_pair(deleted, inserted) is True
+
+
+@pytest.mark.parametrize(
+    ("deleted", "inserted"),
+    [
+        ("child", "student"),  # the house rule this whole slice exists for
+        ("a", "each"),  # a genuine one-letter article substitution
+        ("of", "with"),  # short but both real words
+        ("use", "usage"),
+        ("people", "literacy experts"),
+    ],
+)
+def test_real_substitutions_survive_the_fragment_filter(deleted: str, inserted: str) -> None:
+    """The filter must not take the signal with the noise.
+
+    ``"a" -> "each"`` is the load-bearing case: it is a single character on
+    the deleted side, exactly like the rejected ``"d" -> "s"``, and it is a
+    real word where that one is a word fragment.
+    """
+    assert is_noise_pair(deleted, inserted) is False
