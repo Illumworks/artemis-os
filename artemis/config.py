@@ -699,6 +699,28 @@ class Settings(BaseSettings):
             "write as the riskiest line of code in this repo')."
         ),
     )
+    crisis_content_image_link_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_IMAGE_LINK_ENABLED",
+            "CRISIS_CONTENT_IMAGE_LINK_ENABLED",
+        ),
+        description=(
+            "Kill switch for CCA10 -- linking a thread-attached image into "
+            "Jen's doc as a text line (see docs/crisis-content-approval-"
+            "pipeline.md and artemis/crisis_content/image_link.py). Thread "
+            "notes still record ``has_attachment``/``file_count`` normally "
+            "either way; this only gates the doc write + Slack confirmation "
+            "reply.\n\n"
+            "**Defaults False**, mirroring how crisis_content_writeback_"
+            "enabled (CCA7) originally shipped -- writing into a document "
+            "owned by an external vendor is an explicit owner decision, not "
+            "something to infer from a merged brief. Flip to True only "
+            "after Jon has reviewed the wording against the live doc.\n\n"
+            "Set False at any time to stop the doc write immediately with "
+            "no deploy."
+        ),
+    )
     crisis_content_jen_slack_user_id: str = Field(
         default="U016P00LP08",
         validation_alias=AliasChoices(

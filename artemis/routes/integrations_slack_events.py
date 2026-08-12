@@ -1344,6 +1344,8 @@ async def _handle_mentionable_event(
         try:
             from artemis.crisis_content.thread_notes import maybe_handle_thread_reply
 
+            _event_files = event.get("files")
+            _event_file_count = len(_event_files) if isinstance(_event_files, list) else 0
             thread_handled = await maybe_handle_thread_reply(
                 session,
                 channel_id=channel_id,
@@ -1351,8 +1353,9 @@ async def _handle_mentionable_event(
                 message_ts=ts,
                 slack_user_id=user_id,
                 text=text or "",
-                has_files=bool(event.get("files")),
+                has_files=bool(_event_file_count),
                 access_token=agent_cfg.access_token,
+                file_count=_event_file_count,
             )
         except Exception:
             logger.exception(
