@@ -220,15 +220,46 @@ def _find_all(node: _Node, tag: str) -> list[_Node]:
     return results
 
 
+def _is_comment_anchor(node: _Node) -> bool:
+    """True for a Google Docs comment-anchor link, e.g. the ``[a]`` marker.
+
+    The export renders every comment as a footnote-style anchor in the body
+    text::
+
+        <sup><a href="#cmnt1" id="cmnt_ref1">[a]</a></sup>
+
+    Its visible text is a bracketed letter, and it is NOT part of what anyone
+    wrote -- it is an artifact of someone having commented.
+
+    Production incident 2026-08-12: with 60 of these in the doc after the team
+    reviewed it, the markers were being folded into card titles and copy
+    bodies. That did two kinds of damage. Titles fragmented, so one Instagram
+    post was tracked as three separate cards ("Welcome Back blog",
+    "...blog[u]", "...blog[u][v]"). And because the markers land in the copy
+    body, adding a COMMENT changed ``copy_hash`` -- which the reopen logic
+    reads as "the wording changed since approval", so merely commenting on an
+    approved post would have reopened it for re-approval.
+    """
+    if node.tag != "a":
+        return False
+    href = node.attrs.get("href") or ""
+    return href.startswith("#cmnt")
+
+
 def _collect_text(node: _Node) -> str:
     """Concatenate all descendant text, in document order, with no separator.
 
     This is the "concatenate all spans within a <p>; never rely on span
-    boundaries" rule from the design doc, generalized to any node.
+    boundaries" rule from the design doc, generalized to any node --
+    excluding comment anchors, which are not content (see
+    ``_is_comment_anchor``).
     """
     parts: list[str] = []
     for child in node.children:
-        parts.append(child if isinstance(child, str) else _collect_text(child))
+        if isinstance(child, str):
+            parts.append(child)
+        elif not _is_comment_anchor(child):
+            parts.append(_collect_text(child))
     return "".join(parts)
 
 

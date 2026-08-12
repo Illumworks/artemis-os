@@ -294,3 +294,59 @@ def test_all_cards_malformed_yields_no_cards_and_reports_each() -> None:
 
     assert cards == []
     assert len(skipped) == 2
+
+
+def test_comment_anchors_are_stripped_from_titles_and_copy() -> None:
+    """Google Docs comment anchors must never reach a title or the copy body.
+
+    The export renders each comment as ``<sup><a href="#cmnt1">[a]</a></sup>``
+    inline in the text. Production incident 2026-08-12: with 60 of these in the
+    doc after the team reviewed it, one Instagram post was tracked as three
+    separate cards ("Welcome Back blog", "...blog[u]", "...blog[u][v]") — and
+    because the markers land in the copy body too, adding a COMMENT changed
+    copy_hash, which the reopen logic reads as "the wording changed since
+    approval". Commenting on an approved post would have reopened it.
+    """
+    anchor = '<sup><a href="#cmnt1" id="cmnt_ref1">[u]</a></sup>'
+    table = (
+        "<table><tr><td colspan='2'><p><span>August XX, 2026 - Welcome Back blog</span>"
+        f"{anchor}</p></td></tr>"
+        "<tr><td><p><span>Platform: Instagram</span></p>"
+        "<p><span>Asset for review - LINK</span></p><p><span>Draft</span></p>"
+        "<p><span>Copy review</span></p><p><span>Ready</span></p></td>"
+        f"<td><p><span>The real copy.</span>{anchor}</p></td></tr></table>"
+    )
+    cards = parse_review_cards(f"<html><body>{table}</body></html>")
+
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.title == "Welcome Back blog", f"anchor leaked into the title: {card.title!r}"
+    assert "[u]" not in card.header
+    assert "[u]" not in card.copy_body
+    assert card.copy_body.strip() == "The real copy."
+
+
+def test_adding_a_comment_does_not_change_the_copy_hash() -> None:
+    """The identity-stability half of the same bug, asserted directly.
+
+    Two exports of the same card, one before a comment and one after, must
+    produce the SAME copy_hash and the SAME identity_key — otherwise a comment
+    reopens an approved post and fragments its history.
+    """
+
+    def build(anchor: str) -> str:
+        return (
+            "<table><tr><td colspan='2'><p><span>August XX, 2026 - Not off script</span>"
+            f"{anchor}</p></td></tr>"
+            "<tr><td><p><span>Platform: X</span></p>"
+            "<p><span>Asset for review - LINK</span></p><p><span>Draft</span></p>"
+            "<p><span>Copy review</span></p><p><span>Ready</span></p></td>"
+            f"<td><p><span>Body text that nobody edited.</span>{anchor}</p></td></tr></table>"
+        )
+
+    commented = '<sup><a href="#cmnt7">[c]</a></sup>'
+    before = parse_review_cards("<html><body>" + build("") + "</body></html>")[0]
+    after = parse_review_cards("<html><body>" + build(commented) + "</body></html>")[0]
+
+    assert before.copy_hash == after.copy_hash, "a comment must not look like an edit"
+    assert before.identity_key == after.identity_key
