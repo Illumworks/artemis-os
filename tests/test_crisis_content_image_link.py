@@ -758,6 +758,122 @@ async def test_disabled_via_settings_does_nothing(
     assert await _ledger_rows(db_session) == set()
 
 
+# ── Audit findings: the four early "failed" branches never alert Jon ───────
+#
+# CrisisContentThreadNote's own ORM docstring (artemis/crisis_content/orm.py)
+# says channel_id/file_count are "nullable/defaulted because rows written
+# before CCA10 have neither" -- a real, disclosed legacy-row shape. And the
+# design doc's "Failure modes" section is explicit that every failure in this
+# pipeline "must be loud" -- Jon gets a Slack DM, never just a log line.
+# `deliver_image_link` alerts Jon on the four LATER failure branches
+# (CardNotLocatedError, WritebackVerificationError, credential-unavailable,
+# HTTP error -- all reused from writeback.py, which alerts on every one of
+# its own failure branches) but NOT on the four EARLIER ones: a vanished
+# note, a missing channel_id (the exact CCA10 legacy shape above), no active
+# Callie Slack token, and a chat.getPermalink failure. These three tests
+# document that gap with the real production shape in each case, so it is
+# visible rather than silently accepted. See the audit report for the
+# recommendation; nothing here is "fixed" -- these tests pin CURRENT
+# behaviour so the gap doesn't get bigger without someone noticing.
+
+
+async def test_legacy_note_with_null_channel_id_fails_silently_no_jon_alert(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A pre-CCA10 thread note has ``has_attachment=True`` but ``channel_id
+    IS NULL`` -- the column did not exist yet when the row was written (see
+    ``CrisisContentThreadNote``'s own docstring). Nothing calls
+    ``deliver_image_link`` for an old note today, but if a future backfill
+    or manual replay ever does, this is what happens: a log line only, no
+    ``_alert_jon`` call, unlike every other failure branch in this function.
+    """
+    header = "August 11, 2026 - Welcome Back blog"
+    card_id, _ = await _seed_card(db_session, header=header)
+    note_id = await _seed_note(
+        db_session, card_id=card_id, message_ts="1700000000.000210", channel_id=None
+    )
+    alerts: list[str] = []
+    _patch_alert(monkeypatch, alerts)
+
+    with caplog.at_level("ERROR"):
+        outcome = await deliver_image_link(db_session, note_id)
+
+    assert outcome == "failed"
+    assert any("no channel_id recorded" in record.message for record in caplog.records)
+    assert alerts == [], (
+        "deliver_image_link does not alert Jon for a missing channel_id -- "
+        "this pins that gap; if it starts alerting, update this assertion"
+    )
+    assert await _ledger_rows(db_session) == set()  # not marked delivered -- retriable
+
+
+async def test_no_active_callie_token_fails_silently_no_jon_alert(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Callie's Slack integration has no active token (revoked, uninstalled,
+    or never connected). No doc write is attempted -- but also no alert,
+    unlike a credential failure on the DOC side of this same function.
+    """
+    header = "August 11, 2026 - Welcome Back blog"
+    card_id, _ = await _seed_card(db_session, header=header)
+    note_id = await _seed_note(db_session, card_id=card_id, message_ts="1700000000.000211")
+
+    async def fake_resolve_agent_slack_config(
+        session: AsyncSession, *, agent_id: str, team_id: str | None = None
+    ) -> object:
+        return SimpleNamespace(access_token="")
+
+    monkeypatch.setattr(
+        image_link, "_resolve_agent_slack_config", fake_resolve_agent_slack_config
+    )
+    alerts: list[str] = []
+    _patch_alert(monkeypatch, alerts)
+
+    with caplog.at_level("ERROR"):
+        outcome = await deliver_image_link(db_session, note_id)
+
+    assert outcome == "failed"
+    assert any("no active Slack token" in record.message for record in caplog.records)
+    assert alerts == [], (
+        "deliver_image_link does not alert Jon when Callie has no active "
+        "token -- this pins that gap; if it starts alerting, update this "
+        "assertion"
+    )
+
+
+async def test_permalink_failure_also_sends_no_jon_alert(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Companion to ``test_permalink_failure_writes_nothing_no_ledger_row_
+    retry_succeeds`` above, which already exercises this branch but never
+    asserts on ``alerts`` either way. A PERSISTENT ``chat.getPermalink``
+    failure (Callie loses channel access; the message is deleted) means
+    images silently never get linked, forever, with nothing surfacing to Jon
+    beyond a log line each poll -- the same "looks healthy while doing
+    nothing" shape the rest of this pipeline explicitly alerts on.
+    """
+    header = "August 11, 2026 - Welcome Back blog"
+    copy_lines = ["Copy body."]
+    card_id, _ = await _seed_card(db_session, header=header, copy_lines=copy_lines)
+    note_id = await _seed_note(db_session, card_id=card_id, message_ts="1700000000.000212")
+
+    doc = _document({"t1": [_card_table(header=header, copy_lines=copy_lines)]})
+    insert_calls: list[dict[str, Any]] = []
+    _patch_docs_api(monkeypatch, doc, insert_calls)
+    _patch_slack(monkeypatch, permalink_error=SlackAPIError("chat.getPermalink", "ratelimited"))
+    alerts: list[str] = []
+    _patch_alert(monkeypatch, alerts)
+
+    outcome = await deliver_image_link(db_session, note_id)
+
+    assert outcome == "failed"
+    assert alerts == [], (
+        "deliver_image_link does not alert Jon when chat.getPermalink keeps "
+        "failing -- this pins that gap; if it starts alerting, update this "
+        "assertion"
+    )
+
+
 # ── Structural regression guards -- CRITICAL CONSTRAINTS 1 & 2 in code ──────
 
 
