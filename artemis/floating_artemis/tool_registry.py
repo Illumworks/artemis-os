@@ -123,11 +123,19 @@ def build_authorized_tool_registry(
     (read_project_file, list_project_dir, git_status, git_diff) are added to
     his registry.  Ignored for all other agents.
 
-    ``speaker_id`` is Kai-only: the Slack user id of whoever is speaking this
-    turn, used to authorize his two side-effecting tools (flag_catalog_gap,
-    update_asset_summary). Must come from the resolved Slack event, never from
-    model output. Omitting it denies both (fail-closed). Ignored for all other
-    agents.
+    ``speaker_id`` is the Slack user id of whoever is speaking this turn, used
+    to authorize side-effecting tools for TWO agents (it was Kai-only before
+    CALLIE-1):
+
+      - Kai: flag_catalog_gap and update_asset_summary.
+      - Callie: send_guarded_dm, where it is the requester half of the
+        allowlist pair.
+
+    It must come from the resolved Slack event, never from model output or tool
+    input. Omitting it denies every one of those tools (fail-closed) -- for
+    Callie the tool is still registered but refuses at call time, so she can say
+    she could not verify who was asking instead of going silent. Ignored for all
+    other agents.
 
     Special case — Kai:
       Kai's registry contains ONLY the three read-only enablement tools plus
