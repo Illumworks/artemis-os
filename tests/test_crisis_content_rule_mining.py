@@ -1,4 +1,4 @@
-"""CCA15 -- tests for artemis/crisis_content/rule_mining.py.
+"""CCA15/CCA16 -- tests for artemis/crisis_content/rule_mining.py.
 
 Covers every item in briefs/cca15-mine-suggestions-into-rules.md "Tests"
 section: threshold-reached proposal, below-threshold silence with count
@@ -7,6 +7,15 @@ the apostrophe/whitespace typography filters, display-vs-aggregation
 casing, test-tab exclusion, idempotent re-running, the "writing_rules is
 never written" guarantee, the "existing candidates/examples untouched"
 guarantee, and the textRun-vs-element marker-placement regression.
+
+Also covers every item in briefs/cca16-mine-spans-not-fragments.md "Tests"
+section: the live interleaved-rewrite case coalescing to one span pair (not
+four run-level fragments), the single-word substitution unaffected by
+coalescing (see the CCA15 tests above -- unchanged), an untouched run still
+splitting clusters, a deletion-only cluster (including the live ``how it's
+made.`` -> "" artifact) and an insertion-only cluster both yielding nothing,
+the length guard withholding proposal while still counting, and migration
+0114's removal of the six run-level rows leaving everything else untouched.
 
 Fixtures are hand-built Python dicts mirroring the real
 ``documents.get?includeTabsContent=true&suggestionsViewMode=SUGGESTIONS_INLINE``
@@ -22,11 +31,15 @@ not look like a test database.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import NullPool, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -44,6 +57,9 @@ from artemis.crisis_content.rule_mining_orm import (
 )
 from artemis.db import attach_pgvector_codec
 from artemis.writing_rules.models import WritingExample, WritingRule, WritingTrainingCandidate
+
+_ROOT = Path(__file__).resolve().parents[1]
+_MIGRATION_0114 = _ROOT / "alembic/versions/0114_crisis_content_rule_mining_span_reset.py"
 
 # NOTE: no module-level `pytestmark = pytest.mark.asyncio` -- this file mixes
 # pure sync tests (extraction/normalization) with DB-backed async tests, and
@@ -171,6 +187,33 @@ def _replace_paragraph(
     )
 
 
+def _cluster_paragraph(
+    *fragments: tuple[str, str],
+    prefix: str = "We want every child to know ",
+    suffix: str = " and enjoy learning.",
+    suggestion_id: str = "s-rewrite",
+) -> dict[str, Any]:
+    """One paragraph with an interleaved DEL/ADD/DEL/ADD... cluster (CCA16).
+
+    ``fragments`` is a sequence of ``(kind, text)`` pairs -- kind ``"del"``
+    or ``"add"`` -- emitted back-to-back with no untouched run between them
+    and all sharing ``suggestion_id``, matching the shape a single sentence
+    rewritten in Suggesting mode actually takes in the live doc: one edit,
+    sliced by Google's diff into several alternating runs. See
+    briefs/cca16-mine-spans-not-fragments.md's finding table.
+    """
+    runs = [_run(prefix)]
+    for kind, fragment_text in fragments:
+        if kind == "del":
+            runs.append(_run(fragment_text, del_ids=[suggestion_id]))
+        elif kind == "add":
+            runs.append(_run(fragment_text, add_ids=[suggestion_id]))
+        else:
+            raise ValueError(f"unknown fragment kind {kind!r}")
+    runs.append(_run(suffix))
+    return _para(*runs)
+
+
 # ── Pure extraction / normalization tests ────────────────────────────────────
 
 
@@ -211,6 +254,129 @@ def test_whole_paragraph_deletion_with_no_adjacent_insertion_yields_no_pair() ->
     paragraph = _para(
         _run("Intro text stays. "),
         _run("This whole sentence is simply removed.", del_ids=["s-cut"]),
+    )
+    doc = _document(
+        _tab(
+            tab_id="t1",
+            title="Content To Review",
+            tables=[_card_table(header="Post A", body_paragraphs=[paragraph])],
+        )
+    )
+    pairs = extract_suggestion_pairs(doc)
+    assert pairs == []
+
+
+def test_live_interleaved_rewrite_yields_one_span_pair_not_four() -> None:
+    """CCA16's reproduction of the actual first live pass's fragmentation bug.
+
+    Four run-level DEL/ADD fragments from one sentence Angela rewrote in
+    place -- ``the``/``Amira ``, ``It's a``/``students``, ``can't``/`` or ``,
+    ``topic``/``. `` -- are contiguous (no untouched run between any of
+    them), so they must coalesce into exactly ONE span-level pair, and none
+    of the four run-level fragments may appear as a pair on its own. See
+    briefs/cca16-mine-spans-not-fragments.md's "The finding" table.
+    """
+    paragraph = _cluster_paragraph(
+        ("del", "the"),
+        ("add", "Amira "),
+        ("del", "It's a"),
+        ("add", "students"),
+        ("del", "can't"),
+        ("add", " or "),
+        ("del", "topic"),
+        ("add", ". "),
+    )
+    doc = _document(
+        _tab(
+            tab_id="t1",
+            title="Content To Review",
+            tables=[_card_table(header="Post A", body_paragraphs=[paragraph])],
+        )
+    )
+    pairs = extract_suggestion_pairs(doc)
+
+    assert len(pairs) == 1
+    pair = pairs[0]
+    assert pair.deleted_text == "theIt's acan'ttopic"
+    assert pair.inserted_text == "Amira students or . "
+    assert pair.deletion_ids == ("s-rewrite",)
+    assert pair.insertion_ids == ("s-rewrite",)
+
+    fragment_pairs = {
+        ("the", "Amira "),
+        ("It's a", "students"),
+        ("can't", " or "),
+        ("topic", ". "),
+    }
+    for other_pair in pairs:
+        assert (other_pair.deleted_text, other_pair.inserted_text) not in fragment_pairs
+
+
+def test_untouched_run_between_two_suggestion_clusters_splits_them() -> None:
+    """An untouched run between two DEL/ADD clusters must still end the first
+    cluster -- two independent replacements in one paragraph stay two pairs,
+    not one pair coalesced across the gap between them.
+    """
+    paragraph = _para(
+        _run("We want every "),
+        _run("child", del_ids=["s1"]),
+        _run("student", add_ids=["s1"]),
+        _run(" to succeed, because "),
+        _run("kids", del_ids=["s2"]),
+        _run("students", add_ids=["s2"]),
+        _run(" deserve support."),
+    )
+    doc = _document(
+        _tab(
+            tab_id="t1",
+            title="Content To Review",
+            tables=[_card_table(header="Post A", body_paragraphs=[paragraph])],
+        )
+    )
+    pairs = extract_suggestion_pairs(doc)
+
+    assert len(pairs) == 2
+    assert {(p.deleted_text, p.inserted_text) for p in pairs} == {
+        ("child", "student"),
+        ("kids", "students"),
+    }
+
+
+def test_deletion_only_cluster_with_empty_adjacent_insertion_yields_no_pair() -> None:
+    """The live ``how it's made.`` -> "" artifact.
+
+    A DEL run immediately followed by an ADD run whose content is the
+    empty string (a Docs insertion-point boundary marker, not a real
+    replacement) must not be recorded as a pair -- the ``not deleted_text
+    or not inserted_text`` guard in ``_paragraph_pairs`` is a truthiness
+    check precisely so this counts as deletion-only. See
+    briefs/cca16-mine-spans-not-fragments.md's finding table and "Also
+    required" test list.
+    """
+    paragraph = _para(
+        _run("Read about "),
+        _run("how it's made.", del_ids=["s-cut"]),
+        _run("", add_ids=["s-cut"]),
+    )
+    doc = _document(
+        _tab(
+            tab_id="t1",
+            title="Content To Review",
+            tables=[_card_table(header="Post A", body_paragraphs=[paragraph])],
+        )
+    )
+    pairs = extract_suggestion_pairs(doc)
+    assert pairs == []
+
+
+def test_insertion_only_cluster_yields_no_pair() -> None:
+    """A cluster of ADD blocks with no adjacent DEL block is a pure insertion
+    (nothing removed), the mirror image of the whole-paragraph-deletion
+    rule -- it must not be recorded as a pair either.
+    """
+    paragraph = _para(
+        _run("We should also mention "),
+        _run("the new grant program.", add_ids=["s-insert-only"]),
     )
     doc = _document(
         _tab(
@@ -680,3 +846,205 @@ async def test_existing_pending_candidates_and_examples_untouched(db_session: As
     assert len(remaining_examples) == 2
     example_total = await db_session.execute(select(func.count()).select_from(WritingExample))
     assert example_total.scalar_one() == 2
+
+
+# ── Length guard (CCA16) ───────────────────────────────────────────────────────
+
+
+async def test_pair_over_length_guard_is_counted_but_never_proposed(
+    db_session: AsyncSession,
+) -> None:
+    """A pair whose longer side exceeds the length guard still reaches the
+    proposal threshold and keeps counting, but is never proposed -- CCA16's
+    independent safety net for a long span that genuinely recurs, separate
+    from coalescing.
+    """
+    deleted = "This whole thing is boring"  # 5 words -- over a 4-word guard
+    inserted = "This whole thing is engaging"  # 5 words
+    doc = _document(
+        _tab(
+            tab_id="t1",
+            title="Content To Review",
+            tables=[
+                _card_table(
+                    header=f"Post {i}",
+                    body_paragraphs=[_replace_paragraph(deleted, inserted, f"s{i}")],
+                )
+                for i in range(3)
+            ],
+        )
+    )
+    pairs = extract_suggestion_pairs(doc)
+    assert len(pairs) == 3
+
+    result = await record_and_propose(db_session, pairs, threshold=3, max_words=4)
+
+    assert result.new_observations == 3
+    assert result.proposed_candidates == ()
+    assert result.held_by_length_guard == 1
+
+    pair_row_result = await db_session.execute(
+        select(CrisisContentRuleMiningPair).where(
+            CrisisContentRuleMiningPair.normalized_deleted == normalize_for_aggregation(deleted),
+            CrisisContentRuleMiningPair.normalized_inserted
+            == normalize_for_aggregation(inserted),
+        )
+    )
+    pair_row = pair_row_result.scalar_one()
+    assert pair_row.occurrence_count == 3
+    assert pair_row.status == "counting"
+    assert pair_row.proposed_candidate_id is None
+
+    candidate_count = await db_session.execute(
+        select(func.count()).select_from(WritingTrainingCandidate)
+    )
+    assert candidate_count.scalar_one() == 0
+
+
+async def test_pair_within_length_guard_proposes_normally(db_session: AsyncSession) -> None:
+    """One word under the same guard: reaching the threshold proposes as usual."""
+    deleted = "This thing is boring"  # 4 words -- exactly at a 4-word guard
+    inserted = "This thing is engaging"  # 4 words
+    doc = _document(
+        _tab(
+            tab_id="t1",
+            title="Content To Review",
+            tables=[
+                _card_table(
+                    header=f"Post {i}",
+                    body_paragraphs=[_replace_paragraph(deleted, inserted, f"s{i}")],
+                )
+                for i in range(3)
+            ],
+        )
+    )
+    pairs = extract_suggestion_pairs(doc)
+    assert len(pairs) == 3
+
+    result = await record_and_propose(db_session, pairs, threshold=3, max_words=4)
+
+    assert result.held_by_length_guard == 0
+    assert len(result.proposed_candidates) == 1
+    assert result.proposed_candidates[0].proposed_text == (
+        f'Prefer "{inserted}" over "{deleted}".'
+    )
+
+
+# ── Migration 0114 (CCA16) ──────────────────────────────────────────────────────
+
+
+def _load_migration_0114() -> Any:
+    spec = importlib.util.spec_from_file_location("cca16_migration_0114", _MIGRATION_0114)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_migration_0114_chains_after_0113() -> None:
+    module = _load_migration_0114()
+    assert module.revision == "0114"
+    assert module.down_revision == "0113"
+
+
+async def test_migration_0114_clears_rule_mining_rows_leaves_everything_else(
+    db_session: AsyncSession,
+) -> None:
+    """Seed the run-level six-row shape plus unrelated Writing Studio rows;
+    running 0114's ``upgrade()`` must clear only the two rule-mining tables.
+    """
+    module = _load_migration_0114()
+
+    # The six-row shape CCA15's run-level extractor actually produced live
+    # (see briefs/cca16-mine-spans-not-fragments.md's finding table) --
+    # exact text does not matter to the migration, which deletes
+    # unconditionally, but this is the production shape being cleared.
+    live_rows = [
+        ("the", "Amira "),
+        ("It's a", "students"),
+        ("how it's made.", ""),
+        ("can't", " or "),
+        ("topic", ". "),
+        (", can't surprise you. Boring, on purpose.", " Predictable, on purpose. "),
+    ]
+    for i, (deleted, inserted) in enumerate(live_rows):
+        db_session.add(
+            CrisisContentRuleMiningObservation(
+                occurrence_key=f"live-key-{i}",
+                normalized_deleted=normalize_for_aggregation(deleted),
+                normalized_inserted=normalize_for_aggregation(inserted),
+                deleted_text=deleted,
+                inserted_text=inserted,
+                tab_id="t1",
+                tab_title="Content To Review",
+                card_header=f"Post {i}",
+            )
+        )
+        db_session.add(
+            CrisisContentRuleMiningPair(
+                normalized_deleted=normalize_for_aggregation(deleted),
+                normalized_inserted=normalize_for_aggregation(inserted),
+                display_deleted=deleted,
+                display_inserted=inserted,
+                occurrence_count=1,
+                status="counting",
+            )
+        )
+
+    # Unrelated Writing Studio state that 0114 must leave completely alone.
+    seeded_rule = WritingRule(title="Existing rule", body="Some standing guidance.")
+    seeded_example = WritingExample(title="Existing example", body="Some approved copy.")
+    seeded_candidate = WritingTrainingCandidate(
+        candidate_type="rule",
+        proposed_text="Existing pending candidate",
+        status="proposed",
+    )
+    db_session.add_all([seeded_rule, seeded_example, seeded_candidate])
+    await db_session.commit()
+
+    obs_before = await db_session.execute(
+        select(func.count()).select_from(CrisisContentRuleMiningObservation)
+    )
+    assert obs_before.scalar_one() == len(live_rows)
+    pairs_before = await db_session.execute(
+        select(func.count()).select_from(CrisisContentRuleMiningPair)
+    )
+    assert pairs_before.scalar_one() == len(live_rows)
+
+    def _apply_upgrade(sync_conn: Any) -> None:
+        context = MigrationContext.configure(sync_conn)
+        with Operations.context(context):
+            module.upgrade()
+
+    connection = await db_session.connection()
+    await connection.run_sync(_apply_upgrade)
+    await db_session.commit()
+
+    obs_after = await db_session.execute(
+        select(func.count()).select_from(CrisisContentRuleMiningObservation)
+    )
+    assert obs_after.scalar_one() == 0
+    pairs_after = await db_session.execute(
+        select(func.count()).select_from(CrisisContentRuleMiningPair)
+    )
+    assert pairs_after.scalar_one() == 0
+
+    # writing_rules, writing_examples, and the pending candidate are untouched.
+    rule_row = await db_session.get(WritingRule, seeded_rule.id)
+    assert rule_row is not None
+    assert rule_row.title == "Existing rule"
+    example_row = await db_session.get(WritingExample, seeded_example.id)
+    assert example_row is not None
+    assert example_row.title == "Existing example"
+    candidate_row = await db_session.get(WritingTrainingCandidate, seeded_candidate.id)
+    assert candidate_row is not None
+    assert candidate_row.status == "proposed"
+
+    rule_total = await db_session.execute(select(func.count()).select_from(WritingRule))
+    assert rule_total.scalar_one() == 1
+    example_total = await db_session.execute(select(func.count()).select_from(WritingExample))
+    assert example_total.scalar_one() == 1
+    candidate_total = await db_session.execute(
+        select(func.count()).select_from(WritingTrainingCandidate)
+    )
+    assert candidate_total.scalar_one() == 1
