@@ -195,7 +195,7 @@ class Settings(BaseSettings):
         default=(
             "jon.fila@amiralearning.com,"
             "angela.miata@amiralearning.com,"
-            "josh.mukai@amiralearning.com"
+            "joshua.mukai@amiralearning.com"
         ),
         validation_alias=AliasChoices(
             "ARTEMIS_CALLIE_DM_REQUESTER_EMAILS",
@@ -210,20 +210,23 @@ class Settings(BaseSettings):
             "Slack event's user id via users.info (SlackClient.lookup_user_email), NEVER "
             "from anything in the message text or tool input. Empty = nobody is authorized "
             "(fail-closed), matching kai_action_authorized_user_ids.\n\n"
-            "NOTE: josh.mukai@amiralearning.com follows this list's firstname.lastname "
-            "convention (matching jon.fila / angela.miata below) but is NOT independently "
-            "verified anywhere else in this codebase -- no other setting pins Josh's real "
-            "address. Confirm it and correct via this env var if wrong. A wrong guess here "
-            "only fails Josh closed (he can't trigger a send until it's fixed); it cannot "
-            "grant access to anyone else, because authorization requires an exact match "
-            "against this list, not a fuzzy one."
+            "All five addresses across this setting and callie_dm_recipient_emails were "
+            "verified against Slack's own records via users.lookupByEmail on 2026-08-12, "
+            "not inferred from the naming convention. Josh is joshUA.mukai@ (U07NYLNJY79); "
+            "josh.mukai@ resolves to nothing and would have failed him closed. Getting this "
+            "exactly right matters more than usual here because the workspace contains a "
+            "SECOND Josh -- Josh Smith, josh.smith@amiralearning.com -- who is the person "
+            "Callie wrongly fuzzy-matched to when asked about Josh Mukai (2026-08-12). "
+            "Authorization requires an exact match against this list, never a fuzzy one, so "
+            "a wrong address fails its owner closed and can never grant access to the wrong "
+            "person; re-verify with users.lookupByEmail rather than guessing when editing."
         ),
     )
     callie_dm_recipient_emails: str = Field(
         default=(
             "jon.fila@amiralearning.com,"
             "angela.miata@amiralearning.com,"
-            "josh.mukai@amiralearning.com,"
+            "joshua.mukai@amiralearning.com,"
             "hannah.slater@amiralearning.com,"
             "jaclyn.wright@amiralearning.com"
         ),
@@ -240,8 +243,9 @@ class Settings(BaseSettings):
             "directory_people -- that cache had NULL slack_user_id for every real approver "
             "on the adjacent crisis-content pipeline this week and silently took down every "
             "approval; this tool skips it entirely rather than repeat that failure. Empty = "
-            "nobody can receive (fail-closed). Same josh.mukai@amiralearning.com caveat as "
-            "callie_dm_requester_emails above."
+            "nobody can receive (fail-closed). Every address here was verified against Slack "
+            "on 2026-08-12 -- see callie_dm_requester_emails above, including why the second "
+            "Josh in the workspace makes exact matching load-bearing."
         ),
     )
 
