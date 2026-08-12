@@ -169,6 +169,40 @@ See `../claudeck-artemis/decisions/rebuild-phased-plan.md` for the current phase
 - `worker/<scope>-<short-desc>` — Worker branches.
 - `main` — local integration. Lead merges; Worker proposes via diff.
 
+## Passing tests are not evidence the thing works (lesson, 2026-08-12)
+
+Four bugs reached production on the crisis-content pipeline in two days. **Every one had
+passing tests.** The tests verified the code did what the brief said, against data the test
+itself invented. Nothing checked that the invented data resembled production.
+
+| Bug | What the test did instead |
+|---|---|
+| **Nobody could approve anything.** Identity resolved from `directory_people`, where all four real approvers have `slack_user_id = NULL`. Every lookup missed, authorization failed closed, every click was refused. | Seeded `directory_people` **with** Slack ids. |
+| **A rejected click destroyed a live post.** `_post_ephemeral` POSTed to `response_url` without `replace_original: false`; Slack replaced the whole message and the copy was lost from the channel. | Asserted the endpoint's HTTP response body. The damage happened in a separate outbound POST no test observed. |
+| **A thread reply was silently dropped.** Thread→card mapping needs `message_ts`; rows created before that column existed have NULL. | Always seeded `message_ts` populated. |
+| **A re-fired card's buttons were dead** — it told the approver to re-review, then answered "Already decided". | Tested transitions and click-handling separately, never the click-on-a-refired-card path. |
+
+Two rules follow.
+
+**1. Seed the shape production actually has.** Before writing a test for a DB read, query the
+live table and check what is actually in it. Nullable columns added by a migration are NULL on
+every pre-existing row, forever — `crisis_content_notifications` still has rows with NULL
+`channel_id`/`message_ts` today. A fixture that populates every column tests a database you do
+not have.
+
+**2. A mocked side effect proves the call was made, not that it does what you think.** For any
+outbound API whose semantics you have not read: go read them. `replace_original` defaulting
+the wrong way cost a post's copy in front of an external vendor, and Slack's docs do not even
+pin that default. Where an assumption cannot be verified from documentation, say so at the call
+site.
+
+Corollary worth its own line: **a fail-closed path that cannot distinguish "not permitted" from
+"I could not look you up" reports a permissions problem for what is a data problem.** The
+approval bug above sent everyone hunting the allowlist. Fail closed, but say which.
+
+This is a brief-writing failure more than a coding one — specify the production data shape, not
+just the intended behaviour.
+
 ## Multi-Agent Handoff Protocol
 
 ### Commit Discipline
