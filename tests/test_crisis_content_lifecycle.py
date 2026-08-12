@@ -21,11 +21,19 @@ mirrors, plus CCA11's approved-also-reopens / noise-guard / banner /
 routes-reopen-independently cases) live in
 ``tests/test_crisis_content_transitions.py`` -- that module already owns
 ``_evaluate_route``'s test coverage, and the reopen logic lives inside
-that exact function. The Jen change-request mention's tests live in
-``tests/test_crisis_content_decisions.py`` -- that module already owns the
-full HTTP + DB harness for the ``view_submission`` decision path the Jen
-mention is threaded from. Both are required by the brief and both are
-covered; see those files.
+that exact function. Both are required by the brief and both are covered;
+see that file.
+
+**CCA12 note.** The original CCA9 brief's Jen change-request mention rode
+on the "Request changes" modal's ``view_submission`` handler, and its tests
+lived in ``tests/test_crisis_content_decisions.py``. CCA12
+(``briefs/cca12-edit-in-doc-button.md``) deleted that modal entirely --
+replaced by an ``Edit in doc`` button whose decision carries no note and
+deliberately pings nobody on click (see
+``artemis.crisis_content.slack_actions._handle_edit_in_doc``) -- so that
+mention path, and its tests, no longer exist. See
+``tests/test_crisis_content_decisions.py``'s own CCA12 section for the
+button's actual current behavior.
 """
 
 from __future__ import annotations

@@ -254,7 +254,10 @@ async def test_live_copy_route_posts_to_channel_with_all_three_approvers_mention
         if block.get("type") == "actions"
         for el in block["elements"]
     }
-    assert action_ids == {"crisis_content_approve", "crisis_content_request_changes"}
+    # CCA12: "Request changes" (which opened a modal) was replaced by
+    # "Edit in doc" (crisis_content_edit_in_doc) -- see
+    # tests/test_crisis_content_voice.py for that button's own coverage.
+    assert action_ids == {"crisis_content_approve", "crisis_content_edit_in_doc"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -157,6 +157,33 @@ class Transition(BaseModel):
     ``reopened_after_approval`` is ``None`` for every transition except a
     CCA11 reopen following an ``approved`` decision -- see
     ``ReopenedAfterApproval`` above.
+
+    ``tab_id`` (CCA12) is the Google Docs tab this card's live table
+    currently lives in, if known -- consumed by
+    ``artemis.crisis_content.notify.render_transition_blocks`` to deep-link
+    the "Edit in doc" button's ``url`` with ``?tab=<tab_id>`` instead of a
+    bare doc link (Docs has no per-row anchor; the tab is the best available
+    precision -- see ``briefs/cca12-edit-in-doc-button.md``). Defaults to
+    ``None``, which renders the bare doc link, exactly like every card
+    before this slice.
+
+    **Not populated by anything in this module, or by ``record_observation``,
+    today.** The HTML-export read path (``artemis.crisis_content.parser``)
+    is deliberately tab-agnostic (see that module's ``_is_review_card_table``
+    docstring, "Tab-agnostic on purpose") -- it walks every tab's tables
+    flattened together and never resolves which tab any of them came from.
+    The only place this repo currently CAN resolve a tab id is
+    ``artemis.crisis_content.writeback.locate_card_table``, which requires a
+    second, live Docs JSON API fetch (``documents.get`` with
+    ``includeTabsContent=true``) distinct from the HTML export this
+    package's read path uses, and which only ever runs today at write-back
+    time (after a decision), not at card-render time. Wiring that fetch into
+    the render path was judged out of scope for CCA12 (new network
+    dependency + failure mode in the hot notify path, for every future
+    ``Ready`` transition) and is flagged, not silently guessed at, in the
+    CCA12 report. This field exists so that follow-up work has a typed,
+    tested seam to populate -- see ``render_transition_blocks``'s own
+    docstring for the button-side half of this contract.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -167,6 +194,7 @@ class Transition(BaseModel):
     new_status: str
     is_new_card: bool
     reopened_after_approval: ReopenedAfterApproval | None = None
+    tab_id: str | None = None
 
 
 async def record_observation(

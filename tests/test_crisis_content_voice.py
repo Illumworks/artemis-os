@@ -309,23 +309,76 @@ def test_asset_route_body_char_count_copy_status_and_links_are_unchanged() -> No
     assert f"Open the doc: {notify._DOC_URL}" in lines
 
 
-def test_buttons_and_action_ids_are_unchanged() -> None:
+def test_approve_button_is_unchanged() -> None:
+    """CCA12 touches only the second button -- Approve's action_id, text,
+    style, and value must read exactly as they did before this slice.
+    """
     transition = _copy_transition()
     blocks = notify.render_transition_blocks(transition, card_id=42, footer="", approvers=_APPROVERS)
 
     assert blocks[0]["type"] == "section"
     actions_block = blocks[1]
     assert actions_block["type"] == "actions"
-    approve, request_changes = actions_block["elements"]
+    approve, _edit_in_doc = actions_block["elements"]
 
     assert notify.ACTION_APPROVE == "crisis_content_approve"
-    assert notify.ACTION_REQUEST_CHANGES == "crisis_content_request_changes"
     assert approve["action_id"] == notify.ACTION_APPROVE
     assert approve["text"]["text"] == "Approve"
     assert approve["style"] == "primary"
-    assert request_changes["action_id"] == notify.ACTION_REQUEST_CHANGES
-    assert request_changes["text"]["text"] == "Request changes"
-    assert approve["value"] == request_changes["value"] == "42:copy"
+    assert approve["value"] == "42:copy"
+
+
+def test_edit_in_doc_button_has_both_url_and_action_id() -> None:
+    """CCA12: `Request changes` (which opened a modal) is replaced by
+    `Edit in doc` -- a Block Kit button carrying BOTH `url` and `action_id`,
+    per Slack's own docs for the button element's `url` field: "you'll still
+    receive an interaction payload and will need to send an acknowledgement
+    response." That is what lets one tap both open the doc and record a
+    decision.
+    """
+    transition = _copy_transition()
+    blocks = notify.render_transition_blocks(transition, card_id=42, footer="", approvers=_APPROVERS)
+    actions_block = blocks[1]
+    approve, edit_in_doc = actions_block["elements"]
+
+    assert notify.ACTION_EDIT_IN_DOC == "crisis_content_edit_in_doc"
+    assert edit_in_doc["action_id"] == notify.ACTION_EDIT_IN_DOC
+    assert edit_in_doc["text"]["text"] == "Edit in doc"
+    assert edit_in_doc["value"] == approve["value"] == "42:copy"
+    assert "url" in edit_in_doc
+    assert edit_in_doc["url"].startswith("https://docs.google.com/document/d/")
+
+    # No trace of the retired action_id/text anywhere in the rendered blocks.
+    assert not hasattr(notify, "ACTION_REQUEST_CHANGES")
+    rendered = str(blocks)
+    assert "crisis_content_request_changes" not in rendered
+    assert "Request changes" not in rendered
+
+
+def test_edit_in_doc_url_carries_the_transitions_own_tab_id_not_hardcoded() -> None:
+    """The `?tab=` query param comes from `transition.tab_id` -- i.e. from
+    the card's own location -- never a literal baked into the renderer.
+    Two transitions differing only in `tab_id` must produce two different
+    button `url`s, and a transition with no `tab_id` (every real transition
+    today -- see `Transition.tab_id`'s docstring) falls back to the bare doc
+    link with no `?tab=` at all, rather than a broken or guessed one.
+    """
+    bare = _copy_transition()
+    blocks_bare = notify.render_transition_blocks(bare, card_id=1, footer="", approvers=_APPROVERS)
+    _approve_bare, edit_bare = blocks_bare[1]["elements"]
+    assert "?tab=" not in edit_bare["url"]
+    assert edit_bare["url"] == notify._DOC_URL
+
+    tabbed = _copy_transition().model_copy(update={"tab_id": "t.abc123"})
+    blocks_tabbed = notify.render_transition_blocks(tabbed, card_id=1, footer="", approvers=_APPROVERS)
+    _approve_tabbed, edit_tabbed = blocks_tabbed[1]["elements"]
+    assert edit_tabbed["url"] == f"{notify._DOC_URL}?tab=t.abc123"
+
+    other_tab = _copy_transition().model_copy(update={"tab_id": "t.xyz789"})
+    blocks_other = notify.render_transition_blocks(other_tab, card_id=1, footer="", approvers=_APPROVERS)
+    _approve_other, edit_other = blocks_other[1]["elements"]
+    assert edit_other["url"] != edit_tabbed["url"]
+    assert edit_other["url"] == f"{notify._DOC_URL}?tab=t.xyz789"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,3 +464,41 @@ def test_copy_opener_falls_back_to_a_generic_phrase_when_no_approvers_supplied()
     opener_line = text.splitlines()[0]
     assert "the team" in opener_line
     assert "<@" not in opener_line
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CCA12: the "is editing in the doc" repaint
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_render_editing_in_doc_message_names_the_actor_and_time_no_note() -> None:
+    decided_at = datetime(2026, 8, 12, 15, 45, tzinfo=UTC)
+    text, blocks = notify.render_editing_in_doc_message(
+        actor_mention="<@U_ANGELA>", decided_at=decided_at
+    )
+    assert text == "✏️ <@U_ANGELA> is editing in the doc · 3:45pm"
+    assert len(blocks) == 1
+    assert blocks[0]["type"] == "section"
+    assert blocks[0]["text"]["text"] == text
+
+
+def test_render_editing_in_doc_message_is_distinct_from_render_decision_message() -> None:
+    """The two decision-repaint renderers must not converge on the same
+    wording -- `render_decision_message(decision="changes_requested", ...)`
+    describes the OLD modal flow ("Changes requested by X"), which no
+    approver can reach anymore (see slack_actions.py); this click's copy
+    must say who is editing, never imply a description was given.
+    """
+    decided_at = datetime(2026, 8, 12, 15, 45, tzinfo=UTC)
+    editing_text, _ = notify.render_editing_in_doc_message(
+        actor_mention="<@U_ANGELA>", decided_at=decided_at
+    )
+    decision_text, _ = notify.render_decision_message(
+        decision="changes_requested",
+        actor_label="<@U_ANGELA>",
+        decided_at=decided_at,
+        note=None,
+    )
+    assert editing_text != decision_text
+    assert "editing in the doc" in editing_text
+    assert "Changes requested" not in editing_text

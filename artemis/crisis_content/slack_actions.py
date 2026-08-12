@@ -1,28 +1,41 @@
 """Slack interactivity dispatch for crisis-content decisions (slice B2c, CCA5).
 
 Called from the dispatch branch ``artemis/routes/integrations_slack_interactivity.py``
-adds for the two crisis-content ``action_id``s and the ``view_submission``
-this package's "Request changes" modal produces. This module owns:
+adds for the two crisis-content ``action_id``s. This module owns:
 
   - resolving the clicking Slack user to an email (via ``DirectoryPerson``)
     and checking it against the per-route allowlist
     (``artemis.crisis_content.authorization``)
-  - opening the "why" modal (``views.open``) for Request changes, and
-    handling its ``view_submission``
   - the already-decided / double-click guard
     (``artemis.crisis_content.decisions.is_blocked_by_existing_decision``)
   - persisting the decision (``artemis.crisis_content.decisions.record_decision``)
   - updating the original card in place after a decision
   - scheduling the write-back + Jen notification (CCA7,
-    ``artemis.crisis_content.writeback.schedule_decision_writeback``) once a
-    decision has actually been recorded -- fire-and-forget, off this
-    request's path (see that module for why)
+    ``artemis.crisis_content.writeback.schedule_decision_writeback``) once an
+    ``Approve`` decision has actually been recorded -- fire-and-forget, off
+    this request's path (see that module for why) -- **but deliberately
+    NEVER for an ``Edit in doc`` decision; see ``_handle_edit_in_doc``'s
+    docstring below.**
+
+**CCA12: the "Request changes" modal is gone.** It used to live here --
+``views.open``, its ``view_submission`` handler, the note it collected, the
+``private_metadata`` that carried the target back to the submit handler, and
+``CRISIS_CONTENT_VIEW_CALLBACK_ID``. All deleted, along with the tests that
+covered them (see ``briefs/cca12-edit-in-doc-button.md``): the vendor's team
+asked to edit directly in the document rather than describe a change in
+Slack, and real use confirmed the modal was friction pointing the wrong way
+(Angela couldn't tell where to edit, pasted a rewrite into the thread, then
+edited the doc by hand anyway). The second button is now ``Edit in doc``
+(``ACTION_EDIT_IN_DOC``) -- a Block Kit ``url`` button that ALSO carries an
+``action_id``, so the same tap that opens the document in the approver's
+browser also delivers a ``block_actions`` interaction here. See
+``_handle_edit_in_doc``.
 
 Identity is taken ONLY from the verified payload's top-level ``user.id`` --
-this module never reads a button ``value`` or a modal's ``private_metadata``
-for WHO clicked; those fields exist only to identify the TARGET
-(``card_id``, ``route``). The signature verification that makes ``user.id``
-trustworthy happens in the route BEFORE any of this module runs -- see
+this module never reads a button ``value`` for WHO clicked; that field
+exists only to identify the TARGET (``card_id``, ``route``). The signature
+verification that makes ``user.id`` trustworthy happens in the route BEFORE
+any of this module runs -- see
 ``artemis/routes/integrations_slack_interactivity.py``.
 
 Every public entry point here is written to never raise: unexpected errors
@@ -33,7 +46,6 @@ storm on a broken button is worse than a silent no-op -- the same policy the
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, cast
@@ -52,9 +64,9 @@ from artemis.crisis_content.decisions import (
 )
 from artemis.crisis_content.notify import (
     ACTION_APPROVE,
-    ACTION_REQUEST_CHANGES,
-    jen_mention,
+    ACTION_EDIT_IN_DOC,
     render_decision_message,
+    render_editing_in_doc_message,
 )
 from artemis.crisis_content.transitions import (
     Route,
@@ -69,16 +81,18 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CRISIS_CONTENT_ACTION_IDS",
-    "CRISIS_CONTENT_VIEW_CALLBACK_ID",
     "handle_crisis_content_block_action",
-    "handle_crisis_content_view_submission",
 ]
 
-CRISIS_CONTENT_ACTION_IDS = (ACTION_APPROVE, ACTION_REQUEST_CHANGES)
-CRISIS_CONTENT_VIEW_CALLBACK_ID = "crisis_content_request_changes_modal"
+CRISIS_CONTENT_ACTION_IDS = (ACTION_APPROVE, ACTION_EDIT_IN_DOC)
 
-_NOTE_BLOCK_ID = "crisis_content_note_block"
-_NOTE_ACTION_ID = "crisis_content_note_input"
+# CCA12: the one-time "what a suggestion cannot express" invite, threaded
+# onto the card exactly once per genuine Edit-in-doc decision -- see
+# _reply_edit_invitation.
+_EDIT_INVITATION_TEXT = (
+    "Opened for edits. If something isn't a specific wording change — a question, "
+    "or the whole angle — drop it here."
+)
 
 _ACK: dict[str, Any] = {}
 
@@ -216,60 +230,33 @@ async def _post_ephemeral(response_url: str | None, text: str) -> None:
         logger.exception("crisis_content: failed to POST ephemeral reply to response_url")
 
 
-async def _update_card_via_response_url(
-    response_url: str | None, *, text: str, blocks: list[dict[str, Any]]
+async def _reply_edit_invitation(
+    session: AsyncSession, *, card_id: int, route: Route, access_token: str
 ) -> None:
-    """Best-effort card replacement via ``response_url``. Never raises.
+    """Thread the one-time "what a suggestion cannot express" invite (CCA12).
 
-    Used by the ``view_submission`` path: a modal submission's own HTTP
-    response only controls the MODAL, not the card message that opened it --
-    only ``response_url`` (captured from the original ``block_actions``
-    payload and carried through the modal's ``private_metadata``) can
-    replace that original message from here. The decision row is already
-    committed by the time this runs, so a delivery failure here means a
-    stale-looking card, never a lost decision.
-    """
-    if not response_url:
-        logger.warning("crisis_content: no response_url to update the original card")
-        return
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                response_url,
-                json={"replace_original": True, "text": text, "blocks": blocks},
-            )
-            resp.raise_for_status()
-    except Exception:
-        logger.exception("crisis_content: failed to update the original card via response_url")
+    Per ``briefs/cca12-edit-in-doc-button.md`` "On click" step 3: reply once
+    in the card's own thread, inviting whatever a Google Docs suggestion
+    cannot express -- a question, or "this whole angle needs a rethink."
+    This call is synchronous with the decision but never raises back into
+    the caller -- a delivery failure here must not undo (or even look like
+    it undid) a decision that is already committed by the time this runs.
 
+    "Once" is enforced by the caller, not by anything in here: the only
+    caller (``_handle_edit_in_doc``) only reaches this function after
+    ``record_decision`` has successfully inserted a NEW row, and a repeat
+    click on the same (card, route) is already turned away earlier by
+    ``is_blocked_by_existing_decision`` (a second ``changes_requested``
+    attempt in a row IS blocked -- see that function's docstring) before any
+    of this runs. So the append-only decision guard IS the one-reply guard;
+    there is no separate dedup ledger here.
 
-async def _notify_jen_of_change_request(
-    session: AsyncSession,
-    *,
-    card_id: int,
-    route: Route,
-    actor_label: str,
-    note: str,
-    access_token: str,
-) -> None:
-    """Post a real ``<@…>`` mention for Jen in the card's OWN thread (CCA9).
-
-    Section 4 of ``briefs/cca9-card-lifecycle.md``: on a ``changes_requested``
-    decision, thread a message onto the card mentioning Jen so she sees the
-    ask in the same place the conversation is already happening -- separate
-    from (and in addition to) the existing doc-line + Drive-comment + email
-    notification (``artemis.crisis_content.writeback``, CCA7), which is
-    fire-and-forget and off this request's path. This call is synchronous
-    with the decision but never raises back into the caller -- a delivery
-    failure here must not undo (or even look like it undid) a decision that
-    is already committed by the time this runs.
-
-    ``jen_mention()`` already falls back to the plain word "Jen" when
-    ``settings.crisis_content_jen_slack_user_id`` is empty, so this never
-    posts a broken ``<@>``.
+    Deliberately NOT a Jen mention -- see the module docstring's "Do NOT
+    notify Jen on this click": this text is an open invitation to whoever is
+    already in the thread, never a targeted ping.
 
     Finds where to thread via ``find_posted_location`` -- the
-    ``crisis_content_notifications`` row CCA9 now populates with
+    ``crisis_content_notifications`` row CCA9 populates with
     ``channel_id``/``message_ts`` at post time (see
     ``artemis.crisis_content.notify.post_transition_card``). No row (or an
     incomplete pair) means "nothing to thread onto" and this is skipped with
@@ -279,7 +266,7 @@ async def _notify_jen_of_change_request(
     """
     if not access_token:
         logger.warning(
-            "crisis_content: no Slack token -- cannot notify Jen of change request "
+            "crisis_content: no Slack token -- cannot post the edit-in-doc thread reply "
             "for card_id=%s route=%s",
             card_id,
             route,
@@ -290,7 +277,7 @@ async def _notify_jen_of_change_request(
     if location is None:
         logger.warning(
             "crisis_content: no posted-location record for card_id=%s route=%s -- "
-            "cannot thread a Jen change-request mention",
+            "cannot thread the edit-in-doc invite",
             card_id,
             route,
         )
@@ -299,7 +286,7 @@ async def _notify_jen_of_change_request(
     if not channel_id or not message_ts:
         logger.warning(
             "crisis_content: posted-location incomplete for card_id=%s route=%s "
-            "(channel_id=%r message_ts=%r) -- cannot thread a Jen change-request mention",
+            "(channel_id=%r message_ts=%r) -- cannot thread the edit-in-doc invite",
             card_id,
             route,
             channel_id,
@@ -307,14 +294,13 @@ async def _notify_jen_of_change_request(
         )
         return
 
-    text = f'{jen_mention()} — {actor_label} asked for a change on this one:\n"{note}"'
     try:
         await SlackClient(token=access_token).post_message(
-            channel=channel_id, text=text, thread_ts=message_ts
+            channel=channel_id, text=_EDIT_INVITATION_TEXT, thread_ts=message_ts
         )
     except Exception:
         logger.exception(
-            "crisis_content: failed to post Jen change-request mention for card_id=%s route=%s",
+            "crisis_content: failed to post edit-in-doc thread reply for card_id=%s route=%s",
             card_id,
             route,
         )
@@ -342,7 +328,7 @@ async def handle_crisis_content_block_action(
     payload: dict[str, Any],
     access_token: str,
 ) -> JSONResponse:
-    """Dispatch one ``crisis_content_approve`` / ``crisis_content_request_changes`` click.
+    """Dispatch one ``crisis_content_approve`` / ``crisis_content_edit_in_doc`` click.
 
     Never raises -- any unexpected error is logged and acked with 200,
     matching the interactivity route's overall "never 500 on a button" policy.
@@ -427,12 +413,17 @@ async def _handle_block_action(
         )
         return JSONResponse(status_code=200, content=_ACK)
 
-    if action_id == ACTION_REQUEST_CHANGES:
-        return await _open_request_changes_modal(
-            payload=payload, target=target, response_url=response_url, access_token=access_token
+    if action_id == ACTION_EDIT_IN_DOC:
+        return await _handle_edit_in_doc(
+            session,
+            target=target,
+            slack_user_id=slack_user_id,
+            email=email,
+            message_ts=_message_ts_from_payload(payload),
+            access_token=access_token,
         )
 
-    # ACTION_APPROVE: decide now, synchronously -- no modal needed.
+    # ACTION_APPROVE: decide now, synchronously.
     message_ts = _message_ts_from_payload(payload)
     row = await record_decision(
         session,
@@ -456,225 +447,64 @@ async def _handle_block_action(
     )
 
 
-async def _open_request_changes_modal(
+async def _handle_edit_in_doc(
+    session: AsyncSession,
     *,
-    payload: dict[str, Any],
     target: _Target,
-    response_url: str | None,
+    slack_user_id: str,
+    email: str | None,
+    message_ts: str | None,
     access_token: str,
 ) -> JSONResponse:
-    trigger_id = payload.get("trigger_id")
-    if not trigger_id or not access_token:
-        logger.error(
-            "crisis_content: cannot open request-changes modal (trigger_id=%r, has_token=%s)",
-            trigger_id,
-            bool(access_token),
-        )
-        await _post_ephemeral(
-            response_url, "Couldn't open the change-request form -- please try again."
-        )
-        return JSONResponse(status_code=200, content=_ACK)
+    """Record the ``Edit in doc`` decision and repaint the card -- no doc write, no Jen ping.
 
-    private_metadata = json.dumps(
-        {
-            "card_id": target.card_id,
-            "route": target.route,
-            "response_url": response_url,
-            "message_ts": _message_ts_from_payload(payload),
-        }
-    )
-    view: dict[str, Any] = {
-        "type": "modal",
-        "callback_id": CRISIS_CONTENT_VIEW_CALLBACK_ID,
-        "private_metadata": private_metadata,
-        "title": {"type": "plain_text", "text": "Request changes"},
-        "submit": {"type": "plain_text", "text": "Submit"},
-        "close": {"type": "plain_text", "text": "Cancel"},
-        "blocks": [
-            {
-                "type": "input",
-                "block_id": _NOTE_BLOCK_ID,
-                "label": {"type": "plain_text", "text": "What needs to change?"},
-                "element": {
-                    "type": "plain_text_input",
-                    "action_id": _NOTE_ACTION_ID,
-                    "multiline": True,
-                },
-            }
-        ],
-    }
-    try:
-        await SlackClient(token=access_token).views_open(str(trigger_id), view)
-    except Exception:
-        logger.exception(
-            "crisis_content: views.open failed for card=%s route=%s",
-            target.card_id,
-            target.route,
-        )
-        await _post_ephemeral(
-            response_url, "Couldn't open the change-request form -- please try again."
-        )
-    return JSONResponse(status_code=200, content=_ACK)
+    Per ``briefs/cca12-edit-in-doc-button.md`` "On click": record a
+    ``changes_requested`` decision with ``note = NULL`` (the button's ``url``
+    already sent the approver straight to the document -- there is nothing
+    to describe), repaint the card to say who is editing, and reply once in
+    the thread inviting whatever a Google Docs suggestion cannot express.
 
+    **This is the ONLY caller of ``record_decision`` that deliberately never
+    calls ``schedule_decision_writeback``.** That call is what schedules the
+    doc line + Drive ``@mention`` + email (``artemis.crisis_content.writeback``,
+    CCA7) -- scheduling it here would ping Jen the instant someone taps the
+    button, before a single edit exists in the document; she would open the
+    doc to find nothing changed. In the doc-editing workflow the document
+    itself is the message: Jen sees the edits where she is already working,
+    and the eventual ``Approve`` still notifies her normally through the
+    unchanged path below. **This is a deliberate reduction, not an
+    oversight -- do not "restore" the call here.** If Jen later proves to
+    need an explicit nudge, that is a future suggestion-detection slice
+    (batched, and suppressed when a human already pinged her in-thread), not
+    a reason to schedule today's write-back on this click.
 
-async def handle_crisis_content_view_submission(
-    session: AsyncSession, *, payload: dict[str, Any], access_token: str = ""
-) -> JSONResponse:
-    """Dispatch a ``view_submission`` from the "Request changes" modal.
-
-    Never raises -- see ``handle_crisis_content_block_action``'s docstring
-    for the same policy.
-
-    ``access_token`` (CCA9) is Callie's bot token, needed to thread the Jen
-    change-request mention (``_notify_jen_of_change_request``) -- defaults
-    to ``""`` so existing callers that only ever exercised the pre-CCA9
-    behavior keep working; ``_notify_jen_of_change_request`` itself no-ops
-    (with a warning) on an empty token rather than raising.
+    Authorization and the already-decided/reopen checks already ran in the
+    caller (``_handle_block_action``) before this function is reached --
+    same rules as ``Approve``, per the brief's "Same authorization check,
+    same route rules."
     """
-    try:
-        return await _handle_view_submission(session, payload=payload, access_token=access_token)
-    except Exception:
-        logger.exception("crisis_content: unhandled error handling view_submission")
-        return JSONResponse(status_code=200, content=_ACK)
-
-
-async def _handle_view_submission(
-    session: AsyncSession, *, payload: dict[str, Any], access_token: str = ""
-) -> JSONResponse:
-    view = payload.get("view")
-    if not isinstance(view, dict):
-        return JSONResponse(status_code=200, content=_ACK)
-
-    try:
-        metadata = json.loads(str(view.get("private_metadata") or "{}"))
-    except json.JSONDecodeError:
-        logger.warning("crisis_content: malformed private_metadata on view_submission")
-        return JSONResponse(status_code=200, content=_ACK)
-
-    if not isinstance(metadata, dict):
-        return JSONResponse(status_code=200, content=_ACK)
-
-    raw_card_id = metadata.get("card_id")
-    route = metadata.get("route")
-    response_url_raw = metadata.get("response_url")
-    response_url = str(response_url_raw) if response_url_raw else None
-    if not isinstance(raw_card_id, int) or route not in ("asset", "copy"):
-        logger.warning("crisis_content: invalid target in private_metadata=%r", metadata)
-        return JSONResponse(status_code=200, content=_ACK)
-    card_id: int = raw_card_id
-    route_typed = cast("Route", route)
-    raw_message_ts = metadata.get("message_ts")
-    message_ts = str(raw_message_ts) if raw_message_ts else None
-
-    note = _extract_note(view)
-    if not note:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "response_action": "errors",
-                "errors": {_NOTE_BLOCK_ID: "Say what needs to change before submitting."},
-            },
-        )
-
-    user_obj = payload.get("user")
-    slack_user_id = str(user_obj.get("id") or "") if isinstance(user_obj, dict) else ""
-    email = await _resolve_email(session, slack_user_id, access_token=access_token)
-
-    if email is None:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "response_action": "errors",
-                "errors": {
-                    _NOTE_BLOCK_ID: "I don't recognize you as an approver for this pipeline."
-                },
-            },
-        )
-
-    if not is_authorized_for_route(email, route_typed):
-        return JSONResponse(
-            status_code=200,
-            content={
-                "response_action": "errors",
-                "errors": {_NOTE_BLOCK_ID: f"You're not an approver for the {route_typed} route."},
-            },
-        )
-
-    latest = await get_latest_decision(session, card_id, route_typed)
-    # A prior decision only blocks while it is still ABOUT the current copy.
-    # If the route has been reopened -- the copy was revised after that
-    # decision (CCA11) -- the old decision refers to text that no longer
-    # exists, so the re-fired card's buttons must work. Without this, a
-    # reopened card posts with live buttons that always answer "Already
-    # decided", which is worse than not re-posting at all: it tells the
-    # approver something needs re-reviewing and then refuses to let them.
-    reopened = await find_reopening_decision(session, card_id, route_typed)
-    if (
-        latest is not None
-        and reopened is None
-        and is_blocked_by_existing_decision(latest, "changes_requested")
-    ):
-        who = _display_label(latest.decided_by_email, latest.decided_by_slack_user_id)
-        return JSONResponse(
-            status_code=200,
-            content={
-                "response_action": "errors",
-                "errors": {_NOTE_BLOCK_ID: f"Already decided: {latest.decision} by {who}."},
-            },
-        )
-
     row = await record_decision(
         session,
-        card_id=card_id,
-        route=route_typed,
+        card_id=target.card_id,
+        route=target.route,
         decision="changes_requested",
         decided_by_slack_user_id=slack_user_id,
         decided_by_email=email,
-        note=note,
+        note=None,
         slack_message_ts=message_ts,
     )
-    schedule_decision_writeback(row.id)
+    # Deliberately NOT schedule_decision_writeback(row.id) -- see docstring.
 
-    actor_label = _display_label(email, slack_user_id)
-    text, blocks = render_decision_message(
-        decision="changes_requested",
-        actor_label=actor_label,
-        decided_at=row.decided_at,
-        note=note,
-    )
-    await _update_card_via_response_url(response_url, text=text, blocks=blocks)
-
-    # CCA9: mention Jen in-thread on a change request ONLY -- see
-    # briefs/cca9-card-lifecycle.md section 4. Never raises (see the
-    # function's own docstring); a delivery failure here must not affect the
-    # ack Slack already has via the two calls above.
-    await _notify_jen_of_change_request(
-        session,
-        card_id=card_id,
-        route=route_typed,
-        actor_label=actor_label,
-        note=note,
-        access_token=access_token,
+    actor_mention = f"<@{slack_user_id}>" if slack_user_id else _display_label(email, slack_user_id)
+    text, blocks = render_editing_in_doc_message(
+        actor_mention=actor_mention, decided_at=row.decided_at
     )
 
-    return JSONResponse(status_code=200, content=_ACK)
+    await _reply_edit_invitation(
+        session, card_id=target.card_id, route=target.route, access_token=access_token
+    )
 
-
-def _extract_note(view: dict[str, Any]) -> str | None:
-    state = view.get("state")
-    if not isinstance(state, dict):
-        return None
-    values = state.get("values")
-    if not isinstance(values, dict):
-        return None
-    block = values.get(_NOTE_BLOCK_ID)
-    if not isinstance(block, dict):
-        return None
-    field = block.get(_NOTE_ACTION_ID)
-    if not isinstance(field, dict):
-        return None
-    raw = field.get("value")
-    if not isinstance(raw, str):
-        return None
-    stripped = raw.strip()
-    return stripped or None
+    return JSONResponse(
+        status_code=200,
+        content={"replace_original": True, "text": text, "blocks": blocks},
+    )
