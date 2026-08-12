@@ -28,15 +28,15 @@ we cannot write chip values), so ``_evaluate_route``'s "did the status
 change" check saw no change and emitted nothing, and even if it had, the
 OLD ``(card_id, route, status_value)`` ledger row would have deduped it.
 ``_evaluate_route`` now ALSO re-fires when the status is unchanged at
-``Ready`` but ``_find_reopening_decision`` finds a genuine revision (a
+``Ready`` but ``find_reopening_decision`` finds a genuine revision (a
 ``crisis_content_copy_versions`` row newer than the route's latest
 qualifying decision) -- and the ledger's unique constraint now includes
 ``copy_hash`` (migration 0109), so the re-fire is not itself swallowed as a
 duplicate of the original notification. See ``_evaluate_route`` and
-``_find_reopening_decision`` below.
+``find_reopening_decision`` below.
 
 **Reopening after approval too (CCA11).** Originally ``approved`` stayed
-terminal here -- ``_find_reopening_decision`` (then named
+terminal here -- ``find_reopening_decision`` (then named
 ``_reopened_after_changes_requested``) only ever returned a row for a
 route whose LATEST decision was ``changes_requested``. That was right
 while all editing happened before approval. It stopped being right once
@@ -46,7 +46,7 @@ approval that names specific wording, followed by someone changing that
 wording, is now the expected shape of the workflow, not an edge case --
 and an approval record that refers to text that no longer exists is an
 integrity problem for crisis communications, where the exact wording is
-the thing being signed off on. ``_find_reopening_decision`` now returns the
+the thing being signed off on. ``find_reopening_decision`` now returns the
 latest decision for EITHER ``changes_requested`` OR ``approved`` (still
 gated on a genuine ``crisis_content_copy_versions`` row after
 ``decided_at`` -- see "Do not reopen on noise" below); ``_evaluate_route``
@@ -64,13 +64,13 @@ on every fetch, which is why ``copy_hash`` is computed from normalized text
 comparison that fell back to the raw export would reintroduce that
 instability and re-post every approved card on every poll tick.
 
-**Routes reopen independently.** ``_find_reopening_decision`` reads the
+**Routes reopen independently.** ``find_reopening_decision`` reads the
 LATEST decision filtered to the one route being evaluated -- a route with
 no decision at all, or whose own latest decision doesn't qualify, never
 reopens, regardless of what the OTHER route's decision is or whether the
 shared copy-version log has a new row. That log is card-level, not
 route-level (there is no asset-specific version log -- see
-``_find_reopening_decision``'s own docstring), so if BOTH routes
+``find_reopening_decision``'s own docstring), so if BOTH routes
 independently have a qualifying decision, one genuine revision can reopen
 both; that is the existing CCA9 behavior (see
 ``test_asset_route_reapproval_mirrors_copy_route_rule``) and is preserved
@@ -102,6 +102,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Route",
+    "find_reopening_decision",
     "ReopenedAfterApproval",
     "Transition",
     "record_observation",
@@ -356,7 +357,7 @@ async def _evaluate_route(
     Emits iff: the status is set, is recognized, is exactly ``Ready``, and
     (for the asset route) an asset is actually attached -- AND EITHER the
     status differs from the previous observation (the normal case) OR
-    ``_find_reopening_decision`` finds a genuine reopen (a
+    ``find_reopening_decision`` finds a genuine reopen (a
     ``changes_requested`` OR ``approved`` decision followed by a revised
     copy version -- see the module docstring's "The re-approval fix (CCA9)"
     and "Reopening after approval too (CCA11)"). An unrecognized non-null
@@ -393,7 +394,7 @@ async def _evaluate_route(
         # followed by a genuine revision. See the module docstring's "The
         # re-approval fix (CCA9)" and "Reopening after approval too
         # (CCA11)".
-        reopening_decision = await _find_reopening_decision(session, card_id, route)
+        reopening_decision = await find_reopening_decision(session, card_id, route)
         if reopening_decision is None:
             return None
         logger.info(
@@ -427,23 +428,26 @@ async def _evaluate_route(
 def _decision_actor_label(decision: CrisisContentDecision) -> str:
     """Best-effort human label for the reopened-after-approval banner.
 
-    Mirrors ``slack_actions._display_label`` / ``writeback._actor_label`` /
-    ``image_link._poster_label`` -- same convention as those three, not a
-    shared import: none of those modules' docstrings claim a shared
-    display-name resolution utility exists in this package (each says
-    inventing one, e.g. an extra ``users.info`` call, is out of its own
-    slice's scope), and this function does not invent one either. Prefers
-    the email captured on the decision row; falls back to a Slack mention
-    when no email was resolved at decision time.
+    Deliberately the INVERSE preference of ``writeback._actor_label`` /
+    ``image_link._poster_label``, which prefer the email. Those two write into
+    a Google Doc, where ``<@U123>`` is meaningless literal text. This banner
+    renders in Slack, where a mention resolves to the person's display name --
+    "Previously approved by @Angela M" instead of
+    "by angela.miata@amiralearning.com". Same underlying data, different
+    destination, so the right choice differs; keep them distinct rather than
+    unifying them.
+
+    Still invents no display-name resolution (no extra ``users.info`` call):
+    Slack does the rendering for us from the id already on the decision row.
     """
-    if decision.decided_by_email:
-        return decision.decided_by_email
     if decision.decided_by_slack_user_id:
         return f"<@{decision.decided_by_slack_user_id}>"
+    if decision.decided_by_email:
+        return decision.decided_by_email
     return "unknown"
 
 
-async def _find_reopening_decision(
+async def find_reopening_decision(
     session: AsyncSession, card_id: int, route: Route
 ) -> CrisisContentDecision | None:
     """The decision that reopens ``route``, or ``None`` if it should not reopen.

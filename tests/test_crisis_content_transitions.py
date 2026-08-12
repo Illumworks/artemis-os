@@ -706,13 +706,18 @@ async def test_reopen_after_approval_transition_carries_banner_naming_approver_a
     transition = transitions[0]
 
     reopened = transition.reopened_after_approval
+    # A Slack MENTION, not the raw email: this banner renders in Slack, where
+    # <@U_ANGELA> resolves to "@Angela M". The doc-facing labels in
+    # writeback.py / image_link.py deliberately prefer the email instead,
+    # because a mention is meaningless literal text inside a Google Doc.
     assert reopened is not None
-    assert reopened.approved_by == _ANGELA_EMAIL
+    assert reopened.approved_by == f"<@{_ANGELA_SLACK_ID}>"
     assert reopened.approved_at == decided_at
 
     rendered = notify.render_transition_message(transition, footer="")
     assert "Previously approved" in rendered
-    assert _ANGELA_EMAIL in rendered
+    assert f"<@{_ANGELA_SLACK_ID}>" in rendered
+    assert _ANGELA_EMAIL not in rendered
     expected_stamp = f"{decided_at.strftime('%b')} {decided_at.day}"
     assert expected_stamp in rendered
     # The banner must appear before the card's own body, not buried under it.
