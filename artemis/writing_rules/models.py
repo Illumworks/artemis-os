@@ -168,6 +168,23 @@ class WritingExample(Base):
     """Reference example attached to a writing profile.
 
     Natural key: (profile_id, title, example_type).
+
+    ``quality`` and ``copy_hash`` (migration 0113, CCA14) support harvesting
+    approved crisis-content copy as a permanent example -- see
+    ``artemis.crisis_content.harvest`` and
+    ``docs/crisis-content-approval-pipeline.md`` "Slice D". Both are NULL/
+    default on every row that predates that slice:
+
+    - ``quality`` defaults to ``"unrated"`` on every row (including the 7
+      pre-CCA14 reference/template rows) so retroactive curation (e.g. a ⭐
+      reaction promoting a post to "exemplary") needs no future migration.
+    - ``copy_hash`` is NULL except on harvested rows, where it is the sha256
+      of the approved copy body (mirrors ``CrisisContentCard.copy_hash``).
+      Paired with ``channel`` in a UNIQUE constraint -- NOT ``copy_hash``
+      alone, because one approved post fans out to one row per canonical
+      channel (a Facebook/LinkedIn combo post is two rows sharing one
+      ``copy_hash``) -- so a re-harvest of the same decision cannot insert a
+      duplicate row for a channel that's already there.
     """
 
     __tablename__ = "writing_examples"
@@ -179,6 +196,11 @@ class WritingExample(Base):
             "title",
             "example_type",
             name="idx_writing_examples_profile_title_type",
+        ),
+        UniqueConstraint(
+            "copy_hash",
+            "channel",
+            name="uq_writing_examples_copy_hash_channel",
         ),
     )
 
@@ -192,6 +214,8 @@ class WritingExample(Base):
     asset_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     channel: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    quality: Mapped[str] = mapped_column(Text, nullable=False, server_default="unrated")
+    copy_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )

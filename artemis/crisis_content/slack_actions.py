@@ -16,6 +16,13 @@ adds for the two crisis-content ``action_id``s. This module owns:
     this request's path (see that module for why) -- **but deliberately
     NEVER for an ``Edit in doc`` decision; see ``_handle_edit_in_doc``'s
     docstring below.**
+  - scheduling the Writing Studio harvest (CCA14,
+    ``artemis.crisis_content.harvest.schedule_decision_harvest``) alongside
+    the write-back, same fire-and-forget reasoning, for every ``Approve``
+    click on either route -- ``harvest_decision`` itself is where the
+    ``copy``-route-only rule lives (see that function's docstring), not here,
+    mirroring how the route/route-specific rules for write-back live in
+    ``writeback.py`` rather than being duplicated at the call site.
 
 **CCA12: the "Request changes" modal is gone.** It used to live here --
 ``views.open``, its ``view_submission`` handler, the note it collected, the
@@ -62,6 +69,7 @@ from artemis.crisis_content.decisions import (
     is_blocked_by_existing_decision,
     record_decision,
 )
+from artemis.crisis_content.harvest import schedule_decision_harvest
 from artemis.crisis_content.notify import (
     ACTION_APPROVE,
     ACTION_EDIT_IN_DOC,
@@ -469,6 +477,7 @@ async def _handle_block_action(
         slack_message_ts=message_ts,
     )
     schedule_decision_writeback(row.id)
+    schedule_decision_harvest(row.id)
     text, blocks = render_decision_message(
         decision="approved",
         actor_label=_display_label(email, slack_user_id),
