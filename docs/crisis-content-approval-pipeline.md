@@ -453,6 +453,65 @@ Also unresolved: whether Writing Studio retrieval over `writing_examples` is sem
 (needs an embedding on insert) or a profile-scoped fetch-all. With 7 rows today it may
 well be the latter; confirm before assuming an embedding is required.
 
+## Bridging the two teams' workflows (2026-08-12)
+
+This pipeline was designed around **our** side of the loop: read her doc, decide in Slack,
+write the decision back. The vendor's team then told us how **they** want to work, and it
+changes an assumption underneath the design.
+
+Steffie Cruz (DigiGeeks) in the shared channel:
+
+> Our preference is the team providing suggested edits directly in the document so we can
+> move to approval faster.
+
+She had not been in the meeting where the bridge was discussed, which is exactly why the
+mismatch surfaced late.
+
+### This is better for us, not a compromise
+
+A Google Docs suggestion is **structured data**: an exact before and after, attributed, in
+place. "Tighten the second paragraph" is prose that has to be interpreted by a human or a
+model. So routing edits through the document rather than through Slack:
+
+- gets Jen an accept/reject rather than a description to decode — her stated reason, and
+  the faster path to approval;
+- gives the Writing Studio harvest a far better training signal, since "Jen wrote X, Angela
+  changed it to Y" falls out of the suggestion itself rather than being inferred from a
+  Slack note.
+
+`Request changes` therefore changes meaning: it is the **signal and the context**, not the
+place edits are written. The box is for what a suggestion cannot express — a question, or
+"this whole angle needs a rethink."
+
+### What it broke, and what we did about it
+
+**Terminal approval became wrong.** If the team now edits inside the document, copy changing
+after sign-off is the expected shape, not an edge case — and an approval that refers to text
+which no longer exists is an integrity problem for crisis comms, where the exact wording is
+what was approved. Jon's call: **reopen for approval**, with a banner naming the original
+approver so nobody mistakes a re-fire for a first-time card. Slice CCA11.
+
+**Pending suggestions are invisible.** A suggestion does not change the accepted text, and
+the poller reads accepted text — correct, since the post is not actually revised until Jen
+accepts. But it means suggestions can sit unactioned with nothing surfacing. Jon wants Jen
+pinged, with a caveat worth honouring: *"it could become noisy for her if my team mates are
+@ mentioning her."*
+
+So the ping must be considerate by design, not just rate-limited:
+
+- **batch** a burst of suggestions on a card into one message rather than one per suggestion;
+- **wait for quiet** before sending, so a run of edits produces a single nudge;
+- **stay silent entirely if a human already pinged her** — thread notes already capture
+  replies, so a teammate's `<@…>` mention of Jen in that card's thread means the loop is
+  closed and Callie must not add to it.
+
+One nudge or none, never a pile.
+
+**Not yet built, and deliberately not assumed.** `documents.get` accepts
+`suggestionsViewMode` and returns 200, but the live doc contained **zero** suggestions when
+checked, so nothing about extracting them is proven. Verify against a real suggestion before
+building suggestion detection.
+
 ## Authorization change required
 
 `docs/` and the Kai rules currently restrict side-effecting actions to Jon and Missy.
