@@ -752,6 +752,37 @@ class Settings(BaseSettings):
             "plain word 'Jen' rather than emitting a broken ``<@>`` mention."
         ),
     )
+    crisis_content_test_tab_marker: str = Field(
+        default="TESTING",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_TEST_TAB_MARKER",
+            "CRISIS_CONTENT_TEST_TAB_MARKER",
+        ),
+        description=(
+            "Case-insensitive substring that marks a Google Docs tab as Jon's test "
+            "lane (CCA13 -- see docs/crisis-content-approval-pipeline.md and "
+            "artemis/crisis_content/tab_resolution.py). A card whose live table "
+            "lives on a tab whose title contains this marker (e.g. 'Content To "
+            "Review (TESTING)') sets Transition.is_test, which "
+            "artemis/crisis_content/notify.py already honors: DM to Jon only, the "
+            "'Testing' footer restored, regardless of the destination setting "
+            "below.\n\n"
+            "The Jen write-back (Drive @mention + Gmail, artemis/crisis_content/"
+            "writeback.py) and the Writing Studio harvest (later slices) are "
+            "SUPPOSED to also honor is_test but do not yet -- both live entirely "
+            "in artemis/crisis_content/slack_actions.py and writeback.py, which "
+            "were out of file scope for CCA13 (the brief that introduced this "
+            "setting). See that brief's report for why: is_test is not persisted "
+            "anywhere a decision-time click handler can read it. Wiring the "
+            "suppression is the very next piece of work here, not done.\n\n"
+            "A tab whose title does NOT contain this marker is a real tab by "
+            "default, with no per-tab configuration needed -- a new monthly tab "
+            "just works. Empty string would match every tab (matching an empty "
+            "substring is always True), which would silently make the whole doc a "
+            "test lane; Settings does not block that value, so do not set it "
+            "empty."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

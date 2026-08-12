@@ -75,12 +75,35 @@ independently have a qualifying decision, one genuine revision can reopen
 both; that is the existing CCA9 behavior (see
 ``test_asset_route_reapproval_mirrors_copy_route_rule``) and is preserved
 on purpose, not a gap this slice introduces.
+
+**Tab resolution + the test lane (CCA13).** ``record_observation`` takes an
+OPTIONAL ``tab_map`` -- ``ReviewCard.identity_key -> CardTabInfo`` -- built
+once per poll tick by ``artemis.crisis_content.tab_resolution.resolve_card_tab_map``
+(one ``documents.get`` call, never per card; see that module). Two states:
+
+- ``tab_map is None`` (every caller before CCA13, and every existing test in
+  ``tests/test_crisis_content_transitions.py``): unchanged behavior. No tab
+  is known, ``Transition.tab_id`` is ``None`` and ``Transition.is_test`` is
+  ``False``, exactly like every transition before this slice.
+- ``tab_map`` is a (possibly empty) mapping: tab resolution was attempted
+  this tick. A card whose ``identity_key`` is NOT in the map -- because
+  ``resolve_card_tab_map`` could not positively locate its live table, e.g.
+  a race between the HTML-export fetch and the ``documents.get`` fetch,
+  both against a live, externally-edited document -- is skipped ENTIRELY
+  for this tick: no row upsert, no copy-version append, no transition. This
+  is the fail-closed rule the CCA13 brief calls "the dangerous part" pushed
+  down to card granularity: without a tab we cannot tell a test card from a
+  real one, so treating it as either would risk exactly the wrong-audience
+  post the test lane exists to prevent. Nothing is lost -- the row's stored
+  status is left untouched, so the next tick's comparison against the
+  freshly observed status is unaffected and will retry cleanly once
+  resolution succeeds.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Literal, cast
 
@@ -97,6 +120,7 @@ from artemis.crisis_content.orm import (
     CrisisContentNotification,
 )
 from artemis.crisis_content.parser import classify_status
+from artemis.crisis_content.tab_resolution import CardIdentityKey, CardTabInfo
 
 logger = logging.getLogger(__name__)
 
@@ -158,32 +182,52 @@ class Transition(BaseModel):
     CCA11 reopen following an ``approved`` decision -- see
     ``ReopenedAfterApproval`` above.
 
-    ``tab_id`` (CCA12) is the Google Docs tab this card's live table
-    currently lives in, if known -- consumed by
-    ``artemis.crisis_content.notify.render_transition_blocks`` to deep-link
-    the "Edit in doc" button's ``url`` with ``?tab=<tab_id>`` instead of a
-    bare doc link (Docs has no per-row anchor; the tab is the best available
-    precision -- see ``briefs/cca12-edit-in-doc-button.md``). Defaults to
-    ``None``, which renders the bare doc link, exactly like every card
-    before this slice.
+    ``tab_id`` (CCA12, typed then; populated starting CCA13) is the Google
+    Docs tab this card's live table currently lives in, if known --
+    consumed by ``artemis.crisis_content.notify.render_transition_blocks``
+    to deep-link the "Edit in doc" button's ``url`` with ``?tab=<tab_id>``
+    instead of a bare doc link (Docs has no per-row anchor; the tab is the
+    best available precision -- see ``briefs/cca12-edit-in-doc-button.md``).
+    Defaults to ``None``, which renders the bare doc link, exactly like
+    every card before CCA12.
 
-    **Not populated by anything in this module, or by ``record_observation``,
-    today.** The HTML-export read path (``artemis.crisis_content.parser``)
-    is deliberately tab-agnostic (see that module's ``_is_review_card_table``
-    docstring, "Tab-agnostic on purpose") -- it walks every tab's tables
-    flattened together and never resolves which tab any of them came from.
-    The only place this repo currently CAN resolve a tab id is
-    ``artemis.crisis_content.writeback.locate_card_table``, which requires a
-    second, live Docs JSON API fetch (``documents.get`` with
-    ``includeTabsContent=true``) distinct from the HTML export this
-    package's read path uses, and which only ever runs today at write-back
-    time (after a decision), not at card-render time. Wiring that fetch into
-    the render path was judged out of scope for CCA12 (new network
-    dependency + failure mode in the hot notify path, for every future
-    ``Ready`` transition) and is flagged, not silently guessed at, in the
-    CCA12 report. This field exists so that follow-up work has a typed,
-    tested seam to populate -- see ``render_transition_blocks``'s own
-    docstring for the button-side half of this contract.
+    **CCA12 shipped this field deliberately unpopulated.** The HTML-export
+    read path (``artemis.crisis_content.parser``) is tab-agnostic by design
+    (see that module's ``_is_review_card_table`` docstring) -- it walks
+    every tab's tables flattened together and never resolves which tab any
+    of them came from. The only place this repo could resolve a tab id at
+    the time was ``artemis.crisis_content.writeback.locate_card_table``,
+    which needs a second, live Docs JSON fetch (``documents.get`` with
+    ``includeTabsContent=true``) distinct from the HTML export, and which
+    only ran at write-back time (after a decision), never at card-render
+    time. Wiring that fetch into the render path was judged out of scope
+    for CCA12 (new network dependency + failure mode in the hot notify
+    path, for every future ``Ready`` transition) and flagged, not silently
+    guessed at, in the CCA12 report -- this field existed so that follow-up
+    work had a typed, tested seam to populate.
+
+    **Populated as of CCA13** when ``record_observation`` is given a
+    ``tab_map`` (see that function and
+    ``artemis.crisis_content.tab_resolution``) and this card's identity is
+    present in it. Still ``None`` when no ``tab_map`` is supplied, or when
+    this specific card could not be positively located this tick -- in the
+    latter case ``record_observation`` skips the card entirely rather than
+    emitting a ``Transition`` with a guessed tab, so ``tab_id`` is never
+    ``None`` on an emitted ``Transition`` for a card that WAS resolved as a
+    test card (see ``is_test`` below); ``None`` here means either "no tab
+    resolution was attempted" or "this card was skipped," never "resolved,
+    and it's not a test."
+
+    ``is_test`` (CCA13) is ``True`` iff this card's live table lives on a
+    tab whose title contains ``settings.crisis_content_test_tab_marker``
+    (see ``artemis.crisis_content.tab_resolution._is_test_title``) --
+    Jon's test lane, a duplicated card he can approve/edit/reopen without
+    the channel or the external vendor seeing any of it. Consumed by
+    ``artemis.crisis_content.notify.post_transition_card`` to route a test
+    card to Jon's DM (never the channel) with the ``⚠️ Testing`` footer
+    restored, regardless of ``settings.crisis_content_notify_destination``.
+    Defaults ``False`` -- exactly the pre-CCA13 behavior -- for every
+    transition where tab resolution was not attempted or did not apply.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -195,11 +239,13 @@ class Transition(BaseModel):
     is_new_card: bool
     reopened_after_approval: ReopenedAfterApproval | None = None
     tab_id: str | None = None
+    is_test: bool = False
 
 
 async def record_observation(
     session: AsyncSession,
     cards: Sequence[ReviewCard],
+    tab_map: Mapping[CardIdentityKey, CardTabInfo] | None = None,
 ) -> list[Transition]:
     """Persist ``cards`` and return the transitions worth notifying on.
 
@@ -208,14 +254,43 @@ async def record_observation(
     this exact ``(card, copy_hash)`` pair hasn't been seen before, then
     compute transitions. See the module docstring for the transaction
     contract -- this function flushes but never commits.
+
+    ``tab_map`` (CCA13, optional) is ``ReviewCard.identity_key ->
+    CardTabInfo``, built once per poll tick by
+    ``artemis.crisis_content.tab_resolution.resolve_card_tab_map`` -- see
+    the module docstring's "Tab resolution + the test lane" section for the
+    full contract. ``None`` (the default, and every call from a test written
+    before CCA13) disables the feature entirely: behavior is byte-for-byte
+    what it was before this slice. When a mapping IS supplied, any card
+    whose identity is missing from it is skipped in full -- no row upsert,
+    no copy-version append, no transition -- because without a resolved tab
+    this module cannot tell a test card from a real one, and guessing wrong
+    is the exact failure the test lane exists to prevent. That card's stored
+    status is left untouched, so the next tick's before/after comparison is
+    unaffected and will retry cleanly once resolution succeeds.
     """
     transitions: list[Transition] = []
     for card in cards:
-        transitions.extend(await _observe_card(session, card))
+        tab_info: CardTabInfo | None = None
+        if tab_map is not None:
+            tab_info = tab_map.get(card.identity_key)
+            if tab_info is None:
+                logger.error(
+                    "crisis_content: card=%r (header=%r) has no resolved tab this "
+                    "tick -- skipping ALL observation for it (no row upsert, no "
+                    "transition) so its stored status is not silently advanced "
+                    "without a matching notification. The next tick will retry.",
+                    card.identity_key,
+                    card.header,
+                )
+                continue
+        transitions.extend(await _observe_card(session, card, tab_info))
     return transitions
 
 
-async def _observe_card(session: AsyncSession, card: ReviewCard) -> list[Transition]:
+async def _observe_card(
+    session: AsyncSession, card: ReviewCard, tab_info: CardTabInfo | None = None
+) -> list[Transition]:
     now = datetime.now(UTC)
     row, is_new, previous_asset_status, previous_copy_status = await _resolve_card_row(
         session, card, now
@@ -248,6 +323,7 @@ async def _observe_card(session: AsyncSession, card: ReviewCard) -> list[Transit
             previous_status=previous_status,
             new_status=new_status,
             is_new_card=is_new,
+            tab_info=tab_info,
         )
         if transition is not None:
             card_transitions.append(transition)
@@ -379,6 +455,7 @@ async def _evaluate_route(
     previous_status: str | None,
     new_status: str | None,
     is_new_card: bool,
+    tab_info: CardTabInfo | None = None,
 ) -> Transition | None:
     """Apply the transition + suppression rules for one route of one card.
 
@@ -391,6 +468,11 @@ async def _evaluate_route(
     and "Reopening after approval too (CCA11)"). An unrecognized non-null
     status logs a WARNING and never emits -- silence here means Jen added a
     dropdown option and the pipeline quietly stopped working.
+
+    ``tab_info`` (CCA13) is copied straight onto the emitted ``Transition``'s
+    ``tab_id``/``is_test`` -- ``None`` (no tab resolution attempted, or this
+    card was not in ``record_observation``'s ``tab_map``) reproduces the
+    pre-CCA13 defaults exactly.
     """
     if new_status is None:
         return None
@@ -450,6 +532,8 @@ async def _evaluate_route(
         new_status=new_status,
         is_new_card=is_new_card,
         reopened_after_approval=reopened_after_approval,
+        tab_id=tab_info.tab_id if tab_info is not None else None,
+        is_test=tab_info.is_test if tab_info is not None else False,
     )
 
 
