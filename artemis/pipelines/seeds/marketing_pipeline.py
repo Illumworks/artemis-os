@@ -11,7 +11,20 @@ from artemis.pipelines.schemas import PipelineCreate
 
 PIPELINE_ID = "marketing.main"
 CAMPAIGN_DELIVERABLES_PIPELINE_ID = "marketing.campaign_deliverables"
-TRIGGER_CONFIG = {"type": "scheduled", "cron": "0 */4 * * *", "timezone": "America/Chicago"}
+# Daily at 06:00 Chicago (11:00 UTC / 07:00 ET), two hours ahead of the daily
+# market-signals brief, so qualification is fresh when the brief is composed.
+#
+# Was every 4 hours (6 runs/day at ~$0.90 each, ~$164/month). Cut to daily on
+# 2026-08-12 for two reasons. First, delivery is now daily: with Gate 1 removed,
+# the pipeline's output is read once a day in Callie's brief, so five of six runs
+# produced signals nobody saw sooner. Second, and larger: the nine scouts this
+# pipeline invokes ALSO run standalone on their own 24-hour cadence
+# (artemis/marketing/scout_scheduler.py, DEFAULT_CADENCE_SECONDS = 86400), and
+# those standalone runs are what write and qualify the great majority of signals
+# -- 141 qualified in three days while this pipeline sat blocked and ran not
+# once. Six pipeline runs a day were re-invoking the same nine scouts the
+# scheduler had already run.
+TRIGGER_CONFIG = {"type": "scheduled", "cron": "0 6 * * *", "timezone": "America/Chicago"}
 MANUAL_TRIGGER_CONFIG = {"type": "manual"}
 SCOUT_SLUGS = "starbridge_researcher regional_news linkedin_observer legislative federal_funding state_doe procurement board_minutes leadership_transition".split()  # noqa: SIM905
 DOWNSTREAM = (
@@ -21,7 +34,17 @@ DOWNSTREAM = (
     ("marketing.content.asset_selector", "content_asset_selector", 960),
     ("marketing.content.writing_studio_adapter", "content_writing_studio_adapter", 1100),
 )
-AGENT_IDS = tuple([f"marketing.scout.{slug}" for slug in SCOUT_SLUGS] + [d[0] for d in DOWNSTREAM])
+# Agents the two seeded pipelines actually invoke, and therefore the ones whose
+# absence must block seeding. DOWNSTREAM[2] (marketing.content.brief_assembler)
+# is deliberately excluded: its node left marketing.main with Gate 1 on
+# 2026-08-12 (see build_marketing_pipeline), and the deliverables pipeline never
+# used it. The agent itself stays defined and available for the human-started
+# campaign-initiation flow; it simply must not be a seeding precondition while
+# nothing runs it.
+AGENT_IDS = tuple(
+    [f"marketing.scout.{slug}" for slug in SCOUT_SLUGS]
+    + [d[0] for i, d in enumerate(DOWNSTREAM) if i != 2]
+)
 _DEFAULT_ACTIVE_DELIVERABLES = (
     {"slug": "outreach_email", "label": "Outreach Email", "display_order": 1},
 )
@@ -122,28 +145,40 @@ def build_marketing_pipeline(
     nodes[-2]["config"]["description"] = (
         "Hard filters → Score against all rulesets → Route to top campaign type(s)"
     )
-    nodes.append(
-        {
-            "id": "gate_1_signals_inbox",
-            "type": "human_gate",
-            "label": "Gate 1 Signals Inbox",
-            "config": {
-                "approval_kind": "signal_brief",
-                "approvers": ["joshua.mukai@amiralearning.com", "angela.miata@amiralearning.com"],
-                "timeout_hours": 72,
-            },
-            "position": {"x": 800.0, "y": 690.0},
-        }
-    )
-    nodes.append(_agent_node(DOWNSTREAM[2][0], DOWNSTREAM[2][1], 800, DOWNSTREAM[2][2]))
-    nodes[-1]["config"]["propose_initiation"] = True
-
+    # This pipeline ENDS at qualification. Owner decision, Jon, 2026-08-12.
+    #
+    # It used to continue: qualifier_brief_composer -> gate_1_signals_inbox
+    # (a blocking human_gate DMing Josh and Angela per signal) ->
+    # content_brief_assembler (propose_initiation=True). Both are removed, and
+    # they had to go together -- ``_execute_campaign_initiation_proposal``
+    # requires an uninitiated candidate, and the only thing that creates one is
+    # an operator SELECTION at Gate 1. Auto-approving the gate would therefore
+    # have failed the assembler on every run rather than skipping it.
+    #
+    # Why: Jon does not want per-signal approval pings. "i dont want them to get
+    # pinged about every signal that comes in thats what pops up in the campaign
+    # signals slack channel" -- individual cards already land in
+    # #campaign-signals, and the human touchpoint becomes Callie's combined
+    # daily brief in #market-signals (see docs/market-signals-unification-note.md).
+    # A daily brief cannot unblock a blocking gate, so the gate had to stop
+    # blocking, not merely stop notifying.
+    #
+    # The failure this prevents, concretely: that gate sat suspended for 57 days
+    # and silently blocked every later scheduled run, because its approvers were
+    # configured as josh@ / angela@ -- addresses that do not exist in Slack. The
+    # lookup missed, it fell back to an in-app queue nobody watched, and its
+    # 72-hour escalation went to jon@, which also does not exist. Fixing those
+    # addresses (done, same commit) only meant the unwanted design would start
+    # delivering.
+    #
+    # Campaign initiation is not lost, it is deferred: it becomes a human-started
+    # flow off the daily brief once that brief carries actions (Jon chose
+    # "inform now, add actions later"). Both node definitions are recoverable
+    # from this file's git history if that flow wants them back.
     scouts = [f"scout_{slug}" for slug in SCOUT_SLUGS]
     linear = [
         "qualifier_cross_reference",
         "qualifier_brief_composer",
-        "gate_1_signals_inbox",
-        "content_brief_assembler",
     ]
     pairs = [("trigger_scheduled", scout) for scout in scouts]
     pairs += [(scout, "qualifier_cross_reference") for scout in scouts]

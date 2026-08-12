@@ -978,7 +978,10 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
 
     # Seed marketing pipeline
     result = await seed_marketing_pipeline(db_session)
-    assert result["pipelines"][PIPELINE_ID]["node_count"] == 14
+    # 12, down from 14: gate_1_signals_inbox and content_brief_assembler were
+    # removed on 2026-08-12 by owner decision -- marketing.main now ends at
+    # qualification. See the seed's build_marketing_pipeline comment.
+    assert result["pipelines"][PIPELINE_ID]["node_count"] == 12
 
     async with db_session.begin():
         run = await repo.create_pipeline_run(
@@ -1010,78 +1013,40 @@ async def test_marketing_pipeline_traverses_ci2_graph(db_session: AsyncSession) 
         agent_id = (node.get("config") or {}).get("agent_id", "unknown")
         return _mock_agent_node_result(agent_id)
 
-    with (
-        patch(
-            "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
-            new=_mock_execute_agent_node,
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._schedule_timeout",
-            return_value=None,
-        ),
+    # ONE pass, to completion. This used to be two passes with a manual
+    # gate approval spliced between them; there is no gate to approve now,
+    # and the absence of a second pass IS the thing being tested.
+    with patch(
+        "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
+        new=_mock_execute_agent_node,
     ):
-        # First pass: runs until gate_1_signals_inbox suspends
         async with db_session.begin():
             executor = PipelineExecutor(run_id)
             await executor.run(db_session)
 
     async with db_session.begin():
-        run_obj = await repo.get_pipeline_run(db_session, run_id)
-        assert run_obj.status == "awaiting_approval", (
-            f"Expected awaiting_approval, got {run_obj.status}"
-        )
-        ns = run_obj.node_states
-        assert ns.get("gate_1_signals_inbox", {}).get("status") == "suspended"
-
-        # Approve gate_1
-        ns["gate_1_signals_inbox"]["decision"] = "approved"
-        ns["gate_1_signals_inbox"]["decided_at"] = "2026-05-22T00:00:00+00:00"
-        ns["gate_1_signals_inbox"]["decided_by"] = "test@example.com"
-        await repo.update_pipeline_run(db_session, run_id, node_states=ns, status="running")
-
-    # Second pass: runs from gate_1 onwards through content_brief_assembler to completion
-    with (
-        patch(
-            "artemis.pipelines.node_executors.agent_executor.execute_agent_node",
-            new=_mock_execute_agent_node,
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._get_slack_token",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "artemis.pipelines.node_executors.human_gate_executor._schedule_timeout",
-            return_value=None,
-        ),
-    ):
-        async with db_session.begin():
-            executor2 = PipelineExecutor(run_id)
-            await executor2.run(db_session)
-
-    async with db_session.begin():
-        run_obj = await repo.get_pipeline_run(db_session, run_id)
-        ns = run_obj.node_states
-        assert run_obj.status == "succeeded", (
-            f"Expected succeeded after Gate 1 approval; got {run_obj.status}"
-        )
-
-    async with db_session.begin():
         final = await repo.get_pipeline_run(db_session, run_id)
-        assert final.status == "succeeded", (
-            f"Expected succeeded; got {final.status}; error={final.error_message}"
-        )
         ns = final.node_states
+        assert final.status == "succeeded", (
+            f"Expected succeeded in a single pass; got {final.status}; "
+            f"error={final.error_message}"
+        )
+        assert final.status != "awaiting_approval", (
+            "marketing.main must never suspend. A run left in awaiting_approval "
+            "blocks every later scheduled run of the pipeline, silently -- which "
+            "is exactly what Gate 1 did for 57 days."
+        )
         total_nodes = len([k for k in ns if not k.startswith("_")])
-        assert total_nodes == 14, (
-            f"Expected 14 nodes in state, got {total_nodes}: {list(ns.keys())}"
+        assert total_nodes == 12, (
+            f"Expected 12 nodes in state, got {total_nodes}: {list(ns.keys())}"
         )
         assert ns["trigger_scheduled"]["status"] == "succeeded"
-        assert ns["gate_1_signals_inbox"]["status"] == "succeeded"
-        assert ns["content_brief_assembler"]["status"] == "succeeded"
+        assert ns["qualifier_brief_composer"]["status"] == "succeeded"
+        assert "gate_1_signals_inbox" not in ns
+        assert "content_brief_assembler" not in ns
+        assert not any(
+            state.get("status") == "suspended" for state in ns.values() if isinstance(state, dict)
+        ), "no node may suspend"
 
 
 # ── 13. Integration: continue_on_failure — optional node keeps run alive ──────

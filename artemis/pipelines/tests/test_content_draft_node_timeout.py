@@ -251,7 +251,14 @@ async def test_run_with_tools_forwards_timeout_and_max_turns(tmp_path: Path) -> 
         *,
         tool_run: bool = False,
         timeout_seconds: float | None = None,
+        **kwargs: Any,
     ) -> Any:
+        # **kwargs, not an explicit claude_config_dir: this double had gone stale
+        # against the real signature (which gained claude_config_dir in 496f93e
+        # on 2026-08-10) and failed with a TypeError that named the argument
+        # rather than anything this test is about. The test asserts the cmd and
+        # the timeout it forwards; pinning every unrelated parameter just makes
+        # it break again on the next one.
         captured["cmd"] = cmd
         captured["timeout_seconds"] = timeout_seconds
         from artemis.agent.client import CompletionResponse

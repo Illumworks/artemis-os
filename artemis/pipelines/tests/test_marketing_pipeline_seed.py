@@ -82,14 +82,28 @@ async def test_seed_loads_idempotently_and_writes_expected_graph(
     assert deliverables_row["name"] == "Marketing Campaign Deliverables"
     assert row["trigger_config"] == TRIGGER_CONFIG
     assert deliverables_row["trigger_config"] == MANUAL_TRIGGER_CONFIG
-    assert len(nodes) == 14 and len(edges) == 21
+    # 12/19, down from 14/21: gate_1_signals_inbox and content_brief_assembler
+    # were removed on 2026-08-12 (owner decision -- see build_marketing_pipeline's
+    # comment). marketing.main now ENDS at qualification.
+    assert len(nodes) == 12 and len(edges) == 19
     assert len(deliverable_nodes) == 5 and len(deliverable_edges) == 4
     assert set(agent_ids + deliverable_agent_ids) == set(AGENT_IDS)
     assert {
         "trigger_scheduled": "trigger_scheduled",
-        "gate_1_signals_inbox": "human_gate",
-        "content_brief_assembler": "agent_invocation",
     }.items() <= {node["id"]: node["type"] for node in nodes}.items()
+    # The removed pair, asserted ABSENT rather than merely dropped from the map
+    # above: a blocking human gate reappearing here is the specific regression
+    # worth catching. That gate suspended the pipeline per signal, and because
+    # its approver emails did not exist it stayed suspended for 57 days and
+    # silently blocked every later scheduled run.
+    assert "gate_1_signals_inbox" not in node_ids
+    assert "content_brief_assembler" not in node_ids
+    assert not [node for node in nodes if node["type"] == "human_gate"], (
+        "marketing.main must have no human gate -- the human touchpoint is "
+        "Callie's daily market-signals brief, and a brief cannot unblock a gate"
+    )
+    # Qualification is the end of the line: nothing downstream of it.
+    assert "qualifier_brief_composer" not in {edge["source_node_id"] for edge in edges}
     assert {
         "trigger_manual": "trigger_manual",
         "gate_2_approval_drawer": "human_gate",
@@ -103,7 +117,6 @@ async def test_seed_loads_idempotently_and_writes_expected_graph(
     } == {
         "outreach_email",
     }
-    assert nodes_by_id["content_brief_assembler"]["config"]["propose_initiation"] is True
     assert {
         edge["source_node_id"]
         for edge in deliverable_edges
