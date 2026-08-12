@@ -699,6 +699,33 @@ class Settings(BaseSettings):
             "write as the riskiest line of code in this repo')."
         ),
     )
+    crisis_content_jen_slack_user_id: str = Field(
+        default="U016P00LP08",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_JEN_SLACK_USER_ID",
+            "CRISIS_CONTENT_JEN_SLACK_USER_ID",
+        ),
+        description=(
+            "Jen's Slack user id, for the real ``<@…>`` mention CCA9's "
+            "change-request notification will send (CCA8 -- see "
+            "artemis/crisis_content/notify.py's ``jen_mention()``). "
+            "Ready-for-review cards never use this; they say the plain word "
+            "'Jen' instead (she is pinged only when she must genuinely act).\n\n"
+            "**CONFIGURED, NOT RESOLVED -- do not 'fix' this into an email "
+            "lookup.** Verified live 2026-08: ``users.lookupByEmail`` returns "
+            "nothing for either of Jen's addresses "
+            "(jen@digigeeks.com, jen@justrightstrategy.com -- see "
+            "crisis_content_writeback_jen_emails above). She is an external "
+            "Slack Connect user on a different team (``TUQ6KJT0V``), and "
+            "email lookup only sees users in our own workspace, so it will "
+            "silently return None forever no matter how many times it's "
+            "retried. ``users.info`` on this id independently confirms it is "
+            "jen@digigeeks.com on that external team. The default is that "
+            "confirmed id.\n\n"
+            "Empty string = no known id; ``jen_mention()`` falls back to the "
+            "plain word 'Jen' rather than emitting a broken ``<@>`` mention."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)
