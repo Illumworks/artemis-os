@@ -36,8 +36,10 @@ from sqlalchemy import NullPool, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import artemis.db
+from artemis.config import settings
 from artemis.crisis_content import slack_actions
 from artemis.crisis_content.orm import CrisisContentCard, CrisisContentDecision
+from artemis.crisis_content.transitions import mark_notified
 from artemis.db import attach_pgvector_codec
 from artemis.directory.models import DirectoryPerson
 from artemis.integrations.crypto import encrypt_credentials
@@ -705,3 +707,185 @@ async def test_changes_requested_then_later_approved_both_rows_survive(
     assert rows_after_second[0].decided_by_email == _ANGELA[0]
     assert rows_after_second[1].decision == "approved"
     assert rows_after_second[1].decided_by_email == _HANNAH[0]
+
+
+# ── CCA9: @-mention Jen in-thread on changes_requested only ─────────────────
+
+
+def _fake_slack_post_message_client(
+    posted: list[tuple[str, str, str | None]],
+) -> type:
+    class _FakeSlackClient:
+        def __init__(self, token: str) -> None:
+            self.token = token
+
+        async def post_message(
+            self,
+            channel: str,
+            text: str,
+            thread_ts: str | None = None,
+            blocks: Any = None,
+        ) -> dict[str, Any]:
+            posted.append((channel, text, thread_ts))
+            return {"ok": True}
+
+    return _FakeSlackClient
+
+
+async def test_changes_requested_mentions_jen_in_thread_with_note_text(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changes_requested decision threads a real ``<@…>`` mention for Jen,
+    in the card's own thread, carrying the approver's note text.
+    """
+    monkeypatch.setattr(settings, "crisis_content_jen_slack_user_id", "U016P00LP08")
+
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_slack_post_message_client(posted))
+
+    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
+        pass
+
+    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)
+
+    # CCA9: where the card was posted -- what `find_posted_location` reads
+    # to know which thread to post Jen's mention into.
+    async with db_session.begin():
+        await mark_notified(
+            db_session,
+            card_id,
+            "copy",
+            "Ready",
+            copy_hash="irrelevant-for-this-test",
+            channel_id="C0BM9TL63TL",
+            message_ts="1700000000.000100",
+        )
+
+    resp = await _post(
+        client,
+        _view_submission_payload(
+            private_metadata={
+                "card_id": card_id,
+                "route": "copy",
+                "response_url": "https://hooks.slack.test/actions/FAKE3",
+                "message_ts": "1700000000.000100",
+            },
+            note="tighten the second paragraph",
+            slack_user_id=_ANGELA[1],
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert len(posted) == 1
+    channel, jen_text, thread_ts = posted[0]
+    assert channel == "C0BM9TL63TL"
+    assert thread_ts == "1700000000.000100"
+    assert "<@U016P00LP08>" in jen_text
+    assert "tighten the second paragraph" in jen_text
+
+    # Ready-for-review cards say the plain word Jen elsewhere (CCA8) -- this
+    # message is the ONE exception where a real mention is correct; that
+    # doesn't relax anywhere else, which is covered by
+    # tests/test_crisis_content_voice.py's own tests, left untouched here.
+
+
+async def test_changes_requested_with_empty_jen_setting_posts_without_broken_mention(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty ``crisis_content_jen_slack_user_id`` -> the message still posts,
+    naming Jen in plain text, never a broken ``<@>``.
+    """
+    monkeypatch.setattr(settings, "crisis_content_jen_slack_user_id", "")
+
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_slack_post_message_client(posted))
+
+    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
+        pass
+
+    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)
+
+    async with db_session.begin():
+        await mark_notified(
+            db_session,
+            card_id,
+            "copy",
+            "Ready",
+            copy_hash="irrelevant-for-this-test",
+            channel_id="C0BM9TL63TL",
+            message_ts="1700000000.000200",
+        )
+
+    resp = await _post(
+        client,
+        _view_submission_payload(
+            private_metadata={
+                "card_id": card_id,
+                "route": "copy",
+                "response_url": "https://hooks.slack.test/actions/FAKE4",
+                "message_ts": "1700000000.000200",
+            },
+            note="cut the CTA, it's too pushy",
+            slack_user_id=_HANNAH[1],
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert len(posted) == 1
+    _channel, jen_text, _thread_ts = posted[0]
+    assert "<@" not in jen_text
+    assert "Jen" in jen_text
+    assert "cut the CTA, it's too pushy" in jen_text
+
+
+async def test_changes_requested_with_no_posted_location_skips_jen_mention_without_crashing(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ``crisis_content_notifications`` row for this card+route (e.g. a
+    card actioned before CCA9, or a poller path that never recorded one) ->
+    the request still succeeds and records the decision; there is simply
+    nothing to thread Jen's mention onto. Regression guard for every OTHER
+    test in this file, all of which seed a bare card with no notification
+    row and must keep passing unchanged.
+    """
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(slack_actions, "SlackClient", _fake_slack_post_message_client(posted))
+
+    async def fake_update(response_url: str | None, *, text: str, blocks: list[Any]) -> None:
+        pass
+
+    monkeypatch.setattr(slack_actions, "_update_card_via_response_url", fake_update)
+
+    await _seed_callie_integration(db_session)
+    await _seed_directory(db_session)
+    card_id = await _seed_card(db_session)  # no mark_notified call -- no posted location
+
+    resp = await _post(
+        client,
+        _view_submission_payload(
+            private_metadata={
+                "card_id": card_id,
+                "route": "copy",
+                "response_url": "https://hooks.slack.test/actions/FAKE5",
+                "message_ts": "1700000000.000300",
+            },
+            note="no notification row exists for this card",
+            slack_user_id=_JACLYN[1],
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert posted == []  # nothing to thread onto -- skipped, not crashed
+
+    rows = await _decisions_for(db_session, card_id, "copy")
+    assert len(rows) == 1
+    assert rows[0].decision == "changes_requested"

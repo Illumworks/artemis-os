@@ -20,6 +20,23 @@ Neither ``record_observation`` nor ``mark_notified`` commits -- both flush
 so later reads in the same call see earlier writes. A caller that closes
 the session without committing loses the writes, same as
 ``artemis.memory.store.write_drawer``.
+
+**The re-approval fix (CCA9).** Before this slice, a card that reached
+``Ready``, got a ``changes_requested`` decision, and was then revised by
+Jen would never notify again: the chip still reads ``Ready`` (finding 5 --
+we cannot write chip values), so ``_evaluate_route``'s "did the status
+change" check saw no change and emitted nothing, and even if it had, the
+OLD ``(card_id, route, status_value)`` ledger row would have deduped it.
+``_evaluate_route`` now ALSO re-fires when the status is unchanged at
+``Ready`` but ``_reopened_after_changes_requested`` finds a genuine
+revision (a ``crisis_content_copy_versions`` row newer than the route's
+latest ``changes_requested`` decision) -- and the ledger's unique
+constraint now includes ``copy_hash`` (migration 0109), so the re-fire is
+not itself swallowed as a duplicate of the original notification. See
+``_evaluate_route`` and ``_reopened_after_changes_requested`` below.
+``approved`` stays terminal: ``_reopened_after_changes_requested`` only
+ever returns True for a route whose LATEST decision is
+``changes_requested``.
 """
 
 from __future__ import annotations
@@ -38,6 +55,7 @@ from artemis.crisis_content.models import ReviewCard
 from artemis.crisis_content.orm import (
     CrisisContentCard,
     CrisisContentCopyVersion,
+    CrisisContentDecision,
     CrisisContentNotification,
 )
 from artemis.crisis_content.parser import classify_status
@@ -51,6 +69,7 @@ __all__ = [
     "has_notified",
     "mark_notified",
     "find_card_id",
+    "find_posted_location",
 ]
 
 Route = Literal["asset", "copy"]
@@ -261,11 +280,13 @@ async def _evaluate_route(
 ) -> Transition | None:
     """Apply the transition + suppression rules for one route of one card.
 
-    Emits iff: the status is set, is recognized, is exactly ``Ready``,
-    differs from the previous observation, and (for the asset route) an
-    asset is actually attached. An unrecognized non-null status logs a
-    WARNING and never emits -- silence here means Jen added a dropdown
-    option and the pipeline quietly stopped working.
+    Emits iff: the status is set, is recognized, is exactly ``Ready``, and
+    (for the asset route) an asset is actually attached -- AND EITHER the
+    status differs from the previous observation (the normal case) OR the
+    re-approval fix applies (``_reopened_after_changes_requested`` -- see
+    the module docstring's "The re-approval fix (CCA9)"). An unrecognized
+    non-null status logs a WARNING and never emits -- silence here means
+    Jen added a dropdown option and the pipeline quietly stopped working.
     """
     if new_status is None:
         return None
@@ -284,13 +305,26 @@ async def _evaluate_route(
         )
         return None
 
-    if new_status != _READY or new_status == previous_status:
+    if new_status != _READY:
         return None
 
     if route == "asset" and card.asset_url is None:
         return None
 
-    if await has_notified(session, card_id, route, new_status):
+    if new_status == previous_status:
+        # The chip never moved -- normally nothing to do. The one exception
+        # is the re-approval fix: a changes_requested decision followed by a
+        # genuine revision. See the module docstring.
+        if not await _reopened_after_changes_requested(session, card_id, route):
+            return None
+        logger.info(
+            "crisis_content: re-firing %s route for card_id=%s -- a changes_requested "
+            "decision was followed by a revised copy version",
+            route,
+            card_id,
+        )
+
+    if await has_notified(session, card_id, route, new_status, card.copy_hash):
         return None
 
     return Transition(
@@ -300,6 +334,60 @@ async def _evaluate_route(
         new_status=new_status,
         is_new_card=is_new_card,
     )
+
+
+async def _reopened_after_changes_requested(
+    session: AsyncSession, card_id: int, route: Route
+) -> bool:
+    """True iff ``route``'s LATEST decision is ``changes_requested`` AND a
+    ``crisis_content_copy_versions`` row exists for this card with
+    ``first_seen_at`` after that decision's ``decided_at`` -- i.e. Jen has
+    actually revised the copy since. This is the re-approval fix (CCA9);
+    see the module docstring's "The re-approval fix (CCA9)".
+
+    ``approved`` stays terminal by construction: this returns False for
+    ANY decision other than ``changes_requested`` -- including no decision
+    at all, or the route's latest decision already being ``approved``.
+
+    Reads ``CrisisContentDecision`` directly with the same
+    ``ORDER BY id DESC`` "latest decision" query
+    ``artemis.crisis_content.decisions.get_latest_decision`` uses (same
+    same-timestamp-burst reasoning: ``id`` is strictly monotonic on insert
+    order, ``decided_at`` is not), rather than importing that function --
+    ``decisions.py`` already imports ``Route`` from THIS module, so
+    importing back from ``decisions.py`` here would be a circular import.
+    ``artemis.crisis_content.orm`` is a leaf module (imports nothing from
+    either), so reading its ``CrisisContentDecision`` class directly here is
+    safe.
+
+    The version check is deliberately card-level, not route-level: there is
+    no asset-specific version log (no new column was added for this --
+    brief section 5), so the SAME ``crisis_content_copy_versions`` log
+    (keyed only by ``card_id``) is the "has this post been touched since
+    the decision" signal for BOTH routes. This mirrors the asset route
+    rather than special-casing it, per the brief.
+    """
+    stmt = (
+        select(CrisisContentDecision)
+        .where(CrisisContentDecision.card_id == card_id, CrisisContentDecision.route == route)
+        .order_by(CrisisContentDecision.id.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    latest = result.scalar_one_or_none()
+    if latest is None or latest.decision != "changes_requested":
+        return False
+
+    version_stmt = (
+        select(CrisisContentCopyVersion.id)
+        .where(
+            CrisisContentCopyVersion.card_id == card_id,
+            CrisisContentCopyVersion.first_seen_at > latest.decided_at,
+        )
+        .limit(1)
+    )
+    version_result = await session.execute(version_stmt)
+    return version_result.scalar_one_or_none() is not None
 
 
 async def find_card_id(session: AsyncSession, card: ReviewCard) -> int | None:
@@ -334,14 +422,25 @@ async def find_card_id(session: AsyncSession, card: ReviewCard) -> int | None:
     return result.scalar_one_or_none()
 
 
-async def has_notified(session: AsyncSession, card_id: int, route: Route, status_value: str) -> bool:
-    """True if ``mark_notified`` has already recorded this ``(card, route, status)``."""
+async def has_notified(
+    session: AsyncSession, card_id: int, route: Route, status_value: str, copy_hash: str
+) -> bool:
+    """True if ``mark_notified`` already recorded this ``(card, route, status, copy_hash)``.
+
+    ``copy_hash`` joined the dedup key in CCA9 (migration 0109) -- see the
+    module docstring's "The re-approval fix (CCA9)". Without it, a genuine
+    revision after a ``changes_requested`` decision would be swallowed by
+    the OLD ledger row for the same ``(card, route, 'Ready')``, because the
+    copy chip itself never leaves ``Ready`` (finding 5 -- chip values cannot
+    be written back).
+    """
     stmt = (
         select(CrisisContentNotification.id)
         .where(
             CrisisContentNotification.card_id == card_id,
             CrisisContentNotification.route == route,
             CrisisContentNotification.status_value == status_value,
+            CrisisContentNotification.copy_hash == copy_hash,
         )
         .limit(1)
     )
@@ -355,20 +454,68 @@ async def mark_notified(
     route: Route,
     status_value: str,
     *,
+    copy_hash: str,
+    channel_id: str | None = None,
+    message_ts: str | None = None,
     notified_at: datetime | None = None,
 ) -> None:
-    """Record that ``(card_id, route, status_value)`` has been notified.
+    """Record that ``(card_id, route, status_value, copy_hash)`` has been notified.
 
     Slice B2 calls this only after a successful Slack post -- never before,
     so a delivery failure is never mistaken for a delivered one.
     ``ON CONFLICT DO NOTHING`` on the same unique constraint the migration
     creates makes a retried call safe. Does not commit -- see the module
     docstring's transaction contract.
+
+    ``copy_hash`` is required (CCA9) -- every real caller has it trivially
+    available (``transition.card.copy_hash``), and making it required
+    rather than defaulted avoids a caller silently writing a row the new
+    re-approval dedup can never actually match against. ``channel_id`` /
+    ``message_ts`` are optional and default to ``None`` -- CCA9 records
+    them so ``find_card_thread_target``
+    (``artemis.crisis_content.thread_notes``) can map a Slack thread reply
+    back to this card, but a caller that cannot determine where the message
+    landed (e.g. a test double that doesn't echo Slack's response) should
+    not be forced to fabricate a value.
     """
     stamp = notified_at if notified_at is not None else datetime.now(UTC)
     stmt = (
         pg_insert(CrisisContentNotification)
-        .values(card_id=card_id, route=route, status_value=status_value, notified_at=stamp)
+        .values(
+            card_id=card_id,
+            route=route,
+            status_value=status_value,
+            copy_hash=copy_hash,
+            channel_id=channel_id,
+            message_ts=message_ts,
+            notified_at=stamp,
+        )
         .on_conflict_do_nothing(constraint=_NOTIFICATIONS_CONSTRAINT)
     )
     await session.execute(stmt)
+
+
+async def find_posted_location(
+    session: AsyncSession, card_id: int, route: Route
+) -> tuple[str | None, str | None] | None:
+    """Where the most recent notification for ``(card_id, route)`` was posted.
+
+    Read-only. Returns ``(channel_id, message_ts)`` from the newest matching
+    ``crisis_content_notifications`` row (highest ``id``), or ``None`` if no
+    notification has ever been recorded for this route. Used by CCA9's Jen
+    change-request mention (``artemis.crisis_content.slack_actions``) to
+    find which thread to post into -- a miss, or an incomplete pair (either
+    element ``None``), means "nothing to thread onto," and that caller skips
+    rather than guessing a destination.
+    """
+    stmt = (
+        select(CrisisContentNotification.channel_id, CrisisContentNotification.message_ts)
+        .where(CrisisContentNotification.card_id == card_id, CrisisContentNotification.route == route)
+        .order_by(CrisisContentNotification.id.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is None:
+        return None
+    return (row[0], row[1])

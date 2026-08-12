@@ -397,7 +397,7 @@ async def _observe_and_notify(session: AsyncSession, cards: list[ReviewCard]) ->
         card_failed = False
         for transition in card_transitions:
             try:
-                await post_transition_card(session, transition)
+                posted = await post_transition_card(session, transition)
             except Exception as exc:
                 card_failed = True
                 notify_failures.append(f"{transition.card.identity_key} {transition.route}: {exc}")
@@ -409,8 +409,21 @@ async def _observe_and_notify(session: AsyncSession, cards: list[ReviewCard]) ->
                 )
                 continue
 
+            # `getattr` with a `None` default rather than assuming `posted` is a
+            # `PostedCardMessage` -- a monkeypatched fake in the poller's own
+            # test suite (pre-CCA9) returns `None`, and a missing channel_id/
+            # message_ts must degrade gracefully (nullable columns), not crash
+            # the tick that would otherwise have marked a successful post.
             card_id = await _resolve_card_id(session, transition.card)
-            await mark_notified(session, card_id, transition.route, transition.new_status)
+            await mark_notified(
+                session,
+                card_id,
+                transition.route,
+                transition.new_status,
+                copy_hash=transition.card.copy_hash,
+                channel_id=getattr(posted, "channel_id", None),
+                message_ts=getattr(posted, "message_ts", None),
+            )
 
         if card_failed:
             await session.rollback()

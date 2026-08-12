@@ -67,6 +67,7 @@ import hashlib
 import logging
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -94,6 +95,7 @@ __all__ = [
     "render_transition_message",
     "render_transition_blocks",
     "render_decision_message",
+    "PostedCardMessage",
     "post_transition_card",
     "copy_mention_emails",
     "reset_notify_caches_for_tests",
@@ -257,18 +259,16 @@ def copy_mention_emails() -> list[str]:
 def _join_mentions(mention_tags: list[str]) -> str:
     """``"<@U1>, <@U2> or <@U3>"`` for however many resolved.
 
-    Shared by the live footer's "Any one of ..." line below and CCA8's
-    opener ``{approvers}`` slot (``render_opener``) -- same names, same
-    join style, in both places on the same card.
+    Feeds CCA8's opener ``{approvers}`` slot (``render_opener``). Used to
+    ALSO build a redundant "Any one of ... can approve." footer
+    (``_copy_live_footer``, CCA6) that named the approvers a second time on
+    the same card; CCA9 removed that footer (the opener already carries who
+    and the any-one-of rule) and this helper's only remaining caller is the
+    opener.
     """
     if len(mention_tags) == 1:
         return mention_tags[0]
     return ", ".join(mention_tags[:-1]) + " or " + mention_tags[-1]
-
-
-def _copy_live_footer(mention_tags: list[str]) -> str:
-    """``"Any one of <@U1>, <@U2> or <@U3> can approve."`` for however many resolved."""
-    return f"Any one of {_join_mentions(mention_tags)} can approve."
 
 
 async def _resolve_copy_mentions(client: SlackClient) -> tuple[list[str], list[str]]:
@@ -503,9 +503,44 @@ def render_decision_message(
     return text, blocks
 
 
+@dataclass(frozen=True)
+class PostedCardMessage:
+    """Where a transition's card actually landed (CCA9).
+
+    Returned by ``post_transition_card`` so the caller (``artemis.crisis_content
+    .poller``) can persist ``channel_id``/``message_ts`` onto the
+    ``crisis_content_notifications`` row it writes via ``mark_notified`` --
+    that row is the ONLY place a later Slack thread reply can be mapped back
+    to this card (see ``artemis.crisis_content.thread_notes
+    .find_card_thread_target``).
+
+    Sourced from the REAL Slack API response's own ``channel``/``ts`` fields
+    -- not from what we asked to post to, because a DM's channel id is only
+    known once ``conversations.open`` resolves it internally (``post_dm``
+    does that resolution and returns the resulting channel in its response).
+    Either field is ``None`` when the response doesn't carry it (an
+    unexpected Slack response shape, or a test double that doesn't echo one
+    back) -- the notification row's columns are nullable for exactly this
+    reason; a caller that can't map a reply back to this card is better than
+    one that crashes.
+    """
+
+    channel_id: str | None
+    message_ts: str | None
+
+
+def _posted_message_from_response(response: dict[str, object]) -> PostedCardMessage:
+    channel = response.get("channel")
+    ts = response.get("ts")
+    return PostedCardMessage(
+        channel_id=str(channel) if channel else None,
+        message_ts=str(ts) if ts else None,
+    )
+
+
 async def _post_dm_jon_override(
     client: SlackClient, transition: Transition, card_id: int
-) -> None:
+) -> PostedCardMessage:
     """The ``dm_jon`` rollback: every route DMs Jon, testing footer restored.
 
     Deliberately does not resolve the copy approvers a second time for the
@@ -524,17 +559,18 @@ async def _post_dm_jon_override(
     footer = testing_line_for_route(transition.route)
     text = render_transition_message(transition, footer=footer)
     blocks = render_transition_blocks(transition, card_id, footer=footer)
-    await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
+    response = await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
     logger.info(
         "crisis_content: posted %s-route card for card=%r to Jon (dm_jon override)",
         transition.route,
         transition.card.identity_key,
     )
+    return _posted_message_from_response(response)
 
 
 async def _post_live_asset(
     client: SlackClient, transition: Transition, card_id: int
-) -> None:
+) -> PostedCardMessage:
     """Live routing, ``asset`` route: DM Jon, no footer (he owns visuals)."""
     jon_slack_id = await _resolve_slack_id_cached(client, JON_EMAIL)
     if not jon_slack_id:
@@ -543,16 +579,17 @@ async def _post_live_asset(
         )
     text = render_transition_message(transition, footer="")
     blocks = render_transition_blocks(transition, card_id, footer="")
-    await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
+    response = await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
     logger.info(
         "crisis_content: posted asset-route card for card=%r to Jon (live)",
         transition.card.identity_key,
     )
+    return _posted_message_from_response(response)
 
 
 async def _post_live_copy(
     client: SlackClient, transition: Transition, card_id: int
-) -> None:
+) -> PostedCardMessage:
     """Live routing, ``copy`` route: post to the channel, mentioning whoever resolved.
 
     One unresolvable approver must not kill the notification (CCA6) -- post
@@ -561,6 +598,12 @@ async def _post_live_copy(
     notification), which surfaces as this function raising -- the caller
     (``post_transition_card``) never calls ``mark_notified`` for a raise, so
     the next tick retries.
+
+    No footer (CCA9) -- the old "Any one of <@...> can approve." line
+    (``_copy_live_footer``, CCA6) duplicated who could approve; CCA8's
+    opener already names the same three approvers via ``approvers`` below,
+    so the footer was purely redundant. Jon's call; see
+    ``briefs/cca9-card-lifecycle.md`` section 1.
     """
     mention_tags, unresolved = await _resolve_copy_mentions(client)
     for email in unresolved:
@@ -582,9 +625,8 @@ async def _post_live_copy(
 
     channel = settings.crisis_content_copy_notify_channel
     approvers = _join_mentions(mention_tags)
-    footer = _copy_live_footer(mention_tags)
-    text = render_transition_message(transition, footer=footer, approvers=approvers)
-    blocks = render_transition_blocks(transition, card_id, footer=footer, approvers=approvers)
+    text = render_transition_message(transition, footer="", approvers=approvers)
+    blocks = render_transition_blocks(transition, card_id, footer="", approvers=approvers)
     try:
         # SlackClient.post_message declares `blocks: list[object] | None`,
         # invariant -- `list[dict[str, Any]]` (what render_transition_blocks
@@ -594,7 +636,9 @@ async def _post_live_copy(
         # cast is the narrower, local fix rather than widening
         # SlackClient.post_message's signature, which is out of this
         # slice's file scope.
-        await client.post_message(channel=channel, text=text, blocks=cast("list[object]", blocks))
+        response = await client.post_message(
+            channel=channel, text=text, blocks=cast("list[object]", blocks)
+        )
     except SlackAPIError as exc:
         if exc.error == "not_in_channel":
             raise RuntimeError(
@@ -612,9 +656,10 @@ async def _post_live_copy(
         mention_tags,
         unresolved,
     )
+    return _posted_message_from_response(response)
 
 
-async def post_transition_card(session: AsyncSession, transition: Transition) -> None:
+async def post_transition_card(session: AsyncSession, transition: Transition) -> PostedCardMessage:
     """Post ``transition``'s rendered card (text + decision buttons), as Callie.
 
     Destination is ``settings.crisis_content_notify_destination`` -- see the
@@ -632,6 +677,9 @@ async def post_transition_card(session: AsyncSession, transition: Transition) ->
     row's id, and there is no card to decide on if it doesn't exist yet.
     Every real caller (``artemis/crisis_content/poller.py``) satisfies this
     by construction.
+
+    Returns the ``PostedCardMessage`` (CCA9) so the caller can persist WHERE
+    this card landed onto the notification ledger.
     """
     card_id = await find_card_id(session, transition.card)
     if card_id is None:
@@ -648,10 +696,8 @@ async def post_transition_card(session: AsyncSession, transition: Transition) ->
     client = SlackClient(token=agent_cfg.access_token)
 
     if settings.crisis_content_notify_destination == "dm_jon":
-        await _post_dm_jon_override(client, transition, card_id)
-        return
+        return await _post_dm_jon_override(client, transition, card_id)
 
     if transition.route == "asset":
-        await _post_live_asset(client, transition, card_id)
-    else:
-        await _post_live_copy(client, transition, card_id)
+        return await _post_live_asset(client, transition, card_id)
+    return await _post_live_copy(client, transition, card_id)
