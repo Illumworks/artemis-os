@@ -35,6 +35,7 @@ from artemis.crisis_content.models import ReviewCard
 from artemis.crisis_content.orm import CrisisContentNotification
 from artemis.crisis_content.parser import NoReviewCardsFoundError
 from artemis.crisis_content.poller import run_poll_tick
+from artemis.crisis_content.tab_resolution import CardTabInfo
 from artemis.db import attach_pgvector_codec
 
 # NOTE: no module-level `pytestmark = pytest.mark.asyncio` here (unlike
@@ -115,6 +116,26 @@ def _make_card(
     )
 
 
+async def _default_fake_resolve_card_tab_map(
+    access_token: str, document_id: str, cards: list[ReviewCard]
+) -> dict[tuple[str, str | None, int], CardTabInfo]:
+    """Default CCA13 tab-resolution stub: every card resolves, none are test cards.
+
+    Every pre-CCA13 test in this file constructs cards and expects ordinary
+    (non-test) persistence/notification behavior, with no opinion at all
+    about tabs -- this reproduces that by resolving each card onto a generic
+    real tab. Tests that DO care about tab resolution (failure, is_test)
+    override this via ``monkeypatch.setattr(poller, "resolve_card_tab_map", ...)``
+    after calling ``_patch_pipeline``.
+    """
+    return {
+        card.identity_key: CardTabInfo(
+            tab_id="t.cv99t981gtu6", tab_title="Content To Review", is_test=False
+        )
+        for card in cards
+    }
+
+
 def _patch_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -122,7 +143,8 @@ def _patch_pipeline(
     parse_side_effect: BaseException | None = None,
     post_side_effect: BaseException | None = None,
 ) -> list[ReviewCard]:
-    """Stub out Google-fetch + parse + Slack-post for one call to run_poll_tick.
+    """Stub out Google-fetch + parse + tab-resolution + Slack-post for one
+    call to run_poll_tick.
 
     Returns the ``cards`` list that ``parse_review_cards`` will hand back (so
     callers can assert against the same objects), unless ``parse_side_effect``
@@ -148,6 +170,7 @@ def _patch_pipeline(
     monkeypatch.setattr(poller, "_resolve_access_token", fake_resolve_access_token)
     monkeypatch.setattr(poller, "fetch_crisis_content_export_html", fake_fetch)
     monkeypatch.setattr(poller, "parse_review_cards", fake_parse)
+    monkeypatch.setattr(poller, "resolve_card_tab_map", _default_fake_resolve_card_tab_map)
     monkeypatch.setattr(poller, "post_transition_card", fake_post)
     return resolved_cards
 
@@ -443,6 +466,7 @@ async def test_live_copy_channel_post_failure_leaves_no_notification_row_and_ret
     monkeypatch.setattr(poller, "_resolve_access_token", fake_resolve_access_token)
     monkeypatch.setattr(poller, "fetch_crisis_content_export_html", fake_fetch)
     monkeypatch.setattr(poller, "parse_review_cards", fake_parse)
+    monkeypatch.setattr(poller, "resolve_card_tab_map", _default_fake_resolve_card_tab_map)
     # Deliberately NOT monkeypatching poller.post_transition_card -- this
     # test wants the real notify.post_transition_card to run.
 
@@ -515,3 +539,125 @@ def test_testing_line_is_route_specific() -> None:
     for line in (TESTING_LINE, TESTING_LINE_ASSET):
         assert "Testing" in line
         assert "routed to you only" in line
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CCA13: tab resolution -- the dangerous failure mode
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_tab_resolution_failure_notifies_nothing_alerts_and_next_tick_retries(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The brief's "dangerous part": if the one documents.get call this tick
+    fails, this tick must notify NOTHING -- no Slack post attempted, no
+    ledger row, no CrisisContentCard row either (record_observation is never
+    even called) -- log ERROR + alert Jon, and let the next tick retry once
+    resolution succeeds. Without a resolved tab we cannot tell a test card
+    from a real one, and guessing "real" risks posting Jon's duplicated test
+    card to the live channel and @-mentioning the external vendor about it.
+    """
+    from artemis.crisis_content.tab_resolution import TabResolutionError
+
+    alerts: list[str] = []
+    posts: list[str] = []
+
+    async def fake_alert(session: AsyncSession, text_: str) -> None:
+        alerts.append(text_)
+
+    async def counting_post(session: AsyncSession, transition: object) -> None:
+        posts.append("posted")
+
+    async def failing_resolve(
+        access_token: str, document_id: str, cards: list[ReviewCard]
+    ) -> dict[object, object]:
+        raise TabResolutionError("documents.get returned HTTP 500")
+
+    card = _make_card(copy_status="Ready")
+    _patch_pipeline(monkeypatch, cards=[card])
+    monkeypatch.setattr(poller, "resolve_card_tab_map", failing_resolve)
+    monkeypatch.setattr(poller, "post_transition_card", counting_post)
+    monkeypatch.setattr(poller, "_alert_jon", fake_alert)
+
+    await run_poll_tick()
+
+    assert posts == []  # zero notifications posted
+    assert len(alerts) == 1
+    assert "tab resolution" in alerts[0].lower() or "documents.get" in alerts[0].lower()
+    assert poller._failure_state.is_failing is True
+
+    rows = (await db_session.execute(select(CrisisContentNotification))).scalars().all()
+    assert rows == []  # no ledger rows
+    from artemis.crisis_content.orm import CrisisContentCard
+
+    card_rows = (await db_session.execute(select(CrisisContentCard))).scalars().all()
+    assert card_rows == []  # record_observation was never even reached
+
+    # Next tick: resolution succeeds (the default _patch_pipeline stub) --
+    # the SAME still-Ready card is notified normally.
+    monkeypatch.setattr(poller, "resolve_card_tab_map", _default_fake_resolve_card_tab_map)
+    await run_poll_tick()
+
+    assert posts == ["posted"]
+    assert len(alerts) == 2
+    assert "recovered" in alerts[1].lower()
+    rows_after_retry = (
+        await db_session.execute(select(CrisisContentNotification))
+    ).scalars().all()
+    assert len(rows_after_retry) == 1
+
+
+async def test_tab_resolution_call_count_is_one_per_tick_regardless_of_card_count(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration-level proof (see tests/unit_no_db/test_crisis_content_tab_resolution.py
+    for the same property proven directly against resolve_card_tab_map's own
+    documents.get call): the poller invokes resolve_card_tab_map exactly
+    ONCE per tick no matter how many cards were parsed that tick.
+    """
+    calls: list[int] = []
+
+    async def counting_resolve(
+        access_token: str, document_id: str, cards: list[ReviewCard]
+    ) -> dict[tuple[str, str | None, int], CardTabInfo]:
+        calls.append(len(cards))
+        return {
+            card.identity_key: CardTabInfo(
+                tab_id="t.cv99t981gtu6", tab_title="Content To Review", is_test=False
+            )
+            for card in cards
+        }
+
+    async def fake_post(session: AsyncSession, transition: object) -> None:
+        return None
+
+    cards = [_make_card(header=f"Card {i}", copy_status="Ready") for i in range(4)]
+    _patch_pipeline(monkeypatch, cards=cards)
+    monkeypatch.setattr(poller, "resolve_card_tab_map", counting_resolve)
+    monkeypatch.setattr(poller, "post_transition_card", fake_post)
+
+    await run_poll_tick()
+
+    assert calls == [4]  # exactly one call, and it saw all 4 cards at once
+
+
+async def test_tab_resolution_skipped_entirely_when_no_cards_parsed(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Zero cards this tick -> zero documents.get calls -- no card needs a
+    tab, so the extra network round trip is skipped, not merely a no-op.
+    """
+    calls: list[int] = []
+
+    async def counting_resolve(
+        access_token: str, document_id: str, cards: list[ReviewCard]
+    ) -> dict[object, object]:
+        calls.append(1)
+        return {}
+
+    _patch_pipeline(monkeypatch, cards=[])
+    monkeypatch.setattr(poller, "resolve_card_tab_map", counting_resolve)
+
+    await run_poll_tick()
+
+    assert calls == []

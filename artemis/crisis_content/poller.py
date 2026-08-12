@@ -8,6 +8,7 @@ scheduler.py``):
     resolve Jon's personal Google access token
         -> fetch_crisis_content_export_html
         -> parse_review_cards
+        -> resolve_card_tab_map (CCA13, one documents.get call -- see below)
         -> record_observation (per card, see "Commit granularity" below)
         -> for each transition: post_transition_card, then mark_notified
 
@@ -47,6 +48,29 @@ once again on recovery, and stay quiet in between (see ``_enter_failure`` /
 ``_maybe_recover``). Overlap is guarded by an in-process ``asyncio.Lock``
 (``_poll_lock``): a slow pass causes the next tick to skip, logged at INFO,
 never to queue behind it.
+
+**Tab resolution (CCA13) -- the dangerous failure mode.** Right after
+parsing this tick's cards (and only if there are any -- an empty list skips
+the network call entirely), ``_run_poll_tick_locked`` calls
+``artemis.crisis_content.tab_resolution.resolve_card_tab_map`` exactly ONCE
+to learn which Google Docs tab each card lives on, which is also how a card
+is recognized as living in Jon's ``TESTING`` tab
+(``Transition.is_test`` -- see ``transitions.py`` and ``tab_resolution.py``).
+If that single ``documents.get`` call fails (``TabResolutionError``), this
+function does the same thing every other pre-notify failure branch above
+does: log ERROR via ``_enter_failure`` (debounced), commit, and return --
+**notifying NOTHING this tick**, never calling ``record_observation`` or
+``post_transition_card`` at all. This is deliberate, not merely convenient:
+without tab titles this tick cannot tell a test card from a real one, and
+treating an unresolved card as real would risk posting Jon's duplicated
+test card to the live channel and ``@mention``-ing the external vendor
+about a fake post -- the exact outcome the test lane exists to prevent.
+Nothing is lost by skipping: as above, ``mark_notified`` only ever records
+after a successful post, so the next tick retries cleanly. A card that
+fails to resolve individually (the fetch succeeded, but that one card
+couldn't be positively matched -- see ``tab_resolution.py``'s own
+docstring) does not raise here; ``record_observation`` skips just that
+card, per its own ``tab_map`` contract.
 """
 
 from __future__ import annotations
@@ -75,6 +99,12 @@ from artemis.crisis_content.parser import (
     NoReviewCardsFoundError,
     SignInPageError,
     parse_review_cards,
+)
+from artemis.crisis_content.tab_resolution import (
+    CardIdentityKey,
+    CardTabInfo,
+    TabResolutionError,
+    resolve_card_tab_map,
 )
 from artemis.crisis_content.transitions import mark_notified, record_observation
 from artemis.google_docs.client import GoogleReauthRequiredError, refresh_access_token
@@ -387,7 +417,25 @@ async def _run_poll_tick_locked() -> None:
             )
             await session.commit()
 
-        notify_failures: list[str] = await _observe_and_notify(session, cards)
+        # CCA13: one documents.get call, only if there is at least one card
+        # to resolve a tab for -- see the module docstring's "Tab resolution"
+        # section. A failure here means we cannot tell a test card from a
+        # real one, so this tick notifies NOTHING and returns, same as every
+        # failure branch above.
+        tab_map: dict[CardIdentityKey, CardTabInfo] = {}
+        if cards:
+            try:
+                tab_map = dict(await resolve_card_tab_map(access_token, TARGET_DOCUMENT_ID, cards))
+            except TabResolutionError as exc:
+                await _enter_failure(
+                    session,
+                    "Tab resolution failed -- cannot tell test cards from real ones, "
+                    f"so nothing will be notified this tick: {exc}",
+                )
+                await session.commit()
+                return
+
+        notify_failures: list[str] = await _observe_and_notify(session, cards, tab_map)
 
         if notify_failures:
             await _enter_failure(session, "Slack post failed for: " + "; ".join(notify_failures))
@@ -397,16 +445,22 @@ async def _run_poll_tick_locked() -> None:
             await session.commit()
 
 
-async def _observe_and_notify(session: AsyncSession, cards: list[ReviewCard]) -> list[str]:
+async def _observe_and_notify(
+    session: AsyncSession,
+    cards: list[ReviewCard],
+    tab_map: dict[CardIdentityKey, CardTabInfo] | None = None,
+) -> list[str]:
     """Persist + notify one card at a time; return failure descriptions, if any.
 
     See the module docstring ("Commit granularity") for why this iterates
     per card with its own commit/rollback rather than sharing one commit
-    across the whole tick.
+    across the whole tick. ``tab_map`` (CCA13) is threaded straight into
+    ``record_observation`` -- see that function's own docstring for what a
+    card missing from it means.
     """
     notify_failures: list[str] = []
     for card in cards:
-        card_transitions = await record_observation(session, [card])
+        card_transitions = await record_observation(session, [card], tab_map)
         if not card_transitions:
             await session.commit()
             continue

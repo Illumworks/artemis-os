@@ -539,3 +539,115 @@ def test_live_routing_footers_never_contain_the_testing_line() -> None:
     asset_text = notify.render_transition_message(asset_transition, footer="")
     assert "Testing" not in asset_text
     assert notify.TESTING_LINE_ASSET not in asset_text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CCA13: transition.is_test wins over the global destination, for THIS card
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_test_card_on_copy_route_dms_jon_never_the_channel(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A test-lane copy card must DM Jon -- never the live channel -- even
+    though 'live' copy routing normally posts to the channel and mentions
+    the three approvers. This is the exact failure the test lane exists to
+    prevent: a duplicated test card must never reach the channel or put an
+    @-mention in front of the external vendor.
+    """
+    monkeypatch.setattr(settings, "crisis_content_notify_destination", "live")
+
+    fake_cls = _make_fake_slack_client_cls({_JON: "U_JON"})
+    _patch_slack(monkeypatch, fake_cls)
+
+    card = _make_card(header="Duplicated test card", copy_status="Ready")
+    transition = Transition(
+        card=card,
+        route="copy",
+        previous_status="Draft",
+        new_status="Ready",
+        is_new_card=False,
+        is_test=True,
+    )
+    await _seed_card_row(db_session, card)
+
+    await notify.post_transition_card(db_session, transition)
+
+    client = fake_cls.instances[0]
+    assert client.message_calls == []  # never the channel
+    assert len(client.dm_calls) == 1
+    recipient, msg_text, _blocks = client.dm_calls[0]
+    assert recipient == "U_JON"
+    assert notify.TESTING_LINE in msg_text
+
+
+async def test_test_card_on_asset_route_keeps_testing_footer(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A live asset-route card normally carries NO footer at all (Jon owns
+    visuals, no ambiguity to flag). A test-lane asset card must still show
+    the route-specific ``⚠️ Testing`` footer so Jon can tell it apart from a
+    real asset waiting on him.
+    """
+    monkeypatch.setattr(settings, "crisis_content_notify_destination", "live")
+
+    fake_cls = _make_fake_slack_client_cls({_JON: "U_JON"})
+    _patch_slack(monkeypatch, fake_cls)
+
+    card = _make_card(
+        header="Duplicated test asset",
+        asset_status="Ready",
+        asset_url="https://example.com/asset.png",
+        copy_status="Draft",
+    )
+    transition = Transition(
+        card=card,
+        route="asset",
+        previous_status="Draft",
+        new_status="Ready",
+        is_new_card=False,
+        is_test=True,
+    )
+    await _seed_card_row(db_session, card)
+
+    await notify.post_transition_card(db_session, transition)
+
+    client = fake_cls.instances[0]
+    assert len(client.dm_calls) == 1
+    _recipient, msg_text, _blocks = client.dm_calls[0]
+    assert notify.TESTING_LINE_ASSET in msg_text
+
+
+async def test_real_card_under_live_routing_has_no_testing_footer_for_contrast(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same fixture shape as the two tests above, ``is_test=False`` -- the
+    direct contrast the brief's Tests section asks for: a real card under
+    live routing keeps the channel destination and no footer.
+    """
+    monkeypatch.setattr(settings, "crisis_content_notify_destination", "live")
+
+    fake_cls = _make_fake_slack_client_cls(
+        {_ANGELA: "U_ANGELA", _HANNAH: "U_HANNAH", _JACLYN: "U_JACLYN", _JON: "U_JON"}
+    )
+    _patch_slack(monkeypatch, fake_cls)
+
+    card = _make_card(header="Genuine live card", copy_status="Ready")
+    transition = Transition(
+        card=card,
+        route="copy",
+        previous_status="Draft",
+        new_status="Ready",
+        is_new_card=False,
+        is_test=False,
+    )
+    await _seed_card_row(db_session, card)
+
+    await notify.post_transition_card(db_session, transition)
+
+    client = fake_cls.instances[0]
+    assert client.dm_calls == []
+    assert len(client.message_calls) == 1
+    _channel, msg_text, _blocks = client.message_calls[0]
+    assert notify.TESTING_LINE not in msg_text
+    assert "Testing" not in msg_text

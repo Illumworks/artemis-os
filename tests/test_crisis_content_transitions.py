@@ -40,6 +40,7 @@ from artemis.crisis_content.orm import (
     CrisisContentCopyVersion,
     CrisisContentDecision,
 )
+from artemis.crisis_content.tab_resolution import CardTabInfo
 from artemis.crisis_content.transitions import mark_notified, record_observation
 from artemis.db import attach_pgvector_codec
 
@@ -954,3 +955,101 @@ async def test_asset_route_reapproval_mirrors_copy_route_rule(
     assert len(second_transitions) == 1
     assert second_transitions[0].route == "asset"
     assert second_transitions[0].new_status == "Ready"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CCA13: tab_map threading -- is_test / tab_id populated from CardTabInfo
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_tab_map_sets_is_test_true_for_a_card_on_the_testing_tab(
+    db_session: AsyncSession,
+) -> None:
+    """A card whose resolved tab is the TESTING tab -> Transition.is_test True,
+    and tab_id carries that tab's id (for the "Edit in doc" ?tab= deep link).
+    """
+    card = _make_card(header="Test-lane card", copy_status="Ready")
+    tab_map = {
+        card.identity_key: CardTabInfo(
+            tab_id="t.cv9uq0oh5hzc",
+            tab_title="Content To Review (TESTING)",
+            is_test=True,
+        )
+    }
+
+    transitions = await record_observation(db_session, [card], tab_map)
+    await db_session.commit()
+
+    assert len(transitions) == 1
+    assert transitions[0].is_test is True
+    assert transitions[0].tab_id == "t.cv9uq0oh5hzc"
+
+
+async def test_tab_map_sets_is_test_false_for_a_card_on_the_real_review_tab(
+    db_session: AsyncSession,
+) -> None:
+    """The same shape, resolved onto the real 'Content To Review' tab -> False."""
+    card = _make_card(header="Real-lane card", copy_status="Ready")
+    tab_map = {
+        card.identity_key: CardTabInfo(
+            tab_id="t.cv99t981gtu6", tab_title="Content To Review", is_test=False
+        )
+    }
+
+    transitions = await record_observation(db_session, [card], tab_map)
+    await db_session.commit()
+
+    assert len(transitions) == 1
+    assert transitions[0].is_test is False
+    assert transitions[0].tab_id == "t.cv99t981gtu6"
+
+
+async def test_no_tab_map_reproduces_pre_cca13_defaults(db_session: AsyncSession) -> None:
+    """Omitting ``tab_map`` entirely (every caller before CCA13) is unchanged:
+    ``is_test`` defaults False and ``tab_id`` defaults None, same as CCA12.
+    """
+    card = _make_card(header="Legacy caller card", copy_status="Ready")
+
+    transitions = await record_observation(db_session, [card])
+    await db_session.commit()
+
+    assert len(transitions) == 1
+    assert transitions[0].is_test is False
+    assert transitions[0].tab_id is None
+
+
+async def test_card_missing_from_tab_map_is_skipped_entirely_and_retries_next_tick(
+    db_session: AsyncSession,
+) -> None:
+    """The dangerous-part rule at card granularity: a card NOT in ``tab_map``
+    (tab resolution attempted but this card could not be positively located)
+    gets no row, no copy version, and no transition this tick -- not a
+    transition with a guessed ``is_test``. A later call with a resolved map
+    for the SAME card observes it normally, proving nothing was lost.
+    """
+    card = _make_card(header="Unresolved card", copy_status="Ready")
+
+    # tab_map is provided (not None) but has no entry for this card's identity.
+    transitions = await record_observation(db_session, [card], {})
+    await db_session.commit()
+
+    assert transitions == []
+    rows = (await db_session.execute(select(CrisisContentCard))).scalars().all()
+    assert rows == []
+    versions = (await db_session.execute(select(CrisisContentCopyVersion))).scalars().all()
+    assert versions == []
+
+    # Next tick: resolution succeeds for this card -- it is observed and
+    # notified as if nothing had happened before.
+    tab_map = {
+        card.identity_key: CardTabInfo(
+            tab_id="t.cv99t981gtu6", tab_title="Content To Review", is_test=False
+        )
+    }
+    retried_transitions = await record_observation(db_session, [card], tab_map)
+    await db_session.commit()
+
+    assert len(retried_transitions) == 1
+    assert retried_transitions[0].new_status == "Ready"
+    rows_after_retry = (await db_session.execute(select(CrisisContentCard))).scalars().all()
+    assert len(rows_after_retry) == 1

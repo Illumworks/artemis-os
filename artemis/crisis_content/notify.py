@@ -23,6 +23,18 @@ between the two states in ``docs/crisis-content-approval-pipeline.md``
   ``TESTING_LINE*`` footer restored. This is the rollback: flip the setting,
   no deploy, to instantly undo a bad channel-routing change.
 
+**Per-card test lane (CCA13).** ``transition.is_test`` -- set by
+``artemis.crisis_content.transitions.record_observation`` from the tab
+resolved for this card, see ``artemis.crisis_content.tab_resolution`` --
+overrides ``crisis_content_notify_destination`` for THIS card only: a test
+card always DMs Jon with the ``⚠️ Testing`` footer, exactly like the
+``dm_jon`` override, no matter what ``crisis_content_notify_destination`` is
+set to. This is checked FIRST in ``post_transition_card``, before the
+global destination setting, because it is a property of the card (which
+Google Docs tab it lives on), not a global rollback switch -- a live
+channel that is otherwise routing normally must still never see Jon's
+duplicated test card or @-mention the external vendor about it.
+
 Every Slack user (Jon, or a copy approver) is resolved by email
 (``users.lookupByEmail`` via ``SlackClient.lookup_user_by_email``), never by
 listing users and filtering -- that call paginates and silently misses
@@ -53,9 +65,10 @@ happens on click, and its "Do NOT notify Jen" section for the one thing this
 click deliberately does NOT do. The ``url`` is
 ``f"{_DOC_URL}?tab={transition.tab_id}"`` when ``transition.tab_id`` is set,
 else the bare ``_DOC_URL`` -- see ``Transition.tab_id``'s docstring
-(``artemis.crisis_content.transitions``) for why that field is ``None`` for
-every real transition today and what would need to change to populate it.
-The modal this button replaced (``views.open``, its ``view_submission``
+(``artemis.crisis_content.transitions``) for how CCA13's tab resolution
+populates it (and why it can still be ``None`` -- no tab resolution
+attempted, or this specific card could not be positively located this
+tick). The modal this button replaced (``views.open``, its ``view_submission``
 handler, ``private_metadata``, ``CRISIS_CONTENT_VIEW_CALLBACK_ID``) has been
 deleted entirely, along with the tests that covered it.
 
@@ -350,7 +363,8 @@ def _doc_url_for(tab_id: str | None) -> str:
     precision -- this is deliberately NOT a per-card constant; it is
     computed from whatever ``tab_id`` the caller (``render_transition_blocks``,
     from ``transition.tab_id``) actually has for THIS card, never a
-    hardcoded literal. ``None`` (every real transition today -- see
+    hardcoded literal. ``None`` (no tab resolution attempted this tick, or
+    this specific card could not be positively located -- see
     ``Transition.tab_id``'s docstring) falls back to the bare ``_DOC_URL``,
     identical to the doc link every card has always shown in its body text.
     """
@@ -765,8 +779,12 @@ async def _post_live_copy(
 async def post_transition_card(session: AsyncSession, transition: Transition) -> PostedCardMessage:
     """Post ``transition``'s rendered card (text + decision buttons), as Callie.
 
-    Destination is ``settings.crisis_content_notify_destination`` -- see the
-    module docstring's "Destination (CCA6)" section for the two states.
+    ``transition.is_test`` (CCA13) is checked FIRST and, if true, always
+    wins: DM Jon with the ``⚠️ Testing`` footer, regardless of
+    ``settings.crisis_content_notify_destination`` -- see the module
+    docstring's "Per-card test lane (CCA13)" section. Otherwise destination
+    is ``settings.crisis_content_notify_destination`` -- see the module
+    docstring's "Destination (CCA6)" section for the two states.
     Raises (never swallows) on any failure -- missing Callie token, a failed
     ``users.lookupByEmail`` for Jon (both DM paths) or for EVERY one of the
     copy approvers (the live copy path tolerates one or two failing to
@@ -797,6 +815,13 @@ async def post_transition_card(session: AsyncSession, transition: Transition) ->
         raise RuntimeError("crisis_content: no active Slack token for agent_id='callie'")
 
     client = SlackClient(token=agent_cfg.access_token)
+
+    if transition.is_test:
+        # CCA13: a per-card override that wins regardless of the global
+        # destination setting -- see the module docstring's "Per-card test
+        # lane" section. Reuses the existing dm_jon-override renderer
+        # verbatim: same destination (Jon's DM), same restored footer.
+        return await _post_dm_jon_override(client, transition, card_id)
 
     if settings.crisis_content_notify_destination == "dm_jon":
         return await _post_dm_jon_override(client, transition, card_id)
