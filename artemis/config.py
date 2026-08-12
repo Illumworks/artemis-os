@@ -572,21 +572,46 @@ class Settings(BaseSettings):
             "artemis/crisis_content/poller.py)."
         ),
     )
-    crisis_content_notify_destination: str = Field(
-        default="dm_jon",
+    crisis_content_notify_destination: Literal["live", "dm_jon"] = Field(
+        default="live",
         validation_alias=AliasChoices(
             "ARTEMIS_CRISIS_CONTENT_NOTIFY_DESTINATION",
             "CRISIS_CONTENT_NOTIFY_DESTINATION",
         ),
         description=(
-            "Where Callie's crisis-content review cards are delivered. Only "
-            "'dm_jon' is implemented in this ship-tonight slice (CCA4) -- channel "
-            "C0BM9TL63TL plus the real copy approvers (Angela/Hannah/Jaclyn) is "
-            "explicitly out of scope here and lands in a later slice. This exists "
-            "as a setting now so that later flip is a config change, not a code "
-            "change; any value other than 'dm_jon' logs an ERROR and falls back "
-            "to 'dm_jon' rather than silently doing nothing or posting somewhere "
-            "unintended."
+            "Routing for Callie's crisis-content review cards (CCA6 -- see "
+            "docs/crisis-content-approval-pipeline.md 'Routing' and "
+            "artemis/crisis_content/notify.py).\n\n"
+            "'live' (default, Jon has asked for full functionality): the real "
+            "routing table. 'asset' -> 'Ready' DMs Jon (he is the only asset "
+            "approver). 'copy' -> 'Ready' posts to "
+            "crisis_content_copy_notify_channel, @-mentioning the copy "
+            "approvers (crisis_content_copy_approver_emails minus Jon's "
+            "authorization-backstop entry -- see that field's docstring; the "
+            "card is still addressed to Angela/Hannah/Jaclyn only). No "
+            "'Testing' footer on either route under this value.\n\n"
+            "'dm_jon': ROLLBACK OVERRIDE. Sends EVERYTHING -- both routes -- to "
+            "Jon as a DM, exactly like the pre-CCA6 behavior, and restores the "
+            "'Testing -- routed to you only' footer so the rollback path stays "
+            "honest about what it is. Flip to this value -- no deploy required, "
+            "just an env var / restart -- if the channel routing misbehaves, "
+            "e.g. at 9pm on a Friday, to instantly restore known-good behavior. "
+            "Any value other than these two literals fails Settings validation "
+            "at startup rather than silently doing something unintended."
+        ),
+    )
+    crisis_content_copy_notify_channel: str = Field(
+        default="C0BM9TL63TL",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_COPY_NOTIFY_CHANNEL",
+            "CRISIS_CONTENT_COPY_NOTIFY_CHANNEL",
+        ),
+        description=(
+            "Slack channel ID where copy-route 'Ready' cards post under live "
+            "routing (CCA6 -- see artemis/crisis_content/notify.py). Callie's "
+            "bot user must already be a member, or chat.postMessage fails with "
+            "'not_in_channel' and the notification retries every poll tick "
+            "until she is invited."
         ),
     )
     crisis_content_asset_approver_emails: str = Field(

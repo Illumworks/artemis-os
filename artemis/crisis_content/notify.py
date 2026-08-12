@@ -12,14 +12,25 @@ docstring for why order matters). Persistence of the DECISION a click
 produces is ``artemis.crisis_content.decisions`` / ``.slack_actions``, not
 this module.
 
-**Destination.** Only ``settings.crisis_content_notify_destination ==
-"dm_jon"`` is implemented. Channel routing to ``C0BM9TL63TL`` plus the real
-copy approvers (Angela, Hannah, Jaclyn) is explicitly out of scope for this
-slice -- see ``briefs/cca4-poller-and-callie-card.md`` "OUT" list and
-``docs/crisis-content-approval-pipeline.md`` "Routing". Jon's Slack user is
-resolved by email (``users.lookupByEmail`` via ``SlackClient.lookup_user_by_email``),
-never by listing users and filtering -- that call paginates and silently
-misses people past the first page.
+**Destination (CCA6).** ``settings.crisis_content_notify_destination`` picks
+between the two states in ``docs/crisis-content-approval-pipeline.md``
+"Routing":
+
+- ``"live"`` (default): ``asset`` DMs Jon; ``copy`` posts to
+  ``settings.crisis_content_copy_notify_channel`` (``C0BM9TL63TL``),
+  @-mentioning the copy approvers. No ``TESTING_LINE*`` footer either way.
+- ``"dm_jon"``: the CCA4/CCA5 override -- everything DMs Jon, with the
+  ``TESTING_LINE*`` footer restored. This is the rollback: flip the setting,
+  no deploy, to instantly undo a bad channel-routing change.
+
+Every Slack user (Jon, or a copy approver) is resolved by email
+(``users.lookupByEmail`` via ``SlackClient.lookup_user_by_email``), never by
+listing users and filtering -- that call paginates and silently misses
+people past the first page. Copy-approver resolutions are cached at module
+level (``_approver_slack_id_cache``) so a 2-minute poll tick does not repeat
+three lookups it already has the answer to; only successful resolutions are
+cached, so a currently-unresolvable email (e.g. a new hire mid-onboarding)
+is retried on the next tick rather than permanently assumed missing.
 
 **Buttons (CCA5).** ``render_transition_blocks`` wraps
 ``render_transition_message``'s UNCHANGED text in a ``section`` block and
@@ -37,7 +48,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +56,7 @@ from artemis.config import settings
 from artemis.crisis_content.export_client import TARGET_DOCUMENT_ID
 from artemis.crisis_content.models import ReviewCard
 from artemis.crisis_content.transitions import Transition, find_card_id
-from artemis.integrations.slack.client import SlackClient
+from artemis.integrations.slack.client import SlackAPIError, SlackClient
 from artemis.proactivity.radar import JON_EMAIL
 from artemis.routes.integrations_slack_events import _resolve_agent_slack_config
 
@@ -62,6 +73,8 @@ __all__ = [
     "render_transition_blocks",
     "render_decision_message",
     "post_transition_card",
+    "copy_mention_emails",
+    "reset_notify_caches_for_tests",
 ]
 
 # Block Kit action_ids for the two decision buttons. Defined here (the
@@ -72,7 +85,10 @@ ACTION_APPROVE = "crisis_content_approve"
 ACTION_REQUEST_CHANGES = "crisis_content_request_changes"
 
 # The guard against anyone mistaking testing traffic for the live workflow.
-# Stays on every card until routing is deliberately flipped (a future slice).
+# Used only under the `dm_jon` rollback override (CCA6) -- see
+# `_post_dm_jon_override` below. Kept, word-for-word, so the rollback path
+# stays honest about what it is: a real card that only Jon can see, not the
+# live audience.
 #
 # Route-specific on purpose: per the routing table in
 # docs/crisis-content-approval-pipeline.md, Jon approves visuals and the three
@@ -86,6 +102,82 @@ TESTING_LINE_ASSET = "⚠️ Testing — routed to you only. Live: you (visuals)
 def testing_line_for_route(route: str) -> str:
     """The testing footer for one route. See TESTING_LINE above for why."""
     return TESTING_LINE_ASSET if route == "asset" else TESTING_LINE
+
+
+# Email -> Slack user id. Module-level and process-lifetime on purpose: the
+# poller ticks every `crisis_content_poll_interval_minutes` (default 2), and
+# CCA6 explicitly asks not to re-resolve the three copy approvers on every
+# tick. Only successful resolutions go in -- see `_resolve_slack_id_cached`.
+_approver_slack_id_cache: dict[str, str] = {}
+
+
+def reset_notify_caches_for_tests() -> None:
+    """Test-only: clear the module-level Slack-id cache between tests."""
+    _approver_slack_id_cache.clear()
+
+
+async def _resolve_slack_id_cached(client: SlackClient, email: str) -> str | None:
+    """Resolve ``email`` to a Slack user id via ``lookup_user_by_email``, caching hits.
+
+    Only a successful resolution is cached. Caching a miss would risk
+    permanently hiding an approver whose Slack account shows up later (e.g.
+    mid-onboarding); the cost of not caching a miss is one extra
+    ``users.lookupByEmail`` call on the next poll tick, which is cheap.
+    """
+    cached = _approver_slack_id_cache.get(email)
+    if cached is not None:
+        return cached
+    slack_id = await client.lookup_user_by_email(email)
+    if slack_id:
+        _approver_slack_id_cache[email] = slack_id
+    return slack_id
+
+
+def copy_mention_emails() -> list[str]:
+    """Emails to @-mention on a live copy-route card, in configured order.
+
+    This is ``settings.crisis_content_copy_approver_emails`` (the CCA5
+    authorization allowlist) MINUS Jon's email. Jon was added to that
+    allowlist on 2026-08-11 as a standing authorization backstop -- he CAN
+    click Approve on a copy card if all three primaries are unavailable --
+    but the card stays *addressed* to Angela, Hannah, and Jaclyn only (see
+    docs/crisis-content-approval-pipeline.md "Routing" and
+    settings.crisis_content_copy_approver_emails' own docstring). Mentioning
+    him here would misstate him as a fourth routine approver.
+    """
+    emails = [e.strip() for e in settings.crisis_content_copy_approver_emails.split(",") if e.strip()]
+    return [e for e in emails if e.lower() != JON_EMAIL.lower()]
+
+
+def _copy_live_footer(mention_tags: list[str]) -> str:
+    """``"Any one of <@U1>, <@U2> or <@U3> can approve."`` for however many resolved."""
+    if len(mention_tags) == 1:
+        who = mention_tags[0]
+    else:
+        who = ", ".join(mention_tags[:-1]) + " or " + mention_tags[-1]
+    return f"Any one of {who} can approve."
+
+
+async def _resolve_copy_mentions(client: SlackClient) -> tuple[list[str], list[str]]:
+    """Resolve ``copy_mention_emails()`` to Slack mention tags.
+
+    Returns ``(mention_tags, unresolved_emails)`` -- ``mention_tags`` are
+    ``"<@U...>"`` strings ready to drop into mrkdwn text, in the same order
+    as ``copy_mention_emails()``; an email that fails to resolve is placed
+    in ``unresolved_emails`` instead, never as a placeholder in
+    ``mention_tags``, so the caller can post with whoever DID resolve
+    without further filtering (CCA6: "one unresolvable approver must not
+    kill the notification").
+    """
+    mention_tags: list[str] = []
+    unresolved: list[str] = []
+    for email in copy_mention_emails():
+        slack_id = await _resolve_slack_id_cached(client, email)
+        if slack_id:
+            mention_tags.append(f"<@{slack_id}>")
+        else:
+            unresolved.append(email)
+    return mention_tags, unresolved
 
 
 _DOC_URL = f"https://docs.google.com/document/d/{TARGET_DOCUMENT_ID}/edit"
@@ -152,19 +244,22 @@ def _copy_status_line(card: ReviewCard) -> str:
     return card.copy_status
 
 
-def render_transition_message(transition: Transition) -> str:
-    """Render the full Slack DM text for one transition.
+def render_transition_message(transition: Transition, *, footer: str) -> str:
+    """Render the full Slack DM/channel text for one transition.
 
     Full copy inline, never truncated -- the point is approving without
-    opening the doc. Always notes the OTHER route's status too, so Jon can
-    tell whether the post is actually shippable end to end.
+    opening the doc. Always notes the OTHER route's status too, so the
+    reader can tell whether the post is actually shippable end to end.
 
-    This is the card BODY only -- unchanged since CCA4, and it stays that
-    way (Jon has approved the current format). ``render_transition_blocks``
-    wraps this exact text in Block Kit and appends the decision buttons;
-    this function never gained a ``blocks``/``action_id`` concept itself so
-    that every existing caller of the plain-text body keeps working
-    unchanged.
+    The card BODY (heading, copy, char count, other-route status, doc link)
+    is unchanged since CCA4 and stays that way (Jon has approved the current
+    format). ``footer`` is the one part of the rendered text CCA6 makes
+    caller-controlled: the trailing line was already route-specific before
+    this slice (``testing_line_for_route``); CCA6 extends the same seam so a
+    caller can pass the ``dm_jon`` testing line, a live "who can approve"
+    line, or "" (no footer at all, for the live asset route) without
+    touching anything above it. An empty ``footer`` omits the line AND the
+    blank line that would otherwise separate it from the doc link.
     """
     card = transition.card
     platform = card.platform or "unspecified platform"
@@ -190,18 +285,23 @@ def render_transition_message(transition: Transition) -> str:
         lines.append(f"Asset link: {card.asset_url}")
 
     lines.append(f"Open the doc: {_DOC_URL}")
-    lines.append("")
-    lines.append(testing_line_for_route(transition.route))
+    if footer:
+        lines.append("")
+        lines.append(footer)
     return "\n".join(lines)
 
 
-def render_transition_blocks(transition: Transition, card_id: int) -> list[dict[str, Any]]:
+def render_transition_blocks(
+    transition: Transition, card_id: int, *, footer: str
+) -> list[dict[str, Any]]:
     """Block Kit body for one transition: the card text, plus decision buttons.
 
     The ``section`` block's mrkdwn text is byte-for-byte
-    ``render_transition_message``'s output -- this function only ADDS the
-    ``actions`` block Slack needs to render working buttons; it never
-    restyles the body (see the module docstring, "Buttons (CCA5)").
+    ``render_transition_message(transition, footer=footer)``'s output -- this
+    function only ADDS the ``actions`` block Slack needs to render working
+    buttons; it never restyles the body (see the module docstring, "Buttons
+    (CCA5)"). ``footer`` is passed straight through -- see
+    ``render_transition_message`` for what it controls.
 
     The button ``value`` is ``f"{card_id}:{route}"``, carrying no identity --
     see ``artemis/routes/integrations_slack_interactivity.py`` and
@@ -212,7 +312,10 @@ def render_transition_blocks(transition: Transition, card_id: int) -> list[dict[
     return [
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": render_transition_message(transition)},
+            "text": {
+                "type": "mrkdwn",
+                "text": render_transition_message(transition, footer=footer),
+            },
         },
         {
             "type": "actions",
@@ -276,16 +379,118 @@ def render_decision_message(
     return text, blocks
 
 
-async def post_transition_card(session: AsyncSession, transition: Transition) -> None:
-    """Post ``transition``'s rendered card (text + decision buttons) as a Slack DM to Jon, as Callie.
+async def _post_dm_jon_override(
+    client: SlackClient, transition: Transition, card_id: int
+) -> None:
+    """The ``dm_jon`` rollback: every route DMs Jon, testing footer restored."""
+    jon_slack_id = await _resolve_slack_id_cached(client, JON_EMAIL)
+    if not jon_slack_id:
+        raise RuntimeError(
+            f"crisis_content: users.lookupByEmail found no Slack user for {JON_EMAIL!r}"
+        )
+    footer = testing_line_for_route(transition.route)
+    text = render_transition_message(transition, footer=footer)
+    blocks = render_transition_blocks(transition, card_id, footer=footer)
+    await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
+    logger.info(
+        "crisis_content: posted %s-route card for card=%r to Jon (dm_jon override)",
+        transition.route,
+        transition.card.identity_key,
+    )
 
+
+async def _post_live_asset(
+    client: SlackClient, transition: Transition, card_id: int
+) -> None:
+    """Live routing, ``asset`` route: DM Jon, no footer (he owns visuals)."""
+    jon_slack_id = await _resolve_slack_id_cached(client, JON_EMAIL)
+    if not jon_slack_id:
+        raise RuntimeError(
+            f"crisis_content: users.lookupByEmail found no Slack user for {JON_EMAIL!r}"
+        )
+    text = render_transition_message(transition, footer="")
+    blocks = render_transition_blocks(transition, card_id, footer="")
+    await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
+    logger.info(
+        "crisis_content: posted asset-route card for card=%r to Jon (live)",
+        transition.card.identity_key,
+    )
+
+
+async def _post_live_copy(
+    client: SlackClient, transition: Transition, card_id: int
+) -> None:
+    """Live routing, ``copy`` route: post to the channel, mentioning whoever resolved.
+
+    One unresolvable approver must not kill the notification (CCA6) -- post
+    with the ones that DID resolve and log a WARNING naming the rest. Only
+    if NONE resolve do we refuse to post (a card naming nobody is not a
+    notification), which surfaces as this function raising -- the caller
+    (``post_transition_card``) never calls ``mark_notified`` for a raise, so
+    the next tick retries.
+    """
+    mention_tags, unresolved = await _resolve_copy_mentions(client)
+    for email in unresolved:
+        logger.warning(
+            "crisis_content: could not resolve a Slack id for copy approver "
+            "%r via users.lookupByEmail -- posting without mentioning them; "
+            "%d of %d approver(s) resolved and will still be mentioned.",
+            email,
+            len(mention_tags),
+            len(mention_tags) + len(unresolved),
+        )
+    if not mention_tags:
+        raise RuntimeError(
+            "crisis_content: none of the copy approvers "
+            f"({', '.join(copy_mention_emails())}) resolved to a Slack id via "
+            "users.lookupByEmail -- refusing to post a copy-route card that "
+            "would name nobody"
+        )
+
+    channel = settings.crisis_content_copy_notify_channel
+    footer = _copy_live_footer(mention_tags)
+    text = render_transition_message(transition, footer=footer)
+    blocks = render_transition_blocks(transition, card_id, footer=footer)
+    try:
+        # SlackClient.post_message declares `blocks: list[object] | None`,
+        # invariant -- `list[dict[str, Any]]` (what render_transition_blocks
+        # returns) is not a `list[object]` under mypy's variance rules even
+        # though it obviously satisfies the runtime contract. post_dm takes
+        # the covariant `Sequence[object]` instead and needs no cast; this
+        # cast is the narrower, local fix rather than widening
+        # SlackClient.post_message's signature, which is out of this
+        # slice's file scope.
+        await client.post_message(channel=channel, text=text, blocks=cast("list[object]", blocks))
+    except SlackAPIError as exc:
+        if exc.error == "not_in_channel":
+            raise RuntimeError(
+                f"crisis_content: Callie's bot user is not a member of channel "
+                f"{channel!r} -- chat.postMessage failed with 'not_in_channel'. "
+                "Invite Callie to the channel; every copy-route notification "
+                "will fail and retry until she is."
+            ) from exc
+        raise
+    logger.info(
+        "crisis_content: posted copy-route card for card=%r to channel %s "
+        "(live, mentioned=%s, unresolved=%s)",
+        transition.card.identity_key,
+        channel,
+        mention_tags,
+        unresolved,
+    )
+
+
+async def post_transition_card(session: AsyncSession, transition: Transition) -> None:
+    """Post ``transition``'s rendered card (text + decision buttons), as Callie.
+
+    Destination is ``settings.crisis_content_notify_destination`` -- see the
+    module docstring's "Destination (CCA6)" section for the two states.
     Raises (never swallows) on any failure -- missing Callie token, a failed
-    ``users.lookupByEmail``, no persisted card row, or a Slack API error --
-    so the caller does not call ``mark_notified`` for a post that did not
-    actually happen. Never posts to a channel: only
-    ``crisis_content_notify_destination == "dm_jon"`` is implemented; any
-    other value is logged as an ERROR and treated as ``dm_jon`` rather than
-    silently doing nothing or guessing at a channel to use.
+    ``users.lookupByEmail`` for Jon (both DM paths) or for EVERY one of the
+    copy approvers (the live copy path tolerates one or two failing to
+    resolve -- see ``_post_live_copy``), no persisted card row, or a Slack
+    API error -- so the caller does not call ``mark_notified`` for a post
+    that did not actually happen.
 
     Requires ``transition.card`` to already have a persisted
     ``CrisisContentCard`` row (i.e. this must be called after
@@ -294,15 +499,6 @@ async def post_transition_card(session: AsyncSession, transition: Transition) ->
     Every real caller (``artemis/crisis_content/poller.py``) satisfies this
     by construction.
     """
-    destination = settings.crisis_content_notify_destination
-    if destination != "dm_jon":
-        logger.error(
-            "crisis_content: notify destination %r is not implemented in this "
-            "slice (only 'dm_jon' is wired -- channel + real-approver routing "
-            "is a later slice); falling back to dm_jon",
-            destination,
-        )
-
     card_id = await find_card_id(session, transition.card)
     if card_id is None:
         raise RuntimeError(
@@ -316,17 +512,12 @@ async def post_transition_card(session: AsyncSession, transition: Transition) ->
         raise RuntimeError("crisis_content: no active Slack token for agent_id='callie'")
 
     client = SlackClient(token=agent_cfg.access_token)
-    jon_slack_id = await client.lookup_user_by_email(JON_EMAIL)
-    if not jon_slack_id:
-        raise RuntimeError(
-            f"crisis_content: users.lookupByEmail found no Slack user for {JON_EMAIL!r}"
-        )
 
-    text = render_transition_message(transition)
-    blocks = render_transition_blocks(transition, card_id)
-    await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
-    logger.info(
-        "crisis_content: posted %s-route card for card=%r to Jon (dm_jon)",
-        transition.route,
-        transition.card.identity_key,
-    )
+    if settings.crisis_content_notify_destination == "dm_jon":
+        await _post_dm_jon_override(client, transition, card_id)
+        return
+
+    if transition.route == "asset":
+        await _post_live_asset(client, transition, card_id)
+    else:
+        await _post_live_copy(client, transition, card_id)

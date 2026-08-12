@@ -398,99 +398,109 @@ async def test_overlapping_tick_is_skipped_not_run_concurrently(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Destination: DM-to-Jon only, never the channel
+# Destination: live routing by default; dm_jon is the override, not the norm
+#
+# The full routing-logic surface (copy -> channel with 3 mentions, asset ->
+# Jon DM, the dm_jon override, one-approver-unresolvable, lookup caching,
+# not_in_channel handling) is unit-tested against notify.py directly in
+# tests/test_crisis_content_routing.py (CCA6). What belongs here, at the
+# poller level, is the one property that spans both modules: a failed
+# channel post must never let mark_notified run, so the next tick retries --
+# see test_live_copy_channel_post_failure_leaves_no_notification_row_and_retries
+# below.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_destination_defaults_to_dm_jon() -> None:
+async def test_destination_defaults_to_live() -> None:
     from artemis.config import settings
 
-    assert settings.crisis_content_notify_destination == "dm_jon"
+    assert settings.crisis_content_notify_destination == "live"
 
 
-async def test_post_transition_card_never_posts_to_a_channel(
+async def test_live_copy_channel_post_failure_leaves_no_notification_row_and_retries(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Integration proof of the poller/notify contract under LIVE routing.
+
+    Mirrors test_slack_post_failure_leaves_no_notification_row_and_next_poll_
+    retries above, but exercises the REAL notify.post_transition_card (not a
+    stub) so the live copy route's channel post actually runs -- only the
+    Slack transport (notify.SlackClient) and Callie's token resolution
+    (notify._resolve_agent_slack_config) are faked. Confirms the CCA4 retry
+    contract still holds once notify.py's routing is doing real work.
+    """
+    from artemis.config import settings
     from artemis.crisis_content import notify
-    from artemis.crisis_content.orm import CrisisContentCard
-    from artemis.crisis_content.transitions import Transition
+    from artemis.integrations.slack.client import SlackAPIError
 
-    class _FakeSlackClient:
-        instances: list[_FakeSlackClient] = []
+    monkeypatch.setattr(settings, "crisis_content_notify_destination", "live")
+    notify.reset_notify_caches_for_tests()
 
+    card = _make_card(copy_status="Ready")
+
+    async def fake_resolve_access_token(session: AsyncSession) -> str:
+        return "fake-access-token"
+
+    async def fake_fetch(*, document_id: str, access_token: str, timeout: float = 20.0) -> str:
+        return "<html><!-- stubbed --></html>"
+
+    def fake_parse(html: str) -> list[ReviewCard]:
+        return [card]
+
+    monkeypatch.setattr(poller, "_resolve_access_token", fake_resolve_access_token)
+    monkeypatch.setattr(poller, "fetch_crisis_content_export_html", fake_fetch)
+    monkeypatch.setattr(poller, "parse_review_cards", fake_parse)
+    # Deliberately NOT monkeypatching poller.post_transition_card -- this
+    # test wants the real notify.post_transition_card to run.
+
+    attempts: list[int] = []
+
+    class _FlakyChannelSlackClient:
         def __init__(self, token: str) -> None:
             self.token = token
-            self.dm_calls: list[tuple[str, str, list[object] | None]] = []
-            self.message_calls: list[tuple[str, str]] = []
-            _FakeSlackClient.instances.append(self)
 
         async def lookup_user_by_email(self, email: str) -> str | None:
-            assert email == "jon.fila@amiralearning.com"
-            return "U_JON_FAKE"
+            return "U_" + email.split("@")[0].replace(".", "_").upper()
 
         async def post_dm(
             self, user: str, text: str, blocks: list[object] | None = None
         ) -> dict[str, object]:
-            self.dm_calls.append((user, text, blocks))
-            return {"ok": True}
+            raise AssertionError("live copy routing must never DM")
 
         async def post_message(
-            self, channel: str, text: str, **kwargs: object
+            self,
+            channel: str,
+            text: str,
+            thread_ts: str | None = None,
+            blocks: list[object] | None = None,
         ) -> dict[str, object]:
-            self.message_calls.append((channel, text))
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise SlackAPIError("chat.postMessage", "not_in_channel")
             return {"ok": True}
 
     async def fake_resolve_agent_slack_config(
         session: AsyncSession, *, agent_id: str, team_id: str | None = None
     ) -> object:
-        assert agent_id == "callie"
         return SimpleNamespace(access_token="fake-callie-token")
 
+    monkeypatch.setattr(notify, "SlackClient", _FlakyChannelSlackClient)
     monkeypatch.setattr(notify, "_resolve_agent_slack_config", fake_resolve_agent_slack_config)
-    monkeypatch.setattr(notify, "SlackClient", _FakeSlackClient)
-    _FakeSlackClient.instances.clear()
 
-    card = _make_card(copy_status="Ready")
-    transition = Transition(
-        card=card, route="copy", previous_status="Draft", new_status="Ready", is_new_card=False
-    )
-    # post_transition_card (CCA5) resolves the persisted card row to embed
-    # `card_id` in the decision buttons' `value` -- seed the row a real
-    # caller (poller.py, via record_observation) would already have created.
-    db_session.add(
-        CrisisContentCard(
-            identity_header=card.header,
-            identity_platform=card.platform,
-            identity_ordinal=0,
-            title=card.title,
-            asset_status=card.asset_status,
-            copy_status=card.copy_status,
-            asset_url=card.asset_url,
-            copy_hash=card.copy_hash,
-        )
-    )
-    await db_session.commit()
+    await run_poll_tick()
+    rows_after_failure = (
+        await db_session.execute(select(CrisisContentNotification))
+    ).scalars().all()
+    assert rows_after_failure == []
+    assert attempts == [1]
 
-    await notify.post_transition_card(db_session, transition)
-
-    assert len(_FakeSlackClient.instances) == 1
-    client = _FakeSlackClient.instances[0]
-    assert client.message_calls == []  # never a channel post
-    assert len(client.dm_calls) == 1
-    recipient, text, blocks = client.dm_calls[0]
-    assert recipient == "U_JON_FAKE"
-    assert recipient != "C0BM9TL63TL"
-    assert "C0BM9TL63TL" not in text
-    assert blocks is not None
-    action_ids = {
-        el["action_id"]
-        for block in blocks
-        if block.get("type") == "actions"
-        for el in block["elements"]
-    }
-    assert action_ids == {"crisis_content_approve", "crisis_content_request_changes"}
-    assert notify.TESTING_LINE in text
-    assert "action_id" not in text  # no interactive buttons
+    # Same unchanged (still "Ready") card, second tick -- must retry.
+    await run_poll_tick()
+    assert attempts == [1, 1]
+    rows_after_retry = (
+        await db_session.execute(select(CrisisContentNotification))
+    ).scalars().all()
+    assert len(rows_after_retry) == 1
 
 
 def test_testing_line_is_route_specific() -> None:
