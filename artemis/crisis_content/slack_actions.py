@@ -189,6 +189,39 @@ async def _resolve_email(
     return profile_email
 
 
+async def _update_card_in_place(
+    response_url: str | None, *, text: str, blocks: list[dict[str, Any]]
+) -> None:
+    """Replace the card message itself via ``response_url``. Never raises.
+
+    Why not just return ``{"replace_original": true, ...}`` in the interaction's
+    HTTP response: proven not to work here (2026-08-12, first real button
+    click). The card is posted with ``chat.postMessage``, and returning a
+    message body in the HTTP response did NOT replace it -- the card kept its
+    buttons after a recorded approval, so it could be clicked again and answered
+    "Already decided". POSTing to ``response_url`` DOES work on the same
+    message; the ephemeral rejection path had been proving that all along.
+
+    An identical helper existed for the modal path and was deleted with the
+    modal as "dead plumbing" -- it was not dead, it was the only mechanism that
+    actually worked. This is not a regression from that removal: the decision
+    paths never used it, they have always relied on the HTTP response, and no
+    test could catch it because no test clicks a real Slack button.
+    """
+    if not response_url:
+        logger.warning("crisis_content: no response_url -- cannot repaint the card")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                response_url,
+                json={"replace_original": True, "text": text, "blocks": blocks},
+            )
+            resp.raise_for_status()
+    except Exception:
+        logger.exception("crisis_content: failed to repaint the card via response_url")
+
+
 def _display_label(email: str | None, slack_user_id: str) -> str:
     """Best-effort human label for the outcome line ("Approved by X")."""
     if email:
@@ -421,6 +454,7 @@ async def _handle_block_action(
             email=email,
             message_ts=_message_ts_from_payload(payload),
             access_token=access_token,
+            response_url=response_url,
         )
 
     # ACTION_APPROVE: decide now, synchronously.
@@ -441,10 +475,8 @@ async def _handle_block_action(
         decided_at=row.decided_at,
         note=None,
     )
-    return JSONResponse(
-        status_code=200,
-        content={"replace_original": True, "text": text, "blocks": blocks},
-    )
+    await _update_card_in_place(response_url, text=text, blocks=blocks)
+    return JSONResponse(status_code=200, content=_ACK)
 
 
 async def _handle_edit_in_doc(
@@ -455,6 +487,7 @@ async def _handle_edit_in_doc(
     email: str | None,
     message_ts: str | None,
     access_token: str,
+    response_url: str | None,
 ) -> JSONResponse:
     """Record the ``Edit in doc`` decision and repaint the card -- no doc write, no Jen ping.
 
@@ -504,7 +537,5 @@ async def _handle_edit_in_doc(
         session, card_id=target.card_id, route=target.route, access_token=access_token
     )
 
-    return JSONResponse(
-        status_code=200,
-        content={"replace_original": True, "text": text, "blocks": blocks},
-    )
+    await _update_card_in_place(response_url, text=text, blocks=blocks)
+    return JSONResponse(status_code=200, content=_ACK)

@@ -98,6 +98,33 @@ _JACLYN = ("jaclyn.wright@amiralearning.com", "U_JACLYN")
 _STRANGER_SLACK_ID = "U_TOTALLY_UNKNOWN"
 
 
+_repaints: list[dict[str, object]] = []
+
+
+@pytest.fixture(autouse=True)
+def _capture_repaints(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Capture card repaints, which go via ``response_url`` rather than the HTTP body.
+
+    These assertions used to read ``resp.json()["replace_original"]``. That
+    passed while the real behaviour failed: returning a message body in the
+    interaction's HTTP response does NOT replace a card posted with
+    chat.postMessage, so after a recorded approval the card kept its buttons and
+    could be clicked again (observed on the first real click, 2026-08-12).
+
+    The repaint now POSTs to ``response_url``, so the test must watch that call
+    instead of the response body — the exact "a mock proves the call was made,
+    not that it does what you think" trap this pipeline has hit before.
+    """
+    _repaints.clear()
+
+    async def fake_update(
+        response_url: str | None, *, text: str, blocks: list[dict[str, object]]
+    ) -> None:
+        _repaints.append({"response_url": response_url, "text": text, "blocks": blocks})
+
+    monkeypatch.setattr(slack_actions, "_update_card_in_place", fake_update)
+
+
 @pytest.fixture
 async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)
@@ -255,9 +282,8 @@ async def test_approve_by_allowed_copy_approver_records_and_updates_card(
     )
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body.get("replace_original") is True
-    assert "Approved" in body.get("text", "")
+    assert len(_repaints) == 1, "the card must be repainted via response_url"
+    assert "Approved" in str(_repaints[0]["text"])
 
     rows = await _decisions_for(db_session, card_id, "copy")
     assert len(rows) == 1
@@ -288,7 +314,7 @@ async def test_copy_route_allows_each_of_angela_hannah_jaclyn(
     )
 
     assert resp.status_code == 200
-    assert resp.json().get("replace_original") is True
+    assert len(_repaints) == 1, "the card must be repainted via response_url"
     rows = await _decisions_for(db_session, card_id, "copy")
     assert len(rows) == 1
     assert rows[0].decided_by_email == email
@@ -324,7 +350,7 @@ async def test_copy_route_allows_jon_as_redundancy(
     )
 
     assert resp.status_code == 200
-    assert resp.json().get("replace_original") is True
+    assert len(_repaints) == 1, "the card must be repainted via response_url"
     rows = await _decisions_for(db_session, card_id, "copy")
     assert len(rows) == 1
     assert rows[0].decided_by_email == _JON[0]
@@ -418,7 +444,7 @@ async def test_asset_route_jon_only(
     assert resp.status_code == 200
     rows = await _decisions_for(db_session, card_id, "asset")
     if authorized:
-        assert resp.json().get("replace_original") is True
+        assert len(_repaints) == 1, "the card must be repainted via response_url"
         assert len(rows) == 1
         assert rows[0].decided_by_email == email
         assert ephemeral_calls == []
@@ -516,7 +542,7 @@ async def test_directory_row_with_null_slack_user_id_falls_back_to_users_info(
     )
 
     assert resp.status_code == 200
-    assert resp.json().get("replace_original") is True
+    assert len(_repaints) == 1, "the card must be repainted via response_url"
     rows = await _decisions_for(db_session, card_id, "copy")
     assert len(rows) == 1
     assert rows[0].decided_by_email == _ANGELA[0]
@@ -606,7 +632,7 @@ async def test_edit_in_doc_records_one_changes_requested_decision_with_null_note
     )
 
     assert resp.status_code == 200
-    assert resp.json().get("replace_original") is True
+    assert len(_repaints) == 1, "the card must be repainted via response_url"
 
     rows = await _decisions_for(db_session, card_id, "copy")
     assert len(rows) == 1
@@ -678,9 +704,9 @@ async def test_edit_in_doc_repaints_card_to_editing_state_with_no_buttons(
     )
 
     body = resp.json()
-    assert body.get("replace_original") is True
-    assert "is editing in the doc" in body.get("text", "")
-    assert f"<@{_HANNAH[1]}>" in body.get("text", "")
+    assert len(_repaints) == 1, "the card must be repainted via response_url"
+    assert "is editing in the doc" in str(_repaints[0]["text"])
+    assert f"<@{_HANNAH[1]}>" in str(_repaints[0]["text"])
     # No actions block anywhere in the repaint -- the buttons are gone. CCA9's
     # reopen logic brings the card back automatically once the copy actually
     # changes, which is why removing the buttons here is safe.
@@ -901,7 +927,7 @@ async def test_second_click_on_decided_card_no_duplicate_row(
         ),
     )
     assert first.status_code == 200
-    assert first.json().get("replace_original") is True
+    assert len(_repaints) >= 1, "the first decision must repaint the card"
 
     # A second, genuinely distinct delivery for the SAME button -- even from
     # a different (also-eligible) approver, as "any one is sufficient" plus
@@ -952,7 +978,7 @@ async def test_edit_in_doc_then_later_approved_both_rows_survive(
         ),
     )
     assert click_resp.status_code == 200
-    assert click_resp.json().get("replace_original") is True
+    assert len(_repaints) >= 1, "the Edit-in-doc click must repaint the card"
 
     rows_after_first = await _decisions_for(db_session, card_id, "copy")
     assert len(rows_after_first) == 1
@@ -970,7 +996,7 @@ async def test_edit_in_doc_then_later_approved_both_rows_survive(
         ),
     )
     assert approve_resp.status_code == 200
-    assert approve_resp.json().get("replace_original") is True
+    assert len(_repaints) == 2, "both the Edit-in-doc click and the approval repaint"
 
     rows_after_second = await _decisions_for(db_session, card_id, "copy")
     assert len(rows_after_second) == 2  # BOTH rows survive -- nothing updated or deleted
