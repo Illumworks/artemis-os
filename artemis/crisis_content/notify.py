@@ -470,6 +470,13 @@ def _asset_status_line(card: ReviewCard) -> str:
         return "not set"
     if card.asset_url:
         return f"{card.asset_status} — {card.asset_url}"
+    if card.embedded_asset_count:
+        # A pasted-in image has no URL to offer -- it is a base64 blob in the
+        # export. Say it is there and let the doc link carry them to it,
+        # rather than repeating "no visual attached yet" while a visual sits
+        # in the cell (which is what this said to Jon on 2026-08-12).
+        plural = "s" if card.embedded_asset_count > 1 else ""
+        return f"{card.asset_status} — {card.embedded_asset_count} visual{plural} in the doc"
     return f"still in {card.asset_status} — no visual attached yet"
 
 
@@ -539,7 +546,14 @@ def render_transition_message(transition: Transition, *, footer: str, approvers:
         lines.append(f"Asset: {_asset_status_line(card)}")
     else:
         lines.append(f"Copy: {_copy_status_line(card)}")
-        lines.append(f"Asset link: {card.asset_url}")
+        if card.asset_url:
+            lines.append(f"Asset link: {card.asset_url}")
+        else:
+            # The visual is pasted into the card, so there is no link to give
+            # -- "Asset link: None" is what this printed before. The doc URL
+            # on the next line is the way in.
+            plural = "s" if card.embedded_asset_count > 1 else ""
+            lines.append(f"Asset: {card.embedded_asset_count} visual{plural} pasted into the card")
 
     lines.append(f"Open the doc: {_DOC_URL}")
     if footer:

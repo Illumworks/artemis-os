@@ -76,10 +76,10 @@ def _gate_2_node() -> dict[str, Any]:
         "label": "Gate 2 Approval Drawer",
         "config": {
             "approval_kind": "content_draft",
-            "approvers": ["josh@amiralearning.com", "angela@amiralearning.com"],
+            "approvers": ["joshua.mukai@amiralearning.com", "angela.miata@amiralearning.com"],
             "timeout_hours": 72,
             "on_timeout": "escalate",
-            "escalation_to": ["jon@amiralearning.com"],
+            "escalation_to": ["jon.fila@amiralearning.com"],
         },
         "position": {"x": 800.0, "y": 1440.0},
     }
@@ -129,7 +129,7 @@ def build_marketing_pipeline(
             "label": "Gate 1 Signals Inbox",
             "config": {
                 "approval_kind": "signal_brief",
-                "approvers": ["josh@amiralearning.com", "angela@amiralearning.com"],
+                "approvers": ["joshua.mukai@amiralearning.com", "angela.miata@amiralearning.com"],
                 "timeout_hours": 72,
             },
             "position": {"x": 800.0, "y": 690.0},

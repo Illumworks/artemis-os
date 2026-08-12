@@ -369,6 +369,32 @@ def _extract_asset_url(status_paragraphs: list[_Node]) -> str | None:
     return None
 
 
+def _count_embedded_images(table: _Node) -> int:
+    """How many images are pasted into this card, anywhere in its table.
+
+    A visual can reach a card two ways, and until 2026-08-12 we only saw one
+    of them. ``_extract_asset_url`` looks for an ``<a href>`` on the "Asset
+    for review - LINK" line -- but a check of the live export found **zero**
+    anchors on that line across every card in the document, Jen's included.
+    The "LINK" placeholder has never once been used as a link. What people
+    actually do is paste the image straight into the copy cell, which is
+    exactly what Jon did when testing his own approval route.
+
+    Google's HTML export renders such an image as an ``<img>`` whose ``src``
+    is a base64 ``data:`` URI, so the picture is fully present in what we
+    already fetch -- we simply were not looking for it. Counted across the
+    whole card table rather than one cell, because "does this card have a
+    visual" is a question about the card; the status chips are text, not
+    images, so they cannot inflate this.
+
+    Deliberately a count and not the ``src``: a base64 PNG is hundreds of
+    kilobytes and cannot go in a Slack message or a ``asset_url`` column.
+    Presence is what the asset route needs to know; the doc link is how a
+    human gets to the picture.
+    """
+    return len(_find_all(table, "img"))
+
+
 def _split_header(header: str) -> tuple[str | None, str]:
     """Split "<date text> - <title>" on the first " - ". Falls back to (None, header)."""
     if " - " in header:
@@ -424,6 +450,7 @@ def _build_card(
     )
     platform, asset_status, copy_status = _parse_status_lines(status_lines)
     asset_url = _extract_asset_url(status_paragraphs)
+    embedded_asset_count = _count_embedded_images(table)
 
     copy_lines = _paragraph_lines(copy_cell)
     copy_body = "\n".join(line for line in copy_lines if line)
@@ -445,6 +472,7 @@ def _build_card(
         asset_status=asset_status,
         copy_status=copy_status,
         asset_url=asset_url,
+        embedded_asset_count=embedded_asset_count,
         copy_body=copy_body,
         identity_key=(header, platform, ordinal),
         copy_hash=copy_hash,

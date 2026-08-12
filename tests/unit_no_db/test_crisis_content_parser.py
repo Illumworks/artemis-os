@@ -350,3 +350,68 @@ def test_adding_a_comment_does_not_change_the_copy_hash() -> None:
 
     assert before.copy_hash == after.copy_hash, "a comment must not look like an edit"
     assert before.identity_key == after.identity_key
+
+
+def _card_with(asset_line: str, copy_extra: str = "") -> str:
+    """One signature-matching card; ``asset_line`` is the "Asset for review" <p>."""
+    return (
+        "<html><body><table>"
+        "<tr><td colspan='2'><p><span>August XX, 2026 - More time for books</span></p></td></tr>"
+        "<tr><td><p><span>Platform: TBD</span></p>"
+        f"{asset_line}"
+        "<p><span>Ready</span></p>"
+        "<p><span>Copy review</span></p><p><span>Ready</span></p></td>"
+        f"<td><p><span>This is some testing copy.</span>{copy_extra}</p></td></tr>"
+        "</table></body></html>"
+    )
+
+
+_ASSET_LINE = "<p><span>Asset for review - LINK</span></p>"
+
+
+def test_image_pasted_into_the_copy_cell_counts_as_an_attached_visual() -> None:
+    """How a visual ACTUALLY arrives -- verified against the live doc 2026-08-12.
+
+    Not one card in Jen's document has an anchor on the "Asset for review"
+    line; the "LINK" text is an unused placeholder. People paste the image
+    into the copy cell instead, which Google exports as an <img> with a
+    base64 data: URI. Reading only ``asset_url`` meant ``has_visual`` was
+    False for every card ever, so the asset route -- the only route Jon
+    personally approves -- could never fire.
+    """
+    img = '<span><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="></span>'
+    card = parse_review_cards(_card_with(_ASSET_LINE, img))[0]
+
+    assert card.asset_url is None, "there is no link, and inventing one would be wrong"
+    assert card.embedded_asset_count == 1
+    assert card.has_visual is True
+
+
+def test_no_image_and_no_anchor_is_still_no_visual() -> None:
+    """The placeholder alone must not read as an attached asset."""
+    card = parse_review_cards(_card_with(_ASSET_LINE))[0]
+
+    assert card.embedded_asset_count == 0
+    assert card.has_visual is False
+
+
+def test_multiple_pasted_images_are_all_counted() -> None:
+    """A carousel is several images in one cell; the notification says how many."""
+    img = '<span><img src="data:image/png;base64,AAAA"></span>'
+    card = parse_review_cards(_card_with(_ASSET_LINE, img * 3))[0]
+
+    assert card.embedded_asset_count == 3
+    assert card.has_visual is True
+
+
+def test_a_linked_asset_still_wins_and_keeps_its_url() -> None:
+    """The link path is rarer, not gone -- an anchor must still yield the URL."""
+    anchor = (
+        "<p><span>Asset for review - </span><span>"
+        '<a href="https://drive.google.com/file/d/EXAMPLE/view">Asset link</a>'
+        "</span></p>"
+    )
+    card = parse_review_cards(_card_with(anchor))[0]
+
+    assert card.asset_url == "https://drive.google.com/file/d/EXAMPLE/view"
+    assert card.has_visual is True

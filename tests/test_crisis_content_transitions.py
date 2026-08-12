@@ -95,6 +95,7 @@ def _make_card(
     asset_status: str | None = "Draft",
     copy_status: str | None = "Draft",
     asset_url: str | None = None,
+    embedded_asset_count: int = 0,
     copy_body: str = "Default copy body.",
 ) -> ReviewCard:
     """Build a ``ReviewCard`` the way the real parser would, minus the HTML."""
@@ -107,6 +108,7 @@ def _make_card(
         asset_status=asset_status,
         copy_status=copy_status,
         asset_url=asset_url,
+        embedded_asset_count=embedded_asset_count,
         copy_body=copy_body,
         identity_key=(header, platform, ordinal),
         copy_hash=copy_hash,
@@ -1053,3 +1055,26 @@ async def test_card_missing_from_tab_map_is_skipped_entirely_and_retries_next_ti
     assert retried_transitions[0].new_status == "Ready"
     rows_after_retry = (await db_session.execute(select(CrisisContentCard))).scalars().all()
     assert len(rows_after_retry) == 1
+
+
+async def test_draft_to_ready_on_asset_with_a_PASTED_image_emits(
+    db_session: AsyncSession,
+) -> None:
+    """The asset route must fire for a visual pasted in, not just a linked one.
+
+    This is the case that had never worked. The gate read ``asset_url is
+    None``, and a check of the live document on 2026-08-12 found zero anchors
+    on the "Asset for review" line across every card in it -- so the only
+    route Jon personally approves was suppressed for every card that ever
+    existed, silently, while an image sat in the cell.
+    """
+    draft = _make_card(asset_status="Draft", copy_status="Draft", embedded_asset_count=1)
+    await record_observation(db_session, [draft])
+    await db_session.commit()
+
+    ready = _make_card(asset_status="Ready", copy_status="Draft", embedded_asset_count=1)
+    transitions = await record_observation(db_session, [ready])
+    await db_session.commit()
+
+    assert [t.route for t in transitions] == ["asset"]
+    assert transitions[0].new_status == "Ready"

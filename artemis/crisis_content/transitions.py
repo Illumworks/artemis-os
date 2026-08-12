@@ -497,7 +497,12 @@ async def _evaluate_route(
     if new_status != _READY:
         return None
 
-    if route == "asset" and card.asset_url is None:
+    if route == "asset" and not card.has_visual:
+        # Was ``card.asset_url is None`` until 2026-08-12. That only ever saw
+        # a link on the "Asset for review" line, and no card in the live doc
+        # has one -- so the asset route, the ONLY route Jon personally
+        # approves, could never fire for anybody. A pasted-in image counts;
+        # see ReviewCard.has_visual.
         return None
 
     reopening_decision: CrisisContentDecision | None = None
