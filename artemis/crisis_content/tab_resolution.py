@@ -144,7 +144,19 @@ async def _fetch_document(access_token: str, document_id: str) -> dict[str, Any]
             resp = await http.get(
                 f"{_DOCS_API_BASE}/documents/{document_id}",
                 headers={"Authorization": f"Bearer {access_token}"},
-                params={"includeTabsContent": "true"},
+                params={
+                    "includeTabsContent": "true",
+                    # MUST be explicit. The default
+                    # (DEFAULT_FOR_CURRENT_ACCESS) renders suggestions INLINE for
+                    # an editor, so the API text contains the reviewers' suggested
+                    # insertions while the HTML export shows only accepted text.
+                    # Card matching compares a copy hash across those two sources,
+                    # so once Angela and Hannah suggested edits, 9 of 11 cards
+                    # stopped matching and the pipeline skipped every one of them
+                    # (production, 2026-08-12). This mode returns accepted text,
+                    # which is what the export shows.
+                    "suggestionsViewMode": "PREVIEW_WITHOUT_SUGGESTIONS",
+                },
             )
         resp.raise_for_status()
         payload = resp.json()
@@ -236,7 +248,14 @@ async def resolve_card_tab_map(
     for card in cards:
         try:
             location, _total_count = locate_card_table(
-                document, header=card.header, copy_hash=card.copy_hash
+                document,
+                header=card.header,
+                copy_hash=card.copy_hash,
+                # Position among identical siblings, used only when header +
+                # copy hash is ambiguous -- which happens for a genuinely
+                # duplicated card (Jon's TESTING-tab copy, and the vendor's own
+                # repeated headers across platform variants).
+                ordinal=card.identity_key[2],
             )
         except CardNotLocatedError as exc:
             logger.error(
