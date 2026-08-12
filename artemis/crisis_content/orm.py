@@ -264,6 +264,9 @@ class CrisisContentThreadNote(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     has_attachment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     message_ts: Mapped[str] = mapped_column(Text, nullable=False)
+    # Parent thread of this reply. "Nudge once" is scoped to (card_id,
+    # thread_ts), not card_id alone -- see the migration's column comment.
+    thread_ts: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )

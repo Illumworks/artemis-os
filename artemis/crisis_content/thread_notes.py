@@ -14,9 +14,16 @@ fed only by a verified Slack interactivity payload). See
 ``CrisisContentThreadNote``'s docstring for the same constraint at the ORM
 layer.
 
-**Nudge once per thread.** A note already existing for the card (from an
-earlier reply, checked BEFORE this reply's own insert) means "already
-nudged" -- capture silently, no second nudge. This read-before-write order
+**Nudge once per thread.** A note already existing for this ``(card_id,
+thread_ts)`` pair (from an earlier reply, checked BEFORE this reply's own
+insert) means "already nudged" -- capture silently, no second nudge.
+
+Scoped per THREAD, not per card, on purpose: one card can have both routes
+posted to different places (asset -> Jon's DM, copy -> the channel), and the
+re-approval fix posts a brand-new card in a brand-new thread. Card-scoped
+dedup would swallow the nudge on a thread's genuinely first reply -- exactly
+the moment someone is most likely to believe their reply counted as an
+approval, which is the entire reason the nudge exists. This read-before-write order
 is also what makes the rule safe under a Slack retry of the SAME reply: the
 retry's own insert is idempotent (``ON CONFLICT DO NOTHING`` on
 ``(card_id, message_ts)``), and by the time the retry runs, this exact
@@ -118,10 +125,22 @@ async def find_card_thread_target(
     return CardThreadTarget(card_id=row[0], route=cast("Route | None", row[1]))
 
 
-async def _has_any_note(session: AsyncSession, card_id: int) -> bool:
+async def _has_note_in_thread(session: AsyncSession, card_id: int, thread_ts: str) -> bool:
+    """Whether this specific THREAD has already been nudged.
+
+    Scoped to ``(card_id, thread_ts)`` rather than ``card_id`` alone. One card
+    can have both routes posted to different places (asset -> Jon's DM, copy ->
+    the channel), and the re-approval fix posts a brand-new card in a new
+    thread. Card-scoped dedup would swallow the nudge on a thread's genuinely
+    first reply -- precisely the moment someone is most likely to assume their
+    reply counted as an approval, which is the whole reason the nudge exists.
+    """
     stmt = (
         select(CrisisContentThreadNote.id)
-        .where(CrisisContentThreadNote.card_id == card_id)
+        .where(
+            CrisisContentThreadNote.card_id == card_id,
+            CrisisContentThreadNote.thread_ts == thread_ts,
+        )
         .limit(1)
     )
     result = await session.execute(stmt)
@@ -184,7 +203,7 @@ async def handle_thread_reply(
     reply reads as "already nudged" and stays silent. See the module
     docstring's "Nudge once per thread".
     """
-    already_noted = await _has_any_note(session, card_id)
+    already_noted = await _has_note_in_thread(session, card_id, thread_ts)
 
     stmt = (
         pg_insert(CrisisContentThreadNote)
@@ -196,6 +215,7 @@ async def handle_thread_reply(
             text=text,
             has_attachment=has_attachment,
             message_ts=message_ts,
+            thread_ts=thread_ts,
             created_at=datetime.now(UTC),
         )
         .on_conflict_do_nothing(constraint=_THREAD_NOTES_CONSTRAINT)
@@ -206,8 +226,9 @@ async def handle_thread_reply(
     if already_noted:
         logger.info(
             "crisis_content: thread reply captured silently for card_id=%s "
-            "(a note already exists -- no repeat nudge)",
+            "thread_ts=%s (this thread was already nudged)",
             card_id,
+            thread_ts,
         )
         return
 

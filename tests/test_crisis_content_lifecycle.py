@@ -800,3 +800,81 @@ async def test_reply_to_known_card_is_captured_and_skips_the_generic_loop(
         )
     ).scalars().all()
     assert decisions == []
+
+
+async def test_nudge_is_per_thread_not_per_card(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second thread on the SAME card still gets its own first-reply nudge.
+
+    One card can be posted twice to two different places -- asset to Jon's DM,
+    copy to the channel -- and the re-approval fix posts a brand-new card in a
+    brand-new thread. Dedup scoped to card_id alone would swallow the nudge on
+    the second thread's genuinely first reply, which is exactly the moment
+    someone is most likely to assume their reply counted as an approval.
+
+    The worker flagged this tension (the brief said "once per thread" in its
+    heading but "once per card" in its mechanism) rather than guessing; the
+    schema gained a thread_ts column so the dedup can be scoped correctly.
+    """
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(thread_notes, "SlackClient", _fake_nudge_slack_client_cls(posted))
+
+    thread_a = "1700000000.000100"
+    thread_b = "1700000000.000900"
+
+    card_id = await _seed_card_with_notification(
+        db_session, channel_id=_CRISIS_CHANNEL, message_ts=thread_a, route="copy"
+    )
+    card_row = (
+        await db_session.execute(
+            select(CrisisContentCard).where(CrisisContentCard.id == card_id)
+        )
+    ).scalar_one()
+    # Same card, other route, posted somewhere else -- its own thread.
+    await mark_notified(
+        db_session,
+        card_id,
+        "asset",
+        "Ready",
+        copy_hash=card_row.copy_hash,
+        channel_id="D_JON_DM",
+        message_ts=thread_b,
+    )
+    await db_session.commit()
+
+    for channel_id, thread_ts, message_ts in (
+        (_CRISIS_CHANNEL, thread_a, "1700000000.000101"),
+        ("D_JON_DM", thread_b, "1700000000.000901"),
+    ):
+        handled = await thread_notes.maybe_handle_thread_reply(
+            db_session,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            message_ts=message_ts,
+            slack_user_id="U_ANGELA",
+            text="first reply in this thread",
+            has_files=False,
+            access_token="xoxb-fake",
+        )
+        assert handled is True
+
+    assert len(posted) == 2, (
+        f"expected a nudge in BOTH threads, got {len(posted)} — "
+        "dedup is scoped to the card instead of the thread"
+    )
+    assert {p[0] for p in posted} == {_CRISIS_CHANNEL, "D_JON_DM"}
+
+    # A SECOND reply in thread A must still stay silent.
+    handled = await thread_notes.maybe_handle_thread_reply(
+        db_session,
+        channel_id=_CRISIS_CHANNEL,
+        thread_ts=thread_a,
+        message_ts="1700000000.000102",
+        slack_user_id="U_HANNAH",
+        text="second reply, same thread",
+        has_files=False,
+        access_token="xoxb-fake",
+    )
+    assert handled is True
+    assert len(posted) == 2, "a repeat reply in an already-nudged thread must stay silent"

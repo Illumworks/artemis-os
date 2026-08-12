@@ -107,6 +107,14 @@ def upgrade() -> None:
             "has_attachment", sa.Boolean(), nullable=False, server_default=sa.false()
         ),
         sa.Column("message_ts", sa.Text(), nullable=False),
+        # The parent thread this reply landed in. Needed so "nudge once" can be
+        # scoped per THREAD rather than per card: one card can have two routes
+        # posted to two different places (asset -> Jon's DM, copy -> the
+        # channel), and a re-fired card starts a brand-new thread. Card-scoped
+        # dedup would silently skip the nudge on a thread's genuinely first
+        # reply, which is exactly the case where someone is most likely to
+        # believe their reply counted as an approval.
+        sa.Column("thread_ts", sa.Text(), nullable=False),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),
