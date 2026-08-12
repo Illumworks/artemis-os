@@ -159,9 +159,12 @@ class RuleMiningFetchError(Exception):
 
 @dataclass(frozen=True)
 class SuggestionPair:
-    """One (deleted, inserted) pair extracted from adjacent suggestion runs.
+    """One (deleted, inserted) pair extracted from a suggestion cluster (CCA16).
 
-    Deliberately carries no author field -- see the module docstring's
+    "Cluster" here means the whole contiguous span of DEL/ADD suggestion
+    activity, coalesced by ``_paragraph_pairs`` -- not a single adjacent
+    run pair, which is what this carried pre-CCA16. Deliberately carries no
+    author field -- see the module docstring's
     "Attribution" section. ``is_test_tab`` and ``card_header`` are carried
     through from extraction so ``record_and_propose`` can filter/cite
     without a second document walk.
