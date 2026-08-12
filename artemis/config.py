@@ -818,6 +818,28 @@ class Settings(BaseSettings):
             "is unaffected either way."
         ),
     )
+    crisis_content_rule_mining_max_words: int = Field(
+        default=6,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_RULE_MINING_MAX_WORDS",
+            "CRISIS_CONTENT_RULE_MINING_MAX_WORDS",
+        ),
+        description=(
+            "Longest either side of a mined (deleted, inserted) pair may be, in "
+            "whitespace-separated words, before artemis/crisis_content/"
+            "rule_mining.py (CCA16) refuses to propose it as a "
+            "writing_training_candidates row -- even after it reaches "
+            "crisis_content_rule_mining_threshold. The pair keeps counting "
+            "occurrences past the guard (crisis_content_rule_mining_pairs); only "
+            "the proposal step is withheld, forever, for as long as it stays "
+            "over the guard. Default 6: CCA16 coalesces run-level fragments "
+            "into one span-level pair per rewritten sentence (see that slice's "
+            "brief), so a genuine house rule -- 'child' -> 'student' -- stays "
+            "short and clears this guard easily, while a whole rewritten "
+            "sentence recurring under it is boilerplate that belongs in front "
+            "of a human, not auto-surfaced as if it were a style rule."
+        ),
+    )
     crisis_content_harvest_enabled: bool = Field(
         default=True,
         validation_alias=AliasChoices(

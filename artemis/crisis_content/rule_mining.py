@@ -43,12 +43,39 @@ rather than parameterizing an existing one. This also keeps this slice at
 zero import coupling to any file it was told not to touch, while a sibling
 slice edits this package concurrently.
 
-**A replacement is an adjacent deletion run and insertion run inside the
-same paragraph.** ``_paragraph_pairs`` walks each paragraph's elements in
-order and pairs a maximal run of consecutive DEL-only textRuns with an
-immediately-following maximal run of consecutive ADD-only textRuns. A
-deletion with no adjacent insertion (a cut, not a word swap -- several exist
-in the live doc) yields no pair.
+**A replacement is the whole contiguous span of suggestion activity, not the
+run Google Docs happened to store it in (CCA16).** CCA15 shipped mining at
+run level: a maximal consecutive run of DEL-only textRuns paired with an
+immediately-following maximal run of ADD-only textRuns. Against Jen's real
+doc that produced pairs like ``It's a`` -> ``students`` and ``can't`` ->
+`` or `` -- fragments of one sentence Angela rewrote in place, sliced
+wherever Google's diff happened to put a run boundary and then paired with
+whatever fragment landed next to it. CCA15's 15 tests never caught this
+because they only ever seeded a single-word swap (``child`` -> ``student``),
+which is a one-block-each-side cluster either way -- the tests were not
+wrong, the assumption that production edits look like the fixtures was.
+
+``_paragraph_pairs`` now coalesces at the *cluster* level, via
+``_cluster_blocks``: a maximal consecutive stretch of DEL/ADD blocks,
+unbroken by an untouched (``none``) or ambiguous (``both``) run, is one
+cluster, and each cluster yields at most one pair -- every DEL block's text
+in the cluster, concatenated in document order, against every ADD block's
+text, concatenated in document order (no separator inserted between
+blocks -- see ``_paragraph_pairs``'s docstring for the cosmetic
+consequence). A cluster made of only one kind -- all DEL (a whole-paragraph
+deletion, or a cut), all ADD, or a DEL block adjacent to an ADD block whose
+concatenated text is empty (a Docs boundary-marker artifact, seen live as
+``how it's made.`` -> "") -- yields no pair, exactly as a lone deletion
+always has.
+
+**A cluster this long is not a rule, it is one edit (CCA16).** Coalescing
+fixes the unit but not a long span recurring verbatim (pasted boilerplate).
+``record_and_propose`` therefore refuses to *propose* -- it still counts --
+any pair whose longer side exceeds
+``settings.crisis_content_rule_mining_max_words`` words (default 6). A
+standing house rule is guidance a writer can hold in their head; "prefer X
+over Y" where X is a whole rewritten sentence is one edit, not a rule, and
+Angela's review queue is not where one edit belongs.
 
 **Never auto-applies anything.** ``record_and_propose`` is the only
 function that writes to the database, and the only table it ever writes
@@ -152,12 +179,21 @@ class SuggestionPair:
 
 @dataclass(frozen=True)
 class MiningRunResult:
-    """What one call to ``record_and_propose`` did, for callers/reports."""
+    """What one call to ``record_and_propose`` did, for callers/reports.
+
+    ``held_by_length_guard`` (CCA16) counts pairs that reached the proposal
+    threshold on this call but were withheld because their longer side
+    exceeds ``max_words``/``settings.crisis_content_rule_mining_max_words``
+    -- they were still counted normally; they are simply never proposed
+    while over the guard. See ``record_and_propose``'s "length guard"
+    section.
+    """
 
     new_observations: int
     skipped_test_tab: int
     skipped_noise: int
     proposed_candidates: tuple[WritingTrainingCandidate, ...]
+    held_by_length_guard: int = 0
 
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
@@ -403,29 +439,67 @@ def _paragraph_blocks(paragraph: Mapping[str, Any]) -> list[_Block]:
     return blocks
 
 
+def _cluster_blocks(blocks: Sequence[_Block]) -> list[list[_Block]]:
+    """Group ``blocks`` into maximal runs of mutually adjacent blocks (CCA16).
+
+    Two blocks join the same cluster iff nothing separates them: the
+    earlier block's ``end`` element index equals the later block's
+    ``start``. Any gap ends the cluster -- and there is always a gap where
+    an untouched (``none``) or ambiguous (``both``) run sat, because
+    ``_paragraph_blocks`` never emits a block for one of those, so the
+    index range it occupied is simply missing from the sequence. This is
+    the same adjacency test CCA15's ``_paragraph_pairs`` applied between
+    exactly two blocks; CCA16 applies it across the whole run of blocks so
+    an interleaved DEL/ADD/DEL/ADD rewrite becomes one cluster instead of
+    several independently-paired fragments.
+    """
+    clusters: list[list[_Block]] = []
+    for block in blocks:
+        if clusters and clusters[-1][-1].end == block.start:
+            clusters[-1].append(block)
+        else:
+            clusters.append([block])
+    return clusters
+
+
 def _paragraph_pairs(
     paragraph: Mapping[str, Any],
 ) -> list[tuple[str, str, tuple[str, ...], tuple[str, ...]]]:
-    """Every (deleted, inserted) pair in one paragraph: adjacent DEL->ADD blocks only.
+    """Every (deleted, inserted) span-level pair in one paragraph (CCA16).
 
-    "Adjacent" means the DEL block's end element index equals the ADD
-    block's start element index -- literally neighbouring runs, nothing
-    (not even an untouched-text run) between them. A DEL block with no such
-    immediately-following ADD block (a whole-paragraph deletion, or a cut
-    followed later by an unrelated insertion) yields no pair for that
-    block -- see the module docstring's "adjacent" rule.
+    Coalesces each maximal cluster of contiguous DEL/ADD blocks (see
+    ``_cluster_blocks``) into at most one pair: every DEL block's text in
+    the cluster, concatenated in document order, against every ADD block's
+    text, concatenated in document order. Concatenation is literal -- no
+    separator is inserted between blocks -- because the brief's contract is
+    "the deleted text" and "the inserted text" as two spans to store
+    verbatim, not a reconstructed sentence; the one cosmetic consequence is
+    that two fragments with no whitespace between them (e.g. a deleted
+    ``"the"`` immediately followed in the cluster by a deleted ``"topic"``,
+    with an insertion in between) can fuse into what reads as a single
+    non-word when displayed. See this slice's report for that tradeoff.
+
+    A cluster made of only one kind -- all DEL, all ADD, or a DEL block
+    adjacent to an ADD block whose concatenated text is empty (the live
+    ``how it's made.`` -> "" artifact) -- yields no pair: the ``not
+    deleted_text or not inserted_text`` guard below is deliberately a
+    truthiness check, not an "ADD block exists" check, so an empty-content
+    ADD block is treated exactly like no ADD block at all.
     """
-    blocks = _paragraph_blocks(paragraph)
+    clusters = _cluster_blocks(_paragraph_blocks(paragraph))
     pairs: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = []
-    i = 0
-    while i < len(blocks) - 1:
-        cur = blocks[i]
-        nxt = blocks[i + 1]
-        if cur.kind == "del" and nxt.kind == "add" and cur.end == nxt.start:
-            pairs.append((cur.text, nxt.text, cur.ids, nxt.ids))
-            i += 2
-        else:
-            i += 1
+    for cluster in clusters:
+        deleted_text = "".join(block.text for block in cluster if block.kind == "del")
+        inserted_text = "".join(block.text for block in cluster if block.kind == "add")
+        if not deleted_text or not inserted_text:
+            continue
+        deletion_ids = tuple(
+            dict.fromkeys(id_ for block in cluster if block.kind == "del" for id_ in block.ids)
+        )
+        insertion_ids = tuple(
+            dict.fromkeys(id_ for block in cluster if block.kind == "add" for id_ in block.ids)
+        )
+        pairs.append((deleted_text, inserted_text, deletion_ids, insertion_ids))
     return pairs
 
 
@@ -551,6 +625,19 @@ def is_noise_pair(deleted_text: str, inserted_text: str) -> bool:
     return d == i
 
 
+def _word_count(text: str) -> int:
+    """Whitespace-separated word count, for the CCA16 length guard.
+
+    Deliberately the same primitive ``str.split()`` already uses elsewhere
+    in this file (``normalize_for_aggregation``, ``is_noise_pair``) rather
+    than a separate tokenizer -- see ``record_and_propose``'s "length
+    guard" section for why this exists and
+    ``settings.crisis_content_rule_mining_max_words`` for the default and
+    rationale.
+    """
+    return len(text.split())
+
+
 def _occurrence_key(pair: SuggestionPair) -> str:
     """Stable dedup key for one physical suggestion occurrence.
 
@@ -669,10 +756,12 @@ async def record_and_propose(
     pairs: Sequence[SuggestionPair],
     *,
     threshold: int | None = None,
+    max_words: int | None = None,
 ) -> MiningRunResult:
     """Persist new suggestion occurrences, accumulate counts, propose at threshold.
 
-    Contract (see the CCA15 brief's "Hard constraints" and "Tests"):
+    Contract (see the CCA15 brief's "Hard constraints" and "Tests", and
+    CCA16's length-guard addition):
 
     - Test-tab pairs (``SuggestionPair.is_test_tab``) contribute NOTHING --
       no observation row, no count, no candidate.
@@ -688,6 +777,15 @@ async def record_and_propose(
       reaches ``threshold`` (default ``settings.crisis_content_rule_mining_
       threshold``), its aggregate row flips to ``status="proposed"`` and is
       never proposed again even as its count keeps climbing.
+    - **Length guard (CCA16).** A pair whose longer side exceeds
+      ``max_words`` (default ``settings.crisis_content_rule_mining_
+      max_words``) in whitespace-separated words is counted exactly like
+      any other pair, but is never proposed, no matter how high its count
+      climbs -- see ``MiningRunResult.held_by_length_guard``. Coalescing
+      (``_paragraph_pairs``) fixes the *unit* mining operates on; this
+      guard is the independent safety net for a long span that genuinely
+      recurs (e.g. boilerplate pasted into several cards) rather than
+      relying on "long spans are usually unique" alone.
     - The only table written outside this module's own two is
       ``writing_training_candidates`` (via ``create_training_candidate``).
       ``writing_rules`` is never written -- see this module's docstring.
@@ -699,10 +797,14 @@ async def record_and_propose(
     active_threshold = (
         threshold if threshold is not None else settings.crisis_content_rule_mining_threshold
     )
+    active_max_words = (
+        max_words if max_words is not None else settings.crisis_content_rule_mining_max_words
+    )
 
     new_observations = 0
     skipped_test_tab = 0
     skipped_noise = 0
+    held_by_length_guard = 0
     proposed: list[WritingTrainingCandidate] = []
     example_headers_by_pair: dict[tuple[str, str], list[str]] = {}
 
@@ -754,10 +856,25 @@ async def record_and_propose(
         example_headers_by_pair.setdefault(pair_key, []).append(pair.card_header)
 
         if pair_row.occurrence_count >= active_threshold and pair_row.status != "proposed":
-            candidate = await _propose_candidate(
-                session, pair_row, example_headers_by_pair.get(pair_key, [])
-            )
-            proposed.append(candidate)
+            if (
+                _word_count(pair_row.display_deleted) > active_max_words
+                or _word_count(pair_row.display_inserted) > active_max_words
+            ):
+                held_by_length_guard += 1
+                logger.info(
+                    "crisis_content.rule_mining: withholding proposal for pair %r -> %r "
+                    "(count=%s >= threshold=%s) -- exceeds the %s-word length guard (CCA16)",
+                    pair_row.display_deleted,
+                    pair_row.display_inserted,
+                    pair_row.occurrence_count,
+                    active_threshold,
+                    active_max_words,
+                )
+            else:
+                candidate = await _propose_candidate(
+                    session, pair_row, example_headers_by_pair.get(pair_key, [])
+                )
+                proposed.append(candidate)
 
     await session.commit()
     return MiningRunResult(
@@ -765,4 +882,5 @@ async def record_and_propose(
         skipped_test_tab=skipped_test_tab,
         skipped_noise=skipped_noise,
         proposed_candidates=tuple(proposed),
+        held_by_length_guard=held_by_length_guard,
     )
