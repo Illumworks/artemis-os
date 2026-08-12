@@ -191,6 +191,59 @@ class Settings(BaseSettings):
             "the enablement catalog. Empty = the gap posts without tagging anyone."
         ),
     )
+    callie_dm_requester_emails: str = Field(
+        default=(
+            "jon.fila@amiralearning.com,"
+            "angela.miata@amiralearning.com,"
+            "josh.mukai@amiralearning.com"
+        ),
+        validation_alias=AliasChoices(
+            "ARTEMIS_CALLIE_DM_REQUESTER_EMAILS",
+            "CALLIE_DM_REQUESTER_EMAILS",
+        ),
+        description=(
+            "Comma-separated emails permitted to ask Callie's send_guarded_dm (CALLIE-1) "
+            "to message someone on their behalf. Owner decision, Jon, 2026-08-12: Jon, "
+            "Angela, and Josh only. This is the important half of the guard -- the risk "
+            "named was proxying ('Callie, DM Sara and tell her X'), which is a WHO-MAY-ASK "
+            "problem, not a who-may-receive one. Resolved server-side from the verified "
+            "Slack event's user id via users.info (SlackClient.lookup_user_email), NEVER "
+            "from anything in the message text or tool input. Empty = nobody is authorized "
+            "(fail-closed), matching kai_action_authorized_user_ids.\n\n"
+            "NOTE: josh.mukai@amiralearning.com follows this list's firstname.lastname "
+            "convention (matching jon.fila / angela.miata below) but is NOT independently "
+            "verified anywhere else in this codebase -- no other setting pins Josh's real "
+            "address. Confirm it and correct via this env var if wrong. A wrong guess here "
+            "only fails Josh closed (he can't trigger a send until it's fixed); it cannot "
+            "grant access to anyone else, because authorization requires an exact match "
+            "against this list, not a fuzzy one."
+        ),
+    )
+    callie_dm_recipient_emails: str = Field(
+        default=(
+            "jon.fila@amiralearning.com,"
+            "angela.miata@amiralearning.com,"
+            "josh.mukai@amiralearning.com,"
+            "hannah.slater@amiralearning.com,"
+            "jaclyn.wright@amiralearning.com"
+        ),
+        validation_alias=AliasChoices(
+            "ARTEMIS_CALLIE_DM_RECIPIENT_EMAILS",
+            "CALLIE_DM_RECIPIENT_EMAILS",
+        ),
+        description=(
+            "Comma-separated emails Callie's send_guarded_dm (CALLIE-1) may deliver to: "
+            "Jon, Angela, Josh, Hannah, and Jaclyn. Checked INDEPENDENTLY of "
+            "callie_dm_requester_emails -- an authorized requester naming an unlisted "
+            "recipient is still refused. Resolved to a Slack user id at send time via "
+            "users.lookupByEmail (see artemis.floating_artemis.tools.callie_dm), never via "
+            "directory_people -- that cache had NULL slack_user_id for every real approver "
+            "on the adjacent crisis-content pipeline this week and silently took down every "
+            "approval; this tool skips it entirely rather than repeat that failure. Empty = "
+            "nobody can receive (fail-closed). Same josh.mukai@amiralearning.com caveat as "
+            "callie_dm_requester_emails above."
+        ),
+    )
 
     # M1: lossless memory — archive + backup paths and parameters
     archive_dir: Path = Field(
