@@ -10,12 +10,20 @@ the pure renderer without a database. The end-to-end ``post_transition_card``
 wiring (real Slack calls faked, real DB) is covered by
 ``tests/test_crisis_content_routing.py`` and ``tests/test_crisis_content_poller.py``,
 which this brief also requires to keep passing unmodified.
+
+Also covers the pure-rendering half of CCA11's "previously approved" reopen
+banner (``render_reopened_banner`` and its insertion point in
+``render_transition_message``) -- the reopen-DETECTION tests (does it fire,
+does it name the right approver and date, do routes reopen independently)
+live in ``tests/test_crisis_content_transitions.py``, which owns the DB
+fixtures that logic actually needs.
 """
 
 from __future__ import annotations
 
 import ast
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +32,7 @@ import pytest
 from artemis.config import settings
 from artemis.crisis_content import notify
 from artemis.crisis_content.models import ReviewCard
-from artemis.crisis_content.transitions import Transition
+from artemis.crisis_content.transitions import ReopenedAfterApproval, Transition
 
 _NOTIFY_PATH = Path(__file__).resolve().parent.parent / "artemis" / "crisis_content" / "notify.py"
 
@@ -337,6 +345,59 @@ def test_dm_jon_testing_footers_still_render_for_both_routes() -> None:
         asset_transition, footer=notify.testing_line_for_route("asset")
     )
     assert notify.TESTING_LINE_ASSET in asset_text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CCA11: the "previously approved" reopen banner
+# ─────────────────────────────────────────────────────────────────────────────
+
+_REOPENED = ReopenedAfterApproval(
+    approved_by="angela.miata@amiralearning.com",
+    approved_at=datetime(2026, 8, 11, 15, 30, tzinfo=UTC),
+)
+
+
+def test_render_reopened_banner_names_approver_and_date() -> None:
+    banner = notify.render_reopened_banner(_REOPENED)
+    assert banner == (
+        "⚠️ Previously approved by angela.miata@amiralearning.com on Aug 11, "
+        "and the copy has changed since."
+    )
+
+
+def test_transition_message_inserts_banner_right_after_the_opener_on_both_routes() -> None:
+    """The banner is line 2 -- right after the opener, before anything else --
+    on BOTH routes, mirroring rather than special-casing (same rule notify.py
+    already follows for the rest of the card body).
+    """
+    copy_transition = _copy_transition()
+    reopened_copy = copy_transition.model_copy(update={"reopened_after_approval": _REOPENED})
+    copy_lines = notify.render_transition_message(
+        reopened_copy, footer="", approvers=_APPROVERS
+    ).splitlines()
+    assert copy_lines[0] == notify.render_opener(
+        copy_transition.card.identity_key, "copy", approvers=_APPROVERS
+    )
+    assert copy_lines[1] == notify.render_reopened_banner(_REOPENED)
+
+    asset_transition = _asset_transition()
+    reopened_asset = asset_transition.model_copy(update={"reopened_after_approval": _REOPENED})
+    asset_lines = notify.render_transition_message(reopened_asset, footer="").splitlines()
+    assert asset_lines[0] == notify.render_opener(asset_transition.card.identity_key, "asset")
+    assert asset_lines[1] == notify.render_reopened_banner(_REOPENED)
+
+
+def test_transition_message_omits_banner_when_reopened_after_approval_is_none() -> None:
+    """Every transition this brief doesn't apply to (a first-time card, and a
+    changes_requested reopen) leaves ``reopened_after_approval`` unset by
+    default -- confirms that default renders no banner at all, not an empty
+    line.
+    """
+    transition = _copy_transition()
+    assert transition.reopened_after_approval is None
+    text = notify.render_transition_message(transition, footer="", approvers=_APPROVERS)
+    assert "Previously approved" not in text
+    assert "⚠️" not in text
 
 
 def test_copy_opener_falls_back_to_a_generic_phrase_when_no_approvers_supplied() -> None:

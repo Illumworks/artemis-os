@@ -16,10 +16,11 @@ don't already have a natural home in an existing file:
   reply to a known card leaves existing behavior completely unchanged (the
   Lead's correction to this brief's original routing note).
 
-The re-approval fix's own tests (fires / does-not-fire / approved-stays-
-terminal / asset-route-mirrors) live in
+The re-approval fix's own tests (fires / does-not-fire / asset-route-
+mirrors, plus CCA11's approved-also-reopens / noise-guard / banner /
+routes-reopen-independently cases) live in
 ``tests/test_crisis_content_transitions.py`` -- that module already owns
-``_evaluate_route``'s test coverage, and the re-approval logic lives inside
+``_evaluate_route``'s test coverage, and the reopen logic lives inside
 that exact function. The Jen change-request mention's tests live in
 ``tests/test_crisis_content_decisions.py`` -- that module already owns the
 full HTTP + DB harness for the ``view_submission`` decision path the Jen
