@@ -38,6 +38,16 @@ module never attempts it; it only ever sets ``has_attachment`` from
 whether ``files`` was non-empty, and acknowledges the attachment in the
 nudge text. Do not add the scope here or anywhere in this slice.
 
+**CCA10 extension.** ``handle_thread_reply`` now also persists ``channel_id``
+(a parameter it already received, for the nudge, but never stored) and
+``file_count`` (the length of the reply's files array -- a count, not file
+content), and returns the note's id. ``maybe_handle_thread_reply`` uses that
+id to fire ``artemis.crisis_content.image_link.schedule_image_link_delivery``
+whenever the reply carried at least one file -- that module turns the note
+into a permalink line in Jen's doc, entirely separately from the capture and
+nudge this module still owns. See that module's docstring for why it needs
+no new Slack scope either.
+
 **Wiring (owned by ``artemis/routes/integrations_slack_events.py``, not
 this module).** ``maybe_handle_thread_reply`` is called from
 ``_handle_mentionable_event`` BEFORE the channel-allowlist gate
@@ -62,6 +72,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.crisis_content.image_link import schedule_image_link_delivery
 from artemis.crisis_content.orm import CrisisContentNotification, CrisisContentThreadNote
 from artemis.crisis_content.transitions import Route
 from artemis.directory.models import DirectoryPerson
@@ -184,7 +195,8 @@ async def handle_thread_reply(
     channel_id: str,
     thread_ts: str,
     access_token: str,
-) -> None:
+    file_count: int = 0,
+) -> int:
     """Record one thread reply, and nudge iff this card has never had a note before.
 
     Never infers a decision from ``text`` -- see the module docstring's
@@ -202,6 +214,13 @@ async def handle_thread_reply(
     for this card BEFORE this insert -- so a retried delivery of the SAME
     reply reads as "already nudged" and stays silent. See the module
     docstring's "Nudge once per thread".
+
+    Returns the id of the note row for this ``(card_id, message_ts)`` --
+    freshly inserted, or (under a Slack retry of the same reply) the row
+    from the first delivery. The caller (``maybe_handle_thread_reply``)
+    uses this id to schedule the CCA10 image-link follow-on exactly once
+    per genuinely distinct reply, the same way ``slack_actions.py`` uses
+    ``record_decision``'s returned row to call ``schedule_decision_writeback``.
     """
     already_noted = await _has_note_in_thread(session, card_id, thread_ts)
 
@@ -214,13 +233,28 @@ async def handle_thread_reply(
             author_email=author_email,
             text=text,
             has_attachment=has_attachment,
+            channel_id=channel_id,
+            file_count=file_count,
             message_ts=message_ts,
             thread_ts=thread_ts,
             created_at=datetime.now(UTC),
         )
         .on_conflict_do_nothing(constraint=_THREAD_NOTES_CONSTRAINT)
+        .returning(CrisisContentThreadNote.id)
     )
-    await session.execute(stmt)
+    result = await session.execute(stmt)
+    note_id = result.scalar_one_or_none()
+    if note_id is None:
+        # Conflict: a Slack retry of the exact same (card_id, message_ts).
+        # The row from the first delivery already exists -- fetch its id so
+        # the caller can still (idempotently) schedule the follow-on.
+        existing = await session.execute(
+            select(CrisisContentThreadNote.id).where(
+                CrisisContentThreadNote.card_id == card_id,
+                CrisisContentThreadNote.message_ts == message_ts,
+            )
+        )
+        note_id = existing.scalar_one()
     await session.commit()
 
     if already_noted:
@@ -230,7 +264,7 @@ async def handle_thread_reply(
             card_id,
             thread_ts,
         )
-        return
+        return note_id
 
     nudge = _NUDGE_TEXT_WITH_ATTACHMENT if has_attachment else _NUDGE_TEXT
     try:
@@ -245,6 +279,8 @@ async def handle_thread_reply(
             "crisis_content: failed to post thread-reply nudge for card_id=%s", card_id
         )
 
+    return note_id
+
 
 async def maybe_handle_thread_reply(
     session: AsyncSession,
@@ -256,6 +292,7 @@ async def maybe_handle_thread_reply(
     text: str,
     has_files: bool,
     access_token: str,
+    file_count: int = 0,
 ) -> bool:
     """Entry point for the Slack events hook (CCA9).
 
@@ -266,6 +303,13 @@ async def maybe_handle_thread_reply(
     a known card), in which case the caller's EXISTING behavior must run
     completely unchanged -- this function makes no side effect at all on a
     ``False`` return.
+
+    CCA10: when the reply carried at least one file, schedules
+    ``artemis.crisis_content.image_link.schedule_image_link_delivery`` for
+    the note ``handle_thread_reply`` just wrote (or, under a Slack retry,
+    the pre-existing one) -- that module's own idempotency ledger is what
+    keeps a retried delivery of this call from ever producing a second doc
+    line, not anything here. A note with no files never schedules anything.
     """
     target = await find_card_thread_target(session, channel_id=channel_id, thread_ts=thread_ts)
     if target is None:
@@ -273,7 +317,7 @@ async def maybe_handle_thread_reply(
 
     author_email = await _resolve_directory_email(session, slack_user_id)
 
-    await handle_thread_reply(
+    note_id = await handle_thread_reply(
         session,
         card_id=target.card_id,
         route=target.route,
@@ -285,5 +329,18 @@ async def maybe_handle_thread_reply(
         channel_id=channel_id,
         thread_ts=thread_ts,
         access_token=access_token,
+        file_count=file_count,
     )
+
+    if has_files or file_count > 0:
+        try:
+            schedule_image_link_delivery(note_id)
+        except Exception:
+            logger.exception(
+                "crisis_content: failed to schedule image-link delivery for "
+                "thread_note_id=%s -- the reply is captured but the doc will not be "
+                "linked until this is retried",
+                note_id,
+            )
+
     return True

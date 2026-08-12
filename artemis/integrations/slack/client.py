@@ -100,6 +100,23 @@ class SlackClient:
     async def add_reaction(self, channel: str, ts: str, emoji: str) -> dict[str, object]:
         return await self._post("reactions.add", channel=channel, timestamp=ts, name=emoji)
 
+    async def get_permalink(self, channel: str, message_ts: str) -> str:
+        """Call ``chat.getPermalink`` -- a link to the MESSAGE, never its files.
+
+        Used by the crisis-content image-link flow (CCA10) to point Jen's
+        doc at a Slack message that carries an attachment, without ever
+        needing ``files:read`` or fetching a file's ``url_private`` -- this
+        method touches no file content at all, only the message's own
+        location. Raises ``SlackAPIError`` if Slack reports an error (e.g.
+        ``message_not_found``) or if a 200 response is missing
+        ``permalink`` despite ``ok: true``.
+        """
+        data = await self._post("chat.getPermalink", channel=channel, message_ts=message_ts)
+        permalink = data.get("permalink")
+        if not isinstance(permalink, str) or not permalink:
+            raise SlackAPIError("chat.getPermalink", "response missing 'permalink'")
+        return permalink
+
     async def list_channels(self, limit: int = 200) -> list[dict[str, object]]:
         data = await self._post(
             "conversations.list",

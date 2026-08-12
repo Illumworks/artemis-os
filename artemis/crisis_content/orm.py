@@ -238,6 +238,16 @@ class CrisisContentThreadNote(Base):
     ``ON CONFLICT DO NOTHING`` on this constraint, and that idempotency is
     also what makes the "nudge once per thread" rule safe under retry: see
     that function's docstring.
+
+    ``channel_id`` and ``file_count`` added in CCA10 (migration 0110):
+    ``channel_id`` was already a parameter ``handle_thread_reply`` received
+    (used to post the nudge) but never persisted; CCA10's image-link flow
+    (``artemis.crisis_content.image_link``) needs it back to call
+    ``chat.getPermalink`` for a note it only has by id. ``file_count`` is
+    the number of files this reply's Slack ``files[]`` array carried (array
+    length only -- never file content), for the "one reply, three files ->
+    one line saying '3 images'" rule. Both nullable/defaulted because rows
+    written before CCA10 have neither.
     """
 
     __tablename__ = "crisis_content_thread_notes"
@@ -263,6 +273,12 @@ class CrisisContentThreadNote(Base):
     author_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     has_attachment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # CCA10: the Slack channel this reply landed in (needed by image_link.py
+    # to call chat.getPermalink against a note fetched later by id alone)
+    # and how many files its `files[]` array carried (array length, never
+    # file content -- see the class docstring).
+    channel_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     message_ts: Mapped[str] = mapped_column(Text, nullable=False)
     # Parent thread of this reply. "Nudge once" is scoped to (card_id,
     # thread_ts), not card_id alone -- see the migration's column comment.

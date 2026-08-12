@@ -15,13 +15,24 @@ load-bearing here, not decoration:
    exactly one match; every caller treats that as "log ERROR, alert Jon,
    write nothing" and NEVER falls back to a best guess (e.g. table index,
    first match, most-recent match).
-3. **Verify after writing.** ``_write_doc_line`` re-fetches the doc after the
+3. **Verify after writing.** ``write_doc_line`` re-fetches the doc after the
    insert and confirms the card count is unchanged and the inserted line is
    present in the same table. A mismatch raises
    ``WritebackVerificationError``, which is treated as a loud, standing
    alarm -- NOT as a trigger for a cleanup write (a second write attempting
    to fix a possibly-already-damaged document is exactly the compounding
    mistake the brief warns against).
+
+``write_doc_line`` is public (not the usual leading-underscore private
+helper) because ``artemis.crisis_content.image_link`` (CCA10) reuses it
+verbatim -- CCA10's brief explicitly says to reuse this module's
+``locate_card_table`` and index logic rather than re-deriving it, and this
+function's contract (header + copy_hash -> locate, insert one line, verify)
+has nothing decision-specific in it. It is the ONLY function promoted this
+way; every other private helper in this module stays private, and CCA10
+writes its own independent copy of the credential-resolution machinery
+(matching the established "independent copy per module, deliberately" style
+already used by ``poller.py`` and this module for that specific piece).
 
 Why "header + platform" (the brief's stated card-matching signature) is not
 what this module actually matches on: the Docs API's ``documents.get`` is
@@ -110,6 +121,7 @@ __all__ = [
     "schedule_decision_writeback",
     "render_writeback_line",
     "locate_card_table",
+    "write_doc_line",
 ]
 
 _DOCS_API_BASE = "https://docs.googleapis.com/v1"
@@ -696,7 +708,7 @@ async def _create_drive_comment(access_token: str, *, document_id: str, content:
     resp.raise_for_status()
 
 
-async def _write_doc_line(
+async def write_doc_line(
     access_token: str,
     *,
     document_id: str,
@@ -711,6 +723,11 @@ async def _write_doc_line(
     the insert succeeded but a re-read afterward shows a changed card count
     or a missing line (something IS already written at that point -- the
     caller must alert loudly and must not attempt a cleanup write).
+
+    Public and generic on purpose (header + copy_hash + line_text -- nothing
+    decision-specific): ``artemis.crisis_content.image_link`` (CCA10) calls
+    this exact function for its own single doc-line write, rather than
+    duplicating the locate/insert/verify sequence. See the module docstring.
     """
     before = await _fetch_document(access_token, document_id)
     location, before_count = locate_card_table(before, header=header, copy_hash=copy_hash)
@@ -833,7 +850,7 @@ async def _deliver_doc_line(session: AsyncSession, decision: CrisisContentDecisi
 
     try:
         access_token = await _resolve_docs_access_token(session)
-        await _write_doc_line(
+        await write_doc_line(
             access_token,
             document_id=TARGET_DOCUMENT_ID,
             header=card.identity_header,
