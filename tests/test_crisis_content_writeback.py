@@ -73,6 +73,28 @@ _TRUNCATE = text(
 _DECIDED_AT = datetime(2026, 8, 11, 19, 14, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def _writeback_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enable the write-back kill switch for this module's tests.
+
+    ``crisis_content_writeback_enabled`` ships defaulting to **False**: turning
+    it on means writing into an external vendor's live document and emailing
+    her, which is an explicit owner decision rather than a deployment default.
+
+    These tests exercise the enabled behaviour, so they enable it explicitly
+    rather than inheriting whatever the production default happens to be. That
+    keeps the default free to change for safety reasons without silently
+    gutting this module's coverage -- and it means a test can never be the
+    reason the switch is left on.
+
+    ``test_writeback_disabled_via_settings_does_nothing`` overrides this back to
+    False for itself, which still works: the later monkeypatch wins.
+    """
+    from artemis.config import settings
+
+    monkeypatch.setattr(settings, "crisis_content_writeback_enabled", True)
+
+
 @pytest.fixture
 async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(_db_url, echo=False, poolclass=NullPool)

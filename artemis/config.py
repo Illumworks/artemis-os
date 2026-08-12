@@ -650,7 +650,7 @@ class Settings(BaseSettings):
         ),
     )
     crisis_content_writeback_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices(
             "ARTEMIS_CRISIS_CONTENT_WRITEBACK_ENABLED",
             "CRISIS_CONTENT_WRITEBACK_ENABLED",
@@ -658,13 +658,19 @@ class Settings(BaseSettings):
         description=(
             "Kill switch for the CCA7 write-back that runs after a crisis-content "
             "decision lands: the Google Doc line insert, the Drive @mention "
-            "comment, and the Gmail backup. Defaults True. Set False to disable "
-            "all three immediately, with no deploy, if anything looks wrong "
-            "against Jen's live document -- see the safety section of "
+            "comment, and the Gmail backup. Decisions still record normally in "
+            "crisis_content_decisions either way; this only gates the three "
+            "notification side effects, never the decision itself.\n\n"
+            "**Defaults False, deliberately.** Turning this on means the next "
+            "approval writes into a document owned by an external vendor while "
+            "she is editing it, and emails her. Jon authorised building this; he "
+            "has not yet authorised the first live write, and that is his call to "
+            "make rather than something to infer from 'ship it'. The code is "
+            "merged and tested so enabling it is a one-setting change with no "
+            "deploy -- which is also the emergency-off path if a write ever looks "
+            "wrong. See the safety section of "
             "briefs/cca7-writeback-and-notify-jen.md ('treat every write as the "
-            "riskiest line of code in this repo'). Decisions still record "
-            "normally in crisis_content_decisions either way; this only gates "
-            "the three notification side effects, never the decision itself."
+            "riskiest line of code in this repo')."
         ),
     )
 
