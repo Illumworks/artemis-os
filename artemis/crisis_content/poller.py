@@ -345,7 +345,8 @@ async def _run_poll_tick_locked() -> None:
             html = await fetch_crisis_content_export_html(
                 document_id=TARGET_DOCUMENT_ID, access_token=access_token
             )
-            cards = parse_review_cards(html)
+            skipped_cards: list[str] = []
+            cards = parse_review_cards(html, skipped=skipped_cards)
         except SignInPageError as exc:
             await _enter_failure(session, f"Sign-in page returned instead of doc export: {exc}")
             await session.commit()
@@ -369,6 +370,22 @@ async def _run_poll_tick_locked() -> None:
             await _enter_failure(session, f"Export fetch failed: {exc}")
             await session.commit()
             return
+
+        # A malformed card is skipped rather than killing the tick (see
+        # parser.parse_review_cards). Skipping silently would be the same
+        # class of mistake: the vendor would think a post was submitted and
+        # nobody would ever be told otherwise. So report it, once, through the
+        # same debounce as every other failure -- and keep processing the
+        # cards that ARE well-formed, which is the whole point of the change.
+        if skipped_cards:
+            await _enter_failure(
+                session,
+                f"{len(skipped_cards)} card(s) in the doc couldn't be read and were "
+                "skipped -- the other cards were processed normally. Usually a card "
+                "missing its 'August XX, 2026 - Title' header row. Details: "
+                + "; ".join(skipped_cards),
+            )
+            await session.commit()
 
         notify_failures: list[str] = await _observe_and_notify(session, cards)
 

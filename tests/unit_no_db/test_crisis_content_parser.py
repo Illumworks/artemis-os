@@ -247,3 +247,50 @@ def test_unwrap_google_redirect_url_extracts_q_param() -> None:
 def test_unwrap_google_redirect_url_leaves_plain_url_unchanged() -> None:
     plain = "https://example.com/asset"
     assert unwrap_google_redirect_url(plain) == plain
+
+
+def test_one_malformed_card_does_not_kill_the_whole_parse() -> None:
+    """A single bad card must be skipped and reported, not take the pipeline down.
+
+    Production incident 2026-08-12: a card was duplicated into a test tab with
+    only its body row — the "August XX, 2026 - Title" header row was left
+    behind. That single-row table matched the card signature, failed to build,
+    and the exception escaped a list comprehension, killing every poll tick.
+    Ten well-formed cards went unprocessed and the pipeline sat silently dead.
+    """
+    good = (
+        "<table><tr><td colspan='2'><p><span>August XX, 2026 - Good card</span></p></td></tr>"
+        "<tr><td><p><span>Platform: LinkedIn</span></p>"
+        "<p><span>Asset for review - LINK</span></p><p><span>Draft</span></p>"
+        "<p><span>Copy review</span></p><p><span>Ready</span></p></td>"
+        "<td><p><span>Body copy here.</span></p></td></tr></table>"
+    )
+    # Signature-matching but header-less: exactly the shape that caused the outage.
+    malformed = (
+        "<table><tr><td><p><span>Platform: X</span></p>"
+        "<p><span>Asset for review - LINK</span></p><p><span>TEST</span></p>"
+        "<p><span>Copy review</span></p><p><span>Draft</span></p></td>"
+        "<td><p><span>Orphaned test card.</span></p></td></tr></table>"
+    )
+
+    skipped: list[str] = []
+    cards = parse_review_cards(f"<html><body>{malformed}{good}</body></html>", skipped=skipped)
+
+    assert len(cards) == 1, "the well-formed card must still be parsed"
+    assert cards[0].platform == "LinkedIn"
+    assert len(skipped) == 1, "the malformed card must be reported, not silently dropped"
+    assert "fewer than 2 rows" in skipped[0]
+
+
+def test_all_cards_malformed_yields_no_cards_and_reports_each() -> None:
+    """If every card is malformed the caller gets zero cards — which upstream
+    already treats as loud — plus one report per skipped card."""
+    malformed = (
+        "<table><tr><td><p><span>Platform: X</span></p>"
+        "<p><span>Copy review</span></p><p><span>Draft</span></p></td></tr></table>"
+    )
+    skipped: list[str] = []
+    cards = parse_review_cards(f"<html><body>{malformed}{malformed}</body></html>", skipped=skipped)
+
+    assert cards == []
+    assert len(skipped) == 2

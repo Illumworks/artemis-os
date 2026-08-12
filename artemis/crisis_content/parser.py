@@ -24,12 +24,15 @@ conceptually part of "the fetch". Reasons:
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlsplit
 
 from artemis.crisis_content.models import ReviewCard, StatusClassification
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CrisisContentParseError",
@@ -417,7 +420,7 @@ def _build_card(
     )
 
 
-def parse_review_cards(html: str) -> list[ReviewCard]:
+def parse_review_cards(html: str, *, skipped: list[str] | None = None) -> list[ReviewCard]:
     """Parse the doc's HTML export into review cards.
 
     Raises ``SignInPageError`` if ``html`` looks like a Google sign-in page
@@ -444,4 +447,26 @@ def parse_review_cards(html: str) -> list[ReviewCard]:
         )
 
     ordinal_counts: dict[tuple[str, str | None], int] = {}
-    return [_build_card(table, ordinal_counts) for table in card_tables]
+    cards: list[ReviewCard] = []
+    for index, table in enumerate(card_tables):
+        try:
+            cards.append(_build_card(table, ordinal_counts))
+        except CrisisContentParseError as exc:
+            # ONE malformed card must not take down the whole pipeline.
+            #
+            # Production incident 2026-08-12: Jon duplicated a card into a test
+            # tab but copied only the body row, not the "August XX, 2026 - ..."
+            # header row above it. That single-row table matched the signature,
+            # failed _build_card, and the exception propagated out of a list
+            # comprehension -- killing every poll tick. Ten perfectly good cards
+            # went unprocessed and the pipeline was silently dead until someone
+            # read the traceback.
+            #
+            # A malformed card is now skipped and reported. If EVERY card is
+            # malformed the caller still gets zero cards, and
+            # NoReviewCardsFoundError-style loudness still applies upstream.
+            reason = f"card table #{index}: {exc}"
+            logger.error("crisis_content: skipping malformed %s", reason)
+            if skipped is not None:
+                skipped.append(reason)
+    return cards

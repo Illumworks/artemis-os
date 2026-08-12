@@ -50,8 +50,7 @@ _DB_URL = os.environ.get(
 )
 if "artemis_test" not in _DB_URL:
     raise RuntimeError(
-        f"REFUSING TO LOAD test_crisis_content_poller: db_url={_DB_URL!r} "
-        "is not a test database."
+        f"REFUSING TO LOAD test_crisis_content_poller: db_url={_DB_URL!r} is not a test database."
     )
 
 _test_engine = create_async_engine(_DB_URL, echo=False, poolclass=NullPool)
@@ -137,7 +136,7 @@ def _patch_pipeline(
     async def fake_fetch(*, document_id: str, access_token: str, timeout: float = 20.0) -> str:
         return "<html><!-- stubbed --></html>"
 
-    def fake_parse(html: str) -> list[ReviewCard]:
+    def fake_parse(html: str, *, skipped: list[str] | None = None) -> list[ReviewCard]:
         if parse_side_effect is not None:
             raise parse_side_effect
         return resolved_cards
@@ -200,8 +199,8 @@ async def test_slack_post_failure_leaves_no_notification_row_and_next_poll_retri
 
     await run_poll_tick()
     rows_after_failure = (
-        await db_session.execute(select(CrisisContentNotification))
-    ).scalars().all()
+        (await db_session.execute(select(CrisisContentNotification))).scalars().all()
+    )
     assert rows_after_failure == []
     assert attempts == ["attempt"]
 
@@ -209,9 +208,7 @@ async def test_slack_post_failure_leaves_no_notification_row_and_next_poll_retri
     # not treat the card as "already handled".
     await run_poll_tick()
     assert attempts == ["attempt", "attempt"]
-    rows_after_retry = (
-        await db_session.execute(select(CrisisContentNotification))
-    ).scalars().all()
+    rows_after_retry = (await db_session.execute(select(CrisisContentNotification))).scalars().all()
     assert len(rows_after_retry) == 1
 
 
@@ -254,9 +251,7 @@ async def test_no_review_cards_found_alerts_and_does_not_crash(
         alerts.append(text_)
 
     monkeypatch.setattr(poller, "_alert_jon", fake_alert)
-    _patch_pipeline(
-        monkeypatch, parse_side_effect=NoReviewCardsFoundError("labels renamed")
-    )
+    _patch_pipeline(monkeypatch, parse_side_effect=NoReviewCardsFoundError("labels renamed"))
 
     # Must not raise.
     await run_poll_tick()
@@ -287,9 +282,7 @@ async def test_repeated_failures_alert_on_entry_and_recovery_only(
 
     # Ticks 1-3 fail identically; tick 4 recovers (parses fine, zero cards
     # worth notifying on).
-    _patch_pipeline(
-        monkeypatch, parse_side_effect=NoReviewCardsFoundError("still broken")
-    )
+    _patch_pipeline(monkeypatch, parse_side_effect=NoReviewCardsFoundError("still broken"))
     await run_poll_tick()
     await run_poll_tick()
     await run_poll_tick()
@@ -381,7 +374,7 @@ async def test_overlapping_tick_is_skipped_not_run_concurrently(
 
     monkeypatch.setattr(poller, "_resolve_access_token", slow_resolve_access_token)
     monkeypatch.setattr(poller, "fetch_crisis_content_export_html", fake_fetch)
-    monkeypatch.setattr(poller, "parse_review_cards", lambda html: [])
+    monkeypatch.setattr(poller, "parse_review_cards", lambda html, *, skipped=None: [])
 
     task = asyncio.create_task(run_poll_tick())
     await started.wait()
@@ -444,7 +437,7 @@ async def test_live_copy_channel_post_failure_leaves_no_notification_row_and_ret
     async def fake_fetch(*, document_id: str, access_token: str, timeout: float = 20.0) -> str:
         return "<html><!-- stubbed --></html>"
 
-    def fake_parse(html: str) -> list[ReviewCard]:
+    def fake_parse(html: str, *, skipped: list[str] | None = None) -> list[ReviewCard]:
         return [card]
 
     monkeypatch.setattr(poller, "_resolve_access_token", fake_resolve_access_token)
@@ -489,17 +482,15 @@ async def test_live_copy_channel_post_failure_leaves_no_notification_row_and_ret
 
     await run_poll_tick()
     rows_after_failure = (
-        await db_session.execute(select(CrisisContentNotification))
-    ).scalars().all()
+        (await db_session.execute(select(CrisisContentNotification))).scalars().all()
+    )
     assert rows_after_failure == []
     assert attempts == [1]
 
     # Same unchanged (still "Ready") card, second tick -- must retry.
     await run_poll_tick()
     assert attempts == [1, 1]
-    rows_after_retry = (
-        await db_session.execute(select(CrisisContentNotification))
-    ).scalars().all()
+    rows_after_retry = (await db_session.execute(select(CrisisContentNotification))).scalars().all()
     assert len(rows_after_retry) == 1
 
 
