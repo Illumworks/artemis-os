@@ -507,6 +507,19 @@ class Settings(BaseSettings):
             "Uses screentime_cron_tz for its timezone."
         ),
     )
+    screentime_digest_cron: str = Field(
+        default="0 13 * * mon-fri",
+        description=(
+            "Cron for the DAILY situational read posted by Callie to the market-"
+            "signals channel. Runs two hours after the 11:00 UTC collection sweep "
+            "so the digest reports the morning's findings rather than yesterday's. "
+            "Weekdays only, and day-of-week is given by NAME — never numeric — per "
+            "this repo's APScheduler gotcha (numeric 0=Mon, not Sun), which once "
+            "made the morning brief fire Tue-Sat. Registered by "
+            "``artemis.screentime.runner.register_digest_schedule``. Dormant unless "
+            "``screentime_report_channel`` is set."
+        ),
+    )
     screentime_window_days: int = Field(
         default=30,
         description=(

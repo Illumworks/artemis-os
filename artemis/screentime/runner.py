@@ -332,6 +332,62 @@ def register_screentime_schedule(scheduler: Any) -> None:
     )
 
 
+async def run_digest() -> dict[str, Any]:
+    """Cron entry point for the DAILY situational read. Never raises.
+
+    Wraps ``reporting.post_screentime_digest``, which selects unreported
+    real-move signals, composes one Callie-voiced source-linked digest and marks
+    each included signal reported so a re-run posts nothing.
+
+    That function was written, exported and documented as "the weekly digest
+    (cron)" but had **zero non-test callers** until 2026-08-12 — built, looking
+    finished, wired to nothing. This is the caller.
+    """
+    try:
+        from artemis.db import SessionLocal
+        from artemis.screentime.reporting import post_screentime_digest
+
+        async with SessionLocal() as session:
+            posted = await post_screentime_digest(session)
+            await session.commit()
+            _logger.info("screentime: digest posted %d signal(s)", posted)
+            return {"posted": posted}
+    except Exception as exc:  # pragma: no cover - cron guard
+        _logger.exception("screentime: run_digest failed")
+        return {"error": str(exc)}
+
+
+def register_digest_schedule(scheduler: Any) -> None:
+    """Register the daily situational-read digest. Idempotent.
+
+    Separate job id and cron from the collection sweep so delivery can be
+    retimed or disabled without touching collection. Dormant while
+    ``screentime_report_channel`` is unset — ``post_screentime_digest`` returns
+    0 silently in that case.
+    """
+    from apscheduler.triggers.cron import CronTrigger
+
+    from artemis.config import settings
+
+    trigger = CronTrigger.from_crontab(
+        settings.screentime_digest_cron, timezone=settings.screentime_cron_tz
+    )
+    scheduler.add_job(
+        run_digest,
+        trigger=trigger,
+        id="screentime.watch.digest",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    _logger.info(
+        "screentime: registered digest cron %s (%s) -> channel %r",
+        settings.screentime_digest_cron,
+        settings.screentime_cron_tz,
+        settings.screentime_report_channel or "(unset — dormant)",
+    )
+
+
 def register_board_sweep_schedule(scheduler: Any) -> None:
     """Register the SEPARATE, weekly board-peer-validation sweep. Idempotent.
 
@@ -389,13 +445,14 @@ def get_screentime_scheduler() -> AsyncIOScheduler:
 
 
 def start_screentime_scheduler() -> None:
-    """Start the Screen-Time Watch scheduler and register both jobs: the daily
-    collection sweep AND the separate weekly board-peer-validation sweep. Call
-    from the FastAPI lifespan startup, alongside the other schedulers.
-    Idempotent — safe to call more than once.
+    """Start the Screen-Time Watch scheduler and register all three jobs: the
+    daily collection sweep, the daily situational-read digest, and the separate
+    weekly board-peer-validation sweep. Call from the FastAPI lifespan startup,
+    alongside the other schedulers. Idempotent — safe to call more than once.
     """
     scheduler = get_screentime_scheduler()
     register_screentime_schedule(scheduler)
+    register_digest_schedule(scheduler)
     register_board_sweep_schedule(scheduler)
     if not scheduler.running:
         scheduler.start()
