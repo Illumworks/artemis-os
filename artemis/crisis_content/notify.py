@@ -312,7 +312,9 @@ def copy_mention_emails() -> list[str]:
     settings.crisis_content_copy_approver_emails' own docstring). Mentioning
     him here would misstate him as a fourth routine approver.
     """
-    emails = [e.strip() for e in settings.crisis_content_copy_approver_emails.split(",") if e.strip()]
+    emails = [
+        e.strip() for e in settings.crisis_content_copy_approver_emails.split(",") if e.strip()
+    ]
     return [e for e in emails if e.lower() != JON_EMAIL.lower()]
 
 
@@ -371,6 +373,7 @@ def _doc_url_for(tab_id: str | None) -> str:
     if tab_id:
         return f"{_DOC_URL}?tab={tab_id}"
     return _DOC_URL
+
 
 # t.co wraps every URL in an X post to exactly 23 characters regardless of its
 # real length. A naive len() on copy containing a long URL produces false
@@ -656,7 +659,7 @@ def _posted_message_from_response(response: dict[str, object]) -> PostedCardMess
 
 
 async def _post_dm_jon_override(
-    client: SlackClient, transition: Transition, card_id: int
+    client: SlackClient, transition: Transition, card_id: int, *, resolve_approvers: bool = False
 ) -> PostedCardMessage:
     """The ``dm_jon`` rollback: every route DMs Jon, testing footer restored.
 
@@ -674,13 +677,27 @@ async def _post_dm_jon_override(
             f"crisis_content: users.lookupByEmail found no Slack user for {JON_EMAIL!r}"
         )
     footer = testing_line_for_route(transition.route)
-    text = render_transition_message(transition, footer=footer)
-    blocks = render_transition_blocks(transition, card_id, footer=footer)
+    approvers = ""
+    if resolve_approvers and transition.route == "copy":
+        # Best-effort: a test card that names nobody is still worth delivering
+        # (the opener degrades to "the team"), unlike the live path where a
+        # card naming nobody is not a notification at all.
+        mention_tags, unresolved = await _resolve_copy_mentions(client)
+        if unresolved:
+            logger.warning(
+                "crisis_content: test card could not resolve %d approver(s): %s",
+                len(unresolved),
+                ", ".join(unresolved),
+            )
+        approvers = _join_mentions(mention_tags) if mention_tags else ""
+    text = render_transition_message(transition, footer=footer, approvers=approvers)
+    blocks = render_transition_blocks(transition, card_id, footer=footer, approvers=approvers)
     response = await client.post_dm(user=jon_slack_id, text=text, blocks=blocks)
     logger.info(
-        "crisis_content: posted %s-route card for card=%r to Jon (dm_jon override)",
+        "crisis_content: posted %s-route card for card=%r to Jon (%s)",
         transition.route,
         transition.card.identity_key,
+        "test lane" if resolve_approvers else "dm_jon override",
     )
     return _posted_message_from_response(response)
 
@@ -819,9 +836,21 @@ async def post_transition_card(session: AsyncSession, transition: Transition) ->
     if transition.is_test:
         # CCA13: a per-card override that wins regardless of the global
         # destination setting -- see the module docstring's "Per-card test
-        # lane" section. Reuses the existing dm_jon-override renderer
-        # verbatim: same destination (Jon's DM), same restored footer.
-        return await _post_dm_jon_override(client, transition, card_id)
+        # lane" section. Destination is Jon's DM and the footer is restored,
+        # same as the dm_jon rollback.
+        #
+        # But the approvers ARE resolved here, unlike the rollback path. The
+        # whole value of the test lane is a card that reads exactly like the
+        # real thing, and without resolution the opener degrades to
+        # "Jen has this one ready. the team -- over to you." -- which is not
+        # what any approver will actually see, so testing against it proves
+        # less than it appears to.
+        #
+        # Safe to resolve here for the reason the rollback path avoided it:
+        # dm_jon is the emergency-off switch and must not gain a new way to
+        # fail, whereas a test card failing to resolve is a test failing,
+        # which is exactly when you want to know.
+        return await _post_dm_jon_override(client, transition, card_id, resolve_approvers=True)
 
     if settings.crisis_content_notify_destination == "dm_jon":
         return await _post_dm_jon_override(client, transition, card_id)
