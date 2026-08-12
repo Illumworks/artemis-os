@@ -570,3 +570,44 @@ def test_reopened_asset_card_credits_nobody_either() -> None:
     key = ("August XX, 2026 - Welcome Back blog", "X", 0)
     assert "Jen" in render_opener(key, "asset", is_reopen=False)
     assert "Jen" not in render_opener(key, "asset", is_reopen=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test-lane openers credit nobody (2026-08-12)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("route", ["asset", "copy"])
+def test_test_lane_opener_never_names_jen(route: str) -> None:
+    """On the TESTING tab it is Jon adding the image and flipping the chip.
+
+    Callie told him "New visual in from Jen, ready when you are." about a
+    visual he had just pasted in himself -- on the one surface whose purpose
+    is checking his own approval route works. Same reasoning as the reopen
+    openers: where we cannot truthfully attribute a change, we attribute
+    nothing rather than defaulting to Jen.
+    """
+    key = ("August XX, 2026 - More time for books", "TBD", 1)
+    opener = notify.render_opener(key, route, approvers="<@U1>", is_test=True)
+
+    assert "Jen" not in opener
+    assert opener.strip() == opener, "no leading/trailing whitespace"
+    assert "the team" not in opener, "the {approvers} fallback must not leak in"
+
+
+@pytest.mark.parametrize("route", ["asset", "copy"])
+def test_live_lane_opener_still_thanks_jen(route: str) -> None:
+    """The live lane is unchanged -- Jen really is the one sending these."""
+    key = ("August XX, 2026 - Welcome Back blog", "LinkedIn", 0)
+    assert "Jen" in notify.render_opener(key, route, approvers="<@U1>")
+
+
+def test_test_lane_takes_precedence_over_reopen() -> None:
+    """Both suppress attribution; the test lane is the more specific fact."""
+    key = ("August XX, 2026 - More time for books", "TBD", 1)
+    opener = notify.render_opener(
+        key, "copy", approvers="<@U1>", is_reopen=True, is_test=True
+    )
+
+    assert "Jen" not in opener
+    assert opener in notify._TEST_COPY_OPENERS

@@ -211,6 +211,25 @@ _ASSET_OPENERS: tuple[str, ...] = (
     "New visual in from Jen, ready when you are.",
     "Jen attached the asset for this one — over to you.",
 )
+# A TEST-tab card credits nobody, for the same reason a reopen does not: in
+# the test lane it is Jon adding the image and flipping the chip, so "New
+# visual in from Jen" is simply false -- which is what it told him on
+# 2026-08-12, on the one surface he uses to check his own route works.
+# No ``{approvers}`` placeholder on purpose: a test card is routed to Jon
+# alone, and the ⚠️ Testing footer beneath it already names who would receive
+# it live ("Live: Angela, Hannah, Jaclyn"). Interpolating here produced
+# "...ready for copy review. the team", since the dm_jon lane does not resolve
+# the approver mentions a second time.
+_TEST_COPY_OPENERS: tuple[str, ...] = (
+    "Copy's ready for review on this one.",
+    "This one's marked ready for copy review.",
+    "Copy review ready here.",
+)
+_TEST_ASSET_OPENERS: tuple[str, ...] = (
+    "Visual's ready for review on this one.",
+    "This one's marked ready for visual review.",
+    "Asset review ready here.",
+)
 
 
 def _select_variant(
@@ -236,6 +255,7 @@ def render_opener(
     *,
     approvers: str = "",
     is_reopen: bool = False,
+    is_test: bool = False,
 ) -> str:
     """The conversational opener line for one card, deterministically chosen.
 
@@ -256,19 +276,33 @@ def render_opener(
     the doc rather than Jen -- so "Jen has this one ready" is simply false, and
     on repeat it reads like a form letter. The export carries no authorship, so
     naming the editor is not available and guessing is not acceptable.
+
+    ``is_test`` does the same for a card on Jon's ``TESTING`` tab, and for the
+    same reason: there, Jon is the one pasting the image and flipping the
+    chip, so thanking Jen is a false statement on the surface whose whole
+    purpose is checking that the real thing works. Takes precedence over
+    ``is_reopen`` -- both suppress attribution, and the test lane is the more
+    specific fact about the card.
     """
     if route == "asset":
-        variants = _REOPEN_ASSET_OPENERS if is_reopen else _ASSET_OPENERS
-        return _select_variant(identity_key, route, variants)
+        if is_test:
+            variants = _TEST_ASSET_OPENERS
+        else:
+            variants = _REOPEN_ASSET_OPENERS if is_reopen else _ASSET_OPENERS
+        return _select_variant(identity_key, f"{route}:test" if is_test else route, variants)
+    if is_test:
+        copy_variants = _TEST_COPY_OPENERS
+    else:
+        copy_variants = _REOPEN_COPY_OPENERS if is_reopen else _COPY_OPENERS
     template = _select_variant(
         identity_key,
         # Vary the reopen wording independently of the first-time wording for the
         # same card, so a card that comes back does not repeat the sentence it
         # arrived with.
-        f"{route}:reopen" if is_reopen else route,
-        _REOPEN_COPY_OPENERS if is_reopen else _COPY_OPENERS,
+        f"{route}:test" if is_test else (f"{route}:reopen" if is_reopen else route),
+        copy_variants,
     )
-    return template.format(approvers=approvers or "the team")
+    return template.format(approvers=approvers or "the team").strip()
 
 
 def render_reopened_banner(reopened: ReopenedAfterApproval) -> str:
@@ -531,7 +565,11 @@ def render_transition_message(transition: Transition, *, footer: str, approvers:
         and transition.previous_status == transition.new_status
     )
     opener = render_opener(
-        card.identity_key, transition.route, approvers=approvers, is_reopen=is_reopen
+        card.identity_key,
+        transition.route,
+        approvers=approvers,
+        is_reopen=is_reopen,
+        is_test=transition.is_test,
     )
 
     lines: list[str] = [opener]
