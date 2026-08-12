@@ -105,8 +105,10 @@ def _parse_target(value: str) -> _Target | None:
     return _Target(card_id=card_id, route=cast("Route", route))
 
 
-async def _resolve_email(session: AsyncSession, slack_user_id: str) -> str | None:
-    """Best-effort Slack user id -> directory email. ``None`` on any miss.
+async def _resolve_email(
+    session: AsyncSession, slack_user_id: str, *, access_token: str = ""
+) -> str | None:
+    """Best-effort Slack user id -> email. ``None`` on any miss.
 
     Unlike the ``pipeline_approval_*`` flow's ``_resolve_decided_by`` (which
     always wants SOME display label, falling back to username/raw id), this
@@ -115,6 +117,22 @@ async def _resolve_email(session: AsyncSession, slack_user_id: str) -> str | Non
     here always means "unauthorized" downstream, never "authorized under a
     fallback label" -- silently widening an allowlist by accident is exactly
     the mistake a fallback label would risk.
+
+    Tries ``directory_people`` first, then falls back to Slack's own
+    ``users.info``.
+
+    **Why the fallback exists (production incident, 2026-08-12).** This
+    originally read ``directory_people`` alone. In the live database all four
+    crisis-content approvers were present by email with
+    ``slack_user_id = NULL`` -- the directory sync had never populated ids for
+    them -- so every lookup missed, authorization failed closed, and the first
+    real click got "I don't recognize you as an approver". Not just for one
+    person: NOBODY could approve anything, and the pipeline looked functional
+    the whole time because no code path errored.
+
+    Slack is the authority on its own user ids, so asking it directly is both
+    more correct and immune to directory drift. The directory is kept as the
+    first hop because it needs no network call.
     """
     if not slack_user_id:
         return None
@@ -127,8 +145,30 @@ async def _resolve_email(session: AsyncSession, slack_user_id: str) -> str | Non
         logger.exception(
             "crisis_content: directory lookup failed for slack_user_id=%s", slack_user_id
         )
+        email = None
+    if email:
+        return str(email)
+
+    if not access_token:
+        logger.warning(
+            "crisis_content: no directory email for slack_user_id=%s and no token to ask "
+            "Slack -- treating as unknown",
+            slack_user_id,
+        )
         return None
-    return str(email) if email else None
+    try:
+        profile_email = await SlackClient(token=access_token).lookup_user_email(slack_user_id)
+    except Exception:
+        logger.exception(
+            "crisis_content: users.info lookup failed for slack_user_id=%s", slack_user_id
+        )
+        return None
+    if profile_email:
+        logger.info(
+            "crisis_content: resolved slack_user_id=%s via users.info (not in directory_people)",
+            slack_user_id,
+        )
+    return profile_email
 
 
 def _display_label(email: str | None, slack_user_id: str) -> str:
@@ -155,7 +195,17 @@ async def _post_ephemeral(response_url: str | None, text: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
-                response_url, json={"response_type": "ephemeral", "text": text}
+                response_url,
+                json={
+                    "response_type": "ephemeral",
+                    # MUST be explicit. Observed in production 2026-08-12: without it,
+                    # a rejected click replaced the whole card with this one line and
+                    # the post copy was destroyed in the channel. Slack's docs do not
+                    # pin the default for an interactive-message response_url, so never
+                    # rely on it.
+                    "replace_original": False,
+                    "text": text,
+                },
             )
             resp.raise_for_status()
     except Exception:
@@ -323,7 +373,7 @@ async def _handle_block_action(
     response_url_raw = payload.get("response_url")
     response_url = str(response_url_raw) if response_url_raw else None
 
-    email = await _resolve_email(session, slack_user_id)
+    email = await _resolve_email(session, slack_user_id, access_token=access_token)
     if email is None:
         logger.warning(
             "crisis_content: click from unresolvable slack_user_id=%r (card=%s route=%s) "
@@ -514,7 +564,7 @@ async def _handle_view_submission(
 
     user_obj = payload.get("user")
     slack_user_id = str(user_obj.get("id") or "") if isinstance(user_obj, dict) else ""
-    email = await _resolve_email(session, slack_user_id)
+    email = await _resolve_email(session, slack_user_id, access_token=access_token)
 
     if email is None:
         return JSONResponse(

@@ -146,6 +146,38 @@ class SlackClient:
             return str(user_id) if user_id else None
         return None
 
+    async def lookup_user_email(self, user_id: str) -> str | None:
+        """Resolve a Slack user ID to their email via ``users.info``.
+
+        The reverse of ``lookup_user_by_email``, and the authoritative answer
+        to "who is this id" -- Slack owns its own user records, so this is
+        immune to drift in our ``directory_people`` cache.
+
+        Added after a production incident (2026-08-12): crisis-content
+        authorization resolved identity from ``directory_people`` alone, every
+        approver in that table had ``slack_user_id = NULL``, so every lookup
+        missed and NOBODY could approve anything. Nothing errored; the pipeline
+        simply refused every click.
+
+        Requires ``users:read.email``. Returns ``None`` when the user is
+        unknown or has no visible email (external Slack Connect users often
+        expose one, but do not rely on it).
+        """
+        if not user_id:
+            return None
+        try:
+            data = await self._post("users.info", user=user_id)
+        except SlackAPIError as exc:
+            if "user_not_found" in str(exc):
+                return None
+            raise
+        user = data.get("user")
+        if not isinstance(user, dict):
+            return None
+        profile = user.get("profile")
+        email = profile.get("email") if isinstance(profile, dict) else None
+        return str(email) if email else None
+
     # ── User-token methods (require user OAuth token, not bot token) ─────────
 
     async def search_messages(
