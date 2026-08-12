@@ -21,11 +21,30 @@ class _SessionContext:
 
 
 class _SessionFactory:
+    """Hands out the given sessions in order, then keeps reusing the last one.
+
+    It used to ``pop(0)`` and raise IndexError once exhausted, which coupled
+    this test to the exact NUMBER of ``async with SessionLocal()`` blocks
+    ``route_inbound`` happens to open. Adding the speaker-resolution and
+    participant-listing lookups (2026-08-12) pushed it past two sessions, and
+    the resulting IndexError was swallowed by three separate
+    ``except Exception: logger.exception(...)`` handlers on the way out --
+    so the failure surfaced only as "post_message awaited 0 times", which
+    reads like a routing regression rather than an exhausted fixture.
+
+    Reusing the last session keeps the ordering these tests assert on (first
+    session vs. second session) while making the fixture indifferent to
+    sessions opened after the ones it cares about.
+    """
+
     def __init__(self, *sessions: AsyncMock) -> None:
         self._sessions = list(sessions)
+        self._index = 0
 
     def __call__(self) -> _SessionContext:
-        return _SessionContext(self._sessions.pop(0))
+        session = self._sessions[min(self._index, len(self._sessions) - 1)]
+        self._index += 1
+        return _SessionContext(session)
 
 
 def test_lint_replaces_em_dash_and_en_dash_variants() -> None:
@@ -71,6 +90,17 @@ async def test_route_inbound_lints_outbound_slack_post_only() -> None:
         response_text="Status — complete ✅. See `foo—bar` and https://example.com/a-b"
     )
     slack_client = AsyncMock()
+    # ``route_inbound`` resolves the speaker and lists channel participants
+    # before the turn (2026-08-12). Neither is what this test is about, but a
+    # bare AsyncMock returns AsyncMocks from both, and ``triage.resolve_user``
+    # then calls ``.get()`` on a coroutine. Give them their real shapes -- a
+    # dict from the Web API and a list of member ids -- so this test exercises
+    # outbound LINTING rather than incidentally testing identity resolution.
+    slack_client._post.return_value = {
+        "ok": True,
+        "user": {"id": "U1", "real_name": "Jon Fila", "is_bot": False, "profile": {}},
+    }
+    slack_client.get_conversation_members.return_value = []
 
     with (
         patch("artemis.db.SessionLocal", new=_SessionFactory(first_session, second_session)),

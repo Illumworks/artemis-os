@@ -67,11 +67,32 @@ async def test_route_inbound_uses_agent_specific_session_key_and_reply_token() -
             return False
 
     class _SessionFactory:
+        """Ordered sessions, then reuse the last -- see test_agent_lint.py.
+
+        ``pop(0)`` coupled this test to the exact number of sessions
+        ``route_inbound`` opens; the speaker-resolution and participant
+        lookups (2026-08-12) pushed it past two and the IndexError was
+        swallowed by handlers on the way out, so it looked like a routing
+        regression instead of an exhausted fixture.
+        """
+
         def __init__(self, *sessions: AsyncMock) -> None:
             self._sessions = list(sessions)
+            self._index = 0
 
         def __call__(self) -> _SessionContext:
-            return _SessionContext(self._sessions.pop(0))
+            session = self._sessions[min(self._index, len(self._sessions) - 1)]
+            self._index += 1
+            return _SessionContext(session)
+
+    # Real shapes for the two pre-turn Slack lookups, which this test is not
+    # about -- a bare AsyncMock makes triage.resolve_user call .get() on a
+    # coroutine.
+    slack_client._post.return_value = {
+        "ok": True,
+        "user": {"id": "U1", "real_name": "Jon Fila", "is_bot": False, "profile": {}},
+    }
+    slack_client.get_conversation_members.return_value = []
 
     with (
         patch("artemis.db.SessionLocal", new=_SessionFactory(first_session, second_session)),
