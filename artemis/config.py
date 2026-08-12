@@ -783,6 +783,25 @@ class Settings(BaseSettings):
             "empty."
         ),
     )
+    crisis_content_rule_mining_threshold: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_RULE_MINING_THRESHOLD",
+            "CRISIS_CONTENT_RULE_MINING_THRESHOLD",
+        ),
+        description=(
+            "How many times a normalized (deleted, inserted) suggestion pair must "
+            "recur across Angela/Hannah's Google Docs suggesting-mode edits before "
+            "artemis/crisis_content/rule_mining.py (CCA15) proposes it as a "
+            "candidate writing_rules row. Default 3, per the brief's own worked "
+            "example ('child' -> 'student', seen three times). Below threshold the "
+            "pair is counted (crisis_content_rule_mining_pairs) and nothing is "
+            "proposed -- a single edit is a judgment about one sentence, not a "
+            "rule. Never write below 2: at 1, every one-off suggestion would "
+            "become a candidate, which is exactly the noise this slice exists to "
+            "keep out of Angela's review queue."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)
