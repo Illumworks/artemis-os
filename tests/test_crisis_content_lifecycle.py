@@ -55,6 +55,7 @@ from artemis.crisis_content.orm import (
 )
 from artemis.crisis_content.transitions import Transition, mark_notified
 from artemis.db import attach_pgvector_codec
+from artemis.directory.models import DirectoryPerson
 
 pytestmark = pytest.mark.asyncio
 
@@ -85,6 +86,7 @@ _TABLES = (
     "crisis_content_notifications",
     "crisis_content_copy_versions",
     "crisis_content_cards",
+    "directory_people",
 )
 
 _ANGELA = "angela.miata@amiralearning.com"
@@ -594,6 +596,64 @@ async def test_reply_saying_approved_records_no_decision(
     ).scalars().all()
     assert len(notes) == 1
     assert notes[0].text == "approved!! this is great, ship it"
+
+
+async def test_thread_reply_author_email_stays_null_for_a_known_approver_with_null_slack_user_id(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit finding, documented rather than fixed here.
+
+    ``thread_notes._resolve_directory_email`` queries ``directory_people`` by
+    ``slack_user_id`` with NO fallback to Slack's ``users.info`` -- unlike
+    its sibling ``slack_actions._resolve_email``, which grew that fallback
+    after the 2026-08-12 incident (every crisis-content approver's
+    ``directory_people`` row has ``slack_user_id = NULL`` in production).
+    That incident was about AUTHORIZATION (nobody could click Approve); this
+    is lower-stakes because ``author_email`` is purely informational (feeds
+    a future Writing-Studio harvest, never gates a decision) -- but the same
+    root-cause data shape means ``author_email`` silently stays NULL on every
+    thread note from a real, known approver, forever, in production, even
+    though ``slack_actions.py``'s button-click path resolves the identical
+    person's email correctly via the fallback it has and this module does
+    not. This test pins CURRENT behaviour; it is not asserting this is
+    correct, only that it is what happens today.
+    """
+    posted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(thread_notes, "SlackClient", _fake_nudge_slack_client_cls(posted))
+
+    # The exact live-DB shape: Angela is a real, known approver -- present in
+    # directory_people by email -- but slack_user_id was never synced.
+    async with db_session.begin():
+        db_session.add(
+            DirectoryPerson(email=_ANGELA, full_name="Angela Miata", slack_user_id=None)
+        )
+
+    card_id = await _seed_card_with_notification(
+        db_session, channel_id=_CRISIS_CHANNEL, message_ts="1700000000.000230"
+    )
+
+    handled = await thread_notes.maybe_handle_thread_reply(
+        db_session,
+        channel_id=_CRISIS_CHANNEL,
+        thread_ts="1700000000.000230",
+        message_ts="1700000000.000231",
+        slack_user_id="U_ANGELA",
+        text="tightened the second paragraph",
+        has_files=False,
+        access_token="xoxb-fake",
+    )
+    assert handled is True
+
+    note = (
+        await db_session.execute(
+            select(CrisisContentThreadNote).where(CrisisContentThreadNote.card_id == card_id)
+        )
+    ).scalar_one()
+    assert note.slack_user_id == "U_ANGELA"
+    assert note.author_email is None, (
+        "if this starts resolving, thread_notes.py grew the same users.info "
+        "fallback slack_actions.py has -- update this test to reflect that"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

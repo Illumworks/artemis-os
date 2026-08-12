@@ -470,6 +470,67 @@ async def test_unknown_slack_user_no_row_ephemeral_no_500(
     assert len(ephemeral_calls) == 1
 
 
+async def test_directory_row_with_null_slack_user_id_falls_back_to_users_info(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the exact production shape behind the 2026-08-12 incident.
+
+    The postmortem (see ``_resolve_email``'s own docstring in
+    ``artemis/crisis_content/slack_actions.py``): in the live DB, all four
+    crisis-content approvers are present in ``directory_people`` BY EMAIL,
+    but every one of them has ``slack_user_id = NULL`` -- the directory sync
+    never populated it. The first lookup (``WHERE slack_user_id ==
+    <incoming id>``) always misses against a NULL column, so authorization
+    fails closed, silently, for everyone.
+
+    ``test_unknown_slack_user_no_row_ephemeral_no_500`` above seeds a
+    stranger who is ABSENT from the table entirely -- a different production
+    shape that happens to hit the identical SQL miss, but (since it never
+    mocks ``SlackClient``) only ever exercises the fallback's FAILURE branch.
+    Nothing in the existing suite proves the fallback's SUCCESS path -- that
+    ``SlackClient.lookup_user_email`` (``users.info``) actually resolves the
+    email and lets a real approver's click through. This seeds the row WITH
+    a NULL ``slack_user_id`` (not absent) and mocks that lookup to succeed.
+    """
+
+    class _FakeSlackClient:
+        def __init__(self, token: str) -> None:
+            self.token = token
+
+        async def lookup_user_email(self, user_id: str) -> str | None:
+            assert user_id == _ANGELA[1]
+            return _ANGELA[0]
+
+    monkeypatch.setattr(slack_actions, "SlackClient", _FakeSlackClient)
+
+    await _seed_callie_integration(db_session)
+    # NOT _seed_directory() -- that seeds every approver WITH a slack_user_id,
+    # which is the tidy shape production does not have. Seed Angela's row the
+    # way the live DB actually has it: present by email, slack_user_id NULL.
+    async with db_session.begin():
+        db_session.add(
+            DirectoryPerson(email=_ANGELA[0], full_name="Angela Miata", slack_user_id=None)
+        )
+    card_id = await _seed_card(db_session)
+
+    resp = await _post(
+        client,
+        _click_payload(
+            action_id="crisis_content_approve",
+            card_id=card_id,
+            route="copy",
+            slack_user_id=_ANGELA[1],
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json().get("replace_original") is True
+    rows = await _decisions_for(db_session, card_id, "copy")
+    assert len(rows) == 1
+    assert rows[0].decided_by_email == _ANGELA[0]
+    assert rows[0].decided_by_slack_user_id == _ANGELA[1]
+
+
 async def test_identity_comes_from_verified_payload_not_action_value(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -978,3 +1039,91 @@ async def test_reopened_card_buttons_work_again(
         "got a blocked click instead"
     )
     assert rows[-1].decided_by_email == _HANNAH[0]
+
+
+# ── Outbound response_url body -- the exact shape that caused the 2026-08-12
+# "rejected click destroyed a card" incident ────────────────────────────────
+#
+# Every test above that reaches `_post_ephemeral` monkeypatches it away
+# entirely (see `fake_ephemeral` in e.g. `test_copy_route_still_rejects_an_
+# unlisted_colleague`), so nothing in the existing suite ever inspects the
+# actual JSON body this module sends to Slack's `response_url`. The incident
+# was exactly that: `_post_ephemeral` omitted `replace_original: false` and a
+# denied click replaced the whole card in the channel, destroying a live
+# post. The source now sets it explicitly (see the comment at
+# `slack_actions._post_ephemeral`), but that line has no test of its own --
+# these two do, by mocking httpx directly and reading the real POST body.
+
+
+class _FakeHTTPResponse:
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _FakeAsyncClient:
+    """Mimics ``httpx.AsyncClient`` as an async context manager, capturing calls."""
+
+    def __init__(self, calls: list[dict[str, Any]], *, timeout: float | None = None) -> None:
+        self._calls = calls
+
+    async def __aenter__(self) -> _FakeAsyncClient:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+    async def post(self, url: str, json: dict[str, Any]) -> _FakeHTTPResponse:
+        self._calls.append({"url": url, "json": json})
+        return _FakeHTTPResponse()
+
+
+async def test_post_ephemeral_sends_replace_original_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact body of the exact function involved in the 2026-08-12 incident.
+
+    A denied/duplicate click's ephemeral reply must set
+    ``replace_original: False`` explicitly -- Slack's docs do not pin a
+    default for this field on an interactive-message ``response_url`` (see
+    the source comment), so this cannot be left implicit. This calls the
+    real ``_post_ephemeral`` (not a mock of it) and inspects the real body.
+    """
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        slack_actions.httpx, "AsyncClient", lambda **kw: _FakeAsyncClient(calls, **kw)
+    )
+
+    await slack_actions._post_ephemeral(
+        "https://hooks.slack.test/actions/FAKE_EPHEMERAL", "not an approver"
+    )
+
+    assert len(calls) == 1
+    body = calls[0]["json"]
+    assert body["replace_original"] is False
+    assert body["response_type"] == "ephemeral"
+    assert body["text"] == "not an approver"
+
+
+async def test_update_card_via_response_url_sends_replace_original_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The companion writer in this module: after a GENUINE decision, the
+    card itself must actually be replaced (``True``) -- the opposite of
+    ``_post_ephemeral`` above. Pinning both bodies side by side makes it
+    obvious neither could silently swap with the other.
+    """
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        slack_actions.httpx, "AsyncClient", lambda **kw: _FakeAsyncClient(calls, **kw)
+    )
+
+    await slack_actions._update_card_via_response_url(
+        "https://hooks.slack.test/actions/FAKE_UPDATE",
+        text="Approved by someone",
+        blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": "x"}}],
+    )
+
+    assert len(calls) == 1
+    body = calls[0]["json"]
+    assert body["replace_original"] is True
+    assert body["text"] == "Approved by someone"
