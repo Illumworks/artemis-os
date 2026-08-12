@@ -167,11 +167,23 @@ def _patch_pipeline(
         if post_side_effect is not None:
             raise post_side_effect
 
+    # Rule mining (CCA15) is a SECOND documents.get at the end of the tick.
+    # Stub it to a no-op by default: unstubbed, every tick in this file would
+    # attempt a real HTTPS call to googleapis.com with a fake token. The
+    # mining-specific tests below override these.
+    async def fake_mining_fetch(access_token: str, document_id: str) -> dict[str, object]:
+        return {}
+
+    def fake_extract(document: object) -> list[object]:
+        return []
+
     monkeypatch.setattr(poller, "_resolve_access_token", fake_resolve_access_token)
     monkeypatch.setattr(poller, "fetch_crisis_content_export_html", fake_fetch)
     monkeypatch.setattr(poller, "parse_review_cards", fake_parse)
     monkeypatch.setattr(poller, "resolve_card_tab_map", _default_fake_resolve_card_tab_map)
     monkeypatch.setattr(poller, "post_transition_card", fake_post)
+    monkeypatch.setattr(poller, "fetch_document_with_suggestions", fake_mining_fetch)
+    monkeypatch.setattr(poller, "extract_suggestion_pairs", fake_extract)
     return resolved_cards
 
 
@@ -661,3 +673,112 @@ async def test_tab_resolution_skipped_entirely_when_no_cards_parsed(
     await run_poll_tick()
 
     assert calls == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rule mining (CCA15 wiring): opportunistic, interval-gated, and structurally
+# unable to affect the notification path
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_mining_failure_does_not_break_notification_or_mark_pipeline_failing(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mining fault must cost nothing. Mining is a nice-to-have that feeds
+    Angela's review queue; the approval notification is the product. If a
+    mining exception reached ``_enter_failure`` it would alert Jon and mark
+    the whole pipeline failing -- stopping approvals the vendor and three
+    approvers depend on because a rule proposal broke.
+    """
+    posts: list[str] = []
+
+    async def counting_post(session: AsyncSession, transition: object) -> None:
+        posts.append("posted")
+
+    async def exploding_mining_fetch(access_token: str, document_id: str) -> dict[str, object]:
+        raise RuntimeError("documents.get blew up")
+
+    card = _make_card(copy_status="Ready")
+    _patch_pipeline(monkeypatch, cards=[card])
+    monkeypatch.setattr(poller, "post_transition_card", counting_post)
+    monkeypatch.setattr(poller, "fetch_document_with_suggestions", exploding_mining_fetch)
+
+    await run_poll_tick()  # must not raise
+
+    assert posts == ["posted"]
+    rows = (await db_session.execute(select(CrisisContentNotification))).scalars().all()
+    assert len(rows) == 1, "the notification must survive a mining failure"
+    assert poller._failure_state.is_failing is False, "mining must never fail the pipeline"
+
+
+async def test_mining_is_interval_gated_not_run_every_tick(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The poll runs every 2 min; mining needs its own documents.get. Without
+    the gate we would triple our API calls against Jen's doc to catch edits
+    that arrive a few times a day.
+    """
+    fetches: list[int] = []
+
+    async def counting_mining_fetch(access_token: str, document_id: str) -> dict[str, object]:
+        fetches.append(1)
+        return {}
+
+    _patch_pipeline(monkeypatch, cards=[_make_card(copy_status="Ready")])
+    monkeypatch.setattr(poller, "fetch_document_with_suggestions", counting_mining_fetch)
+    monkeypatch.setattr(
+        poller.settings, "crisis_content_rule_mining_interval_minutes", 60, raising=False
+    )
+
+    await run_poll_tick()
+    await run_poll_tick()
+    await run_poll_tick()
+
+    assert fetches == [1], "three ticks inside one interval must mine exactly once"
+
+
+async def test_mining_interval_zero_disables_it_entirely(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0 is the off switch, and off means no network call at all."""
+    fetches: list[int] = []
+
+    async def counting_mining_fetch(access_token: str, document_id: str) -> dict[str, object]:
+        fetches.append(1)
+        return {}
+
+    _patch_pipeline(monkeypatch, cards=[_make_card(copy_status="Ready")])
+    monkeypatch.setattr(poller, "fetch_document_with_suggestions", counting_mining_fetch)
+    monkeypatch.setattr(
+        poller.settings, "crisis_content_rule_mining_interval_minutes", 0, raising=False
+    )
+
+    await run_poll_tick()
+
+    assert fetches == []
+
+
+async def test_mining_still_runs_when_a_slack_post_failed(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mining sits after the notify branch on purpose: a Slack outage should
+    not also stop us learning the team's editorial preferences. The two
+    concerns are independent and the doc read is unaffected by Slack.
+    """
+    fetches: list[int] = []
+
+    async def counting_mining_fetch(access_token: str, document_id: str) -> dict[str, object]:
+        fetches.append(1)
+        return {}
+
+    _patch_pipeline(
+        monkeypatch,
+        cards=[_make_card(copy_status="Ready")],
+        post_side_effect=RuntimeError("slack down"),
+    )
+    monkeypatch.setattr(poller, "fetch_document_with_suggestions", counting_mining_fetch)
+
+    await run_poll_tick()
+
+    assert fetches == [1]
+    assert poller._failure_state.is_failing is True, "the Slack failure itself must still register"

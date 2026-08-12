@@ -802,6 +802,22 @@ class Settings(BaseSettings):
             "keep out of Angela's review queue."
         ),
     )
+    crisis_content_rule_mining_interval_minutes: int = Field(
+        default=60,
+        validation_alias=AliasChoices(
+            "ARTEMIS_CRISIS_CONTENT_RULE_MINING_INTERVAL_MINUTES",
+            "CRISIS_CONTENT_RULE_MINING_INTERVAL_MINUTES",
+        ),
+        description=(
+            "Minimum minutes between rule-mining passes. Mining needs its own "
+            "documents.get (it reads suggestions, so it cannot share tab "
+            "resolution's PREVIEW_WITHOUT_SUGGESTIONS fetch), and the poll tick "
+            "runs every 2 minutes -- mining every tick would tripleize our API "
+            "calls against Jen's doc to watch for editorial edits that arrive a "
+            "few times a day. 0 disables mining entirely; the notification path "
+            "is unaffected either way."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

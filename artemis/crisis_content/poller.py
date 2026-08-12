@@ -11,6 +11,7 @@ scheduler.py``):
         -> resolve_card_tab_map (CCA13, one documents.get call -- see below)
         -> record_observation (per card, see "Commit granularity" below)
         -> for each transition: post_transition_card, then mark_notified
+        -> _maybe_mine_rules (CCA15, interval-gated, failures swallowed)
 
 Two contracts this module exists to honor, both called out in the brief and
 both easy to get backwards:
@@ -100,6 +101,11 @@ from artemis.crisis_content.parser import (
     SignInPageError,
     parse_review_cards,
 )
+from artemis.crisis_content.rule_mining import (
+    extract_suggestion_pairs,
+    fetch_document_with_suggestions,
+    record_and_propose,
+)
 from artemis.crisis_content.tab_resolution import (
     CardIdentityKey,
     CardTabInfo,
@@ -134,6 +140,12 @@ _JOB_ID = "crisis_content_poll"
 # worker; see settings.uvicorn_workers), and testable without a DB round trip.
 _poll_lock = asyncio.Lock()
 
+# Last rule-mining pass (CCA15), for the interval gate in ``_maybe_mine_rules``.
+# Module state rather than a DB row on purpose: losing it across a restart
+# costs one extra documents.get, and mining is idempotent per suggestion
+# (``_occurrence_key``), so an early re-run double-counts nothing.
+_last_mining_at: datetime | None = None
+
 
 class _CredentialUnavailableError(Exception):
     """Jon's personal Google credential is missing or could not be refreshed."""
@@ -149,9 +161,12 @@ _failure_state = _FailureState()
 
 
 def reset_poller_state_for_tests() -> None:
-    """Test-only: reset the module-level failure-debounce state between tests."""
+    """Test-only: reset module-level failure-debounce + mining-interval state."""
+    global _last_mining_at
+
     _failure_state.is_failing = False
     _failure_state.reason = None
+    _last_mining_at = None
 
 
 # ── Scheduler wiring ─────────────────────────────────────────────────────────
@@ -443,6 +458,66 @@ async def _run_poll_tick_locked() -> None:
         else:
             await _maybe_recover(session)
             await session.commit()
+
+    # Outside the tick's session and after every notification decision, so a
+    # mining fault cannot roll back or delay an approval post (see
+    # ``_maybe_mine_rules``).
+    await _maybe_mine_rules(access_token)
+
+
+async def _maybe_mine_rules(access_token: str) -> None:
+    """Mine Angela and Hannah's suggestions into candidate rules (CCA15).
+
+    Deliberately the LAST thing a tick does, in its own session, and it
+    swallows every exception. Mining is an opportunistic read that turns
+    repeated editorial edits into proposals for Angela's review queue; the
+    notification path is the product. A mining failure must never call
+    ``_enter_failure`` -- that debounce-alerts Jon and marks the whole
+    pipeline failing, which would mean a broken nice-to-have stops the
+    approvals that the vendor and three approvers depend on.
+
+    Gated on its own interval (``settings.crisis_content_rule_mining_
+    interval_minutes``, 0 to disable) because it needs a SECOND
+    ``documents.get``: mining reads suggestions, so it cannot reuse tab
+    resolution's ``PREVIEW_WITHOUT_SUGGESTIONS`` fetch, whose whole point is
+    that suggestions are absent.
+    """
+    global _last_mining_at
+
+    interval = settings.crisis_content_rule_mining_interval_minutes
+    if interval <= 0:
+        return
+
+    now = datetime.now(UTC)
+    if _last_mining_at is not None and now - _last_mining_at < timedelta(minutes=interval):
+        return
+    # Stamp BEFORE the work, not after: a mining pass that raises should still
+    # wait out the interval rather than retrying on every 2-minute tick.
+    _last_mining_at = now
+
+    try:
+        document = await fetch_document_with_suggestions(access_token, TARGET_DOCUMENT_ID)
+        pairs = extract_suggestion_pairs(document)
+        if not pairs:
+            logger.debug("crisis_content: rule mining found no suggestion pairs")
+            return
+        async with _db.SessionLocal() as session:
+            result = await record_and_propose(session, pairs)
+        logger.info(
+            "crisis_content: rule mining saw %d pair(s), recorded %d new occurrence(s) "
+            "(skipped %d test-tab, %d noise), proposed %d candidate rule(s)",
+            len(pairs),
+            result.new_observations,
+            result.skipped_test_tab,
+            result.skipped_noise,
+            len(result.proposed_candidates),
+        )
+    except Exception:  # noqa: BLE001 -- see docstring: must not break notification
+        logger.exception(
+            "crisis_content: rule mining failed -- notifications are unaffected; "
+            "the next pass retries in %d min",
+            interval,
+        )
 
 
 async def _observe_and_notify(
