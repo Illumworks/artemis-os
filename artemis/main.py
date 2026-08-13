@@ -195,6 +195,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # than waiting out the first scheduled interval. Non-blocking, and not a
     # second mechanism -- see that function's docstring.
     asyncio.create_task(recover_pending_requests())
+
+    # Callie's ONE combined daily brief to #market-signals (campaign signals +
+    # crisis + screentime). Registered on the shared automation scheduler.
+    # There must be exactly one cron posting to that channel -- the standalone
+    # screentime digest job is deliberately NOT registered anywhere; it
+    # contributes a section to this brief instead. Two posts a day would rebuild
+    # the noise problem in the channel created to solve it.
+    from artemis.automations.scheduler import get_automation_scheduler
+    from artemis.market_signals import register_market_signals_schedule
+
+    register_market_signals_schedule(get_automation_scheduler())
     try:
         yield
     finally:

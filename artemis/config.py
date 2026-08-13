@@ -991,6 +991,56 @@ class Settings(BaseSettings):
     )
 
 
+    market_signals_channel_id: str = Field(
+        default="C0BPT2T2KFY",
+        validation_alias=AliasChoices(
+            "ARTEMIS_MARKET_SIGNALS_CHANNEL_ID",
+            "MARKET_SIGNALS_CHANNEL_ID",
+        ),
+        description=(
+            "Slack channel for Callie's ONE combined daily brief -- #market-signals "
+            "(C0BPT2T2KFY). Jon's decision 2026-08-12: this channel carries a single "
+            "post a day combining top campaign signals, crisis signals and screentime, "
+            "mentioning Josh and Angela. Individual signal cards keep landing in "
+            "#campaign-signals; this exists because that firehose is unreadable, not "
+            "because it is wrong.\n\n"
+            "Exactly ONE cron may post here. The standalone screentime digest job is "
+            "deliberately no longer registered -- it contributes a section instead. Two "
+            "posts a day would rebuild the noise problem in the channel created to fix "
+            "it. Empty disables the brief entirely."
+        ),
+    )
+    market_signals_brief_cron: str = Field(
+        default="0 13 * * mon-fri",
+        validation_alias=AliasChoices(
+            "ARTEMIS_MARKET_SIGNALS_BRIEF_CRON",
+            "MARKET_SIGNALS_BRIEF_CRON",
+        ),
+        description=(
+            "Cron for the combined daily brief. 13:00 UTC / 09:00 ET weekdays, "
+            "inherited from the screentime digest this replaced, and two hours after "
+            "marketing.main's 06:00 Chicago run so qualification is fresh.\n\n"
+            "Day-of-week by NAME, never numeric: APScheduler treats numeric 0 as "
+            "Monday rather than Sunday, which once made the morning brief fire "
+            "Tue-Sat. Once-per-day is enforced by a unique constraint in "
+            "morning_brief_deliveries, not by this schedule, so a misfire or a manual "
+            "run cannot double-post."
+        ),
+    )
+    market_signals_brief_tz: str = Field(
+        default="UTC",
+        validation_alias=AliasChoices(
+            "ARTEMIS_MARKET_SIGNALS_BRIEF_TZ",
+            "MARKET_SIGNALS_BRIEF_TZ",
+        ),
+        description=(
+            "Timezone for market_signals_brief_cron. UTC to match the screentime "
+            "collection sweep it is timed against; note marketing.main's own cron is "
+            "America/Chicago, so do not assume one timezone across all schedules."
+        ),
+    )
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
