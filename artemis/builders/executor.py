@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.tools  # noqa: F401 — registers tool factories at import time
-from artemis.agent import AnthropicAdapter, run_turn
+from artemis.agent import AnthropicAdapter, collect_tools_used, run_turn
 from artemis.agent.client import ModelAdapter
 from artemis.agent.hooks import HookRegistry
 from artemis.agent.tools import ToolRegistry
@@ -33,6 +33,7 @@ from artemis.costs.events import record_cost_event
 from artemis.marketing.josh_spec import JoshSpec, parse_spec, reason_codes_for_scout
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import get_factory, known_tool_names
+from artemis.trace.capture import elapsed_ms, record_trace, start_timer
 from artemis.ws.events import (
     agent_completed_event,
     agent_failed_event,
@@ -491,6 +492,10 @@ async def run_agent(
     # (the except branch does not produce a RunResult).
     result: Any = None
 
+    # OBS-2: latency for the agent_traces row below — mirrors chat.py's
+    # _turn_start / elapsed_ms pattern for the conversational path.
+    _run_start = start_timer()
+
     try:
         if _is_claude_code_tool_run(adapter, tool_registry):
             # claude-code IS the agent runtime for tool-using scouts: it spawns
@@ -525,11 +530,15 @@ async def run_agent(
             )
             # Normalise the single CompletionResponse into the RunResult shape the
             # downstream text/usage/finalize code expects (one assistant message).
+            # OBS-2: thread completion.tool_calls through metadata the same way
+            # artemis/agent/loop.py::run_turn does, so collect_tools_used() below
+            # picks it up identically regardless of which branch produced `result`.
             result = RunResult(
                 messages=[_user_msg(effective_message), completion.message],
                 stop_reason=cast(StopReason, completion.stop_reason),
                 usage=completion.usage,
                 iterations=1,
+                metadata={"tool_calls": completion.tool_calls} if completion.tool_calls else {},
             )
         else:
             result = await run_turn(
@@ -585,6 +594,42 @@ async def run_agent(
         except Exception:
             logger.warning("cost_event recording failed for run_id=%s", run_id, exc_info=True)
 
+        # OBS-2: agent_traces row for the pipeline/builder agent path — the other
+        # half of OBS-1, which only ever wired capture_trace() into the
+        # conversational path (artemis/floating_artemis/chat.py). Written
+        # synchronously via record_trace() (not the fire-and-forget capture_trace())
+        # and flushed into the SAME session/transaction this function already
+        # commits below: a real pipeline run executes via
+        # artemis/pipelines/run_cli.py's `asyncio.run(...)`, which cancels any
+        # still-pending background task the moment the coroutine returns, so a
+        # fire-and-forget write scheduled on the LAST node of a run risks being
+        # cancelled before it ever reaches Postgres — silently losing exactly the
+        # observability this is meant to add. Own try/except so a trace-write
+        # failure can never fail an otherwise-successful agent run.
+        try:
+            from artemis.costs.events import adapter_identity as _trace_adapter_identity
+
+            _trace_provider, _trace_adapter_model, _ = _trace_adapter_identity(adapter)
+            _trace_model = agent.model or _trace_adapter_model
+            await record_trace(
+                session,
+                agent_id=agent_id,
+                feature_tag="agent_run",
+                session_id=run_id,
+                provider=_trace_provider,
+                model=_trace_model,
+                input_summary=effective_message[:500] if effective_message else None,
+                tools_used=collect_tools_used(result),
+                output_summary=final_text[:500] if final_text else None,
+                outcome="success",
+                latency_ms=elapsed_ms(_run_start),
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+                owner_user_id=owner_user_id,
+            )
+        except Exception:
+            logger.warning("trace capture failed for run_id=%s", run_id, exc_info=True)
+
     except Exception as exc:  # noqa: BLE001
         logger.exception("Agent run '%s' failed", run_id)
         error_msg = f"{type(exc).__name__}: {exc}"
@@ -616,6 +661,35 @@ async def run_agent(
             )
         except Exception:
             logger.warning("cost_event error recording failed for run_id=%s", run_id, exc_info=True)
+
+        # OBS-2: error trace row — lossless recording, mirrors the error cost
+        # event immediately above. `result` may still be None here (the
+        # failure can happen before run_with_tools/run_turn ever returns), so
+        # tools_used can only reflect calls made before the failure when a
+        # partial `result` exists.
+        try:
+            from artemis.costs.events import adapter_identity as _trace_adapter_identity
+
+            _trace_provider, _trace_adapter_model, _ = _trace_adapter_identity(adapter)
+            _trace_model = agent.model or _trace_adapter_model
+            await record_trace(
+                session,
+                agent_id=agent_id,
+                feature_tag="agent_run",
+                session_id=run_id,
+                provider=_trace_provider,
+                model=_trace_model,
+                input_summary=effective_message[:500] if effective_message else None,
+                tools_used=collect_tools_used(result) if result is not None else [],
+                outcome="error",
+                error=error_msg,
+                latency_ms=elapsed_ms(_run_start),
+                input_tokens=result.usage.input_tokens if result is not None else None,
+                output_tokens=result.usage.output_tokens if result is not None else None,
+                owner_user_id=owner_user_id,
+            )
+        except Exception:
+            logger.warning("error trace capture failed for run_id=%s", run_id, exc_info=True)
 
     await session.flush()
 

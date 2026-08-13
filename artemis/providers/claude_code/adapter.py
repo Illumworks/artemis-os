@@ -16,7 +16,9 @@ Notes
   ``claude -p --mcp-config`` against a scoped Artemis MCP server. Builder
   turns use the Builder-scoped server; Floating Artemis turns use their own
   session-scoped server for auto-invoke tools.
-- ``run_with_tools()`` (stream CC2) — unchanged; still used by pipeline agents.
+- ``run_with_tools()`` (stream CC2) — used by pipeline/builder agents
+  (``artemis/builders/executor.py``). Also on ``--output-format stream-json``
+  as of OBS-2 so tool calls are recoverable (see the OBS-2 note below).
 - Usage tokens reported by the CLI (if present) are forwarded; otherwise zeros
   are used so the Usage object is always valid.
 - Raises ``MissingCliBinaryError`` at construction if the binary cannot be found.
@@ -74,8 +76,26 @@ terminal ``type: "result"`` line has the exact same shape ``--output-format
 json`` alone would have produced, so
 :func:`_completion_response_from_payload` applies unchanged and the assistant
 text a user sees is unaffected. Forge mode and ``run_with_tools`` (CC2,
-pipeline agents) are intentionally left on ``--output-format json`` — out of
-scope for this fix (see the OBS-1 brief).
+pipeline agents) were intentionally left on ``--output-format json`` — out of
+scope for that fix (see the OBS-1 brief).
+
+OBS-2: stream-json on run_with_tools (CC2, pipeline/builder agents)
+--------------------------------------------------------------------
+OBS-1 fixed ``tools_used`` for every Slack-facing agent but explicitly left
+``run_with_tools`` (used by ``artemis/builders/executor.py`` for pipeline
+``agent_invocation`` nodes and scout runs) on plain ``--output-format json``,
+so a marketing pipeline agent or scout still ran with zero record of which
+tools it actually invoked — the same blindness OBS-1 fixed for conversational
+agents, just in the part of the system that runs unattended on a schedule.
+``run_with_tools`` now runs with ``--output-format stream-json --verbose``
+(see :func:`_build_launch_command`) and passes ``parse_mode="stream-json"`` to
+:meth:`ClaudeCodeAdapter._run_subprocess`, reusing the exact same
+:func:`_parse_stream_json` / :func:`_completion_response_from_payload` OBS-1
+built — no second parser. Forge mode (native Read/Glob/Bash tools, no Artemis
+MCP server; Ares project inspection) remains on plain ``--output-format
+json`` — it is not part of the pipeline-agent tool-use gap this addresses
+(no ``agent_traces`` row is written for Forge runs today either) and is left
+as a still-open, separate follow-up.
 """
 
 from __future__ import annotations
@@ -681,6 +701,16 @@ class ClaudeCodeAdapter:
         launch error) raises a provider error so the caller can mark the node
         failed and let the rest of the pipeline continue.
 
+        OBS-2: this is the pipeline/builder agent path OBS-1 explicitly left on
+        plain ``--output-format json`` (no tool-call recovery). It now runs
+        with ``--output-format stream-json --verbose`` (see
+        :func:`_build_launch_command`) and passes ``parse_mode="stream-json"``
+        to :meth:`_run_subprocess`, so the tools claude-code's internal loop
+        actually called land on ``CompletionResponse.tool_calls`` the same way
+        they already do for the Builder / Floating Artemis MCP branches of
+        ``_complete_with_tools``. The assistant text returned is unaffected —
+        see :func:`_completion_response_from_payload`.
+
         Args:
             timeout_seconds: Per-call wall-clock subprocess timeout. Overrides the
                 global ``ARTEMIS_CLAUDE_CODE_TIMEOUT_SECONDS`` env var when set.
@@ -723,6 +753,7 @@ class ClaudeCodeAdapter:
                 tool_run=True,
                 timeout_seconds=timeout_seconds,
                 claude_config_dir=claude_config_dir,
+                parse_mode="stream-json",
             )
         finally:
             Path(tmp.name).unlink(missing_ok=True)
@@ -998,12 +1029,22 @@ def _build_launch_command(
     ``max_turns``: when provided, adds ``--max-turns <n>`` to bound the claude-code
     internal agent loop. Use for content nodes that should call one tool and return,
     preventing runaway loops where the LLM keeps calling tools without a final answer.
+
+    OBS-2: ``--output-format stream-json --verbose`` (was plain ``json``) so
+    :meth:`ClaudeCodeAdapter.run_with_tools` can recover the tool calls this
+    internal loop actually made via :func:`_parse_stream_json`, the same way
+    OBS-1 already does for the Builder / Floating Artemis MCP branches of
+    ``_complete_with_tools``. The terminal ``type: "result"`` line has the
+    identical shape the old plain-``json`` output had, so
+    :func:`_completion_response_from_payload` still produces byte-identical
+    assistant text — only ``CompletionResponse.tool_calls`` gains information.
     """
     cmd = [
         binary,
         "-p",
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--model",
         model,
         "--mcp-config",
