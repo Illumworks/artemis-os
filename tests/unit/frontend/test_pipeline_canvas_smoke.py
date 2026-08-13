@@ -157,7 +157,11 @@ def test_marketing_pipeline_has_ci2_node_count():
     data = _load_marketing_pipeline_data()
     if data is None:
         pytest.skip("Marketing pipeline seed not loadable (DB not available)")
-    assert len(data["nodes"]) == 14, f"Expected 14 nodes, got {len(data['nodes'])}"
+    # 12, down from 14: gate_1_signals_inbox and content_brief_assembler were
+    # removed on 2026-08-12 (owner decision -- marketing.main now ends at
+    # qualification; see build_marketing_pipeline's comment for why the two had
+    # to go together).
+    assert len(data["nodes"]) == 12, f"Expected 12 nodes, got {len(data['nodes'])}"
 
 
 def test_marketing_pipeline_edges_reference_valid_nodes():
@@ -195,7 +199,9 @@ def test_marketing_pipeline_edge_count_in_range():
     if data is None:
         pytest.skip("Marketing pipeline seed not loadable")
     edge_count = len(data["edges"])
-    assert 20 <= edge_count <= 22, f"Expected 20–22 edges, got {edge_count}"
+    # 18-20, was 20-22: removing the gate and the assembler dropped two edges
+    # (qualifier -> gate, gate -> assembler). Kept as a range, as before.
+    assert 18 <= edge_count <= 20, f"Expected 18–20 edges, got {edge_count}"
 
 
 # ── JS canvas logic smoke (via node meta, extracted) ─────────────────────────
