@@ -284,6 +284,46 @@ async def _fetch_state_doe(
 # ── Parallel fetch orchestrator ────────────────────────────────────────────────
 
 
+async def _resolve_search_term(district_key: str) -> str:
+    """The district's NAME for searching, falling back to ``district_key``.
+
+    Fetchers search on this string. A drawer key is frequently an NCES id
+    ("11414"), which no news or procurement source knows; the name
+    ("FORT WORTH ISD") is what they index. The ``districts`` table already
+    holds the mapping — nothing new is needed, it was simply never consulted.
+
+    Falls back to the key unchanged on any failure, and for keys that are
+    already names ("St. Louis Public Schools", "IL-U46"): degrading to today's
+    behaviour is always acceptable here, because a research pass with a poor
+    search term is worth strictly more than a research pass that raised.
+    """
+    if not district_key:
+        return district_key
+    try:
+        from sqlalchemy import text as _sql_text
+
+        import artemis.db as _db
+
+        async with _db.SessionLocal() as session:
+            row = (
+                await session.execute(
+                    _sql_text("SELECT name FROM districts WHERE id::text = :key LIMIT 1"),
+                    {"key": district_key},
+                )
+            ).first()
+        name = (row[0] or "").strip() if row else ""
+        if name:
+            _logger.info("Argus: district_key=%r resolved to search term %r", district_key, name)
+            return name
+    except Exception:
+        _logger.warning(
+            "Argus: could not resolve a district name for %r -- searching on the key itself",
+            district_key,
+            exc_info=True,
+        )
+    return district_key
+
+
 async def _gather_tool_results(
     district_key: str,
     dimensions: list[str],
@@ -307,6 +347,20 @@ async def _gather_tool_results(
     if not needed_tools:
         return {}
 
+    # Every fetcher below uses its first argument as a literal SEARCH STRING.
+    # ``district_key`` is a drawer key, and for most real signals it is an NCES
+    # id like "11414" -- which searches nothing. Measured 2026-08-12:
+    #
+    #     _fetch_news("11414", signal)          ->  0 items
+    #     _fetch_news("FORT WORTH ISD", signal) -> 15 items, on-topic
+    #
+    # That single substitution is the difference between a usable dossier and
+    # one that says "Insufficient data from available sources" on 6 of 7
+    # dimensions, which is what the first two real runs produced (12 of 14
+    # findings insufficient). Resolve the key to the district's NAME for
+    # searching, and keep using the key for the drawer.
+    search_term = await _resolve_search_term(district_key)
+
     _tool_fetchers = {
         "news_api": _fetch_news,
         "board_minutes": _fetch_board_minutes,
@@ -321,7 +375,7 @@ async def _gather_tool_results(
             return name, []
         try:
             result = await asyncio.wait_for(
-                fetcher(district_key, signal),
+                fetcher(search_term, signal),
                 timeout=_TOOL_TIMEOUT_S,
             )
             return name, result

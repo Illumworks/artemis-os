@@ -521,3 +521,58 @@ async def test_stub_research_dimensions_still_importable() -> None:
     assert len(result) == 1
     assert result[0].source == "Argus/stub"
     assert "[STUB]" in result[0].value
+
+
+# ── Search-term resolution (2026-08-12) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_gather_tool_results_searches_on_the_district_name_not_the_key() -> None:
+    """Fetchers must receive the district NAME, not its drawer key.
+
+    Every ``_fetch_*`` helper uses its first argument as a literal search
+    string, and a real drawer key is usually an NCES id. Measured against live
+    sources: ``_fetch_news("11414", …)`` returned 0 items while
+    ``_fetch_news("FORT WORTH ISD", …)`` returned 15 on-topic ones. The first
+    two real Argus runs produced 12 "Insufficient data" findings out of 14
+    because of exactly this.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from artemis.argus import research as research_mod
+
+    seen: list[str] = []
+
+    async def spy_fetch(term: str, signal: object) -> list[dict[str, object]]:
+        seen.append(term)
+        return []
+
+    with (
+        patch.object(research_mod, "_resolve_search_term", new=AsyncMock(return_value="FORT WORTH ISD")),
+        patch.object(research_mod, "_fetch_news", new=spy_fetch),
+        patch.object(research_mod, "_fetch_board_minutes", new=spy_fetch),
+    ):
+        await research_mod._gather_tool_results("11414", [research_mod.Dimension.CURRENT_VENDOR], {"state": "TX"})
+
+    assert seen, "no fetcher was called"
+    assert all(term == "FORT WORTH ISD" for term in seen), (
+        f"fetchers must be handed the resolved name, got {seen}"
+    )
+    assert "11414" not in seen, "the raw drawer key must never reach a search"
+
+
+@pytest.mark.asyncio
+async def test_resolve_search_term_falls_back_to_the_key_on_failure() -> None:
+    """A lookup failure must degrade to today's behaviour, never raise.
+
+    A research pass with a poor search term is worth strictly more than one
+    that crashed.
+    """
+    from unittest.mock import MagicMock, patch
+
+    import artemis.db as _db
+    from artemis.argus.research import _resolve_search_term
+
+    broken = MagicMock(side_effect=RuntimeError("db down"))
+    with patch.object(_db, "SessionLocal", broken):
+        assert await _resolve_search_term("11414") == "11414"
