@@ -40,6 +40,7 @@ from artemis.agent.types import (
     RunResult,
     StopReason,
     TextBlock,
+    ToolCallRecord,
     ToolResultBlock,
     ToolUseBlock,
     Usage,
@@ -74,6 +75,15 @@ async def run_turn(
     total_usage = Usage()
     iterations = 0
     stop_reason: StopReason = "end_turn"
+    # OBS-1: adapters with their own internal tool loop (ClaudeCodeAdapter's
+    # MCP path) never emit ToolUseBlocks into `conversation` for this loop to
+    # find — the subprocess resolves tools before returning. They report tool
+    # calls on CompletionResponse.tool_calls instead; collect those here so
+    # callers (chat.py) have them regardless of provider. Not deduped here —
+    # concatenated in call order across iterations; dedup is the caller's call
+    # so there is exactly one dedup policy (chat.py already has one for the
+    # Anthropic ToolUseBlock path).
+    tool_call_records: list[ToolCallRecord] = []
 
     for i in range(1, max_iterations + 1):
         iterations = i
@@ -95,6 +105,8 @@ async def run_turn(
 
         response: CompletionResponse = await adapter.complete(request)
         total_usage.add(response.usage)
+        if response.tool_calls:
+            tool_call_records.extend(response.tool_calls)
 
         if hooks:
             await hooks.fire("after_response", response)
@@ -145,6 +157,7 @@ async def run_turn(
         stop_reason=stop_reason,
         usage=total_usage,
         iterations=iterations,
+        metadata={"tool_calls": tool_call_records} if tool_call_records else {},
     )
     if hooks:
         await hooks.fire("on_done", result)

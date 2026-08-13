@@ -58,6 +58,29 @@ Block = TextBlock | ToolUseBlock | ToolResultBlock
 
 
 @dataclass(slots=True)
+class ToolCallRecord:
+    """One tool invocation observed on a provider path with its OWN internal
+    tool loop (currently: ``ClaudeCodeAdapter``'s MCP tool path, parsed from
+    ``--output-format stream-json``).
+
+    This is deliberately NOT a ``Block`` / part of ``Message.content``. On
+    that path the CLI subprocess resolves every tool call itself and returns
+    only a final text result, so no ``ToolUseBlock`` ever appears in the
+    response message for callers to scan (OBS-1). ``ToolCallRecord`` is the
+    side-channel that carries the same information — which tools ran, and
+    whether each one errored — for callers (``run_turn`` / ``chat.py``) that
+    need it for trace/observability purposes without changing the message
+    content contract.
+
+    ``name`` has any ``mcp__artemis__`` MCP-server prefix already stripped,
+    so it matches the bare tool name used in the registry and in briefs.
+    """
+
+    name: str
+    is_error: bool = False
+
+
+@dataclass(slots=True)
 class Message:
     role: Role
     content: list[Block]

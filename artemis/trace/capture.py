@@ -95,7 +95,9 @@ def capture_trace(
         First ≤500 chars of the user's message (or a digest).  Keep short;
         this is for pattern analysis, not replay.
     tools_used:
-        Ordered list of tool names called during the turn.
+        Ordered list of tool names called during the turn. OBS-1: an entry
+        may be ``"<name>:error"`` when that tool errored at least once during
+        the turn — see ``artemis/floating_artemis/chat.py::_collect_tools_used``.
     output_summary:
         First ≤500 chars of the final assistant response.
     outcome:

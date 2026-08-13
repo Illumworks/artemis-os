@@ -21,7 +21,15 @@ from artemis.agent.client import AnthropicAdapter, ModelAdapter
 from artemis.agent.hooks import HookRegistry
 from artemis.agent.loop import run_turn, user_message
 from artemis.agent.tools import ToolRegistry
-from artemis.agent.types import Message, TextBlock, ToolResultBlock, ToolUseBlock, Usage
+from artemis.agent.types import (
+    Message,
+    RunResult,
+    TextBlock,
+    ToolCallRecord,
+    ToolResultBlock,
+    ToolUseBlock,
+    Usage,
+)
 from artemis.costs.events import record_cost_event
 from artemis.floating_artemis.authority import (
     AuthorizedToolRegistry,
@@ -655,6 +663,57 @@ async def _load_session_context(
     )
 
 
+def _collect_tools_used(result: RunResult) -> list[str]:
+    """Return the deduped, ordered list of tool names invoked during a turn.
+
+    Merges two sources, because the two provider paths surface tool calls in
+    completely different places (OBS-1):
+
+    - **Anthropic path**: ``run_turn`` executes tool_use rounds itself, so
+      ``ToolUseBlock``s land directly in ``result.messages``. Scanned here
+      exactly as before this fix — this source, and this path, are unchanged.
+    - **claude-code MCP path** (Builder / Floating Artemis — i.e. every
+      Slack-facing agent: Callie, Kai, Artemis): the CLI runs its OWN internal
+      tool loop inside the subprocess and returns only a final text result,
+      so no ``ToolUseBlock`` ever reaches ``result.messages`` for this path —
+      that gap is the whole reason ``agent_traces.tools_used`` was ``[]`` for
+      30+ days straight. ``run_turn`` recovers this from the adapter's
+      stream-json parse and threads it through
+      ``result.metadata["tool_calls"]`` (see ``artemis/agent/loop.py`` and
+      ``artemis/providers/claude_code/adapter.py::_parse_stream_json``);
+      merged in below.
+
+    In practice exactly one source is non-empty for any given turn (a turn
+    uses exactly one adapter), but both are merged the same way regardless:
+    first-occurrence-wins dedup, in encounter order.
+
+    A tool name that failed at least once is recorded as ``"<name>:error"``
+    rather than a bare name. There is no separate error column to use instead
+    — no migration; ``agent_traces.tools_used`` stays the ``JSONB`` array of
+    strings it already is — and a name-only list would make a tool that ran
+    and errored look identical to a clean success, which is exactly the
+    failure mode this instrument exists to catch (a tool that "ran" and
+    errored is the case that matters most; see the OBS-1 brief).
+    """
+    errors: dict[str, bool] = {}
+
+    for msg in result.messages:
+        if msg.role != "assistant":
+            continue
+        for block in msg.content:
+            if isinstance(block, ToolUseBlock) and block.name not in errors:
+                errors[block.name] = False
+
+    tool_calls = cast(list[ToolCallRecord], result.metadata.get("tool_calls") or [])
+    for call in tool_calls:
+        if call.name not in errors:
+            errors[call.name] = call.is_error
+        elif call.is_error:
+            errors[call.name] = True
+
+    return [f"{name}:error" if is_error else name for name, is_error in errors.items()]
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 
@@ -1093,15 +1152,10 @@ async def handle_turn(
             "claude-code" if "ClaudeCodeAdapter" in type(adapter).__name__ else "anthropic"
         )
         _fa_model = getattr(adapter, "_default_model", None) or "claude-sonnet-4-6"
-        # Collect distinct tool names from the turn's assistant messages.
-        _tools_used: list[str] = []
-        _seen_tools: set[str] = set()
-        for _msg in result.messages:
-            if _msg.role == "assistant":
-                for _block in _msg.content:
-                    if isinstance(_block, ToolUseBlock) and _block.name not in _seen_tools:
-                        _tools_used.append(_block.name)
-                        _seen_tools.add(_block.name)
+        # OBS-1: merges the Anthropic ToolUseBlock scan with the claude-code
+        # stream-json tool_calls the adapter reports via result.metadata —
+        # see _collect_tools_used for why both sources exist.
+        _tools_used = _collect_tools_used(result)
         capture_trace(
             agent_id=session_ctx.agent_id,
             # Agent-neutral surface label: handle_turn is the shared conversational

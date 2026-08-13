@@ -5,7 +5,7 @@ Public API:
     from artemis.agent import (
         AnthropicAdapter, FakeAdapter,
         HookRegistry,
-        Message, TextBlock, ToolUseBlock, ToolResultBlock,
+        Message, TextBlock, ToolUseBlock, ToolResultBlock, ToolCallRecord,
         Tool, ToolImpl, ToolRegistry,
         RunResult, Usage,
         run_turn, user_message, assistant_message,
@@ -32,6 +32,7 @@ from artemis.agent.types import (
     StopReason,
     TextBlock,
     Tool,
+    ToolCallRecord,
     ToolImpl,
     ToolResultBlock,
     ToolUseBlock,
@@ -56,6 +57,7 @@ __all__ = [
     "StopReason",
     "TextBlock",
     "Tool",
+    "ToolCallRecord",
     "ToolEntry",
     "ToolImpl",
     # tools

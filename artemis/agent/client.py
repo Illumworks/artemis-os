@@ -25,6 +25,7 @@ from artemis.agent.types import (
     Message,
     TextBlock,
     Tool,
+    ToolCallRecord,
     ToolUseBlock,
     Usage,
 )
@@ -58,6 +59,18 @@ class CompletionResponse:
     """The assistant message produced by this call."""
     stop_reason: str
     usage: Usage
+    tool_calls: list[ToolCallRecord] | None = None
+    """Tool invocations observed on a provider path with its OWN internal
+    tool loop (OBS-1) — currently only ``ClaudeCodeAdapter``'s MCP tool path,
+    parsed from ``--output-format stream-json``.
+
+    ``None`` means this adapter/path does not report tool-call info (the
+    Anthropic path, or the claude-code text-only path); callers should fall
+    back to scanning ``message.content`` for ``ToolUseBlock``s, which IS how
+    the Anthropic path surfaces tool calls. An empty list is a real, positive
+    signal — "this path reports tool calls, and there were zero this turn" —
+    distinct from ``None``'s "this path reports nothing."
+    """
 
 
 class ModelAdapter(Protocol):

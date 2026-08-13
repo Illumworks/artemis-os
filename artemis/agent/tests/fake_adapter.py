@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from artemis.agent.client import CompletionRequest, CompletionResponse, ModelAdapter
-from artemis.agent.types import Message, TextBlock, ToolUseBlock, Usage
+from artemis.agent.types import Message, TextBlock, ToolCallRecord, ToolUseBlock, Usage
 
 
 @dataclass(slots=True)
@@ -24,6 +24,14 @@ class ScriptedReply:
     input_tokens: int = 100
     output_tokens: int = 50
     cache_read_input_tokens: int = 0
+    response_tool_calls: list[ToolCallRecord] | None = None
+    """OBS-1: scripts ``CompletionResponse.tool_calls`` directly — the
+    side-channel a provider with its own internal tool loop (ClaudeCodeAdapter's
+    MCP path) uses to report calls that never appear as ``ToolUseBlock``s.
+    Distinct from ``tool_calls`` above (which scripts in-message
+    ``ToolUseBlock``s for the Anthropic-style loop) so a test can exercise
+    either signal, or both, independently.
+    """
 
 
 class FakeAdapter:
@@ -54,6 +62,7 @@ class FakeAdapter:
                 output_tokens=reply.output_tokens,
                 cache_read_input_tokens=reply.cache_read_input_tokens,
             ),
+            tool_calls=reply.response_tool_calls,
         )
 
 

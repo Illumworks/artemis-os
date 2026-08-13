@@ -8,7 +8,9 @@ import pytest
 
 from artemis.agent import (
     HookRegistry,
+    TextBlock,
     Tool,
+    ToolCallRecord,
     ToolRegistry,
     ToolResultBlock,
     ToolUseBlock,
@@ -376,3 +378,47 @@ async def test_tool_result_block_serializes_to_api_shape() -> None:
         "content": "result",
         "is_error": False,
     }
+
+
+# ───── OBS-1: CompletionResponse.tool_calls threaded into RunResult.metadata ──
+
+
+async def test_response_tool_calls_land_in_run_result_metadata() -> None:
+    """A provider with its own internal tool loop (ClaudeCodeAdapter's MCP
+    path) reports calls via CompletionResponse.tool_calls, not ToolUseBlocks —
+    run_turn must surface those on RunResult.metadata["tool_calls"] so callers
+    that never see a ToolUseBlock (because none was ever produced) still learn
+    what ran."""
+    adapter = FakeAdapter(
+        [
+            ScriptedReply(
+                text="done",
+                response_tool_calls=[
+                    ToolCallRecord(name="dispatch_research"),
+                    ToolCallRecord(name="list_candidates", is_error=True),
+                ],
+            )
+        ]
+    )
+
+    result = await run_turn(adapter=adapter, messages=[user_message("hi")])
+
+    assert result.metadata["tool_calls"] == [
+        ToolCallRecord(name="dispatch_research"),
+        ToolCallRecord(name="list_candidates", is_error=True),
+    ]
+    # And, since this path never produces a ToolUseBlock, the message content
+    # is text-only — the metadata channel is the ONLY place this shows up.
+    assert len(result.messages) == 2
+    assert isinstance(result.messages[-1].content[0], TextBlock)
+
+
+async def test_no_response_tool_calls_leaves_metadata_empty() -> None:
+    """When the adapter never sets tool_calls (e.g. the Anthropic path, or a
+    claude-code turn with genuinely no tool use), metadata must not gain a
+    spurious "tool_calls" key — RunResult.metadata stays {}."""
+    adapter = FakeAdapter([ScriptedReply(text="hello")])
+
+    result = await run_turn(adapter=adapter, messages=[user_message("hi")])
+
+    assert result.metadata == {}

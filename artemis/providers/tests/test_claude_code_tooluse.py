@@ -367,10 +367,16 @@ async def test_complete_with_tools_uses_floating_session_context(tmp_path: Path)
     captured: dict[str, object] = {}
 
     async def _fake_run_subprocess(
-        cmd: list[str], prompt: str, *, tool_run: bool = False
+        cmd: list[str],
+        prompt: str,
+        *,
+        tool_run: bool = False,
+        parse_mode: str = "json",
+        **_kwargs: object,
     ) -> object:
         captured["cmd"] = cmd
         captured["prompt"] = prompt
+        captured["parse_mode"] = parse_mode
         from artemis.agent.client import CompletionResponse
         from artemis.agent.types import Usage
 
@@ -404,6 +410,139 @@ async def test_complete_with_tools_uses_floating_session_context(tmp_path: Path)
     start = cmd.index("--allowed-tools") + 1
     end = cmd.index("--disallowed-tools")
     assert cmd[start:end] == ["mcp__artemis__query_memory", "mcp__artemis__write_memory"]
+
+
+# ── OBS-1: Builder/Floating Artemis MCP path switches to stream-json ─────────
+
+
+@pytest.mark.asyncio
+async def test_complete_with_tools_floating_uses_stream_json_output_format(
+    tmp_path: Path,
+) -> None:
+    """The Floating Artemis MCP branch of _complete_with_tools must request
+    --output-format stream-json --verbose (not "json") and tell
+    _run_subprocess to parse it as such — this is the actual OBS-1 fix; every
+    Slack-facing agent (Callie, Kai, Artemis) is on this path."""
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+
+    captured: dict[str, object] = {}
+
+    async def _fake_run_subprocess(
+        cmd: list[str],
+        prompt: str,
+        *,
+        tool_run: bool = False,
+        parse_mode: str = "json",
+        **_kwargs: object,
+    ) -> object:
+        captured["cmd"] = cmd
+        captured["parse_mode"] = parse_mode
+        from artemis.agent.client import CompletionResponse
+        from artemis.agent.types import Usage
+
+        return CompletionResponse(
+            message=Message(role="assistant", content=[TextBlock(text="ok")]),
+            stop_reason="end_turn",
+            usage=Usage(),
+        )
+
+    request = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text="Go find candidates.")])],
+        tools=[Tool(name="list_candidates", description="d", input_schema={})],
+    )
+
+    token = floating_session_id_var.set("fa-session-stream")
+    try:
+        with patch.object(adapter, "_run_subprocess", side_effect=_fake_run_subprocess):
+            await adapter.complete(request)
+    finally:
+        floating_session_id_var.reset(token)
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in cmd
+    assert captured["parse_mode"] == "stream-json"
+
+
+@pytest.mark.asyncio
+async def test_complete_with_tools_builder_uses_stream_json_output_format(
+    tmp_path: Path,
+) -> None:
+    """Same switch applies on the Builder branch (builder_session_id set)."""
+    from artemis.builder.context import builder_session_id_var
+
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+
+    captured: dict[str, object] = {}
+
+    async def _fake_run_subprocess(
+        cmd: list[str],
+        prompt: str,
+        *,
+        tool_run: bool = False,
+        parse_mode: str = "json",
+        **_kwargs: object,
+    ) -> object:
+        captured["cmd"] = cmd
+        captured["parse_mode"] = parse_mode
+        from artemis.agent.client import CompletionResponse
+        from artemis.agent.types import Usage
+
+        return CompletionResponse(
+            message=Message(role="assistant", content=[TextBlock(text="ok")]),
+            stop_reason="end_turn",
+            usage=Usage(),
+        )
+
+    request = CompletionRequest(
+        messages=[Message(role="user", content=[TextBlock(text="Build me a workflow.")])],
+        tools=[Tool(name="builder_read_workflow", description="d", input_schema={})],
+    )
+
+    token = builder_session_id_var.set(7)
+    try:
+        with patch.object(adapter, "_run_subprocess", side_effect=_fake_run_subprocess):
+            await adapter.complete(request)
+    finally:
+        builder_session_id_var.reset(token)
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in cmd
+    assert captured["parse_mode"] == "stream-json"
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools_still_uses_plain_json_output_format(tmp_path: Path) -> None:
+    """OBS-1 scope guard: run_with_tools (CC2, pipeline agents) must be left
+    on --output-format json — only the Builder/Floating Artemis MCP branches
+    of _complete_with_tools switch to stream-json."""
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    proc = _mock_proc(payload)
+
+    captured_cmd: list[str] = []
+
+    async def _capture_exec(*args: object, **kwargs: object) -> object:
+        captured_cmd.extend(str(a) for a in args)
+        return proc
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=_capture_exec)):
+        await adapter.run_with_tools(
+            _request(),
+            agent_id="marketing.scout.regional_news",
+            run_id="RUN-OBS1-SCOPE",
+            pipeline_run_id=None,
+            agent_tools=_REGIONAL_NEWS_TOOLS,
+        )
+
+    assert captured_cmd[captured_cmd.index("--output-format") + 1] == "json"
+    assert "--verbose" not in captured_cmd
 
 
 @pytest.mark.asyncio
