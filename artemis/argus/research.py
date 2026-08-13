@@ -34,6 +34,7 @@ from typing import Any
 from artemis.agent.client import CompletionRequest
 from artemis.agent.types import Message, TextBlock
 from artemis.argus.drawer import Dimension, DistrictFinding
+from artemis.config import settings
 from artemis.providers.fallback import complete_with_fallback
 from artemis.scouts._http import ScoutHttpClient
 
@@ -187,6 +188,37 @@ async def _fetch_board_minutes(
     Unlike the other ``_fetch_*`` helpers, ``district_key`` here must be the
     RAW drawer key, not the resolved search term -- see ``_gather_tool_results``,
     which special-cases this fetcher for exactly that reason.
+
+    ARGUS-3 -- titles alone cannot answer current_vendor / decision_makers /
+    competitor_commitments; the vendor names and contract terms live in each
+    agenda item's BODY, not its title. Fetching every item's body
+    unconditionally (``fetch_bodies=True``) was rejected by ARGUS-2: ~150
+    extra HTTP calls per district against the ``_TOOL_TIMEOUT_S`` (15s)
+    shared with every other Argus source would time out board_minutes and
+    take the other four sources down with it (they run in the same
+    ``asyncio.gather`` in ``_gather_tool_results``).
+
+    So: fetch titles as before (cheap), filter with
+    ``mapping._is_relevant`` (already the board-minutes scout's own
+    relevance judgement -- reused, not reinvented), and fetch bodies for
+    ONLY the survivors -- bounded twice over by
+    ``settings.argus_board_minutes_body_cap`` (how many bodies) and
+    ``settings.argus_board_minutes_body_budget_s`` (how long). Measured
+    against live Dallas ISD data on 2026-08-13: 146 agenda items, 16 pass
+    ``_is_relevant`` -- comfortably under the default cap of 20.
+
+    Relevant (now body-enriched where the fetch succeeded) items are placed
+    FIRST in the returned list, ahead of the remaining title-only items,
+    before the existing ``[:10]`` trim. Without this reordering the fix
+    would be a no-op in practice: a district's ~16 relevant items are
+    scattered across ~5 meetings x many agenda items each, so the old
+    "just take the first 10 in agenda order" slice would almost always
+    grab a run of procedural items (call to order, roll call, prior-minutes
+    approval) from a single meeting and never reach a relevant one --
+    fetching bodies for the right items and then still not sending them to
+    synthesis would be strictly worse than doing nothing (spent the HTTP
+    budget, gained nothing). When nothing is relevant, ``ordered == items``
+    unchanged -- title-only behaviour, exactly as before ARGUS-3.
     """
     boarddocs_url: str | None = None
     if signal and isinstance(signal.get("provenance"), dict):
@@ -213,11 +245,52 @@ async def _fetch_board_minutes(
         return []
 
     try:
-        from artemis.scouts.board_minutes.client import fetch_boarddocs
+        from artemis.scouts.board_minutes.client import (
+            _boarddocs_base,
+            fetch_boarddocs,
+            fetch_boarddocs_bodies,
+        )
+        from artemis.scouts.board_minutes.mapping import _is_relevant
 
         district_cfg = {"district_id": district_key, "boarddocs_url": boarddocs_url}
         async with ScoutHttpClient(timeout=30.0) as http:
             items = await fetch_boarddocs(district_cfg, http)
+
+            relevant = [
+                it
+                for it in items
+                if _is_relevant(f"{it.get('title', '')} {it.get('text', '')}")
+            ]
+            cap = settings.argus_board_minutes_body_cap
+            to_enrich = relevant[:cap]
+            if len(relevant) > cap:
+                _logger.info(
+                    "Argus._fetch_board_minutes: district_key=%r -- %d relevant items, "
+                    "capped body-fetch to %d (argus_board_minutes_body_cap)",
+                    district_key,
+                    len(relevant),
+                    cap,
+                )
+
+            if to_enrich:
+                base_url = _boarddocs_base(boarddocs_url)
+                fetched = await fetch_boarddocs_bodies(
+                    base_url,
+                    to_enrich,
+                    http,
+                    budget_s=settings.argus_board_minutes_body_budget_s,
+                )
+                _logger.info(
+                    "Argus._fetch_board_minutes: district_key=%r -- fetched %d/%d relevant "
+                    "bodies (of %d total agenda items)",
+                    district_key,
+                    fetched,
+                    len(to_enrich),
+                    len(items),
+                )
+
+        enriched_ids = {id(it) for it in to_enrich}
+        ordered = to_enrich + [it for it in items if id(it) not in enriched_ids]
         trimmed = [
             {
                 "title": it.get("title", ""),
@@ -225,7 +298,7 @@ async def _fetch_board_minutes(
                 "source_url": it.get("source_url", ""),
                 "text": (it.get("text", ""))[:1500],
             }
-            for it in items[:10]
+            for it in ordered[:10]
         ]
         return trimmed
     except Exception as exc:
