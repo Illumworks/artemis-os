@@ -1,54 +1,35 @@
-"""Unit tests for Argus dispatch resilience (v3 persistent dispatch).
+"""Unit tests for Argus dispatch resilience (v3 persistent dispatch → v4 claimed dispatch).
 
 All tests are UNIT tests — no DB, no env vars required.  DB and Slack layers are
 mocked.  Tests cover:
 
   R1 — dispatch writes a pending row with channel/team/district captured.
-  R2 — dispatch fires a background task AFTER inserting the pending row.
+  R2 — dispatch does NOT fire a background task; it only inserts the pending
+       row and returns a "queued" payload (ARGUS-1 -- see
+       artemis/floating_artemis/tools/argus_tools.py's module docstring "v4").
   R3 — success marks the row done (status='done', completed_at set).
-  R4 — exception increments attempts + sets error; row stays pending.
+  R4 — exception increments attempts + sets error; row released to 'pending'
+       so the claimer's next tick retries it immediately (ARGUS-1).
   R5 — at attempts >= 3 (MAX_ATTEMPTS) the row is marked failed + fallback posted.
-  R6 — startup recovery selects pending AND attempts<3, re-fires background tasks.
-  R7 — startup recovery does NOT re-fire rows with attempts >= MAX_ATTEMPTS
-       (DB query filters them; verified by checking only fresh rows fire).
-  R8 — startup recovery is silent/non-blocking when no pending rows exist.
+  R6 — recover_pending_requests (ARGUS-1) is now a thin wrapper that runs one
+       claim tick immediately; it no longer queries the table or fires
+       background tasks itself. The real "claims a pending row and cannot
+       double-run one the claimer already holds" proof needs a real
+       Postgres connection (SKIP LOCKED semantics can't be meaningfully
+       mocked) -- see artemis/floating_artemis/tests/test_argus_async_dispatch.py.
+
+R6/R7/R8 here used to assert recover_pending_requests queried
+argus_research_requests directly and re-fired loop.create_task(...) per row
+-- that mechanism doesn't exist anymore; it's one call to run_claim_tick.
 """
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-def _make_request_row(
-    *,
-    id: int = 1,
-    district_key: str = "TX-001",
-    channel_id: str = "C123",
-    team_id: str = "T456",
-    signal: dict[str, Any] | None = None,
-    triggering_signal_id: str | None = None,
-    status: str = "pending",
-    attempts: int = 0,
-    error: str | None = None,
-) -> MagicMock:
-    """Build a mock ArgusResearchRequest row."""
-    row = MagicMock()
-    row.id = id
-    row.district_key = district_key
-    row.channel_id = channel_id
-    row.team_id = team_id
-    row.signal = signal
-    row.triggering_signal_id = triggering_signal_id
-    row.status = status
-    row.attempts = attempts
-    row.error = error
-    return row
 
 
 def _make_session_ctx(session: AsyncMock) -> AsyncMock:
@@ -111,20 +92,16 @@ async def test_insert_pending_request_creates_row_with_correct_fields() -> None:
     assert row_id == 42
 
 
-# ── R2: _dispatch_research fires background task ───────────────────────────────
+# ── R2: _dispatch_research enqueues only -- no background task (ARGUS-1) ──────
 
 
 @pytest.mark.asyncio
-async def test_dispatch_fires_task_and_returns_dispatched() -> None:
-    """_dispatch_research returns dispatched JSON and fires background task."""
+async def test_dispatch_enqueues_only_and_returns_queued() -> None:
+    """_dispatch_research inserts the pending row and returns 'queued' -- it
+    does NOT create a task and does NOT run research itself (ARGUS-1)."""
     import json
 
     from artemis.floating_artemis.tools import argus_tools
-
-    fired: list[str] = []
-
-    async def fake_safe_research_and_post(**kwargs):
-        fired.append(kwargs["district_key"])
 
     # floating_session_id_var is imported lazily inside the function body, so
     # we patch at its source module rather than the argus_tools namespace.
@@ -142,32 +119,35 @@ async def test_dispatch_fires_task_and_returns_dispatched() -> None:
             return_value=("C123", "T456"),
         ),
         patch(
+            "artemis.floating_artemis.tools.argus_tools._resolve_latest_qualified_signal",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
             "artemis.floating_artemis.tools.argus_tools._insert_pending_request",
             new_callable=AsyncMock,
             return_value=7,
         ) as mock_insert,
-        patch(
-            "artemis.floating_artemis.tools.argus_tools._safe_research_and_post",
-            side_effect=fake_safe_research_and_post,
-        ),
     ):
         result_json = await argus_tools._dispatch_research({"district_key": "TX-001"})
 
     result = json.loads(result_json)
-    assert result["status"] == "dispatched"
+    assert result["status"] == "queued"
     assert result["district"] == "TX-001"
+    assert "detail" in result
 
-    # Pending row was inserted
+    # Pending row was inserted -- and that is the ONLY effect of this call.
+    # No task is created here at all (contrast with the old v2/v3 behavior,
+    # which this test used to prove by sleep(0)-draining a background task);
+    # test_argus_async_dispatch.py's rewritten dispatch tests assert directly
+    # that no research-running call happens as a result of this function.
     mock_insert.assert_called_once()
-
-    # Give event loop a tick so the created task runs
-    await asyncio.sleep(0)
-    assert "TX-001" in fired
 
 
 @pytest.mark.asyncio
-async def test_dispatch_no_channel_returns_warning() -> None:
-    """When channel resolution fails, _dispatch_research returns a warning payload."""
+async def test_dispatch_no_channel_returns_failed_not_queued() -> None:
+    """When channel resolution fails, _dispatch_research returns status='failed'
+    -- never 'queued' or 'dispatched' (nothing was persisted or started)."""
     import json
 
     from artemis.floating_artemis.tools import argus_tools
@@ -193,8 +173,9 @@ async def test_dispatch_no_channel_returns_warning() -> None:
         result_json = await argus_tools._dispatch_research({"district_key": "TX-002"})
 
     result = json.loads(result_json)
-    assert result["status"] == "dispatched"
-    assert "warning" in result
+    assert result["status"] == "failed"
+    assert result["error"] == "no_channel_resolved"
+    assert "NOT queued" in result["detail"]
     # Should NOT have tried to insert a row (no channel = can't persist useful row)
     mock_insert.assert_not_called()
 
@@ -382,129 +363,45 @@ async def test_safe_research_and_post_no_fallback_below_cap() -> None:
     assert fallback_posted == []
 
 
-# ── R6: startup recovery re-fires pending rows ────────────────────────────────
+# ── R6: recover_pending_requests delegates to run_claim_tick (ARGUS-1) ────────
 
 
 @pytest.mark.asyncio
-async def test_startup_recovery_refires_pending_rows() -> None:
-    """recover_pending_requests re-fires background tasks for all pending rows."""
-    from artemis.floating_artemis.tools import argus_tools
+async def test_startup_recovery_delegates_to_run_claim_tick() -> None:
+    """recover_pending_requests calls run_claim_tick and nothing else.
 
-    row1 = _make_request_row(
-        id=10, district_key="TX-001", channel_id="C1", team_id="T1", attempts=0
-    )
-    row2 = _make_request_row(
-        id=11, district_key="TX-002", channel_id="C2", team_id="T2", attempts=1
-    )
-
-    fired: list[str] = []
-
-    async def fake_safe_research_and_post(**kwargs):
-        fired.append(kwargs["district_key"])
-
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = [row1, row2]
-
-    mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(return_value=mock_result)
-
-    ctx = _make_session_ctx(mock_session)
-
-    # Patch sqlalchemy.select so ArgusResearchRequest (real ORM class) doesn't
-    # trigger a DB connection.  We just need the session.execute mock to return rows.
-    with (
-        patch("artemis.floating_artemis.tools.argus_tools._db") as mock_db,
-        patch("artemis.floating_artemis.tools.argus_tools.select", return_value=MagicMock()),
-        patch(
-            "artemis.floating_artemis.tools.argus_tools._safe_research_and_post",
-            side_effect=fake_safe_research_and_post,
-        ),
-    ):
-        mock_db.SessionLocal.return_value = ctx
-        await argus_tools.recover_pending_requests()
-
-    # Drain the created tasks
-    await asyncio.sleep(0)
-
-    assert set(fired) == {"TX-001", "TX-002"}
-    assert len(fired) == 2
-
-
-# ── R7: startup recovery only fires rows returned by query ────────────────────
-
-
-@pytest.mark.asyncio
-async def test_startup_recovery_only_fires_rows_returned_by_query() -> None:
-    """recover_pending_requests fires exactly the rows the DB query returns.
-
-    The filtering (attempts < MAX_ATTEMPTS) is the DB's job. This test verifies
-    the recovery loop doesn't add extra filtering of its own — whatever the query
-    returns gets re-fired, no more, no less.
+    ARGUS-1: this used to query argus_research_requests directly and re-fire
+    a background task per row -- a second, independent mechanism from the
+    interval scheduler that happened to be safe only because it ran once,
+    before that scheduler existed to race it. It is now a one-line delegation
+    to the SAME entry point the scheduler uses (including that entry point's
+    own skip-if-already-running guard), which is what makes "cannot double-run
+    a row the claimer already holds" true by construction. See that entry
+    point's own claim-atomicity proof (real Postgres, SKIP LOCKED) in
+    artemis/floating_artemis/tests/test_argus_async_dispatch.py -- it can't be
+    meaningfully asserted with mocks the way this test asserts delegation.
     """
     from artemis.floating_artemis.tools import argus_tools
 
-    # Simulate the DB returning only one row (already filtered by attempts < 3)
-    fresh_row = _make_request_row(id=20, district_key="TX-003", attempts=0)
-
-    fired: list[str] = []
-
-    async def fake_safe_research_and_post(**kwargs):
-        fired.append(kwargs["district_key"])
-
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = [fresh_row]
-
-    mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(return_value=mock_result)
-
-    ctx = _make_session_ctx(mock_session)
-
-    with (
-        patch("artemis.floating_artemis.tools.argus_tools._db") as mock_db,
-        patch("artemis.floating_artemis.tools.argus_tools.select", return_value=MagicMock()),
-        patch(
-            "artemis.floating_artemis.tools.argus_tools._safe_research_and_post",
-            side_effect=fake_safe_research_and_post,
-        ),
-    ):
-        mock_db.SessionLocal.return_value = ctx
+    with patch(
+        "artemis.floating_artemis.tools.argus_tools.run_claim_tick",
+        new_callable=AsyncMock,
+    ) as mock_tick:
         await argus_tools.recover_pending_requests()
 
-    await asyncio.sleep(0)
-    assert fired == ["TX-003"]
-
-
-# ── R8: startup recovery is silent when no pending rows ───────────────────────
+    mock_tick.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
-async def test_startup_recovery_silent_with_no_pending_rows() -> None:
-    """recover_pending_requests is silent and fires no tasks when there are no pending rows."""
+async def test_startup_recovery_swallows_claim_tick_failure() -> None:
+    """A failure inside run_claim_tick must not propagate out of
+    recover_pending_requests -- it's awaited via asyncio.create_task from
+    main.py's lifespan and must never block or crash startup."""
     from artemis.floating_artemis.tools import argus_tools
 
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = []
-
-    mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(return_value=mock_result)
-
-    ctx = _make_session_ctx(mock_session)
-
-    tasks_created: list[Any] = []
-
-    async def fake_safe_research_and_post(**kwargs):
-        tasks_created.append(kwargs)
-
-    with (
-        patch("artemis.floating_artemis.tools.argus_tools._db") as mock_db,
-        patch("artemis.floating_artemis.tools.argus_tools.select", return_value=MagicMock()),
-        patch(
-            "artemis.floating_artemis.tools.argus_tools._safe_research_and_post",
-            side_effect=fake_safe_research_and_post,
-        ),
+    with patch(
+        "artemis.floating_artemis.tools.argus_tools.run_claim_tick",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("DB unreachable"),
     ):
-        mock_db.SessionLocal.return_value = ctx
-        await argus_tools.recover_pending_requests()
-
-    await asyncio.sleep(0)
-    assert tasks_created == []
+        await argus_tools.recover_pending_requests()  # must not raise

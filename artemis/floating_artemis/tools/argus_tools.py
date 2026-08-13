@@ -4,57 +4,102 @@ Callie owns this tool. No other agent sees it.
 
 v1 (sync, retired): research_district ran in-turn; dossier returned directly.
 
-v2 (async, current): dispatch_research fires a background task immediately and
-returns a short ``{"status":"dispatched","district":<name>}`` payload so Callie
-acknowledges in the same turn. The background task runs research_district with its
-own DB session, produces a Callie-voiced summary, and posts it to the originating
-channel via SlackClient.
+v2 (async, retired): dispatch_research fired a background task immediately
+(``loop.create_task``) and returned a short
+``{"status":"dispatched","district":<name>}`` payload so Callie acknowledged
+in the same turn.
 
-v3 (resilient, current): dispatch_research PERSISTS a ``pending`` row in
-``argus_research_requests`` BEFORE firing the background task. The row captures
-channel_id, team_id, district_key, and signal so a process restart can recover
-and re-fire the task. On completion the row is marked ``done``; on repeated
-failure the row is marked ``failed`` and a fallback Slack post is sent.
+v3 (resilient, retired): dispatch_research PERSISTED a ``pending`` row in
+``argus_research_requests`` before firing that same background task, so a
+process restart could recover it. This closed the "restart loses the work
+entirely" gap but not the real one: the task created by ``loop.create_task``
+ran inside ``python -m artemis.tools.mcp_server``, a SUBPROCESS spawned fresh
+per Slack turn by ``artemis.providers.claude_code.adapter``. That subprocess
+exits the moment the turn's tool-call response is sent, killing the task
+mid-research every single time -- so research only ever completed when
+``recover_pending_requests`` happened to re-fire it on a LATER app restart.
+"Research runs when the app next happens to restart" is not a design, and the
+tool still said ``"dispatched"`` -- true only if what came next was actually
+running, which for five weeks it never was.
+
+v4 (claimed dispatch, current -- ARGUS-1): dispatch_research now ONLY enqueues
+a ``pending`` row and returns; it never creates a task and never runs
+research. A claimer living in the long-lived FastAPI app process --
+``run_claim_tick``, an APScheduler interval job started from ``main.lifespan``
+-- atomically claims rows via
+``UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING *``
+(``_claim_next_request``) and runs them one at a time, in-process, with
+per-row failure isolation. A row stuck at ``running`` past
+``settings.argus_claim_stale_minutes`` (crash mid-research) is re-claimable.
+``recover_pending_requests`` stays as a startup backstop -- it just runs one
+claim tick immediately rather than waiting out the first scheduled interval --
+not a second, independent mechanism. See
+``briefs/argus-1-durable-dispatch.md``.
+
+Also since ARGUS-1: when a dispatch supplies neither ``signal`` nor
+``signal_id``, ``_resolve_latest_qualified_signal`` looks up the district's
+newest qualified ``signal_queue`` row itself before enqueueing.
+``_fetch_procurement``/``_fetch_state_doe``/``_fetch_usaspending``
+(``artemis/argus/research.py``) all read the signal's ``state`` to know what
+to search and find nothing (or, for USASpending, everything in the country)
+without it -- every real Callie dispatch omitted it, so every dossier came
+back thin on exactly the dimensions asked about most (current vendor,
+decision makers). A caller-supplied signal is always used unchanged; this
+lookup never overwrites it.
 
 Channel ID resolution
 ---------------------
 The tool reads the ``floating_session_id_var`` context variable (set by the turn
 engine in chat.py) to get the current session_id. That session_id for Slack turns
 has the form ``slack-callie-{team_id}-{channel_id}-{bucket}``, and is also stored
-in the session row's metadata with an explicit ``channel_id`` key. The background
-task uses ``_session_channel_id`` from session_scope to extract the channel_id, and
-reads ``team_id`` from the session metadata.
+in the session row's metadata with an explicit ``channel_id`` key. The claimer
+uses ``_session_channel_id`` from session_scope to extract the channel_id, and
+reads ``team_id`` from the session metadata -- resolved in-turn, before the row
+is persisted, so the values survive the tool's own process exiting.
 
 Callie's token resolution
 -------------------------
-The background task calls ``_resolve_agent_slack_config(session, agent_id="callie",
-team_id=team_id)`` -- the same resolver used by ``_post_slack_message`` in
-``integrations_slack_events.py`` -- to get the access_token from the Callie
-Integration row in the DB.
+Posting (``_post_as_callie``) calls ``_resolve_agent_slack_config(session,
+agent_id="callie", team_id=team_id)`` -- the same resolver used by
+``_post_slack_message`` in ``integrations_slack_events.py`` -- to get the
+access_token from the Callie Integration row in the DB.
 
-Background task safety
-----------------------
-Wrapped in a try/except so any failure is logged at WARNING level and never
-propagates. Strong-referenced in ``_BACKGROUND_TASKS`` (same GC-guard pattern as
-``artemis/trace/capture.py``) so asyncio.create_task() result isn't GC'd.
+Failure isolation
+------------------
+``_run_claimed_request`` -> ``_safe_research_and_post`` wraps the actual
+research+post pipeline in try/except so any failure is logged at WARNING and
+never propagates; the claim loop (``run_claim_tick``) additionally wraps EACH
+claimed row's processing in its own try/except, so a completely unexpected
+exception escaping that (a bug in the isolation itself) still cannot stop the
+next row in the same tick from being tried.
 
 Retry cap
 ---------
-attempts >= 3 → mark failed + post fallback. Startup recovery only re-fires rows
-with attempts < 3, preventing infinite restart loops.
+attempts >= 3 -> mark failed + post fallback, and the claim loop does not
+retry it again. Attempts increments on two paths: a genuine failure inside
+research (the row is released back to ``pending`` for an immediate retry, not
+left at ``running``), and a stale-``running`` reclaim (presumed dead from a
+crash, since nothing else advanced attempts for it) -- so a district that
+keeps crashing the app mid-research is bounded by the same cap as one that
+keeps raising cleanly.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
+from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import-untyped]
+from sqlalchemy import and_, case, or_, select, update
 
 import artemis.db as _db
 from artemis.agent.types import Tool
 from artemis.argus.models import ArgusResearchRequest
+from artemis.config import settings
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
 
 _logger = logging.getLogger(__name__)
@@ -65,10 +110,13 @@ _AGENT_GATE = "[agent:callie]"
 # Retry cap: after this many attempts, mark failed and post a fallback.
 _MAX_ATTEMPTS = 3
 
-# ── GC-retention guard (mirrors artemis/trace/capture.py pattern) ─────────────
-# asyncio.create_task() returns a weakly-referenced Task; holding a strong ref
-# here prevents GC before execution.  The done-callback drops the ref.
-_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+__all__ = [
+    "register_argus_tools",
+    "recover_pending_requests",
+    "run_claim_tick",
+    "start_argus_claim_scheduler",
+    "stop_argus_claim_scheduler",
+]
 
 # ── Tool definition ────────────────────────────────────────────────────────────
 
@@ -76,8 +124,17 @@ DISPATCH_RESEARCH = Tool(
     name="dispatch_research",
     description=(
         "Ask Argus (Callie's dedicated research agent) to research a district in depth. "
-        "ASYNC: returns immediately with an acknowledgement payload; Argus posts findings "
-        "back to this channel when research completes. "
+        "Returns immediately with a QUEUED acknowledgement -- research has not started "
+        "yet and no completion time is promised. An in-app claimer picks the request up "
+        "on its own schedule and Argus posts findings back to this channel once it "
+        "finishes. "
+        "Pass signal or signal_id whenever you have one: without it, two of Argus's "
+        "five research sources (procurement timing, state DOE activity) have no state "
+        "to search against and come back empty, so the dossier is thin on exactly the "
+        "dimensions Jon asks about most (current vendor, decision makers). If both are "
+        "omitted, this tool looks up the district's newest qualified signal itself before "
+        "enqueueing -- but a signal you already have is more reliable than one it has to "
+        "find, so supply it when you can. "
         "Each finding carries source='Argus' so attribution is grounded. "
         "Use when Jon asks Callie to dig into a district or a qualified signal. "
         f"{_SURFACE} {_AGENT_GATE} [layer:1]"
@@ -98,17 +155,23 @@ DISPATCH_RESEARCH = Tool(
             "signal_id": {
                 "type": "integer",
                 "description": (
-                    "Optional signal ID that triggered this research. "
-                    "When provided, every finding is linked back to the signal "
-                    "as evidence so the provenance chain is preserved."
+                    "Signal ID that triggered this research, if you have one. "
+                    "Strongly recommended: without it (and without signal below), "
+                    "two of Argus's five research sources have no state to search "
+                    "against and return nothing. When provided, every finding is "
+                    "linked back to the signal as evidence so the provenance chain "
+                    "is preserved. If both are omitted, this tool looks up the "
+                    "district's newest qualified signal on its own before enqueueing."
                 ),
             },
             "signal": {
                 "type": "object",
                 "description": (
-                    "Optional triggering signal dict (from get_signal). "
-                    "Provides state, headline, and provenance context to focus "
-                    "Argus's research. Pass the full get_signal output."
+                    "Triggering signal dict (from get_signal), if you have one. "
+                    "Strongly recommended -- see signal_id: omitting this materially "
+                    "thins the research. Provides state, headline, and provenance "
+                    "context Argus's sources search against. Pass the full get_signal "
+                    "output."
                 ),
             },
         },
@@ -119,11 +182,19 @@ DISPATCH_RESEARCH = Tool(
 
 
 async def _dispatch_research(inp: dict[str, Any]) -> str:
-    """Fire-and-acknowledge: persist a pending row, schedule background research, return immediately.
+    """Enqueue-only: persist a pending row and return immediately.
 
-    Returns a JSON payload like ``{"status":"dispatched","district":"TX-001"}``
-    so Callie naturally produces the acknowledgement in her own turn without
-    waiting for research to finish.
+    ARGUS-1: does NOT create a task and does NOT run research. The claimer
+    (``run_claim_tick``, running in the long-lived app process) picks the row
+    up on its own schedule -- see the module docstring's "v4" section for why
+    firing a task from here (as v2/v3 did) never actually completed research:
+    this call runs inside a per-turn MCP subprocess that exits before any task
+    it created could finish.
+
+    Returns a JSON payload like ``{"status":"queued","district":"TX-001"}``.
+    Never "dispatched" or "running" -- those claims were the exact lie that
+    cost five weeks (see the module docstring's "v3" section); "queued" is the
+    truthful description of what this call actually did.
     """
     import json
 
@@ -145,32 +216,33 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
     session_id: str | None = floating_session_id_var.get()
 
     _logger.info(
-        "dispatch_research: dispatching async background task for district_key=%r "
-        "signal_id=%r session_id=%r",
+        "dispatch_research: enqueuing district_key=%r signal_id=%r session_id=%r",
         district_key,
         triggering_signal_id,
         session_id,
     )
 
-    # ── Resolve channel_id + team_id now (in-turn, before going async) ────────
+    # ── Resolve channel_id + team_id now (in-turn) ─────────────────────────────
     channel_id, team_id = await _resolve_channel_and_team(session_id)
 
     if not channel_id:
-        # NOT "dispatched". This path persists nothing and starts nothing, and
-        # for five weeks it said otherwise: Callie relayed "Argus is running" to
-        # Jon and to Josh on the strength of this return value while
-        # argus_research_requests stayed empty. A tool that reports success for
-        # work it did not do turns a plumbing bug into an agent misleading a
-        # colleague, and the agent has no way to know better.
+        # NOT "queued". This path persists nothing, and for five weeks the
+        # equivalent early-return said "dispatched" anyway: Callie relayed
+        # "Argus is running" to Jon and to Josh on the strength of that return
+        # value while argus_research_requests stayed empty. A tool that
+        # reports success for work it did not do turns a plumbing bug into an
+        # agent misleading a colleague, and the agent has no way to know
+        # better.
         #
-        # The underlying cause is fixed (artemis/tools/mcp_server.py now sets
-        # floating_session_id_var inside the MCP subprocess, which cannot inherit
-        # it). This stays fail-loud anyway: the next thing to break this
-        # resolution must announce itself rather than be narrated as success.
+        # The underlying contextvar cause is fixed (artemis/tools/mcp_server.py
+        # now sets floating_session_id_var inside the MCP subprocess, which
+        # cannot inherit it). This stays fail-loud anyway: the next thing to
+        # break this resolution must announce itself rather than be narrated
+        # as success.
         _logger.error(
-            "dispatch_research: NOT DISPATCHED — no channel_id resolved for "
+            "dispatch_research: NOT QUEUED — no channel_id resolved for "
             "session_id=%r, so there is nowhere to post findings. Nothing was "
-            "persisted and no research was started.",
+            "persisted.",
             session_id,
         )
         return json.dumps(
@@ -179,15 +251,48 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
                 "district": district_key,
                 "error": "no_channel_resolved",
                 "detail": (
-                    "Research was NOT started. I could not work out which Slack "
-                    "channel to post findings to, so nothing was queued and "
-                    "nothing is running. Say so plainly rather than reporting "
-                    "this as dispatched, and do not promise findings later."
+                    "Research was NOT queued. I could not work out which Slack "
+                    "channel to post findings to, so nothing was saved and "
+                    "nothing will run. Say so plainly rather than reporting "
+                    "this as queued, and do not promise findings later."
                 ),
             }
         )
 
-    # ── Persist a pending row BEFORE firing the task ───────────────────────────
+    # ── Auto-resolve a signal when the caller didn't supply one ────────────────
+    # A caller-supplied signal/signal_id is always used unchanged and never
+    # overwritten by this lookup -- see _resolve_latest_qualified_signal's
+    # docstring for why omitting it starves the research.
+    if signal is None and triggering_signal_id is None:
+        try:
+            resolved = await _resolve_latest_qualified_signal(district_key)
+        except Exception:
+            _logger.warning(
+                "dispatch_research: signal auto-resolution errored for "
+                "district_key=%r -- enqueuing without signal context",
+                district_key,
+                exc_info=True,
+            )
+            resolved = None
+        if resolved is not None:
+            signal, triggering_signal_id = resolved
+            _logger.info(
+                "dispatch_research: auto-resolved qualified signal_id=%s for "
+                "district_key=%r (caller supplied neither signal nor signal_id)",
+                triggering_signal_id,
+                district_key,
+            )
+        else:
+            _logger.info(
+                "dispatch_research: no qualified signal found for "
+                "district_key=%r -- enqueuing without signal context (the "
+                "dossier will likely be thin on procurement/state-DOE "
+                "dimensions; this is recorded by signal staying null on the "
+                "persisted row rather than by a separate column)",
+                district_key,
+            )
+
+    # ── Persist the pending row -- this call does nothing else ─────────────────
     request_id = await _insert_pending_request(
         district_key=district_key,
         channel_id=channel_id,
@@ -196,28 +301,41 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
         triggering_signal_id=triggering_signal_id,
     )
 
-    # Fire the background task (GC-guarded)
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return "Error: no running event loop (dispatch_research requires async context)"
+    if request_id is None:
+        # _insert_pending_request already logged why. Unlike v2/v3, there is no
+        # in-process fallback anymore: nothing was created to run this request,
+        # so a persist failure means the work is dropped, full stop. Reporting
+        # "queued" here would repeat the exact mistake this slice exists to fix.
+        _logger.error(
+            "dispatch_research: NOT QUEUED — failed to persist a pending row "
+            "for district_key=%r; there is no in-process fallback (ARGUS-1), "
+            "so nothing will ever run this request.",
+            district_key,
+        )
+        return json.dumps(
+            {
+                "status": "failed",
+                "district": district_key,
+                "error": "persist_failed",
+                "detail": (
+                    "Research was NOT queued. I could not save the request, "
+                    "so nothing is running and nothing will run later. Say so "
+                    "plainly and don't promise findings."
+                ),
+            }
+        )
 
-    task = loop.create_task(
-        _safe_research_and_post(
-            request_id=request_id,
-            channel_id=channel_id,
-            team_id=team_id,
-            district_key=district_key,
-            triggering_signal_id=triggering_signal_id,
-            signal=signal,
-        ),
-        name=f"argus_bg_{district_key}",
+    return json.dumps(
+        {
+            "status": "queued",
+            "district": district_key,
+            "detail": (
+                "Research is queued. It hasn't started yet and I can't promise "
+                "when it'll finish -- Argus will post findings to this channel "
+                "once the in-app claimer picks it up and completes it."
+            ),
+        }
     )
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
-
-    # Return immediately so Callie acknowledges in her own voice
-    return json.dumps({"status": "dispatched", "district": district_key})
 
 
 # ── Persistence helpers ────────────────────────────────────────────────────────
@@ -254,6 +372,67 @@ async def _resolve_channel_and_team(session_id: str | None) -> tuple[str | None,
             exc_info=True,
         )
         return None, ""
+
+
+async def _resolve_latest_qualified_signal(
+    district_key: str,
+) -> tuple[dict[str, Any], str] | None:
+    """Look up the newest qualified ``signal_queue`` row for ``district_key``.
+
+    Finding (2026-08-12): ``_fetch_procurement``, ``_fetch_state_doe``, and
+    ``_fetch_usaspending`` (``artemis/argus/research.py``) all read ``state``
+    straight off the signal dict -- absent, procurement/state-DOE search
+    nothing and USASpending searches the entire country. Every real Callie
+    dispatch passed ``signal_id=None`` (visible in this module's own log line
+    at dispatch time), so every one of them came back thin on exactly the
+    dimensions asked about most (current vendor, decision makers) even after
+    the contextvar fix made the plumbing work. Called from
+    ``_dispatch_research`` only when the caller supplied neither ``signal``
+    nor ``signal_id``; a caller-supplied signal is always used unchanged and
+    is never overwritten by this lookup.
+
+    Returns ``(signal_dict, signal_id_str)`` for the newest
+    ``signal_queue`` row with ``signal_status='qualified'`` and
+    ``district_id == district_key``, or ``None`` if none qualifies -- in which
+    case the caller still enqueues, just without signal context (see
+    ``_dispatch_research``). The dict shape matches the one
+    ``_research_and_post`` already builds from a bare ``signal_id`` lookup
+    (``headline``/``state``/``district_id``/``source_url``), plus
+    ``provenance`` so ``_fetch_board_minutes``'s ``boarddocs_url`` lookup
+    still works when it's present.
+
+    ``district_key`` is compared against ``signal_queue.district_id`` (the
+    free-text provenance column), not ``resolved_district_id`` (the int FK) --
+    the same convention ``dispatch_research``'s own schema docstring and
+    ``artemis.marketing.brief_assembler._resolve_district_key`` already use
+    for this identifier.
+    """
+    from artemis.marketing.models import SignalQueue
+
+    async with _db.SessionLocal() as session:
+        result = await session.execute(
+            select(SignalQueue)
+            .where(
+                SignalQueue.district_id == district_key,
+                SignalQueue.signal_status == "qualified",
+            )
+            .order_by(SignalQueue.created_at.desc(), SignalQueue.id.desc())
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+
+    if row is None:
+        return None
+
+    signal: dict[str, Any] = {
+        "headline": row.headline or "",
+        "state": row.state or "",
+        "district_id": row.district_id or "",
+        "source_url": row.source_url or "",
+    }
+    if isinstance(row.provenance, dict):
+        signal["provenance"] = row.provenance
+    return signal, str(row.id)
 
 
 async def _insert_pending_request(
@@ -301,8 +480,6 @@ async def _mark_request_done(request_id: int | None) -> None:
     if request_id is None:
         return
     try:
-        from datetime import UTC, datetime
-
         async with _db.SessionLocal() as session:
             row = await session.get(ArgusResearchRequest, request_id)
             if row is not None:
@@ -325,7 +502,18 @@ async def _mark_request_failed(
     team_id: str,
     district_key: str,
 ) -> bool:
-    """Increment attempts; if >= _MAX_ATTEMPTS mark failed and return True (should post fallback)."""
+    """Increment attempts; if >= _MAX_ATTEMPTS mark failed and return True (should post fallback).
+
+    ARGUS-1: on a non-cap failure this now releases the row back to
+    ``pending`` (it was left at whatever status the caller set -- 'running',
+    since ARGUS-1 -- in the pre-claimer design, where the only two statuses
+    were 'pending' going in and 'done'/'failed' coming out, so there was
+    nothing to release). Leaving it at 'running' here would strand it until
+    ``settings.argus_claim_stale_minutes`` elapses AND would double-count the
+    attempt when the stale-reclaim path increments attempts again for the
+    same failure. Releasing to 'pending' makes it immediately reclaimable by
+    the very next poll tick with attempts counted exactly once.
+    """
     if request_id is None:
         return False
     try:
@@ -339,6 +527,7 @@ async def _mark_request_failed(
                 row.status = "failed"
                 await session.commit()
                 return True  # caller should post fallback
+            row.status = "pending"  # release the claim; next tick retries immediately
             await session.commit()
             return False
     except Exception:
@@ -350,7 +539,7 @@ async def _mark_request_failed(
         return False
 
 
-# ── Background task ────────────────────────────────────────────────────────────
+# ── Research + post pipeline (runs inside the app-process claimer) ─────────────
 
 
 async def _safe_research_and_post(
@@ -486,63 +675,298 @@ async def _research_and_post(
     await _mark_request_done(request_id)
 
 
-# ── Startup recovery ───────────────────────────────────────────────────────────
+# ── Claimer (ARGUS-1: the actual mechanism -- everything below runs in the ────
+# ── long-lived app process, never in the per-turn MCP subprocess) ─────────────
+
+
+@dataclass(frozen=True)
+class _ClaimedRequest:
+    """A row this process just atomically claimed. Plain dataclass, not the ORM
+    row itself -- the claiming session is closed by the time callers use this,
+    and named-field access avoids the positional-row-unpacking trap (see
+    CLAUDE.md)."""
+
+    id: int
+    district_key: str
+    channel_id: str
+    team_id: str
+    signal: dict[str, Any] | None
+    triggering_signal_id: str | None
+    attempts: int
+
+
+async def _claim_next_request() -> _ClaimedRequest | None:
+    """Atomically claim exactly one pending-or-stale-running row, or ``None``.
+
+    ``UPDATE argus_research_requests SET status='running', claimed_at=now()
+    WHERE id = (SELECT id FROM argus_research_requests WHERE <claimable>
+    ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`` -- the brief's
+    own suggested shape. ``<claimable>`` is ``status='pending'`` OR
+    (``status='running'`` AND ``claimed_at`` older than
+    ``settings.argus_claim_stale_minutes`` -- presumed orphaned by a crash
+    mid-research).
+
+    Two invariants this single statement provides, both load-bearing and
+    neither optional:
+
+    1. Two concurrent claimers can never take the same row. ``FOR UPDATE SKIP
+       LOCKED`` is a Postgres row lock, not an in-process lock -- it holds
+       across separate connections/transactions/processes, so this is true
+       even if two app instances ran this query in the same microsecond. If
+       the subquery's row is locked by another in-flight claim, this claimer
+       skips it and either claims a different claimable row or gets nothing.
+    2. A claim can never "not complete" and leave a row invisible to future
+       claims -- there is no separate SELECT-then-UPDATE window for a crash to
+       land in between; claiming a row atomically FLIPS it to 'running' in the
+       same statement that read it.
+
+    Attempts is incremented HERE, conditionally, only for the stale-running
+    branch (``CASE WHEN status='running' THEN attempts+1 ELSE attempts``) --
+    a fresh 'pending' claim leaves attempts untouched (it was already
+    incremented, if at all, by ``_mark_request_failed`` on the failure that
+    put it back to 'pending'). This is what lets a crash-looping district hit
+    the same ``_MAX_ATTEMPTS`` cap as a cleanly-failing one without double
+    counting either way -- see ``_mark_request_failed``'s docstring.
+
+    Returns a ``_ClaimedRequest`` regardless of whether attempts is already
+    at or past the cap -- ``_run_claimed_request`` is what decides whether to
+    actually run it or finalize it as exhausted, so this function's contract
+    stays simple: "claimed something claimable, or nothing was claimable."
+    """
+    stale_cutoff = datetime.now(UTC) - timedelta(minutes=settings.argus_claim_stale_minutes)
+
+    claimable_id = (
+        select(ArgusResearchRequest.id)
+        .where(
+            or_(
+                ArgusResearchRequest.status == "pending",
+                and_(
+                    ArgusResearchRequest.status == "running",
+                    ArgusResearchRequest.claimed_at.isnot(None),
+                    ArgusResearchRequest.claimed_at < stale_cutoff,
+                ),
+            )
+        )
+        .order_by(ArgusResearchRequest.id)
+        .with_for_update(skip_locked=True)
+        .limit(1)
+        .scalar_subquery()
+    )
+
+    stmt = (
+        update(ArgusResearchRequest)
+        .where(ArgusResearchRequest.id == claimable_id)
+        .values(
+            status="running",
+            claimed_at=datetime.now(UTC),
+            attempts=case(
+                (ArgusResearchRequest.status == "running", ArgusResearchRequest.attempts + 1),
+                else_=ArgusResearchRequest.attempts,
+            ),
+        )
+        .returning(ArgusResearchRequest)
+    )
+
+    async with _db.SessionLocal() as session:
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        await session.commit()
+
+    if row is None:
+        return None
+
+    return _ClaimedRequest(
+        id=row.id,
+        district_key=row.district_key,
+        channel_id=row.channel_id,
+        team_id=row.team_id or "",
+        signal=row.signal,
+        triggering_signal_id=row.triggering_signal_id,
+        attempts=row.attempts,
+    )
+
+
+async def _finalize_exhausted_claim(claimed: _ClaimedRequest, *, reason: str) -> None:
+    """Mark an already-claimed row 'failed' WITHOUT running research or
+    incrementing attempts again (``_claim_next_request`` already incremented
+    it to reach the cap) -- then post the same fallback a normal cap-out
+    would. Used only when a reclaim lands at/past ``_MAX_ATTEMPTS`` on a
+    stale-running row, i.e. a district that keeps crashing the app itself,
+    not merely raising."""
+    try:
+        async with _db.SessionLocal() as session:
+            row = await session.get(ArgusResearchRequest, claimed.id)
+            if row is not None:
+                row.status = "failed"
+                row.error = reason[:2000]
+                await session.commit()
+    except Exception:
+        _logger.warning(
+            "argus claim: failed to finalize exhausted request_id=%s district_key=%r",
+            claimed.id,
+            claimed.district_key,
+            exc_info=True,
+        )
+    await _post_fallback(
+        channel_id=claimed.channel_id,
+        team_id=claimed.team_id,
+        district_key=claimed.district_key,
+    )
+
+
+async def _run_claimed_request(claimed: _ClaimedRequest) -> None:
+    """Run (or finalize as exhausted) one claimed row. Never raises."""
+    if claimed.attempts >= _MAX_ATTEMPTS:
+        _logger.warning(
+            "argus claim: request_id=%s district_key=%r reclaimed already at "
+            "attempts=%d (cap %d) -- treating as exhausted without another "
+            "research attempt (repeated crash mid-research, not a clean "
+            "failure -- those release to 'pending' below the cap)",
+            claimed.id,
+            claimed.district_key,
+            claimed.attempts,
+            _MAX_ATTEMPTS,
+        )
+        await _finalize_exhausted_claim(
+            claimed,
+            reason=(
+                f"exceeded max attempts ({_MAX_ATTEMPTS}) after being reclaimed from a "
+                "stale 'running' state -- likely a repeated crash mid-research rather "
+                "than a clean failure"
+            ),
+        )
+        return
+
+    await _safe_research_and_post(
+        request_id=claimed.id,
+        channel_id=claimed.channel_id,
+        team_id=claimed.team_id,
+        district_key=claimed.district_key,
+        triggering_signal_id=claimed.triggering_signal_id,
+        signal=claimed.signal,
+    )
+
+
+_claim_lock = asyncio.Lock()
+_claim_scheduler: AsyncIOScheduler | None = None
+_CLAIM_JOB_ID = "argus_claim_poll"
+# Defense in depth, not an expected ceiling: a drain loop that claims until
+# nothing is left claimable should never need this many iterations in one
+# tick, but an unbounded loop here would starve every OTHER scheduled job in
+# this process if the table ever grew a pathological backlog.
+_MAX_ROWS_PER_TICK = 25
+
+
+def get_argus_claim_scheduler() -> AsyncIOScheduler:
+    global _claim_scheduler
+    if _claim_scheduler is None:
+        _claim_scheduler = AsyncIOScheduler()
+    return _claim_scheduler
+
+
+def start_argus_claim_scheduler() -> None:
+    """Register the claim-poll job and start the scheduler. Called from FastAPI lifespan."""
+    scheduler = get_argus_claim_scheduler()
+    scheduler.add_job(
+        run_claim_tick,
+        trigger=IntervalTrigger(seconds=settings.argus_claim_poll_interval_seconds),
+        id=_CLAIM_JOB_ID,
+        replace_existing=True,
+        max_instances=1,  # defense in depth alongside _claim_lock
+        misfire_grace_time=60,
+    )
+    if not scheduler.running:
+        scheduler.start()
+        _logger.info(
+            "argus claim scheduler started (interval=%ds, stale_after=%dmin)",
+            settings.argus_claim_poll_interval_seconds,
+            settings.argus_claim_stale_minutes,
+        )
+
+
+def stop_argus_claim_scheduler() -> None:
+    """Stop the scheduler. Called from FastAPI lifespan shutdown."""
+    global _claim_scheduler
+    if _claim_scheduler is not None and _claim_scheduler.running:
+        _claim_scheduler.shutdown(wait=False)
+        _logger.info("argus claim scheduler stopped")
+    _claim_scheduler = None
+
+
+async def run_claim_tick() -> None:
+    """Scheduler entry point. Skips (logs INFO) if the previous tick is still running.
+
+    Also the entry point ``recover_pending_requests`` calls at startup -- see
+    that function's docstring for why sharing this exact entry point (rather
+    than a separate startup-only code path) is what makes "cannot double-run
+    a row the claimer already holds" true by construction rather than by
+    care taken to keep two paths in sync.
+    """
+    if _claim_lock.locked():
+        _logger.info("argus claim: previous tick still running -- skipping this tick")
+        return
+    async with _claim_lock:
+        processed = 0
+        while processed < _MAX_ROWS_PER_TICK:
+            try:
+                claimed = await _claim_next_request()
+            except Exception:
+                _logger.warning(
+                    "argus claim: the claim query itself failed -- stopping this "
+                    "tick early; the next tick retries",
+                    exc_info=True,
+                )
+                break
+            if claimed is None:
+                break
+            processed += 1
+            try:
+                await _run_claimed_request(claimed)
+            except Exception:
+                # Should be unreachable -- _run_claimed_request and everything
+                # it calls already swallow their own exceptions. Caught anyway
+                # so a bug in that isolation itself still cannot stop the next
+                # claimable row in this tick from being tried, per the brief's
+                # "a failure on one row does not stop the claimer processing
+                # the next" requirement.
+                _logger.warning(
+                    "argus claim: unhandled error processing request_id=%s "
+                    "district_key=%r -- continuing to the next claimable row",
+                    claimed.id,
+                    claimed.district_key,
+                    exc_info=True,
+                )
+        if processed:
+            _logger.info("argus claim: processed %d request(s) this tick", processed)
 
 
 async def recover_pending_requests() -> None:
-    """Re-fire any pending Argus research requests orphaned by a previous process restart.
+    """Startup backstop -- runs one claim tick immediately. NOT a second mechanism.
 
-    Called once at app startup (from the FastAPI lifespan hook in main.py).
-    Queries ``status='pending' AND attempts < _MAX_ATTEMPTS`` and schedules a
-    background task for each row. Non-blocking — does not delay startup.
+    Called once at app startup (from the FastAPI lifespan hook in main.py, via
+    ``asyncio.create_task`` so it does not delay startup).
 
-    These rows are DEFINITIONALLY orphaned: any task that was running died with the
-    previous process, so they will never complete on their own. We re-fire them
-    exactly as if dispatch_research had just been called.
+    Before ARGUS-1 this independently re-fired a background task per
+    'pending' row, bypassing the atomic claim entirely -- correct only
+    because it ran once, before the interval scheduler existed to race it.
+    Now it just calls ``run_claim_tick`` -- the exact entry point the interval
+    scheduler uses, including its skip-if-already-running guard -- so a row
+    the claimer already holds cannot be double-run: either this IS the atomic
+    SELECT ... FOR UPDATE SKIP LOCKED claim (so it cannot grab a row a
+    concurrently-running tick already holds), or the in-process lock is held
+    and this call returns immediately without touching the table at all.
+
+    The reason to keep this at all rather than only relying on the interval:
+    a cold start with a backlog (the app was down for a while) gets that
+    backlog claimed right away instead of waiting out
+    ``settings.argus_claim_poll_interval_seconds`` for no reason.
     """
     try:
-        async with _db.SessionLocal() as session:
-            result = await session.execute(
-                select(ArgusResearchRequest).where(
-                    ArgusResearchRequest.status == "pending",
-                    ArgusResearchRequest.attempts < _MAX_ATTEMPTS,
-                )
-            )
-            rows = result.scalars().all()
-
-        if not rows:
-            _logger.info("dispatch_research startup_recovery: no orphaned pending requests")
-            return
-
-        _logger.info(
-            "dispatch_research startup_recovery: found %d orphaned pending request(s) — re-firing",
-            len(rows),
-        )
-
-        loop = asyncio.get_running_loop()
-        for row in rows:
-            task = loop.create_task(
-                _safe_research_and_post(
-                    request_id=row.id,
-                    channel_id=row.channel_id,
-                    team_id=row.team_id or "",
-                    district_key=row.district_key,
-                    triggering_signal_id=row.triggering_signal_id,
-                    signal=row.signal,
-                ),
-                name=f"argus_recover_{row.district_key}_{row.id}",
-            )
-            _BACKGROUND_TASKS.add(task)
-            task.add_done_callback(_BACKGROUND_TASKS.discard)
-            _logger.info(
-                "dispatch_research startup_recovery: re-fired request_id=%s district_key=%r",
-                row.id,
-                row.district_key,
-            )
+        await run_claim_tick()
     except Exception:
         _logger.warning(
-            "dispatch_research startup_recovery: failed to query/re-fire pending requests — "
-            "startup continues normally",
+            "argus startup_recovery: claim tick failed -- the next scheduled "
+            "tick will retry",
             exc_info=True,
         )
 

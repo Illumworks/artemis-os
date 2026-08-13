@@ -83,7 +83,15 @@ _msg_dedup_lock: asyncio.Lock = asyncio.Lock()
 # ── GC-retention guard for fire-and-forget capture tasks ─────────────────────
 # asyncio.create_task() returns a weakly-referenced Task; hold a strong ref here
 # so it isn't GC'd before it runs. The done-callback drops the ref. Mirrors the
-# _BACKGROUND_TASKS pattern in artemis/floating_artemis/tools/argus_tools.py.
+# _BACKGROUND_TASKS pattern in artemis/trace/capture.py.
+#
+# NOT the pattern to follow for anything that needs to survive a process
+# restart or a short-lived subprocess exiting: see ARGUS-1
+# (artemis/floating_artemis/tools/argus_tools.py), which removed this exact
+# pattern from dispatch_research because a task created inside a per-turn MCP
+# subprocess dies with that subprocess regardless of how carefully it's
+# GC-guarded. This use here is fine because it runs in the long-lived FastAPI
+# app process, not a subprocess.
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 
 

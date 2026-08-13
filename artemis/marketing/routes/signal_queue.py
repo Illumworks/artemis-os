@@ -660,12 +660,15 @@ async def dispatch_argus_for_signal(
     signal_id: int,
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
-    """Fire async Argus research for a signal's district (the "dig deeper" button).
+    """Enqueue Argus research for a signal's district (the "dig deeper" button).
 
-    Reuses the existing ``_dispatch_research`` async dispatch from
-    ``artemis.floating_artemis.tools.argus_tools`` — the same path Callie uses
-    when Jon asks her to dig deeper in chat.  The endpoint only accepts top-tier
-    (hot) qualified signals; 422 for anything else.
+    Reuses ``_insert_pending_request`` from
+    ``artemis.floating_artemis.tools.argus_tools`` -- the same persistence
+    Callie's ``dispatch_research`` chat tool uses. The row is picked up and
+    actually researched by that module's claimer (an app-process APScheduler
+    job, ARGUS-1), not by this request -- this handler only enqueues and
+    returns. The endpoint only accepts top-tier (hot) qualified signals; 400
+    for anything else.
 
     Also records a "acted" engagement observation so the learning loop (#2)
     knows Jon engaged with this signal.
@@ -691,21 +694,34 @@ async def dispatch_argus_for_signal(
 
     _asyncio.create_task(_record_engage_from_signal(session, signal, outcome="acted"))
 
-    # Fire async Argus dispatch (returns immediately with dispatched payload)
-    from artemis.floating_artemis.tools.argus_tools import (
-        _BACKGROUND_TASKS,
-        _insert_pending_request,
-        _safe_research_and_post,
-    )
+    # Enqueue only (ARGUS-1). This endpoint used to fire its own
+    # loop.create_task(_safe_research_and_post(...)) directly -- that ran fine
+    # on its own (this route handler executes in the long-lived app process,
+    # not the per-turn MCP subprocess dispatch_research runs in), but it was a
+    # SECOND, independent dispatch mechanism sitting next to the atomic
+    # claimer ARGUS-1 introduced. Once that claimer exists, a 'pending' row
+    # left by _insert_pending_request is ALSO picked up by its own poll tick
+    # -- so keeping both would research the same signal twice, concurrently,
+    # every time this button was clicked. The claimer is now the only thing
+    # that runs a request; this just persists it.
+    from artemis.floating_artemis.tools.argus_tools import _insert_pending_request
 
     # Resolve channel from the Callie proactive channel config (not a Slack session)
     channel = settings.callie_proactive_channel or settings.marketing_campaigns_slack_channel
-    team_id = ""
+
+    if not channel:
+        return {
+            "status": "failed",
+            "district": district_key,
+            "signalId": signal_id,
+            "channel": None,
+            "error": "no_channel_configured",
+        }
 
     request_id = await _insert_pending_request(
         district_key=district_key,
-        channel_id=channel or "",
-        team_id=team_id,
+        channel_id=channel,
+        team_id="",
         signal={
             "headline": signal.headline or "",
             "state": signal.state or "",
@@ -714,31 +730,11 @@ async def dispatch_argus_for_signal(
         triggering_signal_id=str(signal_id),
     )
 
-    if channel:
-        loop = _asyncio.get_running_loop()
-        task = loop.create_task(
-            _safe_research_and_post(
-                request_id=request_id,
-                channel_id=channel,
-                team_id=team_id,
-                district_key=district_key,
-                triggering_signal_id=str(signal_id),
-                signal={
-                    "headline": signal.headline or "",
-                    "state": signal.state or "",
-                    "district_id": signal.district_id or "",
-                },
-            ),
-            name=f"argus_ui_bg_{district_key}",
-        )
-        _BACKGROUND_TASKS.add(task)
-        task.add_done_callback(_BACKGROUND_TASKS.discard)
-
     return {
-        "status": "dispatched",
+        "status": "queued" if request_id is not None else "failed",
         "district": district_key,
         "signalId": signal_id,
-        "channel": channel or None,
+        "channel": channel,
     }
 
 

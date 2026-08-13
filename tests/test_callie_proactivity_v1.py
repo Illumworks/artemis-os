@@ -406,7 +406,12 @@ async def test_engagement_weights_favour_acted(db_session: AsyncSession) -> None
 
 
 async def test_argus_dispatch_endpoint_hot_signal(db_session: AsyncSession) -> None:
-    """dispatch_argus_for_signal on a hot qualified signal returns dispatched payload."""
+    """dispatch_argus_for_signal on a hot qualified signal enqueues and returns
+    'queued' -- NOT 'dispatched' (ARGUS-1: this endpoint used to fire its own
+    loop.create_task(_safe_research_and_post(...)) directly; it now only
+    persists a pending row and leaves running it entirely to the app-process
+    claimer, so there is no in-process task for this test to observe -- just
+    the honest "queued" contract and the persisted request)."""
     from artemis.marketing.models import SignalQueue
     from artemis.marketing.routes.signal_queue import dispatch_argus_for_signal
 
@@ -435,16 +440,13 @@ async def test_argus_dispatch_endpoint_hot_signal(db_session: AsyncSession) -> N
             "artemis.floating_artemis.tools.argus_tools._insert_pending_request",
             new_callable=AsyncMock,
             return_value=42,
-        ),
-        patch(
-            "artemis.floating_artemis.tools.argus_tools._safe_research_and_post",
-            new_callable=AsyncMock,
-        ),
+        ) as mock_insert,
     ):
         result = await dispatch_argus_for_signal(signal_id=signal_id, session=db_session)
 
-    assert result["status"] == "dispatched"
+    assert result["status"] == "queued"
     assert result["signalId"] == signal_id
+    mock_insert.assert_awaited_once()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

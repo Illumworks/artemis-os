@@ -180,10 +180,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # today -- see artemis/crisis_content/poller.py and
     # docs/crisis-content-approval-pipeline.md.
     start_crisis_content_scheduler()
-    # Recover any Argus research requests orphaned by a previous process restart.
-    # Non-blocking: fires background tasks and returns immediately.
-    from artemis.floating_artemis.tools.argus_tools import recover_pending_requests
+    # Start the Argus research-request claimer (ARGUS-1). dispatch_research
+    # only enqueues a 'pending' row now -- this interval job, running in this
+    # long-lived process rather than the per-turn MCP subprocess the tool call
+    # itself executes in, is what actually performs the research and posts the
+    # findings. See artemis/floating_artemis/tools/argus_tools.py.
+    from artemis.floating_artemis.tools.argus_tools import (
+        recover_pending_requests,
+        start_argus_claim_scheduler,
+    )
 
+    start_argus_claim_scheduler()
+    # Startup backstop: claim anything left pending/orphaned immediately rather
+    # than waiting out the first scheduled interval. Non-blocking, and not a
+    # second mechanism -- see that function's docstring.
     asyncio.create_task(recover_pending_requests())
     try:
         yield
@@ -201,6 +211,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_proactivity_scheduler()
         stop_screentime_scheduler()
         stop_crisis_content_scheduler()
+        from artemis.floating_artemis.tools.argus_tools import stop_argus_claim_scheduler
+
+        stop_argus_claim_scheduler()
 
 
 app = FastAPI(

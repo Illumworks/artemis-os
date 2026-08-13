@@ -936,6 +936,40 @@ class Settings(BaseSettings):
         ),
     )
 
+    argus_claim_poll_interval_seconds: int = Field(
+        default=15,
+        validation_alias=AliasChoices(
+            "ARTEMIS_ARGUS_CLAIM_POLL_INTERVAL_SECONDS",
+            "ARGUS_CLAIM_POLL_INTERVAL_SECONDS",
+        ),
+        description=(
+            "Poll cadence, in seconds, for the Argus research-request claimer "
+            "(ARGUS-1 -- see artemis/floating_artemis/tools/argus_tools.py "
+            "run_claim_tick). This is a DB poll (SELECT ... FOR UPDATE SKIP "
+            "LOCKED against argus_research_requests), not an outbound API call, "
+            "so a short interval is cheap; 15s keeps the gap between "
+            "dispatch_research enqueueing a row and Argus actually starting "
+            "small without polling so often it shows up in DB load."
+        ),
+    )
+    argus_claim_stale_minutes: int = Field(
+        default=15,
+        validation_alias=AliasChoices(
+            "ARTEMIS_ARGUS_CLAIM_STALE_MINUTES",
+            "ARGUS_CLAIM_STALE_MINUTES",
+        ),
+        description=(
+            "A 'running' argus_research_requests row older than this (by "
+            "claimed_at) is presumed orphaned by a crash mid-research and is "
+            "re-claimable by the next poll tick. Long enough that a normal "
+            "research pass (several fetchers + one LLM synthesis call) is never "
+            "mistaken for stale and reclaimed out from under itself -- research "
+            "does not hold the row locked while running, so a too-short window "
+            "would not cause a live double-run, but it would waste an attempt "
+            "off the attempts cap for work that was still genuinely in flight."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
