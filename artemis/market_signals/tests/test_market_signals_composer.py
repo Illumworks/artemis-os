@@ -7,6 +7,7 @@ that silently eats a day of every feed's signals.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -56,7 +57,7 @@ async def test_one_dead_section_does_not_cost_the_others_their_brief() -> None:
     async def fine(_s: object) -> str | None:
         return "something worth reading"
 
-    async def resolver(module_path: str, func_name: str):  # type: ignore[no-untyped-def]
+    async def resolver(module_path: str, func_name: str) -> object:
         return exploding if "crisis" in module_path else fine
 
     with (
@@ -114,7 +115,8 @@ async def test_a_second_run_the_same_day_does_not_post_again() -> None:
         result = await composer.post_daily_brief(session)  # type: ignore[arg-type]
 
     assert result == {"posted": False, "reason": "already_reserved"}
-    build.assert_not_awaited(), "must not even BUILD, since building marks items reported"
+    # Must not even BUILD: building marks feed items reported.
+    build.assert_not_awaited()
 
 
 def test_the_hot_marker_survives_the_house_lint() -> None:
@@ -140,3 +142,63 @@ def test_the_hot_marker_survives_the_house_lint() -> None:
     ]
     assert code_lines, "the prefix assignment moved -- update this test"
     assert all(ln.isascii() for ln in code_lines), f"emoji marker is back: {code_lines}"
+
+
+# ── Selection: what earns a slot in the campaign section ──────────────────────
+
+
+def test_the_commonest_story_type_cannot_fill_the_brief() -> None:
+    """LEADER_TRANSITION_FORMAL was 86 of ~200 qualified signals over three days.
+
+    Ranked by urgency and district size alone, the first real brief was six
+    superintendent hires and IXL's Missouri DOE approval — an actual competitor
+    event — fell off the end. Priority puts buying intent first; the per-code cap
+    stops any one story type owning the section even so. "Three superintendents
+    changed" is one fact, not three.
+    """
+    from artemis.market_signals import campaign_section as cs
+
+    assert cs._code_priority([{"code": "PROCUREMENT_LITERACY_RFP"}]) < cs._code_priority(
+        [{"code": "LEADER_TRANSITION_FORMAL"}]
+    )
+    assert cs._code_priority([{"code": "VENDOR_APPROVED_LIST"}]) < cs._code_priority(
+        [{"code": "LEADER_TRANSITION_FORMAL"}]
+    )
+    assert cs._MAX_PER_CODE < cs._MAX_SIGNALS, "the cap must actually constrain"
+
+
+def test_reason_code_parsing_tolerates_every_shape_it_might_meet() -> None:
+    """Presentation order must never be the thing that breaks a brief."""
+    from artemis.market_signals.campaign_section import _code_priority, _primary_code
+
+    assert _primary_code([{"code": "POLICY_LIT_MANDATE"}]) == "POLICY_LIT_MANDATE"
+    assert _primary_code(["POLICY_LIT_MANDATE"]) == "POLICY_LIT_MANDATE"
+    assert _primary_code("POLICY_LIT_MANDATE") == "POLICY_LIT_MANDATE"
+    junk_values: list[Any] = [None, [], {}, 42, [{"nope": 1}]]
+    for junk in junk_values:
+        assert _primary_code(junk) == "" or isinstance(_primary_code(junk), str)
+        # Unknown/unreadable sorts mid-pack rather than first or vanishing.
+        assert _code_priority(junk) == 6
+
+
+def test_a_state_level_signal_is_not_ranked_last_for_having_no_district() -> None:
+    """State mandates and competitor approvals have no district at all.
+
+    An earlier tier-only ranking dropped exactly those, which are often the most
+    valuable lines in the brief. Tier must break ties, never decide.
+    """
+    from artemis.market_signals.campaign_section import _code_priority, _tier_rank
+
+    state_mandate: dict[str, Any] = {
+        "district_tier": "",
+        "reason_codes": [{"code": "POLICY_LIT_MANDATE"}],
+    }
+    d1_hire: dict[str, Any] = {
+        "district_tier": "D1",
+        "reason_codes": [{"code": "LEADER_TRANSITION_FORMAL"}],
+    }
+
+    def sort_key(m: dict[str, Any]) -> tuple[int, int]:
+        return (_code_priority(m.get("reason_codes")), _tier_rank(m))
+
+    assert sort_key(state_mandate) < sort_key(d1_hire)
