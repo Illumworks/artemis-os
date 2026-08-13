@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -237,8 +237,8 @@ async def test_scout_runner_qualifies_signal_with_active_ruleset(
 
     items = [RawItem(content="c1", source_url="https://ex.com/scout-q1")]
     with patch(
-        "artemis.marketing.scout_runner.get_adapter",
-        return_value=MagicMock(complete=_llm_response(_SCOUT_PAYLOAD)),
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=_llm_response(_SCOUT_PAYLOAD),
     ):
         r = await run_scout(
             db_session,
@@ -286,8 +286,8 @@ async def test_scout_runner_no_ruleset_signal_created_gracefully(
 
     items = [RawItem(content="c2", source_url="https://ex.com/scout-noruleset")]
     with patch(
-        "artemis.marketing.scout_runner.get_adapter",
-        return_value=MagicMock(complete=_llm_response(_SCOUT_PAYLOAD)),
+        "artemis.marketing.scout_runner.complete_with_fallback",
+        new=_llm_response(_SCOUT_PAYLOAD),
     ):
         r = await run_scout(
             db_session,

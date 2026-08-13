@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.config import settings
 from artemis.integrations import repository as integrations_repo
 from artemis.integrations.crypto import encrypt_credentials
 from artemis.marketing.models import Approval, CampaignDeliverable
@@ -70,7 +71,14 @@ async def _seed_ready_for_review_draft(
 
 async def test_stale_review_escalation_sends_one_dm_and_dedupes(
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Pin app_base_url so the asserted deep-link below doesn't depend on the
+    # ambient ARTEMIS_APP_BASE_URL env var (e.g. https://app.artemisos.me in
+    # .env) — matches the pattern used by every other writing-studio deep-link
+    # test (test_ws3_ready_for_review.py, test_slack_approval_messages.py, etc).
+    monkeypatch.setattr(settings, "app_base_url", "http://127.0.0.1:8000")
+
     await _seed_callie_integration(db_session)
     stale_at = datetime.now(UTC) - timedelta(days=2)
     draft = await _seed_ready_for_review_draft(

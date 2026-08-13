@@ -118,14 +118,14 @@ async def test_c3_routes_through_adapter() -> None:
 
 
 async def test_c3_no_provider_path(caplog: pytest.LogCaptureFixture) -> None:
-    """resolve_adapter raises NoProviderAvailableError → returns [], ERROR logged, counter bumped."""
+    """complete_with_fallback raises NoProviderAvailableError → returns [], ERROR logged, counter bumped."""
     obs1 = _obs(1, "Federal grant opportunity for early literacy programs was announced.")
     obs2 = _obs(2, "New Title I supplemental funding available for rural reading programs.")
 
     with (
         caplog.at_level(logging.ERROR, logger="artemis.memory.consolidator"),
         patch(
-            "artemis.memory.consolidator.resolve_adapter",
+            "artemis.memory.consolidator.complete_with_fallback",
             side_effect=NoProviderAvailableError("no providers"),
         ),
     ):
