@@ -717,13 +717,37 @@ async def _run_synthesis(
 
     raw_text = "".join(block.text for block in resp.message.content if isinstance(block, TextBlock))
 
-    return _parse_synthesis_output(raw_text, district_key)
+    # Only tools that actually returned data may be credited as a source.
+    contributing = {name for name, results in tool_results.items() if results}
+    return _parse_synthesis_output(raw_text, district_key, contributing_tools=contributing)
 
 
-def _parse_synthesis_output(raw_text: str, district_key: str) -> list[DistrictFinding]:
+def _parse_synthesis_output(
+    raw_text: str,
+    district_key: str,
+    contributing_tools: set[str] | None = None,
+) -> list[DistrictFinding]:
     """Parse LLM output into DistrictFindings.
 
     Tolerates partial output: lines that cannot be parsed are skipped.
+
+    ``contributing_tools`` is the set of tools that actually returned data this
+    run. A finding may only be attributed to one of them.
+
+    Why that check exists (found 2026-08-13): the ``source`` on a finding comes
+    straight from the MODEL's output and was validated only for starting with
+    "Argus". ``_build_synthesis_prompt`` skips empty tools entirely, so the model
+    is never told a tool returned nothing -- and on a run where board_minutes
+    timed out and contributed zero items, synthesis still produced a
+    decision_makers finding attributed to ``Argus/board_minutes``, naming a
+    specific board member. A sourced-looking claim from an empty source is worse
+    than an unsourced one, because it invites someone to trust it.
+
+    An unsupported attribution is downgraded to plain ``"Argus"`` rather than
+    dropping the finding: the CONTENT may be validly synthesised from another
+    tool, and it is the provenance claim that is false. The discrepancy is
+    recorded in ``raw_notes`` so it stays auditable rather than silently
+    rewritten.
     """
     now_date = datetime.now(UTC).date().isoformat()
     findings: list[DistrictFinding] = []
@@ -769,6 +793,23 @@ def _parse_synthesis_output(raw_text: str, district_key: str) -> list[DistrictFi
         if not source.startswith("Argus"):
             source = f"Argus/{source}"
 
+        # A tool may only be credited if it actually returned something.
+        notes: dict[str, Any] = {"synthesis": "llm", "model": _SYNTHESIS_MODEL}
+        if contributing_tools is not None and "/" in source:
+            claimed = source.split("/", 1)[1].strip()
+            if claimed and claimed not in contributing_tools and claimed != "stub":
+                _logger.warning(
+                    "Argus: dropping unsupported source attribution %r on dimension %r "
+                    "for district_key=%r -- that tool returned no data this run "
+                    "(contributing: %s). Keeping the finding, unattributed.",
+                    source,
+                    dim,
+                    district_key,
+                    sorted(contributing_tools) or "none",
+                )
+                notes["unsupported_source_claim"] = source
+                source = "Argus"
+
         seen_dims.add(dim)
         findings.append(
             DistrictFinding(
@@ -777,7 +818,7 @@ def _parse_synthesis_output(raw_text: str, district_key: str) -> list[DistrictFi
                 source=source,
                 url=url,
                 researched_at=now_date,
-                raw_notes={"synthesis": "llm", "model": _SYNTHESIS_MODEL},
+                raw_notes=notes,
             )
         )
 

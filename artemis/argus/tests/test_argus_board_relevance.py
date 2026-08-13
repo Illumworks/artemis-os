@@ -182,3 +182,51 @@ def test_bare_tutoring_without_literacy_context_stays_excluded() -> None:
 def test_bare_curriculum_adoption_without_subject_stays_excluded() -> None:
     text = "Consider and Take Possible Action to Approve Science Curriculum Adoption for Grades 6-8"
     assert is_argus_relevant(text) is False
+
+
+# ── Source attribution must be earned (2026-08-13) ────────────────────────────
+
+
+def test_a_tool_that_returned_nothing_cannot_be_credited_as_a_source() -> None:
+    """Found live: board_minutes timed out, contributed zero items, and synthesis
+    still wrote a decision_makers finding attributed to ``Argus/board_minutes``
+    naming a specific board member.
+
+    The finding's ``source`` comes straight from the model, and the only check was
+    that it starts with "Argus". ``_build_synthesis_prompt`` skips empty tools
+    entirely, so the model is never even told a tool came back empty — it can name
+    one freely. A sourced-looking claim from an empty source is worse than an
+    unsourced one, because it invites someone to trust it.
+    """
+    from artemis.argus.research import _parse_synthesis_output
+
+    raw = (
+        '{"dimension": "decision_makers", "value": "Board member Jane Doe leads curriculum.", '
+        '"source": "board_minutes"}'
+    )
+
+    findings = _parse_synthesis_output(raw, "11331", contributing_tools={"news_api"})
+
+    assert len(findings) == 1, "the finding is kept — it is the provenance that was false"
+    assert findings[0].source == "Argus", "an unearned tool credit must be stripped"
+    assert findings[0].raw_notes.get("unsupported_source_claim") == "Argus/board_minutes", (
+        "the discrepancy must stay auditable, not be silently rewritten"
+    )
+
+
+def test_a_tool_that_did_contribute_keeps_its_credit() -> None:
+    """The guard must not strip legitimate provenance — that is the whole value
+    of the source field."""
+    from artemis.argus.research import _parse_synthesis_output
+
+    raw = (
+        '{"dimension": "procurement_timing", "value": "RFP RR-250363 closes Sept 10.", '
+        '"source": "procurement"}'
+    )
+
+    findings = _parse_synthesis_output(
+        raw, "11331", contributing_tools={"procurement", "news_api"}
+    )
+
+    assert findings[0].source == "Argus/procurement"
+    assert "unsupported_source_claim" not in findings[0].raw_notes
