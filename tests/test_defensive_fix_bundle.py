@@ -1,11 +1,11 @@
 """Tests for the defensive fix bundle (briefs/defensive-fix-bundle.md).
 
-Verifies that the three direct-SDK call sites now obtain their adapter via
-resolve_adapter rather than instantiating AnthropicAdapter / AsyncAnthropic
+Verifies that the three direct-SDK call sites now obtain their adapter via the
+provider abstraction rather than instantiating AnthropicAdapter / AsyncAnthropic
 directly.  No real LLM calls — all adapter interactions are intercepted.
 
 Coverage:
-  1. graph_extractor._default_call_model uses resolve_adapter (not AsyncAnthropic())
+  1. graph_extractor._default_call_model uses complete_with_fallback (not AsyncAnthropic())
   2. spawn_subagent default path uses resolve_adapter (not AnthropicAdapter())
   3. NoProviderAvailableError surfaces as RuntimeError in _default_call_model
   4. NoProviderAvailableError in spawn_subagent results in failed output
@@ -15,6 +15,16 @@ Coverage:
 Note: workflow_executor resolve_adapter tests live in
 artemis/builders/tests/test_workflow_executor_resolve_adapter.py
 (requires the db_session fixture from that module's conftest).
+
+2026-08-13: graph_extractor._default_call_model was refactored (commit 6c011b7,
+"Gemini rate-limit safety net") to route through
+artemis.providers.fallback.complete_with_fallback instead of calling
+resolve_adapter directly — resolve_adapter no longer exists as a module-level
+name in graph_extractor.py. Tests 1/3/5 below were never updated after that
+refactor and were failing with AttributeError (patching a symbol that no
+longer exists); updated to patch complete_with_fallback, the real seam.
+spawn_subagent (tests 2/4/6) is unaffected — it still calls resolve_adapter
+directly and those patches remain valid.
 """
 
 from __future__ import annotations
@@ -43,27 +53,26 @@ def _make_fake_completion_response(text: str) -> Any:
     )
 
 
-# ── 1. graph_extractor._default_call_model via resolve_adapter ────────────────
+# ── 1. graph_extractor._default_call_model via complete_with_fallback ─────────
 
 
-async def test_graph_extractor_default_call_model_uses_resolve_adapter() -> None:
-    """_default_call_model must call resolve_adapter, not AsyncAnthropic()."""
+async def test_graph_extractor_default_call_model_uses_complete_with_fallback() -> None:
+    """_default_call_model must call complete_with_fallback, not AsyncAnthropic()."""
     from artemis.memory.graph_extractor import _default_call_model
 
     fake_response = _make_fake_completion_response('{"entities": [], "relations": []}')
 
-    mock_adapter = AsyncMock()
-    mock_adapter.complete = AsyncMock(return_value=fake_response)
-
     with patch(
-        "artemis.memory.graph_extractor.resolve_adapter", return_value=mock_adapter
-    ) as mock_resolve:
+        "artemis.memory.graph_extractor.complete_with_fallback",
+        return_value=fake_response,
+    ) as mock_cwf:
         result = await _default_call_model(
             "Jon works on Writing Studio", "claude-haiku-4-5-20251001"
         )
 
-    mock_resolve.assert_called_once_with(provider="claude-code")
-    mock_adapter.complete.assert_called_once()
+    mock_cwf.assert_called_once()
+    assert mock_cwf.call_args.kwargs.get("primary") == "claude-code"
+    assert mock_cwf.call_args.kwargs.get("fallback") == "claude-code"
     assert '{"entities": [], "relations": []}' in result
 
 
@@ -78,11 +87,12 @@ async def test_graph_extractor_default_call_model_no_raw_anthropic_import() -> N
             instantiation_count += 1
 
     fake_response = _make_fake_completion_response('{"entities": [], "relations": []}')
-    mock_adapter = AsyncMock()
-    mock_adapter.complete = AsyncMock(return_value=fake_response)
 
     with (
-        patch("artemis.memory.graph_extractor.resolve_adapter", return_value=mock_adapter),
+        patch(
+            "artemis.memory.graph_extractor.complete_with_fallback",
+            return_value=fake_response,
+        ),
         patch("anthropic.AsyncAnthropic", TrackingAsyncAnthropic),
     ):
         from artemis.memory.graph_extractor import _default_call_model
@@ -95,13 +105,13 @@ async def test_graph_extractor_default_call_model_no_raw_anthropic_import() -> N
 
 
 async def test_graph_extractor_default_call_model_no_provider_raises_runtime_error() -> None:
-    """NoProviderAvailableError from resolve_adapter must propagate as RuntimeError."""
+    """NoProviderAvailableError from complete_with_fallback must propagate as RuntimeError."""
     from artemis.memory.graph_extractor import _default_call_model
     from artemis.providers.resolver import NoProviderAvailableError
 
     with (
         patch(
-            "artemis.memory.graph_extractor.resolve_adapter",
+            "artemis.memory.graph_extractor.complete_with_fallback",
             side_effect=NoProviderAvailableError("no provider"),
         ),
         pytest.raises(RuntimeError, match="no provider available"),

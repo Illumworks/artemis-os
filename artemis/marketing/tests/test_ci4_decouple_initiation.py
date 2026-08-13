@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -325,7 +325,16 @@ async def test_lazy_proposal_generation_persists_when_context_is_requested(
         ]
     )
 
-    with patch("artemis.providers.resolver.resolve_adapter", return_value=adapter):
+    # propose_campaign_initiation resolves its adapter via the ASYNC
+    # resolve_adapter_async (commit 9985bf5 migrated the sync resolve_adapter call
+    # site to it for feature-tag routing-override support); this test patched the
+    # sync name, which still exists on the module but is no longer called here, so
+    # the patch silently missed and a real LLM call fired instead. Patch the
+    # canonical location resolve_adapter_async is imported from at call time.
+    with patch(
+        "artemis.providers.resolver.resolve_adapter_async",
+        new=AsyncMock(return_value=adapter),
+    ):
         response = await client.get(f"/api/marketing/campaigns/{candidate_id}/initiation-context")
 
     assert response.status_code == 200, response.text
