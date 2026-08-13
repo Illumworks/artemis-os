@@ -58,6 +58,24 @@ Streaming note
 --------------
 ``/messages/stream`` SSE stays text-only for CC19.  Streaming + tools is a
 separate brief.  Known limitation documented here.
+
+OBS-1: stream-json on the Builder / Floating Artemis MCP tool path
+--------------------------------------------------------------------
+``_complete_with_tools``'s Builder and Floating Artemis branches run the CLI
+with ``--output-format stream-json --verbose`` instead of ``--output-format
+json``. The CLI's own internal tool loop means no ``ToolUseBlock`` ever
+reaches ``run_turn`` on this path (the subprocess resolves every tool call
+itself and returns one final text result) — so before this, ``tools_used``
+was ``[]`` for every claude-code-driven turn, forever, regardless of how many
+tools actually ran. ``stream-json`` emits one JSON object per line, including
+``tool_use`` / ``tool_result`` events, so :func:`_parse_stream_json` recovers
+that information and reports it on ``CompletionResponse.tool_calls`` — the
+terminal ``type: "result"`` line has the exact same shape ``--output-format
+json`` alone would have produced, so
+:func:`_completion_response_from_payload` applies unchanged and the assistant
+text a user sees is unaffected. Forge mode and ``run_with_tools`` (CC2,
+pipeline agents) are intentionally left on ``--output-format json`` — out of
+scope for this fix (see the OBS-1 brief).
 """
 
 from __future__ import annotations
@@ -68,10 +86,10 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from artemis.agent.client import CompletionRequest, CompletionResponse
-from artemis.agent.types import Message, TextBlock, Usage
+from artemis.agent.types import Message, TextBlock, ToolCallRecord, Usage
 from artemis.providers._bin_path import find_cli_binary
 from artemis.providers.errors import ClaudeCodeTimeoutError, MissingCliBinaryError, ProviderAPIError
 from artemis.tools.mcp_server import mcp_tool_name
@@ -265,6 +283,189 @@ def _cli_failure_detail(stdout: bytes, stderr: bytes) -> str:
     return "; ".join(parts) or stdout_text[:300]
 
 
+#: The MCP server prefix claude-code prepends to every Artemis tool name it
+#: sees (``mcp__artemis__dispatch_research``). Mirrors ``mcp_server.SERVER_NAME``
+#: (``"artemis"``) without importing that module here — this is a plain string
+#: transform, not a registry lookup (see :func:`_strip_mcp_prefix`).
+_MCP_PREFIX = "mcp__artemis__"
+
+
+def _strip_mcp_prefix(name: str) -> str:
+    """Strip the ``mcp__artemis__`` prefix so a recorded tool name matches the
+    bare name used in the tool registry and in briefs (OBS-1 requirement #3),
+    e.g. ``mcp__artemis__dispatch_research`` -> ``dispatch_research``.
+
+    Names without the prefix (e.g. a native claude-code built-in tool name,
+    should one ever appear here) pass through unchanged.
+    """
+    return name.removeprefix(_MCP_PREFIX)
+
+
+def _completion_response_from_payload(
+    data: dict[str, Any],
+    *,
+    label: str,
+    tool_calls: list[ToolCallRecord] | None = None,
+) -> CompletionResponse:
+    """Turn a claude CLI final-result JSON payload into a ``CompletionResponse``.
+
+    Shared by the text path (``complete()``) and both tool-path parse modes
+    (plain ``json`` and ``stream-json``) in :meth:`ClaudeCodeAdapter._run_subprocess`
+    so all three apply *identical* is_error / empty-result / usage extraction.
+    This is what makes the stream-json switch provably text-preserving: the
+    terminal ``type: "result"`` line of a stream-json transcript has the exact
+    same shape as the single object ``--output-format json`` alone would have
+    produced (verified by hand — see the OBS-1 brief), so running it through
+    this same function guarantees byte-identical assistant text either way.
+
+    ``label`` names the caller in error messages only (``"claude CLI"`` vs
+    ``"claude CLI (tool run)"``), preserving the exact error text existing
+    callers/tests already assert on.
+    """
+    # Surface real completion status from the CLI JSON payload. The claude -p
+    # JSON schema (and, identically, the terminal stream-json "result" event)
+    # includes:
+    #   is_error   : bool   — true when the CLI itself errored (e.g. context
+    #                         limit, rate-limit, internal fault). "result" then
+    #                         contains the error message, not the assistant
+    #                         reply.
+    #   subtype    : str    — present on error payloads.
+    #   result     : str    — the assistant's reply on success; error text on
+    #                         failure.
+    if data.get("is_error"):
+        error_msg = str(data.get("result") or data.get("subtype") or "unknown error")
+        raise ProviderAPIError(
+            0,
+            f"{label} reported is_error=true: {error_msg[:300]}",
+        )
+
+    result_text: str = data.get("result") or data.get("output") or data.get("message") or ""
+    if not result_text.strip():
+        raise ProviderAPIError(
+            0,
+            f"{label} returned an empty result (no text produced)",
+        )
+
+    usage_data = data.get("usage") or {}
+    usage = Usage(
+        input_tokens=int(usage_data.get("input_tokens", 0)),
+        output_tokens=int(usage_data.get("output_tokens", 0)),
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+
+    return CompletionResponse(
+        message=Message(role="assistant", content=[TextBlock(text=result_text)]),
+        stop_reason="end_turn",
+        usage=usage,
+        tool_calls=tool_calls,
+    )
+
+
+def _stream_json_content_blocks(event: dict[str, Any]) -> list[Any]:
+    """Return ``event["message"]["content"]`` as a list, or ``[]`` if absent/malformed.
+
+    Defensive against any shape drift in a single line — a missing/odd
+    ``message`` or ``content`` field degrades to "no blocks" rather than
+    raising, consistent with :func:`_parse_stream_json`'s "skip, don't crash
+    the turn" contract for noisy lines.
+    """
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    return content if isinstance(content, list) else []
+
+
+def _parse_stream_json(raw: str) -> tuple[dict[str, Any], list[ToolCallRecord]]:
+    """Parse ``claude -p --output-format stream-json --verbose`` stdout.
+
+    One JSON object per line (verified by hand against a real transcript —
+    see the OBS-1 brief). Walked in order:
+
+    - ``type: "assistant"`` messages whose content includes a ``tool_use``
+      block record a tool call. The ``mcp__artemis__`` prefix is stripped
+      (requirement #3). First occurrence of each (post-strip) name wins the
+      ordering slot — same first-occurrence-wins dedup ``chat.py`` already
+      applies to the Anthropic ``ToolUseBlock`` path, so both paths converge
+      on one dedup policy.
+    - ``type: "user"`` messages whose content includes a ``tool_result`` block
+      carrying ``is_error: true`` mark the *name* that ``tool_use_id`` maps to
+      as failed. If a deduped name was invoked more than once, any one
+      failure marks the whole entry as failed — a tool that ran and errored
+      even once is exactly the case this instrument exists to surface, so it
+      is never allowed to look like a clean success.
+    - ``type: "result"`` is the terminal event. Its payload has the identical
+      shape ``--output-format json`` alone would have produced, so the caller
+      runs it through :func:`_completion_response_from_payload` unchanged.
+      Normally there is exactly one; if more than one somehow appears, the
+      last wins.
+
+    Lines that are not valid JSON, or decode to something other than a JSON
+    object, are skipped silently — the CLI can emit stray/partial lines, and
+    losing an entire turn to a single bad line would be a worse bug than the
+    one this function exists to fix (per the brief's explicit test
+    requirement).
+
+    Raises ``ProviderAPIError`` only when no ``type: "result"`` line is found
+    anywhere in the output — i.e. the run never produced a terminal event at
+    all, which is a real failure, not noise.
+    """
+    order: list[str] = []
+    failed: dict[str, bool] = {}
+    id_to_name: dict[str, str] = {}
+    final_payload: dict[str, Any] | None = None
+
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        if event_type == "assistant":
+            for block in _stream_json_content_blocks(event):
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                raw_name = block.get("name")
+                if not raw_name:
+                    continue
+                name = _strip_mcp_prefix(str(raw_name))
+                tool_id = block.get("id")
+                if tool_id:
+                    id_to_name[str(tool_id)] = name
+                if name not in failed:
+                    failed[name] = False
+                    order.append(name)
+        elif event_type == "user":
+            for block in _stream_json_content_blocks(event):
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                if not block.get("is_error"):
+                    continue
+                tool_id = block.get("tool_use_id")
+                if tool_id is None:
+                    continue
+                failed_name = id_to_name.get(str(tool_id))
+                if failed_name is not None:
+                    failed[failed_name] = True
+        elif event_type == "result":
+            final_payload = event
+
+    if final_payload is None:
+        raise ProviderAPIError(
+            0, "claude CLI (tool run) stream-json produced no result event"
+        )
+
+    tool_calls = [ToolCallRecord(name=name, is_error=failed[name]) for name in order]
+    return final_payload, tool_calls
+
+
 class ClaudeCodeAdapter:
     """Conforms to the ModelAdapter protocol. Streaming not supported."""
 
@@ -335,43 +536,10 @@ class ClaudeCodeAdapter:
         except json.JSONDecodeError as exc:
             raise ProviderAPIError(0, f"Non-JSON from claude CLI: {raw[:300]}") from exc
 
-        # Surface real completion status from the CLI JSON payload.
-        # The claude -p --output-format json schema includes:
-        #   is_error   : bool   — true when the CLI itself errored (e.g. context limit,
-        #                         rate-limit, internal fault). The "result" field then
-        #                         contains the error message, not the assistant reply.
-        #   subtype    : str    — present on error payloads; values include
-        #                         "error_during_execution" and others.
-        #   result     : str    — the assistant's reply on success; error text on failure.
-        #   num_turns  : int    — number of internal turns (informational).
-        #   duration_ms: int    — wall-clock time in ms (informational).
-        if data.get("is_error"):
-            error_msg = str(data.get("result") or data.get("subtype") or "unknown error")
-            raise ProviderAPIError(
-                0,
-                f"claude CLI reported is_error=true: {error_msg[:300]}",
-            )
-
-        result_text: str = data.get("result") or data.get("output") or data.get("message") or ""
-        if not result_text.strip():
-            raise ProviderAPIError(
-                0,
-                "claude CLI returned an empty result (no text produced)",
-            )
-
-        usage_data = data.get("usage") or {}
-        usage = Usage(
-            input_tokens=int(usage_data.get("input_tokens", 0)),
-            output_tokens=int(usage_data.get("output_tokens", 0)),
-            cache_creation_input_tokens=0,
-            cache_read_input_tokens=0,
-        )
-
-        return CompletionResponse(
-            message=Message(role="assistant", content=[TextBlock(text=result_text)]),
-            stop_reason="end_turn",
-            usage=usage,
-        )
+        # Surface real completion status from the CLI JSON payload — shared
+        # with the tool path via _completion_response_from_payload so both
+        # apply identical is_error / empty-result / usage extraction.
+        return _completion_response_from_payload(data, label="claude CLI")
 
     async def _complete_with_tools(self, request: CompletionRequest) -> CompletionResponse:
         """Route a completion through the appropriate backend when tools are present (CC19).
@@ -388,6 +556,14 @@ class ClaudeCodeAdapter:
 
         The guard requires that at least one of the three contextvars is set;
         it raises ``ProviderAPIError`` only when all three are None.
+
+        OBS-1: the Builder and Floating Artemis MCP branches run with
+        ``--output-format stream-json --verbose`` (parsed via
+        :func:`_parse_stream_json`) so the tool calls the CLI's internal loop
+        actually made are recoverable on ``CompletionResponse.tool_calls``.
+        Forge mode is intentionally left on ``--output-format json`` — it
+        uses native tools, not Artemis MCP tools, and isn't part of the
+        ``agent_traces.tools_used`` gap this fixes.
 
         Known limitation: /messages/stream SSE stays text-only for CC19.
         Streaming + tools is a separate brief.
@@ -464,7 +640,8 @@ class ClaudeCodeAdapter:
                 self._binary,
                 "-p",
                 "--output-format",
-                "json",
+                "stream-json",
+                "--verbose",
                 "--model",
                 model,
                 "--mcp-config",
@@ -477,7 +654,9 @@ class ClaudeCodeAdapter:
                 "--permission-mode",
                 _PERMISSION_MODE,
             ]
-            return await self._run_subprocess(cmd, prompt, tool_run=True)
+            return await self._run_subprocess(
+                cmd, prompt, tool_run=True, parse_mode="stream-json"
+            )
         finally:
             Path(tmp.name).unlink(missing_ok=True)
 
@@ -557,6 +736,7 @@ class ClaudeCodeAdapter:
         timeout_seconds: float | None = None,
         claude_config_dir: str | None = None,
         project_path: str | None = None,
+        parse_mode: Literal["json", "stream-json"] = "json",
     ) -> CompletionResponse:
         """Launch the claude CLI, enforce the wall-clock timeout, parse the result.
 
@@ -582,6 +762,16 @@ class ClaudeCodeAdapter:
         to that path via ``cwd=``.  Used by Forge mode so the CLI runs inside
         the target project directory.  When ``None``, cwd is inherited from the
         parent process (existing behavior — no change for MCP paths).
+
+        ``parse_mode`` (OBS-1): ``"json"`` (default — unchanged behavior) parses
+        ``stdout`` as the single ``--output-format json`` object. ``"stream-json"``
+        parses ``stdout`` as one-JSON-object-per-line (``--output-format
+        stream-json --verbose``) via :func:`_parse_stream_json`, which also
+        recovers the tool calls the CLI's internal loop made so they land on
+        ``CompletionResponse.tool_calls``. The caller is responsible for having
+        actually put the matching ``--output-format`` flag in ``cmd`` — this
+        parameter only controls how ``_run_subprocess`` interprets what comes
+        back, not what flag is passed to the CLI.
         """
         timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
         env = _mcp_eager_env(claude_config_dir=claude_config_dir) if tool_run else None
@@ -630,37 +820,21 @@ class ClaudeCodeAdapter:
         if not raw:
             raise ProviderAPIError(0, "claude CLI (tool run) produced no output")
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ProviderAPIError(0, f"Non-JSON from claude CLI: {raw[:300]}") from exc
+        tool_calls: list[ToolCallRecord] | None
+        if parse_mode == "stream-json":
+            data, tool_calls = _parse_stream_json(raw)
+        else:
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ProviderAPIError(0, f"Non-JSON from claude CLI: {raw[:300]}") from exc
+            tool_calls = None
 
-        # Surface real completion status — same logic as complete().
-        if data.get("is_error"):
-            error_msg = str(data.get("result") or data.get("subtype") or "unknown error")
-            raise ProviderAPIError(
-                0,
-                f"claude CLI (tool run) reported is_error=true: {error_msg[:300]}",
-            )
-
-        result_text: str = data.get("result") or data.get("output") or data.get("message") or ""
-        if not result_text.strip():
-            raise ProviderAPIError(
-                0,
-                "claude CLI (tool run) returned an empty result (no text produced)",
-            )
-
-        usage_data = data.get("usage") or {}
-        usage = Usage(
-            input_tokens=int(usage_data.get("input_tokens", 0)),
-            output_tokens=int(usage_data.get("output_tokens", 0)),
-            cache_creation_input_tokens=0,
-            cache_read_input_tokens=0,
-        )
-        return CompletionResponse(
-            message=Message(role="assistant", content=[TextBlock(text=result_text)]),
-            stop_reason="end_turn",
-            usage=usage,
+        # Surface real completion status — same logic as complete(), shared
+        # via _completion_response_from_payload so json and stream-json
+        # produce byte-identical assistant text for the same underlying run.
+        return _completion_response_from_payload(
+            data, label="claude CLI (tool run)", tool_calls=tool_calls
         )
 
 

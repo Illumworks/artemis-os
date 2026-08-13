@@ -475,7 +475,12 @@ class AgentTrace(Base):
     # ── content digest ────────────────────────────────────────────────────────
     # First 500 chars of user message (no PII policy enforcement yet; P6 will gate)
     input_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # JSON array of tool names called, e.g. ["query_memory", "get_okr"]
+    # JSON array of tool names called, e.g. ["query_memory", "get_okr"].
+    # OBS-1: an entry may be "<name>:error" (e.g. "dispatch_research:error")
+    # when that tool ran and returned an error at least once during the turn
+    # — there is no separate error column, so a plain name always means
+    # "ran, and every invocation succeeded." See
+    # artemis/floating_artemis/chat.py::_collect_tools_used for the encoder.
     tools_used: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="'[]'")
     # First 500 chars of assistant final text
     output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
