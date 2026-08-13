@@ -203,6 +203,44 @@ approval bug above sent everyone hunting the allowlist. Fail closed, but say whi
 This is a brief-writing failure more than a coding one — specify the production data shape, not
 just the intended behaviour.
 
+## An agent saying it did something is not evidence it did (lesson, 2026-08-12)
+
+Argus had **never run once** in five weeks while Callie told Jon and Josh, repeatedly and in
+detail, that research was underway. `argus_research_requests` was empty the whole time.
+
+She was not hallucinating and not lying. `dispatch_research` returned
+`{"status": "dispatched"}` from a failure path that persisted nothing and started nothing, so
+she relayed it in good faith. Three rules come out of this, and the third is the expensive one.
+
+**1. A tool must never report success for work it did not do.** Return `"failed"` with a reason
+the model can repeat, and say explicitly what it must not promise. A passing test asserted the
+lie here — it checked `status == "dispatched"` on exactly the path that dispatches nothing —
+which is why five weeks went by.
+
+**2. Contextvars do not cross into the MCP subprocess.** Floating-Artemis tools run in
+`python -m artemis.tools.mcp_server`, spawned per turn by
+`claude_code/adapter.py::_complete_with_tools`. Anything the parent set in its own process is
+absent there. `_serve_floating_artemis` must set what tools read — it now sets
+`floating_session_id_var` and `floating_trusted_agent_id_var`. The tool's docstring had
+asserted the opposite ("always available here"): true in-process, false across the fork.
+
+**3. Two diagnostic signals that look authoritative and are worthless.** Both cost an hour and
+led to a confidently wrong conclusion (that Callie had never called a tool — she had):
+
+| signal | why it proves nothing |
+|---|---|
+| `agent_traces.tools_used` | was `[]` for **every agent, every turn, for 30+ days** — the claude-code path returns only final text, so there were no `ToolUseBlock`s to scan. Fixed by OBS-1; a row from before 2026-08-12 still means nothing. |
+| absence of a log line | a tool executing in the MCP subprocess logs to *that process's* stderr. It never reaches `~/Library/Logs/artemisos/app.err.log`. |
+
+**What actually proves a tool ran:** the DB effect it should have had; `agent_traces.tools_used`
+now that OBS-1 populates it (a failed call reads `<name>:error`); or, when you need the raw
+truth, drive the CLI yourself with `--output-format stream-json --verbose` and read the
+`tool_use` blocks, or the MCP server directly over stdio JSON-RPC (`initialize` →
+`notifications/initialized` → `tools/call`, keeping stdin open long enough for background work).
+
+Corollary for briefs: when a slice's output is an agent's *claim*, the acceptance criterion is
+the effect, never the transcript.
+
 ## Multi-Agent Handoff Protocol
 
 ### Commit Discipline
