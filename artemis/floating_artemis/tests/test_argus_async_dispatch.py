@@ -65,6 +65,35 @@ def _make_db_mock() -> tuple[MagicMock, AsyncMock]:
 # ── T1: dispatch_research returns dispatched payload immediately ───────────────
 
 
+@pytest.fixture(autouse=True)
+def _never_insert_into_a_real_db(request: pytest.FixtureRequest) -> Any:
+    """Stop ``_insert_pending_request`` reaching a real database.
+
+    These tests mock ``floating_session_id_var`` to ``slack-callie-TABC-CABC-_``,
+    which resolves to channel ``CABC``, so ``_dispatch_research`` runs its full
+    happy path -- including the insert. Several of them never patched
+    ``artemis.db.SessionLocal``, and that module reads ``ARTEMIS_DB_URL``, not
+    ``ARTEMIS_TEST_DB_URL``. So every run wrote real rows into the PRODUCTION
+    ``argus_research_requests``.
+
+    Found 2026-08-12: three such rows were sitting in production, and because
+    ``CABC`` does not exist, ``recover_pending_requests`` re-fired them on every
+    app start and each attempt failed with ``channel_not_found`` -- a permanent
+    retry loop seeded by a test suite.
+
+    Autouse so a new test cannot reintroduce it by forgetting the patch. Tests
+    that want to assert on the insert can request ``insert_spy``.
+    """
+    from unittest.mock import AsyncMock as _AsyncMock
+
+    with patch(
+        "artemis.floating_artemis.tools.argus_tools._insert_pending_request",
+        new_callable=_AsyncMock,
+    ) as spy:
+        spy.return_value = 1
+        yield spy
+
+
 @pytest.mark.asyncio
 async def test_dispatch_research_returns_dispatched_payload_immediately() -> None:
     """dispatch_research returns {"status":"dispatched","district":...} without
