@@ -199,13 +199,27 @@ async def _fetch_board_minutes(
     ``asyncio.gather`` in ``_gather_tool_results``).
 
     So: fetch titles as before (cheap), filter with
-    ``mapping._is_relevant`` (already the board-minutes scout's own
-    relevance judgement -- reused, not reinvented), and fetch bodies for
-    ONLY the survivors -- bounded twice over by
+    ``artemis.argus.board_relevance.is_argus_relevant``, and fetch bodies
+    for ONLY the survivors -- bounded twice over by
     ``settings.argus_board_minutes_body_cap`` (how many bodies) and
-    ``settings.argus_board_minutes_body_budget_s`` (how long). Measured
-    against live Dallas ISD data on 2026-08-13: 146 agenda items, 16 pass
-    ``_is_relevant`` -- comfortably under the default cap of 20.
+    ``settings.argus_board_minutes_body_budget_s`` (how long).
+
+    ARGUS-4 -- ``is_argus_relevant`` replaced a reuse of the board-minutes
+    SCOUT's own ``mapping._is_relevant`` here. That function is shared with
+    the live board-minutes scout and is calibrated for ITS tradeoff (a human
+    reviews its output queue, so a generous gate is cheap); Argus shares an
+    8-second body-fetch budget and a 20-item cap across five research
+    sources in one ``asyncio.gather``, so a false positive here is not
+    cheap. Measured against live Dallas ISD data on 2026-08-13: 146 agenda
+    items, 16 raw / 8 unique passed ``mapping._is_relevant`` and ALL EIGHT
+    were false positives (bare "vendor" on building/food-service/workers'-
+    comp contracts, bare "reading" on a Bible-reading resolution, bare
+    "instructional materials" on a non-literacy dual-credit purchase, bare
+    "adsy" on a subject-agnostic missed-instructional-days waiver). See
+    ``board_relevance.py``'s module docstring for the full validation
+    (11 real districts, ~2,000 unique agenda items, zero false positives on
+    manual review) and for why a body-JUDGING second stage was considered
+    and rejected in favour of this tightened title gate.
 
     Relevant (now body-enriched where the fetch succeeded) items are placed
     FIRST in the returned list, ahead of the remaining title-only items,
@@ -245,12 +259,12 @@ async def _fetch_board_minutes(
         return []
 
     try:
+        from artemis.argus.board_relevance import is_argus_relevant
         from artemis.scouts.board_minutes.client import (
             _boarddocs_base,
             fetch_boarddocs,
             fetch_boarddocs_bodies,
         )
-        from artemis.scouts.board_minutes.mapping import _is_relevant
 
         district_cfg = {"district_id": district_key, "boarddocs_url": boarddocs_url}
         async with ScoutHttpClient(timeout=30.0) as http:
@@ -259,7 +273,7 @@ async def _fetch_board_minutes(
             relevant = [
                 it
                 for it in items
-                if _is_relevant(f"{it.get('title', '')} {it.get('text', '')}")
+                if is_argus_relevant(f"{it.get('title', '')} {it.get('text', '')}")
             ]
             cap = settings.argus_board_minutes_body_cap
             to_enrich = relevant[:cap]
