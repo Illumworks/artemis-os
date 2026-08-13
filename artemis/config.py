@@ -969,6 +969,26 @@ class Settings(BaseSettings):
             "off the attempts cap for work that was still genuinely in flight."
         ),
     )
+    argus_claim_retry_backoff_minutes: int = Field(
+        default=5,
+        validation_alias=AliasChoices(
+            "ARTEMIS_ARGUS_CLAIM_RETRY_BACKOFF_MINUTES",
+            "ARGUS_CLAIM_RETRY_BACKOFF_MINUTES",
+        ),
+        description=(
+            "How long a FAILED argus_research_requests row waits before the "
+            "claimer will retry it. A failure releases the row to 'pending' with "
+            "claimed_at stamped, so this is measured from the failure.\n\n"
+            "Exists because the ARGUS-1 live smoke burned all three attempts in "
+            "52 seconds: a claim tick drains until nothing is claimable, and a "
+            "just-failed row was immediately claimable again. Retries are for "
+            "outlasting transient conditions, and three inside a minute outlast "
+            "nothing -- one Slack blip would permanently fail a district. Only "
+            "retries wait: a never-attempted row (attempts == 0) is always "
+            "claimable at once, so new work never queues behind someone else's "
+            "backoff. 0 restores the old immediate-retry behaviour."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

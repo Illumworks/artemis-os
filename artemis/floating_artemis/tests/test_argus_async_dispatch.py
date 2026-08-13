@@ -78,6 +78,7 @@ import artemis.argus.models  # noqa: F401 -- registers ArgusResearchRequest on B
 import artemis.db as _db_module
 import artemis.marketing.models  # noqa: F401 -- registers SignalQueue on Base.metadata
 from artemis.argus.models import ArgusResearchRequest
+from artemis.config import settings
 from artemis.db import attach_pgvector_codec
 from artemis.marketing.models import SignalQueue
 
@@ -1059,3 +1060,76 @@ async def test_persist_failure_reports_failed_not_queued(
 # distinguishable test database, not somewhere unexpected.
 def test_module_db_override_points_at_a_test_database() -> None:
     assert "artemis_test" in str(_db_module.engine.url)
+
+
+# ── C13-C15: retry backoff + claim fairness (real DB) ─────────────────────────
+
+
+async def test_just_failed_row_is_not_immediately_reclaimable() -> None:
+    """A released row waits out the backoff before it can be retried.
+
+    ARGUS-1's live smoke burned all three attempts in 52 seconds: a claim tick
+    drains until nothing is claimable, and a just-failed row was instantly
+    claimable again. Retries exist to outlast transient conditions, and three
+    inside a minute outlast nothing — one Slack blip would have permanently
+    failed a district.
+    """
+    from artemis.floating_artemis.tools.argus_tools import _claim_next_request
+
+    # A failure releases to 'pending' with claimed_at stamped — that is what
+    # "just failed" looks like on disk.
+    await _insert_row(
+        district_key="TX-BACKOFF",
+        status="pending",
+        attempts=1,
+        claimed_at=datetime.now(UTC),
+    )
+
+    assert await _claim_next_request() is None, "a row that just failed must wait"
+
+
+async def test_failed_row_is_reclaimable_once_the_backoff_elapses() -> None:
+    """The backoff delays a retry, it does not cancel it."""
+    from artemis.floating_artemis.tools.argus_tools import _claim_next_request
+
+    stale_enough = datetime.now(UTC) - timedelta(
+        minutes=settings.argus_claim_retry_backoff_minutes + 1
+    )
+    row_id = await _insert_row(
+        district_key="TX-BACKOFF-ELAPSED",
+        status="pending",
+        attempts=1,
+        claimed_at=stale_enough,
+    )
+
+    claimed = await _claim_next_request()
+
+    assert claimed is not None
+    assert claimed.id == row_id
+
+
+async def test_new_work_is_claimed_ahead_of_a_retrying_row() -> None:
+    """A failing district must not head-of-line block newer ones.
+
+    Claim order is ``(attempts, id)``. Under ``id`` alone the older, retrying
+    row won every time, which turns "one district is broken" into "the queue is
+    stopped" — and the retrying row is inserted FIRST here precisely so an
+    id-ordered claim would fail this test.
+    """
+    from artemis.floating_artemis.tools.argus_tools import _claim_next_request
+
+    old_retry = await _insert_row(
+        district_key="TX-OLD-RETRYING",
+        status="pending",
+        attempts=2,
+        claimed_at=datetime.now(UTC) - timedelta(days=1),  # past any backoff
+    )
+    fresh = await _insert_row(district_key="TX-BRAND-NEW", status="pending", attempts=0)
+
+    claimed = await _claim_next_request()
+
+    assert claimed is not None
+    assert claimed.id == fresh, (
+        f"expected the never-attempted row {fresh} first, got {claimed.id} "
+        f"(old retrying row is {old_retry})"
+    )

@@ -77,11 +77,24 @@ Retry cap
 ---------
 attempts >= 3 -> mark failed + post fallback, and the claim loop does not
 retry it again. Attempts increments on two paths: a genuine failure inside
-research (the row is released back to ``pending`` for an immediate retry, not
-left at ``running``), and a stale-``running`` reclaim (presumed dead from a
-crash, since nothing else advanced attempts for it) -- so a district that
-keeps crashing the app mid-research is bounded by the same cap as one that
-keeps raising cleanly.
+research (the row is released back to ``pending``, not left at ``running``),
+and a stale-``running`` reclaim (presumed dead from a crash, since nothing
+else advanced attempts for it) -- so a district that keeps crashing the app
+mid-research is bounded by the same cap as one that keeps raising cleanly.
+
+Retry backoff and claim order
+-----------------------------
+A released row is NOT immediately re-claimable: it waits
+``settings.argus_claim_retry_backoff_minutes`` (from its ``claimed_at``, which
+the failure stamps). ARGUS-1's own live smoke burned all three attempts in 52
+seconds, because a tick drains until nothing is claimable and a just-failed
+row was instantly claimable again -- so one transient Slack failure would
+permanently fail a district. A never-attempted row (``attempts == 0``) skips
+the backoff entirely; new work never waits out someone else's retry.
+
+Claim order is ``(attempts, id)``, not ``id``. Under ``id`` alone a
+persistently-failing district head-of-line blocked every newer one behind it,
+which turns "one district is broken" into "the queue is stopped".
 """
 
 from __future__ import annotations
@@ -735,11 +748,30 @@ async def _claim_next_request() -> _ClaimedRequest | None:
     """
     stale_cutoff = datetime.now(UTC) - timedelta(minutes=settings.argus_claim_stale_minutes)
 
+    # Backoff before a RETRY is claimable again. A failure releases the row to
+    # 'pending' with claimed_at stamped, so "pending and attempted and claimed
+    # recently" means "just failed, leave it alone for now". A never-attempted
+    # row has attempts == 0 and is claimable immediately -- new work must not
+    # wait out anyone else's backoff.
+    #
+    # Without this, the ARGUS-1 live smoke burned all three attempts in 52
+    # seconds: the tick drains until nothing is claimable, and a just-failed row
+    # was instantly claimable again. Retries exist to outlast transient
+    # conditions, and three of them inside a minute outlast nothing -- one Slack
+    # blip would permanently fail a district.
+    retry_cutoff = datetime.now(UTC) - timedelta(minutes=settings.argus_claim_retry_backoff_minutes)
     claimable_id = (
         select(ArgusResearchRequest.id)
         .where(
             or_(
-                ArgusResearchRequest.status == "pending",
+                and_(
+                    ArgusResearchRequest.status == "pending",
+                    or_(
+                        ArgusResearchRequest.attempts == 0,
+                        ArgusResearchRequest.claimed_at.is_(None),
+                        ArgusResearchRequest.claimed_at < retry_cutoff,
+                    ),
+                ),
                 and_(
                     ArgusResearchRequest.status == "running",
                     ArgusResearchRequest.claimed_at.isnot(None),
@@ -747,7 +779,11 @@ async def _claim_next_request() -> _ClaimedRequest | None:
                 ),
             )
         )
-        .order_by(ArgusResearchRequest.id)
+        # attempts first, then id. ORDER BY id alone let one persistently-failing
+        # district head-of-line block every newer one behind it, which is the
+        # difference between "one district is broken" and "the queue is stopped".
+        # Ordering by attempts sends never-tried work ahead of anything retrying.
+        .order_by(ArgusResearchRequest.attempts, ArgusResearchRequest.id)
         .with_for_update(skip_locked=True)
         .limit(1)
         .scalar_subquery()
@@ -965,8 +1001,7 @@ async def recover_pending_requests() -> None:
         await run_claim_tick()
     except Exception:
         _logger.warning(
-            "argus startup_recovery: claim tick failed -- the next scheduled "
-            "tick will retry",
+            "argus startup_recovery: claim tick failed -- the next scheduled tick will retry",
             exc_info=True,
         )
 
