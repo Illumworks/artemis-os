@@ -520,7 +520,14 @@ async def approve_signal(
     # Record engagement: if Callie had proactively pushed this signal, this
     # approval counts as Jon having "acted" on it (not just ignored it).
     # Non-fatal: any failure is swallowed so the approval response is unaffected.
-    _asyncio.create_task(_record_engage_from_approval(session, updated))
+    _asyncio.create_task(
+        _record_engagement_bg(
+            signal_id=updated.id,
+            outcome="acted",
+            reason_codes=_engagement_reason_codes(updated),
+            campaign_family=updated.campaign_family,
+        )
+    )
 
     return {
         "signal": _serialize_signal(updated),
@@ -579,7 +586,14 @@ async def reject_signal(
     # Engagement learning: only record when a non-empty reason is given.
     # A reason-less reject is ambiguous — do not down-weight anything.
     if reason and reason.strip():
-        _asyncio.create_task(_record_engage_from_rejection(session, updated))
+        _asyncio.create_task(
+            _record_engagement_bg(
+                signal_id=updated.id,
+                outcome="rejected",
+                reason_codes=_engagement_reason_codes(updated),
+                campaign_family=updated.campaign_family,
+            )
+        )
 
     return _serialize_signal(updated)
 
@@ -692,7 +706,14 @@ async def dispatch_argus_for_signal(
     # Record engagement so the learning loop knows Jon acted on this signal
     import asyncio as _asyncio
 
-    _asyncio.create_task(_record_engage_from_signal(session, signal, outcome="acted"))
+    _asyncio.create_task(
+        _record_engagement_bg(
+            signal_id=signal.id,
+            outcome="acted",
+            reason_codes=_engagement_reason_codes(signal),
+            campaign_family=signal.campaign_family,
+        )
+    )
 
     # Enqueue only (ARGUS-1). This endpoint used to fire its own
     # loop.create_task(_safe_research_and_post(...)) directly -- that ran fine
@@ -741,91 +762,65 @@ async def dispatch_argus_for_signal(
 # ── Engagement helpers (for learning loop) ───────────────────────────────────
 
 
-async def _record_engage_from_approval(
-    session: AsyncSession,
-    signal: SignalQueue,
+async def _record_engagement_bg(
+    *,
+    signal_id: int,
+    outcome: str,
+    reason_codes: list[str],
+    campaign_family: str | None,
 ) -> None:
-    """Fire-and-forget: record 'acted' engagement when a Callie-pushed signal is approved."""
-    try:
-        from artemis.marketing.callie_push import record_signal_engagement
+    """Fire-and-forget engagement recorder. Opens its OWN session.
 
-        reason_codes = [
-            rc.get("code", "") for rc in (signal.reason_codes or []) if isinstance(rc, dict)
-        ]
-        await record_signal_engagement(
-            session,
-            signal_id=signal.id,
-            outcome="acted",
-            reason_codes=[c for c in reason_codes if c],
-            campaign_family=signal.campaign_family,
-            district_type=None,
-        )
-    except Exception:
-        log.debug(
-            "_record_engage_from_approval: non-fatal failure for signal %s",
-            signal.id,
-            exc_info=True,
-        )
+    It must not borrow the request's session, and that is the bug this replaced.
+    The three callers below used to do
+    ``create_task(_record_engage_from_*(session, updated))`` with the
+    REQUEST-SCOPED ``AsyncSession``. The handler then returns, ``get_session()``
+    tears that session down, and the still-running task races the teardown:
 
+        InterfaceError: cannot perform operation: another operation is in progress
 
-async def _record_engage_from_rejection(
-    session: AsyncSession,
-    signal: SignalQueue,
-) -> None:
-    """Fire-and-forget: record 'rejected' engagement when a signal is rejected WITH a reason.
+    Reproducible 100% of the time in isolation, and it broke four route tests --
+    which means it also intermittently broke real approve/reject/act clicks in the
+    signal queue, since the failure lands in the same event loop as the response.
 
-    Callers MUST only call this when ``signal.rejected_reason`` is non-empty.
-    Reason-less rejects are ambiguous; they must not affect weights.
+    Takes PRIMITIVES, never the ORM object: a ``SignalQueue`` bound to a
+    torn-down session raises on ordinary attribute access, so passing the row
+    would reintroduce the same class of failure one layer down. Callers read the
+    fields while their session is still alive.
+
+    Never raises: engagement telemetry must not affect a decision the operator
+    already made.
     """
     try:
+        import artemis.db as _db
         from artemis.marketing.callie_push import record_signal_engagement
 
-        reason_codes = [
-            rc.get("code", "") for rc in (signal.reason_codes or []) if isinstance(rc, dict)
-        ]
-        await record_signal_engagement(
-            session,
-            signal_id=signal.id,
-            outcome="rejected",
-            reason_codes=[c for c in reason_codes if c],
-            campaign_family=signal.campaign_family,
-            district_type=None,
-        )
+        async with _db.SessionLocal() as bg_session:
+            await record_signal_engagement(
+                bg_session,
+                signal_id=signal_id,
+                outcome=outcome,
+                reason_codes=reason_codes,
+                campaign_family=campaign_family,
+                district_type=None,
+            )
+            await bg_session.commit()
     except Exception:
         log.debug(
-            "_record_engage_from_rejection: non-fatal failure for signal %s",
-            signal.id,
+            "_record_engagement_bg: non-fatal failure for signal %s (outcome=%s)",
+            signal_id,
+            outcome,
             exc_info=True,
         )
 
 
-async def _record_engage_from_signal(
-    session: AsyncSession,
-    signal: SignalQueue,
-    *,
-    outcome: str,
-) -> None:
-    """Generic engagement recorder used by the argus-dispatch endpoint."""
-    try:
-        from artemis.marketing.callie_push import record_signal_engagement
-
-        reason_codes = [
-            rc.get("code", "") for rc in (signal.reason_codes or []) if isinstance(rc, dict)
-        ]
-        await record_signal_engagement(
-            session,
-            signal_id=signal.id,
-            outcome=outcome,
-            reason_codes=[c for c in reason_codes if c],
-            campaign_family=signal.campaign_family,
-            district_type=None,
-        )
-    except Exception:
-        log.debug(
-            "_record_engage_from_signal: non-fatal failure for signal %s",
-            signal.id,
-            exc_info=True,
-        )
+def _engagement_reason_codes(signal: SignalQueue) -> list[str]:
+    """Extract reason codes while the caller's session is still alive."""
+    return [
+        code
+        for rc in (signal.reason_codes or [])
+        if isinstance(rc, dict) and (code := str(rc.get("code") or "").strip())
+    ]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
