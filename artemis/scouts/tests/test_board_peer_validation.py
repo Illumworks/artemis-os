@@ -209,6 +209,10 @@ async def test_fetch_boarddocs_with_bodies_populates_item_text() -> None:
     assert "screen time limits" in screentime_item["text"]
     assert screentime_item["date"] == "2026-06-01"
     assert screentime_item["item_unique"] == "ITEM1"
+    # ARGUS-3: each item also carries which committee it came from, so a
+    # title-only-fetch caller can go back for just the relevant items'
+    # bodies later without re-deriving this from the SPA shell itself.
+    assert screentime_item["committee_id"] == "C1"
 
 
 async def test_fetch_boarddocs_without_bodies_keeps_v1_behaviour() -> None:

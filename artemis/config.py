@@ -989,7 +989,47 @@ class Settings(BaseSettings):
             "backoff. 0 restores the old immediate-retry behaviour."
         ),
     )
-
+    argus_board_minutes_body_cap: int = Field(
+        default=20,
+        validation_alias=AliasChoices(
+            "ARTEMIS_ARGUS_BOARD_MINUTES_BODY_CAP",
+            "ARGUS_BOARD_MINUTES_BODY_CAP",
+        ),
+        description=(
+            "ARGUS-3: maximum number of BoardDocs agenda-item BODIES "
+            "_fetch_board_minutes will fetch per district per research pass, "
+            "after filtering the (cheap, title-only) agenda list down to the "
+            "items whose titles pass mapping._is_relevant. Default 20 — "
+            "measured against live Dallas ISD data on 2026-08-13, 146 agenda "
+            "items produced 16 relevant titles, so Dallas passes untouched. "
+            "This bounds HTTP VOLUME (extra requests against BoardDocs); "
+            "argus_board_minutes_body_budget_s separately bounds WALL-CLOCK "
+            "TIME. A district with more relevant items than this cap gets "
+            "the first `cap` bodies fetched and the rest returned title-only "
+            "rather than skipped outright."
+        ),
+    )
+    argus_board_minutes_body_budget_s: float = Field(
+        default=8.0,
+        validation_alias=AliasChoices(
+            "ARTEMIS_ARGUS_BOARD_MINUTES_BODY_BUDGET_S",
+            "ARGUS_BOARD_MINUTES_BODY_BUDGET_S",
+        ),
+        description=(
+            "ARGUS-3: wall-clock seconds _fetch_board_minutes will spend "
+            "fetching agenda-item bodies (on top of the title-only agenda "
+            "fetch that precedes it), before it stops and returns whatever "
+            "bodies it already has plus title-only text for the rest. Kept "
+            "well under artemis.argus.research._TOOL_TIMEOUT_S (15.0s, "
+            "shared with every other Argus source): the title-only agenda "
+            "fetch itself needs headroom too, and if body-fetching alone ran "
+            "the full 15s a single slow committee would starve news_api / "
+            "procurement / usaspending / state_doe for the same district. "
+            "Each individual item fetch is further bounded by whatever of "
+            "this budget remains (asyncio.wait_for), so one hanging request "
+            "cannot consume the whole allotment by itself."
+        ),
+    )
 
     market_signals_channel_id: str = Field(
         default="C0BPT2T2KFY",

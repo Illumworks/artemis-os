@@ -10,6 +10,7 @@ Coverage:
 
 from __future__ import annotations
 
+import asyncio
 import typing
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,7 +19,11 @@ import httpx
 
 from artemis.scouts._http import ScoutHttpClient
 from artemis.scouts.base import ScoutConfig
-from artemis.scouts.board_minutes.client import fetch_boarddocs, fetch_granicus
+from artemis.scouts.board_minutes.client import (
+    fetch_boarddocs,
+    fetch_boarddocs_bodies,
+    fetch_granicus,
+)
 from artemis.scouts.board_minutes.mapping import meeting_item_to_finding
 from artemis.scouts.board_minutes.scout import (
     _DEFAULT_WATCH_LIST,
@@ -271,6 +276,108 @@ async def test_fetch_boarddocs_returns_empty_for_missing_url() -> None:
     http, _ = _make_http_mock()
     items = await fetch_boarddocs(district, http)
     assert items == []
+
+
+# ===========================================================================
+# ARGUS-3: fetch_boarddocs_bodies -- selective body fetch for a pre-filtered
+# subset of title-only items (the seam artemis.argus.research uses so it
+# never has to fetch a whole district's worth of item bodies).
+# ===========================================================================
+
+
+def _body_item(item_unique: str, title: str = "Some Agenda Item") -> dict[str, Any]:
+    return {
+        "title": title,
+        "date": "2026-02-26",
+        "source_url": f"https://go.boarddocs.com/tx/testdistrict/Board.nsf/goto?open&id={item_unique}",
+        "text": title,
+        "speaker_attribution": None,
+        "item_unique": item_unique,
+        "committee_id": "C1",
+    }
+
+
+async def test_fetch_boarddocs_bodies_fetches_each_item_and_returns_the_success_count() -> None:
+    calls: list[str] = []
+
+    async def fake_body(base_url: str, item_unique: str, committee_id: str, http: Any) -> str:
+        calls.append(item_unique)
+        return f"body for {item_unique}"
+
+    items = [_body_item("A"), _body_item("B")]
+    with patch("artemis.scouts.board_minutes.client.fetch_agenda_item_body", new=fake_body):
+        fetched = await fetch_boarddocs_bodies(
+            "https://go.boarddocs.com/tx/testdistrict/Board.nsf", items, http=MagicMock()
+        )
+
+    assert fetched == 2
+    assert calls == ["A", "B"]
+    assert items[0]["text"] == "body for A"
+    assert items[1]["text"] == "body for B"
+
+
+async def test_fetch_boarddocs_bodies_skips_items_missing_identifiers() -> None:
+    """An item without item_unique/committee_id is left untouched rather than crashing."""
+    calls: list[str] = []
+
+    async def fake_body(base_url: str, item_unique: str, committee_id: str, http: Any) -> str:
+        calls.append(item_unique)
+        return f"body for {item_unique}"
+
+    good = _body_item("A")
+    bad = {"title": "no ids here", "date": "", "source_url": "", "text": "no ids here"}
+    with patch("artemis.scouts.board_minutes.client.fetch_agenda_item_body", new=fake_body):
+        fetched = await fetch_boarddocs_bodies(
+            "https://go.boarddocs.com/tx/testdistrict/Board.nsf",
+            [good, bad],
+            http=MagicMock(),
+        )
+
+    assert fetched == 1
+    assert calls == ["A"]
+    assert bad["text"] == "no ids here"  # untouched
+
+
+async def test_fetch_boarddocs_bodies_budget_exhausted_stops_without_raising() -> None:
+    async def fake_body(base_url: str, item_unique: str, committee_id: str, http: Any) -> str:
+        if item_unique == "SLOW":
+            await asyncio.sleep(2.0)
+            return "never seen"
+        return f"body for {item_unique}"
+
+    items = [_body_item("A"), _body_item("SLOW"), _body_item("B")]
+    with patch("artemis.scouts.board_minutes.client.fetch_agenda_item_body", new=fake_body):
+        fetched = await fetch_boarddocs_bodies(
+            "https://go.boarddocs.com/tx/testdistrict/Board.nsf",
+            items,
+            http=MagicMock(),
+            budget_s=0.05,
+        )
+
+    assert fetched == 1
+    assert items[0]["text"] == "body for A"
+    assert items[1]["text"] == "Some Agenda Item"  # SLOW: timed out, title-only
+    assert items[2]["text"] == "Some Agenda Item"  # B: budget already gone, never attempted
+
+
+async def test_fetch_boarddocs_bodies_one_failure_does_not_lose_the_others() -> None:
+    async def fake_body(base_url: str, item_unique: str, committee_id: str, http: Any) -> str:
+        if item_unique == "FAIL":
+            raise RuntimeError("boom")
+        return f"body for {item_unique}"
+
+    items = [_body_item("A"), _body_item("FAIL"), _body_item("B")]
+    with patch("artemis.scouts.board_minutes.client.fetch_agenda_item_body", new=fake_body):
+        fetched = await fetch_boarddocs_bodies(
+            "https://go.boarddocs.com/tx/testdistrict/Board.nsf",
+            items,
+            http=MagicMock(),
+        )
+
+    assert fetched == 2
+    assert items[0]["text"] == "body for A"
+    assert items[1]["text"] == "Some Agenda Item"  # FAIL: kept its title-only text
+    assert items[2]["text"] == "body for B"
 
 
 # ===========================================================================

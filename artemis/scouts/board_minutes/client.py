@@ -52,10 +52,12 @@ BoardDocs API notes:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import random
 import re
+import time
 from typing import Any
 
 from artemis.scouts._http import ScoutHttpClient
@@ -218,6 +220,7 @@ def _parse_agenda_items(
     date_str: str,
     meeting_name: str,
     base_url: str,
+    committee_id: str = "",
 ) -> list[dict[str, Any]]:
     """Parse agenda item ``<li>`` elements from a ``BD-GetAgenda`` HTML fragment.
 
@@ -234,6 +237,12 @@ def _parse_agenda_items(
         Human-readable meeting name (e.g. "Regular School Board Meeting").
     base_url:
         The ``/Board.nsf`` base URL used to construct ``goto`` URLs.
+    committee_id:
+        The committee this meeting belongs to. Stashed on each returned item
+        (ARGUS-3) so a caller that filters title-only items down to a
+        relevant subset can later fetch just those items' bodies via
+        ``fetch_agenda_item_body`` / ``fetch_boarddocs_bodies`` without
+        re-deriving which committee each item came from.
 
     Returns
     -------
@@ -265,6 +274,10 @@ def _parse_agenda_items(
                 # BoardDocs item identifier — used by fetch_agenda_item_body()
                 # to retrieve the item detail/minutes text.
                 "item_unique": item_unique,
+                # Committee this item's meeting belongs to — also required by
+                # fetch_agenda_item_body() (ARGUS-3: lets a title-only-fetch
+                # caller go back for just the relevant items' bodies).
+                "committee_id": committee_id,
             }
         )
     return items
@@ -327,6 +340,97 @@ async def fetch_agenda_item_body(
     except Exception as exc:
         _logger.debug("BoardDocs goto %s (item %s) failed: %s", goto_url, item_unique, exc)
     return ""
+
+
+async def fetch_boarddocs_bodies(
+    base_url: str,
+    items: list[dict[str, Any]],
+    http: ScoutHttpClient,
+    *,
+    budget_s: float | None = None,
+) -> int:
+    """Fetch BODY text, IN PLACE, for a pre-filtered subset of agenda items.
+
+    ARGUS-3's seam: callers (``artemis.argus.research._fetch_board_minutes``)
+    fetch title-only items cheaply via ``fetch_boarddocs`` (default
+    ``fetch_bodies=False``), filter down to the ones worth the extra HTTP
+    call (e.g. via ``mapping._is_relevant``), and hand the survivors here —
+    at most a couple dozen items rather than every item on the agenda.  This
+    does NOT change ``fetch_boarddocs``'s own contract or its
+    ``fetch_bodies=True`` path (still used verbatim by ``peer_scout``, which
+    always wants every item's body and reads its own per-meeting cap from
+    ``_MAX_ITEM_BODIES_PER_MEETING``).
+
+    Mutates each item's ``"text"`` field to the fetched body (and
+    ``"speaker_attribution"`` when one is found in it) via
+    ``fetch_agenda_item_body``.  Items missing ``"item_unique"`` or
+    ``"committee_id"`` are left untouched — defensive; every item produced by
+    ``fetch_boarddocs``'s API path carries both, but a caller could pass a
+    hand-built item without them.
+
+    ``budget_s``: total wall-clock seconds allotted to this whole call.
+    ``None`` means "no ceiling" (each item is still fetched one at a time,
+    just without a time limit). When set, elapsed time is checked before
+    each item; once the remaining budget is exhausted the loop stops without
+    error and every item from that point on simply keeps its title-only
+    text. Each individual fetch is ALSO wrapped in ``asyncio.wait_for`` with
+    whatever budget remains, so one slow or hanging item (BoardDocs is a
+    Lotus Notes AJAX API with its own retry/backoff inside ``ScoutHttpClient``
+    — a single failing request can otherwise sleep for tens of seconds)
+    cannot by itself consume the entire allotment and starve every item
+    after it. A per-item failure (timeout or any other exception) is caught
+    and logged; that item is left title-only and the loop continues — one
+    bad item never loses the rest.
+
+    Returns the number of items whose body was successfully fetched (for
+    logging/telemetry at the call site).
+    """
+    fetched = 0
+    start = time.monotonic()
+    for item in items:
+        if budget_s is not None:
+            remaining = budget_s - (time.monotonic() - start)
+            if remaining <= 0:
+                _logger.info(
+                    "BoardDocs fetch_boarddocs_bodies: body budget (%.1fs) exhausted after "
+                    "%d/%d items — remaining items stay title-only",
+                    budget_s,
+                    fetched,
+                    len(items),
+                )
+                break
+        else:
+            remaining = None
+
+        item_unique = item.get("item_unique")
+        committee_id = item.get("committee_id")
+        if not item_unique or not committee_id:
+            continue
+
+        try:
+            if remaining is not None:
+                body = await asyncio.wait_for(
+                    fetch_agenda_item_body(base_url, item_unique, committee_id, http),
+                    timeout=remaining,
+                )
+            else:
+                body = await fetch_agenda_item_body(base_url, item_unique, committee_id, http)
+        except Exception as exc:
+            _logger.debug(
+                "BoardDocs fetch_boarddocs_bodies: body fetch failed for item=%s — %s",
+                item_unique,
+                exc,
+            )
+            continue
+
+        if body:
+            item["text"] = body
+            fetched += 1
+            speaker = _extract_speaker(body, item.get("date", ""))
+            if speaker:
+                item["speaker_attribution"] = speaker
+
+    return fetched
 
 
 def _numberdate_to_iso(numberdate: str) -> str:
@@ -454,7 +558,9 @@ async def _fetch_boarddocs_api_items(
             )
             continue
 
-        agenda_items = _parse_agenda_items(agenda_html, date_iso, meeting_name, base_url)
+        agenda_items = _parse_agenda_items(
+            agenda_html, date_iso, meeting_name, base_url, committee_id
+        )
         _logger.debug(
             "BoardDocs meeting %s (%s): %d agenda items parsed",
             meeting_unique,
