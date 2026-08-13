@@ -563,3 +563,38 @@ async def test_fetch_conflict_candidates_respects_limit(
     assert 1 <= len(candidates) <= 6, f"pool must be bounded by 2 x limit; got {len(candidates)}"
     assert all(c.id != new_obs.id for c in candidates)
     assert all(c.superseded_by is None for c in candidates)
+
+
+@pytest.mark.asyncio
+async def test_supersede_refuses_self_supersession(db_session: AsyncSession) -> None:
+    """``supersede_observation(x, x)`` must raise, not silently hide x.
+
+    Self-supersession is always a caller bug and a silent one: the row stays in
+    the table, looks normal, and stops being retrieved — an effective delete from
+    the one function whose whole premise is that we never delete (CLAUDE.md
+    rule 3).
+
+    The route in is not obvious, which is why this guard is worth having:
+    ``write_observation`` dedupes on content hash and returns the EXISTING row
+    for identical content, so a caller writing a replacement that happens to
+    match byte-for-byte gets the same id back and then supersedes it with
+    itself. That is exactly how a correction written into Callie's memory
+    removed itself on 2026-08-13.
+    """
+    from artemis.memory.store import supersede_observation, write_observation
+
+    obs = await write_observation(
+        db_session,
+        scope=Scope(scope_kind="agent", scope_id="selftest"),
+        content="a thing worth remembering",
+        category="warning",
+    )
+    await db_session.flush()
+    obs_id = int(obs.id)
+
+    with pytest.raises(ValueError, match="itself"):
+        await supersede_observation(db_session, obs_id, obs_id)
+
+    row = await db_session.get(MemoryObservation, obs_id)
+    assert row is not None
+    assert row.superseded_by is None, "it must remain retrievable"

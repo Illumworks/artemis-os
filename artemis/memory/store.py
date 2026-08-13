@@ -483,7 +483,23 @@ async def supersede_observation(
     Only acts when old_id is not already superseded (mirrors Node's conditional
     UPDATE … WHERE superseded_by IS NULL). The old observation remains in the
     database — it just falls out of active retrieval.
+
+    Refuses ``old_id == new_id``. Self-supersession is always a caller bug, and
+    it is a silent and nasty one: the row stays in the table, reads perfectly
+    normal, and simply stops being retrieved — the observation is effectively
+    deleted by a function whose entire purpose is that we never delete. Hit on
+    2026-08-13 writing a correction into Callie's memory, where
+    ``write_observation`` had deduped on content hash and returned the SAME row
+    the caller was trying to supersede, so ``old_id`` and ``new_id`` were equal
+    and the correction removed itself.
     """
+    if old_id == new_id:
+        raise ValueError(
+            f"refusing to supersede observation {old_id} with itself: that would "
+            "remove it from retrieval entirely. Note write_observation dedupes on "
+            "content hash and returns the EXISTING row for identical content, "
+            "which is the usual way callers end up here."
+        )
     stmt = (
         update(MemoryObservation)
         .where(
