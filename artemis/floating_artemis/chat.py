@@ -409,11 +409,13 @@ def _build_tool_registry(
     available_surfaces: set[str],
     agent_id: str | None = None,
     speaker_id: str | None = None,
+    participants: list[str] | None = None,
 ) -> AuthorizedToolRegistry:
     return build_authorized_tool_registry(
         available_surfaces,
         agent_id=agent_id,
         speaker_id=speaker_id,
+        participants=participants,
     )
 
 
@@ -930,10 +932,14 @@ async def handle_turn(
     # speaker_id is the Slack user id resolved from the inbound event. It
     # authorizes Kai's flag_catalog_gap and is bound into that tool as a closure
     # value, so tool input cannot spoof the requester. None denies (fail-closed).
+    # participants (who else is in this conversation) is bound into
+    # resolve_person as a ranking tiebreaker only -- see
+    # tool_registry.build_authorized_tool_registry's docstring.
     auth_registry = _build_tool_registry(
         available_surfaces,
         agent_id=session_ctx.agent_id,
         speaker_id=speaker_id,
+        participants=participants,
     )
 
     from artemis.providers.claude_code.adapter import ClaudeCodeAdapter

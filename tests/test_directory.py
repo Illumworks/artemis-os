@@ -261,6 +261,133 @@ async def test_exact_first_name_beats_fuzzy(db_session: AsyncSession) -> None:
     assert await resolve_one("Angel", db_session) == "angel.blandero@amiralearning.com"
 
 
+async def test_two_joshes_ambiguous_no_high_confidence_winner(db_session: AsyncSession) -> None:
+    """The 2026-08-12 incident, reproduced: Josh Smith + Joshua Mukai (who goes
+    by "Josh") must NOT resolve to a single confident "winner" for query
+    "Josh" -- both are plausible, so both come back, tied, at low confidence.
+    """
+    await _seed(
+        db_session,
+        [
+            _person(
+                email="josh.smith@amiralearning.com",
+                full_name="Josh Smith",
+                first_name="Josh",
+                last_name="Smith",
+            ),
+            _person(
+                email="joshua.mukai@amiralearning.com",
+                full_name="Joshua Mukai",
+                first_name="Joshua",
+                last_name="Mukai",
+            ),
+        ],
+    )
+    matches = await resolve_people("Josh", db_session)
+    assert {m.email for m in matches} == {
+        "josh.smith@amiralearning.com",
+        "joshua.mukai@amiralearning.com",
+    }
+    assert all(m.reason == "ambiguous" for m in matches)
+    assert all(m.confidence < 0.90 for m in matches)
+    # No accidental winner: the two confidences must be equal, not just both low.
+    assert matches[0].confidence == matches[1].confidence
+    assert await resolve_one("Josh", db_session) is None
+
+
+async def test_two_joshes_participant_present_breaks_tie(db_session: AsyncSession) -> None:
+    """Same two Joshes, but Josh Mukai is verified present in the conversation.
+
+    Presence should decisively promote him without deleting the other
+    candidate from the response -- the model should still be able to see
+    there IS another Josh in the company, just not in this room.
+    """
+    await _seed(
+        db_session,
+        [
+            _person(
+                email="josh.smith@amiralearning.com",
+                full_name="Josh Smith",
+                first_name="Josh",
+                last_name="Smith",
+            ),
+            _person(
+                email="joshua.mukai@amiralearning.com",
+                full_name="Joshua Mukai",
+                first_name="Joshua",
+                last_name="Mukai",
+            ),
+        ],
+    )
+    matches = await resolve_people("Josh", db_session, participants=["Josh Mukai", "Jon Fila"])
+    by_email = {m.email: m for m in matches}
+    assert len(matches) == 2  # the other Josh is still visible, not dropped
+    winner = by_email["joshua.mukai@amiralearning.com"]
+    other = by_email["josh.smith@amiralearning.com"]
+    assert winner.in_conversation is True
+    assert winner.confidence >= 0.90
+    assert winner.confidence - other.confidence >= 0.10
+    assert other.in_conversation is False
+    assert (
+        await resolve_one("Josh", db_session, participants=["Josh Mukai", "Jon Fila"])
+        == "joshua.mukai@amiralearning.com"
+    )
+
+
+async def test_two_joshes_both_present_still_ambiguous(db_session: AsyncSession) -> None:
+    """If BOTH Joshes are somehow in the room, presence can't break the tie."""
+    await _seed(
+        db_session,
+        [
+            _person(
+                email="josh.smith@amiralearning.com",
+                full_name="Josh Smith",
+                first_name="Josh",
+                last_name="Smith",
+            ),
+            _person(
+                email="joshua.mukai@amiralearning.com",
+                full_name="Joshua Mukai",
+                first_name="Joshua",
+                last_name="Mukai",
+            ),
+        ],
+    )
+    matches = await resolve_people("Josh", db_session, participants=["Josh Mukai", "Josh Smith"])
+    assert all(m.in_conversation for m in matches)
+    assert all(m.reason == "ambiguous" for m in matches)
+    assert await resolve_one("Josh", db_session, participants=["Josh Mukai", "Josh Smith"]) is None
+
+
+async def test_two_joshes_full_name_still_resolves_cleanly(db_session: AsyncSession) -> None:
+    """Even with the ambiguous "Josh" pool present, a full name or email query
+    is unaffected -- it must still resolve confidently to the right person.
+    """
+    await _seed(
+        db_session,
+        [
+            _person(
+                email="josh.smith@amiralearning.com",
+                full_name="Josh Smith",
+                first_name="Josh",
+                last_name="Smith",
+            ),
+            _person(
+                email="joshua.mukai@amiralearning.com",
+                full_name="Joshua Mukai",
+                first_name="Joshua",
+                last_name="Mukai",
+            ),
+        ],
+    )
+    assert await resolve_one("Josh Smith", db_session) == "josh.smith@amiralearning.com"
+    assert await resolve_one("Joshua Mukai", db_session) == "joshua.mukai@amiralearning.com"
+    assert (
+        await resolve_one("joshua.mukai@amiralearning.com", db_session)
+        == "joshua.mukai@amiralearning.com"
+    )
+
+
 async def test_fuzzy_match(db_session: AsyncSession) -> None:
     await _seed(
         db_session,

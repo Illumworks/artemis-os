@@ -112,6 +112,7 @@ def build_authorized_tool_registry(
     agent_id: str | None = None,
     project_path: str | None = None,
     speaker_id: str | None = None,
+    participants: list[str] | None = None,
 ) -> AuthorizedToolRegistry:
     """Build the Floating Artemis tool catalog for the given agent and surfaces.
 
@@ -137,6 +138,14 @@ def build_authorized_tool_registry(
     she could not verify who was asking instead of going silent. Ignored for all
     other agents.
 
+    ``participants`` is the display-name roster of who else is in the current
+    conversation (see ``artemis.routes.integrations_slack_events.route_inbound``).
+    It is bound into ``resolve_person`` (directory_tools.py) as a ranking
+    tiebreaker ONLY -- ambiguous first-name matches prefer a candidate who is
+    actually present. It is never an authorization input (resolve_person is
+    read-only and Layer 1 for every agent) and is safe to omit; omitting it
+    just means resolve_person can't use conversation context to break a tie.
+
     Special case — Kai:
       Kai's registry contains ONLY the three read-only enablement tools plus
       flag_catalog_gap and update_asset_summary. He receives none of the
@@ -159,7 +168,9 @@ def build_authorized_tool_registry(
     registry = AuthorizedToolRegistry()
     register_core_tools(registry, agent_id=agent_id)
     # Directory resolution (name→email): read-only, harmless, all agents.
-    register_directory_tools(registry)
+    # participants lets an ambiguous first-name match prefer whoever is
+    # actually in this conversation -- see register_directory_tools' docstring.
+    register_directory_tools(registry, participants=participants)
     register_builders_tools(registry)
     register_system_tools(registry)
     if "okr" in available_surfaces:
