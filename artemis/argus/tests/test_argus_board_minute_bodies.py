@@ -22,7 +22,7 @@ checking:
 
 Required-by-brief coverage (artemis/argus tests, see
 briefs/argus-3-board-minute-bodies.md):
-  - only _is_relevant-passing titles get bodies fetched (count, driven by a
+  - only is_argus_relevant-passing titles get bodies fetched (count, driven by a
     mixed stub list)
   - the body cap is honoured when more items than the cap are relevant
   - budget exhaustion returns the bodies already fetched PLUS the remaining
@@ -58,7 +58,7 @@ _RELEVANT_TITLE_A = (
     "Reading Curriculum Adoption for Elementary Campuses"
 )
 _RELEVANT_TITLE_B = (
-    "Board Meeting Agenda and Notice — Vendor Review for iReady Renewal (Districtwide)"
+    "Board Meeting Agenda and Notice — Vendor Review for Lexia Renewal (Districtwide)"
 )
 _IRRELEVANT_TITLE_A = "Board Meeting Agenda and Notice — Parking Lot Resurfacing at Central High"
 _IRRELEVANT_TITLE_B = "Board Meeting Agenda and Notice — Approval of Prior Meeting Minutes"
@@ -88,7 +88,7 @@ def _patch_client(**overrides: Any) -> Any:
 
 
 # ===========================================================================
-# 1. Only _is_relevant-passing titles get their bodies fetched
+# 1. Only is_argus_relevant-passing titles get their bodies fetched
 # ===========================================================================
 
 
@@ -102,7 +102,9 @@ async def test_only_relevant_titles_get_body_fetched() -> None:
     mock_fetch_boarddocs = AsyncMock(return_value=items)
     mock_fetch_bodies = AsyncMock(return_value=0)
 
-    with _patch_client(fetch_boarddocs=mock_fetch_boarddocs, fetch_boarddocs_bodies=mock_fetch_bodies):
+    with _patch_client(
+        fetch_boarddocs=mock_fetch_boarddocs, fetch_boarddocs_bodies=mock_fetch_bodies
+    ):
         await _fetch_board_minutes("11331", signal=_SIGNAL)
 
     mock_fetch_bodies.assert_awaited_once()
@@ -128,7 +130,9 @@ async def test_body_cap_is_honoured_when_more_items_than_cap_are_relevant(
     mock_fetch_boarddocs = AsyncMock(return_value=items)
     mock_fetch_bodies = AsyncMock(return_value=0)
 
-    with _patch_client(fetch_boarddocs=mock_fetch_boarddocs, fetch_boarddocs_bodies=mock_fetch_bodies):
+    with _patch_client(
+        fetch_boarddocs=mock_fetch_boarddocs, fetch_boarddocs_bodies=mock_fetch_bodies
+    ):
         await _fetch_board_minutes("11331", signal=_SIGNAL)
 
     mock_fetch_bodies.assert_awaited_once()
@@ -250,7 +254,9 @@ async def test_zero_relevant_titles_yields_title_only_behaviour_and_does_not_rai
     mock_fetch_boarddocs = AsyncMock(return_value=items)
     mock_fetch_bodies = AsyncMock(return_value=0)
 
-    with _patch_client(fetch_boarddocs=mock_fetch_boarddocs, fetch_boarddocs_bodies=mock_fetch_bodies):
+    with _patch_client(
+        fetch_boarddocs=mock_fetch_boarddocs, fetch_boarddocs_bodies=mock_fetch_bodies
+    ):
         result = await _fetch_board_minutes("11331", signal=_SIGNAL)  # must not raise
 
     mock_fetch_bodies.assert_not_called()
