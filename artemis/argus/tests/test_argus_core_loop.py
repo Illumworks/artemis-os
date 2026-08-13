@@ -528,37 +528,51 @@ async def test_stub_research_dimensions_still_importable() -> None:
 
 @pytest.mark.asyncio
 async def test_gather_tool_results_searches_on_the_district_name_not_the_key() -> None:
-    """Fetchers must receive the district NAME, not its drawer key.
+    """Keyword-search fetchers must receive the district NAME, not its drawer key.
 
-    Every ``_fetch_*`` helper uses its first argument as a literal search
-    string, and a real drawer key is usually an NCES id. Measured against live
-    sources: ``_fetch_news("11414", …)`` returned 0 items while
-    ``_fetch_news("FORT WORTH ISD", …)`` returned 15 on-topic ones. The first
-    two real Argus runs produced 12 "Insufficient data" findings out of 14
-    because of exactly this.
+    Every ``_fetch_*`` helper except ``_fetch_board_minutes`` uses its first
+    argument as a literal search string, and a real drawer key is usually an
+    NCES id. Measured against live sources: ``_fetch_news("11414", …)``
+    returned 0 items while ``_fetch_news("FORT WORTH ISD", …)`` returned 15
+    on-topic ones. The first two real Argus runs produced 12 "Insufficient
+    data" findings out of 14 because of exactly this.
+
+    ARGUS-2: ``_fetch_board_minutes`` is the one deliberate exception. It is
+    not a keyword search -- it looks up ``districts.boarddocs_url`` off the
+    RAW drawer key via the same id-based seam ``_resolve_search_term`` uses
+    for the name, so it must receive the raw key, not the resolved name (a
+    district name is not unique across ``districts`` and re-resolving by
+    name could land on a different district's row -- see
+    ``_resolve_district_row``'s docstring).
     """
     from unittest.mock import AsyncMock, patch
 
     from artemis.argus import research as research_mod
 
-    seen: list[str] = []
+    seen_news: list[str] = []
+    seen_board: list[str] = []
 
-    async def spy_fetch(term: str, signal: object) -> list[dict[str, object]]:
-        seen.append(term)
+    async def spy_news(term: str, signal: object) -> list[dict[str, object]]:
+        seen_news.append(term)
+        return []
+
+    async def spy_board(term: str, signal: object) -> list[dict[str, object]]:
+        seen_board.append(term)
         return []
 
     with (
         patch.object(research_mod, "_resolve_search_term", new=AsyncMock(return_value="FORT WORTH ISD")),
-        patch.object(research_mod, "_fetch_news", new=spy_fetch),
-        patch.object(research_mod, "_fetch_board_minutes", new=spy_fetch),
+        patch.object(research_mod, "_fetch_news", new=spy_news),
+        patch.object(research_mod, "_fetch_board_minutes", new=spy_board),
     ):
         await research_mod._gather_tool_results("11414", [research_mod.Dimension.CURRENT_VENDOR], {"state": "TX"})
 
-    assert seen, "no fetcher was called"
-    assert all(term == "FORT WORTH ISD" for term in seen), (
-        f"fetchers must be handed the resolved name, got {seen}"
+    assert seen_news == ["FORT WORTH ISD"], (
+        f"news_api must be handed the resolved name, got {seen_news}"
     )
-    assert "11414" not in seen, "the raw drawer key must never reach a search"
+    assert seen_board == ["11414"], (
+        f"board_minutes must be handed the RAW drawer key, got {seen_board}"
+    )
 
 
 @pytest.mark.asyncio

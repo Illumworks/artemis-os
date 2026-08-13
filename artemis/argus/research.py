@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -104,15 +105,105 @@ async def _fetch_news(district_key: str, signal: dict[str, Any] | None) -> list[
         return []
 
 
+@dataclass(frozen=True)
+class _DistrictRow:
+    """The slice of a ``districts`` row Argus's resolution seam needs."""
+
+    id: int
+    name: str
+    boarddocs_url: str | None
+
+
+async def _resolve_district_row(district_key: str) -> _DistrictRow | None:
+    """Resolve a drawer ``district_key`` to its ``districts`` row, or ``None``.
+
+    THE seam (ARGUS-2): matches only when ``district_key`` is a
+    ``districts.id``, as text -- the exact query ``_resolve_search_term`` has
+    always used to find a district's NAME. Both ``_resolve_search_term`` and
+    ``_fetch_board_minutes`` call this one function, so a given key resolves
+    to the same row (or to no row) from both call sites -- see the ARGUS-2
+    report's test for why that agreement matters: without it, one call site
+    could search on district A's name while the other attaches district B's
+    board minutes to the same drawer.
+
+    Deliberately NOT a name-based fallback. A second lookup by name after the
+    id lookup fails would not be guaranteed to land on the same row -- names
+    are not unique across ``districts`` (no UNIQUE constraint, and duplicates
+    exist: many "Washington", "Jefferson", "Lincoln" districts across
+    states) -- so a free-text drawer key ("St. Louis Public Schools",
+    "IL-U46") returns ``None`` here, same as it already returned the key
+    unchanged (never a resolved name) for ``_resolve_search_term``. That is a
+    real, currently-unfixed gap for those specific drawer keys -- see the
+    ARGUS-2 report -- not something this function silently papers over with
+    a riskier match.
+
+    Returns ``None`` on any failure (logged) or when no row matches. Never
+    raises.
+    """
+    if not district_key:
+        return None
+    try:
+        from sqlalchemy import text as _sql_text
+
+        import artemis.db as _db
+
+        async with _db.SessionLocal() as session:
+            row = (
+                await session.execute(
+                    _sql_text(
+                        "SELECT id, name, boarddocs_url FROM districts "
+                        "WHERE id::text = :key LIMIT 1"
+                    ),
+                    {"key": district_key},
+                )
+            ).first()
+    except Exception:
+        _logger.warning(
+            "Argus: district row lookup failed for district_key=%r",
+            district_key,
+            exc_info=True,
+        )
+        return None
+    if row is None:
+        return None
+    return _DistrictRow(id=row[0], name=row[1] or "", boarddocs_url=row[2])
+
+
 async def _fetch_board_minutes(
     district_key: str, signal: dict[str, Any] | None
 ) -> list[dict[str, Any]]:
-    """Fetch BoardDocs minutes for a district if boarddocs_url is known from signal."""
+    """Fetch BoardDocs minutes for a district.
+
+    ``boarddocs_url`` resolution order:
+      1. ``signal["provenance"]["boarddocs_url"]`` or ``signal["boarddocs_url"]``
+         -- a caller-supplied signal always wins. It may be fresher, or more
+         specific, than whatever is stored on the district row.
+      2. ``districts.boarddocs_url`` for ``district_key``, resolved via
+         ``_resolve_district_row`` -- the same id-based seam
+         ``_resolve_search_term`` uses to find the district's name, so both
+         lookups agree on which district a key means (ARGUS-2). Populated by
+         migration 0117's back-fill from ``artemis.argus.board_minutes_backfill``.
+
+    Unlike the other ``_fetch_*`` helpers, ``district_key`` here must be the
+    RAW drawer key, not the resolved search term -- see ``_gather_tool_results``,
+    which special-cases this fetcher for exactly that reason.
+    """
     boarddocs_url: str | None = None
     if signal and isinstance(signal.get("provenance"), dict):
         boarddocs_url = signal["provenance"].get("boarddocs_url")
     if not boarddocs_url and signal:
         boarddocs_url = signal.get("boarddocs_url")
+
+    if not boarddocs_url:
+        district_row = await _resolve_district_row(district_key)
+        if district_row is not None and district_row.boarddocs_url:
+            boarddocs_url = district_row.boarddocs_url
+            _logger.info(
+                "Argus._fetch_board_minutes: district_key=%r resolved boarddocs_url=%r "
+                "from the districts table (no signal-supplied URL)",
+                district_key,
+                boarddocs_url,
+            )
 
     if not boarddocs_url:
         _logger.debug(
@@ -187,7 +278,41 @@ async def _fetch_procurement(
 async def _fetch_usaspending(
     district_key: str, signal: dict[str, Any] | None
 ) -> list[dict[str, Any]]:
-    """Fetch federal grant awards relevant to a district's state."""
+    """Fetch federal grant awards relevant to a district's state.
+
+    ARGUS-2 investigated (per the brief) whether this could be wired to a
+    district's real recipient identity instead of the current
+    state-plus-name-substring filter, and concluded: NOT wired, deliberately.
+
+    All ten CFDA numbers in ``_EDUCATION_CFDA`` (Title I 84.010, IDEA
+    84.027/84.173, Perkins 84.048, Reading First 84.357, REAP 84.358, CLSD
+    84.371, ESEA Title II-A 84.411, SSAE 84.424, Even Start 84.213) are
+    STATE-FORMULA or state-competitive programs: USASpending's top-level
+    "Recipient Name" for every one of these is the state education agency
+    (e.g. "TEXAS EDUCATION AGENCY"), not the district -- the state re-grants
+    to districts through a mechanism USASpending's award-level search does
+    not surface. Feeding the real district name or NCES id into
+    ``recipient_search_text`` would not change this: the district is
+    structurally never the awardee for these specific programs, so it would
+    still return 0 district-name matches, just with better-looking input.
+
+    Making this actually resolve federal money down to a specific district
+    would need one of:
+      - the district's own federal recipient UEI/DUNS (not a column
+        ``districts`` has, and not derivable from name/nces_id without a new
+        SAM.gov-entity-search integration -- a new data source, not a wiring
+        fix), or
+      - switching to sub-award-level data (``subawards: true``), whose K-12
+        coverage for state-formula grants is unreliable -- many formula
+        programs are exempt from FFATA sub-award reporting below threshold,
+        so this could easily trade "0 items, honestly" for "0 items, now
+        with a code path that looks like it should be finding something."
+
+    Left as-is: state-level context only, via ``recipient_locations``/state
+    filter, same as today. This is the brief's own escape hatch ("report
+    that it needs something we do not have and leave it alone") rather than
+    a half-wired attempt at district-level recipient matching.
+    """
     state = (signal or {}).get("state", "")
     states = [state.upper()] if state else []
 
@@ -296,22 +421,19 @@ async def _resolve_search_term(district_key: str) -> str:
     already names ("St. Louis Public Schools", "IL-U46"): degrading to today's
     behaviour is always acceptable here, because a research pass with a poor
     search term is worth strictly more than a research pass that raised.
+
+    ARGUS-2: shares its row lookup with ``_fetch_board_minutes`` via
+    ``_resolve_district_row`` -- the same seam, so a given ``district_key``
+    resolves to the same ``districts`` row (or to none) for both the search
+    term AND the BoardDocs URL. ``_resolve_district_row`` already never
+    raises, so the try/except here is just belt-and-suspenders around the
+    ``.strip()``/attribute access.
     """
     if not district_key:
         return district_key
     try:
-        from sqlalchemy import text as _sql_text
-
-        import artemis.db as _db
-
-        async with _db.SessionLocal() as session:
-            row = (
-                await session.execute(
-                    _sql_text("SELECT name FROM districts WHERE id::text = :key LIMIT 1"),
-                    {"key": district_key},
-                )
-            ).first()
-        name = (row[0] or "").strip() if row else ""
+        row = await _resolve_district_row(district_key)
+        name = (row.name or "").strip() if row is not None else ""
         if name:
             _logger.info("Argus: district_key=%r resolved to search term %r", district_key, name)
             return name
@@ -347,9 +469,10 @@ async def _gather_tool_results(
     if not needed_tools:
         return {}
 
-    # Every fetcher below uses its first argument as a literal SEARCH STRING.
-    # ``district_key`` is a drawer key, and for most real signals it is an NCES
-    # id like "11414" -- which searches nothing. Measured 2026-08-12:
+    # Every fetcher below EXCEPT board_minutes uses its first argument as a
+    # literal SEARCH STRING. ``district_key`` is a drawer key, and for most
+    # real signals it is an NCES id like "11414" -- which searches nothing.
+    # Measured 2026-08-12:
     #
     #     _fetch_news("11414", signal)          ->  0 items
     #     _fetch_news("FORT WORTH ISD", signal) -> 15 items, on-topic
@@ -369,13 +492,24 @@ async def _gather_tool_results(
         "state_doe": _fetch_state_doe,
     }
 
+    # board_minutes is not a keyword search -- it looks up districts.boarddocs_url
+    # off the RAW district_key (_resolve_district_row, the same id-based seam
+    # _resolve_search_term uses). It must NOT receive the resolved search_term:
+    # a district NAME is not unique across districts (no UNIQUE constraint,
+    # real duplicates exist), so re-resolving by name could land on a
+    # DIFFERENT district's row than the one _resolve_search_term found --
+    # exactly the wrong-attachment risk ARGUS-2 exists to avoid. See
+    # test_board_minutes_receives_the_raw_key_not_the_search_term.
+    raw_key_tools = frozenset({"board_minutes"})
+
     async def _safe_fetch(name: str) -> tuple[str, Any]:
         fetcher = _tool_fetchers.get(name)
         if fetcher is None:
             return name, []
+        fetch_arg = district_key if name in raw_key_tools else search_term
         try:
             result = await asyncio.wait_for(
-                fetcher(search_term, signal),
+                fetcher(fetch_arg, signal),
                 timeout=_TOOL_TIMEOUT_S,
             )
             return name, result
