@@ -19,13 +19,12 @@ from uuid import uuid4
 
 from artemis.agent.client import AnthropicAdapter, ModelAdapter
 from artemis.agent.hooks import HookRegistry
-from artemis.agent.loop import run_turn, user_message
+from artemis.agent.loop import collect_tools_used, run_turn, user_message
 from artemis.agent.tools import ToolRegistry
 from artemis.agent.types import (
     Message,
     RunResult,
     TextBlock,
-    ToolCallRecord,
     ToolResultBlock,
     ToolUseBlock,
     Usage,
@@ -668,52 +667,15 @@ async def _load_session_context(
 def _collect_tools_used(result: RunResult) -> list[str]:
     """Return the deduped, ordered list of tool names invoked during a turn.
 
-    Merges two sources, because the two provider paths surface tool calls in
-    completely different places (OBS-1):
-
-    - **Anthropic path**: ``run_turn`` executes tool_use rounds itself, so
-      ``ToolUseBlock``s land directly in ``result.messages``. Scanned here
-      exactly as before this fix — this source, and this path, are unchanged.
-    - **claude-code MCP path** (Builder / Floating Artemis — i.e. every
-      Slack-facing agent: Callie, Kai, Artemis): the CLI runs its OWN internal
-      tool loop inside the subprocess and returns only a final text result,
-      so no ``ToolUseBlock`` ever reaches ``result.messages`` for this path —
-      that gap is the whole reason ``agent_traces.tools_used`` was ``[]`` for
-      30+ days straight. ``run_turn`` recovers this from the adapter's
-      stream-json parse and threads it through
-      ``result.metadata["tool_calls"]`` (see ``artemis/agent/loop.py`` and
-      ``artemis/providers/claude_code/adapter.py::_parse_stream_json``);
-      merged in below.
-
-    In practice exactly one source is non-empty for any given turn (a turn
-    uses exactly one adapter), but both are merged the same way regardless:
-    first-occurrence-wins dedup, in encounter order.
-
-    A tool name that failed at least once is recorded as ``"<name>:error"``
-    rather than a bare name. There is no separate error column to use instead
-    — no migration; ``agent_traces.tools_used`` stays the ``JSONB`` array of
-    strings it already is — and a name-only list would make a tool that ran
-    and errored look identical to a clean success, which is exactly the
-    failure mode this instrument exists to catch (a tool that "ran" and
-    errored is the case that matters most; see the OBS-1 brief).
+    Thin wrapper kept here (rather than inlined at the one call site below)
+    so ``tests/test_obs1_collect_tools_used.py`` — which imports this name
+    directly — keeps passing unchanged. The actual merge logic (Anthropic
+    ToolUseBlock scan + claude-code ``result.metadata["tool_calls"]``) now
+    lives in ``artemis.agent.loop.collect_tools_used`` so
+    ``artemis/builders/executor.py``'s pipeline/builder agent path can share
+    it instead of reimplementing the same dedup/error-marking policy.
     """
-    errors: dict[str, bool] = {}
-
-    for msg in result.messages:
-        if msg.role != "assistant":
-            continue
-        for block in msg.content:
-            if isinstance(block, ToolUseBlock) and block.name not in errors:
-                errors[block.name] = False
-
-    tool_calls = cast(list[ToolCallRecord], result.metadata.get("tool_calls") or [])
-    for call in tool_calls:
-        if call.name not in errors:
-            errors[call.name] = call.is_error
-        elif call.is_error:
-            errors[call.name] = True
-
-    return [f"{name}:error" if is_error else name for name, is_error in errors.items()]
+    return collect_tools_used(result)
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────

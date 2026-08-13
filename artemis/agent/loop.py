@@ -233,6 +233,62 @@ def _normalize_stop_reason(raw: str) -> StopReason:
     return "end_turn"
 
 
+def collect_tools_used(result: RunResult) -> list[str]:
+    """Return the deduped, ordered list of tool names invoked during a turn.
+
+    Merges two sources, because different provider paths surface tool calls in
+    completely different places (OBS-1):
+
+    - **In-process tool-use loop** (Anthropic path via this module's
+      ``run_turn``, or any adapter that executes tools itself): ``run_turn``
+      drives the tool_use rounds, so ``ToolUseBlock``s land directly in
+      ``result.messages``. Scanned here in encounter order.
+    - **Adapter-internal tool loop** (``ClaudeCodeAdapter``'s MCP path — every
+      Slack-facing agent, the Builder executor, and pipeline/scout agent
+      runs): the CLI runs its OWN internal tool loop inside the subprocess and
+      returns only a final text result, so no ``ToolUseBlock`` ever reaches
+      ``result.messages`` for this path — that gap is the whole reason
+      ``agent_traces.tools_used`` was ``[]`` for every claude-code-driven turn
+      for 30+ days straight (OBS-1). ``run_turn`` recovers this from the
+      adapter's stream-json parse and threads it through
+      ``result.metadata["tool_calls"]`` (see this module's ``run_turn`` above
+      and ``artemis/providers/claude_code/adapter.py::_parse_stream_json``);
+      callers that build a ``RunResult`` by hand for a single-completion tool
+      run (e.g. ``artemis/builders/executor.py``'s claude-code branch) should
+      set the same ``metadata["tool_calls"]`` key so this function picks it up
+      identically.
+
+    Both sources are merged the same way: first-occurrence-wins dedup, in
+    encounter order. In practice exactly one source is non-empty for any given
+    turn (a turn uses exactly one adapter/path).
+
+    A tool name that failed at least once is recorded as ``"<name>:error"``
+    rather than a bare name. There is no separate error column to use instead
+    — ``agent_traces.tools_used`` is a ``JSONB`` array of strings — and a
+    name-only list would make a tool that ran and errored look identical to a
+    clean success, which is exactly the failure mode this instrument exists to
+    catch (a tool that "ran" and errored is the case that matters most; see
+    the OBS-1 brief).
+    """
+    errors: dict[str, bool] = {}
+
+    for msg in result.messages:
+        if msg.role != "assistant":
+            continue
+        for block in msg.content:
+            if isinstance(block, ToolUseBlock) and block.name not in errors:
+                errors[block.name] = False
+
+    tool_calls = cast(list[ToolCallRecord], result.metadata.get("tool_calls") or [])
+    for call in tool_calls:
+        if call.name not in errors:
+            errors[call.name] = call.is_error
+        elif call.is_error:
+            errors[call.name] = True
+
+    return [f"{name}:error" if is_error else name for name, is_error in errors.items()]
+
+
 # Convenience helpers for callers that don't want to construct Message objects
 # from scratch every time.
 
@@ -247,6 +303,7 @@ def assistant_message(text: str) -> Message:
 
 __all__ = [
     "assistant_message",
+    "collect_tools_used",
     "run_turn",
     "user_message",
 ]

@@ -168,9 +168,10 @@ def test_launch_command_strict_and_permission_mode_no_max_turns() -> None:
     assert cmd[cmd.index("--permission-mode") + 1] == "default"
     assert "--max-turns" not in cmd
     assert "--max-budget-usd" not in cmd
-    # Single JSON result, headless print.
+    # Headless print, stream-json (OBS-2: so tool calls are recoverable).
     assert "-p" in cmd
-    assert cmd[cmd.index("--output-format") + 1] == "json"
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in cmd
     assert cmd[cmd.index("--mcp-config") + 1] == "/tmp/x.json"
 
 
@@ -225,7 +226,9 @@ async def test_run_with_tools_passes_mcp_eager_env(tmp_path: Path) -> None:
     """
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
-    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    # OBS-2: run_with_tools now parses stream-json, so the terminal line needs
+    # "type": "result" to be recognized as the terminal event.
+    payload = json.dumps({"type": "result", "result": "ok", "usage": {}}).encode()
     proc = _mock_proc(payload)
 
     captured_env: dict[str, str] = {}
@@ -258,8 +261,14 @@ async def test_run_with_tools_passes_mcp_eager_env(tmp_path: Path) -> None:
 async def test_run_with_tools_success_returns_completion(tmp_path: Path) -> None:
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    # OBS-2: run_with_tools now parses stream-json; "type": "result" marks
+    # this as the terminal event.
     payload = json.dumps(
-        {"result": "Wrote 3 signals.", "usage": {"input_tokens": 120, "output_tokens": 45}}
+        {
+            "type": "result",
+            "result": "Wrote 3 signals.",
+            "usage": {"input_tokens": 120, "output_tokens": 45},
+        }
     ).encode()
     proc = _mock_proc(payload)
 
@@ -290,6 +299,132 @@ async def test_run_with_tools_success_returns_completion(tmp_path: Path) -> None
     # Temp MCP config was created and unlinked.
     assert created_paths, "expected the temp MCP config to be unlinked"
     assert not Path(created_paths[-1]).exists()
+
+
+# ── 5a. OBS-2: run_with_tools populates CompletionResponse.tool_calls ────────────
+#
+# Line shapes mirror test_claude_code_adapter.py's _assistant_line /
+# _tool_result_line / _result_line helpers (not imported directly — kept
+# local so this test file has no cross-test-module coupling).
+
+
+def _tool_use_line(*, tool_use_id: str, name: str) -> str:
+    return json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": tool_use_id, "name": name, "input": {}}],
+            },
+        }
+    )
+
+
+def _tool_result_stream_line(
+    *, tool_use_id: str, is_error: bool = False, content: str = "ok"
+) -> str:
+    block: dict[str, object] = {
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": content,
+    }
+    if is_error:
+        block["is_error"] = True
+    return json.dumps({"type": "user", "message": {"role": "user", "content": [block]}})
+
+
+def _terminal_result_line(*, result: str = "Done.", is_error: bool = False) -> str:
+    return json.dumps(
+        {
+            "type": "result",
+            "is_error": is_error,
+            "result": result,
+            "usage": {"input_tokens": 5, "output_tokens": 10},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools_populates_tool_calls_from_stream_json(tmp_path: Path) -> None:
+    """OBS-2's core positive path: a scout/pipeline agent run that actually
+    calls a tool must land that call on CompletionResponse.tool_calls — this
+    is what agent_traces.tools_used is built from downstream
+    (artemis/builders/executor.py)."""
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    transcript = "\n".join(
+        [
+            _tool_use_line(tool_use_id="t1", name="mcp__artemis__signal_queue_write"),
+            _tool_result_stream_line(tool_use_id="t1"),
+            _terminal_result_line(result="Wrote 1 signal."),
+        ]
+    )
+    proc = _mock_proc(transcript.encode())
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        resp = await adapter.run_with_tools(
+            _request(),
+            agent_id="marketing.scout.regional_news",
+            run_id="RUN-OBS2-TOOLCALLS",
+            pipeline_run_id="PIPE-OBS2",
+            agent_tools=_REGIONAL_NEWS_TOOLS,
+        )
+
+    from artemis.agent.types import ToolCallRecord
+
+    assert resp.tool_calls == [ToolCallRecord(name="signal_queue_write", is_error=False)]
+    assert isinstance(resp.message.content[0], TextBlock)
+    assert resp.message.content[0].text == "Wrote 1 signal."
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools_records_tool_failure_as_error(tmp_path: Path) -> None:
+    """A tool that errored during the run is reported with is_error=True —
+    this is the exact signal that was missing during the Argus outage."""
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    transcript = "\n".join(
+        [
+            _tool_use_line(tool_use_id="t1", name="mcp__artemis__dispatch_research"),
+            _tool_result_stream_line(tool_use_id="t1", is_error=True, content="boom"),
+            _terminal_result_line(result="Something went wrong."),
+        ]
+    )
+    proc = _mock_proc(transcript.encode())
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        resp = await adapter.run_with_tools(
+            _request(),
+            agent_id="marketing.scout.regional_news",
+            run_id="RUN-OBS2-TOOLFAIL",
+            pipeline_run_id=None,
+            agent_tools=_REGIONAL_NEWS_TOOLS,
+        )
+
+    from artemis.agent.types import ToolCallRecord
+
+    assert resp.tool_calls == [ToolCallRecord(name="dispatch_research", is_error=True)]
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools_no_tools_called_yields_empty_list(tmp_path: Path) -> None:
+    """A run with zero tool calls reports an empty list, not None — a
+    positive "zero calls" signal (see _parse_stream_json's contract)."""
+    binary = _make_executable(tmp_path)
+    adapter = ClaudeCodeAdapter(binary_path=str(binary))
+    transcript = _terminal_result_line(result="Nothing to do this run.")
+    proc = _mock_proc(transcript.encode())
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+        resp = await adapter.run_with_tools(
+            _request(),
+            agent_id="marketing.scout.regional_news",
+            run_id="RUN-OBS2-NOTOOLS",
+            pipeline_run_id=None,
+            agent_tools=_REGIONAL_NEWS_TOOLS,
+        )
+
+    assert resp.tool_calls == []
 
 
 # ── 6. failure surfacing + cleanup ───────────────────────────────────────────────
@@ -517,13 +652,15 @@ async def test_complete_with_tools_builder_uses_stream_json_output_format(
 
 
 @pytest.mark.asyncio
-async def test_run_with_tools_still_uses_plain_json_output_format(tmp_path: Path) -> None:
-    """OBS-1 scope guard: run_with_tools (CC2, pipeline agents) must be left
-    on --output-format json — only the Builder/Floating Artemis MCP branches
-    of _complete_with_tools switch to stream-json."""
+async def test_run_with_tools_now_uses_stream_json_output_format(tmp_path: Path) -> None:
+    """OBS-2: run_with_tools (CC2, pipeline/builder agents) now runs on
+    --output-format stream-json --verbose, same as the Builder/Floating
+    Artemis MCP branches of _complete_with_tools (OBS-1) — this was the
+    explicitly-scoped-out follow-up (see the OBS-1 brief's item #2, and the
+    adapter module docstring's OBS-2 note)."""
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
-    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    payload = json.dumps({"type": "result", "result": "ok", "usage": {}}).encode()
     proc = _mock_proc(payload)
 
     captured_cmd: list[str] = []
@@ -536,13 +673,13 @@ async def test_run_with_tools_still_uses_plain_json_output_format(tmp_path: Path
         await adapter.run_with_tools(
             _request(),
             agent_id="marketing.scout.regional_news",
-            run_id="RUN-OBS1-SCOPE",
+            run_id="RUN-OBS2-SCOPE",
             pipeline_run_id=None,
             agent_tools=_REGIONAL_NEWS_TOOLS,
         )
 
-    assert captured_cmd[captured_cmd.index("--output-format") + 1] == "json"
-    assert "--verbose" not in captured_cmd
+    assert captured_cmd[captured_cmd.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in captured_cmd
 
 
 @pytest.mark.asyncio
@@ -718,7 +855,9 @@ async def test_run_with_tools_sets_claude_config_dir_for_mapped_agent(tmp_path: 
     """
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
-    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    # OBS-2: run_with_tools now parses stream-json, so the terminal line needs
+    # "type": "result" to be recognized as the terminal event.
+    payload = json.dumps({"type": "result", "result": "ok", "usage": {}}).encode()
     proc = _mock_proc(payload)
 
     captured_env: dict[str, str] = {}
@@ -753,7 +892,9 @@ async def test_run_with_tools_no_claude_config_dir_by_default(tmp_path: Path) ->
     """
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
-    payload = json.dumps({"result": "ok", "usage": {}}).encode()
+    # OBS-2: run_with_tools now parses stream-json, so the terminal line needs
+    # "type": "result" to be recognized as the terminal event.
+    payload = json.dumps({"type": "result", "result": "ok", "usage": {}}).encode()
     proc = _mock_proc(payload)
 
     captured_env: dict[str, str] = {}

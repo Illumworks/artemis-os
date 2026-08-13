@@ -22,7 +22,7 @@ from artemis.agent.client import (
     ModelAdapter,
 )
 from artemis.agent.hooks import HookCallback, HookEvent, HookRegistry, fire_and_forget
-from artemis.agent.loop import assistant_message, run_turn, user_message
+from artemis.agent.loop import assistant_message, collect_tools_used, run_turn, user_message
 from artemis.agent.tools import ToolEntry, ToolRegistry
 from artemis.agent.types import (
     Block,
@@ -66,8 +66,9 @@ __all__ = [
     "ToolUseBlock",
     "Usage",
     "assistant_message",
-    "fire_and_forget",
     # loop
+    "collect_tools_used",
+    "fire_and_forget",
     "run_turn",
     "user_message",
 ]

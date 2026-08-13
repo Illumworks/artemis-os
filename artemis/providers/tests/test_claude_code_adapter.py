@@ -628,8 +628,10 @@ async def test_run_subprocess_stream_json_no_tool_calls(tmp_path: Path) -> None:
 
 
 async def test_run_subprocess_default_parse_mode_is_json_unchanged(tmp_path: Path) -> None:
-    """parse_mode defaults to "json" — existing callers that never pass it
-    (run_with_tools / CC2 pipeline path) are completely unaffected."""
+    """parse_mode defaults to "json" — any caller that never passes it is
+    unaffected. (run_with_tools / CC2 now explicitly passes "stream-json" as
+    of OBS-2; this test pins _run_subprocess's own default, independent of
+    what any particular caller chooses to pass.)"""
     binary = _make_executable(tmp_path)
     adapter = ClaudeCodeAdapter(binary_path=str(binary))
     payload = json.dumps({"result": "unaffected", "usage": {}}).encode()
