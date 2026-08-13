@@ -598,3 +598,50 @@ async def test_supersede_refuses_self_supersession(db_session: AsyncSession) -> 
     row = await db_session.get(MemoryObservation, obs_id)
     assert row is not None
     assert row.superseded_by is None, "it must remain retrievable"
+
+
+@pytest.mark.asyncio
+async def test_rewriting_superseded_content_reactivates_it(db_session: AsyncSession) -> None:
+    """Re-asserted content must come back ACTIVE, not as a retired row.
+
+    The trap, hit three separate times on 2026-08-13: ``write_observation``
+    dedupes on content hash and returns the existing row. If that row had been
+    superseded, the caller got a retired observation back, its drawer/dimension
+    pointed at a dead end, and the value disappeared from retrieval entirely —
+    worse than keeping the old one or writing a new one, and completely silent.
+
+    Argus made it reproducible: its synthesis prompt hard-codes the exact string
+    "Insufficient data from available sources.", so any dimension whose honest
+    answer stays insufficient across a same-day re-research run generates a
+    byte-identical hash and collides with an already-superseded row.
+    """
+    from artemis.memory.store import supersede_observation, write_observation
+
+    scope = Scope(scope_kind="agent", scope_id="reactivation-test")
+    content = "Insufficient data from available sources."
+
+    first = await write_observation(db_session, scope=scope, content=content, category="warning")
+    await db_session.flush()
+    first_id = int(first.id)
+
+    replacement = await write_observation(
+        db_session, scope=scope, content="something better", category="warning"
+    )
+    await db_session.flush()
+    await supersede_observation(db_session, first_id, int(replacement.id))
+    await db_session.flush()
+
+    retired = await db_session.get(MemoryObservation, first_id)
+    assert retired is not None and retired.superseded_by is not None, "precondition"
+
+    # Same content asserted again — the dedup path returns first_id.
+    again = await write_observation(db_session, scope=scope, content=content, category="warning")
+    await db_session.flush()
+
+    assert int(again.id) == first_id, "dedup should still match on content hash"
+    row = await db_session.get(MemoryObservation, first_id)
+    assert row is not None
+    assert row.superseded_by is None, (
+        "re-asserted content must be reactivated, or the caller silently gets a "
+        "retired row and the value vanishes from retrieval"
+    )

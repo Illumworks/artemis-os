@@ -298,6 +298,31 @@ async def write_observation(
         )
     )
     row = result.scalar_one()
+
+    # Content-hash dedup returned an existing row — and it may be a SUPERSEDED
+    # one, which is a data-loss trap that bit three separate times on 2026-08-13.
+    #
+    # The caller is asserting this content as true right now. Handing back a row
+    # that has been retired means the caller's dimension/drawer ends up pointing
+    # at a dead end and disappears from retrieval entirely — worse than either
+    # keeping the old value or writing a new one, and completely silent.
+    #
+    # How it happens in practice: Argus's synthesis prompt hard-codes the exact
+    # string "Insufficient data from available sources.", so any dimension whose
+    # honest answer stays insufficient across a same-day re-research run produces
+    # a byte-identical hash and collides with a row that was already superseded
+    # by an earlier attempt.
+    #
+    # Re-asserted content is current content, so reactivate it.
+    if row.superseded_by is not None:
+        _logger.info(
+            "write_observation: reactivating superseded observation %s -- its content "
+            "was just re-asserted (content-hash dedup matched a retired row)",
+            row.id,
+        )
+        row.superseded_by = None
+        await session.flush()
+
     obs = Observation.model_validate(row)
     await _embed_and_store(session, "observation", obs.id, content, embedding_provider)
 
