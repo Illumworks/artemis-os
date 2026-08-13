@@ -1060,7 +1060,30 @@ async def _serve_floating_artemis(
     owner memory. Only when it is absent (tests / legacy callers) do we fall back
     to loading agent_id from persisted session metadata. If neither resolves,
     agent_id is None and every memory query returns empty (fail-closed).
+
+    **Sets ``floating_session_id_var`` / ``floating_trusted_agent_id_var`` here,
+    and that is load-bearing.** This function runs in a SUBPROCESS. The parent
+    turn handler sets those contextvars in its own process, and contextvars do
+    not cross a process boundary — so any tool that reads them was reading
+    ``None`` no matter what the parent did.
+
+    What that cost (2026-08-12): ``dispatch_research`` reads
+    ``floating_session_id_var`` to resolve the Slack channel Argus should post
+    findings to. It got None, resolution failed instantly, and the tool took an
+    early-return path that skips both the DB row and the background task — while
+    still returning ``{"status": "dispatched"}``. Callie relayed that in good
+    faith to Jon and to Josh for five weeks. ``argus_research_requests`` was
+    empty the entire time: Argus had never run once.
     """
+    from artemis.floating_artemis.context import (
+        floating_session_id_var,
+        floating_trusted_agent_id_var,
+    )
+
+    floating_session_id_var.set(floating_session_id)
+    if trusted_agent_id:
+        floating_trusted_agent_id_var.set(trusted_agent_id)
+
     async with SessionLocal() as session:
         # M3: prefer the trusted agent_id from the live caller; never trust
         # persisted metadata when a trusted value was forwarded.

@@ -156,13 +156,35 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
     channel_id, team_id = await _resolve_channel_and_team(session_id)
 
     if not channel_id:
-        _logger.warning(
-            "dispatch_research: no channel_id resolved for session_id=%r — "
-            "cannot post Argus findings back to Slack",
+        # NOT "dispatched". This path persists nothing and starts nothing, and
+        # for five weeks it said otherwise: Callie relayed "Argus is running" to
+        # Jon and to Josh on the strength of this return value while
+        # argus_research_requests stayed empty. A tool that reports success for
+        # work it did not do turns a plumbing bug into an agent misleading a
+        # colleague, and the agent has no way to know better.
+        #
+        # The underlying cause is fixed (artemis/tools/mcp_server.py now sets
+        # floating_session_id_var inside the MCP subprocess, which cannot inherit
+        # it). This stays fail-loud anyway: the next thing to break this
+        # resolution must announce itself rather than be narrated as success.
+        _logger.error(
+            "dispatch_research: NOT DISPATCHED — no channel_id resolved for "
+            "session_id=%r, so there is nowhere to post findings. Nothing was "
+            "persisted and no research was started.",
             session_id,
         )
         return json.dumps(
-            {"status": "dispatched", "district": district_key, "warning": "no_channel_resolved"}
+            {
+                "status": "failed",
+                "district": district_key,
+                "error": "no_channel_resolved",
+                "detail": (
+                    "Research was NOT started. I could not work out which Slack "
+                    "channel to post findings to, so nothing was queued and "
+                    "nothing is running. Say so plainly rather than reporting "
+                    "this as dispatched, and do not promise findings later."
+                ),
+            }
         )
 
     # ── Persist a pending row BEFORE firing the task ───────────────────────────

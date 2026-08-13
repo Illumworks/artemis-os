@@ -309,8 +309,14 @@ async def test_no_channel_id_skips_slack_post() -> None:
         result_str = await _dispatch_research({"district_key": "TX-004"})
 
     result = json.loads(result_str)
-    assert result["status"] == "dispatched"
-    assert result["warning"] == "no_channel_resolved"
+    # This assertion used to read status == "dispatched", and that passing test
+    # is why the bug shipped. Nothing is persisted and nothing is started on this
+    # path, so reporting success made Callie tell Jon and Josh for five weeks
+    # that Argus was running while argus_research_requests stayed empty. A tool
+    # must not claim work it did not do -- the agent has no way to know better.
+    assert result["status"] == "failed"
+    assert result["error"] == "no_channel_resolved"
+    assert "NOT started" in result["detail"]
     assert not safe_post_was_called, "Should not post when channel_id is unknown"
 
 
@@ -372,3 +378,34 @@ async def test_thin_findings_posts_graceful_note() -> None:
     assert len(posted_calls) == 1, "Expected a graceful fallback post even for thin findings"
     assert posted_calls[0]["channel"] == "C5555"
     assert posted_calls[0]["text"].strip()
+
+
+# ── T8: the MCP subprocess must set the session contextvar it cannot inherit ──
+
+
+def test_mcp_subprocess_sets_floating_session_contextvar() -> None:
+    """``_serve_floating_artemis`` must set ``floating_session_id_var`` itself.
+
+    The root cause of the five-week Argus outage (2026-08-12). The parent turn
+    handler sets that contextvar in ITS process; ``_serve_floating_artemis`` runs
+    in a subprocess, and contextvars do not cross a process boundary. So every
+    tool reading it got None regardless of what the parent did --
+    ``dispatch_research`` resolved no channel, took its early return, and
+    persisted nothing while reporting "dispatched".
+
+    Asserted against the source rather than by booting a subprocess: the failure
+    mode is the ABSENCE of a call, and a mocked-out subprocess would not have
+    caught it either (the original had full test coverage and a test that
+    asserted the wrong contract). If this is refactored, keep an assertion that
+    the value reaches a tool, not merely that this line exists.
+    """
+    import inspect
+
+    from artemis.tools import mcp_server
+
+    source = inspect.getsource(mcp_server._serve_floating_artemis)
+    assert "floating_session_id_var.set(floating_session_id)" in source, (
+        "the MCP subprocess must set floating_session_id_var -- it cannot "
+        "inherit it from the parent process"
+    )
+    assert "floating_trusted_agent_id_var.set(trusted_agent_id)" in source
