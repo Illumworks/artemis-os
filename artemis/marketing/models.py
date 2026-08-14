@@ -809,15 +809,42 @@ class CampaignStateTransition(Base):
 
 
 class DistrictContact(Base):
-    """District-side recipient for outbound campaign sends.
+    """District-side recipient for outbound campaign sends, and (CONTACTS-1)
+    Argus-sourced record of a district's named decision-makers.
 
-    Lossless: never hard-deleted — only deactivated via active=False.
-    source enum: 'manual' | 'salesforce' (Salesforce sync seam, not built yet).
+    Lossless for 'manual'/'salesforce' rows — never hard-deleted, only
+    deactivated via active=False (see ``deactivate_contact``).
+
+    'argus' rows are different on purpose: they are real people who did not
+    ask to be in this database, extracted from Argus's research prose. They
+    ARE genuinely, permanently hard-deletable on request (see
+    ``delete_contact`` / ``delete_contacts_for_district`` in
+    ``artemis.marketing.contacts``) — CLAUDE.md rule 3's lossless guarantee
+    covers ``memory_observations``/``memory_drawers``, never this table, and
+    the whole point of CONTACTS-1 is that a removal request here does not
+    require (and must never attempt) editing the observation that reported
+    the name. Deleting a row here only removes the row; the source
+    observation is completely unaffected because it never held a reference
+    the other way — see ``source_observation_id`` below.
+
+    source enum: 'manual' | 'salesforce' (Salesforce sync seam, not built
+    yet) | 'argus' (CONTACTS-1 — extracted from a district_research
+    decision_makers finding; see artemis.argus.contacts).
+
+    email/phone are nullable because 'argus' rows frequently have neither —
+    Argus never synthesizes a contact detail that was not in the source text
+    (no name-convention-guessed email; see the brief's own
+    josh.mukai@/joshua.mukai@ cautionary example). 'manual'/'salesforce' rows
+    still always carry an email in practice (enforced at the
+    ``create_contact`` call site, not by the column), since they exist to be
+    real send targets.
     """
 
     __tablename__ = "district_contacts"
     __table_args__ = (
-        CheckConstraint("source IN ('manual','salesforce')", name="ck_district_contacts_source"),
+        CheckConstraint(
+            "source IN ('manual','salesforce','argus')", name="ck_district_contacts_source"
+        ),
         Index("idx_district_contacts_district_active", "district_id", "active"),
     )
 
@@ -829,10 +856,23 @@ class DistrictContact(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    email: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str | None] = mapped_column(Text, nullable=True)
     phone: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
     external_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # CONTACTS-1: provenance pointer for 'argus' rows -- which
+    # memory_observations row (a decision_makers finding) this contact's
+    # name/title were read from. NULL for 'manual'/'salesforce' rows, which
+    # have no observation. No ON DELETE behaviour: memory_observations rows
+    # are never deleted (CLAUDE.md rule 3), so this FK never has to cope with
+    # a missing target.
+    source_observation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "memory_observations.id", name="fk_district_contacts_source_observation"
+        ),
+        nullable=True,
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False

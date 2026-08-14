@@ -722,6 +722,75 @@ async def _propose_ruleset_change(inp: dict[str, Any]) -> str:
         return f"propose_ruleset_change failed: {exc}"
 
 
+async def _get_district_contacts(inp: dict[str, Any]) -> str:
+    """CONTACTS-1: read-only "who runs district X" lookup.
+
+    Deliberately separate from resolve_person (directory_tools.py, which we
+    must not touch or merge with): resolve_person answers "which INTERNAL
+    Amira staffer is this" from directory_people; this answers "which
+    EXTERNAL district contact do we have on file" from district_contacts.
+    Different tables, different trust models, different failure modes --
+    keeping them apart means a bug in one can never surface as a wrong
+    answer about the other.
+
+    Layer 1 / read-only: no authorization implications, matching the brief.
+    Returns a plain "no contacts on file" for a district with none -- never
+    a guess -- and reports the resolver's own message when a district NAME
+    does not confidently match anything (still never a guess).
+    """
+    district_name = str(inp.get("district") or inp.get("district_name") or "").strip()
+    district_id_raw = inp.get("district_id")
+    state = str(inp.get("state") or "").strip() or None
+
+    if not district_name and district_id_raw in (None, ""):
+        return "Error: district (name) or district_id is required"
+
+    try:
+        import artemis.db as _db
+        from artemis.argus.contacts import list_contacts_for_district_id
+        from artemis.tools.district_resolve import resolve_district
+
+        async with _db.SessionLocal() as session:
+            resolved_name: str | None = None
+            if district_id_raw not in (None, ""):
+                try:
+                    district_id = (
+                        district_id_raw
+                        if isinstance(district_id_raw, int)
+                        else int(str(district_id_raw))
+                    )
+                except ValueError:
+                    return f"Error: district_id={district_id_raw!r} is not a valid integer"
+            else:
+                match = await resolve_district(session, district_name, state)
+                if not match.matched or match.district_id is None:
+                    return (
+                        f"No confident district match for {district_name!r}"
+                        f"{f' in {state}' if state else ''} -- {match.message}"
+                    )
+                district_id = match.district_id
+                resolved_name = match.district_name
+
+            contacts = await list_contacts_for_district_id(session, district_id)
+
+        label = resolved_name or f"district_id={district_id}"
+        if not contacts:
+            return f"No contacts on file for {label}."
+
+        lines = [f"Contacts for {label}:"]
+        for contact in contacts:
+            parts = [contact.name]
+            if contact.title:
+                parts.append(f"({contact.title})")
+            if contact.email:
+                parts.append(f"<{contact.email}>")
+            parts.append(f"[source={contact.source}]")
+            lines.append("  " + " ".join(parts))
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"get_district_contacts failed: {exc}"
+
+
 async def _list_content_assets(inp: dict[str, Any]) -> str:
     limit = int(inp.get("limit", 20))
     status = inp.get("status")
@@ -1012,6 +1081,40 @@ PROPOSE_RULESET_CHANGE = Tool(
     },
 )
 
+GET_DISTRICT_CONTACTS = Tool(
+    name="get_district_contacts",
+    description=(
+        "Look up known decision-makers/contacts for a district by name or "
+        "district_id -- e.g. 'who runs Harford County'. Read-only. Returns "
+        "name/title/email/source per active contact, or a plain 'no contacts "
+        "on file' when there are none (never a guess). 'manual'/'salesforce' "
+        "rows are human-entered send targets; 'argus' rows are extracted from "
+        "Argus's own research prose (name+title only -- no fabricated email or "
+        "phone). This is EXTERNAL district contact data from district_contacts, "
+        "separate from resolve_person (which resolves INTERNAL Amira staff via "
+        "directory_people) -- the two are never merged. "
+        f"{_s} [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "district": {
+                "type": "string",
+                "description": "District name to resolve, e.g. 'Harford County'.",
+            },
+            "district_id": {
+                "type": "integer",
+                "description": "Canonical districts.id, if already known (skips name resolution).",
+            },
+            "state": {
+                "type": "string",
+                "description": "Optional 2-letter state code to disambiguate a name match.",
+            },
+        },
+        "required": [],
+    },
+)
+
 LIST_CONTENT_ASSETS = Tool(
     name="list_content_assets",
     description=f"List content assets in the library. {_s} [layer:1]",
@@ -1084,5 +1187,6 @@ def register_marketing_tools(registry: AuthorizedToolRegistry) -> None:
     registry.register(GET_ACTIVE_RULESETS, _get_active_rulesets, layer=1)
     registry.register(PROPOSE_RULESET_CHANGE, _propose_ruleset_change, layer=3)
     registry.register(LIST_CONTENT_ASSETS, _list_content_assets, layer=1)
+    registry.register(GET_DISTRICT_CONTACTS, _get_district_contacts, layer=1)
     registry.register(LINK_CONTENT_ASSET, _link_content_asset, layer=3)
     registry.register(POST_ANALYST_MESSAGE, _post_analyst_message, layer=3)

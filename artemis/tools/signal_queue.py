@@ -259,15 +259,24 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
                 )
 
         # ROUTING — deterministically classify routing_status based on whether
-        # an active district_contacts row exists for the resolved district.
+        # an active, email-bearing district_contacts row exists for the
+        # resolved district.
         # This is system-controlled (never LLM-controlled) and runs after district
         # resolution so resolved_district_id is already set.
         # A signal is routable iff:
         #   1. resolved_district_id is not NULL (i.e. a canonical district was found), AND
-        #   2. at least one active DistrictContact row exists for that district.
+        #   2. at least one active DistrictContact row with a non-null email exists
+        #      for that district.
         # Everything else (state-level ids, unresolved districts, districts with no
-        # active contact) is marked unrouted_no_contact.  The signal is ALWAYS written
-        # — routing_status is purely a classification label, not a gate.
+        # email-bearing active contact) is marked unrouted_no_contact.  The signal
+        # is ALWAYS written — routing_status is purely a classification label, not
+        # a gate.
+        #
+        # CONTACTS-1: the email filter is required, not optional, now that
+        # 'argus' rows can be active with no email (a person Argus only knows
+        # the name and title of). Without it, a district whose ONLY contact
+        # is an email-less Argus extraction would be marked 'routable' —
+        # claiming a real send target exists when there is nobody to write to.
         routing_status = "unrouted_no_contact"
         if row.resolved_district_id is not None:
             contact_stmt = (
@@ -275,6 +284,7 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
                 .where(
                     DistrictContact.district_id == row.resolved_district_id,
                     DistrictContact.active.is_(True),
+                    DistrictContact.email.isnot(None),
                 )
                 .limit(1)
             )
