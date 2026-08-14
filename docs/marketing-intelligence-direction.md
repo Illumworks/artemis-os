@@ -128,10 +128,56 @@ Measured baseline for why this matters: 60 messages in `#demand-gen-callie` tota
   **108.18.96.219** on Verizon Business; whether that is contractually static is a
   question for the Verizon account owner, not answerable from the machine. Recommend
   not restricting by IP until confirmed — a reassignment presents as an auth failure.
-- **What can Callie actually see?** Jon tested her for internal-information exposure
-  deliberately. Not yet reviewed. This is the one open item with a security edge.
+- **What can Callie actually see?** Reviewed 2026-08-14 — findings below. Awaiting Jon's
+  decision on scope, because narrowing her tools changes what Josh can do mid-test.
 - **Josh's own list.** He is still testing to uncover functionality and will produce
   requirements afterwards. **Do not over-build ahead of it.**
+
+## What Callie can see (reviewed 2026-08-14)
+
+Jon asked because he deliberately probed her for internal-information exposure:
+*"I want to make sure she can't expose internal operating information."* Probed by
+calling her tools directly rather than asking her, since asking an agent what it can do
+is the thing this whole week proved unreliable.
+
+**The structural finding, which matters more than any single tool: Callie is protected
+by accident, not by design.** Kai gets a deliberately tiny registry with an early
+return — three read-only enablement tools plus two identity-gated writes. Callie gets
+the *general* registration path, so she has everything the app offers minus whatever
+happens not to be plugged in.
+
+Her production path (claude-code MCP) exposes **layer ≤ 2 only**
+(`_build_auto_invoke_tool_registry`), which does real work:
+
+**Reachable today, and squarely "internal operating information":**
+
+| tool | what it returns |
+|---|---|
+| `recent_failures` | agent names, error classes, run ids — e.g. `agent=marketing.qualifier.brief_composer error='ClaudeCodeTimeoutError…'` |
+| `list_scopes` | the entire agent roster and scope structure (ares, kai, every marketing sub-agent) |
+| `list_calendars` | Jon's calendar list |
+
+**Blocked only by missing credentials — i.e. latent, not prevented:**
+
+- `list_recent_gmail_messages` → *"No active Gmail read credential found"*
+- `list_recent_meetings` → *"Granola is not connected"*
+
+Connect either integration for any reason and Callie silently gains Jon's inbox and
+meeting transcripts. Nothing in her scope says no; only the absence of a credential does.
+
+**Layer-2 writes she can call with no confirmation:** `run_agent`, `run_workflow`
+(she can invoke other agents), `write_memory`, `stage_okr_updates`.
+
+**Genuinely gated out of production:** `update_okr_kr`, `update_okr_krs`, `update_event`,
+`transition_jira_issue`, `send_slack_message` are all layer 3, and layer 3 is excluded
+from the MCP path. Worth noting anyway that layer-3 confirmation in Slack is answered by
+**whoever replies next in the channel** — so it is not a strong gate for an agent in a
+shared room (this is why CALLIE-1's DM tool is layer 2 with its own allowlist instead).
+
+**Recommended fix:** give Callie a scoped registry in the shape of Kai's — marketing and
+signal surfaces, explicitly listed — rather than "everything minus what is unplugged."
+Not done yet: removing tools changes what Josh can do while he is mid-test, so it is
+Jon's call when to narrow it.
 
 ## How we work (earned the hard way this week)
 
