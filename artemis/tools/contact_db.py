@@ -1,6 +1,7 @@
 """Tool: contact_db_stub.has_contact
 
-Reads district_contacts; returns 'true' if an active contact exists for the district.
+Reads district_contacts; returns 'true' if an active contact with an email
+exists for the district.
 
 Registered at import time via ``register_tool``. Imported by
 ``artemis/tools/__init__.py`` so factories fire on first ``import artemis.tools``.
@@ -9,6 +10,13 @@ districtId resolution:
   - Numeric string (e.g. "123"): queried directly as district_contacts.district_id.
   - Non-numeric string: look up signal_queue rows with matching district_id (text),
     read their resolved_district_id FK, then query contacts there.
+
+CONTACTS-1: this tool means "is there someone we can actually reach" -- it
+gates whether a signal is classified 'routable' (see artemis/tools/signal_queue.py).
+Since 'argus' rows can be active with no email (a person Argus only knows the
+name and title of), the query below requires email IS NOT NULL as well as
+active, or a district with only an email-less Argus contact would be
+misreported as routable when there is in fact nobody to write to.
 """
 
 from __future__ import annotations
@@ -82,6 +90,7 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             .where(
                 DistrictContact.district_id.in_(resolved_district_ids),
                 DistrictContact.active.is_(True),
+                DistrictContact.email.isnot(None),
             )
             .limit(1)
         )

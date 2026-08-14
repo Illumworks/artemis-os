@@ -337,6 +337,45 @@ async def write_district_findings(
                 obs.id,
             )
 
+            # ── CONTACTS-1: going forward, a decision_makers finding also
+            # tries to become a district_contacts row. Same confidence bar as
+            # the retroactive pass (artemis.argus.contacts.extract_person) --
+            # most findings will be skipped, and that is by design, not a
+            # failure of this hook. Deliberately its own try/except: the
+            # observation above has already been durably written by this
+            # point, so a bug in extraction must never take that write down
+            # with it. Deferred import: artemis.argus.contacts imports
+            # Dimension/ARGUS_SCOPE/ARGUS_CATEGORY from THIS module at
+            # module level, so importing it back at module level here would
+            # be circular.
+            if finding.dimension == Dimension.DECISION_MAKERS:
+                try:
+                    from artemis.argus.contacts import extract_and_upsert
+
+                    contact_outcome = await extract_and_upsert(
+                        session,
+                        district_key=district_key,
+                        observation_id=obs.id,
+                        dimension=finding.dimension,
+                        value=finding.value,
+                    )
+                    _logger.info(
+                        "Argus/CONTACTS-1: district_key=%r obs_id=%d -> %s (%s)",
+                        district_key,
+                        obs.id,
+                        contact_outcome.outcome,
+                        contact_outcome.reason,
+                    )
+                except Exception:
+                    _logger.error(
+                        "Argus/CONTACTS-1: contact extraction failed for obs_id=%d "
+                        "district_key=%r (non-fatal; the observation write above "
+                        "already succeeded and stands)",
+                        obs.id,
+                        district_key,
+                        exc_info=True,
+                    )
+
         except Exception:
             _logger.error(
                 "write_district_findings: failed to write dimension=%r for district_key=%r "
