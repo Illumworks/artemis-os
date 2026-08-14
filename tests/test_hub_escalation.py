@@ -492,3 +492,71 @@ def test_hub_escalation_cron_in_config() -> None:
     assert hasattr(s, "hub_escalation_cron")
     # Default is every hour.
     assert s.hub_escalation_cron == "0 * * * *"
+
+
+# ── Addressing Jon is not asking Jon (2026-08-14) ─────────────────────────────
+
+
+_JON = "U09F3EPJXSQ"
+
+# Verbatim from agent_pending_asks — rows the old channel rule created and the
+# hourly sweep then escalated, posting "I'll take this, escalating to Jon" into a
+# live Josh/Callie conversation. Jon: "artemis keeps saying escalating to jon and
+# what not which isnt necessary because its a conversation not a problem."
+_REAL_NON_ASKS = (
+    "<@U09F3EPJXSQ> Yes, Jon. You're coming through clearly.",
+    "<@U09F3EPJXSQ> Confirmed, Jon. I've got you. No @mention needed.",
+    "<@U09F3EPJXSQ> All 12 are genuinely dispatched now, Jon. Argus is running.",
+    "<@U09F3EPJXSQ> Josh is here in this channel with us, so I can just speak to him.",
+)
+
+
+@pytest.mark.parametrize("text", _REAL_NON_ASKS)
+def test_answering_jon_in_a_channel_is_not_a_pending_ask(text: str) -> None:
+    """Callie opens nearly every reply with Jon's mention as ordinary courtesy.
+
+    A bare mention used to be sufficient in a channel, so her ANSWERS were
+    logged as unanswered asks and escalated a day later.
+    """
+    from artemis.hub.detection import is_pending_ask
+
+    assert is_pending_ask(text, jon_slack_id=_JON, is_dm=False) is False
+
+
+def test_a_real_question_with_the_mention_appended_still_counts() -> None:
+    """The one genuine ask in the table, and the case a naive fix would break.
+
+    Agents append the addressee AFTER the question, which left the "?" not at
+    end-of-line. Tightening the channel rule without also handling that would
+    have silenced the only real ask while fixing the noise.
+    """
+    from artemis.hub.detection import is_pending_ask
+
+    text = (
+        "Want me to draft the outreach to Kristen, or do you have a way to "
+        "reach her? <@U09F3EPJXSQ>"
+    )
+    assert is_pending_ask(text, jon_slack_id=_JON, is_dm=False) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "<@U09F3EPJXSQ> Should we lead with the RFP or the superintendent angle?",
+        "<@U09F3EPJXSQ> Let me know which you prefer.",
+        "<@U09F3EPJXSQ> Want me to draft that sequence?",
+    ),
+)
+def test_genuine_channel_asks_still_register(text: str) -> None:
+    """The point is to escalate real asks, not to stop escalating."""
+    from artemis.hub.detection import is_pending_ask
+
+    assert is_pending_ask(text, jon_slack_id=_JON, is_dm=False) is True
+
+
+def test_dm_behaviour_is_unchanged() -> None:
+    """In a 1:1 DM every message is to Jon, so a bare question still counts."""
+    from artemis.hub.detection import is_pending_ask
+
+    assert is_pending_ask("Anything else you need?", jon_slack_id=_JON, is_dm=True) is True
+    assert is_pending_ask("<@U09F3EPJXSQ> noted", jon_slack_id=_JON, is_dm=True) is True

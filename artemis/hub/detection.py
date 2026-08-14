@@ -46,6 +46,15 @@ _ASK_PHRASES: tuple[str, ...] = (
     "waiting on you",
     "need your",
     "needs your",
+    # Offers that hand a decision back. Callie phrases most of her real asks
+    # this way ("Want me to draft the outreach, or ...?"), and without these the
+    # ONE genuine ask in agent_pending_asks was the only row the fixed channel
+    # rule still missed.
+    "want me to",
+    "do you want",
+    "would you like",
+    "shall i",
+    "prefer",
 )
 
 # Regex for a trailing question — catches "..." followed by "?" at end-of-string.
@@ -70,8 +79,20 @@ def _has_ask_phrase(text: str) -> bool:
     return any(phrase in lower for phrase in _ASK_PHRASES)
 
 
+# Trailing @-mentions and whitespace, e.g. "... reach her? <@U09F3EPJXSQ>".
+_TRAILING_ADDRESSEES_RE = re.compile(r"(?:\s|<@[A-Z0-9]+>|@[A-Za-z][\w.-]*)+$", re.IGNORECASE)
+
+
 def _has_trailing_question(text: str) -> bool:
-    return bool(_TRAILING_QUESTION_RE.search(text))
+    """True if the text ends with a question, ignoring trailing @-mentions.
+
+    Agents commonly append the addressee AFTER the question ("...reach her?
+    <@JON>"), which left the "?" not at end-of-line and made a real question
+    invisible to this check — it was the single genuine ask in
+    agent_pending_asks, and the only one the tightened channel rule missed.
+    """
+    stripped = _TRAILING_ADDRESSEES_RE.sub("", text)
+    return bool(_TRAILING_QUESTION_RE.search(stripped))
 
 
 def is_pending_ask(text: str, *, jon_slack_id: str = "", is_dm: bool = False) -> bool:
@@ -83,20 +104,39 @@ def is_pending_ask(text: str, *, jon_slack_id: str = "", is_dm: bool = False) ->
 
     Channel vs DM matters:
       - In a **channel**, an agent talks to many people (e.g. Kai asking Sara
-        "what would be most helpful to know?"). A trailing "?" or an ask-phrase
-        is NOT an ask to Jon. We require an explicit **@-mention of Jon**.
+        "what would be most helpful to know?"). So a mention of Jon is
+        NECESSARY but not sufficient: it must ALSO carry a question or an
+        ask-phrase.
       - In a **1:1 DM with Jon**, every message IS to Jon, so a trailing "?",
         an ask-phrase, or a mention all count.
+
+    Why the channel rule needs both (fixed 2026-08-14). A bare mention used to
+    be enough, and that treats ADDRESSING someone as ASKING them something.
+    Callie opens nearly every reply with ``<@JON>`` as ordinary courtesy, so
+    her answers were logged as unanswered asks and the hourly sweep escalated
+    them a day later — posting "I'll take this, escalating to Jon" into a live
+    conversation. Real rows it created:
+
+        "Yes, Jon. You're coming through clearly."
+        "Confirmed, Jon. I've got you. No @mention needed."
+        "All 12 are genuinely dispatched now, Jon."
+
+    Those are answers and acknowledgements. Jon, 2026-08-14: "artemis keeps
+    saying escalating to jon and what not which isnt necessary because its a
+    conversation not a problem." The module's own docstring already said
+    false-positives are the costly direction; this makes the code agree with it.
     """
     if not text or not text.strip():
         return False
-    if is_jon_mention(text, jon_slack_id=jon_slack_id):
-        return True
     if is_dm:
         # 1:1 DM with Jon — a question / directive ask is inherently to him.
+        if is_jon_mention(text, jon_slack_id=jon_slack_id):
+            return True
         return _has_trailing_question(text) or _has_ask_phrase(text)
-    # Channel: only an explicit @Jon mention counts as an ask directed at him.
-    return False
+    # Channel: addressed to Jon AND actually asking him something.
+    if not is_jon_mention(text, jon_slack_id=jon_slack_id):
+        return False
+    return _has_trailing_question(text) or _has_ask_phrase(text)
 
 
 def extract_summary(text: str, *, max_len: int = 200) -> str:
