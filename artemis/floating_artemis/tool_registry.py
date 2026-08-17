@@ -143,6 +143,14 @@ def _build_callie_tool_registry(
       - register_callie_dm_tool: her guarded, allowlisted DM (CALLIE-1).
         speaker_id is bound as a closure so tool input can never spoof the
         requester (see tools/callie_dm.py).
+      - register_salesforce_tools (SFDC-1): check_salesforce_activity,
+        layer 1, read-only in both directions (never writes to Salesforce --
+        structurally impossible, see
+        artemis.integrations.salesforce.client -- and never writes to
+        district_contacts either, since it calls check_suppression with
+        enrich=False). Lets her answer "is this district already in play?"
+        before drafting, per Jon's "so we are not stepping on people's
+        toes" framing in the SFDC-1 brief.
       - query_memory + write_memory (registered directly from core, NOT via
         register_core_tools): her own continuity. query_memory MUST stay the
         scope-gated variant built by ``_make_query_memory(agent_id)`` -- that
@@ -209,6 +217,14 @@ def _build_callie_tool_registry(
     # include_dm=False is load-bearing -- see "KEEP" above.
     register_slack_tools(registry, include_dm=False)
     register_callie_dm_tool(registry, speaker_id=speaker_id)
+
+    # SFDC-1: check_salesforce_activity, layer 1, read-only. Imported locally
+    # (like LIST_WRITING_RULES above) because this tool is Callie-exclusive --
+    # it is not used by the general path and should not appear in this
+    # module's top-of-file import list as if it were.
+    from artemis.floating_artemis.tools.salesforce_tools import register_salesforce_tools
+
+    register_salesforce_tools(registry)
 
     return registry
 

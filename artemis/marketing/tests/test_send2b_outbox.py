@@ -50,6 +50,29 @@ pytestmark = pytest.mark.asyncio
 _PIPELINE_TRUNCATE = text("TRUNCATE pipeline_runs, pipelines RESTART IDENTITY CASCADE")
 
 
+@pytest.fixture(autouse=True)
+def _sfdc1_stub_salesforce_clear(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SFDC-1 added a Salesforce suppression check at the exact seam this file
+    tests (enqueue_send_for_deliverable's queue-or-skip decision). This file
+    is about send/state-machine MECHANICS, not Salesforce, and has its own
+    sibling suite for that (test_sfdc1_suppression.py). Without Salesforce
+    configured in the test DB, the real check fails closed
+    (skip_reason='salesforce_unavailable') for every recipient by design --
+    which would otherwise turn every "queued" expectation below into
+    "skipped" for a reason this file was never written to exercise. Stub it
+    to a clean "not suppressed" result so this file keeps testing what it
+    has always tested.
+    """
+    from artemis.marketing import salesforce_suppression
+
+    async def _clear(session: object, recipients: object) -> salesforce_suppression.SuppressionResult:  # noqa: ARG001
+        return salesforce_suppression.SuppressionResult(
+            False, None, "stubbed clear -- see SFDC-1's test_sfdc1_suppression.py for the real checks"
+        )
+
+    monkeypatch.setattr(salesforce_suppression, "check_suppression_for_recipients", _clear)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 

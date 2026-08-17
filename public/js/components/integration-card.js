@@ -30,6 +30,13 @@ const _PROVIDER_FIELDS = {
     { key: 'client_id', label: 'OAuth Client ID', helper: 'Optional — only if Granola.app is not installed. Register at mcp-auth.granola.ai.', sensitive: false },
     { key: 'client_secret', label: 'OAuth Client Secret', helper: 'Optional — only if Granola.app is not installed.', sensitive: true },
   ],
+  // SFDC-1: Client Credentials (server-to-server) — no redirect URL, so this
+  // is a config-only provider like Jira, not a real OAuth dance like Slack/GCal.
+  salesforce: [
+    { key: 'client_id', label: 'Client ID (Consumer Key)', helper: 'From Neil — the Connected App configured for the Client Credentials flow.', sensitive: true },
+    { key: 'client_secret', label: 'Client Secret (Consumer Secret)', helper: 'Keep this secret — never share it.', sensitive: true },
+    { key: 'login_url', label: 'Login URL', helper: 'https://login.salesforce.com for production, https://test.salesforce.com for a sandbox, or your My Domain URL.', sensitive: false },
+  ],
 };
 
 function _formatDate(isoString) {

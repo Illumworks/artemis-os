@@ -249,6 +249,56 @@ class Settings(BaseSettings):
         ),
     )
 
+    # SFDC-1: Salesforce read-only suppression guard
+    salesforce_recent_contact_window_days: int = Field(
+        default=90,
+        validation_alias=AliasChoices(
+            "ARTEMIS_SALESFORCE_RECENT_CONTACT_WINDOW_DAYS",
+            "SALESFORCE_RECENT_CONTACT_WINDOW_DAYS",
+        ),
+        description=(
+            "How many days back a logged Salesforce Task with TaskSubtype='Email' against a "
+            "contact counts as 'recently emailed by sales' (skip_reason='recent_sales_contact'). "
+            "Default 90, chosen as a judgment call, not derived from data: shorter (e.g. 30) "
+            "risks re-contacting someone sales just closed out a short exchange with; longer "
+            "(e.g. 180) risks suppressing a genuinely cold contact for half a year over one old "
+            "email. 90 days errs toward the safer direction the brief names explicitly -- an "
+            "unsent email costs a day, a wrongly-sent one costs a relationship -- while still "
+            "letting a contact age out eventually. Jon can move this without a code change."
+        ),
+    )
+    salesforce_customer_field: str = Field(
+        default="Is_Customer__c",
+        validation_alias=AliasChoices(
+            "ARTEMIS_SALESFORCE_CUSTOMER_FIELD",
+            "SALESFORCE_CUSTOMER_FIELD",
+        ),
+        description=(
+            "Salesforce Account field name that means 'is a customer'. UNVERIFIED GUESS -- "
+            "see docs/marketing-intelligence-direction.md's open question and "
+            "scripts/salesforce_introspect.py, which lists the org's real candidates once "
+            "credentials are installed. The suppression guard (artemis.marketing."
+            "salesforce_suppression) checks this field's presence in Account's describe() "
+            "response before trusting it; if the name is wrong, the check fails CLOSED "
+            "(skip_reason='salesforce_unavailable'), never silently 'not a customer'. Update "
+            "this setting once the real field name is confirmed against Neil's org."
+        ),
+    )
+    salesforce_customer_truthy_values: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_SALESFORCE_CUSTOMER_TRUTHY_VALUES",
+            "SALESFORCE_CUSTOMER_TRUTHY_VALUES",
+        ),
+        description=(
+            "Comma-separated values (case-insensitive) that count as 'is a customer' when "
+            "salesforce_customer_field is a picklist/text field (e.g. Account.Type values like "
+            "'Customer,Customer - Direct'). Empty (default) means the field is treated as a "
+            "plain boolean checkbox: only a literal True counts, so an unrelated picklist "
+            "value can never be misread as truthy."
+        ),
+    )
+
     # M1: lossless memory — archive + backup paths and parameters
     archive_dir: Path = Field(
         default=Path.home() / ".artemis" / "archive",

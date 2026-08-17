@@ -262,6 +262,99 @@ async def create_argus_contact(
     return contact, True
 
 
+# ── SFDC-1: Salesforce-sourced contact enrichment ────────────────────────────
+
+
+async def upsert_salesforce_contact(
+    session: AsyncSession,
+    *,
+    district_id: int,
+    email: str,
+    name: str,
+    title: str | None = None,
+    phone: str | None = None,
+    external_id: str | None = None,
+) -> tuple[DistrictContact, bool]:
+    """Create, or refresh, a Salesforce-sourced contact record.
+
+    Matched on (district_id, lower(email)) regardless of the existing row's
+    ``source`` -- a contact already hand-entered as 'manual' with the same
+    email gets enriched in place rather than duplicated; its ``source`` is
+    left exactly as-is (this function only ever creates NEW rows as
+    'salesforce', it never reclassifies an existing one). This mirrors
+    create_argus_contact's "refresh in place, don't duplicate" contract, and
+    the same reasoning as create_contact's manual-source upsert path (which
+    this function does not call, because that path's insert branch is
+    manual-only and would otherwise insert a duplicate row on every repeated
+    Salesforce sync of the same person).
+
+    Non-destructive by construction -- this is the required behaviour, not
+    an incidental one (see the SFDC-1 brief's "Contact enrichment never
+    overwrites a real email with a null" test):
+      - email is the match key and is always the value already on file;
+        this function never sets it to anything else, let alone null.
+      - title/phone: a blank/None incoming value NEVER clears an existing
+        populated field. Salesforce is treated as MORE authoritative than a
+        hand-entered value only when it actually has something to say --
+        an empty Salesforce field is silence, not a correction.
+      - external_id (the Salesforce Contact Id) is only set when provided.
+
+    Raises ValueError for an empty name/email or a non-existent district_id.
+    Returns (contact, created) -- created=False means an existing row was
+    found and refreshed rather than duplicated.
+    """
+    email_norm = email.strip().lower()
+    if not email_norm:
+        raise ValueError("email must not be empty")
+    name = name.strip()
+    if not name:
+        raise ValueError("name must not be empty")
+
+    district = await session.get(District, district_id)
+    if district is None:
+        raise ValueError(f"district_id={district_id} does not exist")
+
+    stmt = select(DistrictContact).where(
+        DistrictContact.district_id == district_id,
+        func.lower(DistrictContact.email) == email_norm,
+    )
+    existing = (await session.execute(stmt)).scalars().first()
+    if existing is not None:
+        existing.name = name or existing.name
+        if title:
+            existing.title = title
+        if phone:
+            existing.phone = phone
+        if external_id:
+            existing.external_id = external_id
+        existing.active = True
+        existing.updated_at = datetime.now(tz=UTC)
+        await session.flush()
+        logger.debug(
+            "upsert_salesforce_contact: refreshed existing contact_id=%s district_id=%s",
+            existing.id,
+            district_id,
+        )
+        return existing, False
+
+    contact = DistrictContact(
+        district_id=district_id,
+        name=name,
+        title=title,
+        email=email_norm,
+        phone=phone,
+        source="salesforce",
+        external_id=external_id,
+        active=True,
+    )
+    session.add(contact)
+    await session.flush()
+    logger.debug(
+        "upsert_salesforce_contact: created contact_id=%s district_id=%s", contact.id, district_id
+    )
+    return contact, True
+
+
 async def get_contact(session: AsyncSession, contact_id: int) -> DistrictContact | None:
     """Fetch a single contact by id, or None if it does not exist (e.g. already wiped)."""
     return await session.get(DistrictContact, contact_id)

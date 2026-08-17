@@ -380,6 +380,70 @@ async def jira_oauth_start_compat(
     return {"url": "/?jira_connected=1"}
 
 
+@router.get("/salesforce/oauth/start")
+async def salesforce_oauth_start_compat(
+    session: AsyncSession = Depends(db.get_session),  # noqa: B008
+) -> dict[str, str]:
+    """Salesforce (SFDC-1) uses OAuth 2.0 Client Credentials -- server-to-server,
+    no user redirect. Mirrors jira_oauth_start_compat above: verify the saved
+    credentials against a real Salesforce token exchange, then create the
+    integration row so the existing front-end Connect-button flow Just Works
+    for Salesforce the same way it does for Jira.
+    """
+    from artemis.integrations import crypto
+    from artemis.integrations.config_resolver import resolve_salesforce_config
+    from artemis.integrations.salesforce.client import SalesforceAuthError, fetch_access_token
+
+    try:
+        cfg = await resolve_salesforce_config(session)
+    except MissingProviderConfigError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Salesforce credentials incomplete: {', '.join(exc.missing_fields)}",
+        ) from exc
+
+    try:
+        # The token exchange itself IS the verification here -- unlike Jira's
+        # basic auth, Salesforce's Client Credentials grant rejects bad
+        # credentials at this exact step, so no separate API call is needed
+        # to prove the creds work (contrast jira_oauth_start_compat above,
+        # which must call get_overview because a token exchange has no
+        # jira-side equivalent to fail on). The token itself is not persisted
+        # -- see resolve_salesforce_config's docstring on why a fresh one is
+        # fetched per suppression check instead of cached.
+        await fetch_access_token(
+            login_url=cfg.login_url, client_id=cfg.client_id, client_secret=cfg.client_secret
+        )
+    except SalesforceAuthError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Salesforce rejected your credentials ({exc}). Double-check the Client ID, "
+                "Client Secret, and Login URL, and confirm with Neil that the Connected App's "
+                "OAuth policy permits the Client Credentials flow for the integration user."
+            ),
+        ) from exc
+
+    creds_blob = crypto.encrypt_credentials(
+        {
+            "client_id": cfg.client_id,
+            "client_secret": cfg.client_secret,
+            "login_url": cfg.login_url,
+        }
+    )
+    await repo.upsert_integration(
+        session,
+        provider="salesforce",
+        workspace_id=cfg.login_url,
+        display_name=cfg.login_url.replace("https://", "").rstrip("/"),
+        encrypted_credentials=creds_blob,
+        scopes=None,
+    )
+    await session.commit()
+
+    return {"url": "/?salesforce_connected=1"}
+
+
 @router.get("/gcal/oauth/callback")
 async def gcal_oauth_callback(
     code: str = Query(...),
