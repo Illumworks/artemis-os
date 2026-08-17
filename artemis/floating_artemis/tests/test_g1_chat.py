@@ -265,6 +265,12 @@ async def test_handle_turn_layer3_tool_yields() -> None:
             session_id="test-session-layer3",
             user_text="Create a new agent for me",
             adapter=adapter,
+            # CALLIE-2 scoped agent_id="callie" (the fail-closed default with no
+            # session metadata) down to marketing tools only, so propose_agent
+            # (a generic layer-3 tool used here to exercise staging) is no
+            # longer in her registry. Pin to Artemis explicitly -- this test is
+            # about handle_turn's staging mechanics, not Callie's tool set.
+            trusted_agent_id="artemis",
         )
 
     assert result.stop_reason == "tool_pending"
@@ -311,6 +317,9 @@ async def test_handle_turn_persists_assistant_tool_use_and_resume_keeps_prior_re
             session_id=session_id,
             user_text="Search memory, then stage the agent.",
             adapter=adapter_first,
+            # See test_handle_turn_layer3_tool_yields: propose_agent is no
+            # longer in Callie's CALLIE-2 registry, so pin to Artemis.
+            trusted_agent_id="artemis",
         )
 
     assert turn1.stop_reason == "tool_pending"
@@ -356,6 +365,7 @@ async def test_handle_turn_persists_assistant_tool_use_and_resume_keeps_prior_re
             tool_use_id="fa-pa-1",
             decision="run",
             adapter=adapter_resume,
+            trusted_agent_id="artemis",
         )
 
     assert turn2.response_text == "Proposal staged and ready."
@@ -411,6 +421,12 @@ async def test_handle_turn_claude_code_tool_turn_sets_session_context() -> None:
             session_id="fa-session-tools",
             user_text="Search memory for Jon.",
             adapter=adapter,
+            # CALLIE-2 scoped agent_id="callie" (the fail-closed default with no
+            # session metadata) down to marketing tools only, so propose_agent
+            # is no longer in her registry. Pin to Artemis explicitly -- this
+            # test is about tool-registry wiring into the ClaudeCode path, not
+            # Callie's tool set.
+            trusted_agent_id="artemis",
         )
 
     assert result.response_text == "Used the memory tools."
@@ -449,6 +465,9 @@ async def test_handle_turn_resume_after_confirm_run() -> None:
             session_id="test-confirm-session",
             user_text="Propose agent",
             adapter=adapter_first,
+            # See test_handle_turn_layer3_tool_yields: propose_agent is no
+            # longer in Callie's CALLIE-2 registry, so pin to Artemis.
+            trusted_agent_id="artemis",
         )
 
     assert turn1.stop_reason == "tool_pending"
@@ -467,6 +486,7 @@ async def test_handle_turn_resume_after_confirm_run() -> None:
             tool_use_id=pending_id,
             decision="run",
             adapter=adapter_resume,
+            trusted_agent_id="artemis",
         )
 
     assert turn2.response_text == "Agent proposal submitted."
@@ -497,6 +517,9 @@ async def test_handle_turn_resume_after_confirm_cancel() -> None:
             session_id="test-cancel-session",
             user_text="Propose agent Y",
             adapter=adapter_first,
+            # See test_handle_turn_layer3_tool_yields: propose_agent is no
+            # longer in Callie's CALLIE-2 registry, so pin to Artemis.
+            trusted_agent_id="artemis",
         )
 
     assert turn1.stop_reason == "tool_pending"
@@ -514,6 +537,7 @@ async def test_handle_turn_resume_after_confirm_cancel() -> None:
             tool_use_id=pending_id,
             decision="cancel",
             adapter=adapter_resume,
+            trusted_agent_id="artemis",
         )
 
     assert turn2.stop_reason == "end_turn"

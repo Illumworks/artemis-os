@@ -107,6 +107,96 @@ def _build_ares_tool_registry(
     return registry
 
 
+def _build_callie_tool_registry(
+    agent_id: str,
+    speaker_id: str | None = None,
+    participants: list[str] | None = None,
+) -> AuthorizedToolRegistry:
+    """Build Callie's registry: marketing/signal surfaces, explicitly listed (CALLIE-2).
+
+    Before this, Callie fell through to the general registration path below and
+    held everything the app offers minus whatever happened not to be plugged
+    in -- protected by accident (missing Gmail/Granola credentials), not by
+    design. See ``docs/marketing-intelligence-direction.md`` ("What Callie can
+    see", reviewed 2026-08-14) for the finding and
+    ``briefs/callie-2-scoped-registry.md`` for the keep/drop analysis this
+    function executes verbatim.
+
+    KEEP -- everything she demonstrably needs for marketing work:
+      - register_directory_tools: name -> person resolution, with the
+        ambiguity fix from 2026-08-12 (participants breaks naming ties).
+      - register_marketing_tools: signals, candidates, get_district_contacts.
+        Her job.
+      - register_argus_tools: dispatch_research (Callie-only; Josh asks for
+        this constantly).
+      - register_writing_rules_tools: she drafts copy and needs the house
+        rules.
+      - register_screentime_report_tools: she reports the screentime section
+        on request.
+      - register_slack_tools(include_dm=False): read/post channels. NOT
+        send_slack_dm -- that raw DM tool has no allowlist of its own and is
+        gated only by a layer-3 "operator confirmation" that, in a shared
+        Slack channel, is answered by whoever replies next. Leaving it live
+        alongside send_guarded_dm would make CALLIE-1's guard decorative: a
+        determined requester (or the model itself) could just ask for
+        send_slack_dm instead and reach anyone with no allowlist check at all.
+      - register_callie_dm_tool: her guarded, allowlisted DM (CALLIE-1).
+        speaker_id is bound as a closure so tool input can never spoof the
+        requester (see tools/callie_dm.py).
+      - query_memory + write_memory (registered directly from core, NOT via
+        register_core_tools): her own continuity. query_memory MUST stay the
+        scope-gated variant built by ``_make_query_memory(agent_id)`` -- that
+        is the M3 security control. Swapping it for the ungated
+        ``_query_memory`` would WIDEN her memory reach, not narrow it; that
+        is the one line in this function most worth re-checking on review.
+
+    DROP -- everything else, deliberately not registered here:
+      - register_builders_tools (run_agent, run_workflow, spawn_subagent,
+        list_agents/workflows/skills/chains/dags, propose_agent/workflow/skill)
+      - register_system_tools (health_check, recent_failures, propose_fix)
+      - register_gcal_tools, register_gmail_tools, register_granola_tools --
+        personal data. These are registered unconditionally on the general
+        path for every agent, so before this fix, connecting either
+        integration for any unrelated reason would have silently given
+        Callie Jon's inbox and meeting transcripts.
+      - register_okr_tools -- CLAUDE.md flags OKR Studio rows as an
+        owner-judgment surface.
+      - register_jira_tools.
+      - from core: read_file, propose_edit, list_scopes, surface_status,
+        list_routes, set_pref, set_brief_exclusion, clear_brief_exclusion,
+        spawn_subagent, and the Forge/git tools (already absent for her --
+        kept absent).
+
+    Like Kai's and Ares's registries, this is an early return that does NOT
+    fall through to the general tool registrations below. A future
+    register_* added to that general path must not silently reach Callie --
+    it has to be added here, explicitly, or she never sees it.
+    """
+    from artemis.floating_artemis.tools.core import (
+        QUERY_MEMORY,
+        WRITE_MEMORY,
+        _make_query_memory,
+        _write_memory,
+    )
+
+    registry = AuthorizedToolRegistry()
+    # M3: query_memory is gated to Callie's own scope allowance -- see the
+    # docstring above. Do not swap this for the ungated `_query_memory`.
+    registry.register(QUERY_MEMORY, _make_query_memory(agent_id), layer=1)
+    registry.register(WRITE_MEMORY, _write_memory, layer=2)
+
+    register_directory_tools(registry, participants=participants)
+    register_marketing_tools(registry)
+    register_argus_tools(registry)
+    register_writing_rules_tools(registry)
+    register_screentime_report_tools(registry)
+    # include_dm=False is load-bearing -- see "KEEP" above.
+    register_slack_tools(registry, include_dm=False)
+    register_callie_dm_tool(registry, speaker_id=speaker_id)
+
+    return registry
+
+
 def build_authorized_tool_registry(
     available_surfaces: set[str],
     agent_id: str | None = None,
@@ -151,6 +241,18 @@ def build_authorized_tool_registry(
       flag_catalog_gap and update_asset_summary. He receives none of the
       unconditional tools (core/builders/system/slack/gcal/gmail). This enforces
       the security-critical scope_policy: enablement-scoped, near-read-only.
+
+    Special case — Callie (CALLIE-2):
+      Callie's registry is built entirely by ``_build_callie_tool_registry``:
+      marketing/signal tools, dispatch_research, her guarded DM, Slack
+      read/post (no raw DM), writing rules, screentime reporting, directory
+      resolution, and scope-gated query_memory/write_memory. She receives
+      NONE of the unconditional tools registered below for the general path
+      (no builders/system/gcal/gmail/granola/okr/jira, no core read_file /
+      propose_edit / list_scopes / surface_status / list_routes /
+      spawn_subagent). Before this she fell through to the path below and
+      held everything not gated off by a missing surface or credential; see
+      ``docs/marketing-intelligence-direction.md`` ("What Callie can see").
     """
     normalized_agent = (agent_id or "").strip().lower()
 
@@ -164,6 +266,13 @@ def build_authorized_tool_registry(
     # Early return — no fallthrough to the general tool registrations.
     if normalized_agent == "ares":
         return _build_ares_tool_registry(agent_id or "ares", project_path=project_path)
+
+    # SECURITY: Callie gets a hand-picked marketing/signal registry (CALLIE-2).
+    # Early return — no fallthrough to the general tool registrations.
+    if normalized_agent == "callie":
+        return _build_callie_tool_registry(
+            agent_id or "callie", speaker_id=speaker_id, participants=participants
+        )
 
     registry = AuthorizedToolRegistry()
     register_core_tools(registry, agent_id=agent_id)
@@ -179,36 +288,16 @@ def build_authorized_tool_registry(
         register_writing_rules_tools(registry)
     if "marketing-os" in available_surfaces or "signal-queue" in available_surfaces:
         register_marketing_tools(registry)
-    # CALLIE-1: send_slack_dm is a raw, unauthenticated-by-content DM tool
-    # gated ONLY by a layer-3 "operator confirmation" — which in the Slack
-    # path is answered by whoever is already chatting with the agent in that
-    # same channel. For Callie specifically, that channel can hold many
-    # people (that is the whole reason her requester allowlist matters —
-    # see tools/callie_dm.py's module docstring), so leaving this tool live
-    # for her alongside send_guarded_dm would make the new guard decorative:
-    # a determined requester (or the model itself) could just ask for
-    # send_slack_dm instead and reach anyone with no allowlist check at all.
-    # Artemis keeps it: her inbound gate is a small, explicit USER allowlist
-    # (a privacy boundary, not a shared channel), so the same proxying risk
-    # does not apply there in the same way, and widening that is out of
-    # scope for CALLIE-1.
-    register_slack_tools(registry, include_dm=normalized_agent != "callie")
+    # send_slack_dm: Callie no longer reaches this path at all (see
+    # _build_callie_tool_registry's early return above), so include_dm is
+    # unconditionally True here now -- every remaining caller of this general
+    # path (Artemis, and any future non-special-cased agent) keeps the raw
+    # send_slack_dm tool, same as before CALLIE-1.
+    register_slack_tools(registry)
     register_gcal_tools(registry)
     register_gmail_tools(registry)
     if "jira-board" in available_surfaces:
         register_jira_tools(registry)
     if "meetings" in available_surfaces:
         register_granola_tools(registry)
-    # Argus dispatch tool: available to callie only.
-    # Callie is the face for Argus; no other agent should see this tool.
-    if normalized_agent == "callie":
-        register_argus_tools(registry)
-        # On-demand Screen-Time & AI-policy report: Callie only, read-only,
-        # fires on request (no scheduler, no auto-push). See
-        # artemis/screentime/callie_report.py + tools/screentime_tools.py.
-        register_screentime_report_tools(registry)
-        # CALLIE-1: her one initiating capability. speaker_id is bound as a
-        # closure so tool input can never spoof the requester (see
-        # tools/callie_dm.py).
-        register_callie_dm_tool(registry, speaker_id=speaker_id)
     return registry
