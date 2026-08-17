@@ -643,8 +643,15 @@ def test_register_slack_tools_can_exclude_dm() -> None:
 
 
 def test_tool_registry_module_wires_callie_dm_tool() -> None:
-    """Guards against the registration call being silently dropped in a future edit."""
+    """Guards against the registration call being silently dropped in a future edit.
+
+    CALLIE-2 moved Callie's registration out of the general fallthrough path
+    and into her own early-return builder (``_build_callie_tool_registry``),
+    in the shape of Kai's and Ares's -- see that function's docstring. The
+    wiring call now lives there, not in ``build_authorized_tool_registry``
+    itself.
+    """
     import inspect
 
-    source = inspect.getsource(tool_registry_mod.build_authorized_tool_registry)
+    source = inspect.getsource(tool_registry_mod._build_callie_tool_registry)
     assert "register_callie_dm_tool" in source
