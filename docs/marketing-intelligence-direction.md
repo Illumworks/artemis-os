@@ -128,10 +128,15 @@ Measured baseline for why this matters: 60 messages in `#demand-gen-callie` tota
   **108.18.96.219** on Verizon Business; whether that is contractually static is a
   question for the Verizon account owner, not answerable from the machine. Recommend
   not restricting by IP until confirmed — a reassignment presents as an auth failure.
-- **What can Callie actually see?** Reviewed 2026-08-14 — findings below. Awaiting Jon's
-  decision on scope, because narrowing her tools changes what Josh can do mid-test.
-- **Josh's own list.** He is still testing to uncover functionality and will produce
-  requirements afterwards. **Do not over-build ahead of it.**
+- **What can Callie actually see?** Reviewed AND fixed 2026-08-14 — see the section
+  below. Closed.
+- **Josh's own list.** Jon, 2026-08-14: *"his list lets not rely on that."* He is still
+  testing, and his findings are welcome, but do **not** treat them as a gate. Scope
+  decisions get made on our own judgment and revisited when he reports.
+- **`is customer` field name.** We assume Salesforce Account carries a literal
+  `is customer` flag. Unverified — SFDC-1 must confirm the real object and field names
+  rather than assume, because a wrong field name silently returns "not a customer" for
+  everyone, which is the failure direction that emails a client.
 
 ## What Callie can see (reviewed 2026-08-14)
 
