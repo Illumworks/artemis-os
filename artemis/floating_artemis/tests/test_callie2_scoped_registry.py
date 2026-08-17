@@ -170,6 +170,12 @@ _CALLIE_EXPECTED_TOOL_NAMES = {
     "react_to_slack_message",
     "list_slack_channels",
     "send_guarded_dm",
+    # SFDC-1: check_salesforce_activity, layer 1, read-only both directions
+    # (never writes to Salesforce -- structurally impossible; never writes
+    # to district_contacts -- called with enrich=False). Registered ONLY
+    # inside _build_callie_tool_registry, same discipline as everything else
+    # in this set.
+    "check_salesforce_activity",
 }
 
 # Tools that must never reach Callie's production (layer<=2, claude-code MCP)

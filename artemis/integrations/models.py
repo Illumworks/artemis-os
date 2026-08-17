@@ -19,6 +19,7 @@ _KNOWN_PROVIDERS = frozenset(
         "gmail",
         "jira",
         "granola",
+        "salesforce",
         "anthropic",
         "openai",
         "gemini",

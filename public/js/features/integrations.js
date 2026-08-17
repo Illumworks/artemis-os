@@ -34,6 +34,11 @@ const PROVIDERS = [
     name: 'Granola',
     tagline: 'Meeting transcripts and notes.',
   },
+  {
+    id: 'salesforce',
+    name: 'Salesforce',
+    tagline: 'Read-only: customer accounts, open opportunities, sales contact history.',
+  },
 ];
 
 // Connector kind labels for the "Add connector" dropdown

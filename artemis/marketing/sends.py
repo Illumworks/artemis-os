@@ -214,7 +214,18 @@ async def enqueue_send_for_deliverable(
     Behaviour:
     - Deliverable must be in state 'approved'. Raises ValueError otherwise.
     - If recipients resolve to ≥1:
-        * Insert campaign_sends row status='queued', recipients=<snapshot>.
+        * SFDC-1: run the Salesforce suppression check (existing customer,
+          open opportunity, recently emailed by sales, or Salesforce itself
+          unreachable). If it fires, insert campaign_sends row
+          status='skipped' with the specific skip_reason it returned,
+          recipients=[] — same "do NOT transition the deliverable" contract
+          as the no-contacts path below. See
+          artemis.marketing.salesforce_suppression for the fail-closed
+          contract: any failure to reach/authenticate Salesforce, or a
+          missing assumed field, resolves to skip_reason='salesforce_unavailable',
+          never to "clear to send".
+        * Otherwise: insert campaign_sends row status='queued',
+          recipients=<snapshot>.
         * Transition deliverable approved → queued_for_send.
         * Return the new row.
     - If recipients resolve to 0:
@@ -234,6 +245,31 @@ async def enqueue_send_for_deliverable(
     _district_ids, recipients_snapshot = await resolve_recipients_for_candidate(session, candidate)
 
     if recipients_snapshot:
+        from artemis.marketing.salesforce_suppression import check_suppression_for_recipients
+
+        suppression = await check_suppression_for_recipients(session, recipients_snapshot)
+        if suppression.suppressed:
+            send = CampaignSend(
+                candidate_id=candidate.id,
+                deliverable_id=deliverable.id,
+                recipients=[],
+                status="skipped",
+                skip_reason=suppression.skip_reason,
+                transport="stub",
+                transport_log={"salesforce_suppression_detail": suppression.detail},
+            )
+            session.add(send)
+            await session.flush()
+            logger.warning(
+                "enqueue_send_for_deliverable: SUPPRESSED deliverable_id=%s skip_reason=%s "
+                "detail=%s actor=%s",
+                deliverable.id,
+                suppression.skip_reason,
+                suppression.detail,
+                actor,
+            )
+            return send
+
         send = CampaignSend(
             candidate_id=candidate.id,
             deliverable_id=deliverable.id,

@@ -193,6 +193,62 @@ async def resolve_jira_config(session: AsyncSession) -> JiraConfig:
 
 
 @dataclass(frozen=True)
+class SalesforceConfig:
+    client_id: str
+    client_secret: str
+    login_url: str
+
+
+async def resolve_salesforce_config(session: AsyncSession) -> SalesforceConfig:
+    """Resolve Salesforce OAuth 2.0 Client Credentials: DB per-field, then env fallback.
+
+    Same DB-first/env-fallback shape as resolve_jira_config -- Salesforce's Client
+    Credentials grant is a single static server-to-server secret (client_id +
+    client_secret + login_url), with no per-user OAuth dance and no redirect_uri,
+    so it maps onto IntegrationConfig exactly the way Jira's site_url/email/api_token
+    does, not onto the per-connection Integration/encrypted_credentials row gcal
+    uses for its per-user refresh tokens (Salesforce Client Credentials issues no
+    refresh token at all -- see artemis.integrations.salesforce.client).
+
+    login_url defaults to Salesforce production ("https://login.salesforce.com")
+    when unset anywhere; Jon can override to a custom My Domain URL or
+    "https://test.salesforce.com" for a sandbox org.
+
+    Raises MissingProviderConfigError if client_id/client_secret are absent from
+    both sources -- callers (artemis.marketing.salesforce_suppression) must treat
+    that exactly like any other Salesforce-unreachable failure: fail closed, never
+    "not a customer".
+
+    The env-var fallback exists only for parity with every other resolve_*_config
+    function and for tests. SFDC-1's brief is explicit that credentials must never
+    live in plaintext .env -- the supported install path is
+    POST /api/integrations/providers/salesforce/config (owner-gated), the same
+    mechanism Jira's site_url/email/api_token already use.
+    """
+    stored = await repo.get_provider_config(session, "salesforce") or {}
+
+    client_id = str(stored.get("client_id") or "") or os.environ.get("SALESFORCE_CLIENT_ID", "")
+    client_secret = str(stored.get("client_secret") or "") or os.environ.get(
+        "SALESFORCE_CLIENT_SECRET", ""
+    )
+    login_url = (
+        str(stored.get("login_url") or "")
+        or os.environ.get("SALESFORCE_LOGIN_URL", "")
+        or "https://login.salesforce.com"
+    )
+
+    missing = [
+        name
+        for name, val in [("client_id", client_id), ("client_secret", client_secret)]
+        if not val
+    ]
+    if missing:
+        raise MissingProviderConfigError("salesforce", missing)
+
+    return SalesforceConfig(client_id=client_id, client_secret=client_secret, login_url=login_url)
+
+
+@dataclass(frozen=True)
 class GranolaConfig:
     """Granola OAuth client credentials.
 

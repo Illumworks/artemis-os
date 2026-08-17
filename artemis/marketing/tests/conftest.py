@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 import artemis.db
 import artemis.marketing.models  # noqa: F401 — registers all marketing models on Base.metadata (incl. QualifierRuleApplication, SkippedSignal, DistrictDataMeta, CampaignSend)
+import artemis.memory.models  # noqa: F401 — district_contacts.source_observation_id FKs to memory_observations (CONTACTS-1); without this import, ANY flush touching DistrictContact fails ORM table-sort with NoReferencedTableError when marketing tests run in isolation (pre-existing gap, not previously visible because some other test module happened to import it first in a full-suite run — see SFDC-1's report)
 import artemis.pipelines.models  # noqa: F401 — pipeline_runs is a FK dep of signal_queue; needed for ORM sort_tables
 import artemis.writing_rules.models  # noqa: F401 — claims + writing profile/source FK targets
 from artemis.db import attach_pgvector_codec
