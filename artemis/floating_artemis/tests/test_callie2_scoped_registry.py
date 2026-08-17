@@ -159,7 +159,10 @@ _CALLIE_EXPECTED_TOOL_NAMES = {
     "post_analyst_message",
     "dispatch_research",
     "list_writing_rules",
-    "propose_writing_rule",
+    # propose_writing_rule deliberately ABSENT: layer 3, and a staged layer-3
+    # confirmation in a shared channel is answered by whoever replies next, so
+    # Josh could confirm a change to the house style. CLAUDE.md names Writing
+    # Studio rules an owner-judgment surface.
     "get_screentime_report",
     "record_screentime_feedback",
     "send_slack_message",

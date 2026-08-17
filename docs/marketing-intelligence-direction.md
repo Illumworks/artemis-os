@@ -168,16 +168,38 @@ meeting transcripts. Nothing in her scope says no; only the absence of a credent
 **Layer-2 writes she can call with no confirmation:** `run_agent`, `run_workflow`
 (she can invoke other agents), `write_memory`, `stage_okr_updates`.
 
-**Genuinely gated out of production:** `update_okr_kr`, `update_okr_krs`, `update_event`,
-`transition_jira_issue`, `send_slack_message` are all layer 3, and layer 3 is excluded
-from the MCP path. Worth noting anyway that layer-3 confirmation in Slack is answered by
-**whoever replies next in the channel** — so it is not a strong gate for an agent in a
-shared room (this is why CALLIE-1's DM tool is layer 2 with its own allowlist instead).
+**Correction, 2026-08-14 (my error, caught by the CALLIE-2 worker).** I first wrote that
+layer 3 is *excluded* from the MCP path. It is not.
+`_build_auto_invoke_tool_registry` registers **every** tool; layer 3/4 get a staging
+wrapper that stores a `PendingConfirmation` and never calls the real implementation. So:
 
-**Recommended fix:** give Callie a scoped registry in the shape of Kai's — marketing and
-signal surfaces, explicitly listed — rather than "everything minus what is unplugged."
-Not done yet: removing tools changes what Josh can do while he is mid-test, so it is
-Jon's call when to narrow it.
+- The **write side effect** was genuinely blocked — `update_okr_kr` and friends could not
+  actually mutate anything.
+- But the tools were **visible and stageable**, and a staged confirmation in Slack is
+  answered by **whoever replies next in the channel**. With Josh in the room that is a
+  weak gate, not a real one. (This is exactly why CALLIE-1's DM tool is layer 2 with its
+  own allowlist instead of relying on confirmation.)
+- Her pre-fix production surface was therefore **62 tool names**, not the ~44 a naive
+  layer filter implies.
+
+**FIXED 2026-08-14 (CALLIE-2, merged).** Callie now sits behind an early return with an
+explicit registry, like Kai and Ares. **62 production tools → 34.** Removed
+`spawn_subagent`, `run_agent`, `run_workflow`, every `propose_*`, `recent_failures`,
+`health_check`, `list_scopes`, `list_agents`, `list_dags`, `list_routes`, `read_file`,
+and the entire Gmail/calendar surface — the one that was registered unconditionally for
+every agent and blocked only by a missing credential. She keeps signals, district
+research, contacts, `dispatch_research`, her guarded DM, Slack read/post, scope-gated
+memory, `resolve_person`, screentime and `list_writing_rules`.
+
+A sentinel test now proves a future registration added to the general path cannot
+silently reach her again — which was the actual structural problem.
+
+Two things worth keeping visible. The writing-rules tools were **never** reachable by her
+before (her allowlist carries `writing-studio`; the gate tested `writing-rules` — two
+different strings), so keeping the read tool is a deliberate small widening because she
+drafts copy. And `propose_writing_rule` was dropped on review: it is layer 3, and
+CLAUDE.md names Writing Studio rules an owner-judgment surface, so it must not be
+confirmable by a colleague in a shared channel.
 
 ## How we work (earned the hard way this week)
 

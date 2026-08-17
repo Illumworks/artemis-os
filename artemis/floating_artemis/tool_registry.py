@@ -188,7 +188,23 @@ def _build_callie_tool_registry(
     register_directory_tools(registry, participants=participants)
     register_marketing_tools(registry)
     register_argus_tools(registry)
-    register_writing_rules_tools(registry)
+    # Writing rules: the READ tool only. propose_writing_rule is layer 3, and a
+    # staged layer-3 confirmation in a shared channel is answered by whoever
+    # replies next -- so Josh could confirm a change to the house style. CLAUDE.md
+    # names Writing Studio rules an owner-judgment surface, so it must not be
+    # reachable from #demand-gen-callie at all.
+    #
+    # Also worth recording: these tools were NEVER actually reachable by Callie
+    # before CALLIE-2 -- her surface allowlist carries 'writing-studio' but the
+    # general path gated on 'writing-rules', two distinct strings. So registering
+    # even the read tool is a small widening, taken deliberately because she
+    # drafts copy and needs the house rules.
+    from artemis.floating_artemis.tools.writing_rules import (
+        LIST_WRITING_RULES,
+        _list_writing_rules,
+    )
+
+    registry.register(LIST_WRITING_RULES, _list_writing_rules, layer=1)
     register_screentime_report_tools(registry)
     # include_dm=False is load-bearing -- see "KEEP" above.
     register_slack_tools(registry, include_dm=False)
