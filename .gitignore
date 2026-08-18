@@ -37,3 +37,7 @@ build/
 .claire/
 Icon?
 scripts/watchdog.conf
+
+# Writing-sample PDFs — ~97MB of undiffable binaries kept on the Mini only.
+# See docs/writing-samples-manifest.md for what the corpus contains.
+writing-samples/
