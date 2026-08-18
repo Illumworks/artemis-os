@@ -4349,3 +4349,397 @@ Worker 2 (D1) edited `artemis/marketing/routes/initiation.py`. Worker 2 self-ver
   - `HALLUCINATION_DROPPED {'suggestions': {}}`
 - Apply round-trip is covered in the focused test pack: suggest returns registry-valid tags, existing `PUT /api/writing-studio/drafts/{id}/tags` persists them, and `GET` returns the persisted map.
 - `./scripts/check.sh` is still **not repo-green for unrelated pre-existing reasons** on this branch: it stops at `ruff format --check` on pre-existing files outside this slice (`artemis/builder/agent_builder.py`, `artemis/builder/tests/test_blueprint_fields.py`, `artemis/marketing/tests/test_campaign_cost.py`, `artemis/marketing/tests/test_ws_campaign_handoff.py`, `artemis/marketing/tests/test_ws_folder_crud.py`, `artemis/pipelines/tests/test_gate1_promote_candidate.py`, `artemis/routes/stats.py`, `artemis/routes/tests/test_stats_agent_metrics.py`, `tests/unit/frontend/test_gate1_cluster_ui.py`). I did not fold unrelated formatting churn into this slice.
+
+---
+**2026-06-13 — Worker report — P2b/P2c commitments engine COMPLETE, not merged**
+
+- **Branch:** `worker/p2-commitments-engine`
+- **Commit:** `9fbe8b5` `feat(proactivity): add commitments engine`
+- **Worktree:** `/Users/artemis/Artemis/artemis-os-wt-p2bc-commitments-engine`
+- **Source brief:** `briefs/p2bc-commitments-engine.md`
+
+**Shipped**
+
+- Added Alembic migration `0083` and a new `commitments` lifecycle table with dedupe on `(source_type, source_id, text)`, `owner_user_id`, `due`, `sensitivity`, `status`, `snoozed_until`, and `last_notified_at`.
+- Added deterministic commitment ingestion in `artemis/proactivity/commitments.py`:
+  - meeting `action_items` ingest from `artemis/meetings/summarizer.py`
+  - owner resolution against the `users` directory
+  - due-token parsing (`ISO`, `today`, `tomorrow`, `this week`, `next week`, `TBD`)
+  - sensitivity routing heuristic (`marketing` vs `personal_ops`)
+  - mirrored memory observation writes with `category="commitment"` into the correct agent scope plus `meeting:<granola_id>` secondary scope
+- Extended `artemis/proactivity/scheduler.py` with a new cron-registered commitments follow-up job using the existing scheduler stack and config pattern.
+- Added deterministic Slack delivery:
+  - personal/ops commitments -> Artemis DM
+  - marketing commitments -> Callie Slack channel
+  - `last_notified_at` stamped on success so repeat sweeps dedupe
+  - expired snoozes reactivate automatically before each sweep
+- Added a lightweight DB-backed command path in `route_inbound` for explicit follow-up replies:
+  - `done <id>` marks a commitment done
+  - `snooze <id> 2d|3h|1w` snoozes it in the DB
+  - no dependency on the reactive in-memory `confirmation_store`
+- Added a new recognized memory category `commitment` so mirrored observations do not warn as unknown.
+
+**Verification**
+
+- Test DB migration:
+  - `ARTEMIS_DB_URL=...artemis_test uv run alembic upgrade head`
+  - Result: upgraded `0082 -> 0083`
+- Focused regression pack:
+  - `ARTEMIS_TEST_DB_URL=...artemis_test uv run pytest artemis/proactivity/tests/test_p2bc_commitments_engine.py -q`
+  - Result: **5 passed**
+- Covered in that focused suite:
+  - meeting action-item ingest writes a `commitments` row and mirrored memory observation, and re-ingest does not duplicate either
+  - personal/ops due-soon commitment routes to Artemis DM, stamps `last_notified_at`, and second sweep does not re-ping
+  - `snoozed` / `done` commitments are skipped
+  - marketing commitment routes through Callie to the configured marketing channel
+  - deterministic `snooze` then `done` reply commands update the DB lifecycle
+  - scheduler registers the new `proactivity_commitments_followup` cron job
+- Touched-file static checks:
+  - `uv run ruff check ...` on touched files
+  - `uv run mypy --follow-imports=skip artemis/proactivity/commitments.py artemis/proactivity/repository.py artemis/proactivity/scheduler.py`
+  - Result: clean
+- Repo-wide gate status:
+  - `ARTEMIS_TEST_DB_URL=...artemis_test ./scripts/check.sh` still stops at **pre-existing unrelated** `ruff format --check` drift outside this slice (`artemis/builder/agent_builder.py`, `artemis/builder/tests/test_blueprint_fields.py`, `artemis/floating_artemis/callie_history_handoff.py`, `artemis/floating_artemis/tests/test_c3c_callie_history_handoff.py`, `artemis/floating_artemis/tests/test_g1_chat.py`, `artemis/marketing/tests/test_campaign_cost.py`, `artemis/marketing/tests/test_cc12_content_agent_tools.py`, `artemis/marketing/tests/test_ws_campaign_handoff.py`, `artemis/marketing/tests/test_ws_folder_crud.py`, `artemis/pipelines/tests/test_gate1_promote_candidate.py`, `artemis/proactivity/tests/test_morning_brief_scheduler.py`, `artemis/routes/stats.py`, `artemis/routes/tests/test_stats_agent_metrics.py`, `tests/unit/frontend/test_gate1_cluster_ui.py`). I did not fold unrelated formatting churn into this slice.
+
+---
+**2026-06-13 — Worker report — natural conversation layer COMPLETE, not merged**
+
+- **Branch:** `worker/natural-conversation-layer`
+- **Commit:** `bdf79ee` `feat(proactivity): add natural pending conversation router`
+- **Worktree:** `/Users/artemis/Artemis/artemis-os-wt-natural-conversation`
+- **Source brief:** `briefs/artemis-natural-conversation-layer.md`
+
+**Shipped**
+
+- Added `artemis/proactivity/natural_conversation.py` as the new shared pending-context/router layer for Slack DM replies.
+- Unified pending-context assembly now gathers, in one structured view:
+  - pending `proposed_actions` for the Slack user
+  - live staged OKR updates from the breadcrumb, enriched with KR/objective titles
+  - open commitments
+  - recent active radar items
+  - a short recent-message window from the Floating Artemis session
+- Replaced the route-level split between the old staged-OKR yes/no gate and the old proposal reply matcher with one `route_pending_reply(...)` call in `artemis/routes/integrations_slack_events.py`.
+- Safety posture preserved:
+  - proposal approvals still go through `proposed -> approved -> executed`
+  - `_run_approved_action(...)` remains the only execution path for agency proposals
+  - low-confidence / ambiguous actioning returns a natural clarify response instead of acting
+  - mixed proposal + OKR contexts require explicit reference before any action can fire
+- Added a provider-backed LLM interpretation step for pending replies, with a conservative validator around the model output:
+  - allowed intents only (`approve_proposals`, `reject_proposals`, `apply_okr_updates`, `reject_okr_updates`, `clarify`, `converse`)
+  - confidence threshold for actioning intents
+  - proposal IDs must be valid/current
+  - mixed-domain replies without explicit reference are forced to clarify
+- Added deterministic fallbacks so the gate still behaves safely if the LLM path is unavailable:
+  - explicit `A<id>` references
+  - Slack/email domain picks
+  - single-domain OKR apply/discard
+  - action-y but unsafe/unresolved replies clarify instead of falling through to the old cross-flow bug
+- Preserved the existing `confirm_classifier` hook as a single-domain fast path so the older OKR breadcrumb route behavior and tests stay deterministic where appropriate.
+- Added focused regression coverage in `artemis/proactivity/tests/test_natural_conversation.py` for the brief’s ship-gate phrases:
+  - `yes a2 and a3`
+  - `go ahead with the Slack one`
+  - `skip the email`
+  - ambiguous bare `yes` with proposals + staged OKR
+
+**Verification**
+
+- Focused new regression pack:
+  - `ARTEMIS_TEST_DB_URL=...artemis_test uv run pytest artemis/proactivity/tests/test_natural_conversation.py -q -p no:randomly`
+  - Result: **4 passed**
+- Impacted route regressions:
+  - `ARTEMIS_TEST_DB_URL=...artemis_test uv run pytest artemis/proactivity/tests/test_natural_conversation.py tests/test_p3_agency_messaging_sends.py tests/test_p2_okr_stage_breadcrumb.py -q -p no:randomly`
+  - Result: **15 passed**
+  - Notes: one pre-existing pytest warning remains in `tests/test_p2_okr_stage_breadcrumb.py` because a non-async test carries `@pytest.mark.asyncio`; unrelated to this slice
+- Touched-file lint:
+  - `uv run ruff check artemis/proactivity/natural_conversation.py artemis/routes/integrations_slack_events.py artemis/proactivity/tests/test_natural_conversation.py`
+  - Result: clean
+- Focused typing:
+  - `uv run mypy --follow-imports=silent artemis/proactivity/natural_conversation.py artemis/routes/integrations_slack_events.py`
+  - Result: clean
+
+---
+**2026-06-13 — Worker report — memory M2 eval harness COMPLETE, not merged**
+
+- **Branch:** `worker/memory-m2-eval-harness`
+- **Worktree:** `/Users/artemis/Artemis/artemis-os-wt-memory-m2`
+- **Source brief:** `briefs/memory-m2-eval-harness.md`
+
+**Shipped**
+
+- Added a local-artifact retrieval evaluation harness under `artemis.memory.eval` with CLI modes:
+  - `generate`
+  - `baseline`
+  - `sweep`
+  - `scale`
+  - `full`
+- Persisted QA sets and reports under `~/.artemis/memory-eval/<db_name>/` so the live corpus stays read-only and we do not introduce eval tables into Postgres.
+- Added `memory_eval_dir` to settings and a `record_usage` switch to retrieval so eval queries do not mutate `hit_count` / `accessed_at`.
+- Implemented deterministic corpus fingerprinting, QA generation with LLM-or-heuristic fallback, recall/MRR/latency/payload metrics, and sweep recommendation logic.
+- Implemented scale mode that backs up the source DB, restores into a target `artemis_test...` database, and duplicates observations/scopes/entities/relations to approximately 10x corpus size.
+- Fixed a false-positive read-only invariant warning by comparing fingerprints while excluding capture timestamps.
+- Added focused tests for metric rollup, fingerprint equality semantics, and `record_usage` behavior.
+
+**Run results**
+
+- Live DB baseline on `artemis_os`:
+  - QA set: `memory-m2-live` with 24 queries
+  - `R@1=0.375`
+  - `R@3=0.5417`
+  - `R@5=0.625`
+  - `R@10=0.75`
+  - `MRR=0.4664`
+  - `p50=18.933ms`
+  - `p95=49.194ms`
+- Sweep on `artemis_os` recommended `confirmed_bias`:
+  - baseline `R@5=0.625`, `MRR=0.4664`, `p95=17.789ms`
+  - recommended `R@5=0.6667`, `MRR=0.4792`, `p95=17.449ms`
+- Scale run on `artemis_test_memory_m2` completed after 10x duplication:
+  - corpus before/after eval: `7140` active observations, `310` scopes, `40` entities, `20` relations
+  - read-only fingerprint held; raw-input hashchain remained valid
+  - `R@1=0.375`
+  - `R@3=0.5417`
+  - `R@5=0.625`
+  - `R@10=0.75`
+  - `MRR=0.4664`
+  - `p50=17.786ms`
+  - `p95=32.005ms`
+
+**Artifacts**
+
+- QA set:
+  - `/Users/artemis/.artemis/memory-eval/artemis_os/qa_sets/memory-m2-live.json`
+- Baseline report:
+  - `/Users/artemis/.artemis/memory-eval/artemis_os/reports/20260614T011502Z-memory-m2-live-baseline.json`
+- Sweep report:
+  - `/Users/artemis/.artemis/memory-eval/artemis_os/reports/20260614T011506Z-memory-m2-live-sweep.json`
+- Scale report:
+  - `/Users/artemis/.artemis/memory-eval/artemis_test_memory_m2/reports/20260614T011514Z-memory-m2-live-scale.json`
+
+**Verification**
+
+- Focused tests:
+  - `ARTEMIS_TEST_DB_URL=postgresql+asyncpg://artemis:artemis@localhost:5432/artemis_test uv run pytest artemis/memory/tests/test_eval_harness.py artemis/memory/tests/test_b2_retrieval.py -q`
+  - Result: **32 passed**
+- Touched-file lint:
+  - `uv run ruff check artemis/config.py artemis/memory/retrieval.py artemis/memory/eval artemis/memory/tests/test_eval_harness.py artemis/integrations/gmail/client.py`
+  - Result: clean
+- Repo-wide gate status:
+  - `./scripts/check.sh` still stops at **pre-existing unrelated** `ruff format --check` drift in other slices. It also wanted to reformat `artemis/memory/eval/runner.py` and `artemis/memory/tests/test_eval_harness.py`; I applied formatting there, but did not fold unrelated repo-wide formatting churn into this branch.
+
+---
+
+## 2026-06-18 — Enablement indexing pipeline + Kai narrowing toolkit (Lead: Opus / enablement)
+
+**Status: LIVE on `main` (artemis-os repo).** Two clean fast-forward commits on top of prior main:
+- `57f1167` feat(enablement): Kai indexing pipeline — Apps Script -> webhook -> enablement_assets
+- `0a41912` feat(enablement): add facet filters to search + list_enablement_facets tool
+
+**What landed.** Kai (Chiron) now has real content. Apps Script on `amiracentral@` reads 4 Google
+Sheets + the Indexed Docs Drive folder and POSTs to `POST /api/enablement/ingest`; the server embeds +
+upserts into `enablement_assets`; Kai searches it. **413 assets live, verified end-to-end.**
+
+**Heads-up for the other Lead before you merge your work:**
+- **Run `uv run alembic upgrade head`** — adds migration **`0098`** (widens `enablement_assets`:
+  `links` JSONB, `searchable_text`, `source_sheet/row`, `requires_copy`). New head = `0098`.
+- **New `.env` key** `ARTEMIS_ENABLEMENT_WEBHOOK_SECRET` (NOT committed — Apps Script shared secret).
+  Absent = ingest endpoint returns 503 (fail-closed); harmless if you don't touch enablement.
+- **Touched files** (overlap check): `artemis/enablement/{models,tools}.py`,
+  `artemis/routes/enablement.py` (new, registered in `artemis/main.py`), `artemis/config.py`,
+  `artemis/floating_artemis/personality.py` (Kai persona block only — Artemis/Callie cores untouched).
+  No memory/marketing/builder/pipelines files touched. Should rebase clean onto current main.
+- New non-code artifacts: `apps-script/`, `briefs/enablement-sheet-configs.md`,
+  `tests/test_enablement_{ingest,facets}.py`.
+
+**Verification:** `tests/test_enablement_ingest.py tests/test_enablement_facets.py` → **12 passed**;
+ruff + mypy clean on touched files. Worker test DB `artemis_test_kai` (created + migrated; mine to own).
+
+**Follow-ups:**
+- ~~`audience` facet polluted by product values on `student_video` rows~~ **RESOLVED** `1052253` —
+  AIT reader no longer maps product->audience; live rows scrubbed; audience facet now shows only real
+  audiences. Fixed reader **re-deployed on amiracentral@ and verified** — re-ingest kept 0 video rows
+  with a non-null audience. Locked; hourly cron stays clean.
+- Still open (non-blocking): 2 AIT rows share a `Number` (collapsed to 122 distinct); Indexed Docs
+  shortcuts need the Drive advanced service for body text.
+
+Three commits now on main: `57f1167`, `0a41912`, `1052253`. Main is in a known-good state —
+safe to merge your work on top.
+
+---
+
+## 2026-06-18 (later) — Callie proactivity v1 + enablement empty-string fix merged
+
+On `main` (cherry-picked from Sonnet workers whose worktree bases predated your Argus
+circular-import fix + post-meeting pivot — so I took only their feature commits, not the stale base):
+- `d07910c feat(callie): proactivity v1 + learn-from-reactions`
+- `ea76005 fix(enablement): coerce blank/whitespace-only strings to NULL on ingest`
+
+**Lane hygiene (re: your Artemis/Argus/proactivity work):**
+- **Preserved YOUR `artemis/argus/__init__.py`** — the Callie worker's stale base had a competing
+  lazy-`__getattr__` change; I dropped it and kept yours (0 argus lines changed by the merge).
+- **Did NOT touch `artemis/proactivity/scheduler.py` or `artemis/main.py`.** Callie's push is an
+  event-driven hook in `artemis/marketing/qualification.py` (after a hot signal qualifies); the
+  "dig deeper" button reuses an endpoint added to `artemis/marketing/routes/signal_queue.py`.
+- **`config.py` merged clean** — added 3 `callie_proactive_*` settings; your removal of the
+  pre-meeting settings is untouched.
+- Ships **DORMANT**: `callie_proactive_channel` defaults empty → no posts until Jon sets it.
+- I upgraded dev + test DBs to head **`0099`** (your Argus migration). No new migration from Callie
+  (learning uses memory observations, per the brief).
+
+Main known-good; 9 Callie tests + 14 enablement tests green on the integrated tree.
+
+---
+
+## 2026-06-19 — Callie reason-driven engagement learning merged
+
+`82ed575 feat(callie): learn only from explicit reactions — reason-driven engagement weights` on main
+(cherry-picked clean from a Sonnet worker; no conflicts). Callie's push ranking now learns ONLY from
+explicit reactions: acted → up-weight, reject-WITH-reason → down-weight, reject-without-reason / silent
+ignore → no change (dropped the old "ignored" down-weighting).
+
+**Lane note:** marketing/Callie files only (`callie_push.py`, `marketing/routes/signal_queue.py`,
+`floating_artemis/tools/marketing.py`, `CALLIE_PERSONA_CORE`, `marketing-os.js`) + a new test. **One
+behavior change worth your awareness:** the `reject_signal` floating-artemis tool now goes through
+`transition()` → `SignalState.REJECTED_AT_GATE_1` (matching the HTTP reject route) instead of a direct
+`update_signal(status="rejected")` that bypassed the state machine — stricter + consistent. No
+Artemis/proactivity/main.py/migration changes. 16 Callie tests green on the integrated tree.
+
+---
+
+## 2026-06-19 (app-seat Opus + Jon) — Screen-Time Watch pipeline: scope + migration claim
+
+App-seat Opus (with Jon) is building a NEW, isolated, **national** Screen-Time Watch
+intelligence pipeline — SEPARATE from the marketing campaign pipeline (campaign pipeline is
+NOT touched). Plan: `docs/screentime-watch-plan.md`; briefs: `briefs/screentime-watch-*.md`.
+
+**MIGRATION CLAIM: `0102`** (screentime_* tables). Forge: please take **0103+**. I'll log any
+further numbers here the moment I take them.
+
+**File scope (kept deliberately disjoint from Forge's dev_projects + server-hardening lane):**
+- NEW namespace `artemis/screentime/` (models, repository, scout orchestration, classifier, pipeline def)
+- NEW route `artemis/routes/screentime.py`
+- NEW frontend `public/js/features/screentime-watch.js`
+- REUSE read-only (no edits): `artemis/scouts/*` (legislative, state_doe, board_minutes, regional_news),
+  Callie's posting path in `artemis/marketing/callie_push.py` (call it, don't modify it)
+- Reads `memory_observations` (Callie) — no memory schema change
+
+**Shared-risk files I will need (flagging per your rule — all additive):**
+- `artemis/config.py` — add `screentime_*` settings (channel id, cron, stance config)
+- `artemis/main.py` — register the new screentime route
+- `public/js/core/navigation.js` — add a "Screen-Time Watch" nav entry.
+  **COLLISION RISK with your Forge "Dev Projects"→"Forge" rename (~line 96).** Different lines, but
+  let's sequence: ping me when your navigation.js change lands and I'll rebase my nav entry on top.
+
+Own test DB: `artemis_test_screentime`. Will give a heads-up before any live-app restart.
+
+### 2026-06-19 (later) — Screen-Time Watch Brief 1 MERGED
+
+`6a3ff92 Merge branch 'worker/screentime-pipeline'` on main (worker commit `061af0c`).
+Migration **0102** applied to the LIVE DB (0101 -> 0102). New `screentime_*` tables exist.
+- **DORMANT** — the runner is NOT wired into startup (main.py/scheduler.py untouched), so it
+  does NOT auto-run on restart. Wiring the cron is a later coordinated step (will touch
+  main.py/scheduler — I'll flag before doing it).
+- Isolation verified: only `artemis/screentime/*` (new) + additive `config.py` + 1-line
+  `alembic/env.py`. No marketing/SignalQueue/dev_projects/scout edits. 22 tests pass; import clean.
+- Next alembic number free for Forge: **0103**.
+- Heads-up: noticed uncommitted work on main's working tree (M docs/named-agents-candidates.md +
+  untracked briefs/*) during my merge — I did NOT touch them; they're intact. Flagging so they
+  don't get lost / so we keep main's tree clean between merges.
+
+### 2026-06-19 (later) — Legislative client fix (affects CAMPAIGN too) — MERGED to main
+
+Heads-up: the shared `artemis/scouts/legislative/client.py` was returning **0 bills for
+every query** — so the campaign pipeline's legislative source has been silently dead, not
+just screen-time's. Root cause: LegiScan getSearch returns `searchresult` as numbered keys
+('0','1',…)+'summary', but the client read `.get('results')` (always []); and `BillSummary`
+required `number`+`status` while the API sends `bill_number` and no status. Fixed both
+(numbered-key parse + aliased/defaulted model). Verified live (0→14 control, 0→17 screen-time).
+29 legislative tests pass (updated 2 that encoded the fictional `.results` shape).
+Lane: only `artemis/scouts/legislative/client.py` + its test. No migration. Terminal parked per Jon.
+
+### 2026-06-19 (later) — Screen-Time Watch page LIVE + app restarted
+
+Merged `worker/screentime-page` + `worker/screentime-stance-tune` to main (HEAD 723fd61).
+**Restarted the live app** (pid now 46293) to load the new route + frontend — terminal was
+parked per Jon, so no session collision. Page: `/api/screentime/*` (read = require_token,
+purge = require_owner) + new primary nav "Screen-Time Watch" + inline-SVG tile heat map.
+Lane: routes/screentime.py (new), public/js/features/screentime-watch.js (new), navigation.js
+(additive nav entry around your Forge rename — kept both), main.py (include_router), optional-modules.js.
+No migration. 16 real screen-time bills currently stored (6 unfavorable, 10 neutral).
+NOTE: screentime auto-refresh cron is still NOT wired into startup (dormant); data is from manual
+Lead runs until we wire register_screentime_schedule (a later main.py/scheduler edit — will flag).
+
+### 2026-06-25 — Working-tree collision resolved: my Kai commits brought ONTO main
+
+Re: app-seat Opus's collision heads-up. Correction to the report: my Kai work was NOT
+sitting uncommitted — I had already committed it, but onto the CURRENT shared-tree branch
+`worker/forge-worktree-review-merge` (which the stray checkout left HEAD on), so it was
+stranded OFF main. Had the tree been switched to main + restarted as-is, the Kai fix would
+have vanished from the served app.
+
+What I did (non-destructive, isolated worktree — never touched the shared checkout's branch):
+- Committed the one genuinely-uncommitted tracked file (docs/named-agents-candidates.md) on
+  the worker branch so the shared tree's tracked status is now CLEAN.
+- `git worktree add <tmp> main` then cherry-picked my 3 commits onto main (zero file overlap
+  with 3.6, clean): `574fe4e` fix(kai) taxonomy, `cab4223` test(slack) threaded-mention guard,
+  `467139a` docs(named-agents). Removed the temp worktree.
+- main: edcdacf (3.6) -> 574fe4e -> cab4223 -> 467139a  (now has ALL of Phase 3 + my Kai work).
+- Verified: product_taxonomy.py + tests + expand_query wiring present on main; dev_projects.js
+  (3.6) still present; untracked files don't collide with any main-tracked path.
+
+ALL-CLEAR: shared tree (still on worker branch) is tracked-clean. Safe to switch the tree to
+main and restart — main now serves finished Forge UI AND the Kai taxonomy fix. Only untracked
+files remain in the tree (briefs/*, screentime+enablement docs, public/mockups, writing-samples)
+— they carry across checkout untouched.
+
+Going forward: agreed — both do merges in a dedicated `lead/<scope>-merge` worktree, and
+`git rev-parse --abbrev-ref HEAD` before any merge. (That's exactly how I just moved these.)
+
+### 2026-06-25 (later) — Security fix merging to main + restart (Lead)
+
+Shipping a security fix (Jon approved). Branch `lead/sec-fix-agentid` (2 commits, based on
+main@467139a which is unchanged, clean ff). Files: floating_artemis/{context,chat}.py,
+providers/claude_code/adapter.py (floating MCP config ONLY — NOT the Forge command path),
+tools/mcp_server.py (_serve_floating_artemis), routes/{floating_artemis,integrations}.py, main.py (CORS).
+No migrations. Doing `git merge --ff-only` in the shared tree on main + `launchctl kickstart -k` restart now.
+Fixes: (1) MCP subprocess bound owner memory scope from persisted metadata → now uses the live
+caller's trusted agent_id (non-owner could read owner memory). (2) /api/integrations mgmt endpoints
+owner-gated. (3) CORS wildcard+credentials pinned to app_base_url. Heads-up: I touched adapter.py's
+_build_floating_artemis_mcp_config (additive arg) — does NOT touch _build_forge_command / Forge path.
+
+DONE: merged ff to main (main now 78dcf0d), restarted (pid 74633→85571, healthz 200).
+Smoke: CORS no longer reflects arbitrary Origin; GET /api/integrations now 401 without
+identity (was unauthenticated before). Branch + worktree cleaned up. No migrations.
+Deferred fast-follows: prod fail-open startup assertion, WS auth under CF Access.
+
+### 2026-06-25 — Fable build merged: agent report card (Lead)
+Merged ff `lead-fable/report-card` to main: NEW module artemis/evals/ (LLM-as-judge eval
+harness, 1864 lines, 58 tests). Purely additive, nothing imports it yet → inert, no restart.
+Next Fable builds in flight: scout-contract+board-scout (lead-fable/scout-board), memory-quality.
+
+### 2026-06-25 — Fable builds merged: memory-quality + scout-contract/board-scout (Lead)
+main now 470d6bd, restarted (pid→41639, healthz 200). No migrations added by these.
+- memory-quality (ff): consolidation now propagates confidence/evidence (stops penalizing curated memory), hit_count fix, near_duplicate wired into run_maintenance (daily 03:00 + POST /api/memory/maintain), bounded conflict-check pool. Full memory DB suite ran green (1 pre-existing stale failure re: removed resolve_adapter symbol).
+- scout-contract + board-scout (rebased→ff): canonical Finding contract in scouts/finding.py + base.emit_signals normalization (findings now populate headline/sourceUrl/campaignFamily → pass _validate_finding); in-repo config/scout-packages.json (dropped the sibling-repo dependency); NEW board_peer_validation_scout (DISABLED by default) + BoardDocs body-search + LLM sentiment + pluggable customer-exclusion stub. 49 mocked contract/board tests green. NOTE: test_c2_routes (DB) hangs in this sandbox (spins a real run) — verified contract via mocked tests + review instead.
+
+### 2026-06-25 — Fable security fast-follows + Tier-1 fixes merged (Lead)
+main now bea0da1, restarted twice (pid→48999 security, →49841 tier1, healthz 200 both).
+- security-fastfollow (ed4968f, ff): prod fail-open startup guard (config.py assert_production_auth_config, called in main.py lifespan — DORMANT because the live app runs env=development; plist sets CF but not ARTEMIS_ENV), WS auth under CF Access (ws/routes.py agent_run/workflow streams — floating_artemis ws_router NOT touched), SSRF egress guard (new artemis/egress_guard.py, wired default-on in scouts/_http.py + pdf_extractor), defusedxml==0.7.1 added (2021, org-rule OK; uv.lock committed; ran `uv sync`). 40 tests. NOTE: WS auth needs a live CF-authed smoke (agent-monitor/workflow streaming) — revert ws/routes.py if it breaks streaming.
+- tier1-fixes (bea0da1, rebased→ff): Artemis owner-gate in post_meeting_scheduling (no more proposing meetings for others' commitments) + summarizer Me:=Jon; WS drag-drop backfill no longer clobbers a set folder_id. 16 DB tests pass.
+FINDING: live deployment runs ARTEMIS_ENV=development (CF Access on via plist). Recommend setting ARTEMIS_ENV=production in the plist (all CF settings present, so the new guard would PASS) so prod-only hardening applies. Ops change, pending Jon.
+Still running: lead/broaden-scouts (worker) — touches scouts/state_doe/sources.py which security also touched (defusedxml) — will rebase+resolve on merge.
+
+### 2026-06-25 — Screen-Time broadening + screen-time+AI unification merged (Lead)
+main now 73067c8, restarted (healthz 200). All Lead build worktrees/branches cleaned up.
+- broaden-scouts (3bbb2db): regional_news outlets + keywords, state_doe 7→20 states, board scout wired into fan-out. board_peer_validation_scout kept DISABLED (Salesforce customer-exclusion pending — enabling would flag customers as peer validation).
+- screentime-ai-topic (855ae82): topic_config.py v3 + scout_fanout LegiScan terms now admit AI-in-schools POLICY (14 multi-word anchors, never bare "ai" — substring matcher). Verified no stored DB 'topic' row overrides the DEFAULT, so it's active. Screen-Time Watch now = screen-time AND AI-in-schools policy. AI-policy STANCE tuning deferred to Angela review (TODO in stance_config.py; ban-on-chatbots is NOT unfavorable to Amira's carve-out).
+Parked (need external): board scout → Salesforce list (Neil); Screen-Time autopilot cron → Angela stance review (also fix LegiScan status-mapping vetoed/failed→passed first); report card real-data.
+
+### 2026-06-25 — 50-state screen-time+AI news coverage merged (Lead)
+main now (after doc) — national_news.py gatherer: per-state Google News RSS (school-scoped, multi-word AI, never bare "ai") for all 50+DC, wired into scout_fanout _SCOUT_GATHERERS["national_news"]. Rotation option (states_per_run+cursor in screentime_stance_config 'national_news_cursor') available, not default-wired. Verified registered, sweeps 51. Coverage now full-50-state on bills (LegiScan national) AND news. Did NOT touch shared scouts/state_doe (literacy). Stance deferred to Angela.
+
+### 2026-06-25 — Screen-Time go-live: silent collection + board + Callie on-demand (Lead)
+main 3d13dd9, restarted, healthz 200. NO auto-push (owner requirement) enforced:
+- Collection cron daily 11:00 UTC wired in main.py (start/stop_screentime_scheduler). run_scheduled passes deliver_alerts=False — CRITICAL: screentime_report_channel is SET (C0BBYM8N26M) so without this the cron would have auto-broadcast. Fixed LegiScan status bug (vetoed/failed≠passed) + display-only pipeline guard.
+- Board scout: 27 priority-state BoardDocs-verified districts, general mode. Runs via SILENT screentime fan-out (_gather_board_peer_validation, independent of scouts.yaml). Standalone scout scheduler kept DISABLED in scouts.yaml (would feed marketing signal_queue→Callie push). Exclusion plug-in pending customer list.
+- Callie: get_screentime_report + record_screentime_feedback (callie-only, read-only, on-demand, non-owner-reachable for Amy). Deny-with-reason reuses callie_push reaction-learning.
+DB stale (17/10) until first sweep (11:00 UTC or manual). Stance tuning + non-customer exclusion + optional light-announce still parked.
