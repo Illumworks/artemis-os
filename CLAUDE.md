@@ -4,13 +4,13 @@ Guidance for Claude Code / Codex / the floating Artemis when working in this rep
 
 ## What this repo is
 
-**Artemis OS** — Jon Fila's marketing-intelligence + campaign-workflow system at Amira Learning. Python rebuild of the Node prototype at `../claudeck-artemis/`.
+**Artemis OS** — Jon Fila's marketing-intelligence + campaign-workflow system at Amira Learning. Python rebuild of the Node prototype at `../docs/coordination/`.
 
 This is **his** app, not a fork of Claudeck. The previous repo carried inherited DNA; this one starts clean.
 
 ## Reference implementation
 
-The previous Node app at `/Users/artemis/Desktop/Artemis/claudeck-artemis/` is **frozen as a reference**, not a build target. Read it when you need to understand behavior the new app should match. Do not edit it. Do not run it concurrently.
+The previous Node app at `docs/coordination/` is **frozen as a reference**, not a build target. Read it when you need to understand behavior the new app should match. Do not edit it. Do not run it concurrently.
 
 Key reference paths in the Node app:
 - `db/sqlite.js` memory keystone sections — schema and write paths
@@ -22,11 +22,11 @@ Key reference paths in the Node app:
 - `marketing-ops-v1/` — the 42-file build spec (markdown, design only)
 
 Coordination + decision docs that govern both repos live in the Node repo:
-- `../claudeck-artemis/COORDINATION.md` — real-time Lead / Worker visibility
-- `../claudeck-artemis/PROJECT_LOG.md` — historical decisions
-- `../claudeck-artemis/decisions/artemis-python-rebuild.md` — why this repo exists
-- `../claudeck-artemis/decisions/rebuild-phased-plan.md` — the build plan
-- `../claudeck-artemis/CLAUDE_CODE_PLANNING_HANDOFF.md` — authoritative context
+- `../docs/coordination/COORDINATION.md` — real-time Lead / Worker visibility
+- `../docs/coordination/PROJECT_LOG.md` — historical decisions
+- `../docs/coordination/decisions/artemis-python-rebuild.md` — why this repo exists
+- `../docs/coordination/decisions/rebuild-phased-plan.md` — the build plan
+- `../docs/coordination/CLAUDE_CODE_PLANNING_HANDOFF.md` — authoritative context
 
 Read these before doing anything substantive.
 
@@ -179,7 +179,7 @@ artemis/
 
 ## Where in the plan are we?
 
-See `../claudeck-artemis/decisions/rebuild-phased-plan.md` for the current phase. As of the initial scaffold:
+See `../docs/coordination/decisions/rebuild-phased-plan.md` for the current phase. As of the initial scaffold:
 
 - **Phase A — Scaffolding:** in progress (this commit).
 - Phase B Slice 1 (memory storage + write path): briefed for Worker pickup once Phase A lands.
