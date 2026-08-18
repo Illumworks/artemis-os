@@ -45,7 +45,28 @@ Read these before doing anything substantive.
 
 ## Operating rules
 
-1. **Local-only git.** Never push to remote. All branches and commits stay local. The "conversation moment" artifact is the commit message + a `COORDINATION.md` entry in the Node repo, not a GitHub PR.
+1. **Git: `main` is mirrored to a private backup remote.** `origin` is
+   `git@github.com:Illumworks/artemis-os.git` — private, Jon's account only, no
+   collaborators. **Pushing `main` is expected, not forbidden.** This repo was local-only
+   and unbacked until 2026-08-14; if you find guidance anywhere saying "never push," it
+   predates the remote.
+
+   **It is a backup remote, not a change-review remote.** No PR workflow, no CI, no
+   reviewers. The "conversation moment" artifact is still the commit message plus a
+   `COORDINATION.md` entry in the Node repo — never a GitHub PR. Do not open one, do not
+   wait for one, and do not treat `origin` as a gate on anything.
+
+   Worker branches stay local; only `main` needs to reach the remote. When a slice lands,
+   push it — unbacked work on one Mac mini is the risk the remote exists to remove.
+   Finish with `git status --porcelain` empty and
+   `git rev-list --left-right --count HEAD...origin/main` reading `0	0`.
+
+   Two things that must not change, because other machinery depends on them:
+   - **Never commit `.env`.** It is gitignored and stays that way. Same for
+     `writing-samples/` (~97MB of PDFs, on disk only, catalogued with sha256 per file in
+     `docs/writing-samples-manifest.md`) and `.server-restart.log`.
+   - **Never relocate the repo folder.** The launchd plists and the venv hardcode
+     `/Users/artemis/Artemis/artemis-os`.
 
 2. **Autonomy.** Operate without per-change approval. Surface to Jon only for: big architectural forks, Creative Director judgment (UX / naming / visual / brand), cutover moments, anything touching OKR Studio rows or Writing Studio rules, pattern-of-failures / spec-flaw moments.
 
