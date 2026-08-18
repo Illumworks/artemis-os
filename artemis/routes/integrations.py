@@ -564,13 +564,52 @@ async def slack_user_oauth_start(
     # search.messages (how the radar finds Jon's mentions) needs a USER token —
     # so request the granular search scopes across public/private/DM surfaces.
     # chat:write is pre-requested here for the agency-writes Slack-send lane.
+    #
+    # mpim:history/mpim:read are NOT implied by im:history — verified 2026-08-14:
+    # conversations.history and conversations.info on an mpdm channel both return
+    # missing_scope on a token holding im:history alone. search.messages still
+    # surfaces mpdm message *text* (via search:read.im), which is why the gap is
+    # easy to miss: the content appears, the conversation cannot be read. Group
+    # DMs are a large surface here (69 of the 140 conversations one departed
+    # colleague appeared in), so they are requested explicitly.
+    #
+    # !! This list must stay a SUPERSET of every scope the live token already
+    # holds. Slack does not merge scopes across authorizations — re-running this
+    # flow REPLACES the stored token with exactly what is requested here. On
+    # 2026-08-14 this list held only the five search/user/chat scopes while the
+    # live token carried 21, so a single reconnect would have silently dropped
+    # channels:history, groups:history and im:history and broken every read path
+    # (DM history, channel crawls, the awaiting-reply radar) with no error beyond
+    # a later missing_scope. Before editing, diff against the live grant:
+    #   select scopes from integrations where provider='slack_user';
     user_scopes = ",".join(
         [
+            # read surfaces — history is what every crawl and the radar depend on
+            "channels:history",
+            "groups:history",
+            "im:history",
+            "mpim:history",
+            "channels:read",
+            "groups:read",
+            "im:read",
+            "mpim:read",
+            "canvases:read",
+            # search — Slack deprecated the umbrella search:read for granular scopes
             "search:read.public",
             "search:read.private",
             "search:read.im",
+            "search:read.files",
+            "search:read.users",
+            # identity
             "users:read",
+            "users:read.email",
+            "users.profile:read",
+            # write — the agency-writes Slack-send lane
             "chat:write",
+            "channels:write",
+            "groups:write",
+            "im:write",
+            "canvases:write",
         ]
     )
     url = (
