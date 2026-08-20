@@ -94,6 +94,24 @@ class _StubSalesforceClient:
         raise AssertionError(f"unexpected SOQL in stub: {soql!r}")
 
 
+def _customer_value() -> object:
+    """A value the CONFIGURED customer field actually treats as 'is a customer'.
+
+    These tests follow `settings.salesforce_customer_field` for the field NAME,
+    so they must follow it for the VALUE too. The live org's field
+    (Customer_Status__c) is a picklist, so a hardcoded boolean True stopped
+    counting the moment the default moved off the boolean Is_Customer__c guess.
+    """
+    truthy = [v.strip() for v in settings.salesforce_customer_truthy_values.split(",") if v.strip()]
+    return truthy[0] if truthy else True
+
+
+def _non_customer_value() -> object:
+    """A value the configured field treats as NOT a customer."""
+    truthy = [v.strip() for v in settings.salesforce_customer_truthy_values.split(",") if v.strip()]
+    return "Prospect" if truthy else False
+
+
 def _patch_client(monkeypatch: pytest.MonkeyPatch, stub: _StubSalesforceClient) -> None:
     async def _fake_get_client(session: AsyncSession) -> _StubSalesforceClient:  # noqa: ARG001
         return stub
@@ -169,7 +187,7 @@ async def test_check_suppression_existing_customer(
 
     stub = _StubSalesforceClient(
         contact_records=[{"Id": "003x", "AccountId": "001x", "Name": "Alice", "Email": "a@ex.com"}],
-        account_records=[{"Id": "001x", settings.salesforce_customer_field: True}],
+        account_records=[{"Id": "001x", settings.salesforce_customer_field: _customer_value()}],
     )
     _patch_client(monkeypatch, stub)
 
@@ -188,7 +206,7 @@ async def test_check_suppression_open_opportunity(
 
     stub = _StubSalesforceClient(
         contact_records=[{"Id": "003x", "AccountId": "001x", "Name": "Bob", "Email": "b@ex.com"}],
-        account_records=[{"Id": "001x", settings.salesforce_customer_field: False}],
+        account_records=[{"Id": "001x", settings.salesforce_customer_field: _non_customer_value()}],
         opportunity_records=[{"Id": "006x"}],
     )
     _patch_client(monkeypatch, stub)
@@ -355,7 +373,7 @@ async def test_enqueue_skips_existing_customer(
         contact_records=[
             {"Id": "003x", "AccountId": "001x", "Name": "Alice", "Email": "alice@customer.org"}
         ],
-        account_records=[{"Id": "001x", settings.salesforce_customer_field: True}],
+        account_records=[{"Id": "001x", settings.salesforce_customer_field: _customer_value()}],
     )
     _patch_client(monkeypatch, stub)
 

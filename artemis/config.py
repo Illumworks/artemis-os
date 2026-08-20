@@ -268,24 +268,29 @@ class Settings(BaseSettings):
         ),
     )
     salesforce_customer_field: str = Field(
-        default="Is_Customer__c",
+        default="Customer_Status__c",
         validation_alias=AliasChoices(
             "ARTEMIS_SALESFORCE_CUSTOMER_FIELD",
             "SALESFORCE_CUSTOMER_FIELD",
         ),
         description=(
-            "Salesforce Account field name that means 'is a customer'. UNVERIFIED GUESS -- "
-            "see docs/marketing-intelligence-direction.md's open question and "
-            "scripts/salesforce_introspect.py, which lists the org's real candidates once "
-            "credentials are installed. The suppression guard (artemis.marketing."
-            "salesforce_suppression) checks this field's presence in Account's describe() "
-            "response before trusting it; if the name is wrong, the check fails CLOSED "
-            "(skip_reason='salesforce_unavailable'), never silently 'not a customer'. Update "
-            "this setting once the real field name is confirmed against Neil's org."
+            "Salesforce Account field meaning 'is an AMIRA customer'. VERIFIED against the "
+            "live org 2026-08-20 via scripts/salesforce_introspect.py -- Customer_Status__c "
+            "is labelled 'Customer Status (AML)' (AML = Amira Learning) and is a clean "
+            "PICKLIST. "
+            "It replaced a default of Is_Customer__c, which exists but is WRONG for Amira: "
+            "the org is shared with Istation (the merged company), so Is_Customer__c means "
+            "'customer of anything in the portfolio' -- 11,360 accounts against ~4,900 real "
+            "Amira ones. Using it would have suppressed roughly 6,000 genuine Amira "
+            "prospects as existing customers. The describe() presence check could not catch "
+            "that: the field is real, just not ours. "
+            "Amira_Customer_Status__c was rejected despite the tempting name -- it is free "
+            "text and the live data carries typos ('Cusotmer', 'Cusomter') plus junk values "
+            "('Pearson', a date), any of which would silently miss a suppression."
         ),
     )
     salesforce_customer_truthy_values: str = Field(
-        default="",
+        default="Customer,Child,Parent,Pilot",
         validation_alias=AliasChoices(
             "ARTEMIS_SALESFORCE_CUSTOMER_TRUTHY_VALUES",
             "SALESFORCE_CUSTOMER_TRUTHY_VALUES",

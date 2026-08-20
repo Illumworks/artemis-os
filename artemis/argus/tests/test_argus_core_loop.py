@@ -561,11 +561,15 @@ async def test_gather_tool_results_searches_on_the_district_name_not_the_key() -
         return []
 
     with (
-        patch.object(research_mod, "_resolve_search_term", new=AsyncMock(return_value="FORT WORTH ISD")),
+        patch.object(
+            research_mod, "_resolve_search_term", new=AsyncMock(return_value="FORT WORTH ISD")
+        ),
         patch.object(research_mod, "_fetch_news", new=spy_news),
         patch.object(research_mod, "_fetch_board_minutes", new=spy_board),
     ):
-        await research_mod._gather_tool_results("11414", [research_mod.Dimension.CURRENT_VENDOR], {"state": "TX"})
+        await research_mod._gather_tool_results(
+            "11414", [Dimension.CURRENT_VENDOR], {"state": "TX"}
+        )
 
     assert seen_news == ["FORT WORTH ISD"], (
         f"news_api must be handed the resolved name, got {seen_news}"

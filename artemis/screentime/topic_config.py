@@ -207,7 +207,12 @@ DEFAULT_TOPIC_RULES: dict[str, Any] = {
         "edmentum",
         "savvas",
         "khanmigo",
-        "istation",
+        # NOTE: "istation" is deliberately ABSENT. Istation is the company Amira
+        # MERGED with, not a competitor -- their shared Salesforce org is
+        # istation.my.salesforce.com. It was briefly listed here in error; a
+        # story about Istation losing a district would have registered as a
+        # COMPETITOR removal, which the risk scoring reads as a leading
+        # indicator that Amira is next. Wrong signal, from our own parent.
         "ixl learning",
     ],
     # ── v4: the ENTRANT lane (Mark's "left field" concern) ────────────────────

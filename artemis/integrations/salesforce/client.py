@@ -116,9 +116,7 @@ async def fetch_access_token(
     access_token = str(body.get("access_token") or "")
     instance_url = str(body.get("instance_url") or "")
     if not access_token or not instance_url:
-        raise SalesforceAuthError(
-            "token exchange response missing access_token/instance_url"
-        )
+        raise SalesforceAuthError("token exchange response missing access_token/instance_url")
     return SalesforceToken(access_token=access_token, instance_url=instance_url)
 
 
@@ -172,3 +170,45 @@ class SalesforceClient:
         data: dict[str, Any] = resp.json()
         records = data.get("records")
         return list(records) if isinstance(records, list) else []
+
+    async def query_all(self, soql: str, *, max_records: int = 50_000) -> list[dict[str, Any]]:
+        """Run a SOQL statement and follow ``nextRecordsUrl`` to completion.
+
+        ``query`` deliberately returns only the first page, which is right for
+        the bounded single-record lookups the suppression guard does. The
+        customer-exclusion provider is the one genuine BULK reader: Amira has
+        >10,000 customer school accounts spanning >2,000 distinct districts, and
+        both a plain query and a ``GROUP BY`` hit Salesforce's single-batch
+        ceiling (the latter fails outright: "Aggregate query does not support
+        queryMore()"). So bulk reads need real pagination.
+
+        ``max_records`` is a safety stop, not an expectation — a runaway query
+        should end with a loud log line rather than paging forever. Raises on
+        any HTTP failure, exactly like ``query``, so callers keep failing closed.
+        """
+        url: str | None = f"{self._base}/services/data/{_API_VERSION}/query/"
+        params: dict[str, str] | None = {"q": soql}
+        out: list[dict[str, Any]] = []
+
+        async with httpx.AsyncClient(timeout=60) as http:
+            while url:
+                resp = await http.get(url, headers=self._headers(), params=params)
+                if not resp.is_success:
+                    raise SalesforceAPIError("query_all", resp.status_code, resp.text[:200])
+                data: dict[str, Any] = resp.json()
+                page = data.get("records")
+                if isinstance(page, list):
+                    out.extend(page)
+                if len(out) >= max_records:
+                    logger.warning(
+                        "query_all: stopped at max_records=%d — result truncated. "
+                        "Narrow the SOQL rather than raising the cap.",
+                        max_records,
+                    )
+                    break
+                nxt = data.get("nextRecordsUrl")
+                # nextRecordsUrl is a path; params must not be re-sent with it.
+                url = f"{self._base}{nxt}" if isinstance(nxt, str) and nxt else None
+                params = None
+
+        return out
