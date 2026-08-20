@@ -239,11 +239,36 @@ async def check_suppression(
         if contact_id:
             window_days = settings.salesforce_recent_contact_window_days
             window_start = datetime.now(UTC) - timedelta(days=window_days)
-            task_records = await client.query(
-                "SELECT Id, CreatedDate FROM Task WHERE WhoId = "
-                f"'{_soql_escape(contact_id)}' AND TaskSubtype = 'Email' AND CreatedDate >= "
-                f"{window_start.strftime('%Y-%m-%dT%H:%M:%SZ')} ORDER BY CreatedDate DESC LIMIT 1"
-            )
+            try:
+                task_records = await client.query(
+                    "SELECT Id, CreatedDate FROM Task WHERE WhoId = "
+                    f"'{_soql_escape(contact_id)}' AND TaskSubtype = 'Email' AND CreatedDate >= "
+                    f"{window_start.strftime('%Y-%m-%dT%H:%M:%SZ')} ORDER BY CreatedDate DESC LIMIT 1"
+                )
+            except SalesforceAPIError as exc:
+                # Verified 2026-08-20: the Connected App's run-as user has NO
+                # read access to Task, so this query 400s for every contact that
+                # exists in Salesforce.
+                #
+                # Say WHICH problem it is. A fail-closed path that cannot tell
+                # "not permitted" from "could not reach it" sends people hunting
+                # connectivity when the fix is a permission grant — the exact
+                # trap CLAUDE.md records from the approval-bug post-mortem.
+                logger.warning(
+                    "check_suppression: recent-contact check unavailable — Task is not "
+                    "readable by the Salesforce Connected App's run-as user "
+                    "(contact_id=%s): %s",
+                    contact_id,
+                    exc,
+                )
+                return SuppressionResult(
+                    True,
+                    SKIP_SALESFORCE_UNAVAILABLE,
+                    "cannot verify recent sales contact: the Salesforce Connected App "
+                    "has no READ access to the Task object, so email-activity history "
+                    "is invisible. This is a PERMISSION gap, not an outage — ask Neil "
+                    "to grant Task read to the run-as user. Treat as UNVERIFIED.",
+                )
             if task_records:
                 return SuppressionResult(
                     True,
