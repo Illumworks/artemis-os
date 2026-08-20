@@ -10,27 +10,42 @@ Python); committing them would bloat the repo, muddy the license boundary, and r
 getting executed by our tooling. Put them in a SIBLING folder I can still read:
 
 ```
-/Users/artemis/Desktop/Artemis/agent-references/      ← make this folder
+/Users/artemis/Artemis/agent-references/      ← make this folder
 ├── openclaw/            ← github.com/openclaw/openclaw
 ├── hermes-agent/        ← github.com/NousResearch/hermes-agent
 ├── hermes-self-evolution/ ← github.com/NousResearch/hermes-agent-self-evolution  (their learning loop)
 └── papers/              ← drop the arXiv PDFs here (see reading list)
 ```
 
-I have read access to `/Users/artemis/Desktop/Artemis/`, so anything under `agent-references/` is reachable
+I have read access to `/Users/artemis/Artemis/`, so anything under `agent-references/` is reachable
 without it living in our repo.
+
+> **Path corrected 2026-08-20.** This doc said `~/Desktop/Artemis/` until then; the material actually
+> landed in `~/Artemis/agent-references/`. Nothing was ever at the Desktop path.
 
 ## Exact commands (paste these — clone only, do not run the apps)
 ```bash
-mkdir -p /Users/artemis/Desktop/Artemis/agent-references/papers
-cd /Users/artemis/Desktop/Artemis/agent-references
+mkdir -p /Users/artemis/Artemis/agent-references/papers
+cd /Users/artemis/Artemis/agent-references
 git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw
 git clone --depth 1 https://github.com/NousResearch/hermes-agent.git hermes-agent
 git clone --depth 1 https://github.com/NousResearch/hermes-agent-self-evolution.git hermes-self-evolution
 ```
 `--depth 1` grabs just the current source (no full history) — smaller and all we need for reading.
-Both projects are **MIT-licensed** (reading + adapting is legal with attribution; confirm the LICENSE file
-still says MIT when you clone).
+
+**Licensing is two-of-three, not "both projects."** Verified against the downloaded trees on 2026-08-20:
+
+| Repo | LICENSE file | Terms |
+|---|---|---|
+| `openclaw` | present | MIT — © 2026 OpenClaw Foundation |
+| `hermes-agent` | present | MIT — © 2025 Nous Research |
+| `hermes-agent-self-evolution` | **absent** | **none shipped — all rights reserved by default** |
+
+The third repo ships no LICENSE and no license field, so it is **not** MIT and this doc was wrong to imply
+it. Absent a license, default copyright applies: reading it is fine, adapting anything from it is not.
+Treat it as **read-only inspiration** — if the self-evolution loop (reading-list item 5) turns out to be
+worth building, it gets a clean-room design from the *paper and concepts*, never from that source. Re-check
+upstream for an added LICENSE before assuming otherwise.
 
 ## The guardrails (the "secure" half of the goal — non-negotiable)
 1. **Clone to READ. Never `npm install` / `pip install` / run their setup or start scripts.** These are
@@ -51,6 +66,17 @@ still says MIT when you clone).
 1. **★ OpenClaw security-vulnerability taxonomy** — arXiv `2603.27517` ("A Systematic Taxonomy of Security
    Vulnerabilities in the OpenClaw AI Agent Framework"). The single highest-value artifact: a free catalog
    of exactly what NOT to do, written for the person trying to out-secure them. Drop the PDF in `papers/`.
+   **⚠ STILL NOT DONE (checked 2026-08-20).** `papers/` was never created and this PDF was never
+   downloaded. The doc's own #1 priority sat unfetched for ten weeks while 333 MB of source we could
+   re-download in minutes sat on disk instead. It is a ~2 MB paper, it is the one item here that is
+   *not* trivially re-obtainable from a clone, and it is the only item whose value does not depend on
+   reading 200k lines of someone else's code. Fetch it first, before any re-clone:
+
+   ```bash
+   mkdir -p ~/Artemis/agent-references/papers
+   curl -Lo ~/Artemis/agent-references/papers/2603.27517-openclaw-vuln-taxonomy.pdf \
+     https://arxiv.org/pdf/2603.27517
+   ```
 2. **Their security/permission model** — how each gates shell/file/browser actions, what (if anything)
    requires human approval, how they handle prompt-injection from message surfaces. This is where we expect
    to win; I'll map each gap to our propose→review→merge + human-approval design.
@@ -76,3 +102,53 @@ Artemis should adopt / avoid / do differently*, mapped onto our existing design 
 becomes a checklist we make sure Artemis passes. None of this is a build task now; it's the study phase that
 front-loads the agent-architecture + governance build (`docs/artemis-agent-architecture-and-governance.md`),
 which is queued behind the Writing Studio MVP core.
+
+---
+
+## Restoring this material (deleted from disk 2026-08-20)
+
+**The 333 MB cache is gone; nothing authored was in it.** Deleted after verifying it was a
+*cache, not an archive*: no `.git` directories anywhere, every folder carrying the `-main` branch
+suffix of a GitHub ZIP download, and **every single file in each tree sharing one mtime to the
+minute** — 4,775 files at `2026-06-07 15:54`, 19,829 at `2026-06-07 18:26`, 29 at
+`2026-03-29 11:47`. Not one file was newer than its extraction. Zero local modifications, zero
+notes, zero findings, no `.env` (only the repos' own `.env.example`). All three upstreams were
+confirmed anonymously cloneable the same day.
+
+Re-obtain it with the commands below. **Read the guardrails above first** — the never-run rule is
+the entire reason this material is allowed on this machine at all.
+
+```bash
+mkdir -p ~/Artemis/agent-references/papers && cd ~/Artemis/agent-references
+git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw
+git clone --depth 1 https://github.com/NousResearch/hermes-agent.git hermes-agent
+git clone --depth 1 https://github.com/NousResearch/hermes-agent-self-evolution.git hermes-self-evolution
+curl -Lo papers/2603.27517-openclaw-vuln-taxonomy.pdf https://arxiv.org/pdf/2603.27517
+```
+
+`--depth 1` clones are substantially smaller than what was deleted — the 333 MB included
+`node_modules`-class vendored trees that a shallow clone of source alone does not carry.
+
+### ⚠ Clone to READ. Never install, never run.
+Restoring this puts three autonomous agent frameworks — code that executes shell, file and browser
+operations — onto a machine holding live Amira credentials, a production Postgres, and Slack/Google
+tokens. `npm install` and `pip install` alone execute arbitrary post-install hooks; that is enough
+to lose the machine. Read the source. Do not install dependencies, do not run setup or start
+scripts, do not open their configs with anything that executes them. If one ever has to be watched
+*behaving*, it happens in a throwaway VM with no real keys and no route to Artemis data.
+
+### What a restore does NOT give you back
+These were ZIP downloads, so **no commit SHA was recoverable** — there is no way to reproduce the
+exact bytes that were studied. A fresh clone gets current upstream `HEAD`, which will have moved.
+The versions that were on disk, for reference if a specific one ever matters:
+
+| Repo | Version on disk | Downloaded |
+|---|---|---|
+| `openclaw` | `2026.6.2` | 2026-06-07 |
+| `hermes-agent` | `0.16.0` (desktop app `v0.15.2`) | 2026-06-07 |
+| `hermes-agent-self-evolution` | `0.1.0` | 2026-03-29 |
+
+This is the cost of deleting a cache with no provenance, and it is cheap here **only because
+nothing had been read yet** — no findings depended on those exact bytes. Had the reading-list
+findings doc existed and cited line numbers, this table would not have been enough. If the study
+phase ever starts in earnest, clone properly and record the SHA.
