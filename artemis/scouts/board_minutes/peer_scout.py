@@ -240,6 +240,39 @@ _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
         # Fulton County Schools (Atlanta metro).
         "boarddocs_url": "https://go.boarddocs.com/ga/fcss/Board.nsf/Public",
     },
+    # --- Georgia crisis-coverage pass (2026-08-21) ---
+    # Added because GA board coverage was Gwinnett + Fulton only, and Gwinnett
+    # is not an Amira district (it screens with i-Ready), leaving effectively
+    # one relevant board.  Both slugs below were live-checked on 2026-08-21
+    # (HTTP 200 + address in page title matching the named district) with a
+    # browser User-Agent; BoardDocs 404s a bare default UA.
+    {
+        "district_id": "GA_chatham",
+        "state": "GA",
+        # Savannah-Chatham County Public Schools. Title check: "208 Bull Street
+        # | Savannah, GA 31401".  Holds the only located GA board contract for
+        # Amira (2023-04-12, HMH "AMIRA Suite" renewal, sole source, $352,000,
+        # ESSER/CARES II funded -- that funding source has since expired).
+        "boarddocs_url": "https://go.boarddocs.com/ga/sccs/Board.nsf/Public",
+    },
+    {
+        "district_id": "GA_marietta",
+        "state": "GA",
+        # Marietta City Schools. Title check: "250 Howard Street | Marietta, GA
+        # 30060".  Not an Amira district as far as we know -- included because it
+        # is the state's live AI flashpoint: a July 2026 board resolution states
+        # AI is "not recommended for elementary classrooms" and the
+        # superintendent went further on TV in August.  Whichever screener
+        # Marietta names becomes the template other GA boards copy.
+        "boarddocs_url": "https://go.boarddocs.com/ga/mcs/Board.nsf/Public",
+    },
+    # NOT on BoardDocs -- checked 2026-08-21, do not re-guess these slugs.
+    # Probed and 404: aps, atlanta, cobb, ccsd, clayton, ccps, marietta, dekalb,
+    # dcsd, henry, houston, bibb, muscogee, rcss.  Atlanta Public Schools,
+    # Cobb, Clayton and DeKalb -- our four most exposed Georgia districts, and
+    # APS is where the July 2026 story originated -- all run GSBA's Simbli /
+    # eBOARDsolutions portal, which is not search-indexed and needs its own
+    # adapter.  That is the largest single gap in Georgia board coverage.
 ]
 
 # Hard cap on districts scanned in one run — the national seed list will be

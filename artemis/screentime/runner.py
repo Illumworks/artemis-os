@@ -166,7 +166,7 @@ async def run_screentime_pipeline(
         # 4. "Real moves" filter.
         real_moves = []
         for c in topical:
-            if filters.is_real_move(c, rules):
+            if filters.is_real_move(c, rules, topic_rules):
                 real_moves.append(c)
             else:
                 report.dropped_not_real_move += 1

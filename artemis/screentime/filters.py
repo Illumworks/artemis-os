@@ -477,7 +477,11 @@ def _parse_relevant(text: str) -> bool | None:
     return None
 
 
-def is_real_move(candidate: CandidateSignal, rules: dict[str, Any]) -> bool:
+def is_real_move(
+    candidate: CandidateSignal,
+    rules: dict[str, Any],
+    topic_rules: dict[str, Any] | None = None,
+) -> bool:
     """The explicit, testable "real moves" bar.
 
     Keep a candidate iff ALL hold:
@@ -485,7 +489,36 @@ def is_real_move(candidate: CandidateSignal, rules: dict[str, Any]) -> bool:
          a bare 'news' item is dropped.
       2. it's screen-time relevant (and not an out-of-lane cellphone ban).
       3. it is not flagged opinion/op-ed/editorial in the title.
+
+    ...EXCEPT for the BRAND lane, which bypasses all three.
+
+    The brand bypass (2026-08-21) fixes a second instance of the exact blindness
+    the topic gate's brand lane was added to fix.  The topic gate keeps a named
+    vendor unconditionally and calls it "the single most important class of item
+    we have" -- and then this function re-tested the survivors with
+    ``is_screentime_relevant``, which is the OLD broad-stance-keyword gate with
+    no brand awareness, while ``_REAL_MOVE_STATUSES`` dropped anything filed as
+    'news'.  A brand/procurement story is *always* both: "APS parents balk at AI
+    reading test" carries no screen-time anchor and is filed as news, so it
+    passed stage one and died at stage two.  Net effect:
+    ``screentime_signals`` held ZERO rows for Georgia and ZERO for New Mexico
+    while both were the subject of active, named coverage -- 79 topic-relevant
+    findings in, 0 stored.
+
+    Opinion is bypassed too, deliberately: a hostile op-ed naming a vendor in a
+    major state paper is a real move for brand purposes even though it is
+    correctly excluded for legislative tracking.
+
+    Volume note: this admits every ``brand_any`` match, competitors included, so
+    the watch table over-collects by design.  That is the right trade for a
+    review surface -- and alerting is a separate, deliberate step (see
+    ``run_screentime_pipeline(deliver_alerts=...)``), so widening this does not
+    widen what gets pushed to Slack.
     """
+    if topic_rules and any(
+        term in candidate.text.lower() for term in _topic_terms(topic_rules, "brand_any")
+    ):
+        return True
     if candidate.status not in _REAL_MOVE_STATUSES:
         return False
     if not is_screentime_relevant(candidate.text, rules):
