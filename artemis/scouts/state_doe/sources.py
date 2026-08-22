@@ -170,6 +170,24 @@ STATE_DOE_SOURCES: dict[str, dict[str, str | None]] = {
         "governor_rss": "https://news.google.com/rss/search?q=Virginia+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
         "state_board_agenda_url": "https://www.doe.virginia.gov/boe",  # TODO: verify URL
     },
+    # --- Crisis-state pass (2026-08-21): GA and NM were both absent from this map
+    # while each was the subject of active AI-screener coverage.  Queries here are
+    # deliberately tuned to the actual controversy vocabulary (screener, voice
+    # recording, student data, opt out) rather than the generic
+    # "screen time OR AI policy" pattern used above, which did not surface either
+    # state's story.
+    "GA": {
+        "doe_rss": "https://news.google.com/rss/search?q=%22Georgia%22+(%22Department+of+Education%22+OR+GaDOE+OR+%22State+Board+of+Education%22)+(literacy+OR+%22reading+screener%22+OR+AI+OR+%22student+data%22+OR+%22voice+recording%22+OR+%22opt+out%22)&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://gadoe.org/blog/",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=%22Georgia+Governor%22+(education+OR+literacy+OR+AI)&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://gadoe.org/about-gadoe/state-board-of-education/",  # TODO: verify URL
+    },
+    "NM": {
+        "doe_rss": "https://news.google.com/rss/search?q=%22New+Mexico%22+(%22Public+Education+Department%22+OR+NMPED)+(literacy+OR+%22reading+screener%22+OR+AI+OR+%22student+data%22+OR+%22voice+recording%22+OR+%22opt+out%22)&hl=en-US&gl=US&ceid=US%3Aen",
+        "doe_scrape_url": "https://webnew.ped.state.nm.us/news/",  # TODO: verify URL
+        "governor_rss": "https://news.google.com/rss/search?q=%22New+Mexico+Governor%22+(education+OR+literacy+OR+AI)&hl=en-US&gl=US&ceid=US%3Aen",
+        "state_board_agenda_url": "https://webnew.ped.state.nm.us/bureaus/policy-innovation-measurement/",  # TODO: verify URL
+    },
 }
 
 
