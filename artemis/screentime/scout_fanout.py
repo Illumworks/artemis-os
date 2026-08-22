@@ -73,64 +73,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from artemis.scouts._states import US_STATES_AND_DC as _CANONICAL_US_STATES_AND_DC
 from artemis.scouts.base import ScoutConfig
 
 _logger = logging.getLogger(__name__)
 
-# All 50 states + DC — the national sweep set.
-US_STATES_AND_DC: list[str] = [
-    "AL",
-    "AK",
-    "AZ",
-    "AR",
-    "CA",
-    "CO",
-    "CT",
-    "DE",
-    "DC",
-    "FL",
-    "GA",
-    "HI",
-    "ID",
-    "IL",
-    "IN",
-    "IA",
-    "KS",
-    "KY",
-    "LA",
-    "ME",
-    "MD",
-    "MA",
-    "MI",
-    "MN",
-    "MS",
-    "MO",
-    "MT",
-    "NE",
-    "NV",
-    "NH",
-    "NJ",
-    "NM",
-    "NY",
-    "NC",
-    "ND",
-    "OH",
-    "OK",
-    "OR",
-    "PA",
-    "RI",
-    "SC",
-    "SD",
-    "TN",
-    "TX",
-    "UT",
-    "VT",
-    "VA",
-    "WA",
-    "WV",
-    "WI",
-    "WY",
-]
+# All 50 states + DC — re-exported from the canonical table
+# (artemis/scouts/_states.py). Was a hand-maintained copy that had drifted from
+# the State-DoE source map by 29 states.
+US_STATES_AND_DC = _CANONICAL_US_STATES_AND_DC
+
 
 # Screen-time-tuned search terms — instructional screen-time + evidence-based
 # carve-outs, PLUS (2026-07-10) AI-in-schools POLICY terms. Deliberately NOT

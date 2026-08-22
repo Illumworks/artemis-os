@@ -71,6 +71,7 @@ are not required for normal operation.
 from __future__ import annotations
 
 import logging
+import re
 import xml.etree.ElementTree as ET
 from typing import Any
 from urllib.parse import quote
@@ -78,68 +79,20 @@ from urllib.parse import quote
 import defusedxml.ElementTree as SafeET
 
 from artemis.scouts._http import ScoutHttpClient
+from artemis.scouts._states import STATE_NAMES as _CANONICAL_STATE_NAMES
 from artemis.screentime.filters import LANE_BRAND, LANE_POLICY
 
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# State names — abbreviation → full name, for the human-readable query text.
-# Keys match ``scout_fanout.US_STATES_AND_DC`` exactly (50 states + DC).
+# State names — re-exported from the canonical table.
 # ---------------------------------------------------------------------------
+# Was a second hand-maintained copy. Three lists of states had drifted apart
+# (this one, scout_fanout's, and the State-DoE source map) with nothing to
+# detect it; see artemis/scouts/_states.py.
 
-STATE_NAMES: dict[str, str] = {
-    "AL": "Alabama",
-    "AK": "Alaska",
-    "AZ": "Arizona",
-    "AR": "Arkansas",
-    "CA": "California",
-    "CO": "Colorado",
-    "CT": "Connecticut",
-    "DE": "Delaware",
-    "DC": "District of Columbia",
-    "FL": "Florida",
-    "GA": "Georgia",
-    "HI": "Hawaii",
-    "ID": "Idaho",
-    "IL": "Illinois",
-    "IN": "Indiana",
-    "IA": "Iowa",
-    "KS": "Kansas",
-    "KY": "Kentucky",
-    "LA": "Louisiana",
-    "ME": "Maine",
-    "MD": "Maryland",
-    "MA": "Massachusetts",
-    "MI": "Michigan",
-    "MN": "Minnesota",
-    "MS": "Mississippi",
-    "MO": "Missouri",
-    "MT": "Montana",
-    "NE": "Nebraska",
-    "NV": "Nevada",
-    "NH": "New Hampshire",
-    "NJ": "New Jersey",
-    "NM": "New Mexico",
-    "NY": "New York",
-    "NC": "North Carolina",
-    "ND": "North Dakota",
-    "OH": "Ohio",
-    "OK": "Oklahoma",
-    "OR": "Oregon",
-    "PA": "Pennsylvania",
-    "RI": "Rhode Island",
-    "SC": "South Carolina",
-    "SD": "South Dakota",
-    "TN": "Tennessee",
-    "TX": "Texas",
-    "UT": "Utah",
-    "VT": "Vermont",
-    "VA": "Virginia",
-    "WA": "Washington",
-    "WV": "West Virginia",
-    "WI": "Wisconsin",
-    "WY": "Wyoming",
-}
+STATE_NAMES = _CANONICAL_STATE_NAMES
+
 
 _GOOGLE_NEWS_RSS_BASE = "https://news.google.com/rss/search"
 
@@ -333,6 +286,84 @@ async def fetch_state_news_items(state_abbr: str, http: ScoutHttpClient) -> list
         return []
 
 
+# ---------------------------------------------------------------------------
+# Content-based state attribution
+# ---------------------------------------------------------------------------
+# The per-state fan-out asks Google News one question per state, then used to
+# stamp the ANSWER with the state it ASKED about. Google News does not honour
+# that scope: a query naming Georgia returns Bellevue (WA) and Hillsborough (FL)
+# stories, and a query naming New Mexico returned a Texas renewal. Measured
+# 2026-08-21 on live data: of 23 stored rows, at least 9 were filed under a
+# state the article was not about.
+#
+# The consequence is worse than noise. Per-state counts are what tell us whether
+# we are blind somewhere, so mis-attribution inflates exactly the number we use
+# to decide we have coverage.
+#
+# Resolution is by full state NAME only. Two-letter abbreviations are not
+# matched bare -- "IN", "OR", "OK", "ME", "HI", "DE", "MS", "MD", "MT", "PA",
+# "LA", "MA", "WA", "AL", "CA", "CO", "CT" are all ordinary English words or
+# fragments -- but ARE matched in the ", GA" / ", Ga." place-suffix form, which
+# is unambiguous.
+#
+# NATIONAL is the honest answer for an item with no geography at all (a vendor
+# funding round, a national trade story). Those are real signals; they are just
+# not evidence about any state.
+
+NATIONAL = "US"
+
+_STATE_NAME_RE: dict[str, re.Pattern[str]] = {
+    abbr: re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
+    for abbr, name in STATE_NAMES.items()
+}
+# ", GA" or ", Ga." — an abbreviation used as a place suffix.
+_STATE_SUFFIX_RE: dict[str, re.Pattern[str]] = {
+    abbr: re.compile(r",\s*" + abbr + r"\b\.?", re.IGNORECASE) for abbr in STATE_NAMES
+}
+
+
+def resolve_state(text: str, query_state: str) -> tuple[str, str]:
+    """Return ``(state, confidence)`` for *text* retrieved by a *query_state* feed.
+
+    confidence is one of:
+      ``confirmed``     the text names the state we searched for -- trust it.
+      ``reattributed``  it names exactly one OTHER state -- file it there.
+      ``national``      it names no state at all -- file under ``NATIONAL``.
+      ``ambiguous``     it names several states, none of them ours -- ``NATIONAL``.
+
+    Never raises. An unknown *query_state* is treated as having no home state,
+    which degrades to national rather than to a wrong state.
+
+    KNOWN LIMITATION, and it costs us something real. Resolution is by state
+    name only, so an article that names a place but never its state resolves to
+    NATIONAL: "Popular school program i-Ready, used in Hillsborough County,
+    faces lawsuit over student data" is a FLORIDA signal and lands as national.
+    Florida was one of three states named internally as live on 2026-08-20, so
+    this is exactly the signal we most need placed.
+
+    The fix is available and not done here: ``districts`` holds 13k district
+    names with their states, which would resolve "Hillsborough County" to FL and
+    "Bellevue School District" to WA. It needs a place->state index passed in
+    (this module has no DB access by design) and a disambiguation rule for names
+    that recur across states -- Clayton, Columbus, Athens, Jackson, Franklin,
+    Union County all exist in several. Until then NATIONAL means "no state
+    named", not "not about a state", and the per-state coverage alarm in
+    ``artemis.ops`` is what actually protects us from believing a quiet state is
+    a covered one.
+    """
+    mentioned = {abbr for abbr, rx in _STATE_NAME_RE.items() if rx.search(text)}
+    mentioned |= {abbr for abbr, rx in _STATE_SUFFIX_RE.items() if rx.search(text)}
+
+    home = (query_state or "").strip().upper()
+    if home and home in mentioned:
+        return home, "confirmed"
+    if len(mentioned) == 1:
+        return next(iter(mentioned)), "reattributed"
+    if not mentioned:
+        return NATIONAL, "national"
+    return NATIONAL, "ambiguous"
+
+
 def item_to_finding(item: dict[str, Any], state_abbr: str) -> dict[str, Any] | None:
     """Normalize one RSS item into the canonical raw-finding-dict shape.
 
@@ -350,17 +381,25 @@ def item_to_finding(item: dict[str, Any], state_abbr: str) -> dict[str, Any] | N
 
     lane = str(item.get("lane") or LANE_POLICY).strip().lower()
 
+    # Attribute by what the article says, not by which feed fetched it.
+    resolved_state, state_confidence = resolve_state(combined, state_abbr)
+
     return {
         "sourceType": "national_news",
         "discoveredBy": "national_news_scout",
-        "state": state_abbr,
+        "state": resolved_state,
         "title": title,
         "reasonCodes": _classify_reason_codes(combined),
         "urgency": "standard",
         "evidence": f"{title}. {summary[:300]}".strip(),
         "lane": lane,
         "metadata": {
-            "state": state_abbr,
+            "state": resolved_state,
+            # Kept for auditing: which feed asked, versus what the text said.
+            # A run whose rows are mostly "reattributed" means the per-state
+            # queries are not actually scoping, which is a scout bug, not noise.
+            "query_state": state_abbr,
+            "state_confidence": state_confidence,
             "source_url": link,
             "published_at": item.get("published") or "",
             "source_name": "Google News",

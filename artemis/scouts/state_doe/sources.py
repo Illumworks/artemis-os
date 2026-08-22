@@ -10,184 +10,190 @@ from __future__ import annotations
 import logging
 import xml.etree.ElementTree as ET
 from typing import Any
+from urllib.parse import quote
 
 import defusedxml.ElementTree as SafeET
 
 from artemis.scouts._http import ScoutHttpClient
 from artemis.scouts._pdf import extract_text
+from artemis.scouts._states import STATE_NAMES, agency_name
 
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Per-state source configuration
 # ---------------------------------------------------------------------------
-
-# Each entry contains:
-#   doe_rss          – URL of the state DoE RSS/Atom feed, or None
-#   doe_scrape_url   – Fallback newsroom URL to scrape when RSS is absent/empty
-#   governor_rss     – Governor's press-release RSS feed, or None
-#   state_board_agenda_url – Page listing upcoming/recent state board agendas
+# Per-state source configuration — GENERATED for every state, not hand-listed
+# ---------------------------------------------------------------------------
+# This map used to be hand-written, and on 2026-08-21 it covered 22 of 51
+# jurisdictions. The 29 missing included Oklahoma (which produced more
+# screen-time signals than any other state), Washington, Pennsylvania, New
+# Jersey and Massachusetts. Nothing surfaced the gap, because the scout's
+# default state list is derived FROM this dict — so a state absent here was not
+# under-covered, it was silently not covered at all, and the run report looked
+# healthy.
 #
-# All URLs marked "# TODO: verify URL" are plausible but should be validated
-# against live state web properties before first production run.
+# It is now generated from ``artemis.scouts._states``, so every state is present
+# by construction and adding one is impossible to forget.
+# ``artemis/scouts/tests/test_state_coverage.py`` fails if the layers drift again.
+#
+# Each entry contains:
+#   doe_rss                – state DoE news feed
+#   doe_scrape_url         – newsroom URL to scrape when RSS is absent/empty
+#   governor_rss           – governor's press-release feed
+#   state_board_agenda_url – page listing state board agendas
+#
+# Why every feed is Google News rather than the agency's own: all seven original
+# state DoE sites were tested live on 2026-06-16 and none served a crawlable RSS
+# feed that survived bot detection (403 on fldoe.org, 404/redirect on IN/IL/TX,
+# 404 on MO /news/rss). Google News RSS is publicly accessible per state and
+# carries real DoE coverage.
 
-STATE_DOE_SOURCES: dict[str, dict[str, str | None]] = {
-    # doe_rss URLs verified 2026-06-16.
-    #
-    # All seven state DoE sites were tested live; none serve a crawlable RSS feed
-    # that survives bot-detection (403 on fldoe.org, 404/redirect-to-homepage on
-    # IN/IL/TX, 404 on MO /news/rss).  Google News RSS provides a reliable,
-    # publicly accessible RSS feed per state with real DoE news coverage.
-    # The queries are scoped to literacy/reading to keep results signal-dense.
-    #
-    # MO DESE does expose https://dese.mo.gov/rss.xml but it returns only 2 items
-    # (one of which is a certification form, not news); Google News is richer.
+# The search vocabulary, applied UNIFORMLY to every state.
+#
+# This list fixes a second bug. The original queries asked only about "literacy
+# reading"; a later pass asked about "screen time OR AI policy". So the
+# vocabulary that would have caught the two stories that actually mattered —
+# "reading screener", "voice recording", "opt out", "student data" — existed for
+# Georgia and New Mexico only, because those were the states someone had gone
+# and hand-edited. Any future tuning belongs here, where all 51 states get it.
+_TOPIC_TERMS = (
+    'literacy OR "reading screener" OR "universal screener" OR dyslexia '
+    'OR AI OR "artificial intelligence" OR "student data" OR privacy '
+    'OR "voice recording" OR "opt out" OR "screen time"'
+)
+
+
+def _news_rss(query: str) -> str:
+    """Google News RSS URL for *query*, US English."""
+    return (
+        "https://news.google.com/rss/search?q="
+        + quote(query, safe="")
+        + "&hl=en-US&gl=US&ceid=US%3Aen"
+    )
+
+
+def _doe_rss(state: str) -> str:
+    """DoE-scoped news query for *state*, using the agency's local name."""
+    return _news_rss(f'"{STATE_NAMES[state]}" ({agency_name(state)}) ({_TOPIC_TERMS})')
+
+
+def _governor_rss(state: str) -> str:
+    """Governor-scoped education query for *state*."""
+    return _news_rss(f'"{STATE_NAMES[state]} Governor" (education OR literacy OR AI)')
+
+
+# Hand-verified agency URLs, kept as overrides on top of the generated defaults.
+# A state absent here falls back to its Google News feeds — a real downgrade in
+# precision, but never a silent gap in coverage.
+_VERIFIED_SOURCES: dict[str, dict[str, str]] = {
+    "AL": {
+        "doe_scrape_url": "https://www.alabamaachieves.org/newsroom/",
+        "state_board_agenda_url": "https://www.alabamaachieves.org/about/state-board-of-education/",
+    },
+    "CA": {
+        "doe_scrape_url": "https://www.cde.ca.gov/nr/ne/",
+        "state_board_agenda_url": "https://www.cde.ca.gov/be/ag/ag/",
+    },
+    "CO": {
+        "doe_scrape_url": "https://www.cde.state.co.us/communications/newsreleases",
+        "state_board_agenda_url": "https://www.cde.state.co.us/csb",
+    },
     "FL": {
-        "doe_rss": "https://news.google.com/rss/search?q=Florida+Department+of+Education+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
         "doe_scrape_url": "https://www.fldoe.org/newsroom/",
         "governor_rss": "https://www.flgov.com/news/feed/",
         "state_board_agenda_url": "https://www.fldoe.org/policy/state-board-of-edu/meetings/",
     },
-    "IN": {
-        "doe_rss": "https://news.google.com/rss/search?q=Indiana+Department+of+Education+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.in.gov/doe/news/",
-        "governor_rss": "https://www.in.gov/gov/newsroom/feed/",
-        "state_board_agenda_url": "https://www.in.gov/doe/sboe/meetings/",
-    },
-    "MD": {
-        "doe_rss": "https://news.google.com/rss/search?q=Maryland+State+Department+of+Education+literacy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.marylandpublicschools.org/about/Pages/News/",
-        "governor_rss": "https://governor.maryland.gov/newsroom/feed/",
-        "state_board_agenda_url": "https://www.marylandpublicschools.org/about/Pages/SBOE/Meetings/",
-    },
-    "MO": {
-        "doe_rss": "https://news.google.com/rss/search?q=Missouri+DESE+education+literacy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://dese.mo.gov/news",
-        "governor_rss": "https://governor.mo.gov/news/feed",
-        "state_board_agenda_url": "https://dese.mo.gov/state-board-education/board-meetings",
-    },
-    "MI": {
-        "doe_rss": "https://news.google.com/rss/search?q=Michigan+Department+of+Education+literacy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.michigan.gov/mde/news",
-        "governor_rss": "https://www.michigan.gov/whitmer/news/press-releases/feed",
-        "state_board_agenda_url": "https://www.michigan.gov/mde/state-board/board-meetings",
+    "GA": {
+        "doe_scrape_url": "https://gadoe.org/blog/",
+        "state_board_agenda_url": "https://gadoe.org/about-gadoe/state-board-of-education/",
     },
     "IL": {
-        "doe_rss": "https://news.google.com/rss/search?q=Illinois+State+Board+of+Education+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
         "doe_scrape_url": "https://www.isbe.net/Pages/news.aspx",
         "governor_rss": "https://gov.illinois.gov/news/press-releases/feed/",
         "state_board_agenda_url": "https://www.isbe.net/Pages/State-Board-Meetings.aspx",
     },
+    "IN": {
+        "doe_scrape_url": "https://www.in.gov/doe/news/",
+        "governor_rss": "https://www.in.gov/gov/newsroom/feed/",
+        "state_board_agenda_url": "https://www.in.gov/doe/sboe/meetings/",
+    },
+    "LA": {
+        "doe_scrape_url": "https://www.louisianabelieves.com/newsroom/news-releases",
+        "state_board_agenda_url": "https://www.louisianabelieves.com/about-us/bese",
+    },
+    "MD": {
+        "doe_scrape_url": "https://www.marylandpublicschools.org/about/Pages/News/",
+        "governor_rss": "https://governor.maryland.gov/newsroom/feed/",
+        "state_board_agenda_url": "https://www.marylandpublicschools.org/about/Pages/SBOE/Meetings/",
+    },
+    "MI": {
+        "doe_scrape_url": "https://www.michigan.gov/mde/news",
+        "governor_rss": "https://www.michigan.gov/whitmer/news/press-releases/feed",
+        "state_board_agenda_url": "https://www.michigan.gov/mde/state-board/board-meetings",
+    },
+    "MO": {
+        "doe_scrape_url": "https://dese.mo.gov/news",
+        "governor_rss": "https://governor.mo.gov/news/feed",
+        "state_board_agenda_url": "https://dese.mo.gov/state-board-education/board-meetings",
+    },
+    "MS": {
+        "doe_scrape_url": "https://www.mdek12.org/newsroom",
+        "state_board_agenda_url": "https://www.mdek12.org/board",
+    },
+    "NC": {
+        "doe_scrape_url": "https://www.dpi.nc.gov/news",
+        "state_board_agenda_url": "https://www.dpi.nc.gov/about-dpi/state-board-education",
+    },
+    "NM": {
+        "doe_scrape_url": "https://webnew.ped.state.nm.us/news/",
+        "state_board_agenda_url": "https://webnew.ped.state.nm.us/bureaus/policy-innovation-measurement/",
+    },
+    "NY": {
+        "doe_scrape_url": "https://www.nysed.gov/news",
+        "state_board_agenda_url": "https://www.regents.nysed.gov/meetings",
+    },
+    "OH": {
+        "doe_scrape_url": "https://education.ohio.gov/Media",
+        "state_board_agenda_url": "https://education.ohio.gov/Topics/State-Board-of-Education",
+    },
+    "OR": {
+        "doe_scrape_url": "https://www.oregon.gov/ode/about-us/newsroom/Pages/default.aspx",
+        "state_board_agenda_url": "https://www.oregon.gov/ode/rules-and-policies/Pages/State-Board.aspx",
+    },
+    "SC": {
+        "doe_scrape_url": "https://ed.sc.gov/newsroom/",
+        "state_board_agenda_url": "https://ed.sc.gov/about/state-board-of-education/",
+    },
+    "TN": {
+        "doe_scrape_url": "https://www.tn.gov/education/news.html",
+        "state_board_agenda_url": "https://www.tn.gov/sbe.html",
+    },
     "TX": {
-        "doe_rss": "https://news.google.com/rss/search?q=Texas+Education+Agency+literacy+reading&hl=en-US&gl=US&ceid=US%3Aen",
         "doe_scrape_url": "https://tea.texas.gov/about-tea/news-and-multimedia/press-releases",
         "governor_rss": "https://gov.texas.gov/news/press-releases/feed",
         "state_board_agenda_url": "https://tea.texas.gov/about-tea/leadership/state-board-of-education/sboe-meetings",
     },
-    # --- National broadening pass (2026-07-10, Screen-Time Watch scout expansion) ---
-    # Domains below were live-checked (root resolves 200) as part of this pass;
-    # doe_rss/governor_rss reuse the Google News RSS pattern proven reliable for
-    # the original seven states (direct agency RSS is inconsistent/bot-blocked
-    # across state sites). doe_scrape_url / state_board_agenda_url are
-    # best-effort agency page guesses under the verified root domain — mark
-    # "# TODO: verify URL" per this file's existing convention; validate against
-    # live site structure before relying on the HTML-scrape fallback path.
-    "CA": {
-        "doe_rss": "https://news.google.com/rss/search?q=California+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.cde.ca.gov/nr/ne/",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=California+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.cde.ca.gov/be/ag/ag/",  # TODO: verify URL
-    },
-    "OR": {
-        "doe_rss": "https://news.google.com/rss/search?q=Oregon+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.oregon.gov/ode/about-us/newsroom/Pages/default.aspx",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Oregon+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.oregon.gov/ode/rules-and-policies/Pages/State-Board.aspx",  # TODO: verify URL
-    },
-    "NY": {
-        "doe_rss": "https://news.google.com/rss/search?q=New+York+State+Education+Department+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.nysed.gov/news",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=New+York+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.regents.nysed.gov/meetings",  # TODO: verify URL
-    },
-    "SC": {
-        "doe_rss": "https://news.google.com/rss/search?q=South+Carolina+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://ed.sc.gov/newsroom/",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=South+Carolina+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://ed.sc.gov/about/state-board-of-education/",  # TODO: verify URL
-    },
     "UT": {
-        "doe_rss": "https://news.google.com/rss/search?q=Utah+State+Board+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://schools.utah.gov/communications",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Utah+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://schools.utah.gov/board",  # TODO: verify URL
-    },
-    "AL": {
-        "doe_rss": "https://news.google.com/rss/search?q=Alabama+State+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.alabamaachieves.org/newsroom/",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Alabama+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.alabamaachieves.org/about/state-board-of-education/",  # TODO: verify URL
-    },
-    "OH": {
-        "doe_rss": "https://news.google.com/rss/search?q=Ohio+Department+of+Education+and+Workforce+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://education.ohio.gov/Media",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Ohio+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://education.ohio.gov/Topics/State-Board-of-Education",  # TODO: verify URL
-    },
-    "TN": {
-        "doe_rss": "https://news.google.com/rss/search?q=Tennessee+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.tn.gov/education/news.html",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Tennessee+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.tn.gov/sbe.html",  # TODO: verify URL
-    },
-    "MS": {
-        "doe_rss": "https://news.google.com/rss/search?q=Mississippi+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.mdek12.org/newsroom",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Mississippi+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.mdek12.org/board",  # TODO: verify URL
-    },
-    "NC": {
-        "doe_rss": "https://news.google.com/rss/search?q=North+Carolina+Department+of+Public+Instruction+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.dpi.nc.gov/news",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=North+Carolina+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.dpi.nc.gov/about-dpi/state-board-education",  # TODO: verify URL
-    },
-    "CO": {
-        "doe_rss": "https://news.google.com/rss/search?q=Colorado+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.cde.state.co.us/communications/newsreleases",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Colorado+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.cde.state.co.us/csb",  # TODO: verify URL
-    },
-    "LA": {
-        "doe_rss": "https://news.google.com/rss/search?q=Louisiana+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.louisianabelieves.com/newsroom/news-releases",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Louisiana+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.louisianabelieves.com/about-us/bese",  # TODO: verify URL
+        "doe_scrape_url": "https://schools.utah.gov/communications",
+        "state_board_agenda_url": "https://schools.utah.gov/board",
     },
     "VA": {
-        "doe_rss": "https://news.google.com/rss/search?q=Virginia+Department+of+Education+screen+time+OR+AI+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://www.doe.virginia.gov/news",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=Virginia+Governor+education+policy&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://www.doe.virginia.gov/boe",  # TODO: verify URL
+        "doe_scrape_url": "https://www.doe.virginia.gov/news",
+        "state_board_agenda_url": "https://www.doe.virginia.gov/boe",
     },
-    # --- Crisis-state pass (2026-08-21): GA and NM were both absent from this map
-    # while each was the subject of active AI-screener coverage.  Queries here are
-    # deliberately tuned to the actual controversy vocabulary (screener, voice
-    # recording, student data, opt out) rather than the generic
-    # "screen time OR AI policy" pattern used above, which did not surface either
-    # state's story.
-    "GA": {
-        "doe_rss": "https://news.google.com/rss/search?q=%22Georgia%22+(%22Department+of+Education%22+OR+GaDOE+OR+%22State+Board+of+Education%22)+(literacy+OR+%22reading+screener%22+OR+AI+OR+%22student+data%22+OR+%22voice+recording%22+OR+%22opt+out%22)&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://gadoe.org/blog/",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=%22Georgia+Governor%22+(education+OR+literacy+OR+AI)&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://gadoe.org/about-gadoe/state-board-of-education/",  # TODO: verify URL
-    },
-    "NM": {
-        "doe_rss": "https://news.google.com/rss/search?q=%22New+Mexico%22+(%22Public+Education+Department%22+OR+NMPED)+(literacy+OR+%22reading+screener%22+OR+AI+OR+%22student+data%22+OR+%22voice+recording%22+OR+%22opt+out%22)&hl=en-US&gl=US&ceid=US%3Aen",
-        "doe_scrape_url": "https://webnew.ped.state.nm.us/news/",  # TODO: verify URL
-        "governor_rss": "https://news.google.com/rss/search?q=%22New+Mexico+Governor%22+(education+OR+literacy+OR+AI)&hl=en-US&gl=US&ceid=US%3Aen",
-        "state_board_agenda_url": "https://webnew.ped.state.nm.us/bureaus/policy-innovation-measurement/",  # TODO: verify URL
-    },
+}
+
+
+STATE_DOE_SOURCES: dict[str, dict[str, str | None]] = {
+    state: {
+        "doe_rss": _doe_rss(state),
+        "doe_scrape_url": None,
+        "governor_rss": _governor_rss(state),
+        "state_board_agenda_url": None,
+        **_VERIFIED_SOURCES.get(state, {}),
+    }
+    for state in STATE_NAMES
 }
 
 
