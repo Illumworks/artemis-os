@@ -126,6 +126,38 @@ class Funnel:
         return next((b for b in self.signal_states if b.label == label), None)
 
 
+# A state where we support at least this many districts is a state we should be
+# able to see. Below it, silence is plausible; at or above it, silence means the
+# scouts are not looking. Derived from ``districts.supported``, so it tracks the
+# footprint instead of a hand-kept list.
+COVERAGE_DISTRICT_FLOOR = 20
+
+# Signals older than this in a state we cover means the feeds have gone quiet
+# there, which historically read as "nothing happening" and meant "not looking".
+COVERAGE_STALE_AFTER = timedelta(days=30)
+
+
+@dataclass(frozen=True)
+class StateCoverage:
+    """Per-state: do we have a footprint, and can we actually see that state?"""
+
+    state: str
+    districts: int
+    signals: int
+    newest: datetime | None
+    in_territory_config: bool
+
+    @property
+    def blind(self) -> bool:
+        return self.districts >= COVERAGE_DISTRICT_FLOOR and self.signals == 0
+
+    @property
+    def stale(self) -> bool:
+        if self.signals == 0 or self.districts < COVERAGE_DISTRICT_FLOOR:
+            return False
+        return _is_stale(self.newest, COVERAGE_STALE_AFTER)
+
+
 @dataclass
 class Report:
     generated_at: datetime
@@ -133,6 +165,7 @@ class Report:
     agents: list[AgentActivity] = field(default_factory=list)
     funnel: Funnel = field(default_factory=Funnel)
     stuck_runs: list[StuckRun] = field(default_factory=list)
+    state_coverage: list[StateCoverage] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
 
 
@@ -421,6 +454,71 @@ async def collect_stuck_runs(session: AsyncSession) -> list[StuckRun]:
     ]
 
 
+async def collect_state_coverage(session: AsyncSession) -> list[StateCoverage]:
+    """Where we do business, versus where we can actually see.
+
+    This is the check whose absence let three simultaneous crises go unseen. On
+    2026-08-21 an internal note named New Mexico, Georgia, Hillsborough (FL) and
+    Baltimore (MD) as live in the same week. Signal counts at that moment:
+    Georgia 0, New Mexico 0, Maryland 0, Florida 1 — while Oklahoma, which is in
+    no territory config at all, had more than any other state. Nothing compared
+    those two facts, so every component reported healthy.
+
+    TWO PIPELINES, DO NOT CONFLATE THEM. ``screentime_signals`` is the crisis
+    watch and it never reads ``territory_config``; ``signal_queue`` is the
+    marketing campaign pipeline and is the only thing that applies the territory
+    multiplier. A state's ``territory`` column explains nothing about its signal
+    count -- both are reported because both answer "can we see this state", not
+    because one causes the other. An earlier read of this data mistook the
+    territory penalty for the cause of the crisis blindness; the actual cause was
+    the real-move gate in ``filters.py``.
+
+    The ``US`` state code is excluded: it is the national bucket for items that
+    name no state (see ``national_news.NATIONAL``), not a jurisdiction.
+    """
+    sql = """
+        WITH footprint AS (
+            SELECT state, count(*) AS districts
+              FROM districts
+             WHERE supported IS TRUE AND state IS NOT NULL
+             GROUP BY state
+        ),
+        seen AS (
+            SELECT state, count(*) AS signals, max(discovered_at) AS newest
+              FROM screentime_signals
+             WHERE state <> 'US'
+             GROUP BY state
+        ),
+        territory AS (
+            SELECT DISTINCT jsonb_array_elements_text(
+                       coalesce(standard_states, '[]'::jsonb)
+                       || coalesce(hot_states, '[]'::jsonb)
+                   ) AS state
+              FROM territory_config
+        )
+        SELECT f.state,
+               f.districts,
+               coalesce(s.signals, 0) AS signals,
+               s.newest,
+               (t.state IS NOT NULL) AS in_territory
+          FROM footprint f
+          LEFT JOIN seen s ON s.state = f.state
+          LEFT JOIN territory t ON t.state = f.state
+         ORDER BY f.districts DESC, f.state
+    """
+    rows = (await session.execute(text(sql))).all()
+    return [
+        StateCoverage(
+            state=str(r[0]),
+            districts=int(r[1] or 0),
+            signals=int(r[2] or 0),
+            newest=r[3],
+            in_territory_config=bool(r[4]),
+        )
+        for r in rows
+    ]
+
+
 def derive_findings(report: Report) -> list[Finding]:
     """Turn the raw numbers into the short list of things that need a human."""
     findings: list[Finding] = []
@@ -488,6 +586,43 @@ def derive_findings(report: Report) -> list[Finding]:
             )
         )
 
+    blind = [c for c in report.state_coverage if c.blind]
+    if blind:
+        worst = ", ".join(f"{c.state} ({c.districts} districts)" for c in blind[:6])
+        findings.append(
+            Finding(
+                "stuck",
+                f"{len(blind)} state(s) with a real footprint have ZERO signals: {worst}"
+                + ("" if len(blind) <= 6 else " ..."),
+            )
+        )
+    for cov in report.state_coverage:
+        if cov.stale:
+            findings.append(
+                Finding(
+                    "warn",
+                    f"{cov.state}: {cov.districts} districts supported, "
+                    f"no new signal for {_fmt_duration(cov.newest)}",
+                )
+            )
+    unlisted = [
+        c
+        for c in report.state_coverage
+        if c.districts >= COVERAGE_DISTRICT_FLOOR and not c.in_territory_config
+    ]
+    if unlisted:
+        names = ", ".join(f"{c.state} ({c.districts})" for c in unlisted[:8])
+        findings.append(
+            Finding(
+                "warn",
+                f"campaign scoring only: {len(unlisted)} state(s) with a footprint "
+                f"sit outside territory_config and take a 0.85x penalty on MARKETING "
+                f"signals -- no effect on the crisis watch above. Partly intentional "
+                f"(standard_states encodes chosen sales territories, not footprint), "
+                f"so review rather than fix: {names}" + ("" if len(unlisted) <= 8 else " ..."),
+            )
+        )
+
     return findings
 
 
@@ -497,6 +632,7 @@ async def build_report() -> Report:
         report.agents = await collect_agents(session)
         report.funnel = await collect_funnel(session)
         report.stuck_runs = await collect_stuck_runs(session)
+        report.state_coverage = await collect_state_coverage(session)
     report.findings = derive_findings(report)
     return report
 
@@ -568,6 +704,29 @@ def render(report: Report) -> str:
         add(
             f"  {run.run_id[:8]}  {run.pipeline:<34} {run.status:<18} "
             f"since {_fmt_when(run.since)} ({_fmt_age(run.since)})"
+        )
+
+    add("")
+    add("STATE COVERAGE -- footprint vs. what the CRISIS WATCH can see")
+    add("  (signals = screentime_signals. the territory column governs a DIFFERENT")
+    add("   pipeline -- marketing signal_queue scoring -- and not these counts)")
+    covered = [c for c in report.state_coverage if c.districts >= COVERAGE_DISTRICT_FLOOR]
+    if not covered:
+        add("  (no state has enough supported districts to assess)")
+    else:
+        add(f"  {'state':<7} {'districts':>9} {'signals':>8} {'newest':<14} {'territory':<10}")
+        for cov in covered:
+            flag = "!!" if cov.blind else (" -" if cov.stale else "  ")
+            terr = "yes" if cov.in_territory_config else "MISSING"
+            add(
+                f"  {flag}{cov.state:<5} {cov.districts:>9} {cov.signals:>8} "
+                f"{_fmt_age(cov.newest):<14} {terr:<10}"
+            )
+        blind_n = sum(1 for c in covered if c.blind)
+        add("")
+        add(
+            f"  {len(covered)} states above the {COVERAGE_DISTRICT_FLOOR}-district floor; "
+            f"{blind_n} with zero signals"
         )
 
     add("")

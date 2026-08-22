@@ -13,6 +13,7 @@ from artemis.ops.health import (
     Bucket,
     Funnel,
     Report,
+    StateCoverage,
     StuckRun,
     derive_findings,
     render,
@@ -225,3 +226,75 @@ def test_waiting_column_renders_the_outstanding_question() -> None:
     out = render(report)
     assert "waiting" in out
     assert "!! 17h" in out
+
+
+# ── state coverage ────────────────────────────────────────────────────────────
+# The check whose absence let three simultaneous crises go unseen. On 2026-08-21
+# an internal note named New Mexico, Georgia, Hillsborough (FL) and Baltimore
+# (MD) as live in the same week; signal counts were GA 0, NM 0, MD 0, FL 1.
+# Every component reported healthy because nothing compared footprint to
+# visibility.
+
+
+def _cov(state: str, districts: int, signals: int, newest: datetime | None, terr: bool = True):
+    return StateCoverage(
+        state=state,
+        districts=districts,
+        signals=signals,
+        newest=newest,
+        in_territory_config=terr,
+    )
+
+
+def test_state_with_footprint_and_zero_signals_is_stuck() -> None:
+    """The Georgia case, as it actually was on the morning we found it."""
+    report = _report(state_coverage=[_cov("GA", 66, 0, None)])
+    findings = derive_findings(report)
+    stuck = [f for f in findings if f.severity == "stuck"]
+    assert stuck, "a state we sell into with no signals at all must be a stuck finding"
+    assert "GA (66 districts)" in stuck[0].message
+
+
+def test_small_footprint_with_zero_signals_is_not_flagged() -> None:
+    """Silence in a state with three districts is plausible, not a defect."""
+    report = _report(state_coverage=[_cov("WY", 3, 0, None)])
+    assert derive_findings(report) == []
+
+
+def test_stale_state_is_warned_not_stuck() -> None:
+    report = _report(state_coverage=[_cov("OH", 61, 1, _ago(days=40))])
+    findings = derive_findings(report)
+    assert [f.severity for f in findings] == ["warn"]
+    assert "OH" in findings[0].message
+
+
+def test_recent_signals_produce_no_coverage_finding() -> None:
+    report = _report(state_coverage=[_cov("TX", 196, 6, _ago(hours=2))])
+    assert derive_findings(report) == []
+
+
+def test_territory_gap_is_scoped_to_the_marketing_pipeline() -> None:
+    """Two pipelines. This finding must not read as a crisis-watch problem.
+
+    territory_config is applied by the signal_queue qualifier only; the crisis
+    watch never reads it. An earlier read of this data mistook the 0.85x
+    territory penalty for the cause of the crisis blindness, so the wording is
+    load-bearing and pinned here.
+    """
+    report = _report(state_coverage=[_cov("CA", 257, 4, _ago(days=2), terr=False)])
+    messages = [f.message for f in derive_findings(report)]
+    gap = [m for m in messages if "territory_config" in m]
+    assert gap, "expected a territory finding"
+    assert "campaign scoring only" in gap[0]
+    assert "MARKETING" in gap[0]
+    assert "no effect on the crisis watch" in gap[0]
+    # And it must not be escalated to stuck — it is partly intentional.
+    assert all(f.severity == "warn" for f in derive_findings(report))
+
+
+def test_blind_state_renders_with_an_alarm_marker() -> None:
+    report = _report(state_coverage=[_cov("NC", 63, 0, None, terr=False)])
+    out = render(report)
+    assert "STATE COVERAGE" in out
+    assert "!!NC" in out
+    assert "DIFFERENT" in out, "the two-pipeline caveat must survive in the rendered report"
