@@ -34,11 +34,19 @@ async def store_signal(
     session: AsyncSession,
     candidate: CandidateSignal,
     classification: Classification,
+    *,
+    is_real_move: bool = True,
 ) -> bool:
     """Insert one classified signal, deduped on content_hash.
 
     Returns True if a NEW row was inserted, False if it was a duplicate
     (ON CONFLICT (content_hash) DO NOTHING). Idempotent across re-runs.
+
+    *is_real_move* is the REPORTING flag every read surface filters on
+    (``reporting.py``, ``callie_report.py``). It defaults to True to preserve
+    the previous contract for callers that only ever stored items which had
+    already cleared the bar; the runner now passes it explicitly so brand-lane
+    corpus items persist as not-reportable.
     """
     stmt = (
         pg_insert(ScreentimeSignal)
@@ -54,7 +62,7 @@ async def store_signal(
             source_url=candidate.source_url or None,
             source_type=candidate.source_type,
             published_at=candidate.published_at,
-            is_real_move=True,
+            is_real_move=is_real_move,
             content_hash=candidate.content_hash,
             raw=candidate.raw,
         )

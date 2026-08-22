@@ -89,6 +89,46 @@ _OPINION_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
+# ── Lanes ─────────────────────────────────────────────────────────────────────
+# Which query retrieved an item. Set at fetch time and carried as PROVENANCE,
+# because the retrieved text often does not repeat the term that matched.
+# Google News returns "Santa Fe Public Schools rejects state-required AI
+# program" for a query naming Amira — the vendor is in the article, not the
+# headline. Re-testing that headline for a vendor name (what the brand lane in
+# ``topic_prescreen`` does) drops it. Trusting the lane that fetched it does not.
+LANE_POLICY = "policy"
+LANE_BRAND = "brand"
+
+# The brand lane's own "is this worth reporting" bar. The policy bar
+# (``_REAL_MOVE_STATUSES`` + screen-time relevance) is the wrong test here: a
+# district pausing a vendor is status='news' and carries no screen-time anchor,
+# so the policy bar rejects the exact item we built this lane to catch.
+#
+# An ACTION is somebody doing something to/about a vendor.
+_BRAND_ACTION_MARKERS = re.compile(
+    r"\b(pause[ds]?|pausing|halt(s|ed|ing)?|suspend(s|ed|ing)?|drop(s|ped|ping)?"
+    r"|reject(s|ed|ing)?|remov(e|es|ed|ing)|discontinu(e|es|ed|ing)|terminat(e|es|ed)"
+    r"|cancel(s|led|ling)?|opt(s|ed)? out|opt-out|opting out|ban(s|ned|ning)?"
+    r"|pull(s|ed|ing)?|will not use|won'?t use|not renew|non-?renewal"
+    r"|delet(e|es|ed|ing)|disabl(e|es|ed|ing)|moratorium|phase[ds]? out)\b",
+    re.IGNORECASE,
+)
+# A CONTROVERSY is material public pressure, even with no action taken yet.
+# This is what makes the NBC "alarming some parents" piece reportable.
+_BRAND_CONTROVERSY_MARKERS = re.compile(
+    r"\b(privacy|biometric|voice ?print|consent|surveillance|recording[s]?|alarm(s|ed|ing)?"
+    r"|backlash|pushback|push back|protest(s|ed|ing)?|petition|outcry|concern(s|ed)?"
+    r"|complaint(s)?|lawsuit(s)?|sue[sd]?|suing|investigat(e|es|ed|ion)|subpoena"
+    r"|public records|scrutiny|question(s|ed|ing)? (the )?(accuracy|use)|object(s|ed|ion)"
+    # A vendor publicly defending itself, or being examined by a legislature, is
+    # an event in its own right. Both were observed as misses in the 2026-08-20
+    # NM back-test: "officials, AI testing company defend program's use" (the
+    # LESC hearing) and "officials call for statewide plan to govern AI use".
+    r"|defend(s|ed|ing)?|testif(y|ies|ied)|testimony|hearing|oversight"
+    r"|moratorium|statewide plan|opt.out)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(slots=True)
 class CandidateSignal:
@@ -104,6 +144,10 @@ class CandidateSignal:
     status: str = STATUS_NEWS
     published_at: datetime | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+    # Which query retrieved this. Provenance, not a re-derivable property of the
+    # text — see LANE_POLICY / LANE_BRAND. Defaults to policy so every existing
+    # caller and every other scout keeps its current behaviour untouched.
+    lane: str = LANE_POLICY
 
     @property
     def text(self) -> str:
@@ -193,6 +237,7 @@ def normalize_finding(finding: dict[str, Any]) -> CandidateSignal | None:
         status=status,
         published_at=published_at,
         raw={"finding": finding},
+        lane=(str(meta.get("lane") or finding.get("lane") or LANE_POLICY).strip().lower()),
     )
 
 
@@ -355,7 +400,20 @@ async def passes_topic_gate_async(
 
     *llm_tiebreak* overrides the settings flag when given (tests). When None, the
     flag resolves from the per-config ``llm_tiebreak`` key OR the settings flag.
+
+    PROVENANCE SHORT-CIRCUIT: a brand-lane item is topic-relevant by virtue of
+    the query that retrieved it, and is never re-tested against its own text.
+    The ``brand_any`` check in ``topic_prescreen`` can only see a vendor name
+    the headline happens to repeat, and headlines usually do not: a search for
+    "Amira Learning" returns "Santa Fe Public Schools rejects state-required AI
+    program", which carries no vendor token, no screen-time anchor, and trips
+    the "literacy" exclude. Re-deriving relevance there discards the retrieval
+    evidence we already have. Measured 2026-08-20 against the live NM feed: 27
+    items fetched, 16 dropped here, 11 dropped by the real-move bar, 0 stored.
     """
+    if candidate.lane == LANE_BRAND:
+        return True
+
     decision = topic_prescreen(candidate.text, topic_rules)
     if decision == TOPIC_DROP:
         return False
@@ -477,15 +535,42 @@ def _parse_relevant(text: str) -> bool | None:
     return None
 
 
-def is_real_move(candidate: CandidateSignal, rules: dict[str, Any]) -> bool:
-    """The explicit, testable "real moves" bar.
+def is_brand_real_move(candidate: CandidateSignal) -> bool:
+    """The BRAND lane's own reportable bar — an action taken, or live controversy.
 
-    Keep a candidate iff ALL hold:
+    The policy bar below is the wrong instrument for this lane and rejects
+    exactly what the lane exists to catch: "Santa Fe Public Schools rejects
+    state-required AI program" is status='news' with no screen-time anchor.
+
+    Deliberately NOT applied: the ``_OPINION_MARKERS`` veto. The op-ed that
+    started the New Mexico story *was* the event — an opinion piece naming a
+    vendor is signal here, where an opinion piece about a bill is not.
+
+    Returns False for ordinary vendor PR ("Renews Amira Learning as Trusted
+    Reading Assessment", "Introduces i-Ready Inform"). Those still get STORED —
+    they are corpus — they just do not enter the daily read.
+    """
+    text = candidate.text
+    return bool(_BRAND_ACTION_MARKERS.search(text) or _BRAND_CONTROVERSY_MARKERS.search(text))
+
+
+def is_real_move(candidate: CandidateSignal, rules: dict[str, Any]) -> bool:
+    """The explicit, testable "real moves" bar — i.e. "is this REPORTABLE".
+
+    Since the storage decision was split out of this function, this is purely
+    the reporting bar: ``is_real_move`` is persisted per row and every report
+    surface (``reporting.py``, ``callie_report.py``) filters on it. Capture is
+    broad; the read stays narrow.
+
+    Brand-lane items are judged by ``is_brand_real_move``. For the policy lane,
+    keep a candidate iff ALL hold:
       1. status is an actual action (proposed | passed | amended | guidance) —
          a bare 'news' item is dropped.
       2. it's screen-time relevant (and not an out-of-lane cellphone ban).
       3. it is not flagged opinion/op-ed/editorial in the title.
     """
+    if candidate.lane == LANE_BRAND:
+        return is_brand_real_move(candidate)
     if candidate.status not in _REAL_MOVE_STATUSES:
         return False
     if not is_screentime_relevant(candidate.text, rules):

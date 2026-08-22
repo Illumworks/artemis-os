@@ -78,6 +78,7 @@ from urllib.parse import quote
 import defusedxml.ElementTree as SafeET
 
 from artemis.scouts._http import ScoutHttpClient
+from artemis.screentime.filters import LANE_BRAND, LANE_POLICY
 
 _logger = logging.getLogger(__name__)
 
@@ -347,6 +348,8 @@ def item_to_finding(item: dict[str, Any], state_abbr: str) -> dict[str, Any] | N
     link = str(item.get("link") or "").strip()
     combined = f"{title} {summary}"
 
+    lane = str(item.get("lane") or LANE_POLICY).strip().lower()
+
     return {
         "sourceType": "national_news",
         "discoveredBy": "national_news_scout",
@@ -355,18 +358,29 @@ def item_to_finding(item: dict[str, Any], state_abbr: str) -> dict[str, Any] | N
         "reasonCodes": _classify_reason_codes(combined),
         "urgency": "standard",
         "evidence": f"{title}. {summary[:300]}".strip(),
+        "lane": lane,
         "metadata": {
             "state": state_abbr,
             "source_url": link,
             "published_at": item.get("published") or "",
             "source_name": "Google News",
             "source_type": "national_news",
+            # Carried so the lane survives normalize_finding → CandidateSignal
+            # and lands in the stored row's raw JSON for later auditing.
+            "lane": lane,
         },
     }
 
 
 async def fetch_state_brand_items(state_abbr: str, http: ScoutHttpClient) -> list[dict[str, Any]]:
-    """Fetch + parse the BRAND-lane feed for one state. Fail-safe: [] on error."""
+    """Fetch + parse the BRAND-lane feed for one state. Fail-safe: [] on error.
+
+    Every item is stamped ``lane="brand"``. That stamp is the item's provenance
+    and it is what carries it through the topic gate — the retrieved headline
+    frequently does not repeat the vendor name that matched the query, so the
+    gate cannot re-derive brand relevance from the text. See
+    ``filters.passes_topic_gate_async``.
+    """
     url = build_state_brand_rss_url(state_abbr)
     try:
         resp = await http.get(url)
@@ -375,7 +389,10 @@ async def fetch_state_brand_items(state_abbr: str, http: ScoutHttpClient) -> lis
                 "fetch_state_brand_items(%s): HTTP %d from %s", state_abbr, resp.status_code, url
             )
             return []
-        return parse_news_rss(resp.text)
+        items = parse_news_rss(resp.text)
+        for item in items:
+            item["lane"] = LANE_BRAND
+        return items
     except Exception as exc:
         _logger.warning("fetch_state_brand_items(%s): error — %s", state_abbr, exc)
         return []
@@ -392,14 +409,20 @@ async def gather_state_news(state_abbr: str, http: ScoutHttpClient) -> list[dict
     policy coverage down with it.
     """
     items: list[dict[str, Any]] = []
-    try:
-        items.extend(await fetch_state_news_items(state_abbr, http))
-    except Exception as exc:  # pragma: no cover - fetch_state_news_items already guards
-        _logger.warning("gather_state_news(%s): policy lane error — %s", state_abbr, exc)
+    # BRAND FIRST, deliberately. The two lanes overlap and the link-dedup below
+    # keeps the first occurrence, so whichever lane is fetched first wins the
+    # lane stamp on a shared URL. Brand must win: its stamp grants the topic-gate
+    # short-circuit and the brand real-move bar, both of which are strictly more
+    # permissive. Fetching policy first would silently demote a crisis item that
+    # happened to also match the policy query.
     try:
         items.extend(await fetch_state_brand_items(state_abbr, http))
     except Exception as exc:  # pragma: no cover - fetch_state_brand_items already guards
         _logger.warning("gather_state_news(%s): brand lane error — %s", state_abbr, exc)
+    try:
+        items.extend(await fetch_state_news_items(state_abbr, http))
+    except Exception as exc:  # pragma: no cover - fetch_state_news_items already guards
+        _logger.warning("gather_state_news(%s): policy lane error — %s", state_abbr, exc)
 
     findings: list[dict[str, Any]] = []
     seen_links: set[str] = set()

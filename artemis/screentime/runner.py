@@ -42,6 +42,11 @@ class RunReport:
     dropped_off_topic: int = 0
     real_moves: int = 0
     dropped_not_real_move: int = 0
+    # Brand-lane items kept as corpus but flagged not-reportable: stored so the
+    # market-strategy record is lossless, excluded from the daily read so
+    # breadth of capture never becomes noise. Policy-lane non-moves are still
+    # discarded outright, unchanged.
+    corpus_only: int = 0
     stored_new: int = 0
     duplicates: int = 0
     states_rolled_up: int = 0
@@ -59,6 +64,7 @@ class RunReport:
             "dropped_off_topic": self.dropped_off_topic,
             "real_moves": self.real_moves,
             "dropped_not_real_move": self.dropped_not_real_move,
+            "corpus_only": self.corpus_only,
             "stored_new": self.stored_new,
             "duplicates": self.duplicates,
             "states_rolled_up": self.states_rolled_up,
@@ -163,17 +169,26 @@ async def run_screentime_pipeline(
                 report.dropped_off_topic += 1
         report.topic_relevant = len(topical)
 
-        # 4. "Real moves" filter.
-        real_moves = []
+        # 4. "Real moves" — for the BRAND lane this is now a reporting LABEL
+        #    rather than a storage gate. Brand items that miss the bar are still
+        #    stored (they are the market-strategy corpus) with is_real_move=False,
+        #    and every report surface already filters on that column, so the
+        #    daily read stays exactly as narrow as it is today.
+        #    Policy-lane behaviour is UNCHANGED: a policy non-move is discarded,
+        #    which keeps volume and per-item classification cost flat.
+        to_store: list[tuple[filters.CandidateSignal, bool]] = []
         for c in topical:
             if filters.is_real_move(c, rules):
-                real_moves.append(c)
+                to_store.append((c, True))
+            elif c.lane == filters.LANE_BRAND:
+                to_store.append((c, False))
+                report.corpus_only += 1
             else:
                 report.dropped_not_real_move += 1
-        report.real_moves = len(real_moves)
+        report.real_moves = sum(1 for _, reportable in to_store if reportable)
 
         # 5. Classify + 6. Store (per-signal failure-safe).
-        for c in real_moves:
+        for c, reportable in to_store:
             try:
                 classification = await classify_signal(
                     c, rules, session=session, topic_rules=topic_rules
@@ -186,7 +201,9 @@ async def run_screentime_pipeline(
                     report.providers_used.get(classification.served_by, 0) + 1
                 )
             try:
-                inserted = await repository.store_signal(session, c, classification)
+                inserted = await repository.store_signal(
+                    session, c, classification, is_real_move=reportable
+                )
             except Exception:
                 _logger.warning("screentime: store failed for %r", c.title[:60], exc_info=True)
                 continue
