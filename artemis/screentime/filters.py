@@ -105,12 +105,73 @@ LANE_BRAND = "brand"
 # so the policy bar rejects the exact item we built this lane to catch.
 #
 # An ACTION is somebody doing something to/about a vendor.
-_BRAND_ACTION_MARKERS = re.compile(
+# LOSS of a vendor's position: somebody is taking it away.
+_BRAND_LOSS_MARKERS = re.compile(
     r"\b(pause[ds]?|pausing|halt(s|ed|ing)?|suspend(s|ed|ing)?|drop(s|ped|ping)?"
     r"|reject(s|ed|ing)?|remov(e|es|ed|ing)|discontinu(e|es|ed|ing)|terminat(e|es|ed)"
     r"|cancel(s|led|ling)?|opt(s|ed)? out|opt-out|opting out|ban(s|ned|ning)?"
     r"|pull(s|ed|ing)?|will not use|won'?t use|not renew|non-?renewal"
     r"|delet(e|es|ed|ing)|disabl(e|es|ed|ing)|moratorium|phase[ds]? out)\b",
+    re.IGNORECASE,
+)
+
+# GAIN or CONSOLIDATION of a position. Added 2026-08-21 after reading the first
+# full national run row by row: the bar was asymmetric — it caught bad news about
+# a vendor and silently filed everything else as corpus. Three rows from that run
+# make the case, all marked not-reportable at the time:
+#
+#   "AI-Powered Amira Learning Strikes New Deal with Louisiana Department of
+#    Education"
+#   "Louisiana to Roll Out AI Reading Tutor in 25 School Districts"
+#   "Renaissance Acquired by Francisco Partners, and New CEO Takes Helm"
+#
+# A statewide DoE deal and a 25-district rollout are the leading indicator for
+# "which state is next" — the exact question this watch exists to answer — and a
+# competitor being taken private is market structure. Reporting a removal but not
+# an adoption means the daily read only ever shows the loss half of the market.
+_BRAND_GAIN_MARKERS = re.compile(
+    r"\b(new deal|strikes? (a )?deal|contract(s|ed)? with|award(s|ed)?|wins?|won"
+    r"|select(s|ed|ion)?|approv(e|es|ed|al)|adopt(s|ed|ion)?|expand(s|ed|ing)?"
+    r"|roll(s|ed|ing)? out|rollout|statewide|launch(es|ed)? (in|across|statewide)"
+    r"|partners? with|partnership"
+    r"|renew(s|ed|al)?|extend(s|ed)? (its )?contract)\b",
+    re.IGNORECASE,
+)
+
+# WHO acted is the real distinction, not which verb was used.
+#
+# "Texas Education Agency Renews Amira Learning" and "Curriculum Associates
+# Introduces i-Ready Inform" both describe a vendor doing well. Only the first is
+# a fact about where we stand in a state, because a state agency is the actor. A
+# gain therefore counts as reportable only alongside an institution; a vendor
+# announcing its own good news stays corpus.
+_INSTITUTIONAL_ACTOR = re.compile(
+    r"\b(department of education|education agency|state board|school board"
+    r"|school district(s)?|districts?|superintendent|public schools|state-approved"
+    r"|statewide|legislature|governor|county schools|d[oe]e)\b",
+    re.IGNORECASE,
+)
+
+# Corporate structure. Unconditional: a competitor being acquired or taken
+# private is material market intelligence with no institutional counterparty to
+# look for. Observed misses from the 2026-08-21 run, both filed as corpus:
+# "Renaissance Acquired by Francisco Partners" and "Renaissance Learning looks to
+# expand literacy growth with MyON acquisition".
+_BRAND_STRUCTURE_MARKERS = re.compile(
+    r"\b(acquir(e|es|ed|ing)|acquisition|merger|merges?|taken private"
+    r"|goes? public|ipo|majority stake|buyout)\b",
+    re.IGNORECASE,
+)
+
+# Kept as the union so existing behaviour and any external reference still work.
+_BRAND_ACTION_MARKERS = re.compile(
+    "(?:"
+    + _BRAND_LOSS_MARKERS.pattern
+    + ")|(?:"
+    + _BRAND_GAIN_MARKERS.pattern
+    + ")|(?:"
+    + _BRAND_STRUCTURE_MARKERS.pattern
+    + ")",
     re.IGNORECASE,
 )
 # A CONTROVERSY is material public pressure, even with no action taken yet.
@@ -125,6 +186,12 @@ _BRAND_CONTROVERSY_MARKERS = re.compile(
     # NM back-test: "officials, AI testing company defend program's use" (the
     # LESC hearing) and "officials call for statewide plan to govern AI use".
     r"|defend(s|ed|ing)?|testif(y|ies|ied)|testimony|hearing|oversight"
+    # Scepticism framing in a headline is the story, not a hedge. Observed miss
+    # from the 2026-08-21 national run: "Louisiana leans into AI in schools.
+    # Is it worth all the hype?" — a state feature questioning the premise,
+    # filed as corpus.
+    r"|worth (all )?the hype|is it worth|hype|skeptic(al|ism)?|sceptic(al|ism)?"
+    r"|unproven|no evidence|does(n'?t| not) work|do they (actually )?work"
     r"|moratorium|statewide plan|opt.out)\b",
     re.IGNORECASE,
 )
@@ -546,12 +613,33 @@ def is_brand_real_move(candidate: CandidateSignal) -> bool:
     started the New Mexico story *was* the event — an opinion piece naming a
     vendor is signal here, where an opinion piece about a bill is not.
 
-    Returns False for ordinary vendor PR ("Renews Amira Learning as Trusted
-    Reading Assessment", "Introduces i-Ready Inform"). Those still get STORED —
-    they are corpus — they just do not enter the daily read.
+    Reportable when any of these hold:
+      * a position was LOST (paused, dropped, rejected, opted out) — always;
+      * there is live CONTROVERSY (privacy, consent, backlash, lawsuit, hearing,
+        or a headline questioning whether the thing works) — always;
+      * corporate STRUCTURE changed (acquired, merged, taken private) — always;
+      * a position was GAINED *and an institution is the actor* — a state agency,
+        board, district or legislature. A vendor announcing its own good news is
+        not a fact about where we stand.
+
+    So "Texas Education Agency Renews Amira Learning" is reportable and
+    "Curriculum Associates Introduces i-Ready Inform" is not, though both
+    describe a vendor doing well. Corpus items are still STORED — nothing is
+    discarded — they just do not enter the daily read.
+
+    Note the deliberate asymmetry that was FIXED here: reporting removals but not
+    adoptions meant the daily read only ever showed the market moving against us.
     """
     text = candidate.text
-    return bool(_BRAND_ACTION_MARKERS.search(text) or _BRAND_CONTROVERSY_MARKERS.search(text))
+    if _BRAND_LOSS_MARKERS.search(text):
+        return True
+    if _BRAND_CONTROVERSY_MARKERS.search(text):
+        return True
+    if _BRAND_STRUCTURE_MARKERS.search(text):
+        return True
+    # A gain counts only when an institution is the actor — see
+    # _INSTITUTIONAL_ACTOR. Otherwise it is the vendor's own good news.
+    return bool(_BRAND_GAIN_MARKERS.search(text) and _INSTITUTIONAL_ACTOR.search(text))
 
 
 def is_real_move(candidate: CandidateSignal, rules: dict[str, Any]) -> bool:

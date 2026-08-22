@@ -120,3 +120,51 @@ def test_finding_records_both_the_query_and_the_verdict() -> None:
     assert finding["metadata"]["state"] == "TX"
     assert finding["metadata"]["query_state"] == "NM"
     assert finding["metadata"]["state_confidence"] == "reattributed"
+
+
+# ── outlet names carry geography, and sometimes lie about it ──────────────────
+# Both cases below are real rows from the first full national run (2026-08-21),
+# found by reading the output rather than by a test failing.
+
+
+def test_camelcase_outlet_domain_resolves() -> None:
+    """A word boundary cannot see "WyomingNews.com". A negative lookahead can.
+
+    Google News puts the outlet in the title, so the domain is often the only
+    geography present. This row was stored as national.
+    """
+    state, conf = resolve_state(
+        "Sheridan County school district talks AI in education - WyomingNews.com", "GA"
+    )
+    assert state == "WY"
+    assert conf == "reattributed"
+
+
+def test_lookahead_is_case_sensitive_even_though_the_name_is_not() -> None:
+    """Regression guard for a bug inside the fix.
+
+    With ``re.IGNORECASE`` applied to the whole pattern, the class ``[a-z]``
+    also matches ``A-Z``, so ``(?![a-z])`` rejected the capital N in
+    "WyomingNews" and silently restored the behaviour it was added to fix. The
+    flag is scoped inline instead.
+    """
+    # lowercase state name still resolves
+    assert resolve_state("texas education agency renews amira learning", "NM")[0] == "TX"
+    # a longer lowercase word starting with a state name must NOT resolve
+    assert resolve_state("a wyomingite complains about school", "GA")[0] == NATIONAL
+    # "Indianapolis" is not Indiana for our purposes
+    assert resolve_state("Indianapolis students post reading gains", "GA")[0] == NATIONAL
+
+
+def test_national_outlet_named_after_a_state_does_not_hijack_attribution() -> None:
+    """Every Washington Post story was becoming a Washington-state signal."""
+    state, _ = resolve_state(
+        "Obama and Trump agree! Switching colleges can improve your life - The Washington Post",
+        "GA",
+    )
+    assert state == NATIONAL
+
+
+def test_outlet_named_after_the_state_it_covers_is_still_evidence() -> None:
+    """The guard must stay narrow: Texas Tribune really is Texas."""
+    assert resolve_state("Tribune convenes Texas educators for event", "GA")[0] == "TX"

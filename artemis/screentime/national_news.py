@@ -312,10 +312,34 @@ async def fetch_state_news_items(state_abbr: str, http: ScoutHttpClient) -> list
 
 NATIONAL = "US"
 
+# Trailing guard is (?![a-z]) rather than \b so a camelCase domain resolves:
+# Google News titles carry the outlet, and "Sheridan County school district talks
+# AI in education - WyomingNews.com" is a WYOMING signal that \b cannot see,
+# because there is no non-word character between "Wyoming" and "News". It still
+# refuses "Indianapolis" for IN and "Wyomingite" for WY, which is the point.
+# Scoped inline flag, NOT re.IGNORECASE on the whole pattern: under IGNORECASE
+# the class [a-z] also matches A-Z, so "(?![a-z])" would reject the capital N in
+# "WyomingNews" — silently reintroducing the bug this guard exists to fix. The
+# name matches case-insensitively; the lookahead stays case-sensitive.
 _STATE_NAME_RE: dict[str, re.Pattern[str]] = {
-    abbr: re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
+    abbr: re.compile(r"\b(?i:" + re.escape(name) + r")(?![a-z])")
     for abbr, name in STATE_NAMES.items()
 }
+
+# National outlets whose NAME contains a state name. Without this, every story
+# from The Washington Post is a Washington-state signal — a live example from the
+# 2026-08-21 run, filed under WA: "Obama and Trump agree! Switching colleges can
+# improve your life - The Washington Post".
+#
+# Deliberately narrow. Outlets whose name matches the state they actually cover
+# (Texas Tribune, California Globe, WyomingNews) are NOT listed: for those the
+# name is real evidence of geography, which is exactly what we want to use.
+_NATIONAL_OUTLET_NOISE = re.compile(
+    r"\bthe\s+washington\s+(post|times|examiner|monthly|free\s+beacon)\b"
+    r"|\bwashington\s+(post|examiner|free\s+beacon)\b"
+    r"|\bwashingtonian\b",
+    re.IGNORECASE,
+)
 # ", GA" or ", Ga." — an abbreviation used as a place suffix.
 _STATE_SUFFIX_RE: dict[str, re.Pattern[str]] = {
     abbr: re.compile(r",\s*" + abbr + r"\b\.?", re.IGNORECASE) for abbr in STATE_NAMES
@@ -351,8 +375,9 @@ def resolve_state(text: str, query_state: str) -> tuple[str, str]:
     ``artemis.ops`` is what actually protects us from believing a quiet state is
     a covered one.
     """
-    mentioned = {abbr for abbr, rx in _STATE_NAME_RE.items() if rx.search(text)}
-    mentioned |= {abbr for abbr, rx in _STATE_SUFFIX_RE.items() if rx.search(text)}
+    scrubbed = _NATIONAL_OUTLET_NOISE.sub(" ", text)
+    mentioned = {abbr for abbr, rx in _STATE_NAME_RE.items() if rx.search(scrubbed)}
+    mentioned |= {abbr for abbr, rx in _STATE_SUFFIX_RE.items() if rx.search(scrubbed)}
 
     home = (query_state or "").strip().upper()
     if home and home in mentioned:

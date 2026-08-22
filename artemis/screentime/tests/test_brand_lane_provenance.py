@@ -106,14 +106,36 @@ class TestBrandRealMoveBar:
         assert filters.is_real_move(c, DEFAULT_STANCE_RULES) is True
 
     def test_vendor_pr_is_captured_but_not_reportable(self) -> None:
-        """Corpus, not crisis. These must be stored and must NOT enter the read."""
+        """Corpus, not crisis. These must be stored and must NOT enter the read.
+
+        CHANGED 2026-08-22, deliberately overturning one case from the original
+        version of this test. It also listed "Texas Education Agency Renews Amira
+        Learning as Trusted Reading Assessment" as corpus, on the reasoning that
+        it is a vendor press release. That reasoning holds for the two titles
+        below and not for that one: a state education agency renewing statewide
+        is a fact about where we stand in a state, and it is the same fact as
+        "New Mexico districts drop Amira" with the sign reversed. Reporting the
+        loss and not the gain meant the daily read could only ever show the
+        market moving against us.
+
+        The distinction now drawn is the ACTOR, not the verb — see
+        ``filters._INSTITUTIONAL_ACTOR``. Both titles below have a vendor as the
+        actor and stay corpus.
+        """
         for title in [
-            "Texas Education Agency Renews Amira Learning as Trusted Reading Assessment",
             "Curriculum Associates Introduces i-Ready Inform: Continuing Excellence",
             "Brisk Teaching Raises $6.9M in Funding for AI Education Tool",
         ]:
             c = _candidate(title, lane=filters.LANE_BRAND)
             assert filters.is_real_move(c, DEFAULT_STANCE_RULES) is False, title
+
+    def test_state_agency_renewal_is_reportable(self) -> None:
+        """The case moved out of the test above, pinned with its own name."""
+        c = _candidate(
+            "Texas Education Agency Renews Amira Learning as Trusted Reading Assessment",
+            lane=filters.LANE_BRAND,
+        )
+        assert filters.is_real_move(c, DEFAULT_STANCE_RULES) is True
 
     def test_policy_lane_real_move_semantics_unchanged(self) -> None:
         """A bare policy news item is still not a real move; a passed bill still is."""
@@ -143,3 +165,65 @@ class TestBrandLaneWinsDedup:
             "gather_state_news keeps the first occurrence, so fetching policy first "
             "would silently demote a crisis item that also matched the policy query"
         )
+
+
+# ── the bar was asymmetric ────────────────────────────────────────────────────
+# Found by reading the first full national run row by row: removals were
+# reportable and adoptions were not, so the daily read could only ever show the
+# market moving against us. Every case below is a real stored row.
+
+
+def _brand(title: str) -> filters.CandidateSignal:
+    return filters.CandidateSignal(
+        state="X",
+        title=title,
+        summary="",
+        source_type="national_news",
+        source_url="",
+        lane=filters.LANE_BRAND,
+    )
+
+
+def test_gaining_a_statewide_position_is_reportable() -> None:
+    """A state DoE deal and a 25-district rollout answer "which state is next"."""
+    assert filters.is_brand_real_move(
+        _brand("AI-Powered Amira Learning Strikes New Deal with Louisiana Department of Education")
+    )
+    assert filters.is_brand_real_move(
+        _brand("Louisiana to Roll Out AI Reading Tutor in 25 School Districts")
+    )
+    assert filters.is_brand_real_move(
+        _brand("Amira Learning Selected As Georgia's Only State-Approved Free Reading Screener")
+    )
+
+
+def test_market_structure_changes_are_reportable() -> None:
+    assert filters.is_brand_real_move(
+        _brand("Renaissance Acquired by Francisco Partners, New CEO Takes Helm")
+    )
+    assert filters.is_brand_real_move(
+        _brand("Renaissance Learning looks to expand literacy growth with MyON acquisition")
+    )
+
+
+def test_scepticism_framing_is_reportable() -> None:
+    """A state feature questioning the premise is the story, not a hedge."""
+    assert filters.is_brand_real_move(
+        _brand("Louisiana leans into AI in schools. Is it worth all the hype?")
+    )
+
+
+def test_losing_a_position_is_still_reportable() -> None:
+    assert filters.is_brand_real_move(
+        _brand("Santa Fe Public Schools rejects state-required AI program")
+    )
+
+
+def test_routine_product_pr_stays_corpus() -> None:
+    """Widening the bar must not make everything reportable."""
+    for title in (
+        "Brisk Teaching Brings Full Microsoft Integration to its AI-Powered Classroom Tool",
+        "Brisk Teaching Raises $6.9M in Funding for AI Education Tool",
+        "Curriculum Associates Introduces i-Ready Inform: Continuing Excellence with a New Name",
+    ):
+        assert not filters.is_brand_real_move(_brand(title)), title
