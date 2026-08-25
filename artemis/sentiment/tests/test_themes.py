@@ -303,3 +303,18 @@ def test_verb_variants_did_not_loosen_the_guard(text: str) -> None:
     """The variants pair a record-verb with children's/student voices, so
     ordinary 'recorded their voices' prose must still not match."""
     assert THEME_VOICE_RECORDING not in match_themes(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Our district uses Amira and it records my kid's voice",
+        "The app recorded my son's voice without asking",
+        "It records my daughter's voice every session",
+    ],
+)
+def test_voice_recording_matches_a_parents_own_phrasing(text: str) -> None:
+    """First-person possessive is how a PARENT writes it, which is the single
+    most likely form this theme takes on Reddit. Found by composing the Reddit
+    normalizer with this matcher, not by reading the anchor list."""
+    assert THEME_VOICE_RECORDING in match_themes(text)

@@ -88,6 +88,19 @@ THEMES: dict[str, tuple[str, ...]] = {
         "recorded student voices",
         "children's voices are recorded",
         "children's voices without consent",
+        # Same verb-form gap, first-person possessive. Caught composing the
+        # Reddit normalizer with this matcher: "it records my kid's voice" is
+        # how a parent actually writes it, while only the gerund
+        # ("recording my kid's voice") was covered. A parent's own phrasing is
+        # the single most likely form this theme takes on Reddit.
+        "records my child's voice",
+        "recorded my child's voice",
+        "records my kid's voice",
+        "recorded my kid's voice",
+        "records my son's voice",
+        "recorded my son's voice",
+        "records my daughter's voice",
+        "recorded my daughter's voice",
     ),
     # Angela: "children being used to train AI" — kids' data, voices, or
     # schoolwork feeding model training, framed as extraction rather than
