@@ -20,6 +20,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
@@ -836,6 +837,29 @@ async def _post_turn_failure_notice(
         )
 
 
+def is_routable_event(*, team_id: str, channel_id: str, text: str, files: list[Any] | None) -> bool:
+    """Whether an inbound event carries enough to be worth running a turn on.
+
+    A message is real if it has text OR files. Requiring text is what discarded
+    Josh's TSV on 2026-08-25: an upload posted with no caption arrives with
+    ``text == ""``, so the event was rejected as malformed before Callie was ever
+    invoked. She then answered his follow-up question about a file she had never
+    been handed, and the only trace was one warning line at a level nobody
+    watches.
+
+    team_id and channel_id stay mandatory -- without them there is no session to
+    route to and nowhere to reply.
+    """
+    if not team_id or not channel_id:
+        return False
+    return bool(text) or bool(files)
+
+
+def _mentions_google_file(text: str) -> bool:
+    """Cheap pre-check before importing and running the Google link scanner."""
+    return "docs.google.com" in (text or "") or "drive.google.com" in (text or "")
+
+
 async def route_inbound(
     event_data: dict[str, object],
     *,
@@ -878,8 +902,17 @@ async def route_inbound(
     text = str(event_data.get("text", ""))
     slack_user_id = str(event_data.get("user", ""))
 
-    if not team_id or not channel_id or not text:
-        logger.warning("route_inbound: missing required fields in event_data")
+    files = event_data.get("files")
+    attached_files: list[dict[str, Any]] = list(files) if isinstance(files, list) else []
+
+    if not is_routable_event(
+        team_id=team_id, channel_id=channel_id, text=text, files=attached_files
+    ):
+        logger.warning(
+            "route_inbound: dropping event -- no text and no files (team=%r channel=%r)",
+            team_id,
+            channel_id,
+        )
         return
 
     normalized_agent = _normalize_agent_id(agent_id)
@@ -1233,11 +1266,57 @@ async def route_inbound(
                 slack_user_id,
             )
 
+    # ── Attachments ───────────────────────────────────────────────────────────
+    # Read every file this message references -- Slack uploads and pasted Google
+    # links alike -- and fold the readings into the turn. Failures come back as
+    # STATED reasons rather than omissions, so the agent says "that sheet isn't
+    # shared with me" instead of answering around a file it never saw.
+    #
+    # Never fatal: attachment trouble must not cost the whole turn, so any
+    # unexpected fault here degrades to a plain text turn (and is logged), which
+    # is exactly the behaviour that existed before this layer.
+    turn_text = text
+    if attached_files or _mentions_google_file(text):
+        try:
+            import artemis.db as _files_db
+            from artemis.files.service import collect_attachments, render_for_prompt
+
+            async with _files_db.SessionLocal() as files_session:
+                attachment_results = await collect_attachments(
+                    files_session,
+                    files=attached_files,
+                    text=text,
+                    slack_token=str(event_data.get("access_token") or ""),
+                    channel_id=channel_id,
+                    shared_by=slack_user_id,
+                    message_ts=str(event_data.get("ts") or ""),
+                )
+                await files_session.commit()
+
+            rendered = render_for_prompt(attachment_results)
+            if rendered:
+                # The person's own words come FIRST; file content is context
+                # beneath them. The other order buries a one-line question under
+                # a 200k-character spreadsheet.
+                turn_text = f"{text}\n\n{rendered}" if text else rendered
+            logger.info(
+                "files: attached %d file(s) to session=%s (%d readable, %d not)",
+                len(attachment_results),
+                session_id,
+                sum(1 for r in attachment_results if r.ok),
+                sum(1 for r in attachment_results if not r.ok),
+            )
+        except Exception:
+            logger.exception(
+                "files: attachment intake failed for session=%s -- continuing as a text-only turn",
+                session_id,
+            )
+
     # ── Normal turn ───────────────────────────────────────────────────────────
     try:
         result = await handle_turn(
             session_id=session_id,
-            user_text=text,
+            user_text=turn_text,
             speaker_name=speaker_name,
             participants=participants or None,
             speaker_id=slack_user_id if slack_user_id else None,
@@ -1632,6 +1711,13 @@ async def _handle_mentionable_event(
         "text": text,
         "ts": ts,
         "thread_ts": thread_ts,
+        # Attachments. Before 2026-08-25 the files array was read only by the
+        # crisis-content thread hook (as a COUNT) and was otherwise dropped here,
+        # so no agent could ever see an uploaded file. The token travels with it
+        # because `url_private` is not a public link -- fetching it needs the
+        # bot's bearer credential and files:read.
+        "files": event.get("files") or [],
+        "access_token": agent_cfg.access_token,
     }
     background_tasks.add_task(
         route_inbound,

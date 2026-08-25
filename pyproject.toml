@@ -25,6 +25,11 @@ dependencies = [
     "cryptography>=48.0.0",
     "pyjwt>=2.10,<3",
     "defusedxml>=0.7.1",
+    # Attachment intake (artemis/files) — read spreadsheets and Word docs people
+    # share in Slack. Both are long-stable releases, well clear of the 7-day rule
+    # (openpyxl 3.1.5 shipped 2024-06-28; python-docx 1.2.0 shipped 2025-06-16).
+    "openpyxl>=3.1.5",
+    "python-docx>=1.2.0",
 ]
 
 [dependency-groups]
@@ -36,6 +41,7 @@ dev = [
     "mypy>=1.13",
     "types-python-dateutil",
     "types-PyYAML",
+    "types-openpyxl",
 ]
 
 [tool.ruff]
