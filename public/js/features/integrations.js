@@ -35,6 +35,11 @@ const PROVIDERS = [
     tagline: 'Meeting transcripts and notes.',
   },
   {
+    id: 'reddit',
+    name: 'Reddit',
+    tagline: 'Read-only: public posts for the parent-sentiment watch.',
+  },
+  {
     id: 'salesforce',
     name: 'Salesforce',
     tagline: 'Read-only: customer accounts, open opportunities, sales contact history.',

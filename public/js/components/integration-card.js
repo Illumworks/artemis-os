@@ -32,6 +32,13 @@ const _PROVIDER_FIELDS = {
   ],
   // SFDC-1: Client Credentials (server-to-server) — no redirect URL, so this
   // is a config-only provider like Jira, not a real OAuth dance like Slack/GCal.
+  // Reddit: app-only OAuth (client credentials) for the parent-sentiment watch.
+  // Read-only, public posts. No user login, so no redirect flow here.
+  reddit: [
+    { key: 'client_id', label: 'Client ID', helper: 'The string shown UNDER the app name at reddit.com/prefs/apps.', sensitive: true },
+    { key: 'client_secret', label: 'Client Secret', helper: 'The value labelled "secret". Keep this private.', sensitive: true },
+    { key: 'user_agent', label: 'User Agent', helper: 'Reddit requires a descriptive one and rate-limits generic ones harder. Format: python:amira-sentiment-watch:v1.0 (by /u/your-username)', sensitive: false },
+  ],
   salesforce: [
     { key: 'client_id', label: 'Client ID (Consumer Key)', helper: 'From Neil — the Connected App configured for the Client Credentials flow.', sensitive: true },
     { key: 'client_secret', label: 'Client Secret (Consumer Secret)', helper: 'Keep this secret — never share it.', sensitive: true },

@@ -20,6 +20,7 @@ _KNOWN_PROVIDERS = frozenset(
         "jira",
         "granola",
         "salesforce",
+        "reddit",  # sentiment watch: app-only OAuth, read-only public posts
         "anthropic",
         "openai",
         "gemini",
