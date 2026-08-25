@@ -401,7 +401,9 @@ async def post_brand_signals_brief(session: Any) -> bool:
 
     text = compose_brand_brief(findings)
     parts = split_for_slack(text)
-    posted = await _post_as_callie(session, channel, parts[0], thread_parts=parts[1:])
+    # unfurl=False: every link here is a Google News redirect, and Slack
+    # unfurls each into the same useless "Google News" card.
+    posted = await _post_as_callie(session, channel, parts[0], thread_parts=parts[1:], unfurl=False)
     _log.info(
         "brand_signals: findings=%d amira_named=%d posted=%s channel=%s",
         len(findings),

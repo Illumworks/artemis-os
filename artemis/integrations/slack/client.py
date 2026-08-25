@@ -63,12 +63,26 @@ class SlackClient:
         text: str,
         thread_ts: str | None = None,
         blocks: list[object] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
     ) -> dict[str, object]:
+        """Post a message. ``unfurl_*`` default to None = leave Slack's default.
+
+        Pass ``unfurl_links=False`` for any message carrying several links to
+        an aggregator. Google News RSS links are redirect URLs, so Slack
+        unfurled each one into an identical "Comprehensive up-to-date news
+        coverage..." card -- three of them stacked under one brief, which was
+        most of what made it look broken.
+        """
         kwargs: dict[str, object] = {"channel": channel, "text": text}
         if thread_ts is not None:
             kwargs["thread_ts"] = thread_ts
         if blocks is not None:
             kwargs["blocks"] = blocks
+        if unfurl_links is not None:
+            kwargs["unfurl_links"] = unfurl_links
+        if unfurl_media is not None:
+            kwargs["unfurl_media"] = unfurl_media
         return await self._post("chat.postMessage", **kwargs)
 
     async def post_dm(

@@ -395,6 +395,7 @@ async def _post_as_callie(
     channel: str,
     text: str,
     thread_parts: list[str] | None = None,
+    unfurl: bool = True,
 ) -> bool:
     """Post *text* to *channel* AS Callie, via her resolved Slack token.
 
@@ -412,14 +413,24 @@ async def _post_as_callie(
         _log.warning("screentime_report: no Slack token for Callie — cannot post")
         return False
     client = SlackClient(token=agent_cfg.access_token)
-    response = await client.post_message(channel=channel, text=text)
+    # None leaves Slack's default; False suppresses the link previews.
+    no_unfurl = None if unfurl else False
+    response = await client.post_message(
+        channel=channel, text=text, unfurl_links=no_unfurl, unfurl_media=no_unfurl
+    )
     # Overflow goes in a thread rather than as more top-level messages -- see
     # ``sentiment.report.split_for_slack`` for why this matters.
     if thread_parts:
         parent_ts = response.get("ts")
         if isinstance(parent_ts, str):
             for part in thread_parts:
-                await client.post_message(channel=channel, text=part, thread_ts=parent_ts)
+                await client.post_message(
+                    channel=channel,
+                    text=part,
+                    thread_ts=parent_ts,
+                    unfurl_links=no_unfurl,
+                    unfurl_media=no_unfurl,
+                )
         else:
             _log.warning("post_as_callie: no ts on parent message — thread parts dropped")
     return True
