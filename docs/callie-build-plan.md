@@ -159,3 +159,117 @@ draft is empty. Fix path: engage the real compose/external path so the generated
 ## Recommended start
 **C1 now** (pure refactor, no token, ships safely, unblocks everything). In parallel, Jon creates Callie's
 Slack app/token (C0) so C2 can follow immediately. C3/C4 after she's conversational.
+
+---
+
+# Chapter 3 — Demand-gen partner (from the Jon / Josh catch-up, 2026-08-25)
+
+Source: Jon ↔ Joshua Mukai catch-up, 2026-08-25. Everything below is Josh's stated
+workflow, not inferred. Phases are ordered by what is actually unblocked, not by
+what is most interesting.
+
+## The one-line goal
+
+Josh wants to say "give me today's signals for my target accounts", get real ones,
+say "draft a sequence for Prince George's", approve it, push it to the ESP, and ask
+at the end of the week how it performed — **without checking whether Amira or a
+seller is already working the same contact.**
+
+## C5 — Target-account grounding (UNBLOCKED — do this first)
+
+Josh's complaint is concrete and current: Callie surfaced Hillsboro and two other
+districts, and **two of the three were existing customers**. She had no idea,
+because she has no notion of a target universe.
+
+He posted the universe as a TSV on 2026-08-25: **1,287 rows × 8 columns**, every
+available new-business target account. Columns:
+
+```
+Sales | Billing State/Province | Account Name | District Marketing Tier
+Enrollment in District | Is Customer | Is Parent Account | Amira Channel Partner
+```
+
+**`Is Customer` is already in that file.** Josh said he would accept either
+"recognise this is a target account" or "exclude existing customers" — and the
+column that solves the second one is sitting in the upload. This does NOT need the
+Salesforce customer-status scope, which is what everyone assumed it was waiting on.
+
+Work:
+- Ingest the target-account list into a durable table, keyed on account name +
+  state. Re-ingestable: Josh will post revised lists.
+- Match `signal_queue` rows against it and mark `is_target_account`,
+  `is_existing_customer`, `marketing_tier`, `enrollment`.
+- Suppress (do not delete) signals for existing customers in Josh's surfaces.
+  Existing-customer signals stay visible for the expansion use case he flagged as
+  a "one day" want — this is a filter on HIS view, not a loss of data.
+- Name matching is the hard part and MUST abstain rather than guess. See
+  [[feedback-gazetteer-uniqueness-is-not-correctness]]: a unique match against an
+  incomplete table is confidently wrong. Unmatched signals surface as unmatched.
+
+## C6 — Salesforce enrichment (BLOCKED — scope, waiting on Neil)
+
+Josh wants, per surfaced account: the superintendent, CAO and curriculum leads, plus
+prior opportunity history, so a sequence can reference "you spoke to us two years
+ago".
+
+Held scopes: tasks, view all activities, lead, email message, event, campaign,
+campaign member, case.
+**Missing: customer status.** Jon to confirm with Neil whether the contact and
+opportunity-history reads are possible under the scopes already granted — if so,
+most of C6 lands without waiting.
+
+Do not let C6 block C5. The customer-exclusion half is solved by the TSV.
+
+## C7 — Sequence drafting and send
+
+- Draft a 3-email cadence per surfaced account. Writing Studio already drafts
+  sequences; this is wiring, not new generation.
+- Approval gate before anything sends (Angela).
+- Push to the ESP, tagged to a campaign. HubSpot sunsets in ~2 months; Brevo and
+  Lemlist are the likely replacements. **Build against an ESP interface, not
+  against Brevo** — Jon's own framing was "plug in the right API and we're done",
+  which only holds if the seam exists.
+
+## C8 — Performance reporting
+
+Weekly, per campaign: which accounts engaged, CTA clicks, downloads, overall
+engagement across everything Callie sent. Straight ESP API read once C7 exists.
+
+## C9 — Outreach conflict detection (BLOCKED — Gong API)
+
+Josh's clearest guardrail: he does not want to email a contact an AE is already
+working. Not a hard block on sending — a warning: "this contact had outreach from
+<seller> on <date>". Needs Gong scopes; on the agenda with Neil and Deborah.
+
+This is also the piece with the widest audience — Angela wants other teams to see
+marketing's outreach too, so it is a two-way visibility feature, not just a check.
+
+## Open: which surface Josh actually uses
+
+Unresolved in the meeting, and worth deciding deliberately rather than drifting.
+
+| Option | Reality |
+|---|---|
+| Josh's own Claude, direct | He'd need his own API/MCP keys for every tool. Callie already holds them. Duplicating credentials per person does not scale and widens the blast radius. |
+| MCP access to Callie | Works, but Jon's own objection stands: he'd tell Claude to talk to Callie, which reports back — a layer of indirection over just asking her. |
+| Artifact dashboard | Cheap, no app to open, updates in place, and he can click it from Claude. Good for READING; weak for the approve-and-send step. |
+| Artemis app | Most capable — Writing Studio editing, full metrics, launch button. Angela wants marketing reporting to live here. But Jon explicitly does not want to force anyone into it. |
+
+Jon's stated principle: the intelligence layer is shared, the *interface* should be
+per-person. Recommendation is therefore not "pick one" but: **Slack for the
+conversation, artifact for the dashboard, Artemis for editing and launch** — and
+make sure all three read the same data so they cannot disagree.
+
+## Cross-cutting
+
+- **Signal noise.** Josh and Jon both flagged the raw signal list as unreadable.
+  The channel-canvas standing picture (shipped 2026-08-25) is the answer: the
+  message says what's new today, the canvas holds the current picture, old entries
+  deprecate without ever being deleted.
+- **Attachment intake (shipped 2026-08-25).** Callie, Artemis, Kai and Ares can now
+  read uploads and pasted Google links. This is what makes C5 possible at all — the
+  target list arrived as a file she could not open.
+- **Audit trail.** `file_extractions` records channel, sharer and timestamp for
+  every file an agent reads. Given the 2026-08-25 Amira Central search incident,
+  "which agent read what, and where did it surface" is now answerable — worth
+  keeping that way as agents gain reach.
