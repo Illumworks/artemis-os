@@ -396,9 +396,57 @@ async def test_static_exclusions_normalized() -> None:
     assert ids == {"fl_pinellas", "tx_dallas"}
 
 
-async def test_salesforce_stub_returns_fallback() -> None:
-    stub = SalesforceCustomerExclusions(fallback_ids=["TX_dallas"])
-    assert await stub.get_customer_district_ids() == {"tx_dallas"}
+# SalesforceCustomerExclusions stopped being a stub on 2026-08-20 and now makes
+# a real API call. These patch `_fetch` deliberately: without that, running this
+# file hits LIVE Salesforce, which is both slow and wrong for a unit test.
+
+
+async def test_salesforce_exclusions_returns_fetched_ids_normalized() -> None:
+    provider = SalesforceCustomerExclusions(fallback_ids=["TX_dallas"])
+    with patch.object(
+        SalesforceCustomerExclusions,
+        "_fetch",
+        new=AsyncMock(return_value={"1201560", "4816230"}),
+    ):
+        assert await provider.get_customer_district_ids() == {"1201560", "4816230"}
+
+
+async def test_salesforce_exclusions_falls_back_when_it_has_never_succeeded() -> None:
+    """Fail-safe: a scout run degrades, it does not crash."""
+    provider = SalesforceCustomerExclusions(fallback_ids=["TX_dallas"])
+    with patch.object(
+        SalesforceCustomerExclusions, "_fetch", new=AsyncMock(side_effect=RuntimeError("boom"))
+    ):
+        assert await provider.get_customer_district_ids() == {"tx_dallas"}
+
+
+async def test_salesforce_exclusions_serves_last_known_set_on_later_failure() -> None:
+    """The case that matters in production: Salesforce blips AFTER a good fetch.
+
+    Returning the injected fallback here would silently SHRINK the exclusion
+    set, so customer districts would start surfacing as peer validation — the
+    exact wrong answer this provider exists to prevent.
+    """
+    provider = SalesforceCustomerExclusions(fallback_ids=["TX_dallas"])
+    with patch.object(
+        SalesforceCustomerExclusions, "_fetch", new=AsyncMock(return_value={"1201560"})
+    ):
+        assert await provider.get_customer_district_ids() == {"1201560"}
+
+    provider._fetched_at = 0.0  # force the TTL to have expired
+    with patch.object(
+        SalesforceCustomerExclusions, "_fetch", new=AsyncMock(side_effect=RuntimeError("blip"))
+    ):
+        assert await provider.get_customer_district_ids() == {"1201560"}
+
+
+async def test_salesforce_exclusions_caches_within_ttl() -> None:
+    provider = SalesforceCustomerExclusions()
+    fetch = AsyncMock(return_value={"1201560"})
+    with patch.object(SalesforceCustomerExclusions, "_fetch", new=fetch):
+        await provider.get_customer_district_ids()
+        await provider.get_customer_district_ids()
+    assert fetch.await_count == 1
 
 
 # ===========================================================================

@@ -81,76 +81,89 @@ _logger = logging.getLogger(__name__)
 _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
     {
         "district_id": "FL_pinellas",
+        "nces_id": "1201560",
         "state": "FL",
         "boarddocs_url": "https://go.boarddocs.com/fl/pcsfl/Board.nsf/Public",
     },
     {
         "district_id": "TX_dallas",
+        "nces_id": "4816230",
         "state": "TX",
         "boarddocs_url": "https://go.boarddocs.com/tx/disd/Board.nsf/Public",
     },
     {
         "district_id": "IN_msd_pike",
+        "nces_id": "1808910",
         "state": "IN",
         "boarddocs_url": "https://go.boarddocs.com/in/pike/Board.nsf/Public",
     },
     # --- 2026-07-10 broadening: verified 200 + title/body match ---
     {
         "district_id": "CA_san_diego",
+        "nces_id": "0634320",
         "state": "CA",
         # San Diego Unified School District, Board of Education.
         "boarddocs_url": "https://go.boarddocs.com/ca/sandi/Board.nsf/Public",
     },
     {
         "district_id": "TX_humble",
+        "nces_id": "4823910",
         "state": "TX",
         # Humble Independent School District (Houston metro).
         "boarddocs_url": "https://go.boarddocs.com/tx/hisd/Board.nsf/Public",
     },
     {
         "district_id": "OH_columbus",
+        "nces_id": "3904380",
         "state": "OH",
         # Columbus City Schools.
         "boarddocs_url": "https://go.boarddocs.com/oh/columbus/Board.nsf/Public",
     },
     {
         "district_id": "VA_fauquier",
+        "nces_id": "5101320",
         "state": "VA",
         # Fauquier County Public Schools.
         "boarddocs_url": "https://go.boarddocs.com/va/fcps/Board.nsf/Public",
     },
     {
         "district_id": "NY_buffalo",
+        "nces_id": "3605850",
         "state": "NY",
         # Buffalo City School District.
         "boarddocs_url": "https://go.boarddocs.com/ny/buffalo/Board.nsf/Public",
     },
     {
         "district_id": "LA_jefferson_parish",
+        "nces_id": "2200840",
         "state": "LA",
         # Jefferson Parish Public School System.
         "boarddocs_url": "https://go.boarddocs.com/la/jppss/Board.nsf/Public",
     },
     {
         "district_id": "CO_aurora",
+        "nces_id": "0802340",
         "state": "CO",
         # Aurora Public Schools.
         "boarddocs_url": "https://go.boarddocs.com/co/aurora/Board.nsf/Public",
     },
     {
         "district_id": "UT_canyons",
+        "nces_id": "4900142",
         "state": "UT",
         # Canyons School District.
         "boarddocs_url": "https://go.boarddocs.com/ut/canyons/Board.nsf/Public",
     },
     {
         "district_id": "SC_charleston",
+        "nces_id": "4501440",
         "state": "SC",
         # Charleston County School District.
         "boarddocs_url": "https://go.boarddocs.com/sc/charleston/Board.nsf/Public",
     },
     {
         "district_id": "SC_horry",
+        "nces_id": "4502490",
         "state": "SC",
         # Horry County Schools.
         "boarddocs_url": "https://go.boarddocs.com/sc/horry/Board.nsf/Public",
@@ -158,84 +171,98 @@ _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
     # --- 2026-07-11 board-scout go-live broadening: verified 200 + title match ---
     {
         "district_id": "MD_prince_georges",
+        "nces_id": "2400510",
         "state": "MD",
         # Prince George's County Board of Education (MABE-hosted BoardDocs).
         "boarddocs_url": "https://go.boarddocs.com/mabe/pgcps/Board.nsf/Public",
     },
     {
         "district_id": "MD_montgomery",
+        "nces_id": "2400480",
         "state": "MD",
         # Montgomery County Board of Education (MABE-hosted BoardDocs).
         "boarddocs_url": "https://go.boarddocs.com/mabe/mcpsmd/Board.nsf/Public",
     },
     {
         "district_id": "MO_st_louis",
+        "nces_id": "2929280",
         "state": "MO",
         # Board of Education of the City of St. Louis.
         "boarddocs_url": "https://go.boarddocs.com/mo/stlps/Board.nsf/Public",
     },
     {
         "district_id": "MO_kansas_city",
+        "nces_id": "2916400",
         "state": "MO",
         # Kansas City Public Schools.
         "boarddocs_url": "https://go.boarddocs.com/mo/kanscsd/Board.nsf/Public",
     },
     {
         "district_id": "IL_elgin_u46",
+        "nces_id": "1713710",
         "state": "IL",
         # School District U-46 (Elgin, IL) — second-largest district in IL.
         "boarddocs_url": "https://go.boarddocs.com/il/u46/Board.nsf/Public",
     },
     {
         "district_id": "IL_rockford",
+        "nces_id": "1734510",
         "state": "IL",
         # Rockford Public School District 205.
         "boarddocs_url": "https://go.boarddocs.com/il/rps205/Board.nsf/Public",
     },
     {
         "district_id": "FL_miami_dade",
+        "nces_id": "1200390",
         "state": "FL",
         # Miami-Dade County Public Schools — largest district in FL.
         "boarddocs_url": "https://go.boarddocs.com/fl/sbmd/Board.nsf/Public",
     },
     {
         "district_id": "IN_indianapolis",
+        "nces_id": "1804770",
         "state": "IN",
         # Indianapolis Public Schools.
         "boarddocs_url": "https://go.boarddocs.com/in/indps/Board.nsf/Public",
     },
     {
         "district_id": "OH_cleveland",
+        "nces_id": "3904378",
         "state": "OH",
         # Cleveland Metropolitan School District.
         "boarddocs_url": "https://go.boarddocs.com/oh/cmsd/Board.nsf/Public",
     },
     {
         "district_id": "NY_rochester",
+        "nces_id": "3624750",
         "state": "NY",
         # Rochester City School District.
         "boarddocs_url": "https://go.boarddocs.com/ny/rochny/Board.nsf/Public",
     },
     {
         "district_id": "NC_charlotte_mecklenburg",
+        "nces_id": "3702970",
         "state": "NC",
         # Charlotte-Mecklenburg Schools.
         "boarddocs_url": "https://go.boarddocs.com/nc/cmsnc/Board.nsf/Public",
     },
     {
         "district_id": "NC_wake",
+        "nces_id": "3704720",
         "state": "NC",
         # Wake County Public School System — largest district in NC.
         "boarddocs_url": "https://go.boarddocs.com/nc/wcpsnc/Board.nsf/Public",
     },
     {
         "district_id": "GA_gwinnett",
+        "nces_id": "1302550",
         "state": "GA",
         # Gwinnett County Public Schools — largest district in GA.
         "boarddocs_url": "https://go.boarddocs.com/ga/gcps/Board.nsf/Public",
     },
     {
         "district_id": "GA_fulton",
+        "nces_id": "1302280",
         "state": "GA",
         # Fulton County Schools (Atlanta metro).
         "boarddocs_url": "https://go.boarddocs.com/ga/fcss/Board.nsf/Public",
@@ -248,6 +275,7 @@ _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
     # browser User-Agent; BoardDocs 404s a bare default UA.
     {
         "district_id": "GA_chatham",
+        "nces_id": "1301020",
         "state": "GA",
         # Savannah-Chatham County Public Schools. Title check: "208 Bull Street
         # | Savannah, GA 31401".  Holds the only located GA board contract for
@@ -257,6 +285,7 @@ _DEFAULT_PEER_WATCH_LIST: list[dict[str, Any]] = [
     },
     {
         "district_id": "GA_marietta",
+        "nces_id": "1303510",
         "state": "GA",
         # Marietta City Schools. Title check: "250 Howard Street | Marietta, GA
         # 30060".  Not an Amira district as far as we know -- included because it
@@ -427,10 +456,20 @@ class BoardPeerValidationScout(BaseScout):
                 break
 
             district_id: str = district.get("district_id", "unknown")
-            if normalize_district_id(district_id) in exclude:
+            # Prefer the NCES district id. The Salesforce-backed exclusion
+            # provider keys on it (Account.NCES_District_ID__c joins
+            # districts.nces_id, both 7-digit), while `district_id` here is a
+            # hand-authored slug like "FL_pinellas" that no external system
+            # knows. Falling back to the slug keeps a StaticCustomerExclusions
+            # set of slugs working for tests and manual injection.
+            nces_id: str = str(district.get("nces_id") or "")
+            match_key = nces_id or district_id
+            if normalize_district_id(match_key) in exclude:
                 _logger.debug(
-                    "BoardPeerValidationScout: %s is a customer — skipping (exclusion filter).",
+                    "BoardPeerValidationScout: %s (nces=%s) is a customer — "
+                    "skipping (exclusion filter).",
                     district_id,
+                    nces_id or "-",
                 )
                 continue
 
