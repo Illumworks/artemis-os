@@ -645,11 +645,15 @@ class Settings(BaseSettings):
         ),
     )
     brand_signals_cron: str = Field(
-        default="0 7 * * mon-fri",
+        default="0 12 * * mon-fri",
         validation_alias=AliasChoices("ARTEMIS_BRAND_SIGNALS_CRON", "BRAND_SIGNALS_CRON"),
         description=(
-            "Cron for the daily Brand Signals brief. Day-of-week MUST be by name "
-            "(mon-fri), never numeric — see scheduler notes."
+            "Cron for the daily Brand Signals brief. Interpreted in "
+            "``screentime_cron_tz`` (UTC), so 12:00 is 08:00 Eastern — an hour "
+            "ahead of the combined #market-signals brief at 13:00 UTC, so the "
+            "brand read is already in the channel when that one lands. "
+            "Day-of-week MUST be by name (mon-fri), never numeric — this repo's "
+            "APScheduler gotcha."
         ),
     )
 
