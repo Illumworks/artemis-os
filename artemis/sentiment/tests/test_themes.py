@@ -15,6 +15,8 @@ Structure:
 
 from __future__ import annotations
 
+import pytest
+
 from artemis.sentiment.themes import (
     THEME_IS_A_CHATBOT,
     THEME_PRIVACY_SURVEILLANCE,
@@ -266,3 +268,38 @@ def test_is_amira_specific_independent_of_theme_presence():
 def test_is_amira_specific_false_for_unrelated_text():
     t = "The football team won its homecoming game on Friday night in overtime."
     assert is_amira_specific(t) is False
+
+
+# ── verb-form recall (added 2026-08-20 after a live gap) ─────────────────────
+#
+# Every original voice_recording anchor used the gerund ("recording children's
+# voices"), but real complaints are written in the present or past tense. The
+# most likely real phrasing of the theme Angela named FIRST did not match, while
+# the false-positive guard for "the school choir recorded their voices" passed —
+# the guard had been tuned against a phrasing that also rejected true positives.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Parents say the app records their children's voices without consent",
+        "The district recorded children's voices and stored the audio",
+        "A vendor that records student voices should need opt-in",
+    ],
+)
+def test_voice_recording_matches_present_and_past_tense(text: str) -> None:
+    assert THEME_VOICE_RECORDING in match_themes(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The school choir recorded their voices for the winter concert",
+        "Students recorded their voices for a Spanish language project",
+        "He recorded a voice memo about the meeting",
+    ],
+)
+def test_verb_variants_did_not_loosen_the_guard(text: str) -> None:
+    """The variants pair a record-verb with children's/student voices, so
+    ordinary 'recorded their voices' prose must still not match."""
+    assert THEME_VOICE_RECORDING not in match_themes(text)

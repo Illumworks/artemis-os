@@ -73,6 +73,21 @@ THEMES: dict[str, tuple[str, ...]] = {
         "voice biometric data",
         "capturing children's voices",
         "voice data without consent",
+        # Verb-form coverage. Every anchor above uses the gerund ("recording"),
+        # but real complaints are written in the present or past tense — "the
+        # app records their children's voices", "it recorded my son's voice".
+        # Missing those meant the most-likely real phrasing of the theme Angela
+        # named FIRST did not match. Each variant still pairs a record-verb with
+        # children's/student voices, so the false-positive guard that rejects
+        # "the school choir recorded their voices" is unaffected: that phrase
+        # has no children's/student qualifier.
+        "records children's voices",
+        "recorded children's voices",
+        "record children's voices",
+        "records student voices",
+        "recorded student voices",
+        "children's voices are recorded",
+        "children's voices without consent",
     ),
     # Angela: "children being used to train AI" — kids' data, voices, or
     # schoolwork feeding model training, framed as extraction rather than
