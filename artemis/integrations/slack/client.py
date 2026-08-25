@@ -57,6 +57,16 @@ class SlackClient:
             raise SlackAPIError(method, str(data.get("error", "unknown")))
         return data
 
+    async def api_call(self, method: str, **kwargs: object) -> dict[str, object]:
+        """Call any Slack Web API method. Raises ``SlackAPIError`` on ``ok:false``.
+
+        A public door onto ``_post`` for endpoints that do not warrant their own
+        wrapper (the canvas methods). Same form-encoding rules apply, including
+        JSON-stringifying nested values -- verified against
+        ``canvases.edit``, whose ``changes`` array survives that encoding.
+        """
+        return await self._post(method, **kwargs)
+
     async def post_message(
         self,
         channel: str,

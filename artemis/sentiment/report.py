@@ -343,7 +343,7 @@ def compose_brand_brief(
     # `repository.unreported`. An explicit "nothing new" is a real answer and
     # is stated rather than omitted, so silence never looks like an outage.
     if new_items is not None:
-        parts.append("\n*New since the last brief*")
+        parts.append("\n*New to us since the last brief*")
         if new_items:
             for row in new_items[:10]:
                 parts.append(_line(row))
@@ -433,6 +433,68 @@ def split_for_slack(text: str, *, limit: int = SLACK_TEXT_LIMIT) -> list[str]:
     return parts
 
 
+def compose_daily_message(
+    picture: dict[str, Any],
+    new_items: list[dict[str, Any]],
+    *,
+    canvas_ready: bool = False,
+    now: datetime | None = None,
+) -> str:
+    """The SHORT daily Slack post: what is new, and a pointer to the canvas.
+
+    Deliberately small. The standing picture lives in the channel canvas
+    (``sentiment.canvas``), which is updated in place, so the chat message
+    carries only news. Posting the whole reference document as a message every
+    morning -- one post plus two threaded replies, mostly identical to
+    yesterday's -- is what this replaces.
+
+    ``compose_brand_brief`` remains the FALLBACK for when the canvas cannot be
+    written: better a long message than a silent morning.
+    """
+    now = now or datetime.now().astimezone()
+    institutional = (
+        dict(picture.get("themes") or {}).get(THEME_INSTITUTIONAL_REJECTION, 0)
+        if isinstance(picture.get("themes"), dict)
+        else next(
+            (n for t, n in (picture.get("themes") or []) if t == THEME_INSTITUTIONAL_REJECTION),
+            0,
+        )
+    )
+    spread = " · ".join(f"{s} {n}" for s, n in (picture.get("states") or [])[:6])
+
+    parts = [f"*Brand Signals — {now.strftime('%A, %B %-d')}*"]
+    parts.append(
+        f"*Bottom line.* {picture.get('total', 0)} stories in the last "
+        f"{LOOKBACK_DAYS} days · {picture.get('amira', 0)} name Amira directly · "
+        f"{institutional} involve a district, board or state acting."
+        + (f"\nStates named: {spread}." if spread else "")
+    )
+
+    count = len(new_items)
+    parts.append(f"\n*New to us since the last brief*{f' ({count})' if count else ''}")
+    if new_items:
+        for row in new_items[:10]:
+            parts.append(_line(row))
+        if count > 10:
+            parts.append(f"_…and {count - 10} more._")
+    else:
+        # An explicit nothing. Silence must never be indistinguishable from a
+        # feed that has quietly stopped working.
+        parts.append("_Nothing new. The scan ran and found no story we have not already reported._")
+
+    if canvas_ready:
+        parts.append(
+            "\n_The full standing picture — every story in the window, the state "
+            "and theme rollups, and the competitor escalation ladder — is in this "
+            "channel's *Brand Signals* canvas tab, updated just now._"
+        )
+    parts.append(
+        "_Scope: news coverage only. Facebook parent groups are closed to "
+        "automated reading; Reddit and Vista Social access are pending._"
+    )
+    return "\n".join(parts)
+
+
 async def post_brand_signals_brief(session: Any) -> bool:
     """Scan, persist, compose, post as Callie. Returns True only if Slack took it.
 
@@ -472,11 +534,34 @@ async def post_brand_signals_brief(session: Any) -> bool:
     new_rows = await repo.unreported(session, limit=NEW_ITEMS_PER_BRIEF)
     window_rows = await repo.window_findings(session, days=LOOKBACK_DAYS)
     corpus_total = await repo.count_all(session)
+    picture = await repo.standing_picture(session, days=LOOKBACK_DAYS)
 
     new_items = [row_to_dict(r) for r in new_rows]
     findings = [row_to_dict(r) for r in window_rows]
 
-    text = compose_brand_brief(findings, new_items=new_items, corpus_total=corpus_total)
+    # 1. The standing picture goes to the channel canvas, updated in place.
+    from artemis.integrations.slack.client import SlackClient
+    from artemis.routes.integrations_slack_events import _resolve_agent_slack_config
+    from artemis.sentiment.canvas import compose_canvas_markdown, update_standing_canvas
+
+    canvas_id: str | None = None
+    agent_cfg = await _resolve_agent_slack_config(session, agent_id="callie", team_id=None)
+    if agent_cfg.access_token:
+        try:
+            canvas_id = await update_standing_canvas(
+                SlackClient(token=agent_cfg.access_token),
+                channel,
+                compose_canvas_markdown(findings, picture),
+            )
+        except Exception:  # noqa: BLE001 — a canvas failure must not lose the brief
+            _log.warning("brand_signals: canvas update failed", exc_info=True)
+
+    # 2. The chat message carries only what is new -- unless the canvas failed,
+    #    in which case fall back to the full brief so the morning is not silent.
+    if canvas_id:
+        text = compose_daily_message(picture, new_items, canvas_ready=True)
+    else:
+        text = compose_brand_brief(findings, new_items=new_items, corpus_total=corpus_total)
     parts = split_for_slack(text)
     # unfurl=False: every link here is a Google News redirect, and Slack
     # unfurls each into the same useless "Google News" card.
@@ -490,13 +575,14 @@ async def post_brand_signals_brief(session: Any) -> bool:
 
     _log.info(
         "brand_signals: scanned=%d inserted=%d refreshed=%d new=%d marked=%d "
-        "corpus=%d posted=%s channel=%s",
+        "corpus=%d canvas=%s posted=%s channel=%s",
         len(scanned),
         inserted,
         refreshed,
         len(new_rows),
         marked,
         corpus_total,
+        canvas_id or "none",
         posted,
         channel,
     )

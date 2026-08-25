@@ -12,6 +12,7 @@ from artemis.screentime.national_news import NATIONAL
 from artemis.sentiment.report import (
     LOOKBACK_DAYS,
     compose_brand_brief,
+    compose_daily_message,
     row_to_dict,
     split_for_slack,
 )
@@ -270,19 +271,19 @@ class TestNewSinceLastBrief:
     def test_new_section_is_absent_when_not_supplied(self) -> None:
         """Back-compat: the standing-only form must not grow an empty section."""
         text = compose_brand_brief([_row("a")], now=NOW)
-        assert "New since the last brief" not in text
+        assert "New to us since the last brief" not in text
 
     def test_new_items_lead_the_brief(self) -> None:
         findings = [_row("Old standing story", link="https://x/old")]
         new = [_row("Brand new story", link="https://x/new")]
         text = compose_brand_brief(findings, new_items=new, corpus_total=9, now=NOW)
-        assert text.index("New since the last brief") < text.index("Standing")
+        assert text.index("New to us since the last brief") < text.index("Standing")
         assert text.index("https://x/new") < text.index("https://x/old")
 
     def test_empty_new_list_says_so_explicitly(self) -> None:
         """Silence must never be indistinguishable from an outage."""
         text = compose_brand_brief([_row("a")], new_items=[], now=NOW)
-        assert "New since the last brief" in text
+        assert "New to us since the last brief" in text
         assert "Nothing new" in text
 
     def test_long_new_list_is_capped_with_a_remainder_note(self) -> None:
@@ -354,3 +355,59 @@ def test_new_items_survive_an_empty_standing_window() -> None:
     text = compose_brand_brief([], new_items=new, now=NOW)
     assert "Brand new" in text
     assert "No qualifying coverage" not in text
+
+
+def test_new_heading_says_new_to_us_not_newly_published() -> None:
+    """Google's feed surfaces older stories late: the first live run flagged a
+    July 27 story as new because we had not seen it before. "New" must not be
+    read as "newly published" -- the item's own date is shown alongside."""
+    text = compose_brand_brief([], new_items=[_row("x", day=1)], now=NOW)
+    assert "New to us since the last brief" in text
+
+
+class TestDailyMessage:
+    def _picture(self, **over):
+        base = {
+            "total": 30,
+            "amira": 3,
+            "states": [("NM", 4), ("CA", 3)],
+            "themes": [("institutional_rejection", 6), ("parent_objection", 8)],
+            "corpus": 30,
+        }
+        base.update(over)
+        return base
+
+    def test_leads_with_the_bottom_line_and_states(self) -> None:
+        text = compose_daily_message(self._picture(), [], now=NOW)
+        assert "30 stories in the last 120 days" in text
+        assert "3 name Amira directly" in text
+        assert "6 involve a district" in text
+        assert "NM 4 · CA 3" in text
+
+    def test_lists_new_items(self) -> None:
+        new = [_row("Fresh story", link="https://x/fresh")]
+        text = compose_daily_message(self._picture(), new, now=NOW)
+        assert "https://x/fresh" in text
+
+    def test_says_nothing_new_explicitly(self) -> None:
+        text = compose_daily_message(self._picture(), [], now=NOW)
+        assert "Nothing new" in text
+
+    def test_points_at_the_canvas_only_when_it_was_written(self) -> None:
+        with_canvas = compose_daily_message(self._picture(), [], canvas_ready=True, now=NOW)
+        assert "canvas tab" in with_canvas
+        without = compose_daily_message(self._picture(), [], canvas_ready=False, now=NOW)
+        assert "canvas tab" not in without
+
+    def test_stays_short_enough_for_one_slack_message(self) -> None:
+        """The whole point: no thread, no split, no repetition."""
+        new = [_row(f"n{i}", link=f"https://n/{i}") for i in range(10)]
+        text = compose_daily_message(self._picture(), new, canvas_ready=True, now=NOW)
+        assert len(split_for_slack(text)) == 1
+
+    def test_no_states_omits_the_states_line(self) -> None:
+        text = compose_daily_message(self._picture(states=[]), [], now=NOW)
+        assert "States named" not in text
+
+    def test_always_carries_the_scope_caveat(self) -> None:
+        assert "Scope: news coverage only" in compose_daily_message(self._picture(), [], now=NOW)
