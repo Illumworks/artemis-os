@@ -25,6 +25,7 @@ from artemis.sentiment.themes import (
     THEME_TRAINING_AI_ON_CHILDREN,
     THEME_VOICE_RECORDING,
     THEMES,
+    has_tech_context,
     is_amira_specific,
     match_themes,
 )
@@ -365,3 +366,50 @@ def test_parent_objection_ignores_ordinary_and_tragedy_coverage(headline: str) -
     three of fourteen results in the live sweep. Objection language must not
     fire on it."""
     assert THEME_PARENT_OBJECTION not in match_themes(headline)
+
+
+# ── objection must be PAIRED with tech context ───────────────────────────────
+#
+# From the first live national scan (2026-08-20): parent_objection on its own
+# matched parents demanding answers over a backpack ban, a mascot name, a
+# superintendent's leave and an FBI raid. Real parent anger, nothing to do with
+# us. The act of objecting is only OUR signal when the object is ed-tech.
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Parents demand answers after Memphis middle school bans backpacks",
+        "Parents petition to change high school mascot's naughty name",
+        "Germantown parents demand transparency as superintendent is on leave",
+        "Lawrence County parents push back on new absence policy",
+        "Parents protest, call for action on bullying and mental health",
+    ],
+)
+def test_real_parent_anger_without_tech_is_not_our_signal(headline: str) -> None:
+    assert THEME_PARENT_OBJECTION in match_themes(headline)  # it IS objection
+    assert not has_tech_context(headline)  # but not about us
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Schools, parents balk at AI testing for kindergarten students",
+        "A.I.-Themed High School Is Put on Hold After Parental Backlash",
+        "Elmira parents demand answers over teacher's AI misuse allegations",
+        "A $57,590 Robot Was Supposed to Transform Learning. Instead, It Triggered a Backlash",
+    ],
+)
+def test_objection_about_ed_tech_is_our_signal(headline: str) -> None:
+    """All five are real headlines from the live scan."""
+    assert THEME_PARENT_OBJECTION in match_themes(headline)
+    assert has_tech_context(headline)
+
+
+def test_tech_context_matches_real_headline_word_forms() -> None:
+    """The real Arizona headline, verbatim from the live scan. It carries no
+    objection language, so it is a tech-context signal only — and 'surveilling'
+    must match, which the noun form 'surveillance' alone did not."""
+    real = "Arizona schools are digitally surveilling students. Here's what parents need to know"
+    assert has_tech_context(real)
+    assert THEME_PARENT_OBJECTION not in match_themes(real)

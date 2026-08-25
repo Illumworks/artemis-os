@@ -266,3 +266,72 @@ def is_amira_specific(text: str) -> bool:
     """
     lower = _normalize(text)
     return any(anchor in lower for anchor in _BRAND_ANCHORS)
+
+
+# Terms that make a piece of text about EDUCATION TECHNOLOGY, as opposed to any
+# other thing a parent might be angry about.
+#
+# Added 2026-08-20 after the first live scan. `parent_objection` on its own
+# matched parents demanding answers over a backpack ban, a mascot name, a
+# superintendent's leave and an FBI raid — real parent anger, nothing to do with
+# us. The act of objecting is only OUR signal when the object is ed-tech, so
+# callers must pair the two. Kept as a separate predicate rather than folded
+# into the theme, for the same reason `is_amira_specific` is separate: a caller
+# has to be able to ask "how much parent anger is there" and "is it about
+# technology" independently.
+_TECH_CONTEXT: tuple[str, ...] = (
+    "artificial intelligence",
+    # NYT and several wire outlets style it "A.I." with periods. Missing this
+    # dropped "A.I.-Themed High School Is Put on Hold After Parental Backlash"
+    # — a New York Times story and the strongest single result in the first
+    # live scan. House style is not something to guess at from a keyword list.
+    "a.i.",
+    "ai testing",
+    "ai tutor",
+    "ai assessment",
+    "ai-powered",
+    "ai powered",
+    "ai in schools",
+    "ai program",
+    "ai misuse",
+    "generative ai",
+    "chatgpt",
+    "chatbot",
+    "algorithm",
+    "student data",
+    "data privacy",
+    "screen time",
+    "screentime",
+    "surveil",  # stem: covers surveillance / surveilling / surveilled
+    "facial recognition",
+    "biometric",
+    "voice recording",
+    "reading app",
+    "reading software",
+    "reading program",
+    "ed tech",
+    "edtech",
+    "education technology",
+    "classroom technology",
+    "learning platform",
+    "digital learning",
+    # Physical ed-tech, not just software. Missing these dropped "A $57,590
+    # Robot Was Supposed to Transform Learning. Instead, It Triggered a
+    # Backlash" — a genuine ed-tech backlash story — from the first live scan.
+    "robot",
+    "tablets",
+    "student devices",
+    "school-issued device",
+    "learning software",
+    "assessment tool",
+)
+
+
+def has_tech_context(text: str) -> bool:
+    """True if *text* is about education technology at all.
+
+    Pair this with ``parent_objection``: objection + tech context is our
+    signal; objection alone is just a parent being angry about something.
+    """
+    lowered = _normalize(text)
+    return any(term in lowered for term in _TECH_CONTEXT)
