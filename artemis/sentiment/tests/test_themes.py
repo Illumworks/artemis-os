@@ -19,6 +19,7 @@ import pytest
 
 from artemis.sentiment.themes import (
     THEME_IS_A_CHATBOT,
+    THEME_PARENT_OBJECTION,
     THEME_PRIVACY_SURVEILLANCE,
     THEME_SCREEN_TIME_HARM,
     THEME_TRAINING_AI_ON_CHILDREN,
@@ -31,13 +32,19 @@ from artemis.sentiment.themes import (
 # --- Structural guard --------------------------------------------------------
 
 
-def test_all_five_themes_present():
+def test_theme_set_is_exactly_what_we_expect():
+    """Names the set rather than counting it, so adding a theme fails with the
+    name that changed instead of an opaque count mismatch."""
     assert set(THEMES) == {
+        # The five narratives Angela named, written in PARENT register.
         THEME_VOICE_RECORDING,
         THEME_TRAINING_AI_ON_CHILDREN,
         THEME_IS_A_CHATBOT,
         THEME_PRIVACY_SURVEILLANCE,
         THEME_SCREEN_TIME_HARM,
+        # Written in JOURNALIST register — the act of objecting, whatever the
+        # grievance. This is what answers "where are the outcries growing".
+        THEME_PARENT_OBJECTION,
     }
 
 
@@ -318,3 +325,43 @@ def test_voice_recording_matches_a_parents_own_phrasing(text: str) -> None:
     most likely form this theme takes on Reddit. Found by composing the Reddit
     normalizer with this matcher, not by reading the anchor list."""
     assert THEME_VOICE_RECORDING in match_themes(text)
+
+
+# ── journalist register vs parent register ───────────────────────────────────
+#
+# Every other theme is written the way a PARENT complains. News is written the
+# way a REPORTER summarises. A live Georgia sweep on 2026-08-20 returned
+# "Schools, parents balk at AI testing for kindergarten students" — the single
+# most on-point result — and it matched NOTHING. parent_objection closes that,
+# and detects a flashpoint even when the underlying grievance is phrased in a
+# way we have not anticipated.
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Schools, parents balk at AI testing for kindergarten students",
+        "A $57,590 Robot Was Supposed to Transform Learning. Instead, It Triggered a Backlash",
+        "Concerned parents packed the board meeting over the district's reading app",
+        "Parents opt out of the AI reading assessment in growing numbers",
+        "Parent outcry over student data prompts a district review",
+    ],
+)
+def test_parent_objection_matches_real_headline_phrasing(headline: str) -> None:
+    assert THEME_PARENT_OBJECTION in match_themes(headline)
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Georgia lawmakers push to regulate AI, algorithms",
+        "Father of Georgia school shooter sentenced to 15 years in prison",
+        "More than half of Georgia teachers use AI, CSRA educators weigh in",
+        "District parents night is scheduled for Thursday",
+    ],
+)
+def test_parent_objection_ignores_ordinary_and_tragedy_coverage(headline: str) -> None:
+    """A 'Georgia schools parents' query pulls in unrelated tragedy coverage —
+    three of fourteen results in the live sweep. Objection language must not
+    fire on it."""
+    assert THEME_PARENT_OBJECTION not in match_themes(headline)

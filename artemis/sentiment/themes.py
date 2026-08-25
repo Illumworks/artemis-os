@@ -46,6 +46,7 @@ THEME_TRAINING_AI_ON_CHILDREN = "training_ai_on_children"
 THEME_IS_A_CHATBOT = "is_a_chatbot"
 THEME_PRIVACY_SURVEILLANCE = "privacy_surveillance"
 THEME_SCREEN_TIME_HARM = "screen_time_harm"
+THEME_PARENT_OBJECTION = "parent_objection"
 
 # --- Anchors -------------------------------------------------------------
 #
@@ -179,6 +180,44 @@ THEMES: dict[str, tuple[str, ...]] = {
         "replacing books with screens",
         "digital eye strain",
         "screen fatigue",
+    ),
+    # JOURNALIST REGISTER, not parent register. Added 2026-08-20 after a live
+    # scan: every theme above is written the way a PARENT complains ("it records
+    # my kid's voice"), but news is written the way a REPORTER summarises
+    # ("Schools, parents balk at AI testing for kindergarten students"). That
+    # real Georgia headline — the single most on-point result in the sweep —
+    # matched nothing. Same narrative, different vocabulary.
+    #
+    # This theme is the ACT of objecting rather than any specific grievance,
+    # which is what answers "where are these outcries growing": it detects a
+    # flashpoint even when the underlying complaint is phrased in a way we have
+    # not anticipated.
+    THEME_PARENT_OBJECTION: (
+        "parents balk at",
+        "parents push back",
+        "parents object to",
+        "parents are objecting",
+        "parents raise concerns",
+        "parents raised concerns",
+        "parent backlash",
+        "parental backlash",
+        "triggered a backlash",
+        "sparked a backlash",
+        "facing backlash",
+        "parent outcry",
+        "public outcry",
+        "parents demand",
+        "parents petition",
+        "parents protest",
+        "parents are protesting",
+        "parents complain",
+        "parents complained",
+        "parents opt out",
+        "parents opting out",
+        "opt-out requests",
+        "packed board meeting",
+        "angry parents",
+        "concerned parents",
     ),
 }
 
