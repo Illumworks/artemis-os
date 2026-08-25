@@ -12,6 +12,7 @@ from artemis.screentime.national_news import NATIONAL
 from artemis.sentiment.report import (
     LOOKBACK_DAYS,
     compose_brand_brief,
+    row_to_dict,
     split_for_slack,
 )
 from artemis.sentiment.themes import (
@@ -260,3 +261,96 @@ class TestScheduleRegistration:
         assert not dow.strip("*").replace("-", "").replace(",", "").isdigit(), (
             f"day-of-week {dow!r} must be by NAME (mon-fri), never numeric"
         )
+
+
+class TestNewSinceLastBrief:
+    """The reason the corpus exists. The first version re-listed the whole
+    120-day window every morning; by day three there was nothing to read."""
+
+    def test_new_section_is_absent_when_not_supplied(self) -> None:
+        """Back-compat: the standing-only form must not grow an empty section."""
+        text = compose_brand_brief([_row("a")], now=NOW)
+        assert "New since the last brief" not in text
+
+    def test_new_items_lead_the_brief(self) -> None:
+        findings = [_row("Old standing story", link="https://x/old")]
+        new = [_row("Brand new story", link="https://x/new")]
+        text = compose_brand_brief(findings, new_items=new, corpus_total=9, now=NOW)
+        assert text.index("New since the last brief") < text.index("Standing")
+        assert text.index("https://x/new") < text.index("https://x/old")
+
+    def test_empty_new_list_says_so_explicitly(self) -> None:
+        """Silence must never be indistinguishable from an outage."""
+        text = compose_brand_brief([_row("a")], new_items=[], now=NOW)
+        assert "New since the last brief" in text
+        assert "Nothing new" in text
+
+    def test_long_new_list_is_capped_with_a_remainder_note(self) -> None:
+        new = [_row(f"n{i}", link=f"https://n/{i}") for i in range(14)]
+        text = compose_brand_brief([], new_items=new, now=NOW)
+        assert "and 4 more new today" in text
+
+    def test_corpus_total_is_reported_when_supplied(self) -> None:
+        text = compose_brand_brief([_row("a")], corpus_total=412, now=NOW)
+        assert "412 stories tracked" in text
+
+    def test_standing_heading_absent_without_a_corpus_total(self) -> None:
+        assert "Standing picture" not in compose_brand_brief([_row("a")], now=NOW)
+
+
+class TestRowToDict:
+    def test_maps_orm_fields_onto_the_composer_shape(self) -> None:
+        class _Row:
+            id = 7
+            lane = "vendor"
+            title = "Story"
+            link = "https://x/1"
+            themes = ["parent_objection"]
+            names_amira = True
+            published_at = datetime(2026, 8, 20, tzinfo=UTC)
+            state = "NM"
+
+        got = row_to_dict(_Row())
+        assert got["amira"] is True
+        assert got["published"] == datetime(2026, 8, 20, tzinfo=UTC)
+        assert got["state"] == "NM"
+        assert got["id"] == 7
+
+    def test_null_themes_become_an_empty_list(self) -> None:
+        class _Row:
+            id = 1
+            lane = "category"
+            title = "t"
+            link = "l"
+            themes = None
+            names_amira = False
+            published_at = None
+            state = "US"
+
+        assert row_to_dict(_Row())["themes"] == []
+
+    def test_the_result_renders_through_the_composer(self) -> None:
+        """The adapter is only correct if the composer accepts its output."""
+
+        class _Row:
+            id = 1
+            lane = "vendor"
+            title = "Amira story"
+            link = "https://x/1"
+            themes: list[str] = []
+            names_amira = True
+            published_at = datetime(2026, 8, 20, tzinfo=UTC)
+            state = "NM"
+
+        text = compose_brand_brief([row_to_dict(_Row())], now=NOW)
+        assert "Amira story" in text
+        assert "1 names Amira directly" in text
+
+
+def test_new_items_survive_an_empty_standing_window() -> None:
+    """A brand-new story on a day the window happens to be empty must still be
+    reported. Guarding only on `findings` discarded exactly the news."""
+    new = [_row("Brand new", link="https://x/new")]
+    text = compose_brand_brief([], new_items=new, now=NOW)
+    assert "Brand new" in text
+    assert "No qualifying coverage" not in text

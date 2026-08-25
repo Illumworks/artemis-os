@@ -48,6 +48,10 @@ from artemis.sentiment.themes import (
 _log = logging.getLogger(__name__)
 
 LOOKBACK_DAYS = 120
+
+# Most new items to list in one brief. Kept small because the brief is meant to
+# be read: a day-late story is fine, an unreadable wall is not.
+NEW_ITEMS_PER_BRIEF = 15
 _BASE = "https://news.google.com/rss/search"
 
 # States we sweep with both query shapes rather than one. Named internally as
@@ -249,6 +253,24 @@ def _peer_pattern_section(findings: list[dict[str, Any]], shown: set[str]) -> li
     return lines
 
 
+def row_to_dict(row: Any) -> dict[str, Any]:
+    """Adapt a ``BrandSignalFinding`` to the dict shape the composer renders.
+
+    Keeps the composer pure and database-free, which is what lets its wording
+    be pinned by tests that need no fixtures.
+    """
+    return {
+        "id": row.id,
+        "lane": row.lane,
+        "title": row.title,
+        "link": row.link,
+        "themes": list(row.themes or []),
+        "amira": bool(row.names_amira),
+        "published": row.published_at,
+        "state": row.state,
+    }
+
+
 def _line(row: dict[str, Any]) -> str:
     when = row["published"].strftime("%b %-d")
     where = "" if row["state"] == NATIONAL else f" · {row['state']}"
@@ -258,13 +280,22 @@ def _line(row: dict[str, Any]) -> str:
     return f"• *{when}*{where} — <{row['link']}|{title}>{tail}"
 
 
-def compose_brand_brief(findings: list[dict[str, Any]], *, now: datetime | None = None) -> str:
+def compose_brand_brief(
+    findings: list[dict[str, Any]],
+    *,
+    new_items: list[dict[str, Any]] | None = None,
+    corpus_total: int | None = None,
+    now: datetime | None = None,
+) -> str:
     """Render the Slack brief. Pure — no I/O, so the wording is testable."""
     # Local time: the header should name the reader's day, not UTC's.
     now = now or datetime.now().astimezone()
     header = f"*Brand Signals — {now.strftime('%A, %B %-d')}*"
 
-    if not findings:
+    # Guard on BOTH: an empty standing window with new items present must still
+    # render them. Short-circuiting on `findings` alone silently discarded the
+    # only part of the brief that was actually news.
+    if not findings and not new_items:
         return (
             f"{header}\n"
             "_No qualifying coverage in the last "
@@ -306,7 +337,30 @@ def compose_brand_brief(findings: list[dict[str, Any]], *, now: datetime | None 
         "automated reading; Reddit and Vista Social access are pending._"
     )
 
+    # WHAT IS NEW leads the brief. The first version re-listed the whole
+    # 120-day window every morning, so by day three there was nothing to read.
+    # `new_items` is the set never included in a previous brief -- see
+    # `repository.unreported`. An explicit "nothing new" is a real answer and
+    # is stated rather than omitted, so silence never looks like an outage.
+    if new_items is not None:
+        parts.append("\n*New since the last brief*")
+        if new_items:
+            for row in new_items[:10]:
+                parts.append(_line(row))
+            if len(new_items) > 10:
+                parts.append(f"_\u2026and {len(new_items) - 10} more new today._")
+        else:
+            parts.append(
+                "_Nothing new. The scan ran and found no story we have not already reported._"
+            )
+
     shown: set[str] = set()
+
+    if corpus_total is not None:
+        parts.append(
+            "\n*Standing picture* \u2014 the full window below. "
+            f"{corpus_total} stories tracked since we started keeping them."
+        )
 
     if named:
         parts.append("\n*Amira by name*")
@@ -380,15 +434,28 @@ def split_for_slack(text: str, *, limit: int = SLACK_TEXT_LIMIT) -> list[str]:
 
 
 async def post_brand_signals_brief(session: Any) -> bool:
-    """Gather, compose, and post today's brief as Callie.
+    """Scan, persist, compose, post as Callie. Returns True only if Slack took it.
 
-    Returns True only when Slack actually accepted a post. Dormant (returns
-    False, logs, does nothing) when ``brand_signals_channel`` is unset, so the
-    feature ships off and is enabled by configuration alone.
+    Ordering is deliberate and is the whole reason this persists:
+
+    1. Upsert the scan into ``brand_signal_findings`` and COMMIT. The stories
+       were genuinely seen; that fact should survive a failed post.
+    2. Read back the unreported set (what is new) and the window (the standing
+       picture) from the TABLE, not the feed. Reading the table is why the
+       counts stop drifting between runs.
+    3. Post.
+    4. Only then stamp ``reported_at`` on exactly the rows we listed. Marking
+       before posting would drop a story from every future brief if Slack
+       failed -- the same class of bug as a tool reporting success for work it
+       did not do.
+
+    Dormant (returns False, does nothing) when ``brand_signals_channel`` is
+    unset, so the feature ships off and is enabled by configuration alone.
     """
     from artemis.config import settings
     from artemis.scouts._http import ScoutHttpClient
     from artemis.screentime.reporting import _post_as_callie
+    from artemis.sentiment import repository as repo
 
     channel = settings.brand_signals_channel
     if not channel:
@@ -397,17 +464,39 @@ async def post_brand_signals_brief(session: Any) -> bool:
 
     place_index = await load_place_index(session)
     async with ScoutHttpClient(timeout=25.0, rate_limit=2.0) as http:
-        findings = await gather_brand_signals(http, place_index)
+        scanned = await gather_brand_signals(http, place_index)
 
-    text = compose_brand_brief(findings)
+    inserted, refreshed = await repo.upsert_findings(session, scanned)
+    await session.commit()
+
+    new_rows = await repo.unreported(session, limit=NEW_ITEMS_PER_BRIEF)
+    window_rows = await repo.window_findings(session, days=LOOKBACK_DAYS)
+    corpus_total = await repo.count_all(session)
+
+    new_items = [row_to_dict(r) for r in new_rows]
+    findings = [row_to_dict(r) for r in window_rows]
+
+    text = compose_brand_brief(findings, new_items=new_items, corpus_total=corpus_total)
     parts = split_for_slack(text)
     # unfurl=False: every link here is a Google News redirect, and Slack
     # unfurls each into the same useless "Google News" card.
     posted = await _post_as_callie(session, channel, parts[0], thread_parts=parts[1:], unfurl=False)
+
+    if posted and new_rows:
+        marked = await repo.mark_reported(session, [r.id for r in new_rows])
+        await session.commit()
+    else:
+        marked = 0
+
     _log.info(
-        "brand_signals: findings=%d amira_named=%d posted=%s channel=%s",
-        len(findings),
-        sum(1 for row in findings if row["amira"]),
+        "brand_signals: scanned=%d inserted=%d refreshed=%d new=%d marked=%d "
+        "corpus=%d posted=%s channel=%s",
+        len(scanned),
+        inserted,
+        refreshed,
+        len(new_rows),
+        marked,
+        corpus_total,
         posted,
         channel,
     )

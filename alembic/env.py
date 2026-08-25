@@ -18,6 +18,7 @@ import artemis.identity.models  # noqa: F401 — registers identity directory mo
 import artemis.marketing.models  # noqa: F401 — registers marketing OS models
 import artemis.memory.models  # noqa: F401 — registers memory keystone models
 import artemis.screentime.models  # noqa: F401 — registers Screen-Time Watch models
+import artemis.sentiment.models  # noqa: F401 — registers Brand Signals models
 import artemis.writing_rules.models  # noqa: F401 — registers Writing Studio models
 from alembic import context
 from artemis.config import settings
