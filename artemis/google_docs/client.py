@@ -103,6 +103,16 @@ def build_google_oauth_start_url(
         f"&scope={scope}"
         f"&access_type=offline"
         f"&prompt=consent"
+        # Incremental authorization: the new token carries the scopes this user
+        # ALREADY granted, plus whatever is requested above. Without it Google
+        # issues a token holding exactly `scopes` and nothing else, so shipping a
+        # reconnect link with an incomplete list silently strips live capability
+        # -- the same failure Slack's OAuth has, where the only defence is a
+        # hand-maintained superset list (see `assert_no_scope_regression` in
+        # artemis/routes/integrations.py). Google supports fixing it at the
+        # source; this makes a reconnect purely additive and removes the whole
+        # bug class here rather than guarding against it case by case.
+        f"&include_granted_scopes=true"
         f"&state={quote_plus(state)}"
     )
 

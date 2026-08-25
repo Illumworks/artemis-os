@@ -30,6 +30,20 @@ GoogleOAuthSource = Literal["google", "gcal", "gmail"]
 GOOGLE_MARKETING_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/documents",
+    # Read-only access to files this app did NOT create. `drive.file` covers only
+    # app-created files -- Drive answers 404 (not 403) on anything else, so a
+    # Google Doc or Sheet someone shares with the agent is indistinguishable from
+    # one that does not exist. That is the Google half of the attachment-intake
+    # gap: without this, a pasted Docs/Sheets link is unreadable.
+    #
+    # `readonly` rather than full `drive` deliberately: the agents need to READ
+    # what people share with them, never to modify it. Writes stay on
+    # `drive.file`, scoped to documents the app made itself.
+    "https://www.googleapis.com/auth/drive.readonly",
+    # Drive's export endpoint renders a spreadsheet to CSV but returns ONLY the
+    # first tab. Multi-tab sheets are normal in marketing, so reading them
+    # properly needs the Sheets API. Read-only for the same reason as above.
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
 )
