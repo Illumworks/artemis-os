@@ -11,6 +11,7 @@
 //   openIntegrationsModal();
 
 import { renderIntegrationCard } from './integration-card.js';
+import { renderApiConnectorsSection } from './api-connectors.js';
 
 // ── Known providers ───────────────────────────────────────────────────────────
 
@@ -271,6 +272,24 @@ export function openIntegrationsModal() {
   grid.className = 'integration-cards-grid';
   body.appendChild(grid);
 
+  // ── API Connectors ────────────────────────────────────────────────────────
+  // Key-based credentials (Vista Social, Starbridge, model providers). These
+  // are not OAuth, so they get their own section rather than a provider card.
+  const connTitle = document.createElement('h3');
+  connTitle.className = 'integrations-modal__section-title';
+  connTitle.textContent = 'API Connectors';
+  body.appendChild(connTitle);
+
+  const connSubtitle = document.createElement('p');
+  connSubtitle.className = 'integrations-modal__section-subtitle';
+  connSubtitle.textContent =
+    'Key-based credentials used by agents at runtime. Encrypted at rest.';
+  body.appendChild(connSubtitle);
+
+  const connSection = document.createElement('div');
+  connSection.id = 'api-connectors-section';
+  body.appendChild(connSection);
+
   // ── Footer hint ───────────────────────────────────────────────────────────
   const footer = document.createElement('p');
   footer.className = 'integrations-modal__footer';
@@ -284,6 +303,7 @@ export function openIntegrationsModal() {
 
   // Populate cards async — modal is already visible, cards stream in
   _populateGrid(grid);
+  renderApiConnectorsSection(connSection);
 
   // ── Backdrop click closes ─────────────────────────────────────────────────
   overlay.addEventListener('click', (e) => {
