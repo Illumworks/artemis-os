@@ -47,6 +47,108 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
+
+async def live_scopes_for_token(access_token: str) -> frozenset[str] | None:
+    """Read a Slack token's ACTUAL granted scopes from the ``x-oauth-scopes`` header.
+
+    This is the only authoritative source. ``integrations.scopes`` records what
+    was granted when the row was written and drifts silently: a Slack app
+    reinstall that adds scopes reuses the same ``xoxb`` token value and never
+    calls our callback, so the column keeps reporting the old set forever. On
+    2026-08-25 Callie's column read 16 scopes while her live token carried 19,
+    including the ``files:read`` the whole attachment path depends on.
+
+    Returns ``None`` when the grant could not be READ (network failure, or Slack
+    rejecting the token). ``None`` means "unknown", never "empty" — callers must
+    not treat it as an empty scope set, or a transient outage would look like a
+    total scope loss.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://slack.com/api/auth.test",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+    except httpx.HTTPError:
+        return None
+    if not response.json().get("ok"):
+        return None
+    raw = response.headers.get("x-oauth-scopes", "")
+    return frozenset(s.strip() for s in raw.split(",") if s.strip())
+
+
+async def assert_no_scope_regression(
+    session: AsyncSession,
+    *,
+    provider: str,
+    requested: list[str],
+) -> None:
+    """Refuse to start an OAuth flow that would STRIP a scope a live token holds.
+
+    Slack replaces scopes on re-authorization rather than merging them, so an
+    incomplete list here silently removes capability from a working token — the
+    failure surfaces later as a ``missing_scope`` on some unrelated read path,
+    with nothing pointing back to the reconnect that caused it. This turns that
+    silent, delayed break into a loud refusal before the user ever reaches
+    Slack's consent screen.
+
+    It replaces a code comment instructing the next person to run the diff by
+    hand. That comment existed on 2026-08-14 and the list still fell out of date.
+
+    The two failure modes are reported SEPARATELY and never conflated:
+      - a genuine regression names the agent and the exact scopes at risk;
+      - an unreadable grant says so, and does not claim the list is unsafe.
+    """
+    integrations = await repo.list_active(session, provider=provider)
+    requested_set = frozenset(requested)
+
+    regressions: list[str] = []
+    unreadable: list[str] = []
+
+    from artemis.integrations.crypto import decrypt_credentials
+
+    for integration in integrations:
+        agent = str(getattr(integration, "agent_id", "") or f"id={integration.id}")
+        if not integration.encrypted_credentials:
+            continue
+        try:
+            creds = decrypt_credentials(bytes(integration.encrypted_credentials)) or {}
+        except Exception:
+            unreadable.append(f"{agent} (credentials could not be decrypted)")
+            continue
+        token = str(creds.get("access_token") or creds.get("bot_token") or creds.get("token") or "")
+        if not token:
+            continue
+
+        live = await live_scopes_for_token(token)
+        if live is None:
+            unreadable.append(f"{agent} (Slack did not return a usable grant)")
+            continue
+
+        missing = live - requested_set
+        if missing:
+            regressions.append(f"{agent} would lose: {', '.join(sorted(missing))}")
+
+    if regressions:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Refusing to start Slack OAuth: the requested scope list is not a "
+                "superset of the live grant, so reconnecting would silently strip "
+                "working capability. " + "; ".join(regressions) + ". Add these scopes "
+                "to the list in artemis/routes/integrations.py before retrying."
+            ),
+        )
+
+    if unreadable:
+        logger.warning(
+            "slack oauth preflight: could not READ the live grant for %s — "
+            "this is a lookup failure, NOT evidence the scope list is unsafe. "
+            "Proceeding; verify manually if a read path breaks after reconnect.",
+            "; ".join(unreadable),
+        )
+
+
 # In-memory state store for non-Google OAuth (single-process; sufficient for V1).
 _oauth_states: dict[str, str] = {}
 
@@ -185,10 +287,30 @@ async def slack_oauth_start(
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = "pending"
 
+    # !! This list must stay a SUPERSET of the union of every live BOT token's
+    # grant, across every agent (artemis, callie, kai, ares) — they all install
+    # through this one endpoint. Slack does not merge scopes across
+    # authorizations: re-running this flow REPLACES the token with exactly what
+    # is requested here.
+    #
+    # Verified live 2026-08-25 by reading the `x-oauth-scopes` response header
+    # on `auth.test` for each stored bot token. Do NOT diff against
+    # `integrations.scopes` — that column records what was granted when the row
+    # was written and goes stale silently. Callie's row read 16 scopes while her
+    # live token carried 19, because a Slack reinstall adds scopes to the SAME
+    # xoxb token value and never calls our callback. `_assert_no_scope_regression`
+    # below now enforces this against the live grant, not the column.
+    #
+    # search:read.* is here because Artemis's bot token carries it; files:read /
+    # files:write / remote_files:read because Callie's does (the universal file
+    # intake layer). Requesting the union is safe — a scope no agent needs is
+    # simply approved and unused; omitting one an agent HAS silently breaks it.
     scopes = ",".join(
         [
+            # write
             "chat:write",
             "chat:write.public",
+            # read surfaces
             "channels:read",
             "channels:history",
             "groups:read",
@@ -196,11 +318,27 @@ async def slack_oauth_start(
             "im:read",
             "im:history",
             "im:write",
+            "canvases:read",
+            "canvases:write",
+            # files — the agent-agnostic attachment intake layer
+            "files:read",
+            "files:write",
+            "remote_files:read",
+            # search (Artemis's bot token holds these)
+            "search:read.public",
+            "search:read.private",
+            "search:read.im",
+            "search:read.files",
+            "search:read.users",
+            # identity + reactions
             "users:read",
+            "users:read.email",
+            "reactions:read",
             "reactions:write",
             "app_mentions:read",
         ]
     )
+    await assert_no_scope_regression(session, provider="slack", requested=scopes.split(","))
     url = (
         f"https://slack.com/oauth/v2/authorize"
         f"?client_id={cfg.client_id}"
@@ -600,10 +738,24 @@ async def slack_user_oauth_start(
             "search:read.im",
             "search:read.files",
             "search:read.users",
+            # The deprecated umbrella search:read is requested DESPITE the
+            # granular scopes above because the live user token still carries it
+            # (verified 2026-08-25 via the x-oauth-scopes header on auth.test).
+            # The superset rule outranks the deprecation: omitting it strips a
+            # scope the live token holds. If Slack ever rejects the authorize URL
+            # with invalid_scope, drop this line — that failure is loud and
+            # happens BEFORE any token is replaced, which is the safe direction.
+            # Slack grants `identify` implicitly and it cannot be requested, so
+            # it is deliberately absent here despite being on the live token.
+            "search:read",
             # identity
             "users:read",
             "users:read.email",
             "users.profile:read",
+            # files — the agent-agnostic attachment intake layer
+            "files:read",
+            "files:write",
+            "remote_files:read",
             # write — the agency-writes Slack-send lane
             "chat:write",
             "channels:write",
@@ -611,6 +763,9 @@ async def slack_user_oauth_start(
             "im:write",
             "canvases:write",
         ]
+    )
+    await assert_no_scope_regression(
+        session, provider="slack_user", requested=user_scopes.split(",")
     )
     url = (
         f"https://slack.com/oauth/v2/authorize"
