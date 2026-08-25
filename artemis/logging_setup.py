@@ -27,6 +27,7 @@ safe to call from anywhere.
 """
 
 import logging
+import re
 import sys
 
 from artemis.config import settings
@@ -51,6 +52,92 @@ _NOISY_LIBRARIES: tuple[str, ...] = (
 
 # Marks our handler so repeat calls update it instead of stacking duplicates.
 _HANDLER_FLAG = "_artemis_stderr_handler"
+
+# ── Secret redaction ──────────────────────────────────────────────────────────
+#
+# Some vendors authenticate by putting the key in the URL query string. Vista
+# Social's MCP endpoint is the first we integrate that does
+# (`…/mcp?api_key=…`), and httpx logs every request line — method and full URL —
+# at INFO. So the credential reaches any handler that sees httpx at INFO.
+#
+# `_NOISY_LIBRARIES` pins httpx to WARNING, which hides it today, but that is
+# incidental protection, not a guarantee: raise httpx to INFO to debug one
+# request and you write a live credential into `app.err.log`, and a script or
+# cron that never calls `configure_logging()` has no pin at all.
+#
+# The filter below redacts the value instead of relying on the level. It is
+# attached to the *logger*, so it runs before propagation and protects every
+# handler downstream, pytest's caplog included. It removes nothing and silences
+# nothing.
+
+_SECRET_QUERY_PARAMS: tuple[str, ...] = ("api_key", "apikey", "access_token", "token", "key")
+
+_REDACTION = "<redacted>"
+
+_SECRET_QUERY_RE = re.compile(
+    r"(?i)\b(" + "|".join(_SECRET_QUERY_PARAMS) + r")=([^&\s\"']+)",
+)
+
+# Loggers known to render outbound URLs.
+_URL_LOGGING_LIBRARIES: tuple[str, ...] = ("httpx", "httpcore", "urllib3", "aiohttp.client")
+
+_FILTER_FLAG = "_artemis_secret_redaction"
+
+
+def redact_secrets(text: str) -> str:
+    """Mask secret-bearing query parameters in ``text``."""
+    return _SECRET_QUERY_RE.sub(lambda m: f"{m.group(1)}={_REDACTION}", text)
+
+
+def _redact_arg(value: object) -> object:
+    """Redact one log argument, whatever its type.
+
+    Arguments are not always strings. httpx logs its request line as
+    ``logger.info('HTTP Request: %s %s ...', method, request.url)`` where
+    ``request.url`` is an ``httpx.URL`` *object* — an ``isinstance(value, str)``
+    guard silently misses it, which is exactly how the first version of this
+    filter let the key through.
+
+    So redact on the rendered form and substitute only when that actually
+    changed something. Numbers and other secret-free values keep their original
+    type, so ``%d``-style format specifiers still work.
+    """
+    if isinstance(value, str):
+        return redact_secrets(value)
+    rendered = str(value)
+    if "=" not in rendered:
+        return value
+    redacted = redact_secrets(rendered)
+    return redacted if redacted != rendered else value
+
+
+class SecretRedactingFilter(logging.Filter):
+    """Strip credentials out of log records rather than dropping the records."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str) and "=" in record.msg:
+            record.msg = redact_secrets(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {k: _redact_arg(v) for k, v in record.args.items()}
+            elif isinstance(record.args, tuple):
+                record.args = tuple(_redact_arg(a) for a in record.args)
+        return True
+
+
+def install_secret_redaction() -> None:
+    """Attach the redaction filter to URL-logging libraries. Idempotent.
+
+    Safe to call from anywhere — scripts and jobs that never run the app's
+    lifespan should call it before making authenticated requests.
+    """
+    for name in _URL_LOGGING_LIBRARIES:
+        logger = logging.getLogger(name)
+        if any(getattr(f, _FILTER_FLAG, False) for f in logger.filters):
+            continue
+        log_filter = SecretRedactingFilter()
+        setattr(log_filter, _FILTER_FLAG, True)
+        logger.addFilter(log_filter)
 
 
 def _install_root_handler() -> logging.Handler:
@@ -90,5 +177,9 @@ def configure_logging() -> str:
 
     for name in _NOISY_LIBRARIES:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    # Defence in depth: the WARNING pin above hides credential-bearing URLs
+    # today, but the redaction filter is what guarantees they never print.
+    install_secret_redaction()
 
     return level

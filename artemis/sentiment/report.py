@@ -334,7 +334,8 @@ def compose_brand_brief(
     # thread to discover.
     parts.append(
         "_Scope: news coverage only. Facebook parent groups are closed to "
-        "automated reading; Reddit and Vista Social access are pending._"
+        "automated reading; Reddit access is pending. Vista Social is "
+        "connected but covers our own profiles only._"
     )
 
     # WHAT IS NEW leads the brief. The first version re-listed the whole
@@ -392,7 +393,8 @@ def compose_brand_brief(
     parts.append(
         "\n*What this does not cover.* Facebook parent groups are closed to any "
         "automated read. Reddit access is submitted and awaiting their review. "
-        "Vista Social is pending an access request. Until those land this is "
+        "Vista Social is connected, but reaches only our own profiles — its "
+        "trend search does not do brand monitoring. Until those land this is "
         "news coverage only — it will under-report parent-voice chatter, which "
         "is where the specific narratives (voice recordings, training AI on "
         'children, "it\'s just a chatbot") actually live.'
@@ -490,7 +492,8 @@ def compose_daily_message(
         )
     parts.append(
         "_Scope: news coverage only. Facebook parent groups are closed to "
-        "automated reading; Reddit and Vista Social access are pending._"
+        "automated reading; Reddit access is pending. Vista Social is "
+        "connected but covers our own profiles only._"
     )
     return "\n".join(parts)
 

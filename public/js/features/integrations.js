@@ -46,14 +46,35 @@ const PROVIDERS = [
   },
 ];
 
-// Connector kind labels for the "Add connector" dropdown
-const CONNECTOR_KINDS = [
-  { id: 'starbridge', label: 'Starbridge', fields: ['api_key', 'api_url'] },
-  { id: 'openai', label: 'OpenAI', fields: ['api_key', 'organization'] },
-  { id: 'anthropic', label: 'Anthropic', fields: ['api_key'] },
-  { id: 'gemini', label: 'Google Gemini', fields: ['api_key'] },
-  { id: 'tavily', label: 'Tavily', fields: ['api_key'] },
+// Connector kinds for the "Add connector" dropdown.
+//
+// The authoritative registry is artemis/connectors/kinds.py, served by
+// GET /api/connectors/kinds. This array is only a fallback for when that call
+// fails — it is deliberately NOT the source of truth. It used to be, and the
+// result was that a kind added server-side never appeared in this dropdown, so
+// the backend accepted connectors nobody could actually create.
+let CONNECTOR_KINDS = [
+  { id: 'starbridge', label: 'Starbridge', fields: ['api_key', 'api_url'], secret_fields: ['api_key'] },
+  { id: 'openai', label: 'OpenAI', fields: ['api_key', 'organization'], secret_fields: ['api_key'] },
+  { id: 'anthropic', label: 'Anthropic', fields: ['api_key'], secret_fields: ['api_key'] },
+  { id: 'gemini', label: 'Google Gemini', fields: ['api_key'], secret_fields: ['api_key'] },
+  { id: 'tavily', label: 'Tavily', fields: ['api_key'], secret_fields: ['api_key'] },
 ];
+
+// OAuth-managed kinds are linkable but not creatable through this form, so the
+// dropdown hides them; their credentials come from the OAuth flow instead.
+async function _loadConnectorKinds() {
+  try {
+    const res = await fetch('/api/connectors/kinds');
+    if (!res.ok) return;
+    const kinds = await res.json();
+    if (Array.isArray(kinds) && kinds.length) {
+      CONNECTOR_KINDS = kinds.filter((k) => !k.oauth_managed);
+    }
+  } catch {
+    // Keep the fallback list — an unreachable API should not block the form.
+  }
+}
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
@@ -356,7 +377,10 @@ function _renderConnectorCards(container, connectors) {
   addBtn.type = 'button';
   addBtn.className = 'integration-connect-btn';
   addBtn.textContent = '+ Add connector';
-  addBtn.addEventListener('click', () => _showAddConnectorModal(container, connectors));
+  addBtn.addEventListener('click', async () => {
+    await _loadConnectorKinds();
+    _showAddConnectorModal(container, connectors);
+  });
   container.appendChild(addBtn);
 }
 
@@ -458,7 +482,7 @@ function _showAddConnectorModal(listContainer, existingConnectors) {
     fieldsContainer.innerHTML = kind.fields.map((f) => `
       <label class="connector-form-field">
         <span>${_escHtml(f.replace(/_/g, ' '))}${f === 'organization' ? ' (optional)' : ''}</span>
-        <input type="${f.includes('key') || f.includes('secret') ? 'password' : 'text'}"
+        <input type="${(kind.secret_fields || []).includes(f) ? 'password' : 'text'}"
                id="connector-field-${_escAttr(f)}"
                name="${_escAttr(f)}"
                autocomplete="off"

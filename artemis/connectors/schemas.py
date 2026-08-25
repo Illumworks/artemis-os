@@ -76,6 +76,16 @@ class AgentConnectorOut(BaseModel):
     tool_namespace: str
 
 
+class ConnectorKindOut(BaseModel):
+    """One entry of the connector kind registry, for the UI's Add dropdown."""
+
+    id: str
+    label: str
+    fields: list[str]
+    secret_fields: list[str]
+    oauth_managed: bool
+
+
 class ConnectorTestResult(BaseModel):
     """Result from POST /api/connectors/{id}/test."""
 

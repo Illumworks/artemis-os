@@ -154,7 +154,9 @@ def compose_canvas_markdown(
     parts.append(
         "News coverage only. Facebook parent groups are closed to any automated "
         "read. Reddit access is submitted and awaiting review. Vista Social is "
-        "pending. Until those land this under-reports parent-voice chatter, which "
+        "connected, but it reaches only our own profiles — its trend search does "
+        "not do brand monitoring, and it carries neither Reddit nor Facebook "
+        "groups. Until those land this under-reports parent-voice chatter, which "
         "is where the specific narratives (voice recordings, training AI on "
         'children, "it\'s just a chatbot") actually live.'
     )

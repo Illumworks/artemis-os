@@ -24,12 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import artemis.db as db
 from artemis.connectors import repository as repo
 from artemis.connectors.encryption import mask_credentials
-from artemis.connectors.kinds import KNOWN_KIND_IDS
+from artemis.connectors.kinds import CONNECTOR_KINDS, KNOWN_KIND_IDS
 from artemis.connectors.models import Connector
 from artemis.connectors.schemas import (
     AgentConnectorLink,
     AgentConnectorOut,
     ConnectorCreate,
+    ConnectorKindOut,
     ConnectorListItem,
     ConnectorOut,
     ConnectorTestResult,
@@ -153,12 +154,61 @@ async def _test_connector(kind: str, creds: dict[str, str]) -> ConnectorTestResu
                 return ConnectorTestResult(ok=True, message="Gemini API key is valid.")
             return ConnectorTestResult(ok=False, message=f"Gemini returned HTTP {r.status_code}.")
 
+        if kind == "vista_social":
+            # Vista speaks MCP over HTTP, not REST. The handshake is the cheapest
+            # honest proof of reachability: it authenticates and returns the
+            # server banner without touching any account data.
+            from artemis.connectors.mcp_http import (
+                McpError,
+                McpHttpClient,
+                vista_endpoint_url,
+            )
+
+            try:
+                url = vista_endpoint_url(creds)
+            except ValueError as exc:
+                return ConnectorTestResult(ok=False, message=str(exc))
+            try:
+                async with McpHttpClient(url, timeout=20) as mcp:
+                    tools = await mcp.list_tools()
+            except McpError as exc:
+                # exc never carries the URL — see mcp_http module docstring.
+                return ConnectorTestResult(ok=False, message=f"Vista Social: {exc.reason}.")
+            return ConnectorTestResult(
+                ok=True,
+                message=f"Vista Social MCP reachable — {len(tools)} tools available.",
+            )
+
         return ConnectorTestResult(ok=True, message=f"No test configured for kind={kind!r}.")
 
     except httpx.TimeoutException:
         return ConnectorTestResult(ok=False, message="Connection timed out.")
     except Exception as exc:
         return ConnectorTestResult(ok=False, message=f"Test failed: {exc}")
+
+
+# ── Kind registry ─────────────────────────────────────────────────────────────
+
+
+@router.get("/api/connectors/kinds", response_model=list[ConnectorKindOut])
+async def list_connector_kinds_endpoint() -> list[ConnectorKindOut]:
+    """Expose the kind registry so the UI does not keep its own copy.
+
+    ``public/js/features/integrations.js`` used to hardcode this list, which
+    meant adding a kind server-side left it invisible in the "Add connector"
+    dropdown — the backend accepted a connector nobody could create. One
+    registry, served.
+    """
+    return [
+        ConnectorKindOut(
+            id=kind.id,
+            label=kind.label,
+            fields=list(kind.fields),
+            secret_fields=list(kind.secret_fields),
+            oauth_managed=kind.oauth_managed,
+        )
+        for kind in CONNECTOR_KINDS.values()
+    ]
 
 
 # ── Connectors CRUD ────────────────────────────────────────────────────────────
