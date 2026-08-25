@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
 from artemis.connectors import repository as repo
-from artemis.connectors.encryption import mask_credentials
+from artemis.connectors.encryption import ConnectorKeyMissingError, mask_credentials
 from artemis.connectors.kinds import CONNECTOR_KINDS, KNOWN_KIND_IDS
 from artemis.connectors.models import Connector
 from artemis.connectors.schemas import (
@@ -37,7 +37,7 @@ from artemis.connectors.schemas import (
     ConnectorUpdate,
 )
 from artemis.marketing.routes._auth import require_token
-from artemis.marketing.routes._errors import bad_request, not_found
+from artemis.marketing.routes._errors import bad_request, internal, not_found
 
 logger = logging.getLogger(__name__)
 
@@ -231,12 +231,16 @@ async def create_connector_endpoint(
 ) -> ConnectorOut:
     if body.kind not in KNOWN_KIND_IDS:
         raise bad_request(f"Unknown connector kind: {body.kind!r}")
-    row = await repo.create_connector(
-        session,
-        kind=body.kind,
-        name=body.name,
-        credentials=body.credentials,
-    )
+    try:
+        row = await repo.create_connector(
+            session,
+            kind=body.kind,
+            name=body.name,
+            credentials=body.credentials,
+        )
+    except ConnectorKeyMissingError as exc:
+        # Config problem, not a code bug — say so instead of a bare 500.
+        raise internal(str(exc), code="connector_key_missing") from exc
     await session.commit()
     return _connector_to_detail(row)
 

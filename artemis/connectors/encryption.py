@@ -32,6 +32,17 @@ class ConnectorEncryptionError(Exception):
     """Raised when encryption/decryption fails."""
 
 
+class ConnectorKeyMissingError(ConnectorEncryptionError, RuntimeError):
+    """The connector encryption key is not configured.
+
+    This is a deployment/config problem, not a bad request, and it used to
+    escape as a bare RuntimeError — so saving a connector returned a bare
+    HTTP 500 with a stack trace, indistinguishable from a code bug. It stays a
+    RuntimeError subclass so any existing `except RuntimeError` still catches
+    it; routes catch this specific type to say what is actually wrong.
+    """
+
+
 def _load_key() -> bytes:
     """Load the connector encryption key. Fatal if missing."""
     raw = os.environ.get(_ENV_VAR)
@@ -46,7 +57,7 @@ def _load_key() -> bytes:
                 os.environ[_ENV_VAR] = val
                 return val.encode()
 
-    raise RuntimeError(
+    raise ConnectorKeyMissingError(
         f"{_ENV_VAR} is not set. "
         'Generate a key with: python -c "from cryptography.fernet import Fernet; '
         'print(Fernet.generate_key().decode())" '
