@@ -41,3 +41,7 @@ scripts/watchdog.conf
 # Writing-sample PDFs — ~97MB of undiffable binaries kept on the Mini only.
 # See docs/writing-samples-manifest.md for what the corpus contains.
 writing-samples/
+
+# MCP server configs: Vista Social embeds its API key in the server URL, so a
+# committed .mcp.json would publish a live credential.
+.mcp.json
