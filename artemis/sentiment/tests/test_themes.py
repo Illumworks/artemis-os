@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from artemis.sentiment.themes import (
+    THEME_INSTITUTIONAL_REJECTION,
     THEME_IS_A_CHATBOT,
     THEME_PARENT_OBJECTION,
     THEME_PRIVACY_SURVEILLANCE,
@@ -46,6 +47,10 @@ def test_theme_set_is_exactly_what_we_expect():
         # Written in JOURNALIST register — the act of objecting, whatever the
         # grievance. This is what answers "where are the outcries growing".
         THEME_PARENT_OBJECTION,
+        # INSTITUTIONAL register — districts, boards, teachers, legislators.
+        # The commercially severe half: a parent complaint is sentiment, a
+        # district vote is a lost contract.
+        THEME_INSTITUTIONAL_REJECTION,
     }
 
 
@@ -413,3 +418,77 @@ def test_tech_context_matches_real_headline_word_forms() -> None:
     real = "Arizona schools are digitally surveilling students. Here's what parents need to know"
     assert has_tech_context(real)
     assert THEME_PARENT_OBJECTION not in match_themes(real)
+
+
+# ── institutional_rejection ───────────────────────────────────────────────────
+#
+# Added 2026-08-24. A vendor-name sweep returned ~a dozen Amira-named stories
+# that matched NO theme at all: every objection anchor made "parents" the
+# grammatical subject, while the live New Mexico crisis is being driven by
+# DISTRICTS, SCHOOL BOARDS, TEACHERS and LEGISLATORS. Each headline below is
+# verbatim from that sweep.
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Santa Fe Public Schools rejects state-required AI program",
+        "School Districts Push Back Against State-Required AI Reading Assessments",
+        "Pinellas teachers raise concerns about AI reading program used in classrooms",
+        "New Mexico Allows Schools to Opt Out of Controversial AI Tool",
+        "Katy ISD restricts the use of AI in elementary school classrooms",
+        "AI classroom robot plan put on hold in Salamanca",
+        "Charlotte-Mecklenburg Schools shortens i-Ready contract over screen time",
+    ],
+)
+def test_institutional_rejection_fires_on_real_coverage(headline: str) -> None:
+    assert THEME_INSTITUTIONAL_REJECTION in match_themes(headline)
+    assert has_tech_context(headline)
+
+
+def test_institutional_rejection_is_distinct_from_parent_objection() -> None:
+    """The two must not collapse: a parent complaint is sentiment, a district
+    vote is a lost contract, and they escalate differently."""
+    district = "Santa Fe Public Schools rejects state-required AI program"
+    parent = "Parents are raising the alarm as schools roll out AI teachers without consent"
+    assert match_themes(district) == {THEME_INSTITUTIONAL_REJECTION}
+    assert match_themes(parent) == {THEME_PARENT_OBJECTION}
+
+
+def test_a_story_can_carry_both_registers() -> None:
+    both = "A.I.-Themed High School Is Put on Hold After Parental Backlash"
+    assert match_themes(both) >= {THEME_INSTITUTIONAL_REJECTION, THEME_PARENT_OBJECTION}
+
+
+@pytest.mark.parametrize(
+    "benign",
+    [
+        # Ordinary district business that happens to use the same verbs.
+        "School leaders gathered in Denver for the annual superintendents conference",
+        "The board rejects the proposed boundary change after community input",
+        "District drops its dress code requirement for high school seniors",
+    ],
+)
+def test_institutional_rejection_without_tech_is_not_our_signal(benign: str) -> None:
+    """Same pairing rule as parent_objection: the ACT of rejecting is only our
+    signal when the thing rejected is ed-tech."""
+    assert not has_tech_context(benign)
+
+
+def test_parent_objection_matches_inverted_sentence_forms() -> None:
+    """Coverage often makes parents the OBJECT, not the subject."""
+    real = "Meet Amira, an AI reading tutor alarming some parents and school leaders in New Mexico"
+    assert THEME_PARENT_OBJECTION in match_themes(real)
+    assert is_amira_specific(real)
+
+
+def test_hyphenated_initialism_is_tech_context() -> None:
+    """KOAT styles it 'A-I'. Third house style after 'AI' and NYT's 'A.I.'."""
+    assert has_tech_context(
+        "Concerns about A-I in the classroom even though its mandated by NM PED"
+    )
+
+
+def test_bare_hyphen_substring_does_not_leak() -> None:
+    """' a-i ' is space-bounded because 'a-i' sits inside ordinary words."""
+    assert not has_tech_context("Our data-informed approach to reading instruction")

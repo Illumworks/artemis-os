@@ -477,9 +477,15 @@ def start_screentime_scheduler() -> None:
     that composer instead. ``register_digest_schedule`` stays available for
     standalone/manual use (and for a future channel that wants only this feed).
     """
+    from artemis.sentiment.report import register_brand_signals_schedule
+
     scheduler = get_screentime_scheduler()
     register_screentime_schedule(scheduler)
     register_board_sweep_schedule(scheduler)
+    # Brand Signals rides this scheduler but is its OWN job, cron and channel:
+    # #brand-signals is the dedicated single-feed channel this docstring
+    # anticipated, so a standalone post there creates no double-posting.
+    register_brand_signals_schedule(scheduler)
     if not scheduler.running:
         scheduler.start()
         _logger.info("screentime: scheduler started")

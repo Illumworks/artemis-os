@@ -37,6 +37,8 @@ PURE / no I/O. No provider calls, no DB, no network. Sources (§2), scoring
 
 from __future__ import annotations
 
+import re
+
 from artemis.screentime.topic_config import DEFAULT_TOPIC_RULES
 
 # --- Theme names -------------------------------------------------------------
@@ -47,6 +49,7 @@ THEME_IS_A_CHATBOT = "is_a_chatbot"
 THEME_PRIVACY_SURVEILLANCE = "privacy_surveillance"
 THEME_SCREEN_TIME_HARM = "screen_time_harm"
 THEME_PARENT_OBJECTION = "parent_objection"
+THEME_INSTITUTIONAL_REJECTION = "institutional_rejection"
 
 # --- Anchors -------------------------------------------------------------
 #
@@ -218,6 +221,85 @@ THEMES: dict[str, tuple[str, ...]] = {
         "packed board meeting",
         "angry parents",
         "concerned parents",
+        # Added 2026-08-24 from the vendor-name sweep. Every anchor above makes
+        # "parents" the grammatical subject; real coverage often makes them the
+        # OBJECT of the verb -- "an AI reading tutor alarming some parents",
+        # "parents are raising the alarm". Same narrative, inverted sentence.
+        "alarming parents",
+        "alarming some parents",
+        "parents are alarmed",
+        "parents alarmed",
+        "raising the alarm",
+        "parents push for consent",
+        "without parental consent",
+        "families object",
+        # The macro frame, from NYT 2026-04-29 "In Backlash Against Tech in
+        # Schools, Parents Are Winning Rollbacks". "backlash" alone is too
+        # loose, but bound to tech/AI it is exactly this narrative.
+        "backlash against tech",
+        "backlash against ai",
+        "winning rollbacks",
+    ),
+    # INSTITUTIONAL register. Added 2026-08-24 after a vendor-name sweep found
+    # ~a dozen Amira-named stories that matched NO theme at all. Every objection
+    # theme above assumes the objector is a PARENT; in the live New Mexico
+    # crisis the objectors are districts, school boards, teachers, unions and
+    # legislators -- "Santa Fe Public Schools rejects state-required AI
+    # program", "School Districts Push Back Against State-Required AI Reading
+    # Assessments", "Pinellas teachers raise concerns".
+    #
+    # This is the commercially severe half of the signal: an angry parent is
+    # sentiment, a district vote is a lost contract. Kept separate from
+    # parent_objection precisely so the two can be counted and escalated
+    # differently.
+    THEME_INSTITUTIONAL_REJECTION: (
+        # Districts / boards as objector
+        "districts push back",
+        "district pushes back",
+        "schools push back",
+        "district rejects",
+        "districts reject",
+        "schools reject",
+        "schools rejects",
+        "public schools reject",
+        "school board rejects",
+        "board rejects",
+        "board votes to remove",
+        "votes to drop",
+        "votes to end",
+        "district drops",
+        "districts drop",
+        "school district drops",
+        # Program halted, whoever halted it
+        "pauses the program",
+        "paused the program",
+        "suspends the program",
+        "put on hold",
+        "puts on hold",
+        "removed from schools",
+        "pulled from classrooms",
+        "restricts the use of",
+        # Opt-out machinery -- the New Mexico compromise, and the shape any
+        # state-level retreat is likely to take.
+        "allows schools to opt out",
+        "schools to opt out",
+        "district opts out",
+        "districts opt out",
+        "opt out of the program",
+        # Educators / officials as objector
+        "teachers raise concerns",
+        "teachers raised concerns",
+        "educators raise concerns",
+        "superintendent raises concerns",
+        "lawmakers question",
+        "legislators question",
+        "state officials defend",
+        "officials defend",
+        # Contract-level outcomes: the most severe form of this signal.
+        "cancels the contract",
+        "terminates the contract",
+        "declines to renew",
+        "did not renew",
     ),
 }
 
@@ -227,6 +309,34 @@ THEMES: dict[str, tuple[str, ...]] = {
 _BRAND_ANCHORS: tuple[str, ...] = tuple(
     str(term).lower() for term in DEFAULT_TOPIC_RULES.get("brand_any", ())
 )
+
+
+# Some narratives are a GRAMMATICAL PATTERN, not a phrase, and substring
+# anchors cannot express them. The motivating case is contract outcomes:
+# "Charlotte-Mecklenburg Schools shortens i-Ready contract over screen time"
+# puts the vendor name between the verb and its object, so no fixed phrase can
+# span it -- yet a shortened or cancelled contract is the most commercially
+# severe signal this whole watch can produce.
+#
+# Kept deliberately small. A regex here must still require BOTH the action and
+# the object, so it stays as specific as the phrase anchors it supplements.
+_THEME_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
+    THEME_INSTITUTIONAL_REJECTION: (
+        # <verb> ... contract  (bounded, so it cannot span a sentence break)
+        re.compile(
+            r"\b(?:shorten(?:s|ed)?|cut(?:s)?|end(?:s|ed)?|cancel(?:s|led|ed)?"
+            r"|terminat(?:es|ed)|pause(?:s|d)?|suspend(?:s|ed)?|drop(?:s|ped)?"
+            r"|decline[sd]? to renew|(?:did|will|would) not renew|non-?renew(?:al|s|ed)?)"
+            r"[^.!?]{0,40}?\bcontract\b"
+        ),
+        # board/district <verb> the program/tool/software
+        re.compile(
+            r"\b(?:board|boards|district|districts|school board|trustees)\b"
+            r"[^.!?]{0,40}?\b(?:vote[sd]?|move[sd]?|act(?:s|ed)?)\b"
+            r"[^.!?]{0,30}?\b(?:remove|drop|end|cancel|reject|scrap)\b"
+        ),
+    ),
+}
 
 
 def _normalize(text: str) -> str:
@@ -251,7 +361,13 @@ def match_themes(text: str) -> set[str]:
     check) to decide whether it is actually pointed at Amira.
     """
     lower = _normalize(text)
-    return {name for name, anchors in THEMES.items() if any(anchor in lower for anchor in anchors)}
+    found = {name for name, anchors in THEMES.items() if any(anchor in lower for anchor in anchors)}
+    found |= {
+        name
+        for name, patterns in _THEME_PATTERNS.items()
+        if any(pattern.search(lower) for pattern in patterns)
+    }
+    return found
 
 
 def is_amira_specific(text: str) -> bool:
@@ -324,6 +440,25 @@ _TECH_CONTEXT: tuple[str, ...] = (
     "school-issued device",
     "learning software",
     "assessment tool",
+    # From the 2026-08-24 vendor sweep: the exact register used to describe
+    # Amira in coverage -- "an AI reading tutor", "state-required AI reading
+    # assessments", "Controversial AI Tool".
+    "ai reading",
+    "reading tutor",
+    "ai tool",
+    "ai teachers",
+    # Third house style for the initialism, after plain "ai" and NYT's "A.I.":
+    # KOAT writes "A-I" with a hyphen. Bounded by spaces on purpose -- a bare
+    # "a-i" substring also sits inside ordinary words like "data-informed".
+    " a-i ",
+    # "In Backlash Against Tech in Schools" carries no "AI" token at all, yet it
+    # is the macro story for this whole watch.
+    "tech in schools",
+    "technology in schools",
+    "use of ai",
+    "ai in the classroom",
+    "ai in classrooms",
+    "ai in elementary",
 )
 
 

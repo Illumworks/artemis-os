@@ -390,7 +390,12 @@ async def _compose_digest_text(session: AsyncSession, signals: list[ScreentimeSi
 # ── Slack post helper (reuses Callie's resolved token + SlackClient) ─────────
 
 
-async def _post_as_callie(session: AsyncSession, channel: str, text: str) -> bool:
+async def _post_as_callie(
+    session: AsyncSession,
+    channel: str,
+    text: str,
+    thread_parts: list[str] | None = None,
+) -> bool:
     """Post *text* to *channel* AS Callie, via her resolved Slack token.
 
     Reuses the exact resolution path callie_push uses
@@ -407,7 +412,16 @@ async def _post_as_callie(session: AsyncSession, channel: str, text: str) -> boo
         _log.warning("screentime_report: no Slack token for Callie — cannot post")
         return False
     client = SlackClient(token=agent_cfg.access_token)
-    await client.post_message(channel=channel, text=text)
+    response = await client.post_message(channel=channel, text=text)
+    # Overflow goes in a thread rather than as more top-level messages -- see
+    # ``sentiment.report.split_for_slack`` for why this matters.
+    if thread_parts:
+        parent_ts = response.get("ts")
+        if isinstance(parent_ts, str):
+            for part in thread_parts:
+                await client.post_message(channel=channel, text=part, thread_ts=parent_ts)
+        else:
+            _log.warning("post_as_callie: no ts on parent message — thread parts dropped")
     return True
 
 

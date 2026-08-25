@@ -630,6 +630,29 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Brand Signals — Callie's daily read for Angela's team (#brand-signals) ──
+    # Same dormant-until-set pattern. Distinct from screentime_report_channel:
+    # that feed is policy/screen-time; this one is brand + parent sentiment.
+    brand_signals_channel: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_BRAND_SIGNALS_CHANNEL",
+            "BRAND_SIGNALS_CHANNEL",
+        ),
+        description=(
+            "Slack channel ID for Callie's daily Brand Signals brief "
+            "(#brand-signals). Empty = feature OFF — no posts at all."
+        ),
+    )
+    brand_signals_cron: str = Field(
+        default="0 7 * * mon-fri",
+        validation_alias=AliasChoices("ARTEMIS_BRAND_SIGNALS_CRON", "BRAND_SIGNALS_CRON"),
+        description=(
+            "Cron for the daily Brand Signals brief. Day-of-week MUST be by name "
+            "(mon-fri), never numeric — see scheduler notes."
+        ),
+    )
+
     # ── Screen-Time Watch — Callie reporting to #policy-watch (Brief 2) ─────────
     # Additive, dormant-until-set (same pattern as callie_proactive_channel).
     # A NEW consumer of the screentime_signals table — does NOT change Callie's
