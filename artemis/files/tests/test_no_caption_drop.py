@@ -19,9 +19,7 @@ _SLACK_FILE = [{"id": "F123", "name": "leads.tsv", "mimetype": "text/plain"}]
 
 def test_caption_less_upload_is_routable() -> None:
     """THE regression: a file with empty text must survive the guard."""
-    assert is_routable_event(
-        team_id="T123", channel_id="C0BPX9Y8WBE", text="", files=_SLACK_FILE
-    )
+    assert is_routable_event(team_id="T123", channel_id="C0BPX9Y8WBE", text="", files=_SLACK_FILE)
 
 
 def test_text_with_no_files_is_routable() -> None:

@@ -112,10 +112,19 @@ async def fetch_slack_file(
             "conversation. (Slack answers 200 here, not 401.)"
         )
 
-    return extract(
+    result = extract(
         payload,
         filename=filename,
         mimetype=mimetype,
         source="slack",
         source_url=permalink,
     )
+
+    # Hand the bytes back to the caller for images only, and only in memory.
+    # `service._look_at_image` needs them to run vision, and by design nothing
+    # here writes an image to disk or keeps it after the turn. Images alone,
+    # because no other kind has a second pass that needs the original.
+    if result.kind == "image":
+        file_obj["_payload"] = payload
+
+    return result

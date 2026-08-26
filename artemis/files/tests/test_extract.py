@@ -132,7 +132,7 @@ def test_oversize_payload_is_refused_before_parsing() -> None:
 def test_image_is_acknowledged_but_never_claimed_as_read() -> None:
     result = extract(b"\x89PNG\r\n", filename="chart.png")
     assert result.kind == "image"
-    assert "cannot be read yet" in result.text
+    assert "NOT looked at" in result.text
     assert "Do NOT guess" in result.text
 
 

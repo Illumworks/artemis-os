@@ -113,21 +113,26 @@ def extract_docx(payload: bytes, *, filename: str, mimetype: str = "") -> Extrac
 def describe_image(payload: bytes, *, filename: str, mimetype: str = "") -> ExtractedFile:
     """Acknowledge an image without pretending to have read it.
 
-    Vision is a deliberate later slice. Until then this returns a factual
-    placeholder rather than raising, so an agent can say "you sent me a
-    screenshot, I can see it is there but cannot read it yet" -- which is true,
-    useful, and cannot be mistaken for having understood the contents.
+    This is the UNREAD state, not the "vision does not exist" state -- vision
+    shipped 2026-08-25. An image lands here when the two gates in
+    ``artemis.files.authorization`` did not both pass: the sharer is not on the
+    vision allowlist, or the agent was not directly addressed. Both are ordinary
+    outcomes, not errors, so this returns a factual placeholder rather than
+    raising.
+
+    The wording matters. It must let an agent say "you sent me a screenshot and I
+    have not looked at it" -- true, useful, and impossible to mistake for having
+    understood the contents.
     """
     return ExtractedFile(
         filename=filename,
         mimetype=mimetype or "image/unknown",
         kind="image",
         text=(
-            f"[image: {filename}, {len(payload):,} bytes] "
-            "Image contents cannot be read yet -- this agent has no vision capability "
-            "wired up. Acknowledge the image and ask the sender to describe it or paste "
-            "the relevant text. Do NOT guess at what it shows."
+            f"[image: {filename}, {len(payload):,} bytes] This image was NOT looked at, "
+            "so its contents are unknown. Say that plainly and ask the sender to "
+            "describe it or paste the relevant text. Do NOT guess at what it shows."
         ),
         size_bytes=len(payload),
-        notes=["Image understanding is not enabled; only the file's presence is known."],
+        notes=["Image was not read; only the file's presence is known."],
     )

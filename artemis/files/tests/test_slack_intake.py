@@ -57,6 +57,7 @@ async def test_slack_login_page_is_reported_as_permissions_not_as_content() -> N
     Taken at face value that extracts cleanly as an HTML document, and the agent
     would summarise Slack's own login chrome as though it were the file.
     """
+
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,

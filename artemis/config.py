@@ -191,6 +191,24 @@ class Settings(BaseSettings):
             "the enablement catalog. Empty = the gap posts without tagging anyone."
         ),
     )
+    vision_user_ids: str = Field(
+        default="U09F3EPJXSQ,U07NYLNJY79",
+        validation_alias=AliasChoices(
+            "ARTEMIS_VISION_USER_IDS",
+            "VISION_USER_IDS",
+        ),
+        description=(
+            "Comma-separated Slack user IDs whose shared images an agent may actually "
+            "LOOK AT. Everyone else gets the file acknowledged by name and type only. "
+            "Two reasons this is gated rather than on for everyone: vision costs real "
+            "tokens per image (Claude Opus 5 caps at 4,784 visual tokens, ~$0.024 an "
+            "image), and text inside an image is untrusted input to an agent that "
+            "holds approval buttons. Owner decision 2026-08-25: Jon Fila (U09F3EPJXSQ) "
+            "and Josh Mukai (U07NYLNJY79) to start; widen as it proves out. Resolved "
+            "server-side from the Slack event's user id, never from message text. "
+            "Empty = nobody (fail-closed)."
+        ),
+    )
     callie_dm_requester_emails: str = Field(
         default=(
             "jon.fila@amiralearning.com,"

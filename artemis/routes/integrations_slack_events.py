@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import artemis.db as db
 from artemis.config import settings
+from artemis.files.authorization import may_look_at_images
 from artemis.integrations import repository as repo
 from artemis.integrations.config_resolver import _parse_allowed_user_ids
 from artemis.integrations.crypto import decrypt_credentials
@@ -1290,6 +1291,7 @@ async def route_inbound(
                     channel_id=channel_id,
                     shared_by=slack_user_id,
                     message_ts=str(event_data.get("ts") or ""),
+                    vision_allowed=bool(event_data.get("vision_allowed")),
                 )
                 await files_session.commit()
 
@@ -1718,6 +1720,20 @@ async def _handle_mentionable_event(
         # bot's bearer credential and files:read.
         "files": event.get("files") or [],
         "access_token": agent_cfg.access_token,
+        # Whether images may actually be LOOKED AT, decided here where both
+        # facts are known: who spoke, and whether the agent was addressed. Both
+        # gates are required -- an allowlisted person AND a direct request --
+        # so an agent sitting in a busy channel never burns tokens on every
+        # screenshot posted near it, and only people who are meant to can put
+        # pixels in front of an agent that holds approval buttons.
+        "vision_allowed": may_look_at_images(
+            speaker_id=user_id,
+            channel_id=channel_id,
+            is_mention=(
+                inner_type == "app_mention"
+                or bool(agent_cfg.bot_user_id and f"<@{agent_cfg.bot_user_id}>" in (text or ""))
+            ),
+        ),
     }
     background_tasks.add_task(
         route_inbound,
