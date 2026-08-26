@@ -322,6 +322,7 @@ def _build_server(
 async def build_floating_artemis_tool_set(
     tool_names: set[str] | None = None,
     agent_id: str | None = None,
+    speaker_id: str | None = None,
 ) -> dict[str, tuple[Tool, ToolImpl]]:
     """Build the Floating Artemis auto-invoke tool set for MCP serving.
 
@@ -343,7 +344,9 @@ async def build_floating_artemis_tool_set(
         logger.debug("floating MCP could not load status surfaces; falling back to empty set")
         available_surfaces = set()
 
-    registry = build_authorized_tool_registry(available_surfaces, agent_id=agent_id)
+    registry = build_authorized_tool_registry(
+        available_surfaces, agent_id=agent_id, speaker_id=speaker_id
+    )
     wanted = tool_names or set()
 
     tool_set: dict[str, tuple[Tool, ToolImpl]] = {}
@@ -973,6 +976,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Agent-run scope (CC1/CC2) — mutually exclusive with builder scope.
     parser.add_argument("--agent-id", default=None, help="Dotted agent id to bind to.")
     parser.add_argument("--run-id", default=None, help="Agent run UUID (for provenance).")
+    parser.add_argument(
+        "--speaker-id",
+        default=None,
+        help="Slack user id of the person speaking, for identity-gated tools.",
+    )
     parser.add_argument("--pipeline-run-id", default=None, help="Optional pipeline run id.")
     # Builder scope (CC19) — mutually exclusive with agent-run scope.
     parser.add_argument(
@@ -1051,6 +1059,7 @@ async def _serve_floating_artemis(
     floating_session_id: str,
     tool_names: list[str] | None,
     trusted_agent_id: str | None = None,
+    speaker_id: str | None = None,
 ) -> int:
     """Open a session and serve Floating Artemis auto-invoke tools over stdio.
 
@@ -1077,12 +1086,15 @@ async def _serve_floating_artemis(
     """
     from artemis.floating_artemis.context import (
         floating_session_id_var,
+        floating_speaker_id_var,
         floating_trusted_agent_id_var,
     )
 
     floating_session_id_var.set(floating_session_id)
     if trusted_agent_id:
         floating_trusted_agent_id_var.set(trusted_agent_id)
+    if speaker_id:
+        floating_speaker_id_var.set(speaker_id)
 
     async with SessionLocal() as session:
         # M3: prefer the trusted agent_id from the live caller; never trust
@@ -1105,7 +1117,7 @@ async def _serve_floating_artemis(
                 )
 
         tool_set = await build_floating_artemis_tool_set(
-            set(tool_names or []), agent_id=_fa_agent_id
+            set(tool_names or []), agent_id=_fa_agent_id, speaker_id=speaker_id
         )
         logger.info(
             "artemis MCP server (floating_artemis) bound to session=%s agent_id=%s tools=%s",
@@ -1134,7 +1146,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.floating_session_id is not None:
         return anyio.run(
-            _serve_floating_artemis, args.floating_session_id, args.tool_name, args.agent_id
+            _serve_floating_artemis,
+            args.floating_session_id,
+            args.tool_name,
+            args.agent_id,
+            args.speaker_id,
         )
 
     # Agent-run scope (CC1/CC2): both --agent-id and --run-id are required.

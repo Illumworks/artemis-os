@@ -37,6 +37,7 @@ from artemis.floating_artemis.authority import (
 )
 from artemis.floating_artemis.context import (
     floating_session_id_var,
+    floating_speaker_id_var,
     floating_tool_use_id_var,
     floating_trusted_agent_id_var,
 )
@@ -605,6 +606,10 @@ async def _load_session_context(
 
     Parameters
     ----------
+    speaker_id:
+        Slack user id of the person who confirmed. Forwarded into the MCP
+        subprocess so identity-gated tools can still see who is asking on the
+        resumed turn; None fails those closed, which is the safe default.
     trusted_agent_id:
         When provided (web-turn path), this value GOVERNS tool/memory gating — it
         overrides the persisted session metadata.  Derived server-side from the
@@ -978,6 +983,11 @@ async def handle_turn(
     # (session_ctx.agent_id derives from the live caller's identity), not persisted
     # session metadata — so a non-owner turn on an owner session can't read owner memory.
     trusted_token = floating_trusted_agent_id_var.set(session_ctx.agent_id)
+    # Identity-gated tools (send_guarded_dm, flag_catalog_gap,
+    # import_target_accounts) bind the speaker as a closure when the registry is
+    # built. The subprocess builds its OWN registry, so the speaker has to travel
+    # with it or every one of them fails closed.
+    speaker_token = floating_speaker_id_var.set(speaker_id)
     _turn_start = start_timer()
     try:
         result = await run_turn(
@@ -1040,6 +1050,7 @@ async def handle_turn(
         raise
     finally:
         floating_trusted_agent_id_var.reset(trusted_token)
+        floating_speaker_id_var.reset(speaker_token)
         floating_session_id_var.reset(session_token)
 
     # ── 8. Extract final text ─────────────────────────────────────────────────
@@ -1176,6 +1187,7 @@ async def resume_after_confirm(
     adapter: ModelAdapter | None = None,
     db_session: Any | None = None,
     trusted_agent_id: str | None = None,
+    speaker_id: str | None = None,
 ) -> TurnResult:
     """Resume a suspended turn after operator confirms or cancels a layer-3/4 tool.
 
@@ -1312,6 +1324,7 @@ async def resume_after_confirm(
     # (session_ctx.agent_id derives from the live caller's identity), not persisted
     # session metadata — so a non-owner turn on an owner session can't read owner memory.
     trusted_token = floating_trusted_agent_id_var.set(session_ctx.agent_id)
+    speaker_token = floating_speaker_id_var.set(speaker_id)
     try:
         agent_profile = load_agent_profile(session_ctx.agent_id)
         result = await run_turn(
@@ -1327,6 +1340,7 @@ async def resume_after_confirm(
         raise
     finally:
         floating_trusted_agent_id_var.reset(trusted_token)
+        floating_speaker_id_var.reset(speaker_token)
         floating_session_id_var.reset(session_token)
 
     response_text: str | None = None

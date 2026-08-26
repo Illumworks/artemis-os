@@ -478,9 +478,7 @@ def _parse_stream_json(raw: str) -> tuple[dict[str, Any], list[ToolCallRecord]]:
             final_payload = event
 
     if final_payload is None:
-        raise ProviderAPIError(
-            0, "claude CLI (tool run) stream-json produced no result event"
-        )
+        raise ProviderAPIError(0, "claude CLI (tool run) stream-json produced no result event")
 
     tool_calls = [ToolCallRecord(name=name, is_error=failed[name]) for name in order]
     return final_payload, tool_calls
@@ -593,12 +591,14 @@ class ClaudeCodeAdapter:
         from artemis.dev_projects.context import forge_project_path_var, forge_write_mode_var
         from artemis.floating_artemis.context import (
             floating_session_id_var,
+            floating_speaker_id_var,
             floating_trusted_agent_id_var,
         )
 
         builder_session_id = builder_session_id_var.get()
         floating_session_id = floating_session_id_var.get()
         floating_trusted_agent_id = floating_trusted_agent_id_var.get()
+        floating_speaker_id = floating_speaker_id_var.get()
         forge_project_path = forge_project_path_var.get()
         forge_write_mode = forge_write_mode_var.get()
 
@@ -639,6 +639,7 @@ class ClaudeCodeAdapter:
                 session_id=str(floating_session_id),
                 tool_names=agent_tools,
                 trusted_agent_id=floating_trusted_agent_id,
+                speaker_id=floating_speaker_id,
             )
         tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
             mode="w", suffix=".mcp.json", prefix="artemis-builder-mcp-", delete=False
@@ -674,9 +675,7 @@ class ClaudeCodeAdapter:
                 "--permission-mode",
                 _PERMISSION_MODE,
             ]
-            return await self._run_subprocess(
-                cmd, prompt, tool_run=True, parse_mode="stream-json"
-            )
+            return await self._run_subprocess(cmd, prompt, tool_run=True, parse_mode="stream-json")
         finally:
             Path(tmp.name).unlink(missing_ok=True)
 
@@ -923,7 +922,11 @@ def _build_builder_mcp_config(*, builder_session_id: int) -> dict[str, Any]:
 
 
 def _build_floating_artemis_mcp_config(
-    *, session_id: str, tool_names: list[str], trusted_agent_id: str | None = None
+    *,
+    session_id: str,
+    tool_names: list[str],
+    trusted_agent_id: str | None = None,
+    speaker_id: str | None = None,
 ) -> dict[str, Any]:
     """Build the Floating Artemis stdio MCP config.
 
@@ -943,6 +946,12 @@ def _build_floating_artemis_mcp_config(
     ]
     if trusted_agent_id:
         args += ["--agent-id", trusted_agent_id]
+    if speaker_id:
+        # Identity-gated tools bind the speaker as a closure when the registry is
+        # built, and the subprocess builds its own. Without this every one of them
+        # sees None and fails closed -- which reads to the user as "I can't
+        # identify you" rather than as the plumbing gap it is.
+        args += ["--speaker-id", speaker_id]
     for tool_name in tool_names:
         args += ["--tool-name", tool_name]
     return {
