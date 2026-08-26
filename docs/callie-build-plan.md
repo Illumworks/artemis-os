@@ -189,12 +189,26 @@ Sales | Billing State/Province | Account Name | District Marketing Tier
 Enrollment in District | Is Customer | Is Parent Account | Amira Channel Partner
 ```
 
-**`Is Customer` is already in that file.** Josh said he would accept either
-"recognise this is a target account" or "exclude existing customers" — and the
-column that solves the second one is sitting in the upload. This does NOT need the
-Salesforce customer-status scope, which is what everyone assumed it was waiting on.
+**CORRECTED 2026-08-26 after profiling the real file.** An earlier draft of this
+section said the `Is Customer` column solves the exclusion. It does not — that
+column is `0` on all 1,287 rows. The list is **already filtered to non-customers**,
+so exclusion works by **list membership**: a district absent from the 1,287 is
+either a customer or not a target, and either way Josh does not want it.
+
+His requirement is still met without Salesforce — he said recognising target
+accounts would satisfy him equally. But the distinction matters when Callie
+explains herself: she can say "not on your target list", never "this is an
+existing customer". Telling those apart still needs C6.
 
 Work:
+**SHIPPED 2026-08-26** (migration 0121, `artemis/marketing/targets/`,
+tool `list_target_signals`). Live numbers: 1,287 accounts across 44 states
+(D3 748 / D2 393 / D1 146); 1,036 (80.5%) linked to an NCES district, 251
+abstained with the reason recorded. Two live-data shapes shaped the design —
+"Hempfield Area SD" and "Hempfield SD" (PA) normalize identically, and
+"Community Independent School District" (TX) normalizes to empty — so the key is
+the RAW `(state, account_name)` and both cases abstain rather than guess.
+
 - Ingest the target-account list into a durable table, keyed on account name +
   state. Re-ingestable: Josh will post revised lists.
 - Match `signal_queue` rows against it and mark `is_target_account`,
