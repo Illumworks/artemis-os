@@ -19,12 +19,14 @@ them review-relevant --
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any
 
 import httpx
 import pytest
 
 from artemis.config import settings
+from artemis.crisis_content import tab_resolution
 from artemis.crisis_content.models import ReviewCard
 from artemis.crisis_content.tab_resolution import (
     CardTabInfo,
@@ -84,7 +86,10 @@ def _decoy_table(header: str = "Strategy notes") -> dict[str, Any]:
 
 
 def _tab(
-    tab_id: str, title: str, tables: list[dict[str, Any]], child_tabs: list[dict[str, Any]] | None = None
+    tab_id: str,
+    title: str,
+    tables: list[dict[str, Any]],
+    child_tabs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     tab: dict[str, Any] = {
         "tabProperties": {"tabId": tab_id, "title": title},
@@ -130,7 +135,9 @@ _REAL_REVIEW_TAB = "t.cv99t981gtu6"
 _TEST_REVIEW_TAB = "t.cv9uq0oh5hzc"
 
 
-def _live_doc(*, real_tables: list[dict[str, Any]], test_tables: list[dict[str, Any]]) -> dict[str, Any]:
+def _live_doc(
+    *, real_tables: list[dict[str, Any]], test_tables: list[dict[str, Any]]
+) -> dict[str, Any]:
     """The verified live tab shape: 5 tabs, 2 of them review-relevant."""
     return _document(
         [
@@ -247,13 +254,9 @@ def test_marker_matching_is_case_insensitive(monkeypatch: pytest.MonkeyPatch) ->
 
 
 async def test_exactly_one_fetch_regardless_of_card_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    cards = [
-        _make_card(header=f"Card {i}", copy_lines=[f"Copy {i}."]) for i in range(5)
-    ]
+    cards = [_make_card(header=f"Card {i}", copy_lines=[f"Copy {i}."]) for i in range(5)]
     doc = _live_doc(
-        real_tables=[
-            _card_table(header=f"Card {i}", copy_lines=[f"Copy {i}."]) for i in range(5)
-        ],
+        real_tables=[_card_table(header=f"Card {i}", copy_lines=[f"Copy {i}."]) for i in range(5)],
         test_tables=[],
     )
     calls = _patch_fetch(monkeypatch, doc)
@@ -269,7 +272,9 @@ async def test_exactly_one_fetch_regardless_of_card_count(monkeypatch: pytest.Mo
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_fetch_http_error_raises_tab_resolution_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fetch_http_error_raises_tab_resolution_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def failing_fetch(access_token: str, document_id: str) -> dict[str, Any]:
         raise httpx.ConnectError("connection refused")
 
@@ -326,3 +331,105 @@ def test_write_doc_lines_own_locator_finds_the_testing_tab_card_correctly() -> N
 
     assert location.tab_id == _TEST_REVIEW_TAB
     assert total == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Unresolvable-card debounce (2026-08-25)
+#
+# A card that cannot be resolved stays unresolvable until a HUMAN edits the doc.
+# Logging it every tick produced 7,509 ERROR lines from two cards -- with the
+# matching pair in transitions.record_observation, 13.9% of the whole app log.
+# The skip behaviour must not change; only how often it is announced.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _ambiguous_doc() -> dict[str, Any]:
+    """Two tables sharing a header, neither matching the card's copy hash.
+
+    This is the live shape that wedged on 2026-08-25: the vendor duplicated a
+    header across platform variants and then edited the copy, so the stored hash
+    matches neither table and the ordinal cannot break the tie.
+    """
+    header = "August 27, 2026 - Amira Listening Logistics"
+    return _live_doc(
+        real_tables=[
+            _card_table(header=header, copy_lines=["One body."]),
+            _card_table(header=header, copy_lines=["A different body."]),
+        ],
+        test_tables=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_card_is_reported_once_not_every_tick(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    tab_resolution.reset_tab_resolution_state_for_tests()
+    header = "August 27, 2026 - Amira Listening Logistics"
+    card = _make_card(header=header, copy_lines=["Copy that matches neither table."])
+    _patch_fetch(monkeypatch, _ambiguous_doc())
+
+    with caplog.at_level(logging.ERROR):
+        first = await tab_resolution.resolve_card_tab_map("tok", "doc", [card])
+    assert first == {}, "an unresolvable card must still be omitted from the map"
+    assert sum("could not positively locate" in r.message for r in caplog.records) == 1
+
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        for _ in range(5):
+            again = await tab_resolution.resolve_card_tab_map("tok", "doc", [card])
+    assert again == {}, "the skip behaviour must be unchanged by the debounce"
+    assert not caplog.records, "repeat ticks must not re-log at ERROR"
+
+
+@pytest.mark.asyncio
+async def test_recovery_is_announced_when_the_doc_is_fixed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Going quiet is only safe if recovery is visible."""
+    tab_resolution.reset_tab_resolution_state_for_tests()
+    header = "August 27, 2026 - Amira Listening Logistics"
+    body = "The one true body."
+    card = _make_card(header=header, copy_lines=[body])
+
+    _patch_fetch(monkeypatch, _ambiguous_doc())
+    assert await tab_resolution.resolve_card_tab_map("tok", "doc", [card]) == {}
+
+    # The doc is edited so exactly one table matches — the human fix.
+    fixed = _live_doc(real_tables=[_card_table(header=header, copy_lines=[body])], test_tables=[])
+    _patch_fetch(monkeypatch, fixed)
+
+    with caplog.at_level(logging.INFO):
+        resolved = await tab_resolution.resolve_card_tab_map("tok", "doc", [card])
+
+    assert card.identity_key in resolved
+    assert any("recovered" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_second_failure_after_recovery_is_reported_again(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Debounce must not permanently silence a card that breaks twice."""
+    tab_resolution.reset_tab_resolution_state_for_tests()
+    header = "August 27, 2026 - Amira Listening Logistics"
+    body = "The one true body."
+    card = _make_card(header=header, copy_lines=[body])
+
+    _patch_fetch(monkeypatch, _ambiguous_doc())
+    await tab_resolution.resolve_card_tab_map("tok", "doc", [card])
+
+    _patch_fetch(
+        monkeypatch,
+        _live_doc(real_tables=[_card_table(header=header, copy_lines=[body])], test_tables=[]),
+    )
+    await tab_resolution.resolve_card_tab_map("tok", "doc", [card])
+
+    _patch_fetch(monkeypatch, _ambiguous_doc())
+    # caplog accumulates for the whole test, and the FIRST failure above was also
+    # an ERROR. Clear it so this asserts on the post-recovery break alone.
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        await tab_resolution.resolve_card_tab_map("tok", "doc", [card])
+
+    assert sum("could not positively locate" in r.message for r in caplog.records) == 1

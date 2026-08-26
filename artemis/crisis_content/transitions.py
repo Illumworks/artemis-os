@@ -275,11 +275,17 @@ async def record_observation(
         if tab_map is not None:
             tab_info = tab_map.get(card.identity_key)
             if tab_info is None:
-                logger.error(
+                # DEBUG, not ERROR: every card missing from `tab_map` was already
+                # logged by `tab_resolution.resolve_card_tab_map`, which alone
+                # knows WHY it could not be located. This line only ever restated
+                # that, once per card per tick -- 7,509 duplicate ERROR lines by
+                # 2026-08-25. The skip itself is unchanged and still deliberate:
+                # without a resolved tab this module cannot tell a test card from
+                # a real one, so it observes nothing rather than guessing.
+                logger.debug(
                     "crisis_content: card=%r (header=%r) has no resolved tab this "
-                    "tick -- skipping ALL observation for it (no row upsert, no "
-                    "transition) so its stored status is not silently advanced "
-                    "without a matching notification. The next tick will retry.",
+                    "tick -- skipping all observation for it (see tab_resolution "
+                    "for the reason).",
                     card.identity_key,
                     card.header,
                 )
@@ -515,6 +521,17 @@ async def _evaluate_route(
         reopening_decision = await find_reopening_decision(session, card_id, route)
         if reopening_decision is None:
             return None
+
+    # This guard is why the re-fire announcement below sits AFTER it rather than
+    # before. Until 2026-08-25 the "re-firing" line was logged the moment a
+    # reopening decision was found -- and then this check almost always returned
+    # None, because the revised copy had already been notified. It announced an
+    # intent it did not carry out, every 2 minutes, for 9,226 lines. The log now
+    # records what actually happened, not what was about to be considered.
+    if await has_notified(session, card_id, route, new_status, card.copy_hash):
+        return None
+
+    if reopening_decision is not None:
         logger.info(
             "crisis_content: re-firing %s route for card_id=%s -- a %s decision "
             "was followed by a revised copy version",
@@ -522,9 +539,6 @@ async def _evaluate_route(
             card_id,
             reopening_decision.decision,
         )
-
-    if await has_notified(session, card_id, route, new_status, card.copy_hash):
-        return None
 
     reopened_after_approval: ReopenedAfterApproval | None = None
     if reopening_decision is not None and reopening_decision.decision == "approved":

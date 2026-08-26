@@ -90,6 +90,23 @@ from artemis.crisis_content.writeback import (
 
 logger = logging.getLogger(__name__)
 
+# ── Unresolvable-card debounce (2026-08-25) ──────────────────────────────────
+# A card that cannot be resolved to a tab stays unresolvable until a HUMAN edits
+# the doc -- nothing about the next tick changes the outcome. Logging it every
+# pass produced 7,509 ERROR lines from two cards, which with the matching pair in
+# `transitions.record_observation` came to 13.9% of the entire application log.
+#
+# Same reasoning, and the same shape, as `poller._enter_failure`: log on ENTRY
+# into the failing state, stay quiet while it persists, and say so on recovery.
+# The condition is still visible -- it is a stuck card, not a transient blip --
+# but it is stated once instead of drowning every other line in the file.
+_unresolved_cards: set[object] = set()
+
+
+def reset_tab_resolution_state_for_tests() -> None:
+    """Test-only: clear the unresolvable-card debounce between cases."""
+    _unresolved_cards.clear()
+
 __all__ = [
     "CardTabInfo",
     "TabResolutionError",
@@ -258,16 +275,32 @@ async def resolve_card_tab_map(
                 ordinal=card.identity_key[2],
             )
         except CardNotLocatedError as exc:
-            logger.error(
-                "crisis_content: could not positively locate a live tab for "
-                "card=%r (header=%r) -- omitting it from this tick's tab map. "
-                "Callers must skip notifying this card, not guess; the next "
-                "tick will retry. %s",
-                card.identity_key,
-                card.header,
-                exc,
-            )
+            if card.identity_key in _unresolved_cards:
+                # Already reported. Nothing about this tick changes the outcome
+                # -- only a doc edit will -- so stay quiet until it does.
+                logger.debug(
+                    "crisis_content: card=%r still unresolvable (already reported)",
+                    card.identity_key,
+                )
+            else:
+                _unresolved_cards.add(card.identity_key)
+                logger.error(
+                    "crisis_content: could not positively locate a live tab for "
+                    "card=%r (header=%r) -- omitting it from the tab map and "
+                    "skipping it. Callers must not guess. This will NOT clear on "
+                    "its own: it needs the doc edited so the header is "
+                    "unambiguous. Further ticks log at DEBUG until it resolves. %s",
+                    card.identity_key,
+                    card.header,
+                    exc,
+                )
             continue
+        if card.identity_key in _unresolved_cards:
+            _unresolved_cards.discard(card.identity_key)
+            logger.info(
+                "crisis_content: card=%r resolves to a tab again -- recovered",
+                card.identity_key,
+            )
         title = tab_titles.get(location.tab_id, "")
         tab_map[card.identity_key] = CardTabInfo(
             tab_id=location.tab_id,
