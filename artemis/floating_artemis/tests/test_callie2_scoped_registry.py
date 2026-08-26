@@ -172,6 +172,7 @@ _CALLIE_EXPECTED_TOOL_NAMES = {
     "react_to_slack_message",
     "list_slack_channels",
     "send_guarded_dm",
+    "import_target_accounts",
     # SFDC-1: check_salesforce_activity, layer 1, read-only both directions
     # (never writes to Salesforce -- structurally impossible; never writes
     # to district_contacts -- called with enrich=False). Registered ONLY
@@ -244,6 +245,7 @@ def test_callie_production_registry_keeps_required_tools() -> None:
     for required in (
         "dispatch_research",
         "send_guarded_dm",
+        "import_target_accounts",
         "query_memory",
         "write_memory",
         "get_district_contacts",

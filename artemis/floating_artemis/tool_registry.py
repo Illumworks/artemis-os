@@ -218,6 +218,15 @@ def _build_callie_tool_registry(
     register_slack_tools(registry, include_dm=False)
     register_callie_dm_tool(registry, speaker_id=speaker_id)
 
+    # C5: replacing Josh's target-account list. Identity-gated on speaker_id
+    # bound as a closure -- NOT layer 3, because a layer-3 confirmation in a
+    # shared channel is answered by whoever replies next (see the send_slack_dm
+    # note in "KEEP" above) and would imply a safety that is not there.
+    # Callie-exclusive, so imported locally like the two below it.
+    from artemis.marketing.targets.tool import register_target_admin_tools
+
+    register_target_admin_tools(registry, speaker_id=speaker_id)
+
     # SFDC-1: check_salesforce_activity, layer 1, read-only. Imported locally
     # (like LIST_WRITING_RULES above) because this tool is Callie-exclusive --
     # it is not used by the general path and should not appear in this
