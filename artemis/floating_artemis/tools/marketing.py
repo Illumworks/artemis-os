@@ -407,6 +407,76 @@ async def _list_signals(inp: dict[str, Any]) -> str:
         return f"list_signals failed: {exc}"
 
 
+async def _list_target_signals(inp: dict[str, Any]) -> str:
+    """Josh's view: target-account signals, plus statewide news where he sells.
+
+    This is the tool behind "give me the signals for the target accounts for
+    today" (Josh, 2026-08-25). It reports the held-back counts as well as the
+    hits, because a filter you cannot see the edges of is one nobody trusts --
+    and it lists unresolved districts by name so a naming mismatch surfaces as a
+    question rather than as a silently missing opportunity.
+    """
+    days = int(inp.get("days", 7))
+    limit = int(inp.get("limit", 200))
+    try:
+        import artemis.db as _db
+        from artemis.marketing.targets.surface import select_for_targets
+
+        async with _db.SessionLocal() as session:
+            result = await select_for_targets(session, days=days, limit=limit)
+
+        if not result.considered:
+            return f"No qualified signals at all in the last {days} day(s)."
+
+        lines: list[str] = [result.summary(), ""]
+
+        if result.targets:
+            lines.append(f"TARGET ACCOUNTS ({len(result.targets)}):")
+            for sig in result.targets:
+                tier = f"[{sig.marketing_tier}] " if sig.marketing_tier else ""
+                # Deliberately NO url. Google News RSS links run 300+ characters
+                # of base64 and, on the first live run, buried every headline in
+                # the digest -- they would do the same in Slack and cost tokens
+                # for nothing. The signal id is the handle; `get_signal` returns
+                # the link when someone actually wants to open one.
+                lines.append(
+                    f"  #{sig.signal_id} {tier}{sig.account_name} ({sig.state}) — {sig.headline}"
+                )
+        else:
+            lines.append("TARGET ACCOUNTS: none in this window.")
+
+        if result.state_level:
+            lines.append("")
+            lines.append(
+                f"STATEWIDE, in states with targets ({len(result.state_level)}) — "
+                "these belong to no single district:"
+            )
+            for sig in result.state_level:
+                lines.append(f"  #{sig.signal_id} {sig.state} — {sig.headline}")
+
+        if result.unresolved:
+            lines.append("")
+            lines.append(
+                f"COULD NOT MATCH ({len(result.unresolved)}) — these name a district "
+                "that could not be tied to a target account. They are NOT confirmed "
+                "non-targets; say so rather than dropping them:"
+            )
+            for sig in result.unresolved:
+                lines.append(
+                    f"  #{sig.signal_id} {sig.district_name} ({sig.state}) — "
+                    f"{sig.headline} [{sig.reason}]"
+                )
+
+        lines.append("")
+        lines.append(
+            f"Held back: {result.excluded_not_target} not on the target list, "
+            f"{result.excluded_other_state} statewide in states with no targets."
+        )
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"list_target_signals failed: {exc}"
+
+
 async def _get_signal(inp: dict[str, Any]) -> str:
     signal_id = inp.get("signal_id")
     if not signal_id:
@@ -922,6 +992,26 @@ LIST_SIGNALS = Tool(
     },
 )
 
+LIST_TARGET_SIGNALS = Tool(
+    name="list_target_signals",
+    description=(
+        "Signals for Josh's new-business TARGET ACCOUNTS, plus statewide signals in "
+        "states where he has targets. Use this — not list_signals — whenever the ask "
+        "is about target accounts, new business, or 'my accounts'. Districts absent "
+        "from the target list are held back on purpose; districts that could not be "
+        "matched are reported separately and must NOT be described as non-targets. "
+        f"{_s} [layer:1]"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "days": {"type": "integer", "default": 7, "description": "Look-back window."},
+            "limit": {"type": "integer", "default": 200},
+        },
+        "required": [],
+    },
+)
+
 GET_SIGNAL = Tool(
     name="get_signal",
     description=f"Get a single marketing signal by ID. {_s} [layer:1]",
@@ -1173,6 +1263,7 @@ def register_marketing_tools(registry: AuthorizedToolRegistry) -> None:
     registry.register(SEARCH_CLAIMS_REGISTER, _search_claims_register, layer=1)
     registry.register(GET_CAMPAIGN_PERFORMANCE, _get_campaign_performance, layer=1)
     registry.register(LIST_SIGNALS, _list_signals, layer=1)
+    registry.register(LIST_TARGET_SIGNALS, _list_target_signals, layer=1)
     registry.register(GET_SIGNAL, _get_signal, layer=1)
     registry.register(QUALIFY_SIGNAL, _qualify_signal, layer=2)
     registry.register(APPROVE_SIGNAL, _approve_signal, layer=3)

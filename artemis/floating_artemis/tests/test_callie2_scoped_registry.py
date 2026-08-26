@@ -84,6 +84,7 @@ _ARTEMIS_EXPECTED_TOOL_NAMES = {
     "search_claims_register",
     "get_campaign_performance",
     "list_signals",
+    "list_target_signals",
     "get_signal",
     "qualify_signal",
     "approve_signal",
@@ -140,6 +141,7 @@ _CALLIE_EXPECTED_TOOL_NAMES = {
     "search_claims_register",
     "get_campaign_performance",
     "list_signals",
+    "list_target_signals",
     "get_signal",
     "qualify_signal",
     "approve_signal",
@@ -208,9 +210,7 @@ def _callie_auto_invoke_names(speaker_id: str | None = "U_TEST") -> set[str]:
     AUTHORIZED registry in the first place. That is exactly what this helper,
     and the "forbidden" assertions below, check.
     """
-    auth_registry = build_authorized_tool_registry(
-        set(), agent_id="callie", speaker_id=speaker_id
-    )
+    auth_registry = build_authorized_tool_registry(set(), agent_id="callie", speaker_id=speaker_id)
     auto_registry = _build_auto_invoke_tool_registry(auth_registry, "test-callie-session")
     return {tool.name for tool in auto_registry.specs()}
 
@@ -221,7 +221,9 @@ def _callie_auto_invoke_names(speaker_id: str | None = "U_TEST") -> set[str]:
 def test_callie_production_registry_excludes_forbidden_tools() -> None:
     names = _callie_auto_invoke_names()
     present_forbidden = names & _FORBIDDEN_PRODUCTION_TOOL_NAMES
-    assert not present_forbidden, f"Callie's production registry must not expose {present_forbidden}"
+    assert not present_forbidden, (
+        f"Callie's production registry must not expose {present_forbidden}"
+    )
 
     prefixed = [n for n in names if n.startswith(_FORBIDDEN_PRODUCTION_PREFIXES)]
     assert not prefixed, f"Callie's production registry must not expose {prefixed}"
@@ -369,6 +371,5 @@ def test_sentinel_tool_on_general_path_does_not_reach_callie(monkeypatch: Any) -
 
     callie_registry = build_authorized_tool_registry(set(), agent_id="callie", speaker_id="U_TEST")
     assert "__sentinel_future_tool__" not in callie_registry, (
-        "Callie's early return must not fall through to a newly-added "
-        "general-path registration"
+        "Callie's early return must not fall through to a newly-added general-path registration"
     )

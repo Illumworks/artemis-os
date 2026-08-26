@@ -884,9 +884,7 @@ async def test_dispatch_uses_explicit_signal_unchanged(
             new_callable=AsyncMock,
         ) as mock_resolve,
     ):
-        result_str = await _dispatch_research(
-            {"district_key": "TX-777", "signal": explicit_signal}
-        )
+        result_str = await _dispatch_research({"district_key": "TX-777", "signal": explicit_signal})
 
     result = json.loads(result_str)
     assert result["status"] == "queued"

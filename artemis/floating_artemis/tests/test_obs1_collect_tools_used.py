@@ -77,7 +77,9 @@ def test_anthropic_path_ignores_non_tool_use_blocks_and_user_messages() -> None:
     result = _run_result(
         [
             Message(role="user", content=[TextBlock(text="hi")]),
-            _assistant(TextBlock(text="thinking..."), ToolUseBlock(id="1", name="get_okr", input={})),
+            _assistant(
+                TextBlock(text="thinking..."), ToolUseBlock(id="1", name="get_okr", input={})
+            ),
         ]
     )
 
