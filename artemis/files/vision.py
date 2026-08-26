@@ -13,10 +13,15 @@ first call.
 **Limits, from the vision docs (verified 2026-08-25).** Claude accepts JPEG,
 PNG, GIF and WebP only; animations are ignored past the first frame. Max
 8000x8000 px, max 10 MB. Cost is ``ceil(w/28) * ceil(h/28)`` visual tokens,
-which on Claude Opus 5's high-resolution tier is capped at 4,784 tokens by
-automatic downscaling -- roughly $0.024 an image. That cap is why this module
-does not resize before sending: the cost is already bounded, and a resize would
-cost fidelity on exactly the dense screenshots people share.
+capped by automatic downscaling at the model's tier limit -- 1,568 on the
+standard tier (Sonnet 4.6, Haiku 4.5), 4,784 on the high-resolution tier
+(4.7 and later). That cap is why this module does not resize before sending:
+the spend is already bounded, and a resize would cost fidelity on exactly the
+dense screenshots people share.
+
+In practice these calls run through the CLI on a Max subscription rather than
+per-token API billing, so the real budget is rate limit, not dollars -- which is
+another reason not to pin a bigger model than the work needs.
 
 **One limitation worth stating to users.** Claude cannot name people in images
 and will refuse to. A marketing visual full of faces will be described, but not
@@ -88,12 +93,34 @@ def media_type_for(filename: str, declared: str = "") -> str | None:
     return normalized if normalized in SUPPORTED_MEDIA_TYPES else None
 
 
+def _default_model() -> str:
+    """Follow the house model setting rather than pinning one here.
+
+    Nothing else in this system runs on Opus: named agents are on
+    ``claude-sonnet-4-6`` and the high-volume scouts on ``claude-haiku-4-5``.
+    This deliberately reads the SAME env var and fallback the claude-code
+    adapter uses, so changing the house model moves vision with it instead of
+    leaving a second, forgotten default behind.
+
+    Measured on the same image, 2026-08-25: Sonnet identified it as a bar chart
+    with the same accuracy as Opus in half the latency (8.6s vs 17.2s); Haiku
+    was correct but described it as "three coloured rectangles" rather than
+    reading it as a chart. Opus bought nothing here -- describing a screenshot
+    is not a reasoning-hard task.
+    """
+    import os
+
+    from artemis.providers.claude_code.adapter import _DEFAULT_MODEL
+
+    return os.environ.get("CLAUDE_CODE_DEFAULT_MODEL", _DEFAULT_MODEL)
+
+
 async def describe_image(
     payload: bytes,
     *,
     filename: str,
     mimetype: str = "",
-    model: str = "claude-opus-5",
+    model: str | None = None,
 ) -> str:
     """Return a prose description of the image, or raise VisionUnavailableError.
 
@@ -117,6 +144,7 @@ async def describe_image(
 
     from artemis.providers._bin_path import find_cli_binary
 
+    model = model or _default_model()
     binary = find_cli_binary("claude")
     if not binary:
         raise VisionUnavailableError(
