@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis import db as _db
+from artemis.ops.phantom_work import PhantomClaim, find_phantom_claims
 
 # Named agents that have a Slack presence.  Ordered for display.
 AGENTS: tuple[str, ...] = ("artemis", "callie", "kai", "ares")
@@ -165,6 +166,7 @@ class Report:
     agents: list[AgentActivity] = field(default_factory=list)
     funnel: Funnel = field(default_factory=Funnel)
     stuck_runs: list[StuckRun] = field(default_factory=list)
+    phantom_claims: list[PhantomClaim] = field(default_factory=list)
     state_coverage: list[StateCoverage] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
 
@@ -576,6 +578,18 @@ def derive_findings(report: Report) -> list[Finding]:
             Finding("warn", f"no new signals collected for {_fmt_duration(collected.newest)}")
         )
 
+    # Phantom work: an agent describing a delegation it never started. No
+    # plumbing check catches this -- nothing malfunctions -- so the only signal
+    # is the mismatch between what was SAID and which tools were actually
+    # called. See artemis/ops/phantom_work.py for the two incidents.
+    for phantom in report.phantom_claims:
+        findings.append(
+            Finding(
+                "stuck",
+                f"{phantom.describe()} -- someone may be waiting on work that was never started",
+            )
+        )
+
     approved = report.funnel.status("approved")
     if approved and _is_stale(approved.newest, STALENESS_BUDGET["gate_approval"]):
         findings.append(
@@ -632,6 +646,7 @@ async def build_report() -> Report:
         report.agents = await collect_agents(session)
         report.funnel = await collect_funnel(session)
         report.stuck_runs = await collect_stuck_runs(session)
+        report.phantom_claims = await find_phantom_claims(session)
         report.state_coverage = await collect_state_coverage(session)
     report.findings = derive_findings(report)
     return report
