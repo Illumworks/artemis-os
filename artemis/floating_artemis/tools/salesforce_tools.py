@@ -31,21 +31,90 @@ from artemis.floating_artemis.authority import AuthorizedToolRegistry
 CHECK_SALESFORCE_ACTIVITY = "check_salesforce_activity"
 
 
-async def _check_salesforce_activity(inp: dict[str, Any]) -> str:
+async def _resolve_district_by_name(session: Any, district_name: str) -> tuple[Any, list[Any]]:
+    """Resolve a district name to one row, or report the ambiguity.
+
+    Returns ``(district, [])`` on a confident single match, ``(None, candidates)``
+    when several districts share the normalized name, and ``(None, [])`` when
+    nothing matches.
+
+    The exact ``ILIKE`` this replaces matched only a byte-identical name. Josh hit
+    that on 2026-08-28: Hillsborough County (FL) is stored as ``HILLSBOROUGH`` in
+    our index, so every reasonable name he tried missed, and Prince George's
+    missed because he said the short form. Reuses C5's
+    ``normalize_district_name`` rather than growing a second, subtly different
+    normalizer -- the two must stay in agreement or a district can be a target
+    under one and unknown under the other.
+
+    Ambiguity abstains and names the candidates. Attributing another district's
+    sales activity to this one is the failure that matters here.
+    """
+    from sqlalchemy import select
+
+    from artemis.marketing.models import District
+    from artemis.marketing.targets.matching import normalize_district_name
+
+    exact = (
+        await session.execute(select(District).where(District.name.ilike(district_name)).limit(1))
+    ).scalar_one_or_none()
+    if exact is not None:
+        return exact, []
+
+    key = normalize_district_name(district_name)
+    if not key:
+        return None, []
+
+    everything = [d for d in (await session.execute(select(District))).scalars().all() if d.name]
+
+    matches = [d for d in everything if normalize_district_name(d.name) == key]
+    if len(matches) == 1:
+        return matches[0], []
+    if len(matches) > 1:
+        return None, matches
+
+    # Nothing matched. Offer near misses rather than a dead end -- but as
+    # SUGGESTIONS, never as an answer.
+    #
+    # This exists because our index stores NCES short forms: Hillsborough County
+    # (FL) is literally "HILLSBOROUGH", so every reasonable name Josh tried
+    # missed. The tempting fix is to add COUNTY to the shared normalizer, and it
+    # is wrong -- "Jefferson County Schools" and "Jefferson Schools" are often
+    # different districts, and stripping COUNTY without CITY is asymmetric in
+    # every state that has both. Widening the normalizer to rescue this lookup
+    # would quietly degrade C5 target matching, which was measured against the
+    # live list. So the normalizer stays put and the ambiguity surfaces here.
+    # Match the leading word as a WHOLE TOKEN, not a prefix. A prefix match on
+    # "PRINCE" also pulls in Princeton and Princeville, burying the right answer
+    # in noise -- and a suggestion list nobody trusts is the same as no list.
+    lead = key.split(" ")[0] if key else ""
+    if len(lead) >= 4:
+        near = [d for d in everything if lead in normalize_district_name(d.name).split(" ")]
+        if near:
+            return None, near[:6]
+    return None, []
+
+
+async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: Any = None) -> str:
+    """Report Salesforce activity for a district's known contacts.
+
+    ``session_factory`` is a test seam. This opens its own session, so a test
+    that seeds rows in its own uncommitted transaction is invisible to it —
+    the injectable-factory pattern used elsewhere in this repo for exactly that
+    reason. Production always passes None and gets ``artemis.db.SessionLocal``.
+    """
     district_name = str(inp.get("district_name") or "").strip()
     district_id_raw = inp.get("district_id")
     if not district_name and district_id_raw is None:
         return "Error: provide district_name or district_id"
 
     try:
-        from sqlalchemy import select
-
         import artemis.db as _db
         from artemis.marketing.contacts import list_contacts_for_district
         from artemis.marketing.models import District
         from artemis.marketing.salesforce_suppression import check_suppression
 
-        async with _db.SessionLocal() as session:
+        _factory = session_factory or _db.SessionLocal
+        async with _factory() as session:
             district: District | None = None
             if district_id_raw is not None:
                 try:
@@ -53,20 +122,42 @@ async def _check_salesforce_activity(inp: dict[str, Any]) -> str:
                 except (TypeError, ValueError):
                     district = None
             else:
-                result = await session.execute(
-                    select(District).where(District.name.ilike(district_name)).limit(1)
-                )
-                district = result.scalar_one_or_none()
+                district, candidates = await _resolve_district_by_name(session, district_name)
+                if candidates:
+                    names = ", ".join(f"{d.name} ({d.state}, id {d.id})" for d in candidates)
+                    return (
+                        f"No exact match for {district_name!r} in our district index. The "
+                        f"closest entries are: {names}. Our index stores official short forms, "
+                        "which often differ from how the district is written elsewhere. Tell me "
+                        "which one is right (the id is cleanest) and I will run the check -- I "
+                        "am not going to pick one, because attributing another district's sales "
+                        "activity to this one is the error that matters here."
+                    )
 
             if district is None:
-                return f"No district found matching {district_name or district_id_raw!r}."
+                # Be precise about WHICH lookup failed. Callie told Josh on
+                # 2026-08-28 that the Salesforce name might differ and asked him
+                # for it -- but this lookup never touches Salesforce, so a perfect
+                # Salesforce name would still have missed. Sending someone to
+                # fetch a fact that cannot help is worse than saying "not found".
+                return (
+                    f"{district_name!r} is not in OUR district index, so there is nothing to "
+                    "look up against Salesforce yet. This is a gap on our side, not a "
+                    "Salesforce one -- the Salesforce account name will not change the "
+                    "result. Give me the district id if you have it, or a closer form of "
+                    "the name as it appears in district records."
+                )
 
             contacts = await list_contacts_for_district(session, district.id)
             emailed_contacts = [c for c in contacts if c.email]
             if not emailed_contacts:
                 return (
-                    f"{district.name}: no contacts on file with an email address -- "
-                    "nothing to check against Salesforce."
+                    f"{district.name}: found in our index, but we hold no contacts with email "
+                    "addresses for it, and this check runs per contact. So there is nothing "
+                    "to check -- NOT a clean bill of health, and not a Salesforce failure. "
+                    "Customer status and opportunity history stay unavailable for this "
+                    "district until contacts are populated. Say that plainly rather than "
+                    "implying the district looks clear."
                 )
 
             lines: list[str] = [f"{district.name}: {len(emailed_contacts)} contact(s) checked."]
