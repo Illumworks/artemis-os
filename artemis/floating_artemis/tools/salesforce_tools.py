@@ -23,12 +23,51 @@ it enrich=False makes the layer-1 classification true, not just labeled.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from artemis.agent.types import Tool
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
 
+logger = logging.getLogger(__name__)
+
 CHECK_SALESFORCE_ACTIVITY = "check_salesforce_activity"
+
+
+def _joined(*parts: Any) -> str:
+    """Join the non-empty pieces of an answer with blank lines between them."""
+    flat: list[str] = []
+    for part in parts:
+        if isinstance(part, list):
+            flat.extend(str(p) for p in part if p)
+        elif part:
+            flat.append(str(part))
+    return "\n\n".join(flat)
+
+
+def _target_conflict(sf_match: Any, district_name: str) -> str:
+    """Warn when Salesforce contradicts the new-business target list.
+
+    Found live on 2026-08-28: Prince George's County Public Schools sits on the
+    demand-gen target list as a D1 NEW BUSINESS account, while Salesforce carries
+    it as a Pilot with an open opportunity. Either the exported list is stale or
+    a pilot is not excluded from it — and a "new business" sequence into an
+    account sales is already piloting is precisely the toe-stepping the whole
+    suppression guard exists to prevent.
+
+    This is a warning, never a block. The target list is Josh's to define; the
+    job here is to make sure the contradiction is seen before anything sends.
+    """
+    if sf_match is None or not getattr(sf_match, "customer_status", None):
+        return ""
+    status = str(sf_match.customer_status)
+    if status.strip().lower() in {"", "none", "prospect"}:
+        return ""
+    return (
+        f"⚠ Conflict to resolve before drafting: Salesforce carries this account as "
+        f"{status!r}. If {district_name!r} is also on the new-business target list, one of "
+        "the two is wrong — check with the account owner rather than sending into it."
+    )
 
 
 async def _resolve_district_by_name(session: Any, district_name: str) -> tuple[Any, list[Any]]:
@@ -115,6 +154,44 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
 
         _factory = session_factory or _db.SessionLocal
         async with _factory() as session:
+            # ── Salesforce FIRST ──────────────────────────────────────────
+            # The account question ("is this a customer, what is the history?")
+            # is answered by Salesforce, not by us. Until 2026-08-28 this
+            # resolved against our own index first and then required local
+            # contacts, so a district we had never met returned nothing even
+            # when Salesforce held a complete record. Houston ISD sat there as
+            # Customer with 10 open opportunities the whole time.
+            sf_lines: list[str] = []
+            sf_match = None
+            try:
+                from artemis.marketing.salesforce_account_lookup import lookup_district
+                from artemis.marketing.salesforce_suppression import _get_client
+
+                lookup = await lookup_district(await _get_client(session), district_name)
+                if lookup.error:
+                    sf_lines.append(f"Salesforce: {lookup.error}")
+                elif lookup.matched is not None:
+                    sf_match = lookup.matched
+                    sf_lines.append(f"Salesforce: {sf_match.describe()}")
+                elif lookup.candidates:
+                    names = "; ".join(c.describe() for c in lookup.candidates)
+                    sf_lines.append(
+                        f"Salesforce holds {len(lookup.candidates)} accounts matching "
+                        f"{district_name!r} — {names}. Tell me which one before I treat any "
+                        "of them as this district."
+                    )
+                else:
+                    sf_lines.append(
+                        f"Salesforce: no account matching {district_name!r}. That is a real "
+                        "absence, not a lookup failure."
+                    )
+            except Exception as exc:
+                logger.debug("salesforce account lookup failed", exc_info=True)
+                sf_lines.append(
+                    f"Salesforce: lookup failed ({type(exc).__name__}) — customer status is "
+                    "UNKNOWN, not confirmed absent."
+                )
+
             district: District | None = None
             if district_id_raw is not None:
                 try:
@@ -125,42 +202,47 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
                 district, candidates = await _resolve_district_by_name(session, district_name)
                 if candidates:
                     names = ", ".join(f"{d.name} ({d.state}, id {d.id})" for d in candidates)
-                    return (
-                        f"No exact match for {district_name!r} in our district index. The "
+                    return _joined(
+                        sf_lines,
+                        f"Our district index has no exact match for {district_name!r}. The "
                         f"closest entries are: {names}. Our index stores official short forms, "
                         "which often differ from how the district is written elsewhere. Tell me "
                         "which one is right (the id is cleanest) and I will run the check -- I "
-                        "am not going to pick one, because attributing another district's sales "
-                        "activity to this one is the error that matters here."
+                        "am not going to pick one, because attributing another district's "
+                        "sales activity to this one is the error that matters here.",
                     )
 
             if district is None:
+                # Salesforce may well have answered even though our index did not.
                 # Be precise about WHICH lookup failed. Callie told Josh on
                 # 2026-08-28 that the Salesforce name might differ and asked him
                 # for it -- but this lookup never touches Salesforce, so a perfect
                 # Salesforce name would still have missed. Sending someone to
                 # fetch a fact that cannot help is worse than saying "not found".
-                return (
-                    f"{district_name!r} is not in OUR district index, so there is nothing to "
-                    "look up against Salesforce yet. This is a gap on our side, not a "
-                    "Salesforce one -- the Salesforce account name will not change the "
-                    "result. Give me the district id if you have it, or a closer form of "
-                    "the name as it appears in district records."
+                return _joined(
+                    sf_lines,
+                    f"Our own index has no entry for {district_name!r}, so there is no "
+                    "contact-level suppression detail to add — but the Salesforce answer "
+                    "above stands on its own.",
                 )
 
             contacts = await list_contacts_for_district(session, district.id)
             emailed_contacts = [c for c in contacts if c.email]
             if not emailed_contacts:
-                return (
-                    f"{district.name}: found in our index, but we hold no contacts with email "
-                    "addresses for it, and this check runs per contact. So there is nothing "
-                    "to check -- NOT a clean bill of health, and not a Salesforce failure. "
-                    "Customer status and opportunity history stay unavailable for this "
-                    "district until contacts are populated. Say that plainly rather than "
-                    "implying the district looks clear."
+                return _joined(
+                    sf_lines,
+                    _target_conflict(sf_match, district_name),
+                    f"{district.name}: no contacts with email addresses on file, so there is no "
+                    "per-contact check to run. That is a gap in our contact data — NOT a clean "
+                    "bill of health, and not a Salesforce failure.",
                 )
 
-            lines: list[str] = [f"{district.name}: {len(emailed_contacts)} contact(s) checked."]
+            lines: list[str] = []
+            lines.extend(sf_lines)
+            conflict = _target_conflict(sf_match, district_name)
+            if conflict:
+                lines.append(conflict)
+            lines.append(f"{district.name}: {len(emailed_contacts)} contact(s) checked.")
             any_unavailable = False
             for contact in emailed_contacts:
                 check = await check_suppression(

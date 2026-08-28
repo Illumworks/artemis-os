@@ -52,9 +52,7 @@ async def test_identity_cannot_be_spoofed_through_tool_input() -> None:
     """The closure wins. A model that invents a speaker field gets nowhere."""
     run = _make_import_target_accounts("U0SOMEONEELSE")
 
-    out = await run(
-        {"file_id": "F0BTF3J3HB2", "speaker_id": JON, "imported_by": JON, "user": JON}
-    )
+    out = await run({"file_id": "F0BTF3J3HB2", "speaker_id": JON, "imported_by": JON, "user": JON})
 
     assert "Not permitted" in out
 
@@ -72,7 +70,7 @@ def test_the_tool_tells_the_model_when_to_use_it() -> None:
     """Description carries the guardrails the model has to honour."""
     description = IMPORT_TARGET_ACCOUNTS.description
     assert "ONLY when explicitly asked" in description
-    assert "never guess" in IMPORT_TARGET_ACCOUNTS.input_schema["properties"]["file_id"][
-        "description"
-    ]
+    assert (
+        "never guess" in IMPORT_TARGET_ACCOUNTS.input_schema["properties"]["file_id"]["description"]
+    )
     assert "stop being treated as live targets" in description

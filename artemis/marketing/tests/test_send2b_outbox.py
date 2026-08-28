@@ -65,9 +65,13 @@ def _sfdc1_stub_salesforce_clear(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     from artemis.marketing import salesforce_suppression
 
-    async def _clear(session: object, recipients: object) -> salesforce_suppression.SuppressionResult:  # noqa: ARG001
+    async def _clear(
+        session: object, recipients: object
+    ) -> salesforce_suppression.SuppressionResult:  # noqa: ARG001
         return salesforce_suppression.SuppressionResult(
-            False, None, "stubbed clear -- see SFDC-1's test_sfdc1_suppression.py for the real checks"
+            False,
+            None,
+            "stubbed clear -- see SFDC-1's test_sfdc1_suppression.py for the real checks",
         )
 
     monkeypatch.setattr(salesforce_suppression, "check_suppression_for_recipients", _clear)

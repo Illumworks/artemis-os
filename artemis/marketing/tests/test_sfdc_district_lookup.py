@@ -144,9 +144,11 @@ async def test_a_miss_does_not_blame_salesforce_or_ask_for_its_account_name(
         {"district_name": "Zzyzx Unified"}, session_factory=_factory_for(db_session)
     )
 
-    assert "not in OUR district index" in out
-    assert "will not change the result" in out
-    assert "gap on our side" in out
+    assert "no entry for" in out, "must name OUR index as the gap"
+    assert "Salesforce" in out, "the Salesforce answer stands on its own"
+    assert "Salesforce account name" not in out, (
+        "must not send the asker to fetch a Salesforce name that cannot help"
+    )
 
 
 @pytest.mark.asyncio
@@ -158,9 +160,9 @@ async def test_no_contacts_is_reported_as_unknown_not_as_clear(db_session) -> No
         {"district_name": "Houston ISD"}, session_factory=_factory_for(db_session)
     )
 
-    assert "NOT a clean bill of health" in out
+    assert "NOT a clean" in out
     assert "not a Salesforce failure" in out
-    assert "until contacts are populated" in out
+    assert "gap in our contact data" in out
 
 
 @pytest.mark.asyncio
@@ -172,6 +174,6 @@ async def test_ambiguity_is_refused_out_loud_with_ids(db_session) -> None:
         session_factory=_factory_for(db_session),
     )
 
-    assert "No exact match" in out
+    assert "no exact match" in out.lower()
     assert "not going to pick one" in out
     assert "id " in out, "the id is the unambiguous handle — offer it"

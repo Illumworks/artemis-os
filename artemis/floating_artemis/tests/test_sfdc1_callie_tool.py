@@ -55,7 +55,11 @@ async def test_missing_district_returns_error_string() -> None:
 async def test_no_district_found() -> None:
     with patch("artemis.db.SessionLocal", return_value=_session_cm(None)):
         result = await _check_salesforce_activity({"district_name": "Nowhere ISD"})
-    assert "No district found" in result
+    # Wording changed 2026-08-28 when Salesforce moved to the front of the
+    # answer: the tool now says which lookup came up empty, and must NOT send
+    # the asker to fetch a Salesforce account name that cannot help.
+    assert "no entry for" in result
+    assert "Salesforce account name" not in result
 
 
 async def test_no_email_bearing_contacts() -> None:
@@ -68,7 +72,10 @@ async def test_no_email_bearing_contacts() -> None:
         ),
     ):
         result = await _check_salesforce_activity({"district_id": 1})
-    assert "no contacts on file with an email" in result
+    # "Nothing to check" must not read as "nothing to worry about" — the old
+    # phrasing let Callie imply a district looked clear when it was never checked.
+    assert "no contacts with email addresses on file" in result
+    assert "NOT a clean" in result
 
 
 async def test_reports_clear_and_suppressed_and_unavailable_contacts() -> None:
