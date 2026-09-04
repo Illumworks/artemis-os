@@ -93,35 +93,71 @@ def _prettify_json(raw: str, filename: str) -> tuple[str, str]:
 
 
 def _strip_html(raw: str) -> str:
-    """Reduce HTML to its visible text.
+    """Reduce HTML to its visible text, preferring the main content region.
+
+    Two passes. The first collects only what sits inside ``<main>``,
+    ``<article>`` or ``role="main"``; the second collects the whole body. The
+    main-region text wins when there is a meaningful amount of it.
+
+    Without that preference a government page is unusable: michigan.gov's
+    literacy-law page is 334 KB, and its first several thousand characters are
+    the site's navigation menu. An agent asked for the statute's grade bands
+    would read a list of every MDE programme area and never reach the law
+    (measured 2026-08-31).
 
     Uses the stdlib parser rather than a regex so that script and style bodies
-    are dropped by structure -- a regex that strips tags happily leaves a page's
+    are dropped by STRUCTURE — a regex that strips tags happily leaves a page's
     entire JavaScript payload behind as "text".
     """
     from html.parser import HTMLParser
 
+    # Chrome that is visible text but never the answer.
+    skip_tags = {"script", "style", "nav", "header", "footer", "aside", "noscript", "svg"}
+    main_tags = {"main", "article"}
+
     class _Stripper(HTMLParser):
         def __init__(self) -> None:
             super().__init__(convert_charrefs=True)
-            self.chunks: list[str] = []
+            self.all_chunks: list[str] = []
+            self.main_chunks: list[str] = []
             self._skip = 0
+            self._main = 0
+            self._stack: list[str] = []
 
-        def handle_starttag(self, tag: str, attrs: object) -> None:
-            if tag in {"script", "style"}:
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            self._stack.append(tag)
+            if tag in skip_tags:
                 self._skip += 1
+            if tag in main_tags or dict(attrs).get("role") == "main":
+                self._main += 1
 
         def handle_endtag(self, tag: str) -> None:
-            if tag in {"script", "style"} and self._skip:
+            if tag in skip_tags and self._skip:
                 self._skip -= 1
+            # Only close a main region opened by one of these tag names.
+            if tag in main_tags and self._main:
+                self._main -= 1
+            if tag in self._stack:
+                while self._stack and self._stack.pop() != tag:
+                    pass
 
         def handle_data(self, data: str) -> None:
-            if not self._skip and data.strip():
-                self.chunks.append(data.strip())
+            if self._skip:
+                return
+            text = data.strip()
+            if not text:
+                return
+            self.all_chunks.append(text)
+            if self._main:
+                self.main_chunks.append(text)
 
     parser = _Stripper()
     try:
         parser.feed(raw)
     except Exception:
         return raw
-    return "\n".join(parser.chunks)
+
+    main_text = "\n".join(parser.main_chunks)
+    if len(main_text) >= 200:
+        return main_text
+    return "\n".join(parser.all_chunks)

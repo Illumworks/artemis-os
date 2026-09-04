@@ -227,6 +227,14 @@ def _build_callie_tool_registry(
 
     register_target_admin_tools(registry, speaker_id=speaker_id)
 
+    # Read a public page by URL. Josh sent her a michigan.gov link on 2026-08-31
+    # and she had no way to open it -- 27 tools and not one could fetch a URL,
+    # while the scouts read public pages all day. Layer 1, read-only, SSRF-guarded;
+    # what comes back is labelled untrusted content.
+    from artemis.floating_artemis.tools.web import register_web_tools
+
+    register_web_tools(registry)
+
     # SFDC-1: check_salesforce_activity, layer 1, read-only. Imported locally
     # (like LIST_WRITING_RULES above) because this tool is Callie-exclusive --
     # it is not used by the general path and should not appear in this
