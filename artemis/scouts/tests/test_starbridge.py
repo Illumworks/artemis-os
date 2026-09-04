@@ -24,6 +24,7 @@ from artemis.scouts.starbridge.client import (
     StarbridgeClient,
     StarbridgeDocument,
     StarbridgeItem,
+    StarbridgeUnavailableError,
 )
 from artemis.scouts.starbridge.mapping import item_to_finding
 from artemis.scouts.starbridge.scout import StarbridgeResearcherScout
@@ -170,12 +171,57 @@ async def test_search_http_200_parses_items() -> None:
     assert items[1].item_type == "grant"
 
 
-async def test_search_http_error_returns_empty_list() -> None:
-    """search() returns [] on HTTP 4xx/5xx instead of raising."""
+async def test_search_raises_rather_than_reporting_an_empty_scan() -> None:
+    """This test previously asserted `items == []` on a 500, and that was the bug.
+
+    Every endpoint path and field name in the client is an unverified guess
+    marked "TODO: confirm with Starbridge team". Returning [] on an HTTP error
+    meant a completely unconfigured integration -- wrong base URL, rejected key,
+    endpoint that does not exist -- reported "0 signals" in exactly the words a
+    working integration uses on a quiet day.
+
+    That is how Argus sat idle for five weeks while its progress was relayed in
+    good faith. "Nothing is happening in the world" and "nothing is happening
+    here" must not look identical.
+    """
     mock_http = _make_mock_http(status_code=500, json_response={})
     client = StarbridgeClient(api_key="test-key", _http=mock_http)
-    items = await client.search("literacy")
-    assert items == []
+
+    with pytest.raises(StarbridgeUnavailableError) as excinfo:
+        await client.search("literacy")
+
+    assert "500" in str(excinfo.value)
+    assert "not an empty result" in str(excinfo.value)
+
+
+async def test_a_rejected_key_says_so_rather_than_reporting_no_results() -> None:
+    """401 is the most likely first failure the day a real key is wired in."""
+    mock_http = _make_mock_http(status_code=401, json_response={})
+    client = StarbridgeClient(api_key="wrong-key", _http=mock_http)
+
+    with pytest.raises(StarbridgeUnavailableError) as excinfo:
+        await client.search("literacy")
+
+    assert "API key was rejected" in str(excinfo.value)
+
+
+async def test_a_wrong_endpoint_path_names_itself_as_the_likely_cause() -> None:
+    """The paths are guesses, so a 404 means us, not the vendor being quiet."""
+    mock_http = _make_mock_http(status_code=404, json_response={})
+    client = StarbridgeClient(api_key="test-key", _http=mock_http)
+
+    with pytest.raises(StarbridgeUnavailableError) as excinfo:
+        await client.search("literacy")
+
+    assert "endpoint path is wrong" in str(excinfo.value)
+
+
+async def test_a_genuinely_empty_result_is_still_an_empty_list() -> None:
+    """The distinction only works if a real empty answer stays quiet."""
+    mock_http = _make_mock_http(status_code=200, json_response={"items": []})
+    client = StarbridgeClient(api_key="test-key", _http=mock_http)
+
+    assert await client.search("literacy") == []
 
 
 # ---------------------------------------------------------------------------
@@ -377,3 +423,43 @@ async def test_log_includes_credit_usage_info(caplog: pytest.LogCaptureFixture) 
     log_messages = [r.message for r in caplog.records]
     assert any("Starbridge API call" in m for m in log_messages)
     assert any("results=1" in m for m in log_messages)
+
+
+async def test_a_scout_run_where_every_query_failed_is_not_a_clear_scan() -> None:
+    """The scout swallowed exceptions per query and returned [] regardless.
+
+    So an unconfigured integration produced a run that looked exactly like a
+    quiet day across every priority state. The client raising is not enough on
+    its own if the layer above catches and continues.
+    """
+    scout = StarbridgeResearcherScout(api_key="test-key")
+    mock_client = MagicMock()
+    mock_client.search = AsyncMock(side_effect=StarbridgeUnavailableError("HTTP 401"))
+
+    with (
+        patch.object(scout, "_get_client", return_value=mock_client),
+        pytest.raises(StarbridgeUnavailableError) as excinfo,
+    ):
+        await scout._gather_findings()
+
+    assert "NOT a clear scan" in str(excinfo.value)
+
+
+async def test_a_partial_failure_still_returns_what_it_found() -> None:
+    """One failing state must not discard the other states' findings."""
+    scout = StarbridgeResearcherScout(api_key="test-key")
+    calls = {"n": 0}
+
+    async def _flaky(**_kw: Any) -> list[StarbridgeItem]:
+        calls["n"] += 1
+        if calls["n"] % 2:
+            raise StarbridgeUnavailableError("HTTP 503")
+        return [_make_item()]
+
+    mock_client = MagicMock()
+    mock_client.search = _flaky
+
+    with patch.object(scout, "_get_client", return_value=mock_client):
+        findings = await scout._gather_findings()
+
+    assert findings, "a partial outage must not read as zero signals either"

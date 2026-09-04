@@ -15,7 +15,7 @@ import os
 from typing import Any, ClassVar
 
 from artemis.scouts.base import BaseScout, ScoutConfig
-from artemis.scouts.starbridge.client import StarbridgeClient
+from artemis.scouts.starbridge.client import StarbridgeClient, StarbridgeUnavailableError
 from artemis.scouts.starbridge.mapping import item_to_finding
 
 _logger = logging.getLogger(__name__)
@@ -93,6 +93,9 @@ class StarbridgeResearcherScout(BaseScout):
         client = self._get_client()
         findings: list[dict[str, Any]] = []
 
+        attempted = 0
+        unavailable = 0
+
         for state in self._priority_states:
             for term in SEARCH_TERMS:
                 # TODO: confirm with Starbridge team — whether to filter by state in API
@@ -101,6 +104,7 @@ class StarbridgeResearcherScout(BaseScout):
                 filters: dict[str, Any] = {
                     "state": state,  # TODO: confirm filter key name with Starbridge team
                 }
+                attempted += 1
                 try:
                     results = await client.search(query=query, filters=filters)
                     _logger.info(
@@ -110,6 +114,14 @@ class StarbridgeResearcherScout(BaseScout):
                     )
                     for item in results:
                         findings.append(item_to_finding(item))
+                except StarbridgeUnavailableError:
+                    unavailable += 1
+                    _logger.warning(
+                        "StarbridgeResearcherScout: query=%r state=%s unavailable; continuing.",
+                        query,
+                        state,
+                        exc_info=True,
+                    )
                 except Exception:
                     _logger.warning(
                         "StarbridgeResearcherScout: query=%r state=%s failed; continuing.",
@@ -117,5 +129,16 @@ class StarbridgeResearcherScout(BaseScout):
                         state,
                         exc_info=True,
                     )
+
+        # Every single query failed to reach the API. Returning [] here would be
+        # indistinguishable from a genuinely quiet scan, and the scout would report
+        # "0 signals" for an integration that is simply not configured -- the exact
+        # shape of the Argus failure. A partial failure still returns what it found.
+        if attempted and unavailable == attempted:
+            raise StarbridgeUnavailableError(
+                f"All {attempted} Starbridge queries failed to reach the API. "
+                "This is NOT a clear scan: report Starbridge as unavailable and say "
+                "that no signals were checked, not that none were found."
+            )
 
         return findings

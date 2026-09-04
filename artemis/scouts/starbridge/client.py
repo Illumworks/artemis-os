@@ -29,6 +29,23 @@ _logger = logging.getLogger(__name__)
 _STARBRIDGE_BASE = "https://api.starbridge.io/v1/"
 
 
+class StarbridgeUnavailableError(Exception):
+    """The API could not be reached or refused us -- NOT "there were no results".
+
+    Every endpoint path, field name and filter in this module is an assumption
+    marked "TODO: confirm with Starbridge team"; the vendor shape was never
+    verified. Before this existed, `search` returned `[]` on a 401, a 404, a
+    wrong base URL and any exception alike, so a completely unconfigured
+    integration reported "0 signals" in exactly the words a working one uses on a
+    quiet day.
+
+    That is the failure that let Argus sit idle for five weeks while Callie
+    relayed its progress in good faith. A caller must be able to tell "nothing is
+    happening in the world" from "nothing is happening here", so configuration
+    and auth failures raise and carry the status code.
+    """
+
+
 class StarbridgeItem(BaseModel):
     """Lightweight item record returned by Starbridge search."""
 
@@ -122,17 +139,23 @@ class StarbridgeClient:
                 "search",  # TODO: confirm with Starbridge team
                 json=body,
             )
-        except Exception:
+        except Exception as exc:
             _logger.exception("Starbridge search request failed for query=%r", query)
-            return []
+            raise StarbridgeUnavailableError(
+                f"Starbridge search could not be reached ({type(exc).__name__}). "
+                "This is not an empty result -- report it as unavailable and do not "
+                "say the scan was clear."
+            ) from exc
 
         if resp.status_code >= 400:
-            _logger.warning(
-                "Starbridge search → HTTP %d for query=%r",
-                resp.status_code,
-                query,
+            _logger.error("Starbridge search → HTTP %d for query=%r", resp.status_code, query)
+            raise StarbridgeUnavailableError(
+                f"Starbridge search returned HTTP {resp.status_code}. "
+                f"{'The API key was rejected. ' if resp.status_code in (401, 403) else ''}"
+                f"{'The endpoint path is wrong -- every path here is an unconfirmed guess. ' if resp.status_code == 404 else ''}"
+                "This is not an empty result -- report it as unavailable and do not "
+                "say the scan was clear."
             )
-            return []
 
         data: Any = resp.json()
         # TODO: confirm with Starbridge team — response envelope shape
