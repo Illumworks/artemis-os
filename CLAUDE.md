@@ -262,6 +262,54 @@ truth, drive the CLI yourself with `--output-format stream-json --verbose` and r
 Corollary for briefs: when a slice's output is an agent's *claim*, the acceptance criterion is
 the effect, never the transcript.
 
+## A rule in a prompt is not a gate in code (lesson, 2026-09-04)
+
+Callie read a Michigan page for Josh, worked out that
+`amiralearning.com/state/amira-for-michigan` held the fact she was missing, named
+that URL, and then asked **Josh** to go open it. The page loads in under a second,
+needs no login, and its third line answers the question. Her trace for that turn
+reads `['ToolSearch', 'read_web_page']` — she had the tool and had used it moments
+earlier, in that same turn, and stopped at one call.
+
+Nothing was capping her. **The floating chat path passes no `--max-turns` at all**
+(`artemis/providers/claude_code/adapter.py` only adds it when a caller asks;
+builder and pipeline turns do, chat turns do not). So before reaching for a
+timeout, a permission, or a broken tool as the explanation, check the trace: an
+agent that called one tool and stopped chose to stop.
+
+**Where the rules live is part of whether they bind.** Her profile carried three
+sections marked `(Hard Rule)`, each written *after* she had broken it in good
+faith. All three were injected under `"## Full personality profile (background
+reference)"` — the same weight as tone, register and voice corpus. Rules that
+exist because they were broken were filed as background colour.
+
+They are now hoisted above the profile body under `"## Binding rules"`.
+`personality.extract_hard_rules` matches on the heading, so **a new hard rule is
+promoted by writing "(Hard Rule)" in its heading — no code change, no list to keep
+in sync.** A section runs to the next heading of the same or higher level, so a
+rule may carry sub-headings. An agent with none gets no empty binding block.
+
+**The limit of that fix, which is the actual lesson.** Hoisting makes a rule
+harder to miss. It cannot make it impossible to miss, and two of Callie's three
+rules already existed when she broke the behaviour they describe. So:
+
+> **If a behaviour recurs after its rule is in the binding block, do not write
+> another rule and do not make the heading louder. The next fix is a gate in code.**
+
+What a gate looks like here: the tool layer refuses or the send path intercepts —
+e.g. an outbound message that names a URL and asks a human to open it is held
+until the agent has actually called `read_web_page` on it, the same way
+`dispatch_research` was made to stop returning `"dispatched"` for work it never
+started. Prompt text asks; code decides.
+
+Corollary: `load_agent_profile` is `@cache`d, so **editing a profile changes
+nothing until the app restarts.** A profile fix that has not been deployed is not
+a fix. Check `agent_traces` for in-flight turns before kicking the service — a
+restart on 2026-08-26 silently ate a question Sara had asked and she never got an
+answer.
+
+---
+
 ## Multi-Agent Handoff Protocol
 
 ### Commit Discipline
