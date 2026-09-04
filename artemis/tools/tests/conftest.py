@@ -58,26 +58,3 @@ async def db_session() -> AsyncIterator[AsyncSession]:
             yield session
     finally:
         await engine.dispose()
-
-
-@pytest.fixture(autouse=True)
-def _stub_source_url_verification(monkeypatch):
-    """Keep signal writes offline by default.
-
-    `signal_queue.write` verifies that a signal's source URL resolves to a real
-    page (added 2026-09-04 after a scout invented 149 of them). That is a real
-    network call, and letting every test make one turned a 4-second suite into a
-    225-second one — while quietly making the tests depend on the internet and on
-    example.com's status code.
-
-    So the check is stubbed to "confirmed" here, and the verifier's own behaviour
-    is tested directly in test_source_url_check.py against a stubbed transport.
-    A test that wants a rejection can patch
-    ``artemis.tools.signal_queue.verify_source_url`` itself.
-    """
-    from artemis.tools._source_url_check import UrlVerdict
-
-    async def _confirmed(_url: str) -> UrlVerdict:
-        return UrlVerdict(ok=True, verified=True, reason="stubbed in tests")
-
-    monkeypatch.setattr("artemis.tools.signal_queue.verify_source_url", _confirmed)

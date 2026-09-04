@@ -176,3 +176,94 @@ async def lookup_district(client: Any, district_name: str) -> AccountLookup:
             client, result.matched.account_id
         )
     return result
+
+
+# Fields that answer "is someone already working this person?" without any Gong
+# API at all. Gong syncs onto the Contact record, and these were readable the
+# whole time -- the conflict guardrail Josh asked for first never needed a new
+# integration, only somebody to look.
+_CONFLICT_FIELDS = (
+    "Id",
+    "Name",
+    "Title",
+    "Email",
+    "LastActivityDate",
+    "Gong__Actively_Being_in_a_Flow__c",
+    "Gong__Current_Flow_Name__c",
+    "Gong__Current_Flow_User_Name__c",
+    "Gong__Added_to_Flow_Date__c",
+)
+
+
+@dataclass
+class AccountContact:
+    """One person at a district, with whatever we can say about who is on them."""
+
+    contact_id: str
+    name: str
+    title: str = ""
+    email: str = ""
+    last_activity: str = ""
+    in_active_flow: bool = False
+    flow_name: str = ""
+    flow_owner: str = ""
+    flow_since: str = ""
+
+    @property
+    def conflicted(self) -> bool:
+        """Whether someone else is actively working this person right now."""
+        return self.in_active_flow
+
+    def describe(self) -> str:
+        bits = [self.name]
+        if self.title:
+            bits.append(self.title)
+        if self.conflicted:
+            who = self.flow_owner or "a seller"
+            flow = f" ({self.flow_name})" if self.flow_name else ""
+            bits.append(f"⚠ IN ACTIVE OUTREACH by {who}{flow} since {self.flow_since or 'unknown'}")
+        elif self.last_activity:
+            bits.append(f"last touched {self.last_activity}")
+        else:
+            bits.append("no recorded activity")
+        return " — ".join(bits)
+
+
+async def fetch_account_contacts(
+    client: Any, account_id: str, *, limit: int = 25
+) -> list[AccountContact]:
+    """People at an account, and who is already working them.
+
+    Returns [] on any failure rather than raising -- but a caller must not read
+    an empty list as "nobody is being worked". Absence of evidence is not
+    evidence of absence, and this is the check that stops marketing emailing
+    into an active sales conversation.
+    """
+    if not account_id:
+        return []
+    try:
+        rows = await client.query(
+            f"SELECT {', '.join(_CONFLICT_FIELDS)} FROM Contact "
+            f"WHERE AccountId = '{_soql_escape(account_id)}' "
+            f"ORDER BY LastActivityDate DESC NULLS LAST LIMIT {int(limit)}"
+        )
+    except Exception:
+        logger.warning("contact fetch failed for account %s", account_id, exc_info=True)
+        return []
+
+    people: list[AccountContact] = []
+    for row in rows:
+        people.append(
+            AccountContact(
+                contact_id=str(row.get("Id") or ""),
+                name=str(row.get("Name") or "(unnamed)"),
+                title=str(row.get("Title") or ""),
+                email=str(row.get("Email") or ""),
+                last_activity=str(row.get("LastActivityDate") or ""),
+                in_active_flow=bool(row.get("Gong__Actively_Being_in_a_Flow__c")),
+                flow_name=str(row.get("Gong__Current_Flow_Name__c") or ""),
+                flow_owner=str(row.get("Gong__Current_Flow_User_Name__c") or ""),
+                flow_since=str(row.get("Gong__Added_to_Flow_Date__c") or ""),
+            )
+        )
+    return people

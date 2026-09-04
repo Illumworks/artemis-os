@@ -140,6 +140,71 @@ async def _account_customer_field_present(client: SalesforceClient) -> bool:
     return settings.salesforce_customer_field in field_names
 
 
+async def _recent_contact_from_contact_record(
+    client: Any, contact_id: str, window_days: int
+) -> SuppressionResult | None:
+    """Answer "has sales touched this person?" without the Task object.
+
+    Task carries the detail of each activity and is not readable by the run-as
+    user. The Contact record carries the two facts the guardrail actually needs
+    and IS readable:
+
+      ``Gong__Actively_Being_in_a_Flow__c``  a seller is working them RIGHT NOW
+      ``LastActivityDate``                   when they were last touched at all
+
+    Returns ``None`` when even this cannot be read, so the caller can fall
+    through to its unverified result rather than treating a lookup failure as a
+    clean bill of health.
+    """
+    try:
+        rows = await client.query(
+            "SELECT Id, LastActivityDate, Gong__Actively_Being_in_a_Flow__c, "
+            "Gong__Current_Flow_Name__c, Gong__Current_Flow_User_Name__c "
+            f"FROM Contact WHERE Id = '{_soql_escape(contact_id)}' LIMIT 1"
+        )
+    except Exception:
+        logger.warning(
+            "check_suppression: Contact-record fallback failed for %s", contact_id, exc_info=True
+        )
+        return None
+    if not rows:
+        return None
+
+    row = rows[0]
+
+    if row.get("Gong__Actively_Being_in_a_Flow__c"):
+        owner = str(row.get("Gong__Current_Flow_User_Name__c") or "a seller")
+        flow = str(row.get("Gong__Current_Flow_Name__c") or "an active sequence")
+        return SuppressionResult(
+            True,
+            SKIP_RECENT_SALES_CONTACT,
+            f"{owner} is actively working this contact in {flow!r} (per Gong, synced to "
+            "Salesforce) — do not send into an open sales conversation",
+        )
+
+    last = str(row.get("LastActivityDate") or "")
+    if last:
+        try:
+            last_dt = datetime.strptime(last[:10], "%Y-%m-%d").replace(tzinfo=UTC)
+        except ValueError:
+            last_dt = None
+        if last_dt is not None and last_dt >= datetime.now(UTC) - timedelta(days=window_days):
+            return SuppressionResult(
+                True,
+                SKIP_RECENT_SALES_CONTACT,
+                f"last sales activity on {last[:10]}, inside the {window_days}-day window "
+                "(from the Contact record; Task detail is not readable)",
+            )
+
+    return SuppressionResult(
+        False,
+        None,
+        "no active sales sequence and no activity inside the window, per the Contact "
+        "record. NOTE: per-activity Task detail is not readable, so this is based on "
+        "LastActivityDate and Gong flow status rather than individual emails.",
+    )
+
+
 async def check_suppression(
     session: AsyncSession,
     *,
@@ -261,13 +326,28 @@ async def check_suppression(
                     contact_id,
                     exc,
                 )
+                # Task is unreadable, but the same question can be answered from
+                # the Contact record itself, which IS readable: LastActivityDate
+                # for "when were they last touched", and the Gong flow fields for
+                # "is a seller working them right now". Gong syncs onto Contact,
+                # so this needs no Gong API and no new permission.
+                #
+                # Falling back matters: without it every known Salesforce contact
+                # suppresses as UNVERIFIED and the send path is blocked outright.
+                # Task would add WHAT the touch was; this answers WHETHER, which
+                # is what the guardrail is actually for.
+                fallback = await _recent_contact_from_contact_record(
+                    client, contact_id, window_days
+                )
+                if fallback is not None:
+                    return fallback
                 return SuppressionResult(
                     True,
                     SKIP_SALESFORCE_UNAVAILABLE,
-                    "cannot verify recent sales contact: the Salesforce Connected App "
-                    "has no READ access to the Task object, so email-activity history "
-                    "is invisible. This is a PERMISSION gap, not an outage — ask Neil "
-                    "to grant Task read to the run-as user. Treat as UNVERIFIED.",
+                    "cannot verify recent sales contact: the Connected App has no READ "
+                    "access to Task, and the Contact-record fallback (LastActivityDate, "
+                    "Gong flow fields) could not be read either. This is a PERMISSION "
+                    "gap, not an outage. Treat as UNVERIFIED.",
                 )
             if task_records:
                 return SuppressionResult(
