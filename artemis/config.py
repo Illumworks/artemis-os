@@ -138,6 +138,22 @@ class Settings(BaseSettings):
         description="Embedding backend. Only 'minilm' supported in V1.",
     )
 
+    starbridge_webhook_public_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ARTEMIS_STARBRIDGE_WEBHOOK_PUBLIC_KEY",
+            "STARBRIDGE_WEBHOOK_PUBLIC_KEY",
+        ),
+        description=(
+            "Starbridge's Ed25519 webhook signing key, copied verbatim from "
+            "Settings -> Webhook Keys including its whpk_ prefix. It is a PUBLIC "
+            "key: it can only verify signatures, never create them, so it is not a "
+            "secret. Empty = POST /api/starbridge/webhook refuses every delivery "
+            "with 503, because an endpoint that accepts unsigned bodies when a key "
+            "is missing is an open write path into the signal queue."
+        ),
+    )
+
     enablement_webhook_secret: str = Field(
         default="",
         validation_alias=AliasChoices(

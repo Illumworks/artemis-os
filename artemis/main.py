@@ -92,6 +92,7 @@ from artemis.routes import notifications as notifications_routes
 from artemis.routes import people as people_routes
 from artemis.routes import screentime as screentime_routes
 from artemis.routes import sessions as sessions_routes
+from artemis.routes import starbridge as starbridge_routes
 from artemis.routes import stats as stats_routes
 from artemis.routes import users as users_routes
 from artemis.routes.builders import (
@@ -311,6 +312,7 @@ app.include_router(users_routes.router)
 
 # Phase C2 — Marketing OS HTTP routes
 app.include_router(scouts.router)
+app.include_router(starbridge_routes.router)  # Starbridge signed webhook -> signal queue
 app.include_router(signal_queue.router)
 app.include_router(signal_criteria.router)
 app.include_router(campaign_ops.router)
