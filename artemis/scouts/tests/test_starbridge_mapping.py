@@ -120,3 +120,85 @@ def test_evidence_is_never_paraphrased() -> None:
     finding = item_to_finding(_item())
     assert "Universal Reading Screener-Public School Districts RFP" in finding["evidence"]
     assert "Universal reading screener services required statewide." in finding["evidence"]
+
+
+# ── deadlines ────────────────────────────────────────────────────────────────
+
+
+def test_a_closed_solicitation_is_never_hot() -> None:
+    """`days_until <= 30` is also true of -3.
+
+    An RFP that shut three days ago imported at the highest tier there is. It
+    matters most where it is least visible: backfilling an existing bridge
+    carries months of expired deadlines, and every one would have reached Josh's
+    queue marked hot.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from artemis.scouts.starbridge.mapping import _urgency
+
+    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+    long_gone = (datetime.now(UTC).date() - timedelta(days=200)).isoformat()
+
+    assert _urgency(yesterday) == "enrichment"
+    assert _urgency(long_gone) == "enrichment"
+
+
+def test_an_imminent_deadline_is_hot() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from artemis.scouts.starbridge.mapping import _urgency
+
+    assert _urgency((datetime.now(UTC).date() + timedelta(days=10)).isoformat()) == "hot"
+    assert _urgency((datetime.now(UTC).date() + timedelta(days=45)).isoformat()) == "standard"
+    assert _urgency((datetime.now(UTC).date() + timedelta(days=200)).isoformat()) == "enrichment"
+
+
+def test_a_missing_or_unparseable_deadline_does_not_crash() -> None:
+    from artemis.scouts.starbridge.mapping import _urgency
+
+    assert _urgency(None) == "enrichment"
+    assert _urgency("not-a-date") == "enrichment"
+
+
+def test_the_due_date_column_drives_urgency_not_added_to_bridge() -> None:
+    """Kansas: Due Date 2026-10-07, Added to Bridge 2026-08-30.
+
+    Reading the wrong one made a screener RFP closing in 33 days look like
+    enrichment, and would make every backfilled row look identical.
+    """
+    from artemis.scouts.starbridge.client import signal_to_item
+
+    signal = {
+        "bridge": {"name": "RFPs - State & State DOE", "filterType": "RFP", "columns": []},
+        "row": {
+            "rowId": "r-1",
+            "name": "Universal Reading Screener-Public School Districts RFP",
+            "columns": {
+                "Due Date": {"value": "2026-10-07"},
+                "Added to Bridge": {"value": "2026-08-30T04:44:56.841250943Z"},
+                "Buyer State Code": {"value": "KS"},
+                "Buyer Name": {"value": "Kansas State Department of Education"},
+            },
+        },
+    }
+    item = signal_to_item(signal)
+
+    assert item.deadline_date == "2026-10-07"
+    assert item.state == "KS"
+
+
+def test_a_bridge_without_those_columns_still_maps() -> None:
+    """Bridges are user-configured; only this one was confirmed to carry them."""
+    from artemis.scouts.starbridge.client import signal_to_item
+
+    item = signal_to_item(
+        {
+            "bridge": {"name": "b", "filterType": "RFP", "columns": []},
+            "row": {"rowId": "r-2", "name": "Some RFP", "columns": {"Match Score": {"value": 4}}},
+        }
+    )
+
+    assert item.deadline_date is None
+    assert item.state is None
+    assert item.match_score == 4

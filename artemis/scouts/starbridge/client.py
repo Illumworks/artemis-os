@@ -45,6 +45,15 @@ _COL_SCORE = "Match Score"
 _COL_BUYER = "Buyer Name"
 _COL_SOURCE_URL = "Source Url"
 _COL_ADDED = "Added to Bridge"
+#: Confirmed live on RFPs - State & State DOE, 2026-09-04. "Due Date" is the
+#: solicitation's actual closing date (Kansas: 2026-10-07); "Added to Bridge" is
+#: when the row entered OUR bridge and says nothing about the deadline. Deriving
+#: urgency from the latter made a screener RFP closing in 33 days read as
+#: enrichment. Not every bridge carries these -- bridges are user-configured --
+#: so each falls back rather than assuming.
+_COL_DUE_DATE = "Due Date"
+_COL_STATE = "Buyer State Code"
+_COL_FULL_SUMMARY = "Summary"
 
 
 class StarbridgeUnavailableError(Exception):
@@ -132,8 +141,12 @@ def signal_to_item(signal: dict[str, Any]) -> StarbridgeItem:
         match_score = None
 
     # Prefer the fuller "Summarized Relevance" bullets; fall back to the one-line
-    # reasoning. Either is Starbridge's own text about why this row matched.
-    summary = values.get(_COL_RELEVANCE) or values.get(_COL_SUMMARY)
+    # reasoning, then to the solicitation's own summary. The first two are
+    # Starbridge's text about why this row matched US, which is more useful to a
+    # marketer than a neutral restatement of the RFP.
+    summary = (
+        values.get(_COL_RELEVANCE) or values.get(_COL_SUMMARY) or values.get(_COL_FULL_SUMMARY)
+    )
 
     return StarbridgeItem(
         item_id=str(row.get("rowId") or ""),
@@ -141,7 +154,10 @@ def signal_to_item(signal: dict[str, Any]) -> StarbridgeItem:
         summary=str(summary) if summary else None,
         item_type=str(bridge.get("filterType") or "unknown").lower(),
         source_url=(str(values[_COL_SOURCE_URL]) if values.get(_COL_SOURCE_URL) else None),
-        deadline_date=(str(values[_COL_ADDED]) if values.get(_COL_ADDED) else None),
+        # The real closing date when the bridge carries one; never "Added to
+        # Bridge", which is our own bookkeeping and not a deadline.
+        deadline_date=(str(values[_COL_DUE_DATE]) if values.get(_COL_DUE_DATE) else None),
+        state=(str(values[_COL_STATE]) if values.get(_COL_STATE) else None),
         match_score=match_score,
         buyer_name=(str(values[_COL_BUYER]) if values.get(_COL_BUYER) else None),
         bridge_name=str(bridge.get("name") or ""),

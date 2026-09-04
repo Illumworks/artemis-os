@@ -8,7 +8,7 @@ All ambiguous assumptions are marked with ``# TODO: confirm with Starbridge team
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from artemis.scouts.starbridge.client import StarbridgeItem
@@ -92,28 +92,33 @@ def _reason_codes(item: StarbridgeItem) -> list[str]:
 
 
 def _urgency(deadline_date: str | None) -> str:
-    """Return urgency tier string based on deadline proximity.
+    """Urgency from how long is left to respond.
 
-    Returns
-    -------
-    str
-        ``"hot"`` if deadline within 30 days,
-        ``"standard"`` if 30-90 days out,
-        ``"enrichment"`` otherwise (no deadline falls here).
+    ``hot`` within 30 days, ``standard`` 30-90, ``enrichment`` otherwise --
+    including, importantly, a deadline that has already passed.
+
+    **A closed solicitation is not urgent.** The comparison used to be
+    ``days_until <= 30``, which is also true of -3, so an RFP that shut three days
+    ago imported at the highest tier there is. That matters most exactly when it
+    is least visible: a backfill of an existing bridge carries months of expired
+    deadlines, and every one of them would have arrived in Josh's queue marked
+    hot.
     """
     if not deadline_date:
         return "enrichment"
 
     try:
-        # TODO: confirm with Starbridge team — deadline_date format
         deadline = date.fromisoformat(deadline_date[:10])
     except (ValueError, TypeError):
-        _logger_fallback = "enrichment"
-        return _logger_fallback
+        return "enrichment"
 
-    today = datetime.utcnow().date()
-    days_until = (deadline - today).days
+    days_until = (deadline - datetime.now(UTC).date()).days
 
+    if days_until < 0:
+        # Kept rather than dropped: a closed RFP still says this buyer is in
+        # market, which is worth knowing. It is simply not something to act on
+        # today, and the tier has to say so.
+        return "enrichment"
     if days_until <= _URGENCY_HOT_DAYS:
         return "hot"
     if days_until <= _URGENCY_STANDARD_DAYS:
