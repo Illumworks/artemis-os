@@ -143,9 +143,55 @@ def test_system_prompt_forbids_the_claims_the_record_cannot_support() -> None:
     lowered = SYSTEM_PROMPT.lower()
     assert "never assert" in lowered
     assert "approved" in lowered
-    assert "you cannot open the file" in lowered
     assert "do not \\\n" not in SYSTEM_PROMPT  # no broken continuation
     assert "null" in lowered
+
+
+def test_system_prompt_ties_opening_the_file_to_whether_content_was_given() -> None:
+    """The no-file rule is conditional now, and must stay conditional.
+
+    It used to read "You cannot open the file", full stop. That was true when
+    nothing could fetch an asset, and it is why 289 assets have no summary. The
+    backfill can now open them, so an unconditional claim would be a false
+    statement in the prompt -- but dropping the rule entirely would license the
+    model to invent contents whenever the fetch came back empty, which is the
+    far worse failure. Both halves have to survive.
+    """
+    from artemis.enablement.enrichment import SYSTEM_PROMPT
+
+    lowered = SYSTEM_PROMPT.lower()
+    assert "document content" in lowered, "the fetched-text case must be named"
+    assert "have not" in lowered and "opened the file" in lowered, (
+        "the no-content case must still forbid guessing at the contents"
+    )
+    assert "must not guess" in lowered
+
+
+def test_fetched_document_text_outranks_the_record_and_is_labelled_as_fetched() -> None:
+    """Otherwise the summary is written from the title after all.
+
+    searchable_text is under 80 characters for 212 of the unsummarised assets,
+    so if it won this contest the backfill would produce paraphrased titles --
+    the exact non-answer it exists to replace.
+    """
+    from dataclasses import replace
+
+    facts = replace(FACTS, document_text="Rostering is configured through Clever or ClassLink.")
+    prompt = build_user_prompt(facts)
+
+    assert "Clever or ClassLink" in prompt
+    assert "fetched from the asset itself" in prompt.lower()
+
+
+def test_a_fetched_document_gets_a_larger_excerpt_than_a_record_field() -> None:
+    """A record field is a filing note; a fetched document is the asset."""
+    from dataclasses import replace
+
+    long_text = "word " * 2000
+    record_only = build_user_prompt(replace(FACTS, searchable_text=long_text))
+    fetched = build_user_prompt(replace(FACTS, document_text=long_text))
+
+    assert len(fetched) > len(record_only)
 
 
 def test_long_body_text_is_truncated() -> None:

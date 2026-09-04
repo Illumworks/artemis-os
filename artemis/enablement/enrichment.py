@@ -139,6 +139,12 @@ class AssetFacts:
     transcript_text: str | None
     searchable_text: str | None
     links: list[dict[str, Any]]
+    #: Text actually fetched FROM the asset, when the backfill could open it.
+    #: None means the file was never opened, and the prompt says so explicitly --
+    #: 212 of the 289 unsummarised assets carry under 80 characters of record
+    #: text, so summarising those from the record alone would paraphrase the
+    #: title and pass it off as a description.
+    document_text: str | None = None
 
     @classmethod
     def from_row(cls, asset: Any) -> AssetFacts:
@@ -165,7 +171,9 @@ reviewing your work.
 Describe what the asset IS and when someone would reach for it. Nothing else.
 
 HARD RULES
-- Use ONLY the record fields given to you. You cannot open the file.
+- Use ONLY what you are given: the record fields, plus the DOCUMENT CONTENT \
+excerpt when one is present. If no document content is provided you have NOT \
+opened the file, and must not guess at what is inside it.
 - Never assert that an asset is approved, current, up to date, the latest \
 version, or effective. You have no way to know any of that, and a librarian \
 repeating it as fact is the exact problem this catalog is fixing.
@@ -217,10 +225,18 @@ def build_user_prompt(facts: AssetFacts, *, feedback: str | None = None) -> str:
     else:
         lines.append("- links: (none)")
 
-    body = facts.transcript_text or facts.searchable_text
+    # Fetched document text outranks the record fields: it is the only source
+    # here that describes what is actually IN the asset rather than how it was
+    # filed. The record's own searchable_text is under 80 characters for 212 of
+    # the 289 unsummarised assets -- little more than the title.
+    body = facts.document_text or facts.transcript_text or facts.searchable_text
     if body:
-        excerpt = " ".join(body.split())[:1500]
-        source = "transcript" if facts.transcript_text else "document text"
+        excerpt = " ".join(body.split())[: 4000 if facts.document_text else 1500]
+        source = (
+            "DOCUMENT CONTENT (fetched from the asset itself)"
+            if facts.document_text
+            else ("transcript" if facts.transcript_text else "document text")
+        )
         lines.append(f"- {source} excerpt: {excerpt}")
     else:
         lines.append("- body text: (none available)")
