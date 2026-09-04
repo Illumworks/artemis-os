@@ -18,6 +18,7 @@ from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
 from artemis.marketing.models import DistrictContact, SignalQueue
 from artemis.marketing.qualification import run_and_store_qualification
 from artemis.marketing.scout_intake import normalize_intake_payload
+from artemis.tools._source_url_check import verify_source_url
 from artemis.tools.context import ToolContext
 from artemis.tools.district_resolve import resolve_district
 from artemis.tools.registry import register_tool
@@ -150,6 +151,30 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             normalized = normalize_intake_payload(intake_payload, scout_type=slug)
         except ValueError as exc:
             return f"VALIDATION_ERROR: {exc}"
+
+        # ── Source-URL reality check ────────────────────────────────────────────
+        # A scout is an LLM agent, and nothing here previously checked that the
+        # URL it supplied pointed at anything. 149 fabricated signals reached the
+        # queue between 2026-08-10 and 2026-09-02 -- 52 approved past Gate 1, one
+        # of them announcing an Amira partnership that never happened, in the
+        # weekly brief to Josh and Angela.
+        #
+        # This is the boundary where a model's claim becomes a durable record, so
+        # it is the right place to check, and it covers every scout rather than
+        # the one that happened to fail.
+        verdict = await verify_source_url(normalized.source_url or "")
+        if not verdict.ok:
+            logger.warning(
+                "signal_queue.write REJECTED agent=%s url=%s -- %s",
+                slug,
+                normalized.source_url,
+                verdict.reason,
+            )
+            return (
+                f"REJECTED: {verdict.reason}. A signal must cite a source you actually "
+                "retrieved. Do not construct or guess a URL -- if a feed returned nothing, "
+                "report zero signals; that is a valid and useful result."
+            )
 
         # ── Source-URL dedup (fallback for null-district / federal signals) ──────
         # If source_url is set, check for a recent non-archived row with the same URL.

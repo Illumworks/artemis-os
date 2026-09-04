@@ -47,20 +47,32 @@ def _build_kai_tool_registry(speaker_id: str | None = None) -> AuthorizedToolReg
     dropped: nobody has time to sift 400+ generated summaries, so corrections
     happen live instead.  Its allowlist is Jon, Sara, and Missy.
 
+    ``read_web_page`` (layer 1) was added 2026-08-31. It is read-only, has no
+    agency and touches no Amira system -- it fetches a public URL and returns
+    text -- so it does not widen Kai's scope in the sense the rule below is
+    about. It earns its place: on 2026-08-26 Julie asked him for a one-pager
+    that was "not on the resources sheet" and gave him the link, and he could
+    only search his own index. Answering "where is X" is his entire job, and the
+    answer is often behind a link someone just handed him.
+
     SECURITY: This function is the sole caller of register_enablement_tools,
     register_enablement_gap_flag_tool, and register_enablement_summary_edit_tool.
-    Do NOT add any other tool registrations here.
+    Do NOT add any other tool registrations here -- with the standing exception
+    of strictly read-only, zero-agency tools like the page reader above, and then
+    only with the reason recorded here.
     """
     from artemis.enablement.actions import (
         register_enablement_gap_flag_tool,
         register_enablement_summary_edit_tool,
     )
     from artemis.enablement.tools import register_enablement_tools
+    from artemis.floating_artemis.tools.web import register_web_tools
 
     registry = AuthorizedToolRegistry()
     register_enablement_tools(registry)
     register_enablement_gap_flag_tool(registry, speaker_id=speaker_id)
     register_enablement_summary_edit_tool(registry, speaker_id=speaker_id)
+    register_web_tools(registry)
     return registry
 
 

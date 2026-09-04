@@ -320,6 +320,14 @@ def test_artemis_still_has_raw_send_slack_dm() -> None:
 
 
 def test_kai_registry_unchanged_by_callie2() -> None:
+    """Kai stays enablement-scoped and near-read-only.
+
+    ``read_web_page`` joined the set on 2026-08-31. It is layer 1, has no agency
+    and touches no Amira system — it fetches a public URL and returns text — so it
+    does not widen his scope in the sense this test guards. It earns its place:
+    Julie asked him for a one-pager that was "not on the resources sheet" and gave
+    him the link, and he could only search his own index.
+    """
     registry = build_authorized_tool_registry(set(), agent_id="kai")
     names = {entry.tool.name for entry in registry.all_entries()}
     assert names == {
@@ -328,6 +336,7 @@ def test_kai_registry_unchanged_by_callie2() -> None:
         "list_enablement_facets",
         "flag_catalog_gap",
         "update_asset_summary",
+        "read_web_page",
     }
 
 
