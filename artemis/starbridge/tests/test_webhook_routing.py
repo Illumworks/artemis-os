@@ -156,3 +156,66 @@ async def test_a_row_without_an_id_is_malformed(db_session) -> None:
     assert (
         await route_delivery(db_session, {"data": {"name": "x", "columns": {}}})
     ).outcome == "malformed"
+
+
+@pytest.mark.asyncio
+async def test_one_rfp_matched_by_four_bridges_is_queued_once(db_session) -> None:
+    """rowId cannot catch this, and it is the common case, not an edge case.
+
+    The Kansas statewide screener arrived from four bridges -- Intervention
+    Search, Assessment Search, Amira Learning Feed and RFPs - State & State DOE
+    -- as four different rows with four different rowIds. Measured overlap
+    between the RFP bridges runs 0-50%, so they are genuinely complementary and
+    worth keeping; the price is that one event legitimately arrives several times
+    and only the headline identifies it.
+    """
+    title = "Universal Reading Screener-Public School Districts RFP"
+    outcomes = []
+    for bridge_row in ("row-a", "row-b", "row-c", "row-d"):
+        payload = json.loads(_body(row_id=bridge_row, name=title, columns=_RFP_COLUMNS))
+        result = await route_delivery(db_session, payload)
+        await db_session.flush()
+        outcomes.append(result.outcome)
+
+    assert outcomes == ["queued", "duplicate", "duplicate", "duplicate"], outcomes
+    rows = (
+        await db_session.execute(
+            select(func.count()).select_from(SignalQueue).where(SignalQueue.headline == title)
+        )
+    ).scalar_one()
+    assert rows == 1
+
+
+@pytest.mark.asyncio
+async def test_headline_matching_ignores_case(db_session) -> None:
+    """Bridges phrase the same solicitation with different capitalisation."""
+    await route_delivery(
+        db_session,
+        json.loads(_body(row_id="row-x", name="Literacy Screener RFP", columns=_RFP_COLUMNS)),
+    )
+    await db_session.flush()
+
+    second = await route_delivery(
+        db_session,
+        json.loads(_body(row_id="row-y", name="literacy screener rfp", columns=_RFP_COLUMNS)),
+    )
+    assert second.outcome == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_two_genuinely_different_rfps_both_queue(db_session) -> None:
+    """The dedupe must not swallow distinct solicitations."""
+    a = await route_delivery(
+        db_session,
+        json.loads(_body(row_id="row-p", name="Kansas screener RFP", columns=_RFP_COLUMNS)),
+    )
+    await db_session.flush()
+    b = await route_delivery(
+        db_session,
+        json.loads(_body(row_id="row-q", name="Ohio HQIM approved list RFP", columns=_RFP_COLUMNS)),
+    )
+    await db_session.flush()
+
+    assert a.outcome == "queued"
+    assert b.outcome == "queued"
+    assert a.signal_id != b.signal_id

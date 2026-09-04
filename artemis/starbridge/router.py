@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.marketing.models import SignalQueue
@@ -21,6 +22,12 @@ from artemis.scouts.starbridge.mapping import item_to_finding
 from artemis.starbridge.webhook import is_actionable
 
 logger = logging.getLogger(__name__)
+
+#: How far back to look for the same headline from a different bridge. Long
+#: enough to cover a solicitation matched by several bridges over a few days,
+#: short enough that an annually recurring RFP with an identical title is not
+#: silently swallowed a year later.
+CROSS_BRIDGE_WINDOW = timedelta(days=30)
 
 SOURCE_TYPE = "starbridge"
 DISCOVERED_BY = "starbridge_webhook"
@@ -148,6 +155,31 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
     ).scalar_one_or_none()
     if existing is not None:
         return RouteResult("duplicate", signal_id=int(existing), reason_codes=codes)
+
+    # Cross-bridge duplication, which rowId cannot catch. One RFP matched by four
+    # bridges is four DIFFERENT rows with four different rowIds -- the Kansas
+    # statewide screener arrived that way from Intervention Search, Assessment
+    # Search, Amira Learning Feed and RFPs - State & State DOE. Measured overlap
+    # between the RFP bridges runs 0-50%, so they are complementary and worth
+    # keeping; the price is that the same event legitimately arrives several
+    # times and only the headline identifies it.
+    headline = item.title.strip()
+    if headline:
+        twin = (
+            (
+                await session.execute(
+                    select(SignalQueue.id).where(
+                        SignalQueue.source_type == SOURCE_TYPE,
+                        func.lower(SignalQueue.headline) == headline.lower(),
+                        SignalQueue.created_at > datetime.now(UTC) - CROSS_BRIDGE_WINDOW,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if twin is not None:
+            return RouteResult("duplicate", signal_id=int(twin), reason_codes=codes)
 
     if not is_actionable(codes):
         await _write_observation(session, item, finding, codes)
