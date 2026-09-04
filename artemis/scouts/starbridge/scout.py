@@ -1,11 +1,17 @@
-"""Starbridge Researcher Scout — real implementation.
+"""Starbridge Researcher Scout — reads the signal feed.
 
-Discovers legislation and funding signals by querying the Starbridge API
-across Amira Learning's priority states.
+**Starbridge is a feed, not a search engine.** This scout used to loop over
+priority states crossed with search terms and POST each pair to a ``search``
+endpoint. No such endpoint exists. An organisation configures *bridges* --
+standing monitors for RFPs, board meetings, buyers, contacts and purchases -- and
+the API returns the rows those bridges matched. Ours has 68 bridges holding
+174,544 rows, already tuned for literacy and screening.
 
-NOTE: The Starbridge API is in bench-test period. The API shape is not yet
-confirmed with the vendor. All ambiguous assumptions are marked with
-``# TODO: confirm with Starbridge team``.
+So the scout reads what the bridges found and filters locally, rather than
+sending terms nobody is listening for.
+
+The old shape was 40 requests a run (8 states x 5 terms) against a host that does
+not resolve. This is one.
 """
 
 from __future__ import annotations
@@ -15,7 +21,7 @@ import os
 from typing import Any, ClassVar
 
 from artemis.scouts.base import BaseScout, ScoutConfig
-from artemis.scouts.starbridge.client import StarbridgeClient, StarbridgeUnavailableError
+from artemis.scouts.starbridge.client import StarbridgeClient
 from artemis.scouts.starbridge.mapping import item_to_finding
 
 _logger = logging.getLogger(__name__)
@@ -23,7 +29,7 @@ _logger = logging.getLogger(__name__)
 # Default priority states for Amira Learning market coverage.
 _DEFAULT_PRIORITY_STATES: list[str] = ["FL", "TX", "CA", "NY", "GA", "NC", "OH", "IL"]
 
-# Search terms relevant to Amira Learning's product and policy focus.
+# Kept for callers that still reference it; the feed is not term-driven.
 SEARCH_TERMS: list[str] = [
     "literacy",
     "reading",
@@ -31,6 +37,16 @@ SEARCH_TERMS: list[str] = [
     "education funding",
     "curriculum",
 ]
+
+#: Starbridge scores each row 1-5 against its bridge. Below this the row matched
+#: the monitor loosely and is not worth a signal; the live feed's top entries sit
+#: at 4 and 5.
+MIN_MATCH_SCORE = 4
+
+#: How many feed rows to pull per run. Deduplication happens inside the client --
+#: overlapping bridges re-report the same event, and 50 raw rows carried only 28
+#: distinct titles when measured.
+FEED_PAGE_SIZE = 100
 
 
 class StarbridgeResearcherScout(BaseScout):
@@ -91,54 +107,35 @@ class StarbridgeResearcherScout(BaseScout):
             return []
 
         client = self._get_client()
+
+        # One call. The bridges have already done the searching; asking them what
+        # they found is the entire integration.
+        items = await client.top_signals(limit=FEED_PAGE_SIZE)
+
         findings: list[dict[str, Any]] = []
+        skipped_low_score = 0
+        skipped_unclassified = 0
+        for item in items:
+            if item.match_score is not None and item.match_score < MIN_MATCH_SCORE:
+                skipped_low_score += 1
+                continue
+            finding = item_to_finding(item)
+            # No reason code means we could not place it in Josh's registry.
+            # Emitting it anyway is how a Kansas procurement notice became a
+            # federal grant; an unclassified signal is worth less than nothing
+            # once it carries a confident wrong label.
+            if not finding.get("reasonCodes"):
+                skipped_unclassified += 1
+                continue
+            findings.append(finding)
 
-        attempted = 0
-        unavailable = 0
-
-        for state in self._priority_states:
-            for term in SEARCH_TERMS:
-                # TODO: confirm with Starbridge team — whether to filter by state in API
-                # or post-filter the results. For now, include state in query.
-                query = f"{term} {state}"
-                filters: dict[str, Any] = {
-                    "state": state,  # TODO: confirm filter key name with Starbridge team
-                }
-                attempted += 1
-                try:
-                    results = await client.search(query=query, filters=filters)
-                    _logger.info(
-                        "Starbridge API call: query=%r results=%d",
-                        query,
-                        len(results),
-                    )
-                    for item in results:
-                        findings.append(item_to_finding(item))
-                except StarbridgeUnavailableError:
-                    unavailable += 1
-                    _logger.warning(
-                        "StarbridgeResearcherScout: query=%r state=%s unavailable; continuing.",
-                        query,
-                        state,
-                        exc_info=True,
-                    )
-                except Exception:
-                    _logger.warning(
-                        "StarbridgeResearcherScout: query=%r state=%s failed; continuing.",
-                        query,
-                        state,
-                        exc_info=True,
-                    )
-
-        # Every single query failed to reach the API. Returning [] here would be
-        # indistinguishable from a genuinely quiet scan, and the scout would report
-        # "0 signals" for an integration that is simply not configured -- the exact
-        # shape of the Argus failure. A partial failure still returns what it found.
-        if attempted and unavailable == attempted:
-            raise StarbridgeUnavailableError(
-                f"All {attempted} Starbridge queries failed to reach the API. "
-                "This is NOT a clear scan: report Starbridge as unavailable and say "
-                "that no signals were checked, not that none were found."
-            )
-
+        _logger.info(
+            "StarbridgeResearcherScout: %d signals after dedupe, %d kept, "
+            "%d below score %d, %d unclassified",
+            len(items),
+            len(findings),
+            skipped_low_score,
+            MIN_MATCH_SCORE,
+            skipped_unclassified,
+        )
         return findings

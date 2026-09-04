@@ -17,50 +17,78 @@ from artemis.scouts.starbridge.client import StarbridgeItem
 # Reason code constants (from registry)
 # ---------------------------------------------------------------------------
 
-_RC_BILL_INTRODUCED = "BILL_INTRODUCED"
-_RC_FEDERAL_GRANT_OPEN = "FEDERAL_GRANT_OPEN"
-_RC_STATE_DYSLEXIA = "STATE_DYSLEXIA_MANDATE"
-_RC_STATE_OBC = "STATE_OBC_LEGISLATION"
+#: Josh's canonical registry (artemis.marketing.josh_spec) holds exactly 17 reason
+#: codes. The four this module used to emit -- BILL_INTRODUCED, FEDERAL_GRANT_OPEN,
+#: STATE_DYSLEXIA_MANDATE, STATE_OBC_LEGISLATION -- are in none of them. They were
+#: invented alongside the rest of the fabricated integration, so every finding this
+#: scout produced carried a code no downstream consumer recognises. A live run
+#: labelled a Kansas *state* reading-screener RFP as FEDERAL_GRANT_OPEN.
+_RC_LITERACY_RFP = "PROCUREMENT_LITERACY_RFP"
+_RC_ELA_ADOPTION = "PROCUREMENT_ELA_ADOPTION"
+_RC_APPROVED_LIST = "VENDOR_APPROVED_LIST"
+_RC_LITERACY_GRANT = "FUNDING_LITERACY_GRANT"
+_RC_LIT_MANDATE = "POLICY_LIT_MANDATE"
+_RC_LEADER_FORMAL = "LEADER_TRANSITION_FORMAL"
+_RC_STRATEGIC_LITERACY = "DISTRICT_STRATEGIC_LITERACY"
 
-# TODO: confirm with Starbridge team — item_type values and their meanings
-_LEGISLATION_TYPES: frozenset[str] = frozenset(
-    {"bill", "legislation", "resolution", "amendment", "statute"}
-)
-_FUNDING_TYPES: frozenset[str] = frozenset({"grant", "funding", "award", "rfp", "solicitation"})
+_LEGISLATION_TYPES: frozenset[str] = frozenset({"signal"})
+_FUNDING_TYPES: frozenset[str] = frozenset({"rfp", "purchase"})
 
-# Keywords that trigger additional reason codes (applied to title)
 _DYSLEXIA_KEYWORDS: frozenset[str] = frozenset({"dyslexia", "dyslexic"})
-_OBC_KEYWORDS: frozenset[str] = frozenset({"outcomes-based", "obc", "performance contract"})
+_LITERACY_KEYWORDS: frozenset[str] = frozenset(
+    {"literacy", "reading", "screener", "screening", "phonics", "intervention", "tutor"}
+)
+_ADOPTION_KEYWORDS: frozenset[str] = frozenset(
+    {"instructional material", "curriculum", "adoption", "ela "}
+)
+_APPROVED_LIST_KEYWORDS: frozenset[str] = frozenset({"approved list", "vendor list", "hqim"})
+_GRANT_KEYWORDS: frozenset[str] = frozenset({"grant", "funding", "award", "appropriation"})
+_LEADER_KEYWORDS: frozenset[str] = frozenset(
+    {"superintendent", "chief academic officer", "appointment", "resignation"}
+)
 
 _URGENCY_HOT_DAYS = 30
 _URGENCY_STANDARD_DAYS = 90
 
 
 def _reason_codes(item: StarbridgeItem) -> list[str]:
-    """Determine reason codes from item_type and title keywords."""
-    item_type_lower = (item.item_type or "").lower()
-    title_lower = (item.title or "").lower()
-    summary_lower = (item.summary or "").lower()
-    combined_lower = f"{title_lower} {summary_lower}"
+    """Map a signal onto Josh's registry, or onto nothing.
+
+    Returning an empty list is a real outcome and the caller drops the finding.
+    A signal we cannot classify is worth less than nothing once it carries a
+    confident, wrong label: the previous version defaulted every unrecognised
+    item to BILL_INTRODUCED, which is how a Kansas procurement notice became a
+    federal grant.
+    """
+    text = f"{item.title or ''} {item.summary or ''}".lower()
+    item_type = (item.item_type or "").lower()
 
     codes: list[str] = []
 
-    # Primary code based on item type
-    if item_type_lower in _LEGISLATION_TYPES:
-        codes.append(_RC_BILL_INTRODUCED)
-    elif item_type_lower in _FUNDING_TYPES:
-        codes.append(_RC_FEDERAL_GRANT_OPEN)
-    else:
-        # TODO: confirm with Starbridge team — default for unknown item_type
-        codes.append(_RC_BILL_INTRODUCED)
+    if any(kw in text for kw in _APPROVED_LIST_KEYWORDS):
+        codes.append(_RC_APPROVED_LIST)
 
-    # Content-based supplemental codes
-    if any(kw in combined_lower for kw in _DYSLEXIA_KEYWORDS):
-        codes.append(_RC_STATE_DYSLEXIA)
-    if any(kw in combined_lower for kw in _OBC_KEYWORDS):
-        codes.append(_RC_STATE_OBC)
+    if item_type in _FUNDING_TYPES:
+        # An RFP is procurement. Which kind depends on what is being bought.
+        if any(kw in text for kw in _LITERACY_KEYWORDS):
+            codes.append(_RC_LITERACY_RFP)
+        if any(kw in text for kw in _ADOPTION_KEYWORDS):
+            codes.append(_RC_ELA_ADOPTION)
 
-    return codes
+    if any(kw in text for kw in _GRANT_KEYWORDS):
+        codes.append(_RC_LITERACY_GRANT)
+
+    if any(kw in text for kw in _DYSLEXIA_KEYWORDS):
+        codes.append(_RC_LIT_MANDATE)
+
+    if item_type == "meeting":
+        if any(kw in text for kw in _LEADER_KEYWORDS):
+            codes.append(_RC_LEADER_FORMAL)
+        elif any(kw in text for kw in _LITERACY_KEYWORDS):
+            codes.append(_RC_STRATEGIC_LITERACY)
+
+    # Preserve order, drop repeats.
+    return list(dict.fromkeys(codes))
 
 
 def _urgency(deadline_date: str | None) -> str:
@@ -94,10 +122,18 @@ def _urgency(deadline_date: str | None) -> str:
 
 
 def _district_id(item: StarbridgeItem) -> str:
-    """Return the districtId string for a StarbridgeItem."""
+    """Identify the buyer, falling back to the state, then to national.
+
+    Starbridge names the buyer on the row ("Kansas State Department of
+    Education"), and that is far more use than STATE_NATIONAL -- which is what
+    every single live finding was labelled, because `state` is never populated by
+    the feed.
+    """
+    if item.buyer_name:
+        return item.buyer_name.strip()
     if item.state:
         return f"STATE_{item.state.upper()}"
-    return "STATE_NATIONAL"  # TODO: confirm with Starbridge team — national fallback
+    return "STATE_NATIONAL"
 
 
 def _evidence(item: StarbridgeItem) -> str:
