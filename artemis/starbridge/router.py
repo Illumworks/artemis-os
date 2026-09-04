@@ -9,11 +9,12 @@ statewide screener RFP under twenty district strategic plans.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.marketing.models import SignalQueue
@@ -28,6 +29,33 @@ logger = logging.getLogger(__name__)
 #: short enough that an annually recurring RFP with an identical title is not
 #: silently swallowed a year later.
 CROSS_BRIDGE_WINDOW = timedelta(days=30)
+
+#: Noise words stripped before comparing two headlines. Kansas arrived twice as
+#: "Universal Reading Screener-Public School Districts RFP" and "...Public School
+#: Districts" -- one solicitation, two bridges, three characters apart, and an
+#: exact match collapsed neither. Deliberately a short closed list rather than
+#: fuzzy scoring: a similarity threshold high enough to catch this would also
+#: merge genuinely different solicitations, and two districts running separate
+#: screener RFPs is exactly the case we must not lose.
+_HEADLINE_NOISE = re.compile(
+    r"\b(rfps?|rfi|rfq|rfa|itb"
+    r"|requests? for (proposals?|information|quotes?|applications?|qualifications?)"
+    r"|invitations? (for|to) bids?|solicitation)\b",
+    re.IGNORECASE,
+)
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def normalize_headline(headline: str) -> str:
+    """Reduce a solicitation title to a comparable key.
+
+    Strips the procurement-vehicle words, then all punctuation and spacing, so
+    "Universal Reading Screener-Public School Districts RFP" and the same title
+    without "RFP" collapse to one key while two distinct RFPs stay distinct.
+    """
+    stripped = _HEADLINE_NOISE.sub(" ", headline or "")
+    return _NON_ALNUM.sub("", stripped.lower())
+
 
 SOURCE_TYPE = "starbridge"
 DISCOVERED_BY = "starbridge_webhook"
@@ -79,13 +107,53 @@ _MEETING_MARKERS = (
 )
 
 
+#: bridgeId -> filterType, resolved once from the API and reused.
+#:
+#: The webhook body names its bridge but not the bridge's type, and the bridge
+#: is the authority: RFP, Meeting, Buyer, Contact, Purchase. Guessing from the
+#: row's words instead put 21 board-minute rows into Josh's campaign queue --
+#: "Charleston County SD Allocates $2.2M for Amira" is intelligence about us, not
+#: a procurement trigger -- and classified "Pasadena Unified SD RFP for Security
+#: Patrols" as a literacy RFP because the title contains "RFP" and the bridge's
+#: summary column mentions reading.
+_BRIDGE_TYPES: dict[str, str] = {}
+
+
+async def resolve_bridge_type(bridge_id: str) -> str:
+    """Return the bridge's own filterType, or "" if it cannot be looked up.
+
+    Cached for the process lifetime: a bridge's type does not change, and a
+    backfill delivers a thousand rows from five bridges in twenty seconds.
+    Failure returns "" rather than raising, so a Starbridge outage degrades to
+    the content heuristic instead of dropping deliveries.
+    """
+    if not bridge_id:
+        return ""
+    if bridge_id in _BRIDGE_TYPES:
+        return _BRIDGE_TYPES[bridge_id]
+
+    try:
+        import os
+
+        from artemis.scouts.starbridge.client import StarbridgeClient
+
+        client = StarbridgeClient(api_key=os.getenv("STARBRIDGE_API_KEY", ""))
+        data = await client._get(f"/api/external/bridge/{bridge_id}")
+        filter_type = str(data.get("filterType") or "").lower()
+    except Exception:
+        logger.warning("starbridge: could not resolve bridge type for %s", bridge_id, exc_info=True)
+        return ""
+
+    _BRIDGE_TYPES[bridge_id] = filter_type
+    return filter_type
+
+
 def _infer_item_type(name: str, columns: dict[str, Any]) -> str:
-    """Best-effort type for a webhook row, or "" when it cannot be told.
+    """Fallback only, used when the bridge's own type cannot be resolved.
 
     Returning "" is deliberate: the mapper treats an unknown type as
-    non-procurement rather than assuming, so a wrong guess here cannot promote a
-    parking-lot bid into Josh's campaign queue. The feed path keeps Starbridge's
-    authoritative `filterType` and never reaches this.
+    non-procurement rather than assuming, so a wrong guess cannot promote a
+    parking-lot bid into Josh's campaign queue.
     """
     haystack = f"{name} {' '.join(str(c.get('value', '')) for c in columns.values() if isinstance(c, dict))}".lower()
     if any(marker in haystack for marker in _RFP_MARKERS):
@@ -95,7 +163,7 @@ def _infer_item_type(name: str, columns: dict[str, Any]) -> str:
     return ""
 
 
-def _webhook_to_signal(payload: dict[str, Any]) -> dict[str, Any] | None:
+def _webhook_to_signal(payload: dict[str, Any], bridge_type: str = "") -> dict[str, Any] | None:
     """Reshape a webhook body into the feed shape the mapper already understands.
 
     The webhook sends ``data.columns`` keyed by column name with no bridge
@@ -110,7 +178,9 @@ def _webhook_to_signal(payload: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "bridge": {
             "name": str(data.get("bridgeId") or ""),
-            "filterType": _infer_item_type(str(data.get("name") or ""), columns),
+            # The bridge's own type when we have it; the heuristic only as a
+            # fallback, because the bridge is the authority on what it collects.
+            "filterType": bridge_type or _infer_item_type(str(data.get("name") or ""), columns),
             "columns": [],
         },
         "row": {
@@ -128,7 +198,11 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
     429, and retrying a body we will never understand just repeats the failure
     three times. Unusable is reported, not thrown.
     """
-    signal = _webhook_to_signal(payload)
+    data = payload.get("data")
+    bridge_type = await resolve_bridge_type(
+        str(data.get("bridgeId") or "") if isinstance(data, dict) else ""
+    )
+    signal = _webhook_to_signal(payload, bridge_type)
     if signal is None:
         return RouteResult("malformed", detail="payload has no data object")
 
@@ -136,13 +210,12 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
     if not item.item_id:
         return RouteResult("malformed", detail="row carries no rowId")
 
-    finding = item_to_finding(item)
-    codes: list[str] = list(finding.get("reasonCodes") or [])
-    if not codes:
-        # Not a failure. We could not place it in Josh's registry, and a signal
-        # carrying a confident wrong label is worse than one we never had.
-        return RouteResult("unclassified", detail=item.title[:120])
-
+    # Dedupe BEFORE classifying. A duplicate is a duplicate whether or not this
+    # particular copy can be classified, and the copies differ: Kansas arrived
+    # once as "...Districts RFP" and once as "...Districts", and only the first
+    # carries the word that identifies it as procurement. Classifying first meant
+    # the second copy was dropped as unclassified rather than recognised as the
+    # signal we already had.
     # Idempotency at the data layer, not just on webhook-id: Starbridge sends
     # bridge.row.updated for the same row repeatedly as later columns finish.
     existing = (
@@ -154,7 +227,7 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return RouteResult("duplicate", signal_id=int(existing), reason_codes=codes)
+        return RouteResult("duplicate", signal_id=int(existing))
 
     # Cross-bridge duplication, which rowId cannot catch. One RFP matched by four
     # bridges is four DIFFERENT rows with four different rowIds -- the Kansas
@@ -164,22 +237,33 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
     # keeping; the price is that the same event legitimately arrives several
     # times and only the headline identifies it.
     headline = item.title.strip()
-    if headline:
-        twin = (
+    key = normalize_headline(headline)
+    if key:
+        # Compared in Python, not SQL: the normalisation is a regex the database
+        # cannot express, and the candidate set is one window of Starbridge
+        # signals rather than the whole table.
+        recent = (
             (
                 await session.execute(
-                    select(SignalQueue.id).where(
+                    select(SignalQueue.id, SignalQueue.headline).where(
                         SignalQueue.source_type == SOURCE_TYPE,
-                        func.lower(SignalQueue.headline) == headline.lower(),
                         SignalQueue.created_at > datetime.now(UTC) - CROSS_BRIDGE_WINDOW,
                     )
                 )
             )
-            .scalars()
-            .first()
+            .tuples()
+            .all()
         )
-        if twin is not None:
-            return RouteResult("duplicate", signal_id=int(twin), reason_codes=codes)
+        for existing_id, existing_headline in recent:
+            if normalize_headline(existing_headline or "") == key:
+                return RouteResult("duplicate", signal_id=int(existing_id))
+
+    finding = item_to_finding(item)
+    codes: list[str] = list(finding.get("reasonCodes") or [])
+    if not codes:
+        # Not a failure. We could not place it in Josh's registry, and a signal
+        # carrying a confident wrong label is worse than one we never had.
+        return RouteResult("unclassified", detail=item.title[:120])
 
     if not is_actionable(codes):
         await _write_observation(session, item, finding, codes)

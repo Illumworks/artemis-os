@@ -219,3 +219,168 @@ async def test_two_genuinely_different_rfps_both_queue(db_session) -> None:
     assert a.outcome == "queued"
     assert b.outcome == "queued"
     assert a.signal_id != b.signal_id
+
+
+# ── near-duplicate headlines ─────────────────────────────────────────────────
+
+
+def test_the_kansas_pair_collapses_to_one_key() -> None:
+    """One solicitation, two bridges, three characters apart.
+
+    Exact matching collapsed neither, so Kansas reached the queue twice in the
+    live backfill.
+    """
+    from artemis.starbridge.router import normalize_headline
+
+    assert normalize_headline("Universal Reading Screener-Public School Districts RFP") == (
+        normalize_headline("Universal Reading Screener-Public School Districts")
+    )
+
+
+def test_procurement_vehicle_wording_does_not_make_two_signals() -> None:
+    from artemis.starbridge.router import normalize_headline
+
+    base = normalize_headline("Synchronous Online High Impact Tutorials")
+    for variant in (
+        "Synchronous Online High Impact Tutorials (Request for Proposal)",
+        "Synchronous Online High Impact Tutorials RFP",
+        "Synchronous Online High Impact Tutorials - Invitation to Bid",
+        "Synchronous Online High Impact Tutorials  (RFQ)",
+    ):
+        assert normalize_headline(variant) == base, variant
+
+
+def test_two_different_solicitations_stay_separate() -> None:
+    """The case a fuzzy threshold would have broken.
+
+    Two districts running separate screener RFPs is normal, and merging them
+    loses a real opportunity — which is why this is a closed list of vehicle
+    words rather than a similarity score.
+    """
+    from artemis.starbridge.router import normalize_headline
+
+    assert normalize_headline("Kansas Universal Reading Screener RFP") != normalize_headline(
+        "Ohio Universal Reading Screener RFP"
+    )
+    assert normalize_headline("K-3 Screener RFP") != normalize_headline("K-8 Screener RFP")
+
+
+@pytest.mark.asyncio
+async def test_a_near_duplicate_delivery_is_recognised(db_session) -> None:
+    first = await route_delivery(
+        db_session,
+        json.loads(
+            _body(
+                row_id="r-1",
+                name="Universal Reading Screener-Public School Districts RFP",
+                columns=_RFP_COLUMNS,
+            )
+        ),
+    )
+    await db_session.flush()
+
+    second = await route_delivery(
+        db_session,
+        json.loads(
+            _body(
+                row_id="r-2",
+                name="Universal Reading Screener-Public School Districts",
+                columns=_RFP_COLUMNS,
+            )
+        ),
+    )
+
+    assert first.outcome == "queued"
+    assert second.outcome == "duplicate"
+    assert second.signal_id == first.signal_id
+
+
+# ── the bridge is the authority on its own type ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_meetings_bridge_row_goes_to_memory_not_the_campaign_queue(
+    db_session, monkeypatch
+) -> None:
+    """21 board-minute rows reached Josh's queue in the live backfill.
+
+    "Charleston County SD Allocates $2.2M for Amira" is intelligence about us,
+    not a procurement trigger. The webhook body carries no filterType, so the
+    keyword heuristic saw "grant" and routed it as actionable.
+    """
+    import artemis.starbridge.router as router_mod
+
+    async def _meeting(_bridge_id: str) -> str:
+        return "meeting"
+
+    monkeypatch.setattr(router_mod, "resolve_bridge_type", _meeting)
+    before = (await db_session.execute(select(func.count()).select_from(SignalQueue))).scalar_one()
+
+    payload = json.loads(
+        _body(
+            row_id="r-bm",
+            name="Charleston County SD Allocates $2.2M for Amira",
+            columns={
+                "Match Score": 4,
+                "Summarized Relevance": "- Board approved literacy grant funding.",
+                "Buyer Name": "Charleston County School District",
+            },
+        )
+    )
+    result = await route_delivery(db_session, payload)
+    await db_session.flush()
+
+    assert result.outcome == "observation"
+    after = (await db_session.execute(select(func.count()).select_from(SignalQueue))).scalar_one()
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_the_bridge_type_overrides_the_keyword_guess(db_session, monkeypatch) -> None:
+    """ "Pasadena Unified SD RFP for Security Patrols" was tagged a literacy RFP.
+
+    The title contains "RFP" and the bridge's summary column mentions reading,
+    so the heuristic promoted a security contract into the campaign queue.
+    """
+    import artemis.starbridge.router as router_mod
+
+    async def _meeting(_bridge_id: str) -> str:
+        return "meeting"
+
+    monkeypatch.setattr(router_mod, "resolve_bridge_type", _meeting)
+
+    payload = json.loads(
+        _body(
+            row_id="r-sec",
+            name="Pasadena Unified SD RFP for Security Patrols",
+            columns={
+                "Match Score": 4,
+                "Summarized Relevance": "- Reading room patrols.",
+                "Buyer Name": "Pasadena USD",
+            },
+        )
+    )
+    result = await route_delivery(db_session, payload)
+
+    assert result.outcome != "queued", "a security contract must not enter the campaign queue"
+
+
+@pytest.mark.asyncio
+async def test_an_unresolvable_bridge_falls_back_rather_than_dropping(
+    db_session, monkeypatch
+) -> None:
+    """A Starbridge outage must degrade, not lose deliveries."""
+    import artemis.starbridge.router as router_mod
+
+    async def _unresolved(_bridge_id: str) -> str:
+        return ""
+
+    monkeypatch.setattr(router_mod, "resolve_bridge_type", _unresolved)
+
+    result = await route_delivery(
+        db_session,
+        json.loads(
+            _body(row_id="r-fb", name="Statewide Literacy Screener RFP", columns=_RFP_COLUMNS)
+        ),
+    )
+    assert result.outcome == "queued"

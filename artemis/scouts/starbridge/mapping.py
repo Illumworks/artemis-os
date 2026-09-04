@@ -54,41 +54,50 @@ _URGENCY_STANDARD_DAYS = 90
 def _reason_codes(item: StarbridgeItem) -> list[str]:
     """Map a signal onto Josh's registry, or onto nothing.
 
-    Returning an empty list is a real outcome and the caller drops the finding.
-    A signal we cannot classify is worth less than nothing once it carries a
-    confident, wrong label: the previous version defaulted every unrecognised
-    item to BILL_INTRODUCED, which is how a Kansas procurement notice became a
-    federal grant.
+    **The bridge's type gates which codes are even reachable.** A board meeting
+    that mentions a grant is intelligence about a district, not a funding
+    opportunity to campaign on -- and treating the two alike put 21 board-minute
+    rows into Josh's campaign queue in the live backfill, including "Charleston
+    County SD Allocates $2.2M for Amira", which is a customer telling us they
+    already bought. Procurement and funding codes are therefore reachable only
+    from procurement-shaped bridges.
+
+    Returning an empty list is a real outcome and the caller drops the finding. A
+    signal we cannot classify is worth less than nothing once it carries a
+    confident, wrong label.
     """
     text = f"{item.title or ''} {item.summary or ''}".lower()
     item_type = (item.item_type or "").lower()
 
     codes: list[str] = []
 
-    if any(kw in text for kw in _APPROVED_LIST_KEYWORDS):
-        codes.append(_RC_APPROVED_LIST)
+    if item_type == "meeting":
+        # Context, never a campaign trigger. Board minutes are where a district
+        # says what it is doing; that is worth retrieving later, not acting on.
+        if any(kw in text for kw in _LEADER_KEYWORDS):
+            codes.append(_RC_LEADER_FORMAL)
+        elif any(kw in text for kw in _LITERACY_KEYWORDS | _GRANT_KEYWORDS):
+            codes.append(_RC_STRATEGIC_LITERACY)
+        return codes
 
     if item_type in _FUNDING_TYPES:
-        # An RFP is procurement. Which kind depends on what is being bought.
+        if any(kw in text for kw in _APPROVED_LIST_KEYWORDS):
+            codes.append(_RC_APPROVED_LIST)
         if any(kw in text for kw in _LITERACY_KEYWORDS):
             codes.append(_RC_LITERACY_RFP)
         if any(kw in text for kw in _ADOPTION_KEYWORDS):
             codes.append(_RC_ELA_ADOPTION)
+        if any(kw in text for kw in _GRANT_KEYWORDS):
+            codes.append(_RC_LITERACY_GRANT)
+        if any(kw in text for kw in _DYSLEXIA_KEYWORDS):
+            codes.append(_RC_LIT_MANDATE)
+        return list(dict.fromkeys(codes))
 
-    if any(kw in text for kw in _GRANT_KEYWORDS):
-        codes.append(_RC_LITERACY_GRANT)
-
+    # Buyer, Contact and unknown-type rows are lists, not events. Nothing here
+    # is a campaign trigger, and a dyslexia mention alone is a policy note.
     if any(kw in text for kw in _DYSLEXIA_KEYWORDS):
         codes.append(_RC_LIT_MANDATE)
-
-    if item_type == "meeting":
-        if any(kw in text for kw in _LEADER_KEYWORDS):
-            codes.append(_RC_LEADER_FORMAL)
-        elif any(kw in text for kw in _LITERACY_KEYWORDS):
-            codes.append(_RC_STRATEGIC_LITERACY)
-
-    # Preserve order, drop repeats.
-    return list(dict.fromkeys(codes))
+    return codes
 
 
 def _urgency(deadline_date: str | None) -> str:

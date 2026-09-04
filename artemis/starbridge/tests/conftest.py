@@ -28,3 +28,19 @@ async def db_session() -> AsyncIterator[AsyncSession]:
     async with AsyncSession(_engine, expire_on_commit=False) as session:
         yield session
         await session.rollback()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_bridge_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the routing tests off the network.
+
+    `route_delivery` resolves a bridge's type from the Starbridge API. Left
+    unstubbed the suite made a real HTTP call per test, which is slow, needs a
+    key, and fails in CI. Tests that care about the type override this.
+    """
+    import artemis.starbridge.router as router_mod
+
+    async def _unresolved(_bridge_id: str) -> str:
+        return ""
+
+    monkeypatch.setattr(router_mod, "resolve_bridge_type", _unresolved)
