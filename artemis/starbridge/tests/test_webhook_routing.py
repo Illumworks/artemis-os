@@ -73,7 +73,10 @@ async def test_a_procurement_signal_lands_in_the_campaign_queue(db_session) -> N
     ).scalar_one()
     assert row.source_type == "starbridge"
     assert row.district_id == "Kansas State Department of Education"
-    assert "PROCUREMENT_LITERACY_RFP" in row.reason_codes
+    # Membership against the ENTRIES, not against a list of strings. The
+    # original form of this line passed precisely because the codes were being
+    # written as bare strings -- it asserted the bug.
+    assert {rc["code"] for rc in row.reason_codes} >= {"PROCUREMENT_LITERACY_RFP"}
     assert row.source_url == "https://supplier.sok.ks.gov/bid"
     assert row.provenance["match_score"] == 5
 
@@ -384,3 +387,58 @@ async def test_an_unresolvable_bridge_falls_back_rather_than_dropping(
         ),
     )
     assert result.outcome == "queued"
+
+
+# ── the shape the qualifier actually reads ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reason_codes_are_written_in_the_shape_the_qualifier_reads(db_session) -> None:
+    """`[{"code": ...}]`, never `["..."]`.
+
+    `qualifier.qualify_signal` does `rc.get("code")` on each entry. Handed a bare
+    string it raises AttributeError and the entire qualification crashes -- so
+    the signal never scores, never pushes, and never reaches anyone. The first
+    backfill wrote 1,021 rows as plain strings and every one of them would have
+    sat in pending_qualification forever.
+    """
+    result = await route_delivery(
+        db_session,
+        json.loads(_body(row_id="rc-1", name="Literacy Screener RFP", columns=_RFP_COLUMNS)),
+    )
+    await db_session.flush()
+
+    row = (
+        await db_session.execute(select(SignalQueue).where(SignalQueue.id == result.signal_id))
+    ).scalar_one()
+
+    assert row.reason_codes, "a queued signal must carry its codes"
+    for entry in row.reason_codes:
+        assert isinstance(entry, dict), f"got {type(entry).__name__}, qualifier will crash"
+        assert entry.get("code"), "each entry must carry a non-empty 'code'"
+
+
+@pytest.mark.asyncio
+async def test_the_written_codes_survive_the_real_qualifier_reader(db_session) -> None:
+    """Assert against the consumer's own logic, not against our idea of it.
+
+    A test that only checks "is a dict" would still pass if the key were named
+    something else, which is the mistake that produced the bug.
+    """
+    result = await route_delivery(
+        db_session,
+        json.loads(_body(row_id="rc-2", name="Statewide Screener RFP", columns=_RFP_COLUMNS)),
+    )
+    await db_session.flush()
+    row = (
+        await db_session.execute(select(SignalQueue).where(SignalQueue.id == result.signal_id))
+    ).scalar_one()
+
+    # Mirrors artemis/marketing/qualifier.py::qualify_signal.
+    reason_map: dict[str, float] = {}
+    for rc in row.reason_codes or []:
+        if not rc or not rc.get("code"):
+            continue
+        reason_map[str(rc["code"])] = 1.0
+
+    assert "PROCUREMENT_LITERACY_RFP" in reason_map

@@ -280,7 +280,13 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
         urgency_tier=str(finding.get("urgency") or "standard"),
         discovered_by=DISCOVERED_BY,
         district_id=str(finding.get("districtId") or "") or None,
-        reason_codes=codes,
+        # `[{"code": ...}]`, not `["..."]`. This is the shape
+        # `qualifier.qualify_signal` reads, and it reads `rc.get("code")` --
+        # handed a bare string it raises AttributeError and the whole
+        # qualification crashes. The first backfill wrote 1,021 rows as plain
+        # strings, every one of which would have sat in pending_qualification
+        # forever, never scored, never pushed, never seen by anyone.
+        reason_codes=[{"code": c} for c in codes],
         provenance={
             "starbridge_row_id": item.item_id,
             "starbridge_bridge": item.bridge_name,
