@@ -48,6 +48,24 @@ class Finding:
 
 
 @dataclass(frozen=True)
+class SourceYield:
+    """One scout, and whether its runs actually produce anything.
+
+    A scout that runs on schedule and emits nothing looks identical, from every
+    other angle in this report, to a scout watching a quiet world.
+    """
+
+    scout_type: str
+    runs: int
+    productive_runs: int
+    last_run: datetime | None
+
+    @property
+    def is_silently_dead(self) -> bool:
+        return self.runs >= DEAD_SOURCE_MIN_RUNS and self.productive_runs == 0
+
+
+@dataclass(frozen=True)
 class AgentActivity:
     """One named agent, seen through every path it can write to.
 
@@ -168,7 +186,16 @@ class Report:
     stuck_runs: list[StuckRun] = field(default_factory=list)
     phantom_claims: list[PhantomClaim] = field(default_factory=list)
     state_coverage: list[StateCoverage] = field(default_factory=list)
+    source_yield: list[SourceYield] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+
+
+#: A scout must have had at least this many runs in the window before "zero
+#: signals" means anything. Below it, a quiet world is the likelier explanation.
+DEAD_SOURCE_MIN_RUNS = 5
+
+#: How far back to look when judging whether a source is producing.
+DEAD_SOURCE_WINDOW = timedelta(days=14)
 
 
 # ── formatting ────────────────────────────────────────────────────────────────
@@ -521,9 +548,68 @@ async def collect_state_coverage(session: AsyncSession) -> list[StateCoverage]:
     ]
 
 
+async def collect_source_yield(session: AsyncSession) -> list[SourceYield]:
+    """Per scout: how often it ran, and how often that run produced a signal.
+
+    **Why this exists.** `starbridge_researcher` ran 48 times over three weeks
+    and emitted nothing on every single one, because its API client pointed at a
+    hostname that does not resolve. Nothing in this report noticed, because a
+    scout that completes successfully with zero findings is indistinguishable
+    from a scout with nothing to find -- the run is green, the log says
+    "Scan complete", and the number is a legitimate answer on a quiet day.
+
+    It is the Argus failure in a different costume: a tool reporting success for
+    work it did not do. The tell is not any single zero. It is a run count with a
+    zero beside it.
+    """
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT scout_type,
+                       count(*) AS runs,
+                       count(*) FILTER (
+                           WHERE coalesce(jsonb_array_length(created_signal_ids), 0) > 0
+                       ) AS productive,
+                       max(started_at) AS last_run
+                FROM scout_runs
+                -- make_interval, not a bound timedelta: asyncpg sends the latter
+                -- untyped and Postgres reads `now() - $1` as an interval, giving
+                -- "operator does not exist: timestamp with time zone > interval".
+                WHERE started_at > now() - make_interval(days => :days)
+                GROUP BY scout_type
+                ORDER BY productive, runs DESC
+                """
+            ),
+            {"days": DEAD_SOURCE_WINDOW.days},
+        )
+    ).all()
+    return [
+        SourceYield(
+            scout_type=str(r.scout_type),
+            runs=int(r.runs),
+            productive_runs=int(r.productive),
+            last_run=r.last_run,
+        )
+        for r in rows
+    ]
+
+
 def derive_findings(report: Report) -> list[Finding]:
     """Turn the raw numbers into the short list of things that need a human."""
     findings: list[Finding] = []
+
+    for src in report.source_yield:
+        if src.is_silently_dead:
+            findings.append(
+                Finding(
+                    "stuck",
+                    f"{src.scout_type}: {src.runs} runs in the last "
+                    f"{DEAD_SOURCE_WINDOW.days} days, NOT ONE produced a signal -- "
+                    "a broken source and a quiet world look identical from here, "
+                    "so treat this as broken until proven otherwise",
+                )
+            )
 
     if report.service.get("healthz") != "200":
         findings.append(Finding("stuck", f"healthz returned {report.service.get('healthz')!r}"))
@@ -648,6 +734,7 @@ async def build_report() -> Report:
         report.stuck_runs = await collect_stuck_runs(session)
         report.phantom_claims = await find_phantom_claims(session)
         report.state_coverage = await collect_state_coverage(session)
+        report.source_yield = await collect_source_yield(session)
     report.findings = derive_findings(report)
     return report
 
@@ -743,6 +830,16 @@ def render(report: Report) -> str:
             f"  {len(covered)} states above the {COVERAGE_DISTRICT_FLOOR}-district floor; "
             f"{blind_n} with zero signals"
         )
+
+    if report.source_yield:
+        add("")
+        add(f"SOURCE YIELD (last {DEAD_SOURCE_WINDOW.days} days)")
+        for src in report.source_yield:
+            marker = "!!" if src.is_silently_dead else "  "
+            add(
+                f"  {marker} {src.scout_type[:30]:32} {src.runs:>4} runs "
+                f"{src.productive_runs:>4} produced a signal"
+            )
 
     add("")
     add("FINDINGS")
