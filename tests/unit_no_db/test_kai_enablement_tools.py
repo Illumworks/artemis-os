@@ -309,14 +309,20 @@ class TestKaiToolRegistry:
         # Kai's locked-down registry: search + get + the facet/filter tool,
         # plus the single identity-gated flag_catalog_gap added 2026-08-11.
         # If this count changes again, it is a security decision — not a refactor.
+        #
+        # read_web_page joined on 2026-08-31 and was weighed as such: layer 1, no
+        # agency, touches no Amira system — it fetches a public URL and returns
+        # text. Julie asked him for a one-pager that was "not on the resources
+        # sheet" and gave him the link; he could only search his own index.
         reg = build_authorized_tool_registry(set(), agent_id="kai")
-        assert len(reg) == 5
+        assert len(reg) == 6
         assert {e.tool.name for e in reg.all_entries()} == {
             "search_enablement_assets",
             "get_enablement_asset",
             "list_enablement_facets",
             "flag_catalog_gap",
             "update_asset_summary",
+            "read_web_page",
         }
 
     def test_kai_registry_has_search_tool(self):

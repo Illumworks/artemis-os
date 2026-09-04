@@ -154,9 +154,16 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
     # Translate "suite + function" phrasing into the product name the asset is filed
     # under (e.g. "Lectura ILP" -> + "Enseñar"), so retrieval connects regardless of
     # how the user phrased it. No-op unless a suite AND a function are both named.
-    from artemis.enablement.product_taxonomy import expand_query
+    from artemis.enablement.product_taxonomy import expand_domain_terms, expand_query
 
+    # Two expansions, and they answer different questions. expand_query resolves
+    # "suite + function" into a product name. expand_domain_terms bridges the gap
+    # between how people ask and how the library is filed -- "rostering" appears
+    # in none of the 416 assets, so nothing finds it without this.
     search_text = expand_query(query)
+    _domain = expand_domain_terms(query)
+    if _domain:
+        search_text = f"{search_text} {' '.join(_domain)}"
 
     # Optional structured filters.
     audience_filter: str | None = inp.get("audience")
@@ -203,6 +210,27 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
             _logger.debug("search_enablement_assets: embedding unavailable (%r)", embed_exc)
 
         async with _db.SessionLocal() as session:
+            # Retrieval is a UNION of vector and keyword, not a fallback chain.
+            #
+            # Until 2026-09-04 keyword ran ONLY when vector returned nothing, so a
+            # document whose title literally contained the asker's word could never
+            # enter the pool as long as the vector search returned anything at all.
+            # Sara asked for "customer facing tech requirement documents for
+            # rostering" and got the Tech Care Family Letter -- a parent PDF --
+            # while "Amira Technical Guide", "Tech Prep Guide" and the Clever /
+            # ClassLink rostering walkthroughs sat unretrieved.
+            #
+            # 69% of the library has no summary, so those assets embed on title
+            # alone and compete badly on a compound question. Keyword is exactly
+            # what rescues them, which is why it now always runs.
+            #
+            # The re-ranker below is unchanged: this only widens what it can see.
+            pool: dict[Any, Any] = {}
+
+            def _absorb(found: list[Any]) -> None:
+                for a in found:
+                    pool.setdefault(a.id, a)
+
             if embedding is not None:
                 # Cosine similarity via pgvector (<=> operator = cosine distance; order ASC).
                 # Filter to enablement + shared scopes only.
@@ -225,16 +253,29 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                 )
                 stmt = _apply_filters(stmt)
                 result = await session.execute(stmt)
-                assets = list(result.scalars().all())
+                _absorb(list(result.scalars().all()))
 
-                # If vector search returned nothing, fall back to keyword.
-                if not assets:
-                    embedding = None  # trigger keyword path below
+            # Keyword pass, ALWAYS. Matches significant TERMS rather than the whole
+            # query as one substring -- "%customer facing tech requirement documents
+            # for rostering%" matches nothing, ever, which made the old fallback
+            # useless for exactly the natural-language questions people ask.
+            import re as _re
 
-            if embedding is None:
-                # Keyword search: case-insensitive substring match on title, summary, tags.
-                q_lower = f"%{query.lower()}%"
-
+            terms = [
+                t for t in _re.split(r"[^a-z0-9]+", (search_text or "").lower()) if len(t) >= 3
+            ][:8]
+            if terms:
+                term_clauses = []
+                for term in terms:
+                    like = f"%{term}%"
+                    term_clauses.extend(
+                        [
+                            func.lower(EnablementAsset.title).like(like),
+                            func.lower(EnablementAsset.summary).like(like),
+                            func.lower(EnablementAsset.asset_name).like(like),
+                            func.lower(EnablementAsset.searchable_text).like(like),
+                        ]
+                    )
                 stmt = (
                     select(EnablementAsset)
                     .where(
@@ -244,20 +285,15 @@ async def _search_enablement_assets(inp: dict[str, Any]) -> str:
                         )
                     )
                     .where(EnablementAsset.status.is_distinct_from("archived"))
-                    .where(
-                        or_(
-                            func.lower(EnablementAsset.title).like(q_lower),
-                            func.lower(EnablementAsset.summary).like(q_lower),
-                            func.lower(EnablementAsset.asset_name).like(q_lower),
-                            func.lower(EnablementAsset.searchable_text).like(q_lower),
-                        )
-                    )
+                    .where(or_(*term_clauses))
                     .order_by(EnablementAsset.updated_at.desc())
                     .limit(candidate_k)
                 )
                 stmt = _apply_filters(stmt)
                 result = await session.execute(stmt)
-                assets = list(result.scalars().all())
+                _absorb(list(result.scalars().all()))
+
+            assets = list(pool.values())
 
         # Hybrid re-rank (keyword/title boost over the vector pool), then trim.
         # Use the expanded text so the product-name boost (e.g. "Enseñar") applies.

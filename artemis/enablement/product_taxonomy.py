@@ -150,3 +150,55 @@ So when someone asks for a Lectura/Spanish ILP lesson or video, search the produ
 does not exist before you have searched the specific product name it would be filed under.
 
 "The Story of America" is a separate standalone product, outside the Dual Language Suite."""
+
+# ── Operational vocabulary (2026-09-04) ──────────────────────────────────────
+#
+# Practitioners ask in one vocabulary; the library is filed in another. Sara
+# asked for "customer facing tech requirement documents for rostering" and got a
+# parent PDF, while "Amira Technical Guide", "Tech Prep Guide" and the Clever /
+# ClassLink walkthroughs sat unretrieved.
+#
+# The reason is stark: the word "roster" appears in ZERO of 416 assets. Not a
+# title, not a summary, not a body. No amount of keyword or vector search finds a
+# word the corpus does not contain, so the bridge has to be built here.
+#
+# Every RIGHT-HAND term below was verified present in the live corpus before
+# being added (clever: 4 assets, classlink: 3, technical: 9). Adding a synonym
+# that matches nothing would just be noise pretending to be a fix.
+#
+# Deliberately small. This is a bridge for vocabulary the library genuinely
+# lacks, NOT a general thesaurus -- every entry widens the candidate pool for
+# every matching query, and an over-broad map degrades precision for everyone.
+_DOMAIN_SYNONYMS: dict[tuple[str, ...], tuple[str, ...]] = {
+    # How districts provision students and teachers.
+    ("roster", "rostering", "sso", "single sign on", "provisioning", "account setup"): (
+        "Clever",
+        "ClassLink",
+        "log in",
+    ),
+    # What IT asks for before a deployment.
+    ("tech requirement", "technical requirement", "system requirement", "it requirement"): (
+        "Technical Guide",
+        "Tech Prep",
+        "Device Setup",
+    ),
+}
+
+
+def expand_domain_terms(query: str) -> list[str]:
+    """Return library vocabulary implied by an operational question.
+
+    Separate from the product expansion above: that one resolves a suite plus a
+    function into a product NAME, and fires only when both cues are present. This
+    one maps an operational concept onto the words the assets actually use, and
+    fires on a single cue -- because a question like "rostering resources" has
+    only the one.
+    """
+    if not query or not query.strip():
+        return []
+    q = _norm(query)
+    additions: list[str] = []
+    for cues, targets in _DOMAIN_SYNONYMS.items():
+        if any(cue in q for cue in cues):
+            additions.extend(t for t in targets if _norm(t) not in q and t not in additions)
+    return additions

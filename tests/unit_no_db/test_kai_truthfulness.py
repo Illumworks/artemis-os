@@ -155,7 +155,13 @@ def test_kai_persona_carries_the_row_28_worked_example() -> None:
 
 
 def test_kai_registry_is_exactly_three_reads_plus_two_gated_writes() -> None:
-    """Kai's whole surface. Widening this is a security change, not a feature."""
+    """Kai's whole surface. Widening this is a security change, not a feature.
+
+    read_web_page was added 2026-08-31 under exactly that standard: layer 1, no
+    agency, no Amira system touched. It reads a public URL and returns text,
+    which is what "where is X" needs when the answer sits behind a link someone
+    just handed him.
+    """
     registry = build_authorized_tool_registry(set(), agent_id="kai")
     by_name = {entry.tool.name: entry for entry in registry.all_entries()}
     assert set(by_name) == {
@@ -164,8 +170,14 @@ def test_kai_registry_is_exactly_three_reads_plus_two_gated_writes() -> None:
         "list_enablement_facets",
         "flag_catalog_gap",
         "update_asset_summary",
+        "read_web_page",
     }
-    for name in ("search_enablement_assets", "get_enablement_asset", "list_enablement_facets"):
+    for name in (
+        "search_enablement_assets",
+        "get_enablement_asset",
+        "list_enablement_facets",
+        "read_web_page",
+    ):
         assert by_name[name].layer == 1, f"{name} must stay layer 1 (read-only)"
     assert by_name["flag_catalog_gap"].layer == 2
     assert by_name["update_asset_summary"].layer == 2
