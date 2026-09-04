@@ -202,3 +202,40 @@ async def backfill_summaries(
         await session.flush()
     logger.info("enablement summary backfill: %s", report.summary())
     return report
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import asyncio
+    import sys
+
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="fetch and generate but write nothing, so a run can be read before it lands",
+    )
+    args = parser.parse_args()
+
+    async def _main() -> None:
+        import artemis.db as _db
+
+        async with _db.SessionLocal() as session:
+            report = await backfill_summaries(session, limit=args.limit, dry_run=args.dry_run)
+            if not args.dry_run:
+                await session.commit()
+
+        print(report.summary())
+        if report.skipped_titles:
+            # Skips are the honest half of the result and are always shown --
+            # a run that only printed its successes would misreport coverage.
+            print("\nskipped:")
+            for line in report.skipped_titles:
+                print(f"  - {line}")
+
+    asyncio.run(_main())
