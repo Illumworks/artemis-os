@@ -98,7 +98,14 @@ def _filename_for(url: str, content_type: str) -> str:
     return f"page{suffix}"
 
 
-async def _read_web_page(inp: dict[str, Any]) -> str:
+async def _read_web_page(inp: dict[str, Any], *, max_bytes: int | None = None) -> str:
+    """Fetch a page and return its text inside an untrusted-content envelope.
+
+    `max_bytes` is keyword-only and deliberately absent from the tool schema, so
+    it is reachable by in-process callers and not by anything an agent can say.
+    The enablement backfill uses it to read the ~26MB customer manuals, which the
+    default ceiling refuses; `extract` clamps whatever it is given.
+    """
     url = str(inp.get("url") or "").strip()
     if not url:
         return "read_web_page needs a url."
@@ -156,6 +163,7 @@ async def _read_web_page(inp: dict[str, Any]) -> str:
                 mimetype=content_type,
                 source="web",
                 source_url=url,
+                max_bytes=max_bytes,
             )
         except ExtractionError as exc:
             return f"Fetched {url} but could not read it: {exc.reason}"

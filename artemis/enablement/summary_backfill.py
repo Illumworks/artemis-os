@@ -158,9 +158,14 @@ async def _fetch_document_text(url: str) -> str:
                 extracted = await fetch_google_file(links[0][1], token=token, client=client)
             return extracted.text
 
+        from artemis.files.extract.base import MAX_DOWNLOAD_BYTES_TRUSTED
         from artemis.floating_artemis.tools.web import _read_web_page
 
-        raw = await _read_web_page({"url": url})
+        # The raised ceiling is the whole reason three customer manuals are
+        # readable at all: at ~26MB they sit just over the default and yield
+        # 166,000 characters of real text. Keyword-only, so no agent can ask for
+        # it; `extract` clamps it regardless.
+        raw = await _read_web_page({"url": url}, max_bytes=MAX_DOWNLOAD_BYTES_TRUSTED)
         if raw.startswith(("Refusing", "Could not read", "read_web_page failed", "Fetched")):
             return ""
         return _strip_tool_framing(raw)

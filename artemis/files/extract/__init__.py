@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 from artemis.files.extract.base import (
     MAX_DOWNLOAD_BYTES,
+    MAX_DOWNLOAD_BYTES_TRUSTED,
     ExtractedFile,
     FileTooLargeError,
     UnsupportedFileTypeError,
@@ -113,6 +114,7 @@ def extract(
     mimetype: str = "",
     source: str = "",
     source_url: str = "",
+    max_bytes: int | None = None,
 ) -> ExtractedFile:
     """Route `payload` to the right extractor and return a bounded rendering.
 
@@ -120,10 +122,13 @@ def extract(
     and `FileTooLargeError` when the payload exceeds the ceiling. Both carry a
     `reason` written to be repeated to the person who shared the file.
     """
-    if len(payload) > MAX_DOWNLOAD_BYTES:
+    # `max_bytes` is for trusted in-process callers only and is clamped, so a
+    # caller cannot lift the ceiling arbitrarily by asking for a bigger number.
+    ceiling = min(max_bytes or MAX_DOWNLOAD_BYTES, MAX_DOWNLOAD_BYTES_TRUSTED)
+    if len(payload) > ceiling:
         raise FileTooLargeError(
             f"{filename} is {len(payload):,} bytes, over the "
-            f"{MAX_DOWNLOAD_BYTES:,}-byte limit, so it was not read."
+            f"{ceiling:,}-byte limit, so it was not read."
         )
 
     extension = _extension_of(filename)

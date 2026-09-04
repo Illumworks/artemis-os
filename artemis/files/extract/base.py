@@ -14,6 +14,15 @@ from typing import Literal
 # refused; a stray multi-hundred-MB upload must not be able to wedge the app.
 MAX_DOWNLOAD_BYTES: int = 25 * 1024 * 1024
 
+# The most a trusted in-process caller may raise the ceiling to. Three of the
+# catalog's customer manuals are ~26MB and yield 166,000 characters of real text,
+# so the 25MB default was the only thing stopping the enablement backfill from
+# reading the most important documents it has. Nothing an agent says can reach
+# this: it is a keyword argument to `extract`, not a tool parameter, and it is
+# still a ceiling rather than an escape hatch, because the reason for having one
+# at all -- a stray upload must not be able to wedge the app -- has not changed.
+MAX_DOWNLOAD_BYTES_TRUSTED: int = 64 * 1024 * 1024
+
 # Ceiling on extracted text we retain. Chosen to be generous for documents while
 # staying far below any model's context: the point of extraction is to give an
 # agent something readable, not to relay the file.

@@ -369,3 +369,52 @@ def test_the_report_line_is_readable_and_balanced() -> None:
     assert "((" not in line
     assert "10 summarised of 15" in line
     assert "165" in line
+
+
+# ── the raised ceiling is for us, never for an agent ──────────────────────────
+
+
+def test_the_trusted_ceiling_is_bounded_not_an_escape_hatch() -> None:
+    from artemis.files.extract.base import MAX_DOWNLOAD_BYTES, MAX_DOWNLOAD_BYTES_TRUSTED
+
+    assert MAX_DOWNLOAD_BYTES_TRUSTED > MAX_DOWNLOAD_BYTES, "it must clear the 26MB manuals"
+    assert MAX_DOWNLOAD_BYTES_TRUSTED <= 128 * 1024 * 1024, (
+        "a stray upload still must not be able to wedge the app"
+    )
+
+
+def test_an_oversized_request_is_clamped_rather_than_honoured() -> None:
+    """Asking for a bigger number must not grant it."""
+    from artemis.files.extract import extract
+    from artemis.files.extract.base import MAX_DOWNLOAD_BYTES_TRUSTED, FileTooLargeError
+
+    payload = b"x" * (MAX_DOWNLOAD_BYTES_TRUSTED + 1024)
+
+    with pytest.raises(FileTooLargeError) as excinfo:
+        extract(payload, filename="huge.pdf", max_bytes=1024 * 1024 * 1024)
+
+    assert f"{MAX_DOWNLOAD_BYTES_TRUSTED:,}" in str(excinfo.value), (
+        "the message must name the ceiling actually applied, not the one requested"
+    )
+
+
+def test_the_default_ceiling_is_unchanged_for_every_existing_caller() -> None:
+    """Slack uploads and agent fetches must not silently gain a bigger limit."""
+    from artemis.files.extract import extract
+    from artemis.files.extract.base import MAX_DOWNLOAD_BYTES, FileTooLargeError
+
+    payload = b"x" * (MAX_DOWNLOAD_BYTES + 1024)
+
+    with pytest.raises(FileTooLargeError):
+        extract(payload, filename="big.pdf")
+
+
+def test_max_bytes_is_keyword_only_so_the_tool_schema_cannot_carry_it() -> None:
+    """An agent passes a dict of arguments; this must not be reachable from one."""
+    import inspect
+
+    from artemis.floating_artemis.tools.web import _read_web_page
+
+    params = inspect.signature(_read_web_page).parameters
+    assert params["max_bytes"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["max_bytes"].default is None
