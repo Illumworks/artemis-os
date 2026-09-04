@@ -293,6 +293,12 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
             "match_score": item.match_score,
             "buyer_name": item.buyer_name,
             "delivery_type": payload.get("type"),
+            # The solicitation's closing date. Urgency is DERIVED from this and
+            # then the date itself was thrown away, so a signal could say "hot"
+            # while nobody could see what it was hot about -- and reconstructing
+            # it meant paging the whole bridge back out of Starbridge.
+            "due_date": item.deadline_date,
+            "buyer_state": item.state,
         },
         # Enter at pending_qualification, never pre-qualified. Starbridge scores a
         # row against its own bridge, which is not the same question as whether it

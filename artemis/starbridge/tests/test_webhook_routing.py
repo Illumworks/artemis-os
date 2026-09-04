@@ -442,3 +442,29 @@ async def test_the_written_codes_survive_the_real_qualifier_reader(db_session) -
         reason_map[str(rc["code"])] = 1.0
 
     assert "PROCUREMENT_LITERACY_RFP" in reason_map
+
+
+@pytest.mark.asyncio
+async def test_the_due_date_is_stored_not_just_used(db_session) -> None:
+    """Urgency is derived from the due date, so the date has to survive.
+
+    Without it a signal reads "hot" and nobody can see what it is hot about;
+    rebuilding the dates for fifteen signals meant paging entire bridges back out
+    of Starbridge, and nine of them could not be recovered at all.
+    """
+    payload = json.loads(
+        _body(
+            row_id="due-1",
+            name="Statewide Literacy Screener RFP",
+            columns={**_RFP_COLUMNS, "Due Date": "2026-10-07", "Buyer State Code": "KS"},
+        )
+    )
+    result = await route_delivery(db_session, payload)
+    await db_session.flush()
+
+    row = (
+        await db_session.execute(select(SignalQueue).where(SignalQueue.id == result.signal_id))
+    ).scalar_one()
+
+    assert row.provenance["due_date"] == "2026-10-07"
+    assert row.provenance["buyer_state"] == "KS"
