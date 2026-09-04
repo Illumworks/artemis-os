@@ -16,6 +16,7 @@ no summary is truthful and a generated one would not be.
 
 from __future__ import annotations
 
+import pathlib
 from types import SimpleNamespace
 
 import pytest
@@ -84,18 +85,28 @@ def _asset(**kw: object) -> _Asset:
 
 
 class _Session:
-    def __init__(self, assets: list[_Asset]) -> None:
+    """Answers the two statements the backfill issues: a count, then the rows."""
+
+    def __init__(self, assets: list[_Asset], *, excluded: int = 0) -> None:
         self._assets = assets
+        self._excluded = excluded
         self.flushed = False
+        self.statements = 0
 
     async def execute(self, _stmt: object) -> object:
-        assets = self._assets
+        self.statements += 1
+        assets, excluded = self._assets, self._excluded
+        first = self.statements == 1
 
         class _R:
+            def scalar_one(self_inner):  # noqa: N805
+                return excluded
+
             def scalars(self_inner):  # noqa: N805
                 class _S:
                     def all(self_s):  # noqa: N805
-                        return assets
+                        # The count query comes first; only the second returns rows.
+                        return [] if first else assets
 
                 return _S()
 
@@ -289,3 +300,72 @@ def test_a_body_containing_dashes_survives_intact() -> None:
 
     body = "Section 1 --- Requirements\nMinimum spec --- 4GB RAM.\n--- Appendix ---"
     assert _strip_tool_framing(_framed(body)) == body
+
+
+def test_interactive_assets_are_excluded_before_the_limit_not_after() -> None:
+    """A 25-row batch once spent all 25 on Storylane and summarised nothing.
+
+    Ordered by recency the walkthroughs crowd out every real candidate, so the
+    limit has to buy attempts rather than rows.
+    """
+    from artemis.enablement.summary_backfill import backfill_summaries  # noqa: F401
+
+    src = pathlib.Path("artemis/enablement/summary_backfill.py").read_text()
+    assert "notilike" in src, "the host exclusion must reach SQL, not just the loop"
+
+
+@pytest.mark.asyncio
+async def test_excluded_assets_are_reported_so_a_batch_cannot_look_like_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "2 summarised of 2" must not read as a finished catalog."""
+
+    async def _rich(_url: str) -> str:
+        return "x" * (MIN_CONTENT_CHARS + 50)
+
+    async def _generate(*_a: object, **_k: object) -> object:
+        return SimpleNamespace(summary="A summary.", audience=None, format=None, grade_range=None)
+
+    monkeypatch.setattr(mod, "_fetch_document_text", _rich)
+    monkeypatch.setattr("artemis.enablement.enrichment.generate_enrichment", _generate)
+
+    report = await mod.backfill_summaries(_Session([_asset()], excluded=166), limit=5, dry_run=True)
+
+    assert report.excluded_unfetchable == 166
+    assert "166" in report.summary()
+    assert "still unsummarised" in report.summary()
+
+
+def test_a_drive_video_is_recognised_by_name_not_by_its_url() -> None:
+    """A Drive link carries no extension, so the host filter cannot see a video.
+
+    One batch downloaded 20 .mp4 files from Drive purely to watch extraction
+    fail on each. The failure was correct; paying two API calls to discover it,
+    and then recording "could not fetch", was not.
+    """
+    url = "https://drive.google.com/file/d/abc123/view"
+
+    assert not _is_unfetchable(url), "the URL alone gives nothing away"
+    assert _is_unfetchable(url, "STU-Fifth-TUT-0009_Make A Rhyme.mp4")
+    assert _is_unfetchable(url, "Amira_ISIP_Access.MOV"), "case must not matter"
+    assert _is_unfetchable(url, "Costume Contest Poster.png")
+
+
+def test_a_document_whose_title_merely_mentions_media_is_still_fetched() -> None:
+    """Only a trailing extension counts; "Video Guide" is a document about video."""
+    url = "https://explore.amiralearning.com/hubfs/g.pdf"
+
+    assert not _is_unfetchable(url, "Video Walkthrough Companion Guide")
+    assert not _is_unfetchable(url, "How to Record an mp4 for Families")
+
+
+def test_the_report_line_is_readable_and_balanced() -> None:
+    """It is the only thing an operator reads; a stray paren shipped once already."""
+    from artemis.enablement.summary_backfill import BackfillReport
+
+    line = BackfillReport(considered=15, summarised=10, excluded_unfetchable=165).summary()
+
+    assert line.count("(") == line.count(")")
+    assert "((" not in line
+    assert "10 summarised of 15" in line
+    assert "165" in line

@@ -34,7 +34,7 @@ import logging
 import re
 from dataclasses import dataclass, field, replace
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.enablement.models import EnablementAsset
@@ -51,12 +51,39 @@ MIN_CONTENT_CHARS = 400
 #: discover it -- 63 walkthroughs and 103 videos sit behind these.
 _UNFETCHABLE_HOSTS = ("storylane.io", "youtube.com", "youtu.be", "vimeo.com", "loom.com")
 
+#: Media files, recognised by name. A Drive link to a video carries no extension
+#: in its URL, so the host filter cannot see it: a 20-asset batch downloaded 20
+#: .mp4 files from Drive purely to watch extraction fail on each one. Extraction
+#: failing is the correct outcome, but "could not fetch" is the wrong reason to
+#: record -- these are not documents and never will be. Catching them by name
+#: also saves two Drive API calls apiece.
+_MEDIA_EXTENSIONS = (
+    ".mp4",
+    ".mov",
+    ".m4v",
+    ".avi",
+    ".webm",
+    ".mkv",
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+)
+
 
 @dataclass
 class BackfillReport:
     """What the run actually did. Skips are reported, never hidden."""
 
     considered: int = 0
+    #: Excluded by the SQL filter before the limit was applied. Counted so that
+    #: "0 summarised of 25" can never be mistaken for coverage of the whole
+    #: backlog -- most of the catalog's unsummarised rows live here.
+    excluded_unfetchable: int = 0
     summarised: int = 0
     too_little_content: int = 0
     unfetchable_host: int = 0
@@ -66,17 +93,23 @@ class BackfillReport:
 
     def summary(self) -> str:
         return (
-            f"{self.summarised} summarised of {self.considered} considered "
-            f"({self.too_little_content} too little content, "
+            f"{self.summarised} summarised of {self.considered} considered; "
+            f"{self.excluded_unfetchable} interactive/media assets excluded before "
+            f"the batch and still unsummarised. "
+            f"Of the batch: {self.too_little_content} too little content, "
             f"{self.unfetchable_host} unfetchable host, "
             f"{self.fetch_failed} fetch failed, "
-            f"{self.model_declined} declined by the model)"
+            f"{self.model_declined} declined by the model."
         )
 
 
-def _is_unfetchable(url: str) -> bool:
+def _is_unfetchable(url: str, title: str = "") -> bool:
+    """True when the asset is a demo, a video or an image rather than a document."""
     lowered = (url or "").lower()
-    return any(host in lowered for host in _UNFETCHABLE_HOSTS)
+    if any(host in lowered for host in _UNFETCHABLE_HOSTS):
+        return True
+    named = (title or "").strip().lower()
+    return named.endswith(_MEDIA_EXTENSIONS) or lowered.endswith(_MEDIA_EXTENSIONS)
 
 
 #: The page reader wraps its result in a header, an optional truncation notice
@@ -151,13 +184,33 @@ async def backfill_summaries(
         reembed,
     )
 
+    # Unsummarised, not archived, and has a link to open.
+    unsummarised = (
+        or_(EnablementAsset.summary.is_(None), EnablementAsset.summary == ""),
+        EnablementAsset.status.is_distinct_from("archived"),
+        EnablementAsset.drive_link.isnot(None),
+    )
+    # Interactive demos and video players are excluded in SQL, not merely skipped
+    # in the loop. Ordered by recency they crowd out every real candidate -- a
+    # 25-row batch spent all 25 on Storylane walkthroughs and summarised nothing.
+    # The limit should buy 25 attempts, not 25 rows.
+    fetchable = and_(
+        *[EnablementAsset.drive_link.notilike(f"%{host}%") for host in _UNFETCHABLE_HOSTS],
+        *[EnablementAsset.title.notilike(f"%{ext}") for ext in _MEDIA_EXTENSIONS],
+    )
+
+    excluded = (
+        await session.execute(
+            select(func.count()).select_from(EnablementAsset).where(*unsummarised).where(~fetchable)
+        )
+    ).scalar_one()
+
     rows = (
         (
             await session.execute(
                 select(EnablementAsset)
-                .where(or_(EnablementAsset.summary.is_(None), EnablementAsset.summary == ""))
-                .where(EnablementAsset.status.is_distinct_from("archived"))
-                .where(EnablementAsset.drive_link.isnot(None))
+                .where(*unsummarised)
+                .where(fetchable)
                 .order_by(EnablementAsset.updated_at.desc())
                 .limit(limit)
             )
@@ -166,15 +219,15 @@ async def backfill_summaries(
         .all()
     )
 
-    report = BackfillReport(considered=len(rows))
+    report = BackfillReport(considered=len(rows), excluded_unfetchable=int(excluded))
 
     for asset in rows:
         url = asset.drive_link or ""
         title = asset.title or asset.asset_name or f"id={asset.id}"
 
-        if _is_unfetchable(url):
+        if _is_unfetchable(url, title):
             report.unfetchable_host += 1
-            report.skipped_titles.append(f"{title} (interactive/media link)")
+            report.skipped_titles.append(f"{title} (interactive/media, not a document)")
             continue
 
         text = await _fetch_document_text(url)
