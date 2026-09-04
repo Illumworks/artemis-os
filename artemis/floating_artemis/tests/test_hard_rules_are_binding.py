@@ -74,14 +74,28 @@ def test_a_profile_with_no_hard_rules_yields_nothing() -> None:
     assert extract_hard_rules("") == ""
 
 
-def test_callies_three_rules_are_all_found_in_the_real_profile() -> None:
-    """Guards against the live profile drifting out of the pattern's reach."""
-    rules = load_agent_profile("callie").hard_rules
-    headings = re.findall(r"^.*\(Hard Rules?\)$", rules, re.MULTILINE)
+def test_every_marked_section_in_the_real_profile_is_hoisted() -> None:
+    """Asserts the MECHANISM, not a count.
 
-    assert len(headings) == 3, headings
-    assert any("Work In Flight" in h for h in headings)
-    assert any("Look It Up Yourself" in h for h in headings)
+    The earlier form of this pinned the number at three and broke the moment a
+    fourth rule was written -- which is the one thing that must stay cheap, since
+    the whole point is that a new rule needs no code change. What matters is that
+    nothing marked "(Hard Rule)" is left behind in the background body.
+    """
+    profile = load_agent_profile("callie")
+    in_profile = set(re.findall(r"^#{2,4}\s+(.*\(Hard Rules?\))\s*$", profile.profile_text, re.M))
+    hoisted = set(re.findall(r"^(.*\(Hard Rules?\))$", profile.hard_rules, re.M))
+
+    assert in_profile, "the live profile should carry at least one marked rule"
+    assert in_profile == hoisted, f"not hoisted: {in_profile - hoisted}"
+
+
+def test_the_rules_written_after_a_failure_are_all_present() -> None:
+    """Each of these exists because the behaviour it forbids already happened."""
+    hoisted = load_agent_profile("callie").hard_rules
+
+    for rule in ("Work In Flight", "Look It Up Yourself", "Numbers From The CRM"):
+        assert rule in hoisted, rule
 
 
 def test_the_rules_are_placed_above_the_background_reference() -> None:

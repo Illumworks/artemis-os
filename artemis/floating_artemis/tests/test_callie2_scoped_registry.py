@@ -180,6 +180,14 @@ _CALLIE_EXPECTED_TOOL_NAMES = {
     # inside _build_callie_tool_registry, same discipline as everything else
     # in this set.
     "check_salesforce_activity",
+    # salesforce_pipeline, layer 1, read-only. Answers a FIXED menu of prepared
+    # questions -- no free SOQL, because handing an agent a query language is how
+    # it invents a filter, gets a number, and reports it as confidently as a real
+    # one. Every answer carries the filter that produced it and any known
+    # distortion (the January 2026 cleanup), and an unreachable Salesforce
+    # returns an explicit "unavailable" rather than a zero. Callie-exclusive:
+    # she is the one quoting revenue figures to the person who owns them.
+    "salesforce_pipeline",
 }
 
 # Tools that must never reach Callie's production (layer<=2, claude-code MCP)

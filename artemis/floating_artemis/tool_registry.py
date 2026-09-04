@@ -255,6 +255,14 @@ def _build_callie_tool_registry(
 
     register_salesforce_tools(registry)
 
+    # Pipeline figures for a FIXED set of questions -- no free SOQL, because
+    # handing an agent a query language is how it invents a filter, gets a
+    # number, and reports it as confidently as a real one. Callie-exclusive,
+    # imported locally for the same reason as the two above.
+    from artemis.floating_artemis.tools.pipeline_tools import register_pipeline_tools
+
+    register_pipeline_tools(registry)
+
     return registry
 
 
