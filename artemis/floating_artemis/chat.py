@@ -75,6 +75,7 @@ def _build_system_prompt(
     available_surfaces: list[str],
     persona_core: str | None = None,
     profile_text: str | None = None,
+    hard_rules: str | None = None,
     display_name: str | None = None,
     agent_id: str = "artemis",
     recent_meeting_context: str | None = None,
@@ -88,10 +89,27 @@ def _build_system_prompt(
     profile = load_agent_profile("artemis")
     persona_core = profile.persona_core if persona_core is None else persona_core
     profile_text = profile.profile_text if profile_text is None else profile_text
+    hard_rules = profile.hard_rules if hard_rules is None else hard_rules
     display_name = profile.display_name if display_name is None else display_name
 
     # Lead with the high-priority distilled persona rules.
     parts = [persona_core] if persona_core else []
+
+    # Then the hard rules, ABOVE the profile body and labelled as binding.
+    #
+    # Every one of these was written in response to a specific failure that had
+    # already happened -- research described but never dispatched, then a page
+    # handed to Josh to open that she could open herself. Filing them under
+    # "background reference", alongside tone and register, is the wrong weight for
+    # a rule that exists because it was broken. They stay in the profile too, in
+    # place, so the document still reads as one piece.
+    if hard_rules:
+        parts.append(
+            "## Binding rules\n"
+            "These are not background. Each was written after it was broken, and each "
+            "overrides anything later in this prompt that reads as permission to do "
+            "otherwise. Before you send a message, check it against these.\n\n" + hard_rules
+        )
 
     # Append the full personality profile as richer background detail.
     if profile_text:
@@ -850,6 +868,7 @@ async def handle_turn(
         available_surfaces=sorted(available_surfaces),
         persona_core=agent_profile.persona_core,
         profile_text=agent_profile.profile_text,
+        hard_rules=agent_profile.hard_rules,
         display_name=agent_profile.display_name,
         agent_id=agent_profile.agent_id,
         recent_meeting_context=recent_meeting_ctx,

@@ -409,6 +409,9 @@ class AgentProfile:
     display_name: str
     persona_core: str
     profile_text: str
+    #: Sections whose headings are marked "(Hard Rule)", hoisted into the binding
+    #: part of the system prompt instead of the background-reference body.
+    hard_rules: str
     voice_corpus: list[str]
 
 
@@ -489,6 +492,53 @@ def _parse_voice_corpus(profile_text: str) -> list[str]:
     return _PHRASE_LINE_RE.findall(section_text)
 
 
+#: A profile section whose heading ends in "(Hard Rule)" or "(Hard Rules)". These
+#: are hoisted to the top of the system prompt rather than left in the profile
+#: body -- see `extract_hard_rules`.
+_HARD_RULE_HEADING_RE = re.compile(
+    r"^(?P<hashes>#{2,4})\s+(?P<title>.*\(Hard Rules?\))\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def extract_hard_rules(profile_text: str) -> str:
+    """Return every section of `profile_text` whose heading is marked a hard rule.
+
+    A section runs from its heading to the next heading of the same or higher
+    level, so a hard rule may contain sub-headings without being truncated.
+
+    **Why this exists.** The full profile was injected under the heading "Full
+    personality profile (background reference)". Two of Callie's rules are
+    labelled *hard* precisely because she had already broken them in good faith --
+    describing research that was never dispatched, then asking Josh to open a page
+    she could open herself -- and filing them as background reference is the wrong
+    weight for a rule written in response to a specific failure.
+
+    Matching on the heading rather than a list of section names is deliberate:
+    the next hard rule gets hoisted by writing "(Hard Rule)" in its heading, with
+    no code change and nothing to keep in sync. A profile with none returns "".
+    """
+    if not profile_text:
+        return ""
+
+    matches = list(_HARD_RULE_HEADING_RE.finditer(profile_text))
+    if not matches:
+        return ""
+
+    sections: list[str] = []
+    for match in matches:
+        level = len(match.group("hashes"))
+        # The section ends at the next heading of the same or higher rank; a
+        # deeper sub-heading belongs to this rule and must not end it.
+        closing = re.compile(rf"^#{{1,{level}}}\s+\S", re.MULTILINE)
+        following = closing.search(profile_text, match.end())
+        body = profile_text[match.end() : following.start() if following else len(profile_text)]
+        # Trailing "---" separators are layout, not content.
+        sections.append(f"{match.group('title')}\n{body.strip().rstrip('-').strip()}")
+
+    return "\n\n".join(sections)
+
+
 @cache
 def load_agent_profile(agent_id: str) -> AgentProfile:
     """Return the cached personality profile for a named agent."""
@@ -500,6 +550,7 @@ def load_agent_profile(agent_id: str) -> AgentProfile:
         display_name=defaults.get("display_name", normalized.replace("-", " ").title()),
         persona_core=defaults.get("persona_core", ""),
         profile_text=profile_text,
+        hard_rules=extract_hard_rules(profile_text),
         voice_corpus=_parse_voice_corpus(profile_text),
     )
 
