@@ -72,3 +72,41 @@ def test_scout_instruction_still_directs_tool_use() -> None:
     instr = default_agent_instruction("marketing.scout.federal_funding")
     assert "Execute your scan NOW" in instr
     assert "signal_queue.write" in instr
+
+
+# ── Anti-fabrication (2026-09-04) ────────────────────────────────────────────
+
+
+def test_the_scout_is_told_never_to_invent_a_signal() -> None:
+    """The state_doe scout invented 149 signals between 2026-08-10 and 2026-09-02.
+
+    signal_queue.write now rejects a source URL that does not resolve, which stops
+    fabricated signals landing. This pins the other half: the instruction must
+    tell the scout not to invent one in the first place.
+    """
+    instruction = default_agent_instruction("marketing.scout.state_doe")
+
+    assert "NEVER INVENT A SIGNAL" in instruction
+    assert "actually returned to you in THIS run" in instruction
+    assert "Do not construct, complete, guess or shorten a URL" in instruction
+
+
+def test_reporting_zero_is_explicitly_permitted() -> None:
+    """The deferred-tools line created pressure against the honest answer.
+
+    It was written for a real bug — scouts giving up when tools looked deferred —
+    but a model with empty feeds could resolve the tension by inventing. Both
+    instructions have to coexist, so the narrow meaning is spelled out.
+    """
+    instruction = default_agent_instruction("marketing.scout.state_doe")
+
+    assert "Zero is a real and useful answer" in instruction
+    assert "that is success, not failure" in instruction
+    # The original guidance must survive — it fixed its own bug.
+    assert "Do NOT skip tool calls or report 0 signals" in instruction
+    assert "do not report zero because a tool LOOKED unavailable" in instruction
+
+
+def test_the_anti_fabrication_rule_is_scout_scoped() -> None:
+    """Qualifiers read existing signals; they emit none, so the rule is noise there."""
+    assert "NEVER INVENT A SIGNAL" not in default_agent_instruction("marketing.qualifier.gate1")

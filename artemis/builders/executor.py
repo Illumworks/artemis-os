@@ -352,7 +352,19 @@ def default_agent_instruction(agent_id: str, override: str | None = None) -> str
             "pre-connected and fully available. If any tool appears as 'deferred' "
             "or 'not yet connected', call it anyway — the connection is synchronous "
             "and the tool will execute. Do NOT skip tool calls or report 0 signals "
-            "solely because tools appear deferred."
+            "solely because tools appear deferred.\n\n"
+            "NEVER INVENT A SIGNAL. Every signal must come from an item a fetch "
+            "tool actually returned to you in THIS run, and its source URL must be "
+            "the exact URL that item carried. Do not construct, complete, guess or "
+            "shorten a URL, and never write a plausible-sounding headline you did "
+            "not read.\n\n"
+            "Zero is a real and useful answer. If your feeds returned nothing this "
+            "run, report zero signals — that is success, not failure. The line "
+            "above about not reporting 0 means only this: do not report zero "
+            "because a tool LOOKED unavailable without calling it. It never means "
+            "you should produce signals to avoid an empty result. An empty scan "
+            "costs nothing; one invented signal costs the credibility of every "
+            "real one beside it."
         )
     if agent_id.startswith("marketing.qualifier."):
         return (
