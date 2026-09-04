@@ -34,6 +34,49 @@ logger = logging.getLogger(__name__)
 CHECK_SALESFORCE_ACTIVITY = "check_salesforce_activity"
 
 
+async def _render_people(client: Any, account_id: str) -> str:
+    """Render the decision-makers at an account, conflicts first.
+
+    Conflicts lead because they change what happens next: a contact a seller is
+    actively sequencing is one marketing must not write to, and burying that
+    under a roster is how it gets missed.
+
+    An empty list is reported as "none returned", never as "nobody is being
+    worked" -- absence of evidence is not evidence of absence, and this is the
+    check standing between a marketing send and an open sales conversation.
+    """
+    from artemis.marketing.salesforce_account_lookup import fetch_account_contacts
+
+    people = await fetch_account_contacts(client, account_id, limit=25)
+    if not people:
+        return (
+            "Contacts: none returned for this account. That is not a clean bill of "
+            "health — treat outreach conflict as UNKNOWN rather than clear."
+        )
+
+    conflicted = [p for p in people if p.conflicted]
+    lines: list[str] = []
+
+    if conflicted:
+        lines.append(f"⚠ DO NOT SEND to {len(conflicted)} contact(s) — already in active outreach:")
+        lines.extend(f"   {p.describe()}" for p in conflicted)
+        lines.append("")
+
+    clear = [p for p in people if not p.conflicted]
+    titled = [p for p in clear if p.title]
+    untitled = [p for p in clear if not p.title]
+
+    lines.append(f"Contacts ({len(people)} total, {len(conflicted)} in active outreach):")
+    # Titled contacts first: a title is what makes someone a decision-maker
+    # rather than a name, and it is what the outreach is pitched at.
+    for person in titled[:12]:
+        lines.append(f"   {person.describe()}")
+    if untitled:
+        names = ", ".join(p.name for p in untitled[:6])
+        lines.append(f"   (+{len(untitled)} without a title on file: {names})")
+    return "\n".join(lines)
+
+
 def _joined(*parts: Any) -> str:
     """Join the non-empty pieces of an answer with blank lines between them."""
     flat: list[str] = []
@@ -167,12 +210,18 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
                 from artemis.marketing.salesforce_account_lookup import lookup_district
                 from artemis.marketing.salesforce_suppression import _get_client
 
-                lookup = await lookup_district(await _get_client(session), district_name)
+                sf_client = await _get_client(session)
+                lookup = await lookup_district(sf_client, district_name)
                 if lookup.error:
                     sf_lines.append(f"Salesforce: {lookup.error}")
                 elif lookup.matched is not None:
                     sf_match = lookup.matched
                     sf_lines.append(f"Salesforce: {sf_match.describe()}")
+                    # The people, and who is already working them. This is the
+                    # half Josh asked for first -- the superintendent, the CAO,
+                    # the curriculum leads -- and it lives in Salesforce, not in
+                    # our own contact table (which holds 7 rows).
+                    sf_lines.append(await _render_people(sf_client, sf_match.account_id))
                 elif lookup.candidates:
                     names = "; ".join(c.describe() for c in lookup.candidates)
                     sf_lines.append(
@@ -201,6 +250,17 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
             else:
                 district, candidates = await _resolve_district_by_name(session, district_name)
                 if candidates:
+                    # When Salesforce already answered, the local-index miss is a
+                    # footnote, not a question. Ending a complete answer with a
+                    # paragraph asking the reader to pick a district id reads as
+                    # failure and buries what we just told them.
+                    if sf_match is not None:
+                        return _joined(
+                            sf_lines,
+                            "(Our own district index has no matching entry, so there is no "
+                            "extra local detail to add. The Salesforce answer above stands "
+                            "on its own.)",
+                        )
                     names = ", ".join(f"{d.name} ({d.state}, id {d.id})" for d in candidates)
                     return _joined(
                         sf_lines,
@@ -278,10 +338,12 @@ def register_salesforce_tools(registry: AuthorizedToolRegistry) -> None:
         Tool(
             name=CHECK_SALESFORCE_ACTIVITY,
             description=(
-                "Read-only: check Salesforce for a district's known contacts -- existing "
-                "customer, open opportunity, or recently emailed by sales. Use before "
-                "drafting outreach so marketing does not step on an active sales "
-                "conversation. Fails closed: reports 'could not verify' rather than a false "
+                "Read-only district brief from Salesforce: customer status, open "
+                "opportunities, the decision-makers (superintendent, chief academic "
+                "officer, curriculum leads) with their titles, and WHICH CONTACTS A "
+                "SELLER IS ALREADY WORKING. Use this before drafting any outreach. "
+                "Contacts flagged as in active outreach must not be written to -- say so "
+                "and stop. Fails closed: reports 'could not verify' rather than a false "
                 "'clear to contact' if Salesforce cannot be reached."
             ),
             input_schema={
