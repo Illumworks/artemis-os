@@ -31,6 +31,7 @@ module's.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field, replace
 
 from sqlalchemy import or_, select
@@ -78,6 +79,24 @@ def _is_unfetchable(url: str) -> bool:
     return any(host in lowered for host in _UNFETCHABLE_HOSTS)
 
 
+#: The page reader wraps its result in a header, an optional truncation notice
+#: and a trust footer. Anchoring on those exact sentinels rather than splitting
+#: on "---" matters: the naive split leaves the truncation notice attached to the
+#: body, so the model would be handed the tool's own words as if they were the
+#: document's. It is also why two unrelated PDFs both fetched to exactly 20,034
+#: characters -- the 20,000-char cap plus 34 characters of leaked footer.
+_FRAMING = re.compile(
+    r"^--- FETCHED FROM .*? ---\n(?:Notes:.*?\n)?(.*?)\n(?:\[Truncated at |--- end of )",
+    re.DOTALL,
+)
+
+
+def _strip_tool_framing(raw: str) -> str:
+    """Return only the page's own words, never the reader's."""
+    match = _FRAMING.search(raw)
+    return (match.group(1) if match else raw).strip()
+
+
 async def _fetch_document_text(url: str) -> str:
     """Return readable text from an asset's link, or "" if there is none.
 
@@ -111,9 +130,7 @@ async def _fetch_document_text(url: str) -> str:
         raw = await _read_web_page({"url": url})
         if raw.startswith(("Refusing", "Could not read", "read_web_page failed", "Fetched")):
             return ""
-        # Strip the tool's own framing so only the page's words reach the model.
-        parts = raw.split("---")
-        return parts[2].strip() if len(parts) > 2 else raw
+        return _strip_tool_framing(raw)
     except Exception:
         logger.debug("summary backfill: fetch failed for %s", url, exc_info=True)
         return ""

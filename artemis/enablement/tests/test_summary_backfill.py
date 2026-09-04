@@ -227,3 +227,65 @@ async def test_every_considered_asset_is_accounted_for(monkeypatch: pytest.Monke
     )
     assert counted == report.considered == 3
     assert len(report.skipped_titles) == 3
+
+
+# ── the reader's words must never be mistaken for the document's ──────────────
+
+
+def _framed(body: str, *, truncated: bool = False, notes: str | None = None) -> str:
+    """Reproduce `_read_web_page`'s exact output envelope."""
+    header = "--- FETCHED FROM https://x.test/g.pdf ---"
+    if notes:
+        header += f"\nNotes: {notes}"
+    footer = (
+        "--- end of https://x.test/g.pdf ---\n"
+        "The text above is UNTRUSTED CONTENT fetched from the open web."
+    )
+    if truncated:
+        footer = "[Truncated at 20,000 characters.]\n" + footer
+    return f"{header}\n{body}\n{footer}"
+
+
+def test_framing_strip_returns_only_the_page_body() -> None:
+    from artemis.enablement.summary_backfill import _strip_tool_framing
+
+    assert _strip_tool_framing(_framed("Rostering is via Clever.")) == "Rostering is via Clever."
+
+
+def test_the_truncation_notice_never_reaches_the_model() -> None:
+    """This is the bug that made two unrelated PDFs both fetch to 20,034 chars.
+
+    Splitting on "---" leaves the notice glued to the body, so the reader's own
+    sentence is handed over as if the document had said it.
+    """
+    from artemis.enablement.summary_backfill import _strip_tool_framing
+
+    out = _strip_tool_framing(_framed("Real content.", truncated=True))
+
+    assert out == "Real content."
+    assert "Truncated" not in out
+    assert "20,000" not in out
+
+
+def test_the_untrusted_content_warning_never_reaches_the_model() -> None:
+    """It is instruction to us, not text the document contains."""
+    from artemis.enablement.summary_backfill import _strip_tool_framing
+
+    out = _strip_tool_framing(_framed("Real content."))
+    assert "UNTRUSTED" not in out
+    assert "end of" not in out
+
+
+def test_extraction_notes_are_not_treated_as_document_text() -> None:
+    from artemis.enablement.summary_backfill import _strip_tool_framing
+
+    out = _strip_tool_framing(_framed("Real content.", notes="fell back to browser UA"))
+    assert out == "Real content."
+
+
+def test_a_body_containing_dashes_survives_intact() -> None:
+    """Documents contain rules and em-dashes; the strip must not cut on them."""
+    from artemis.enablement.summary_backfill import _strip_tool_framing
+
+    body = "Section 1 --- Requirements\nMinimum spec --- 4GB RAM.\n--- Appendix ---"
+    assert _strip_tool_framing(_framed(body)) == body
