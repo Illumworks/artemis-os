@@ -172,30 +172,41 @@ async def big_deals_without_contacts(client: Any, *, min_amount: int = 250_000) 
     )
 
 
-async def loss_reason_availability(client: Any) -> Answer:
-    """Whether Salesforce records WHY a deal was lost. Today: it does not."""
-    found: list[str] = []
-    for field_name in (
-        "Loss_Reason__c",
-        "Reason_Lost__c",
-        "Closed_Lost_Reason__c",
-        "Loss_Reason_Detail__c",
-    ):
-        try:
-            await client.query(f"SELECT {field_name} FROM Opportunity LIMIT 1")
-            found.append(field_name)
-        except Exception:
-            continue
+async def loss_reasons(client: Any, *, days: int = 730, limit: int = 12) -> Answer:
+    """Why deals were lost, from Salesforce's own field.
+
+    **This function previously reported that no such field existed.** Four
+    conventional names were probed -- Loss_Reason__c, Reason_Lost__c,
+    Closed_Lost_Reason__c, Loss_Reason_Detail__c -- all absent, and absence of
+    those four was recorded as absence of the capability. The field is called
+    `Reason__c`, it is populated on roughly 28,600 closed-lost opportunities, and
+    it was the single richest thing available while we were telling people it did
+    not exist.
+
+    A probe that tests four guesses and reports "NONE" is not a finding. It is
+    four guesses.
+    """
+    rows = await client.query(
+        "SELECT Reason__c v, COUNT(Id) n FROM Opportunity "
+        f"WHERE IsClosed = true AND IsWon = false AND CloseDate = LAST_N_DAYS:{int(days)} "
+        f"GROUP BY Reason__c ORDER BY COUNT(Id) DESC LIMIT {int(limit)}"
+    )
     return Answer(
-        question="Does Salesforce record why deals are lost?",
-        filter_description="Probed the four conventional loss-reason field names on Opportunity.",
-        rows=[{"loss_reason_fields_found": ", ".join(found) if found else "NONE"}],
+        question="Why we lose deals",
+        filter_description=(
+            f"Opportunity.Reason__c on deals closed lost in the last {days} days. "
+            "Blank on a substantial share of rows, so read the counts as 'of those "
+            "with a reason recorded'."
+        ),
+        rows=[{"reason": r.get("v") or "(not recorded)", "deals": r.get("n")} for r in rows],
         caveats=[
-            "With no loss-reason field, no query can explain a loss. Do not infer "
-            "one from stage, amount or owner -- say the data does not exist."
-        ]
-        if not found
-        else [],
+            "'Merged with another Opp' is a bookkeeping outcome, not a loss. Exclude "
+            "it before describing why deals are lost.",
+            "The field's describe advertises fewer values than the data contains: "
+            "several high-volume reasons are marked inactive but still populated. "
+            "Read the values from the DATA, never from the picklist definition.",
+            JAN_2026_CAVEAT,
+        ],
     )
 
 

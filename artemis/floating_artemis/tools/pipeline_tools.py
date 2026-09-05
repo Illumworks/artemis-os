@@ -22,7 +22,7 @@ from artemis.marketing.pipeline_intel import (
     big_deals_without_contacts,
     closing_soon,
     deals_missing_contacts,
-    loss_reason_availability,
+    loss_reasons,
     open_pipeline_by_stage,
     stalled_deals,
     win_rate_by_size,
@@ -32,14 +32,17 @@ logger = logging.getLogger(__name__)
 
 SALESFORCE_PIPELINE = "salesforce_pipeline"
 
-_QUESTIONS = {
+#: question name -> the coroutine that answers it. Typed loosely on purpose: the
+#: handlers take different keyword defaults (days, limit, min_amount) and are all
+#: called with just the client here.
+_QUESTIONS: dict[str, Any] = {
     "win_rate_by_size": win_rate_by_size,
     "open_pipeline_by_stage": open_pipeline_by_stage,
     "stalled_deals": stalled_deals,
     "deals_missing_contacts": deals_missing_contacts,
     "closing_soon": closing_soon,
     "big_deals_without_contacts": big_deals_without_contacts,
-    "loss_reason_availability": loss_reason_availability,
+    "loss_reasons": loss_reasons,
 }
 
 #: The escape hatch. An enum pushes the model to pick SOMETHING, so without this
@@ -73,7 +76,7 @@ async def _salesforce_pipeline(inp: dict[str, Any], *, session_factory: Any = No
         logger.warning("salesforce_pipeline: %s failed", question, exc_info=True)
         return UNAVAILABLE
 
-    return answer.render()
+    return str(answer.render())
 
 
 def register_pipeline_tools(registry: AuthorizedToolRegistry) -> None:
@@ -104,9 +107,9 @@ def register_pipeline_tools(registry: AuthorizedToolRegistry) -> None:
                 "- closing_soon: 'what's closing this month', 'what lands soon'\n"
                 "- big_deals_without_contacts: counts only, for the same question "
                 "at $250k+\n"
-                "- loss_reason_availability: 'why did we lose X', 'what are our "
-                "loss reasons' -- Salesforce has NO loss-reason field, so this "
-                "reports that the data does not exist rather than guessing\n"
+                "- loss_reasons: 'why did we lose X', 'what are our loss reasons' "
+                "-- reports Opportunity.Reason__c, the real field. Exclude 'Merged "
+                "with another Opp', which is bookkeeping and not a loss\n"
                 "- none_of_these: anything else, including forecasts, quota, "
                 "commission, individual rep performance, or any question needing "
                 "call or email activity"

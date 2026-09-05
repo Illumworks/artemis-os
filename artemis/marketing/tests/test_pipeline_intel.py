@@ -14,7 +14,7 @@ from artemis.marketing.pipeline_intel import (
     SIZE_BANDS,
     UNAVAILABLE,
     big_deals_without_contacts,
-    loss_reason_availability,
+    loss_reasons,
     win_rate_by_size,
 )
 
@@ -101,16 +101,40 @@ async def test_missing_contacts_are_labelled_hygiene_not_risk() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_loss_reason_field_forbids_inferring_one() -> None:
-    """A plausible story about why a deal was lost is fabrication with a citation shape."""
-    # All four probe names end in "__c"; raising on only one of them left the
-    # others "succeeding" and the test asserting a half-configured org.
-    client = _Client({}, raise_on="__c")
+async def test_loss_reasons_reads_the_field_that_actually_exists() -> None:
+    """This function used to report that no loss-reason field existed.
 
-    answer = await loss_reason_availability(client)
+    Four conventional names were probed, all absent, and absence of those four
+    was recorded as absence of the capability. The field is `Reason__c`, it is
+    populated on roughly 28,600 closed-lost opportunities, and it was the richest
+    thing available while we were telling people it did not exist. A probe that
+    tests four guesses and reports NONE is not a finding, it is four guesses.
+    """
+    client = _Client({})
 
-    assert answer.rows[0]["loss_reason_fields_found"] == "NONE"
-    assert "do not infer one" in " ".join(answer.caveats).lower()
+    await loss_reasons(client)
+
+    assert client.queries
+    assert "Reason__c" in client.queries[0]
+    assert "IsWon = false" in client.queries[0]
+
+
+@pytest.mark.asyncio
+async def test_merged_opportunities_are_flagged_as_bookkeeping() -> None:
+    """The second most common value is not a loss, and excluding it changes the top reason."""
+    answer = await loss_reasons(_Client({}))
+
+    joined = " ".join(answer.caveats)
+    assert "Merged with another Opp" in joined
+    assert "not a loss" in joined
+
+
+@pytest.mark.asyncio
+async def test_the_reader_is_told_to_trust_the_data_over_the_picklist() -> None:
+    """Several high-volume reasons are inactive in the describe but still populated."""
+    answer = await loss_reasons(_Client({}))
+
+    assert "never from the picklist" in " ".join(answer.caveats)
 
 
 def test_unavailable_forbids_reporting_a_zero() -> None:
