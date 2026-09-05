@@ -197,3 +197,107 @@ async def loss_reason_availability(client: Any) -> Answer:
         if not found
         else [],
     )
+
+
+async def stalled_deals(client: Any, *, days: int = 90, limit: int = 15) -> Answer:
+    """Open opportunities nobody has touched. Named deals, not just a count."""
+    from artemis.marketing.pipeline_hygiene import find_stalled_deals
+
+    deals = await find_stalled_deals(client, days=days, limit=limit)
+    return Answer(
+        question=f"Open deals with no activity in {days} days",
+        filter_description=(
+            f"Open opportunities whose LastModifiedDate is older than {days} days, "
+            "richest first, test and demo accounts excluded."
+        ),
+        rows=[
+            {
+                "account": d.account_name,
+                "stage": d.stage,
+                "amount": f"${d.amount:,.0f}" if d.amount else "no amount",
+                "untouched": f"{d.days_since_touch}d",
+                "owner": d.owner,
+            }
+            for d in deals
+        ],
+        caveats=[
+            "LastModifiedDate means the RECORD has not changed, not that nobody "
+            "has spoken to them. Task and Event are not readable on this "
+            "connection, so real activity is invisible to us -- do not say a rep "
+            "has neglected an account."
+        ],
+    )
+
+
+async def deals_missing_contacts(client: Any, *, limit: int = 15) -> Answer:
+    """Late-stage open deals with nobody recorded against them, named."""
+    from artemis.marketing.pipeline_hygiene import LATE_STAGES, find_deals_without_contacts
+
+    deals = await find_deals_without_contacts(client, limit=limit)
+    return Answer(
+        question="Late-stage open deals with no contact attached",
+        filter_description=(
+            "Open opportunities at " + ", ".join(LATE_STAGES) + ", with zero "
+            "OpportunityContactRole rows. Auto-generated renewals excluded: they are "
+            "empty because a machine created them."
+        ),
+        rows=[
+            {
+                "account": d.account_name,
+                "stage": d.stage,
+                "amount": f"${d.amount:,.0f}" if d.amount else "no amount",
+                "closes": d.close_date or "no date",
+                "owner": d.owner,
+            }
+            for d in deals
+        ],
+        caveats=[
+            "CRM hygiene, not deal health. 77% of WON deals also have no contact "
+            "attached against 63% of lost ones, so do not present this as deals at risk."
+        ],
+    )
+
+
+async def closing_soon(client: Any, *, days: int = 30, limit: int = 20) -> Answer:
+    """Open deals with a close date inside the window."""
+    rows = await client.query(
+        "SELECT Name, StageName, Amount, CloseDate, Owner.Name, Account.Name "
+        "FROM Opportunity WHERE IsClosed=false "
+        f"AND CloseDate = NEXT_N_DAYS:{int(days)} "
+        f"ORDER BY Amount DESC NULLS LAST LIMIT {int(limit)}"
+    )
+    return Answer(
+        question=f"Open deals closing in the next {days} days",
+        filter_description=(
+            f"Open opportunities with CloseDate inside the next {days} days, richest first."
+        ),
+        rows=[
+            {
+                "account": (r.get("Account") or {}).get("Name") or "(no account)",
+                "stage": r.get("StageName"),
+                "amount": f"${(r.get('Amount') or 0):,.0f}",
+                "closes": r.get("CloseDate"),
+                "owner": (r.get("Owner") or {}).get("Name") or "(unassigned)",
+            }
+            for r in rows
+        ],
+        caveats=[
+            "CloseDate is a forecast a rep entered, not a commitment. A date in "
+            "the past on an open deal means the forecast slipped, not that it closed."
+        ],
+    )
+
+
+#: Returned when the agent judges that no prepared question fits what was asked.
+#:
+#: The enum on the tool schema pushes the model to pick a valid value, so without
+#: an explicit way out it answers the NEAREST question instead of the one asked --
+#: and a real number under the wrong framing is worse than a refusal, because it
+#: looks like an answer.
+NOT_COVERED = (
+    "None of the prepared pipeline questions answers that. Say so plainly, name "
+    "what you CAN answer, and do not substitute a different figure. Available: "
+    "win rate by deal size, open pipeline by stage, stalled deals, late-stage "
+    "deals with no contact attached, deals closing soon, and whether Salesforce "
+    "records loss reasons (it does not)."
+)

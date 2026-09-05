@@ -17,10 +17,14 @@ from typing import Any
 from artemis.agent.types import Tool
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
 from artemis.marketing.pipeline_intel import (
+    NOT_COVERED,
     UNAVAILABLE,
     big_deals_without_contacts,
+    closing_soon,
+    deals_missing_contacts,
     loss_reason_availability,
     open_pipeline_by_stage,
+    stalled_deals,
     win_rate_by_size,
 )
 
@@ -31,13 +35,23 @@ SALESFORCE_PIPELINE = "salesforce_pipeline"
 _QUESTIONS = {
     "win_rate_by_size": win_rate_by_size,
     "open_pipeline_by_stage": open_pipeline_by_stage,
+    "stalled_deals": stalled_deals,
+    "deals_missing_contacts": deals_missing_contacts,
+    "closing_soon": closing_soon,
     "big_deals_without_contacts": big_deals_without_contacts,
     "loss_reason_availability": loss_reason_availability,
 }
 
+#: The escape hatch. An enum pushes the model to pick SOMETHING, so without this
+#: a question outside the menu gets answered with the nearest available one -- a
+#: real number under the wrong framing, which reads as an answer and is not.
+NONE_OF_THESE = "none_of_these"
+
 
 async def _salesforce_pipeline(inp: dict[str, Any], *, session_factory: Any = None) -> str:
     question = str(inp.get("question") or "").strip()
+    if question == NONE_OF_THESE:
+        return NOT_COVERED
     handler = _QUESTIONS.get(question)
     if handler is None:
         return (
@@ -68,23 +82,46 @@ def register_pipeline_tools(registry: AuthorizedToolRegistry) -> None:
             name=SALESFORCE_PIPELINE,
             description=(
                 "Read-only Salesforce pipeline figures for a FIXED set of questions. "
+                "Map what the person actually asked onto the closest question ONLY "
+                "if it genuinely answers them; otherwise pass 'none_of_these' and "
+                "tell them what you can answer instead. Answering a different "
+                "question than the one asked is worse than saying you cannot -- the "
+                "number is real and the framing is wrong.\n"
                 "Every answer states the filter that produced it and any known "
-                "distortion in the data -- repeat both when quoting a number. "
-                "Never state a pipeline figure you did not get from this tool in "
-                "this turn. If it reports the data is unavailable, say so; that is "
-                "NOT a report of zero. Questions: win_rate_by_size (win rate per "
-                "deal-size band), open_pipeline_by_stage (current open pipeline), "
-                "big_deals_without_contacts (large open deals with nobody attached), "
-                "loss_reason_availability (whether Salesforce records WHY deals are "
-                "lost -- it currently does not)."
+                "distortion in the data; repeat both when quoting a number. Never "
+                "state a pipeline figure you did not get from this tool in this "
+                "turn. If it reports the data is unavailable, say so -- that is NOT "
+                "a report of zero.\n"
+                "Questions, and the sorts of things they answer:\n"
+                "- win_rate_by_size: 'how are we doing on big deals', 'what do we "
+                "actually win', 'are we losing the enterprise stuff'\n"
+                "- open_pipeline_by_stage: 'what's in the pipeline', 'where is "
+                "everything sitting', 'how much is open'\n"
+                "- stalled_deals: 'what's gone quiet', 'what's stuck', 'what has "
+                "nobody touched'\n"
+                "- deals_missing_contacts: 'which deals have nobody attached', "
+                "'who are we even talking to'\n"
+                "- closing_soon: 'what's closing this month', 'what lands soon'\n"
+                "- big_deals_without_contacts: counts only, for the same question "
+                "at $250k+\n"
+                "- loss_reason_availability: 'why did we lose X', 'what are our "
+                "loss reasons' -- Salesforce has NO loss-reason field, so this "
+                "reports that the data does not exist rather than guessing\n"
+                "- none_of_these: anything else, including forecasts, quota, "
+                "commission, individual rep performance, or any question needing "
+                "call or email activity"
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "question": {
                         "type": "string",
-                        "enum": sorted(_QUESTIONS),
-                        "description": "Which prepared question to run.",
+                        "enum": [*sorted(_QUESTIONS), NONE_OF_THESE],
+                        "description": (
+                            "Which prepared question to run, or 'none_of_these' "
+                            "when the person asked something the menu does not "
+                            "answer."
+                        ),
                     }
                 },
                 "required": ["question"],

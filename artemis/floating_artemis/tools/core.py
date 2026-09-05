@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from artemis.agent.types import Tool, ToolImpl
 from artemis.floating_artemis.authority import AuthorizedToolRegistry
@@ -292,6 +292,35 @@ def register_ares_coding_tools(
 # ── Tool implementations ──────────────────────────────────────────────────────
 
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from artemis.memory.schemas import Scope
+
+
+async def _live_scopes(session: AsyncSession) -> list[Scope]:
+    """Every scope that actually holds observations.
+
+    Enumerated from the data rather than hard-coded: a scope kind added later
+    would otherwise be invisible to an unscoped search, which is exactly the bug
+    this replaces. The agent's allowance is applied to the result, so this widens
+    what is SEARCHED and never what is PERMITTED.
+    """
+    from sqlalchemy import text as _text
+
+    from artemis.memory.schemas import Scope
+
+    rows = (
+        await session.execute(
+            _text(
+                "SELECT DISTINCT scope_kind, scope_id FROM memory_observations "
+                "WHERE superseded_by IS NULL"
+            )
+        )
+    ).all()
+    return [Scope(scope_kind=str(r.scope_kind), scope_id=str(r.scope_id)) for r in rows]
+
+
 def _make_query_memory(agent_id: str | None) -> ToolImpl:
     """Return a ``_query_memory`` implementation gated to ``agent_id``'s allowance.
 
@@ -314,31 +343,47 @@ def _make_query_memory(agent_id: str | None) -> ToolImpl:
     async def _query_memory_impl(inp: dict[str, Any]) -> str:
         """Query the Artemis memory store — scope-gated to the calling agent."""
         query = inp.get("query", "")
-        scope = inp.get("scope", "global:global")
+        raw_scope = inp.get("scope")
         limit = int(inp.get("limit", 10))
-        if scope == "all":
-            scope = "global:global"
+        # "all" and "no scope given" both mean: search everything this agent may
+        # read. They used to mean `global:global`, which holds ONE observation of
+        # 2,170 -- so an unscoped query searched 0.05% of memory and truthfully
+        # reported nothing found.
+        #
+        # That is how Callie told Jon "nothing in memory shows Argus findings on
+        # Roy or Grosse Pointe" ninety minutes after Argus wrote four observations
+        # naming Roy Bishop Jr. She called the tool. The tool answered from a
+        # scope those findings were never in. Same failure as dispatch_research
+        # returning "dispatched": the tool told her something false and she
+        # relayed it in good faith.
+        scope = None if raw_scope in (None, "", "all") else str(raw_scope)
 
         try:
             import artemis.db as _db
             from artemis.memory.retrieval import search_observations
             from artemis.memory.schemas import Scope
 
-            scope_kind, scope_id = scope.split(":") if ":" in scope else (scope, "default")
-            requested_scope = Scope(scope_kind=scope_kind, scope_id=scope_id)
-
-            # M3: enforce agent allowance — drop any scope not permitted.
-            enforced = _enforce_agent_scope_set(_agent_id, [requested_scope])
-            if not enforced:
-                logger.info(
-                    "query_memory: scope %s:%s denied for agent_id=%r — returning empty",
-                    scope_kind,
-                    scope_id,
-                    _agent_id,
-                )
-                return "No relevant memory found."
-
             async with _db.SessionLocal() as session:
+                if scope is None:
+                    requested = await _live_scopes(session)
+                else:
+                    scope_kind, scope_id = (
+                        scope.split(":", 1) if ":" in scope else (scope, "default")
+                    )
+                    requested = [Scope(scope_kind=scope_kind, scope_id=scope_id)]
+
+                # M3: enforce agent allowance — drop any scope not permitted.
+                # Still the gate that keeps Callie out of agent:artemis and
+                # personal:*; widening the DEFAULT does not widen the ALLOWANCE.
+                enforced = _enforce_agent_scope_set(_agent_id, requested)
+                if not enforced:
+                    logger.info(
+                        "query_memory: no permitted scope for agent_id=%r (requested %s)",
+                        _agent_id,
+                        scope or "<all>",
+                    )
+                    return "No relevant memory found."
+
                 results = await search_observations(
                     session,
                     scope_set=enforced,
