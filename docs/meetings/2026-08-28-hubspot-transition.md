@@ -79,11 +79,22 @@ Item 4 is the Gong dependency. Nothing else supplies it.
 Jon's list, in his stated priority order: **Task, Lead, EmailMessage, Event,
 Campaign, CampaignMember, Case**.
 
-Verified 2026-09-04, seven days later: **none of them are readable.** `describe`
-returns 404 for Lead, Task, Event, Campaign, CampaignMember, Case and
-EmailMessage. Readable today remains what Jon listed as already working on the
-call -- Account, Contact, Opportunity, User, OpportunityContactRole,
-AccountContactRelation, ContentDocument.
+Verified 2026-09-04, seven days later: `describe` returns 404 for Lead, Task,
+Event, Campaign, CampaignMember, Case and EmailMessage.
+
+**But Neil is not the whole story, and the first version of this note implied he
+was.** Jon has Salesforce system-admin rights and re-scoped the permission set
+himself during the week, working from screenshots rather than waiting. So the
+current access is what JON granted, not what Neil delivered. Two of the
+objects on the list are also not grantable at all on the Salesforce Integration
+user licence -- Task and Event among them -- which is a licence question rather
+than a permissions one and cannot be fixed by ticking a box.
+
+The accurate statement is therefore narrower than "Neil delivered nothing": the
+same-day permission update did not arrive, Jon routed around it for what he
+could, and part of the original list is blocked by licensing regardless of who
+does the granting. `docs/salesforce-capability-map.md` holds the audited truth of
+what is readable; trust that over any list quoted from this meeting.
 
 **Gong -- promised "next week sometime."**
 
