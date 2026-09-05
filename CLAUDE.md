@@ -310,6 +310,37 @@ answer.
 
 ---
 
+## Write down what was expensive to learn (standing rule, 2026-09-04)
+
+Facts established by probing a live system get used once and lost when the
+session ends. The next session re-probes, or guesses. In one day that cost: an
+assertion that Neil never granted Salesforce permissions when Jon had re-scoped
+them himself; a stalled-deals module built, tested and reachable by no tool; and
+`pipeline_hygiene` sitting unwired for hours because nothing recorded it existed.
+
+**If it was expensive to learn, it goes in `docs/` and gets committed.** The repo
+is the durable store; agent memory is only the index into it.
+
+| Kind | Lives in | Example |
+|---|---|---|
+| Capability — what an integration can actually reach, audited | `docs/*-capability-map.md`, `docs/FUNCTIONALITY-MAP.md` | which Salesforce objects are readable, per-agent tool lists |
+| Decision — what was decided and what it forbids | `docs/meetings/YYYY-MM-DD-topic.md` | prospects do NOT go into Salesforce |
+| Operational — runbooks, where a value is configured | `docs/*-runbook.md` | the webhook URL is written in five places, four outside this repo |
+
+Three rules that hold for all of them:
+
+- **State what is NOT available as prominently as what is.** A capability map
+  listing only successes reads as complete and is worse than none.
+- **Point at the audited doc from anywhere a stale list might be quoted** — a
+  list from a meeting transcript is not current state.
+- **Date it and say how to regenerate it.**
+
+Enumeration is fan-out work: delegate it to a sub-agent and keep the judgement in
+the main thread. The sub-agent should write the file, not just report, or the
+findings die with its context too.
+
+---
+
 ## Multi-Agent Handoff Protocol
 
 ### Commit Discipline
