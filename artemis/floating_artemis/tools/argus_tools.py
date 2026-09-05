@@ -150,6 +150,9 @@ DISPATCH_RESEARCH = Tool(
         "find, so supply it when you can. "
         "Each finding carries source='Argus' so attribution is grounded. "
         "Use when Jon asks Callie to dig into a district or a qualified signal. "
+        "If the signal already carries a recent dossier this returns it with "
+        "status='already_researched' and queues NOTHING -- report those findings "
+        "rather than saying research is running. "
         f"{_SURFACE} {_AGENT_GATE} [layer:1]"
     ),
     input_schema={
@@ -185,6 +188,17 @@ DISPATCH_RESEARCH = Tool(
                     "thins the research. Provides state, headline, and provenance "
                     "context Argus's sources search against. Pass the full get_signal "
                     "output."
+                ),
+            },
+            "force": {
+                "type": "boolean",
+                "description": (
+                    "Re-run research even if this signal already has a recent "
+                    "dossier attached. Default false: a completed dossier is "
+                    "returned instead of paying for the same work again. Set true "
+                    "only when the existing findings are genuinely stale for what "
+                    "is being asked -- one signal was researched three times "
+                    "because nothing recorded that it had been done."
                 ),
             },
         },
@@ -304,6 +318,29 @@ async def _dispatch_research(inp: dict[str, Any]) -> str:
                 "persisted row rather than by a separate column)",
                 district_key,
             )
+
+    # ── Already researched recently? Then say so instead of paying again ──────
+    # Signal 3186 was researched three separate times -- 31 Aug twice, 4 Sep once
+    # -- each run completing successfully and none aware of the others, because
+    # nothing recorded the result anywhere the next request would look.
+    prior = await existing_dossier(triggering_signal_id)
+    if prior and not bool(inp.get("force")):
+        return json.dumps(
+            {
+                "status": "already_researched",
+                "district": district_key,
+                "completed_at": prior.get("completed_at"),
+                "request_id": prior.get("request_id"),
+                "excerpt": prior.get("excerpt"),
+                "detail": (
+                    "Research on this signal already completed and is attached to "
+                    "it. Nothing new was queued. Use the findings below rather "
+                    "than telling anyone research is running, and do not promise "
+                    "fresh findings. Pass force=true only if the existing dossier "
+                    "is genuinely stale for what is being asked."
+                ),
+            }
+        )
 
     # ── Persist the pending row -- this call does nothing else ─────────────────
     request_id = await _insert_pending_request(
@@ -488,8 +525,114 @@ async def _insert_pending_request(
         return None
 
 
-async def _mark_request_done(request_id: int | None) -> None:
-    """Mark a request row as done with completed_at=now."""
+#: How long a dossier counts as current. Below this, a second request for the
+#: same signal is answered from the existing one instead of re-run.
+DOSSIER_FRESH_DAYS = 14
+
+
+async def _attach_dossier_to_signal(
+    triggering_signal_id: str | None,
+    *,
+    request_id: int | None,
+    summary: Any = None,
+) -> None:
+    """Record on the SIGNAL that research completed, and what it said.
+
+    **Why this exists.** Argus wrote its findings to memory and posted them to
+    Slack, and neither is attached to the thing that triggered it. So nothing can
+    answer "has this district been researched?" -- signal 3186 was researched
+    three separate times (31 Aug twice, 4 Sep once), each run completing
+    successfully, each one unaware of the last.
+
+    It is also why Callie could say "the signal is still qualified with no
+    dossier attached" about work that had finished ninety minutes earlier. She
+    was reading the signal, and the signal did not know.
+    """
+    if triggering_signal_id is None:
+        return
+    try:
+        from sqlalchemy.orm.attributes import flag_modified
+
+        # pipeline_runs is imported for its side effect: signal_queue carries a
+        # foreign key to it, and mapping SignalQueue without it raises
+        # NoReferencedTableError. The app process happens to import it already,
+        # so this only bites callers with a narrower import graph -- which is
+        # exactly the sort of thing that works until it does not.
+        import artemis.pipelines.models  # noqa: F401
+        from artemis.marketing.models import SignalQueue
+
+        async with _db.SessionLocal() as session:
+            row = await session.get(SignalQueue, int(triggering_signal_id))
+            if row is None:
+                return
+            provenance = dict(row.provenance or {})
+            provenance["argus_dossier"] = {
+                "request_id": request_id,
+                "completed_at": datetime.now(UTC).isoformat(),
+                # An excerpt, not the whole dossier: the full text is in memory
+                # and in the Slack post. This field answers "was this done, when,
+                # and roughly what did it say" without duplicating the record.
+                # Either the rendered Callie post or the raw research dict,
+                # depending on which branch completed; both are worth keeping and
+                # neither is worth a second code path.
+                "excerpt": (str(summary) if summary else "")[:1500] or None,
+            }
+            row.provenance = provenance
+            # JSONB mutated in place does not mark the row dirty -- the UPDATE is
+            # silently dropped without this (see CLAUDE.md on node_states).
+            flag_modified(row, "provenance")
+            await session.commit()
+            _logger.info(
+                "dispatch_research: attached dossier to signal %s (request %s)",
+                triggering_signal_id,
+                request_id,
+            )
+    except Exception:
+        _logger.warning(
+            "dispatch_research: could not attach dossier to signal %s",
+            triggering_signal_id,
+            exc_info=True,
+        )
+
+
+async def existing_dossier(triggering_signal_id: str | None) -> dict[str, Any] | None:
+    """Return a recent dossier for this signal, or None.
+
+    Lets a caller answer "already researched, here is when" instead of paying for
+    the same research a third time.
+    """
+    if triggering_signal_id is None:
+        return None
+    try:
+        import artemis.pipelines.models  # noqa: F401
+        from artemis.marketing.models import SignalQueue
+
+        async with _db.SessionLocal() as session:
+            row = await session.get(SignalQueue, int(triggering_signal_id))
+        dossier = (row.provenance or {}).get("argus_dossier") if row is not None else None
+        if not isinstance(dossier, dict):
+            return None
+        completed = dossier.get("completed_at")
+        if not completed:
+            return None
+        age = datetime.now(UTC) - datetime.fromisoformat(str(completed))
+        return dossier if age.days < DOSSIER_FRESH_DAYS else None
+    except Exception:
+        _logger.warning(
+            "dispatch_research: could not read dossier for signal %s",
+            triggering_signal_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def _mark_request_done(
+    request_id: int | None,
+    *,
+    triggering_signal_id: str | None = None,
+    summary: Any = None,
+) -> None:
+    """Mark a request row as done, and record the result on the triggering signal."""
     if request_id is None:
         return
     try:
@@ -505,6 +648,10 @@ async def _mark_request_done(request_id: int | None) -> None:
             request_id,
             exc_info=True,
         )
+
+    # Separate session and separate try: the signal update failing must not
+    # leave the request looking unfinished and get it retried.
+    await _attach_dossier_to_signal(triggering_signal_id, request_id=request_id, summary=summary)
 
 
 async def _mark_request_failed(
@@ -667,7 +814,9 @@ async def _research_and_post(
             "dispatch_research: formatted Callie post is empty for district_key=%r; skipping Slack post",
             district_key,
         )
-        await _mark_request_done(request_id)
+        await _mark_request_done(
+            request_id, triggering_signal_id=triggering_signal_id, summary=summary
+        )
         return
 
     # ── 4. Post back to channel as Callie ─────────────────────────────────────
@@ -684,8 +833,10 @@ async def _research_and_post(
         request_id,
     )
 
-    # ── 5. Mark request done ──────────────────────────────────────────────────
-    await _mark_request_done(request_id)
+    # ── 5. Mark request done, and record it on the signal that triggered it ───
+    await _mark_request_done(
+        request_id, triggering_signal_id=triggering_signal_id, summary=formatted_text
+    )
 
 
 # ── Claimer (ARGUS-1: the actual mechanism -- everything below runs in the ────
