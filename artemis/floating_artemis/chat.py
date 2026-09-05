@@ -717,8 +717,12 @@ async def handle_turn(
     participants: list[str] | None = None,
     db_session: Any | None = None,
     trusted_agent_id: str | None = None,
+    _retry_done: bool = False,
 ) -> TurnResult:
     """Run one user turn for the given Floating Artemis session.
+
+    ``_retry_done`` is internal: it marks a turn that is already the single
+    correction retry for deferred work, so the gate cannot recurse.
 
     Parameters
     ----------
@@ -1080,6 +1084,47 @@ async def handle_turn(
             if texts:
                 response_text = " ".join(texts)
                 break
+
+    # ── 8b. One retry when the reply defers work this turn could have done ────
+    #
+    # Callie ended an Argus briefing with "Open flags: confirm prior Amira
+    # relationship in CRM, identify the curriculum lead..." -- two of which are a
+    # single check_salesforce_activity call away, and the answer changes the
+    # pitch (Roy Bishop was already our contact and already the curriculum lead).
+    # The "Look It Up Yourself" rule was in her binding block when she did it, so
+    # per CLAUDE.md the next fix is a gate rather than a louder rule.
+    #
+    # A nudge, not a wall: one retry, and if the second attempt still cannot
+    # answer, whatever it produced goes out. Blocking would trade a wrong answer
+    # for silence, which is the failure that lost Sara's question in August.
+    if response_text and not _retry_done:
+        from artemis.floating_artemis.unchecked_claims import find_unchecked_flags
+
+        _flags = find_unchecked_flags(
+            response_text,
+            _collect_tools_used(result),
+            available_tools={e.tool.name for e in auth_registry.all_entries()},
+        )
+        if _flags is not None:
+            logger.info(
+                "handle_turn: %s deferred %s it could have checked -- one retry",
+                session_ctx.agent_id,
+                [i.name for i in _flags.items],
+            )
+            return await handle_turn(
+                session_id=session_id,
+                user_text=_flags.correction(),
+                reasoning_effort=reasoning_effort,
+                speed_tier=speed_tier,
+                adapter=adapter,
+                owner_user_id=owner_user_id,
+                speaker_name=speaker_name,
+                speaker_id=speaker_id,
+                participants=participants,
+                db_session=db_session,
+                trusted_agent_id=trusted_agent_id,
+                _retry_done=True,
+            )
 
     # ── 9. Persist messages ────────────────────────────────────────────────────
     user_msg_id = await _persist_messages(
