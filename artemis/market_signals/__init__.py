@@ -17,6 +17,28 @@ readable post, see whether it gets read, then add actions. This is also why
 quietened — a brief cannot unblock a blocking gate, and that gate silently
 stopped every later scheduled run for 57 days.
 
+What this brief IS, in Jon's words (clarified 2026-09-08)
+--------------------------------------------------------
+
+**A pulse.** What is going on in the market: Amira's own name, AI in schools,
+screen time in schools, literacy policy, competitor movement. Topic-shaped, not
+audience-shaped.
+
+It is deliberately NOT segmented by customer status. Jon: *"market pulse was
+dealing with non customers or a mix not a single bucket it was just a general
+whats going on with amira, ai in schools, screentime in schools and what not."*
+Whether a district is a customer is a question for the campaign feed and for
+Salesforce, not a filter on this one.
+
+**Two things that DO belong even though they are district-specific:** a customer
+having a problem, and a district saying something good about us. Both are pulse,
+because both are the market talking about Amira.
+
+**What does not belong: buying intent.** Starbridge RFPs, procurement notices and
+deadlines are demand-gen signals for Josh and land in `#campaign-signals`. A
+Kansas screener RFP is a strong signal in the wrong room. This was proposed and
+rejected on 2026-09-08; do not re-propose it without a new reason.
+
 Section contract, agreed across two concurrent sessions:
 
     async def build_<feed>_section(session) -> str | None
