@@ -474,21 +474,23 @@ async def test_submit_draft_for_review_uses_deliverable_id() -> None:
 
 
 async def test_fire_scout_accepts_legacy_scout_id_alias() -> None:
-    mock_session, mock_cm = _mock_session_cm()
-    mock_run = type("ScoutRunRow", (), {"id": "run-1"})()
+    """The alias still resolves; the response no longer claims a scout started.
 
-    with (
-        patch("artemis.db.SessionLocal", return_value=mock_cm),
-        patch(
-            "artemis.marketing.repository.create_scout_run",
-            new=AsyncMock(return_value=mock_run),
-        ) as mock_create,
-    ):
-        result = await _fire_scout({"scout_id": "legislative"})
+    This test previously asserted `"Scout legislative fired"` and that
+    `create_scout_run` had been awaited -- it was pinning the bug in place.
+    fire_scout inserted a run row, said it had fired, and started nothing, which
+    is dispatch_research returning "dispatched" for the third time in this
+    codebase. Two orphan `pending` rows from June and July were the only trace.
 
-    assert "Scout legislative fired" in result
-    assert mock_create.await_args is not None
-    assert mock_create.await_args.kwargs["scout_type"] == "legislative"
+    The alias is the part worth keeping, so it is what this now checks.
+    """
+    import json
+
+    result = json.loads(await _fire_scout({"scout_id": "legislative"}))
+
+    assert result["scout_type"] == "legislative", "the scout_id alias must still resolve"
+    assert result["status"] == "not_started"
+    assert "NOTHING WAS STARTED" in result["detail"]
 
 
 async def test_list_content_assets_returns_real_rows() -> None:

@@ -15,6 +15,8 @@ is why this is a gate and not a fourth rule.
 
 from __future__ import annotations
 
+import pytest
+
 from artemis.floating_artemis.unchecked_claims import find_unchecked_flags
 
 REAL_MESSAGE = (
@@ -120,3 +122,62 @@ def test_the_gate_cannot_recurse() -> None:
     src = inspect.getsource(handle_turn)
     assert "not _retry_done" in src, "the retry must be guarded by the flag"
     assert "_retry_done=True" in src, "the retry must set the flag"
+
+
+# ── fire_scout must not report success for work it does not do ───────────────
+
+
+@pytest.mark.asyncio
+async def test_fire_scout_does_not_claim_to_have_started_anything() -> None:
+    """It used to insert a scout_runs row and return "Scout X fired: run_id=...".
+
+    Nothing started. Two orphan `pending` rows from June and July were the only
+    trace: runs that were "fired", never ran, never completed. That is
+    dispatch_research returning "dispatched" for the third time in this codebase.
+    """
+    import json
+
+    from artemis.floating_artemis.tools.marketing import _fire_scout
+
+    result = json.loads(await _fire_scout({"scout_type": "regional_news"}))
+
+    assert result["status"] == "not_started"
+    assert "NOTHING WAS STARTED" in result["detail"]
+    assert "do not promise findings" in result["detail"]
+
+
+def test_fire_scout_creates_no_run_row() -> None:
+    """The phantom row was the evidence that made the lie believable.
+
+    A run record for work that never ran is worse than no record: it makes the
+    scout look attempted, and two such rows sat in the database from June and
+    July as the only trace.
+
+    Asserted against the source rather than by counting rows, because counting
+    would need a live session and this is a structural guarantee, not a runtime
+    one: the call must not be there at all.
+    """
+    import inspect
+
+    from artemis.floating_artemis.tools.marketing import _fire_scout
+
+    src = inspect.getsource(_fire_scout)
+    assert "create_scout_run" not in src, "fire_scout must not write a run row"
+    assert "fired" not in src.lower().split('"""')[-1], "it must not claim to have fired anything"
+
+
+def test_fire_scout_reports_the_real_last_run() -> None:
+    """Refusing is not enough; it should answer the question behind the request.
+
+    Someone firing a scout wants to know it has run recently, so the refusal
+    carries when it last ran and what it produced. Checked structurally: a second
+    live call in this module trips pytest's loop teardown, and what matters is
+    that the query is there.
+    """
+    import inspect
+
+    from artemis.floating_artemis.tools.marketing import _fire_scout
+
+    src = inspect.getsource(_fire_scout)
+    assert "FROM scout_runs" in src, "it must look up the real last run"
+    assert "last ran" in src, "and report it"

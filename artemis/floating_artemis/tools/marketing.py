@@ -722,20 +722,77 @@ async def _list_scout_runs(inp: dict[str, Any]) -> str:
 
 
 async def _fire_scout(inp: dict[str, Any]) -> str:
+    """Report that a scout cannot be triggered on demand, and say when it next runs.
+
+    **This tool used to lie.** It inserted a row into ``scout_runs``, returned
+    "Scout X fired: run_id=...", and started nothing. Two orphan `pending` rows
+    from June and July sat in the database as the only evidence -- runs that were
+    "fired", never ran, and never completed.
+
+    That is ``dispatch_research`` returning ``{"status": "dispatched"}`` for the
+    third time in this codebase, and the recorded lesson is explicit: a tool must
+    never report success for work it did not do.
+
+    **Why it cannot simply be made to work.** Scouts run as subprocesses spawned
+    by ``scout_scheduler._run_scout_job`` inside the long-lived app process. This
+    tool executes in the per-turn MCP subprocess, which dies when the turn ends,
+    so a task started here would be killed mid-flight -- the exact failure that
+    left Argus never running for five weeks. Doing it properly needs a durable
+    request row plus an in-app claimer, the way ARGUS-1 was rebuilt. That is a
+    real piece of work and is not pretended at here.
+
+    So this returns what is true: scouts are on a schedule, here is when this one
+    last ran and what it produced, and nothing was started.
+    """
     scout_type = inp.get("scout_type") or inp.get("scout_id")
     if not scout_type:
         return "Error: scout_type is required"
+
     try:
-        import uuid
+        from sqlalchemy import text as _text
 
         import artemis.db as _db
-        from artemis.marketing import repository as repo
+        from artemis.marketing import scout_scheduler as _sched
 
-        run_id = f"scout_run_{uuid.uuid4().hex[:8]}"
         async with _db.SessionLocal() as session:
-            run = await repo.create_scout_run(session, run_id=run_id, scout_type=scout_type)
-            await session.commit()
-        return f"Scout {scout_type} fired: run_id={run.id}"
+            row = (
+                await session.execute(
+                    _text(
+                        """
+                        SELECT started_at, status,
+                               coalesce(jsonb_array_length(created_signal_ids), 0) AS emitted
+                        FROM scout_runs WHERE scout_type = :t
+                        ORDER BY started_at DESC LIMIT 1
+                        """
+                    ),
+                    {"t": scout_type},
+                )
+            ).one_or_none()
+
+        hours = max(1, int(getattr(_sched, "DEFAULT_CADENCE_SECONDS", 14400)) // 3600)
+        if row is None:
+            last = f"No run of {scout_type} has ever been recorded."
+        else:
+            last = (
+                f"{scout_type} last ran {row.started_at:%Y-%m-%d %H:%M} UTC "
+                f"({row.status}), producing {row.emitted} signal(s)."
+            )
+
+        return json.dumps(
+            {
+                "status": "not_started",
+                "scout_type": scout_type,
+                "detail": (
+                    f"NOTHING WAS STARTED. Scouts cannot be triggered on demand: "
+                    f"they run on a schedule every ~{hours}h from the app process, "
+                    f"and this tool runs in a per-turn subprocess that cannot reach "
+                    f"it. {last} Say plainly that you did not start a scout and do "
+                    f"not promise findings. If a run is genuinely needed sooner, "
+                    f"that is a change someone has to make, not something you can "
+                    f"trigger."
+                ),
+            }
+        )
     except Exception as exc:
         return f"fire_scout failed: {exc}"
 
