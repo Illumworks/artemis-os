@@ -72,9 +72,26 @@ Read these before doing anything substantive.
 
 3. **Lossless memory rule.** Drawers and evidence are never deleted. Observations are removed from active retrieval only via supersession (`superseded_by`), never via DELETE. There is no public `delete_drawer` or `delete_observation` API.
 
-4. **Dependencies.** Never add or upgrade a dependency to a version released less than 7 days ago. Exception: direct response to a known CVE, documented at the point of upgrade. Applies to all dependency types — Python, Docker base images, GitHub Actions if we ever add them. The lockfile (`uv.lock`) must reflect the same constraint when regenerated.
+4. **Never store Gong transcripts.** Jon's rule, 2026-09-08, and it is absolute:
+   call content is read, reduced to a signal, and discarded. Derive a flag, a
+   sentiment, a topic or a district association; persist THAT. Never write
+   transcript text, quotes, or a participant's words to the database, to memory,
+   to a log line, or to a Slack message.
 
-5. **Tests are not optional.** Same discipline as the Node reference: >85% backend coverage, 100% on keystone-class modules. Run `./scripts/check.sh` before opening any branch for review.
+   Gong is the only source in this system where the people in the data did not
+   consent to us reading it. Public records, RFPs, news and our own CRM are all
+   different in kind: a rep's call with a district is a conversation two people
+   had. The output Jon wants is a notification ("something is happening with
+   district X"), never the conversation.
+
+   Practical consequence for design: prefer whatever Gong computes itself
+   (trackers, sentiment, topics) over anything that requires pulling transcript
+   text. If a feature can be built from call METADATA alone, build it that way
+   even if it is slightly worse, because it never holds the content at all.
+
+5. **Dependencies.** Never add or upgrade a dependency to a version released less than 7 days ago. Exception: direct response to a known CVE, documented at the point of upgrade. Applies to all dependency types — Python, Docker base images, GitHub Actions if we ever add them. The lockfile (`uv.lock`) must reflect the same constraint when regenerated.
+
+6. **Tests are not optional.** Same discipline as the Node reference: >85% backend coverage, 100% on keystone-class modules. Run `./scripts/check.sh` before opening any branch for review.
 
 ## Local dev quickstart
 
