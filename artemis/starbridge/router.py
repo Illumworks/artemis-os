@@ -308,6 +308,29 @@ async def route_delivery(session: AsyncSession, payload: dict[str, Any]) -> Rout
     )
     session.add(row)
     await session.flush()
+
+    # Qualify on arrival, or the signal never reaches anyone.
+    #
+    # The daily brief reads QUALIFIED signals from the last 26 hours. A webhook
+    # row entering at pending_qualification and staying there is invisible to it
+    # forever: the backfill only appeared because it was qualified by hand, and
+    # the next 1,027 would have sat unread. Nothing else qualifies these -- the
+    # scheduled qualifier runs over scout output, not over webhook arrivals.
+    #
+    # Deterministic and cheap (no LLM), and it is the same call the manual path
+    # makes, so a Starbridge signal is scored on identical rules to every other.
+    # Non-fatal: a failure leaves the row pending rather than losing it.
+    try:
+        from artemis.marketing.qualification import run_and_store_qualification
+
+        await run_and_store_qualification(session, row)
+    except Exception:
+        logger.warning(
+            "starbridge: qualification failed for signal %s (row kept, still pending)",
+            row.id,
+            exc_info=True,
+        )
+
     return RouteResult("queued", signal_id=int(row.id), reason_codes=codes)
 
 

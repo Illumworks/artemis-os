@@ -468,3 +468,55 @@ async def test_the_due_date_is_stored_not_just_used(db_session) -> None:
 
     assert row.provenance["due_date"] == "2026-10-07"
     assert row.provenance["buyer_state"] == "KS"
+
+
+@pytest.mark.asyncio
+async def test_a_queued_signal_is_qualified_on_arrival(db_session, monkeypatch) -> None:
+    """An unqualified signal is invisible to the daily brief, forever.
+
+    The brief reads QUALIFIED signals from the last 26 hours. A webhook row
+    entering at pending_qualification and staying there never reaches anyone:
+    the 1,027-signal backfill only surfaced because it was qualified by hand,
+    and nothing else qualifies these -- the scheduled qualifier runs over scout
+    output, not webhook arrivals.
+    """
+    called: list[int] = []
+
+    async def _qualify(_session: object, signal: object) -> dict:
+        called.append(int(signal.id))  # type: ignore[attr-defined]
+        return {"scores": []}
+
+    monkeypatch.setattr("artemis.marketing.qualification.run_and_store_qualification", _qualify)
+
+    result = await route_delivery(
+        db_session,
+        json.loads(
+            _body(row_id="q-1", name="Statewide Literacy Screener RFP", columns=_RFP_COLUMNS)
+        ),
+    )
+    await db_session.flush()
+
+    assert result.outcome == "queued"
+    assert called == [result.signal_id], "the queued signal must be qualified in the same turn"
+
+
+@pytest.mark.asyncio
+async def test_a_qualification_failure_keeps_the_signal(db_session, monkeypatch) -> None:
+    """Losing the signal would be worse than leaving it pending."""
+
+    async def _boom(_session: object, _signal: object) -> dict:
+        raise RuntimeError("qualifier down")
+
+    monkeypatch.setattr("artemis.marketing.qualification.run_and_store_qualification", _boom)
+
+    result = await route_delivery(
+        db_session,
+        json.loads(_body(row_id="q-2", name="Reading Intervention RFP", columns=_RFP_COLUMNS)),
+    )
+    await db_session.flush()
+
+    assert result.outcome == "queued"
+    row = (
+        await db_session.execute(select(SignalQueue).where(SignalQueue.id == result.signal_id))
+    ).scalar_one()
+    assert row.id, "the row survives a qualifier failure"

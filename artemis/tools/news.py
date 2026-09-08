@@ -76,8 +76,27 @@ def _parse_google_news_rss(xml_text: str) -> list[dict[str, Any]]:
         link = (link_el.text or "").strip() if link_el is not None else ""
         published = (pub_el.text or "").strip() if pub_el is not None else ""
         source = (source_el.text or "").strip() if source_el is not None else ""
+        # <source url="https://www.wfaa.com">WFAA</source>. The publisher's own
+        # domain, which is the one piece of provenance a reader can act on.
+        #
+        # Every `link` here is an opaque news.google.com/rss/articles/CBMi...
+        # redirect: it names no publisher, carries no date, and cannot be
+        # resolved without Google's internal handshake or a headless browser.
+        # Slack unfurled all of them into the same "Comprehensive up-to-date news
+        # coverage" card, which is how four identical previews ended up stacked
+        # under one brief. Naming the publisher is the honest substitute for a
+        # link we cannot make transparent.
+        source_domain = (source_el.attrib.get("url") or "").strip() if source_el is not None else ""
 
-        items.append({"title": title, "link": link, "published": published, "source": source})
+        items.append(
+            {
+                "title": title,
+                "link": link,
+                "published": published,
+                "source": source,
+                "source_domain": source_domain,
+            }
+        )
         if len(items) >= _MAX_ITEMS:
             break
     return items

@@ -233,6 +233,10 @@ def article_to_finding(
             "source_url": article.get("url") or "",
             "published_at": article.get("published_at") or "",
             "source_name": article.get("source_name") or "",
+            # The publisher's own domain. Every Google News link is an opaque
+            # redirect naming no publisher, so without this a reader cannot tell
+            # whether a story came from a district's own paper or an aggregator.
+            "source_domain": article.get("source_domain") or "",
             "source_type": "news_article",
         },
     }
