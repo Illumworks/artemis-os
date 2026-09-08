@@ -138,6 +138,26 @@ class Settings(BaseSettings):
         description="Embedding backend. Only 'minilm' supported in V1.",
     )
 
+    gong_access_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ARTEMIS_GONG_ACCESS_KEY", "GONG_ACCESS_KEY"),
+        description=(
+            "Gong API access key, from Gong Settings -> API. Paired with "
+            "gong_access_key_secret as HTTP Basic auth against api.gong.io. Empty "
+            "= the Gong integration is off and every call path reports itself "
+            "unavailable rather than returning nothing."
+        ),
+    )
+    gong_access_key_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("ARTEMIS_GONG_ACCESS_KEY_SECRET", "GONG_ACCESS_KEY_SECRET"),
+        description=(
+            "Gong API secret. A real secret, unlike the Starbridge webhook key -- "
+            "it authenticates as us and can read call recordings and transcripts. "
+            "Never log it, never put it in a URL."
+        ),
+    )
+
     starbridge_webhook_public_key: str = Field(
         default="",
         validation_alias=AliasChoices(
