@@ -89,6 +89,21 @@ Read these before doing anything substantive.
    text. If a feature can be built from call METADATA alone, build it that way
    even if it is slightly worse, because it never holds the content at all.
 
+   **Never build a rep performance view.** Jon, 2026-09-08: the scope is the
+   DISTRICT, never the person. Tracker counts joined to `primaryUserId` is a rep
+   evaluation dataset whether or not anyone intended one, and it is one query
+   away at all times. So: aggregate by account, never by rep; never rank, score,
+   compare or trend an individual; never surface who was on a call as a
+   characteristic of that person. The credential can read all 22 reps'
+   conversations, which is exactly why the restraint has to live in the code
+   rather than in intent.
+
+   **Derived facts are allowed; words are not.** "You last spoke on 14 August and
+   implementation timing was the concern" is a fact about a conversation and is
+   fine. "They said the rollout felt rushed" is a person's words, and is not,
+   even paraphrased closely enough to be recognisable. The test: could the
+   speaker read it back and find themselves quoted? Then it does not ship.
+
 5. **Dependencies.** Never add or upgrade a dependency to a version released less than 7 days ago. Exception: direct response to a known CVE, documented at the point of upgrade. Applies to all dependency types — Python, Docker base images, GitHub Actions if we ever add them. The lockfile (`uv.lock`) must reflect the same constraint when regenerated.
 
 6. **Tests are not optional.** Same discipline as the Node reference: >85% backend coverage, 100% on keystone-class modules. Run `./scripts/check.sh` before opening any branch for review.
