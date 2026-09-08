@@ -254,7 +254,16 @@ async def post_daily_brief(session: AsyncSession) -> dict[str, Any]:
         if not token:
             raise RuntimeError("no Callie Slack token — cannot deliver the brief")
 
-        await SlackClient(token=token).post_message(channel=channel, text=lint_agent_text(body))
+        # unfurl off: these briefs carry several Google News RSS links, which
+        # are redirect URLs, so Slack expanded each into an identical
+        # "Comprehensive up-to-date news coverage" card. Stacked three or four
+        # deep that is most of the scrolling and none of the information.
+        await SlackClient(token=token).post_message(
+            channel=channel,
+            text=lint_agent_text(body),
+            unfurl_links=False,
+            unfurl_media=False,
+        )
         # Delivered. NOW the "already reported" markers become durable.
         await session.commit()
         await _mark(session, channel, "sent")

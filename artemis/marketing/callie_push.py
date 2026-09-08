@@ -287,7 +287,12 @@ async def push_top_tier_signal(
             return False
 
         client = SlackClient(token=agent_cfg.access_token)
-        await client.post_message(channel=channel, text=text)
+        # Signal pushes carry a source link, usually a Google News redirect
+        # that unfurls into a generic aggregator card telling the reader
+        # nothing. See SlackClient.post_message.
+        await client.post_message(
+            channel=channel, text=text, unfurl_links=False, unfurl_media=False
+        )
 
         # Record push observation (dedup + freq-cap anchor)
         await _record_push_observation(session, signal_id, headline)

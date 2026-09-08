@@ -1302,7 +1302,8 @@ async def _post_as_callie(
         return
 
     client = SlackClient(token=agent_cfg.access_token)
-    await client.post_message(channel=channel_id, text=text)
+    # Argus dossiers cite several sources; the unfurls bury the findings.
+    await client.post_message(channel=channel_id, text=text, unfurl_links=False, unfurl_media=False)
 
 
 async def _post_fallback(

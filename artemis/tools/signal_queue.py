@@ -151,6 +151,35 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             normalized = normalize_intake_payload(intake_payload, scout_type=slug)
         except ValueError as exc:
             return f"VALIDATION_ERROR: {exc}"
+        # A news article about something that happened months ago is not a
+        # signal. Julie and Jamie found a Michigan piece from February, a Kansas
+        # one from March and a Los Angeles one from 2024 sitting in the channel
+        # as current. Applies to news only: a statute from February is still a
+        # live fact, and an RFP posted sixty days ago can close next week.
+        from artemis.marketing.article_recency import assess as _assess_recency
+
+        _recency = _assess_recency(
+            published_at=normalized.source_published_at,
+            source_type=normalized.source_type,
+            discovered_by=normalized.discovered_by,
+        )
+        if _recency.should_reject:
+            logger.info(
+                "signal_queue.write: rejected stale news signal (%s) -- %s",
+                normalized.headline[:80] if normalized.headline else "(no headline)",
+                _recency.reason(),
+            )
+            return json.dumps(
+                {
+                    "status": "rejected",
+                    "reason": "stale_article",
+                    "detail": (
+                        f"Not queued: {_recency.reason()}. Say plainly that the "
+                        "article is too old to be a current signal rather than "
+                        "reporting it as one."
+                    ),
+                }
+            )
 
         # ── Source-URL reality check ────────────────────────────────────────────
         # A scout is an LLM agent, and nothing here previously checked that the
@@ -253,6 +282,11 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
                 "agent_run_id": ctx.agent_run_id,
                 "agent_id": ctx.agent_id,
                 "why_flagged": normalized.why_flagged,
+                # Captured by the scout, carried through normalize_intake_payload,
+                # and until now dropped right here -- so the queue had no idea how
+                # old anything was and a 2024 article read as current.
+                "source_published_at": normalized.source_published_at,
+                "source_title": normalized.source_title,
                 **({"change_hash": incoming_change_hash} if incoming_change_hash else {}),
             },
         )

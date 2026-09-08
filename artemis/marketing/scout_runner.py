@@ -327,6 +327,8 @@ async def run_scout(
                 "run_id": run_id,
                 "agent_id": agent_id,
                 "why_flagged": normalized.why_flagged,
+                "source_published_at": normalized.source_published_at,
+                "source_title": normalized.source_title,
             },
         )
         session.add(signal_row)
