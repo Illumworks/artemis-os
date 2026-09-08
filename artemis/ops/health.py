@@ -11,6 +11,7 @@ import asyncio
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -187,7 +188,17 @@ class Report:
     phantom_claims: list[PhantomClaim] = field(default_factory=list)
     state_coverage: list[StateCoverage] = field(default_factory=list)
     source_yield: list[SourceYield] = field(default_factory=list)
+    backup: dict[str, str] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
+
+
+#: A backup older than this is stale. Nightly at 03:30, so 48h means two
+#: consecutive misses before it is called out, which survives a laptop asleep
+#: overnight without crying wolf.
+BACKUP_STALE_AFTER = timedelta(hours=48)
+
+#: Where backup_db.sh writes. Kept in sync with ARTEMIS_BACKUP_DIR's default.
+BACKUP_DIR = Path.home() / "artemis-backups"
 
 
 #: A scout must have had at least this many runs in the window before "zero
@@ -254,6 +265,40 @@ def _shell(cmd: str) -> str:
 def _leading_pid(listing: str) -> str:
     head = listing.split()
     return head[0] if head and head[0].isdigit() else ""
+
+
+def collect_backup() -> dict[str, str]:
+    """Freshest database backup, its age and size.
+
+    **Why this is in the health report.** There was no database backup of any kind
+    before 2026-09-08. The git remote backs up the code and has never held a
+    single row, so every signal, memory observation and Argus dossier lived on one
+    disk. That gap was invisible because nothing looked for it.
+
+    A backup job that quietly stops is the same failure as a scout that runs and
+    emits nothing: everything reports fine and the thing you are relying on is
+    not happening. So the report asks the only question that matters, which is
+    how old the newest good backup is.
+    """
+    try:
+        dumps = sorted(
+            BACKUP_DIR.glob("artemis_os-*.dump"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+    except OSError:
+        return {"state": "unreadable", "dir": str(BACKUP_DIR)}
+    if not dumps:
+        return {"state": "none", "dir": str(BACKUP_DIR)}
+
+    newest = dumps[0]
+    stat = newest.stat()
+    return {
+        "state": "ok",
+        "newest": newest.name,
+        "age": _fmt_duration(datetime.fromtimestamp(stat.st_mtime, tz=UTC)),
+        "age_seconds": str(int(datetime.now(UTC).timestamp() - stat.st_mtime)),
+        "size_mb": f"{stat.st_size / 1_048_576:.0f}",
+        "count": str(len(dumps)),
+    }
 
 
 def collect_service() -> dict[str, str]:
@@ -599,6 +644,31 @@ def derive_findings(report: Report) -> list[Finding]:
     """Turn the raw numbers into the short list of things that need a human."""
     findings: list[Finding] = []
 
+    _backup = report.backup
+    if _backup.get("state") == "none":
+        findings.append(
+            Finding(
+                "stuck",
+                f"NO DATABASE BACKUP EXISTS in {_backup.get('dir')} -- the git remote "
+                "backs up the code and holds no rows, so every signal, memory and "
+                "dossier is on one disk only",
+            )
+        )
+    elif _backup.get("state") == "unreadable":
+        findings.append(
+            Finding("stuck", f"backup directory {_backup.get('dir')} could not be read")
+        )
+    elif _backup.get("age_seconds") and int(_backup["age_seconds"]) > int(
+        BACKUP_STALE_AFTER.total_seconds()
+    ):
+        findings.append(
+            Finding(
+                "stuck",
+                f"newest database backup is {_backup.get('age')} old -- the nightly "
+                "job has missed at least two runs and nothing else would have said so",
+            )
+        )
+
     for src in report.source_yield:
         if src.is_silently_dead:
             findings.append(
@@ -728,6 +798,7 @@ def derive_findings(report: Report) -> list[Finding]:
 
 async def build_report() -> Report:
     report = Report(generated_at=datetime.now(UTC), service=collect_service())
+    report.backup = collect_backup()
     async with _db.SessionLocal() as session:
         report.agents = await collect_agents(session)
         report.funnel = await collect_funnel(session)
@@ -831,15 +902,27 @@ def render(report: Report) -> str:
             f"{blind_n} with zero signals"
         )
 
+    if report.backup:
+        add("")
+        add("BACKUP")
+        if report.backup.get("state") == "ok":
+            add(
+                f"     newest {report.backup['newest']} "
+                f"({report.backup['age']} old, {report.backup['size_mb']}MB, "
+                f"{report.backup['count']} on disk)"
+            )
+        else:
+            add(f"  !! {report.backup.get('state')} -- {report.backup.get('dir')}")
+
     if report.source_yield:
         add("")
         add(f"SOURCE YIELD (last {DEAD_SOURCE_WINDOW.days} days)")
-        for src in report.source_yield:
-            marker = "!!" if src.is_silently_dead else "  "
-            add(
-                f"  {marker} {src.scout_type[:30]:32} {src.runs:>4} runs "
-                f"{src.productive_runs:>4} produced a signal"
-            )
+    for src in report.source_yield:
+        marker = "!!" if src.is_silently_dead else "  "
+        add(
+            f"  {marker} {src.scout_type[:30]:32} {src.runs:>4} runs "
+            f"{src.productive_runs:>4} produced a signal"
+        )
 
     add("")
     add("FINDINGS")

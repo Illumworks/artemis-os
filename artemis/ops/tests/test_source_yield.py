@@ -12,7 +12,7 @@ It is the Argus failure in a different costume. The tell is not any single zero
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from artemis.ops.health import (
     DEAD_SOURCE_MIN_RUNS,
@@ -84,3 +84,58 @@ def test_a_stuck_finding_makes_the_command_exit_nonzero() -> None:
 
     assert any(f.severity == "stuck" for f in findings)
     assert isinstance(findings[0], Finding)
+
+
+# ── backup freshness ─────────────────────────────────────────────────────────
+
+
+def test_no_backup_at_all_is_flagged_as_stuck() -> None:
+    """There was no database backup of any kind before 2026-09-08.
+
+    The git remote backs up the code and has never held a single row, so every
+    signal, memory observation and Argus dossier lived on one disk. The gap was
+    invisible because nothing looked for it.
+    """
+    report = Report(generated_at=datetime.now(UTC), service={"healthz": "200"})
+    report.backup = {"state": "none", "dir": "/Users/artemis/artemis-backups"}
+
+    findings = derive_findings(report)
+    hit = [f for f in findings if "NO DATABASE BACKUP" in f.message]
+
+    assert len(hit) == 1
+    assert hit[0].severity == "stuck"
+
+
+def test_a_stale_backup_is_flagged() -> None:
+    """A backup job that quietly stops is a scout that runs and emits nothing.
+
+    Everything reports fine and the thing being relied on is not happening.
+    """
+    from artemis.ops.health import BACKUP_STALE_AFTER
+
+    report = Report(generated_at=datetime.now(UTC), service={"healthz": "200"})
+    report.backup = {
+        "state": "ok",
+        "age": "4 days",
+        "age_seconds": str(int(BACKUP_STALE_AFTER.total_seconds()) + 3600),
+    }
+
+    assert [f for f in derive_findings(report) if "database backup is" in f.message]
+
+
+def test_a_fresh_backup_produces_no_finding() -> None:
+    report = Report(generated_at=datetime.now(UTC), service={"healthz": "200"})
+    report.backup = {"state": "ok", "age": "6h", "age_seconds": "21600"}
+
+    assert not [f for f in derive_findings(report) if "backup" in f.message.lower()]
+
+
+def test_the_window_tolerates_one_missed_night() -> None:
+    """Nightly at 03:30, so a laptop asleep overnight must not cry wolf.
+
+    Two consecutive misses is a real problem; one is a closed lid.
+    """
+    from artemis.ops.health import BACKUP_STALE_AFTER
+
+    assert timedelta(hours=36) <= BACKUP_STALE_AFTER
+    assert timedelta(days=4) >= BACKUP_STALE_AFTER
