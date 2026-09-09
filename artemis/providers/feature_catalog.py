@@ -16,14 +16,30 @@ from __future__ import annotations
 # Canonical provider IDs (must match artemis/providers/registry.py _BUILDERS keys)
 _T1 = [{"provider": "claude-code"}, {"provider": "anthropic"}]
 _T2 = [{"provider": "codex"}, {"provider": "claude-code"}, {"provider": "anthropic"}]
+#: The model actually loaded on the Mac Studio, verified 2026-09-09.
+#:
+#: The catalog previously named ``qwen/qwen3-14b``, which is NOT loaded there.
+#: Every Tier 3 call therefore failed at lm-studio and cascaded to Gemini and
+#: then Claude, so the local box was paid for and never used, and nothing said
+#: so: a cascade that falls through looks identical to one that was never
+#: configured.
+#:
+#: It is the *coder-instruct* model rather than the general one on purpose.
+#: ``qwen/qwen3.6-35b-a3b`` is a reasoning model that, in this LM Studio setup,
+#: spends its entire budget on reasoning tokens and returns an EMPTY string --
+#: measured at 300, 400 and 1200 max_tokens, and unchanged by a ``/no_think``
+#: prefix or ``chat_template_kwargs.enable_thinking = false``. An empty reply is
+#: the worst possible failure here because it is a 200 with a usable shape.
+_LM_STUDIO_MODEL = "qwen3-coder-30b-a3b-instruct-mlx"
+
 _T3_LM_FIRST = [
-    {"provider": "lm-studio", "model": "qwen/qwen3-14b"},
+    {"provider": "lm-studio", "model": _LM_STUDIO_MODEL},
     {"provider": "gemini", "model": "gemini-2.5-flash"},
     {"provider": "claude-code"},
 ]
 _T3_GEMINI_FIRST = [
     {"provider": "gemini", "model": "gemini-2.5-flash"},
-    {"provider": "lm-studio", "model": "qwen/qwen3-14b"},
+    {"provider": "lm-studio", "model": _LM_STUDIO_MODEL},
     {"provider": "claude-code"},
 ]
 
