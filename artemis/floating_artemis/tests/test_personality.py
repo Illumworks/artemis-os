@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -290,4 +291,32 @@ def test_build_system_prompt_artemis_profile_matches_legacy_output() -> None:
         speaker_name="Jon",
         is_personal_slack_dm=True,
     )
-    assert prompt == build_legacy_prompt()
+    # The "## Today" block carries the current date, so it cannot appear in a
+    # hand-written expectation -- it would be wrong tomorrow. Strip it from the
+    # comparison and assert its CONTENT separately, below.
+    #
+    # That this test broke twice in one day (a deliberate wording change on
+    # 2026-08-12 that went unnoticed for four weeks, then this) is the argument
+    # against its shape: it reimplements the string it is checking, so every
+    # intentional change reads as a failure and says nothing about correctness.
+    # Replacing it with property assertions is tracked separately.
+    without_today = re.sub(r"\n## Today\n.*?(?=\n## )", "", prompt, flags=re.S)
+
+    assert without_today == build_legacy_prompt()
+
+
+def test_the_prompt_tells_the_agent_what_day_it_is() -> None:
+    """Callie was handed "last touched 2027-03-29" -- seven months in the future
+    -- and reported it as a past contact in March, because nothing in her 20k
+    character prompt said what today was. An agent with no clock cannot notice an
+    impossible date."""
+    from datetime import UTC, datetime
+
+    prompt = _build_system_prompt(
+        voice_samples=[], page_context=None, available_surfaces=[], session_id="fa-test"
+    )
+
+    assert f"{datetime.now(UTC):%Y-%m-%d}" in prompt
+    # Knowing the date is only useful if an impossible one must be said out loud.
+    assert "is AFTER today" in prompt
+    assert "do not report it as a past event" in prompt

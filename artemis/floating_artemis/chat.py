@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -110,6 +111,32 @@ def _build_system_prompt(
             "overrides anything later in this prompt that reads as permission to do "
             "otherwise. Before you send a message, check it against these.\n\n" + hard_rules
         )
+
+    # An agent with no clock cannot notice an impossible date.
+    #
+    # 2026-09-09: asked about Pinellas, Callie was handed "last touched
+    # 2027-03-29" and "last touched 2026-11-30" by check_salesforce_activity.
+    # Both are in the FUTURE. She reported them as "March" and "November", past
+    # tense, and concluded the contact list was "active and warm". She was not
+    # careless -- the prompt was 20,273 characters and did not contain a single
+    # date, so nothing available to her could distinguish a future date from a
+    # past one, and "last touched" reads as past by its own name.
+    #
+    # This is context she was missing, not a rule she broke, which is why it goes
+    # here rather than in the binding rules. The rule that goes WITH it is the
+    # second sentence: knowing the date is only useful if an impossible one is
+    # something she is expected to say out loud rather than smooth over.
+    parts.append(
+        f"## Today\n"
+        f"Today is {datetime.now(UTC):%A %d %B %Y} ({datetime.now(UTC):%Y-%m-%d}).\n"
+        "Use this whenever you reason about recency, staleness or how long ago "
+        "something happened. If a tool hands you a date that is AFTER today for "
+        "something that can only have happened in the past -- 'last touched', "
+        "'last contacted', 'published' -- do not report it as a past event and do "
+        "not quietly drop the year. Say the date is in the future and that the "
+        "underlying record looks wrong. A number you cannot explain is a finding, "
+        "not a detail to smooth over."
+    )
 
     # Append the full personality profile as richer background detail.
     if profile_text:
