@@ -320,3 +320,105 @@ def test_gong_failure_cannot_take_out_the_suppression_check() -> None:
         src.index("recent_contact_summary") - 600 : src.index("recent_contact_summary") + 400
     ]
     assert "except Exception" in block, "the Gong fetch must be wrapped"
+
+
+# ── the one-line form, for annotating someone else's message ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_one_liner_is_silent_when_there_is_nothing_to_say(monkeypatch) -> None:
+    """Deliberately the OPPOSITE of the full summary's behaviour.
+
+    Here the line annotates someone else's message, so no calls means no
+    annotation. In the full summary the same state must be stated out loud,
+    because there a missing Gong section would read as "no prior contact".
+    """
+    from artemis.integrations.gong import client as mod
+
+    async def _none(self, name, *, days=180, limit=5):  # noqa: ANN001, ARG001
+        return []
+
+    monkeypatch.setattr(mod.GongMetadataClient, "recent_calls_for_account", _none)
+
+    assert await mod.one_line_contact("Anywhere") is None
+
+
+@pytest.mark.asyncio
+async def test_the_one_liner_is_silent_when_gong_is_down(monkeypatch) -> None:
+    """An outage must not annotate a signal with a guess."""
+    from artemis.integrations.gong import client as mod
+
+    async def _boom(self, name, *, days=180, limit=5):  # noqa: ANN001, ARG001
+        raise mod.GongUnavailableError("down")
+
+    monkeypatch.setattr(mod.GongMetadataClient, "recent_calls_for_account", _boom)
+
+    assert await mod.one_line_contact("Anywhere") is None
+
+
+@pytest.mark.asyncio
+async def test_the_one_liner_names_the_themes_and_says_not_cold(monkeypatch) -> None:
+    from artemis.integrations.gong import client as mod
+
+    async def _calls(self, name, *, days=180, limit=5):  # noqa: ANN001, ARG001
+        return [
+            mod.CallContext(
+                call_id="c1",
+                started="2026-05-11T10:00:00Z",
+                duration_seconds=120,
+                title="Call",
+                system="Gong Connect",
+                account_name="A District",
+                trackers={"Objections (tracker)": 2},
+                external_parties=1,
+            )
+        ]
+
+    monkeypatch.setattr(mod.GongMetadataClient, "recent_calls_for_account", _calls)
+
+    line = await mod.one_line_contact("A District")
+
+    assert line is not None
+    assert "2026-05-11" in line
+    assert "Objections (tracker)" in line
+    assert "Not a cold account" in line
+
+
+def test_a_signal_push_carries_prior_contact() -> None:
+    """ "They posted an RFP" and "they posted an RFP and we spoke to them twice in
+    July" call for different next actions, and a Slack message cannot be asked a
+    follow-up question."""
+    from artemis.marketing.callie_push import _build_push_text
+
+    text = _build_push_text(
+        signal_id=1,
+        headline="A district posted a screener RFP",
+        district_id="A District",
+        state="KS",
+        campaign_family="obc",
+        top_score=0.9,
+        reason_codes=[{"code": "PROCUREMENT_LITERACY_RFP"}],
+        app_base_url="",
+        prior_contact="2 calls in the last 180 days, most recent 2026-07-14. Not a cold account.",
+    )
+
+    assert "*Prior contact:*" in text
+    assert "Not a cold account" in text
+
+
+def test_a_signal_push_without_prior_contact_says_nothing_about_it() -> None:
+    """No line beats an empty line: absence is not evidence of a cold account."""
+    from artemis.marketing.callie_push import _build_push_text
+
+    text = _build_push_text(
+        signal_id=1,
+        headline="A district posted a screener RFP",
+        district_id="A District",
+        state="KS",
+        campaign_family="obc",
+        top_score=0.9,
+        reason_codes=[],
+        app_base_url="",
+    )
+
+    assert "Prior contact" not in text

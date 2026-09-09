@@ -144,6 +144,7 @@ def _build_push_text(
     top_score: float,
     reason_codes: list[dict[str, Any]],
     app_base_url: str,
+    prior_contact: str | None = None,
 ) -> str:
     """Build the Callie-voiced top-tier signal push message (Slack mrkdwn).
 
@@ -151,7 +152,14 @@ def _build_push_text(
       1. Signal headline + district context
       2. Recommended angle (campaign family + fit score)
       3. Reason codes (top 3)
-      4. Offer: dig deeper with Argus, or kick off a brief
+      4. Prior contact, when we have spoken to them
+      5. Offer: dig deeper with Argus, or kick off a brief
+
+    ``prior_contact`` is a one-line summary of recent Gong conversations. It is
+    the difference between "Kansas DOE posted a screener RFP" and "...and we
+    spoke to them twice in July", which changes what the reader does next. It
+    arrives here rather than waiting to be asked for, because nobody asks: Callie
+    was drafting cold outreach for Grosse Pointe while five calls sat in Gong.
     """
     district_label = district_id or ""
     state_label = f" ({state})" if state else ""
@@ -172,6 +180,9 @@ def _build_push_text(
     lines.append(f"*Best angle:* {family_label} campaign ({score_pct}% fit)")
     if codes_text:
         lines.append(f"*Signals:* {codes_text}")
+
+    if prior_contact:
+        lines.append(f"*Prior contact:* {prior_contact}")
 
     # Deep-link into signal detail
     signal_url = f"{app_base_url}/#marketing?signal={signal_id}" if app_base_url else ""
@@ -263,6 +274,22 @@ async def push_top_tier_signal(
             return False
 
         # Build message
+        # Prior contact, fetched here rather than left to be asked for. A signal
+        # that says "they posted an RFP" reads very differently from one that
+        # says "they posted an RFP and we spoke to them twice in July", and the
+        # reader cannot ask a Slack message a follow-up question.
+        prior_contact: str | None = None
+        try:
+            from artemis.integrations.gong.client import one_line_contact
+
+            prior_contact = await one_line_contact(district_id or "")
+        except Exception:
+            _log.warning(
+                "callie_push: prior-contact lookup failed for %r (non-fatal)",
+                district_id,
+                exc_info=True,
+            )
+
         text = _build_push_text(
             signal_id=signal_id,
             headline=headline,
@@ -272,6 +299,7 @@ async def push_top_tier_signal(
             top_score=top_score,
             reason_codes=reason_codes,
             app_base_url=settings.app_base_url,
+            prior_contact=prior_contact,
         )
 
         # Post via Callie's Slack token

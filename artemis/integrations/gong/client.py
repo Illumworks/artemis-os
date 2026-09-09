@@ -321,3 +321,41 @@ async def recent_contact_summary(account_name: str, *, days: int = 180) -> str |
         "counts, not quotes, so do not claim to know what anyone said."
     )
     return "\n".join(lines)
+
+
+async def one_line_contact(account_name: str, *, days: int = 180) -> str | None:
+    """A single line of prior-contact context, or None when there is nothing to say.
+
+    The compact form of `recent_contact_summary`, for places where a paragraph
+    would drown the thing it is annotating: a signal push, a brief entry, a
+    worklist row.
+
+    Returns None on "no linked calls" and on a Gong outage. That is deliberate
+    and it is the opposite of the full summary's behaviour: here the line is an
+    ANNOTATION on someone else's message, so silence just means no annotation. In
+    the full summary the same states must be stated out loud, because there the
+    absence of a Gong section would read as "no prior contact".
+    """
+    from artemis.config import settings
+
+    if not settings.gong_access_key or not settings.gong_access_key_secret:
+        return None
+
+    client = GongMetadataClient(settings.gong_access_key, settings.gong_access_key_secret)
+    try:
+        calls = await client.recent_calls_for_account(account_name, days=days, limit=5)
+    except GongUnavailableError:
+        logger.warning("gong: one-line context unavailable for %r", account_name)
+        return None
+    if not calls:
+        return None
+
+    newest = calls[0]
+    when = str(newest.started or "")[:10]
+    fired = sorted({t for call in calls for t in call.fired_trackers})
+    themes = f", touching on {', '.join(fired[:3])}" if fired else ""
+    plural = "s" if len(calls) != 1 else ""
+    return (
+        f"{len(calls)} call{plural} in the last {days} days, most recent {when}"
+        f"{themes}. Not a cold account."
+    )
