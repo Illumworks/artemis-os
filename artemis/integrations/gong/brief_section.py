@@ -20,35 +20,21 @@ and the client cannot fetch a transcript.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
-from datetime import UTC, datetime, timedelta
 
-from artemis.integrations.gong.baseline import (
-    AccountDeviation,
-    account_deviation,
-    portfolio_rates,
-)
-from artemis.integrations.gong.client import CallContext, GongMetadataClient, _to_context
+from artemis.integrations.gong.baseline import AccountDeviation
 from artemis.integrations.gong.snapshots import (
     TrendVerdict,
     previous_readings,
     trend_for,
     write_snapshots,
 )
+from artemis.integrations.gong.survey import LOOKBACK_DAYS, run_survey
 
 logger = logging.getLogger(__name__)
-
-#: Window for both the portfolio norm and each district's rate. Long enough that
-#: an account can accumulate the three calls it needs to be judged at all, short
-#: enough that a district which settled down months ago is not still flagged.
-LOOKBACK_DAYS = 120
 
 #: How many of each kind reach the brief. This ranks rather than alarms, so the
 #: brief carries the top few and the rest stay queryable.
 MAX_PER_KIND = 3
-
-#: Pages of 100 calls. 120 days is roughly eight.
-_MAX_PAGES = 10
 
 
 async def _trends(flagged: list[AccountDeviation]) -> dict[str, TrendVerdict]:
@@ -105,39 +91,9 @@ async def build_gong_section(session: object = None) -> str | None:
         return None
 
     try:
-        client = GongMetadataClient(settings.gong_access_key, settings.gong_access_key_secret)
-        frm = (datetime.now(UTC) - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%dT00:00:00Z")
-        to = datetime.now(UTC).strftime("%Y-%m-%dT23:59:59Z")
-
-        calls: list[CallContext] = []
-        cursor: str | None = None
-        for _ in range(_MAX_PAGES):
-            body: dict[str, object] = {
-                "filter": {"fromDateTime": frm, "toDateTime": to},
-                "contentSelector": {
-                    "context": "Extended",
-                    "exposedFields": {"parties": True, "content": {"trackers": True}},
-                },
-            }
-            if cursor:
-                body["cursor"] = cursor
-            payload = await client._post("/v2/calls/extensive", body)
-            calls.extend(_to_context(raw) for raw in payload.get("calls", []))
-            cursor = (payload.get("records") or {}).get("cursor")
-            if not cursor:
-                break
-
-        portfolio = portfolio_rates(calls)
-        by_account: dict[str, list[CallContext]] = defaultdict(list)
-        for call in calls:
-            if call.account_name:
-                by_account[call.account_name].append(call)
-
-        deviations = [
-            account_deviation(name, account_calls, portfolio)
-            for name, account_calls in by_account.items()
-        ]
-        flagged = [d for d in deviations if d.has_signal]
+        survey = await run_survey(days=LOOKBACK_DAYS)
+        portfolio = survey.portfolio
+        flagged = survey.flagged
         if not flagged:
             return None
 

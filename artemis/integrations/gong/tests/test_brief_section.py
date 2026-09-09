@@ -80,8 +80,9 @@ def test_the_window_lets_an_account_reach_the_minimum_sample() -> None:
     A shorter window would judge almost nobody.
     """
     from artemis.integrations.gong.baseline import MIN_CALLS_FOR_SIGNAL
+    from artemis.integrations.gong.survey import LOOKBACK_DAYS
 
-    assert mod.LOOKBACK_DAYS >= 90
+    assert LOOKBACK_DAYS >= 90
     assert MIN_CALLS_FOR_SIGNAL >= 3
 
 

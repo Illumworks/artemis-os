@@ -188,6 +188,12 @@ _CALLIE_EXPECTED_TOOL_NAMES = {
     # returns an explicit "unavailable" rather than a zero. Callie-exclusive:
     # she is the one quoting revenue figures to the person who owns them.
     "salesforce_pipeline",
+    # GONG-1: district_call_signal, layer 1, read-only. The Gong tracker signal
+    # was reachable only through one line of the daily brief, so "which districts
+    # are saying good things about us?" had no answer at all. Counts by ACCOUNT
+    # only: never keyed to a rep, never a word anyone said (CLAUDE.md rule 4),
+    # and "unknown" rather than "quiet" when Gong cannot be reached.
+    "district_call_signal",
 }
 
 # Tools that must never reach Callie's production (layer<=2, claude-code MCP)

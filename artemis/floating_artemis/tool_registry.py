@@ -163,6 +163,12 @@ def _build_callie_tool_registry(
         enrich=False). Lets her answer "is this district already in play?"
         before drafting, per Jon's "so we are not stepping on people's
         toes" framing in the SFDC-1 brief.
+      - register_gong_tools (GONG-1): district_call_signal, layer 1,
+        read-only. The Gong tracker signal was reachable only through one
+        line of the daily brief, so "which districts are saying good things
+        about us?" had no answer. Counts by ACCOUNT only -- never a rep,
+        never a word anyone said, and it reports "unknown" rather than
+        "quiet" when Gong is unreachable.
       - query_memory + write_memory (registered directly from core, NOT via
         register_core_tools): her own continuity. query_memory MUST stay the
         scope-gated variant built by ``_make_query_memory(agent_id)`` -- that
@@ -262,6 +268,16 @@ def _build_callie_tool_registry(
     from artemis.floating_artemis.tools.pipeline_tools import register_pipeline_tools
 
     register_pipeline_tools(registry)
+
+    # GONG-1: district_call_signal, layer 1, read-only. Answers "which districts
+    # are saying good things" and "what is going on with X" from call trackers,
+    # which until now existed only as one line in the daily brief and so could
+    # not be followed up on. District-level only -- nothing in it is keyed to a
+    # rep, and nothing in it is a word anyone said (CLAUDE.md rule 4). Callie-
+    # exclusive, imported locally for the same reason as the three above.
+    from artemis.floating_artemis.tools.gong_tools import register_gong_tools
+
+    register_gong_tools(registry)
 
     return registry
 
