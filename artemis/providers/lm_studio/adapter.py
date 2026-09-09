@@ -20,6 +20,8 @@ Notes
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 import logging
 import os
 
@@ -35,6 +37,26 @@ _LM_STUDIO_PLACEHOLDER_MODEL = "local-model"
 def _default_base_url() -> str:
     """Return the adapter base URL (with /v1 suffix) from config."""
     return f"{settings.lm_studio_base_url}/v1"
+
+
+#: Minimum completion budget for a local call.
+#:
+#: The models on the Studio are REASONING models: they spend tokens thinking
+#: before they emit a single character of answer. Below this floor the budget is
+#: consumed entirely by the reasoning block and the response comes back with
+#: `finish_reason="length"` and an EMPTY string -- a 200 with a usable shape,
+#: which is the worst way for this to fail.
+#:
+#: Measured 2026-09-09 on `qwen/qwen3.6-35b-a3b` with a three-line extraction
+#: task: at max_tokens=200 it returned 0 characters after 199 completion tokens;
+#: at 8192 it answered correctly, having spent 759 tokens to produce 71
+#: characters. An earlier note in `feature_catalog` concluded from 300/400/1200
+#: that the model was unusable. The model was fine. The budget was not, and the
+#: conclusion cost us the faster of the two local models.
+#:
+#: 8192 matches the default the Studio's own `offload` tool uses, for the same
+#: reason.
+_REASONING_TOKEN_FLOOR = 8192
 
 
 class LMStudioAdapter(OpenAIAdapter):
@@ -63,6 +85,7 @@ class LMStudioAdapter(OpenAIAdapter):
         model.  Many local models do not reliably support tool execution.
         Emit a warning so future hollowness is caught immediately.
         """
+        request = self._with_reasoning_budget(request)
         if request.tools:
             logger.warning(
                 "%s adapter received request.tools but does not support tool execution. "
@@ -70,4 +93,28 @@ class LMStudioAdapter(OpenAIAdapter):
                 "tool-capable provider.",
                 type(self).__name__,
             )
-        return await super().complete(request)
+        response = await super().complete(request)
+        # Local inference is free. The OpenAI adapter priced this call at OpenAI
+        # rates -- a real summary above came back costed at $0.00038 -- which
+        # would make the cost dashboard show no saving from routing work here,
+        # which is the entire reason the box exists.
+        with contextlib.suppress(AttributeError):
+            object.__setattr__(response, "cost_usd", 0.0)
+        return response
+
+    def _with_reasoning_budget(self, request: CompletionRequest) -> CompletionRequest:
+        """Raise a too-small `max_tokens` to the floor rather than returning nothing.
+
+        Logged rather than raised: a caller asking for 400 tokens wants a short
+        answer and still gets one. The floor buys room for the thinking that
+        precedes it, and the model stops on its own once it has answered.
+        """
+        if request.max_tokens >= _REASONING_TOKEN_FLOOR:
+            return request
+        logger.info(
+            "lm-studio: raising max_tokens %s -> %s; local models spend budget on "
+            "reasoning tokens and return an empty string below this",
+            request.max_tokens,
+            _REASONING_TOKEN_FLOOR,
+        )
+        return dataclasses.replace(request, max_tokens=_REASONING_TOKEN_FLOOR)

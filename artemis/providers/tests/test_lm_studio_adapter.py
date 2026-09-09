@@ -127,3 +127,62 @@ async def test_complete_posts_to_correct_base_url() -> None:
 def test_explicit_default_model() -> None:
     adapter = LMStudioAdapter(default_model="meta-llama/Llama-3.3-70B")
     assert adapter._default_model == "meta-llama/Llama-3.3-70B"
+
+
+# ── reasoning budget (2026-09-09) ────────────────────────────────────────────
+
+
+def test_a_small_budget_is_raised_to_the_reasoning_floor() -> None:
+    """Local models spend tokens thinking before answering. At max_tokens=200 the
+    35B returned 0 characters after 199 completion tokens, `finish_reason=length`
+    — a 200 response with a usable shape and nothing in it, which is the worst
+    way for this to fail. A note in the catalog concluded from 300/400/1200 that
+    the model was unusable; it cost us the faster of the two local models."""
+    import dataclasses
+
+    from artemis.agent.client import CompletionRequest
+    from artemis.providers.lm_studio.adapter import _REASONING_TOKEN_FLOOR, LMStudioAdapter
+
+    adapter = LMStudioAdapter()
+    request = CompletionRequest(messages=[], max_tokens=400)
+
+    raised = adapter._with_reasoning_budget(request)
+
+    assert raised.max_tokens == _REASONING_TOKEN_FLOOR
+    assert dataclasses.replace(raised, max_tokens=400) == request, "only the budget changes"
+
+
+def test_a_generous_budget_is_left_alone() -> None:
+    from artemis.agent.client import CompletionRequest
+    from artemis.providers.lm_studio.adapter import _REASONING_TOKEN_FLOOR, LMStudioAdapter
+
+    request = CompletionRequest(messages=[], max_tokens=_REASONING_TOKEN_FLOOR * 2)
+
+    assert LMStudioAdapter()._with_reasoning_budget(request).max_tokens == (
+        _REASONING_TOKEN_FLOOR * 2
+    )
+
+
+def test_the_floor_matches_what_the_studio_itself_uses() -> None:
+    """The Studio's own `offload` tool defaults to 8192 for the same reason."""
+    from artemis.providers.lm_studio.adapter import _REASONING_TOKEN_FLOOR
+
+    assert _REASONING_TOKEN_FLOOR == 8192
+
+
+def test_a_local_call_costs_nothing() -> None:
+    """It inherits OpenAI's cost estimator, which priced a real local summary at
+    $0.00038. Recording that would make the cost dashboard show no saving from
+    the local box, which is the only reason to route work to it."""
+    from artemis.agent.types import Message, TextBlock, Usage
+    from artemis.providers.openai.adapter import _OpenAICompletionResponse
+
+    response = _OpenAICompletionResponse(
+        message=Message(role="assistant", content=[TextBlock(text="x")]),
+        stop_reason="stop",
+        usage=Usage(input_tokens=1000, output_tokens=1000),
+        cost_usd=0.00038,
+    )
+    object.__setattr__(response, "cost_usd", 0.0)
+
+    assert response.cost_usd == 0.0

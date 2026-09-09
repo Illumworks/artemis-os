@@ -26,7 +26,14 @@ from typing import Any
 import httpx
 
 from artemis.agent.client import CompletionRequest, CompletionResponse
-from artemis.agent.types import Message, TextBlock, ToolResultBlock, ToolUseBlock, Usage
+from artemis.agent.types import (
+    Message,
+    TextBlock,
+    ToolCallRecord,
+    ToolResultBlock,
+    ToolUseBlock,
+    Usage,
+)
 from artemis.providers.errors import MissingApiKeyError, ProviderAPIError
 from artemis.providers.openai.models import (
     OPENAI_DEFAULT_MODEL,
@@ -351,7 +358,7 @@ class OpenAIAdapter:
 class _OpenAICompletionResponse(CompletionResponse):
     """CompletionResponse extended with computed OpenAI cost."""
 
-    __slots__ = ("cost_usd",)
+    __slots__ = ("cost_usd", "tool_calls")
 
     def __init__(
         self,
@@ -360,8 +367,22 @@ class _OpenAICompletionResponse(CompletionResponse):
         stop_reason: str,
         usage: Usage,
         cost_usd: float,
+        tool_calls: list[ToolCallRecord] | None = None,
     ) -> None:
         object.__setattr__(self, "message", message)
         object.__setattr__(self, "stop_reason", stop_reason)
         object.__setattr__(self, "usage", usage)
         object.__setattr__(self, "cost_usd", cost_usd)
+        # `tool_calls` is declared on CompletionResponse with a default of None,
+        # but a default on a frozen dataclass field is applied by the generated
+        # __init__ -- which this class replaces. So it was never set on any
+        # instance, and the attribute did not exist rather than being None.
+        #
+        # `agent/loop.py` reads `response.tool_calls` on EVERY turn, so every
+        # completion through this adapter or its LM Studio subclass raised
+        # AttributeError immediately after the model answered. A local call
+        # therefore could not succeed no matter which model or token budget it
+        # used, and the failure looked like the provider being down, so the
+        # cascade fell through to Gemini and then Claude. `repr()` raised too,
+        # which is why nothing useful appeared in a log.
+        object.__setattr__(self, "tool_calls", tool_calls)

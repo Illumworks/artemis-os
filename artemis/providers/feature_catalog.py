@@ -24,13 +24,28 @@ _T2 = [{"provider": "codex"}, {"provider": "claude-code"}, {"provider": "anthrop
 #: so: a cascade that falls through looks identical to one that was never
 #: configured.
 #:
-#: It is the *coder-instruct* model rather than the general one on purpose.
-#: ``qwen/qwen3.6-35b-a3b`` is a reasoning model that, in this LM Studio setup,
-#: spends its entire budget on reasoning tokens and returns an EMPTY string --
-#: measured at 300, 400 and 1200 max_tokens, and unchanged by a ``/no_think``
-#: prefix or ``chat_template_kwargs.enable_thinking = false``. An empty reply is
-#: the worst possible failure here because it is a 200 with a usable shape.
-_LM_STUDIO_MODEL = "qwen3-coder-30b-a3b-instruct-mlx"
+#: CORRECTED 2026-09-09. This previously named the coder-instruct model and said
+#: ``qwen/qwen3.6-35b-a3b`` "returns an EMPTY string -- measured at 300, 400 and
+#: 1200 max_tokens". The model was never the problem. Every one of those budgets
+#: was too small: these are REASONING models that spend tokens thinking before
+#: emitting any answer, so a small budget is consumed entirely by the reasoning
+#: block and comes back `finish_reason="length"` with empty content.
+#:
+#: Re-measured on the same model and the same task: at max_tokens=200, zero
+#: characters after 199 completion tokens; at 8192, the correct answer in 7.4s
+#: having spent 759 tokens to produce 71 characters. The floor now lives in
+#: `LMStudioAdapter._with_reasoning_budget` so no caller can reproduce it.
+#:
+#: The 35B is the Studio's own default and was measured there as the fastest
+#: model available by 2-3x (100.7 tok/s against 37.8 for a dense 27B), passing
+#: tool-calling, summarisation, needle-in-haystack, bug-finding and strict-format
+#: tests. Speed tracks ACTIVE parameters, not size: this is a 3B-active MoE.
+#:
+#: One caveat that is not visible from here: LM Studio's just-in-time loading
+#: uses a model's DEFAULT context (4,096), not the context it was last loaded
+#: with. A model held resident on the Studio at `-c 131072` has the long context;
+#: one JIT-loaded by our call does not. Long-input work must not assume it.
+_LM_STUDIO_MODEL = "qwen/qwen3.6-35b-a3b"
 
 _T3_LM_FIRST = [
     {"provider": "lm-studio", "model": _LM_STUDIO_MODEL},
