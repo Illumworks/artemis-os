@@ -50,6 +50,12 @@ _SECTIONS: tuple[tuple[str, str, str], ...] = (
     ("Campaign signals", "artemis.market_signals.campaign_section", "build_campaign_section"),
     ("Crisis signals", "artemis.crisis_content.brief_section", "build_crisis_section"),
     ("Screen time", "artemis.screentime.reporting", "build_screentime_section"),
+    # Districts whose calls are unusually concerned or unusually positive. Both
+    # are the market talking about Amira, which is what this brief is for. The
+    # positive half is the part nothing else surfaces: "Amira Solving Problems"
+    # on 100% of a district's calls is a case study nobody outside those calls
+    # has heard about.
+    ("What districts are saying", "artemis.integrations.gong.brief_section", "build_gong_section"),
 )
 
 
