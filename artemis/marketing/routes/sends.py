@@ -38,7 +38,10 @@ router = APIRouter(
     dependencies=[Depends(require_token)],
 )
 
-_VALID_STATUSES = frozenset({"queued", "sent", "failed", "skipped"})
+# `simulated` = a transport ran and delivered nothing (the default dry run).
+# Distinct from `failed`, where something went wrong, and from `sent`, which
+# now means an email actually left the building.
+_VALID_STATUSES = frozenset({"queued", "sent", "simulated", "failed", "skipped"})
 
 
 class SendActionRequest(BaseModel):

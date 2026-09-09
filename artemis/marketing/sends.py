@@ -3,8 +3,11 @@
 Recipient resolution, enqueue, and mark-sent operations for campaign sends.
 All functions are async; the caller owns commit/rollback.
 
-NO REAL EMAIL — transport is stubbed. The 'stub' transport only writes
-to transport_log; no external email system is called.
+NO REAL EMAIL YET, and a send now says so. The transport is resolved from
+configuration and defaults to a dry run that renders the message and delivers
+nothing; a send it did not deliver is recorded as 'simulated', not 'sent'. See
+artemis/marketing/transport.py — no ESP adapter exists because no ESP has been
+chosen since HubSpot's termination.
 """
 
 from __future__ import annotations
@@ -330,10 +333,14 @@ async def mark_send_sent(
 
     - Looks up the send row WITH ROW LOCK.
     - If status != 'queued', raises ValueError with current status.
-    - Sets status='sent', sent_at=now(), sent_by=actor.
-    - Writes stub transport_log (NO REAL EMAIL).
-    - Transitions the linked deliverable queued_for_send → sent via state_machine.
+    - Hands the message to the configured transport (default: a dry run).
+    - Sets status from what the transport reports: 'sent' only when something was
+      actually delivered, otherwise 'simulated'.
+    - Transitions the deliverable queued_for_send → sent ONLY on real delivery.
     - Caller owns commit.
+
+    The name is now slightly wrong — it does not always mark a send sent, and
+    that is the point. Renaming it is a bigger change than the fix deserved.
     """
     result = await session.execute(
         select(CampaignSend).where(CampaignSend.id == send_id).with_for_update()
@@ -348,28 +355,60 @@ async def mark_send_sent(
     now = datetime.now(UTC)
     recipients = send.recipients if isinstance(send.recipients, list) else []
 
-    send.status = "sent"
-    send.sent_at = now
+    # Hand it to a transport and record what the transport actually did. This
+    # used to set status='sent' unconditionally with a log line reading "NO REAL
+    # EMAIL", which is the shape of every bug this codebase has spent a week
+    # removing: the status is what every other surface reads, and none of them
+    # read the note underneath.
+    from artemis.marketing.transport import OutboundMessage, resolve_transport
+
+    deliverable = await session.get(CampaignDeliverable, send.deliverable_id)
+    raw_meta = deliverable.deliverable_metadata if deliverable is not None else None
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    transport = resolve_transport()
+    outcome = await transport.send(
+        OutboundMessage(
+            recipients=[str(r) for r in recipients],
+            subject=str(meta.get("subject") or f"Campaign deliverable {send.deliverable_id}"),
+            body=str(meta.get("body") or meta.get("copy") or ""),
+            deliverable_id=int(send.deliverable_id),
+        )
+    )
+
+    send.status = outcome.status
+    send.sent_at = now if outcome.delivered else None
     send.sent_by = actor
+    send.transport = outcome.transport
     send.transport_log = {
-        "transport": "stub",
-        "sent_at": now.isoformat(),
+        "transport": outcome.transport,
+        "delivered": outcome.delivered,
+        "detail": outcome.detail,
+        "at": now.isoformat(),
         "actor": actor,
         "recipient_count": len(recipients),
-        "note": "NO REAL EMAIL — transport pending ESP",
+        **({"rendered": outcome.rendered} if outcome.rendered else {}),
     }
     send.updated_at = now
     await session.flush()
 
-    # Transition the deliverable: queued_for_send → sent
-    await transition(
-        session,
-        "deliverable",
-        send.deliverable_id,
-        DeliverableState.sent,
-        actor=actor,
-        reason="send_completed_stub",
-    )
+    # The deliverable only reaches `sent` if something was actually sent.
+    # Otherwise it stays queued_for_send, which is exactly what it still is —
+    # claiming it was sent one level up would be the same lie in a second place.
+    if outcome.delivered:
+        await transition(
+            session,
+            "deliverable",
+            send.deliverable_id,
+            DeliverableState.sent,
+            actor=actor,
+            reason=f"send_completed:{outcome.transport}",
+        )
+    else:
+        logger.info(
+            "mark_send_sent: send_id=%s NOT delivered (%s) — deliverable stays queued_for_send",
+            send_id,
+            outcome.transport,
+        )
     logger.info(
         "mark_send_sent: send_id=%s deliverable_id=%s actor=%s",
         send_id,

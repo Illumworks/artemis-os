@@ -820,6 +820,20 @@ class Settings(BaseSettings):
             "until she is invited."
         ),
     )
+    campaign_send_transport: str = Field(
+        default="dry_run",
+        validation_alias=AliasChoices(
+            "ARTEMIS_CAMPAIGN_SEND_TRANSPORT",
+            "CAMPAIGN_SEND_TRANSPORT",
+        ),
+        description=(
+            "Which transport a campaign send uses. 'dry_run' (default) renders the "
+            "message and sends nothing; 'none' records that no provider is configured. "
+            "A real ESP adapter is registered in artemis/marketing/transport.py and "
+            "named here — an unknown value falls back to no-send, never to sending."
+        ),
+    )
+
     signal_approver_emails: str = Field(
         default="jon.fila@amiralearning.com,joshua.mukai@amiralearning.com",
         validation_alias=AliasChoices(

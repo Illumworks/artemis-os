@@ -522,14 +522,21 @@ async def test_post_send_transitions_queued_to_sent(
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "sent"
+    # This asserted status == "sent", sentAt is not None, and the deliverable
+    # reaching `sent` -- for a send that sent nothing, because the transport was
+    # a stub whose own log line said "NO REAL EMAIL". That is the bug encoded as
+    # a contract, and it is why nobody noticed the pipeline terminated in a stub.
+    #
+    # A send now reports what the transport actually did. The default transport
+    # is a dry run, so:
+    assert body["status"] == "simulated"
     assert body["sentBy"] == "jon@amiralearning.com"
-    assert body["sentAt"] is not None
-    assert body["transport"] == "stub"
+    assert body["sentAt"] is None, "nothing was sent, so there is no time it was sent"
+    assert body["transport"] == "dry_run"
 
-    # Deliverable should now be in 'sent' state
+    # And the deliverable stays where it is, because it is still queued for send.
     await db_session.refresh(deliverable)
-    assert deliverable.status == DeliverableState.sent.value
+    assert deliverable.status == DeliverableState.queued_for_send.value
 
 
 async def test_post_send_already_sent_returns_409(
@@ -559,7 +566,10 @@ async def test_post_send_already_sent_returns_409(
     assert second.status_code == 409
     body = second.json()
     assert body["code"] == "send_not_queued"
-    assert "sent" in body["error"]
+    # The row is no longer queued, which is what the 409 is about. It reads
+    # "simulated" rather than "sent" now, because the dry-run transport delivered
+    # nothing -- the double-send guard is unaffected either way.
+    assert "simulated" in body["error"]
 
 
 async def test_post_send_skipped_returns_409(
