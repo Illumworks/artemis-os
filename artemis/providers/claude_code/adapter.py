@@ -367,11 +367,26 @@ def _completion_response_from_payload(
         )
 
     usage_data = data.get("usage") or {}
+    # Both cache fields were hardcoded to 0, which threw away most of the input.
+    #
+    # With prompt caching on -- and this path caches the system prompt and tools
+    # by default -- Claude reports only the NEW tokens under `input_tokens` and
+    # puts the rest under `cache_read_input_tokens`. So a cached 5,000-token
+    # system prompt was recorded as about 50 input tokens.
+    #
+    # Measured 2026-09-09 across 840 calls in 30 days: `input_tokens` never
+    # exceeded 341, against scouts emitting 9,000 output tokens each. Reading
+    # those numbers, this system appears to spend nothing on input, which is
+    # both false and the reason no one could evaluate whether moving work to the
+    # local box would save anything. Cache reads are cheap rather than free
+    # (roughly a tenth of input price) and cache CREATION is more expensive than
+    # input, so the discarded fields are also the only view of whether caching is
+    # working at all.
     usage = Usage(
         input_tokens=int(usage_data.get("input_tokens", 0)),
         output_tokens=int(usage_data.get("output_tokens", 0)),
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
+        cache_creation_input_tokens=int(usage_data.get("cache_creation_input_tokens", 0) or 0),
+        cache_read_input_tokens=int(usage_data.get("cache_read_input_tokens", 0) or 0),
     )
 
     return CompletionResponse(
