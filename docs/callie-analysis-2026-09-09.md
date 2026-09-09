@@ -342,6 +342,49 @@ of five served to four of five.
 
 ---
 
+## 8b. What was actually done, same day
+
+Jon read this document and asked for all of it. Status as of commit `a9d17af`,
+with the service restarted so every item below is live.
+
+| | Item | Done | Commit |
+|---|---|---|---|
+| 1 | Restart | yes — twice, the second after the upgrades | — |
+| 2 | Watch the next answers | **outstanding, and it is Jon's to judge** | — |
+| 3 | Site roster (Josh #2) | yes — `district_sites`, plus a one-line summary folded into the district brief | `a9d17af` |
+| 4 | Opportunity detail (Josh #3) | yes — open/won/lost with amounts, dates and loss reasons | `a9d17af` |
+| 5 | Acknowledgement | yes — a reaction on receipt, before the turn starts | `2f4a1c6` |
+| 6 | Auto-context on district questions | yes — deal history, site roster and the stored call signal all arrive unasked | `a9d17af` |
+| 7 | Layer-3 at runtime | **not done, deliberately** — a product decision, not a fix | — |
+
+Three further bugs surfaced while doing the work, all the same shape as the four
+in §3:
+
+- **`gong_lines` was computed at line 316 and one branch returned at 286.** For
+  any district Salesforce knows and our own index does not, the conversation
+  context was never fetched — silently, on exactly the districts most likely to
+  be treated as cold, which is the failure the fold-in was built to prevent.
+  Grosse Pointe was that case. Pinellas hit it; Ypsilanti, being in our index,
+  did not, which is why nobody saw it.
+- **`recent_contact_summary` fetched five calls and reported five as the total.**
+  Pinellas has 22 in 180 days, the most recent yesterday, and a renewal sitting
+  140 days in stage. A cap wearing a count's clothes.
+- **A test sliced `inspect.getsource` by character offset** and broke because a
+  comment moved. Replaced with one that makes the Gong call fail and checks the
+  Salesforce answer survives.
+
+**What the same question returns now.** Where the tested answer had "5 open
+opportunities" and "the contact list is active and warm", the tool now hands her:
+a $731,625 renewal closed won five weeks ago and another open for July 2027; 15
+closed-lost deals with reasons; two contacts correctly described as having
+meetings *scheduled* rather than having been touched; 1 of 169 sites marked, with
+a caution that the district does not maintain the marker; 22 linked calls, most
+recent yesterday; a renewal 140 days in stage; and the highest concern rate in
+the Gong portfolio.
+
+None of that changes her recommendation — the account team should still be in
+front of this RFP. It changes how quickly.
+
 ## 9. The uncomfortable summary
 
 The agent was the most reliable component in this test.
