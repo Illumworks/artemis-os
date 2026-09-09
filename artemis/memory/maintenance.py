@@ -12,6 +12,7 @@ Category decay factors (per-run):
     convention:  0.99  — very slow decay
     decision:    0.97  — moderate decay
     discovery:   0.93  — faster decay (raw observations age out)
+    gong_account_signal: 0.995 — a time series; old readings stay comparable
     <default>:   0.95  — unknown categories
 """
 
@@ -37,6 +38,12 @@ _DECAY_FACTORS: dict[str, float] = {
     # Argus district-research findings: durable reference data, decays slowly
     # (gently fades to prompt re-research rather than going stale silently).
     "district_research": 0.99,
+    # Gong tracker readings, one dated row per district per run. These are a TIME
+    # SERIES: the value of an old reading is that a newer one can be compared
+    # against it, so a snapshot from six weeks ago is not less true than
+    # yesterday's. Left on the 0.95 default it would halve in a fortnight and the
+    # trend would quietly lose its early end.
+    "gong_account_signal": 0.995,
 }
 _DEFAULT_DECAY = 0.95
 
