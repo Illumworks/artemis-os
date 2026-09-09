@@ -820,6 +820,21 @@ class Settings(BaseSettings):
             "until she is invited."
         ),
     )
+    signal_approver_emails: str = Field(
+        default="jon.fila@amiralearning.com,joshua.mukai@amiralearning.com",
+        validation_alias=AliasChoices(
+            "ARTEMIS_SIGNAL_APPROVER_EMAILS",
+            "SIGNAL_APPROVER_EMAILS",
+        ),
+        description=(
+            "Comma-separated emails permitted to approve or reject a signal from "
+            "Callie's Slack card. Checked against an email resolved server-side from "
+            "the verified Slack payload's user id -- never from the button's value. "
+            "Note joshua.mukai@ and not josh.mukai@; there are two Joshes and the "
+            "wrong one is a real address."
+        ),
+    )
+
     crisis_content_asset_approver_emails: str = Field(
         default="jon.fila@amiralearning.com",
         validation_alias=AliasChoices(

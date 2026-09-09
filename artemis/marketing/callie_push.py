@@ -54,6 +54,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.config import settings
+from artemis.marketing.slack_signal_actions import SIGNAL_APPROVE, SIGNAL_REJECT
 from artemis.memory.models import MemoryObservation, MemoryScope
 from artemis.memory.schemas import Scope
 
@@ -196,6 +197,48 @@ def _build_push_text(
 # ── Main push entry point ──────────────────────────────────────────────────────
 
 
+def _decision_blocks(text: str, signal_id: int) -> list[object]:
+    """The card, with somewhere to say yes.
+
+    The card was plain text for three months while 3,479 signals accumulated at
+    `qualified`, averaging 40 days old, against 58 ever approved. The decision
+    was not missing because nobody wanted to make it — it lived in the web app
+    while the notification arrived in Slack, so agreeing with a card on your
+    phone had nowhere to go.
+
+    A button, not a "reply yes": Slack signs the click and the clicker's identity
+    is resolved server-side against an allowlist. A text reply is answered by
+    whoever types next, which is how the layer-3 confirmation flow works and is
+    exactly why it is not trusted here.
+
+    The value carries only the signal id. Everything that decides what happens —
+    who clicked, whether they may — comes from the verified payload, never from
+    the button.
+    """
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {
+            "type": "actions",
+            "block_id": f"signal_{signal_id}_decision",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": SIGNAL_APPROVE,
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "value": f"signal:{signal_id}",
+                },
+                {
+                    "type": "button",
+                    "action_id": SIGNAL_REJECT,
+                    "text": {"type": "plain_text", "text": "Reject"},
+                    "value": f"signal:{signal_id}",
+                },
+            ],
+        },
+    ]
+
+
 async def push_top_tier_signal(
     session: AsyncSession,
     *,
@@ -319,7 +362,11 @@ async def push_top_tier_signal(
         # that unfurls into a generic aggregator card telling the reader
         # nothing. See SlackClient.post_message.
         await client.post_message(
-            channel=channel, text=text, unfurl_links=False, unfurl_media=False
+            channel=channel,
+            text=text,
+            blocks=_decision_blocks(text, int(signal_id)),
+            unfurl_links=False,
+            unfurl_media=False,
         )
 
         # Record push observation (dedup + freq-cap anchor)

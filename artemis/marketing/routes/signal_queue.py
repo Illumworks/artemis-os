@@ -443,6 +443,24 @@ async def approve_signal(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> dict[str, Any]:
     """Gate 1: approve signal and promote to campaign candidate."""
+    return await approve_signal_impl(signal_id, session=session, decided_by="operator")
+
+
+async def approve_signal_impl(
+    signal_id: int,
+    *,
+    session: AsyncSession,
+    decided_by: str = "operator",
+) -> dict[str, Any]:
+    """The approval itself, callable from something that is not an HTTP request.
+
+    Split from the route so `decided_by` is NOT a request parameter. Adding it to
+    the route signature would make it a QUERY parameter, so anyone could name
+    whoever they liked as the decider — which is the same flaw that makes
+    `decide_approval` unsafe (it takes `decided_by` from model input). The Slack
+    card path knows the real person, because Slack signs the click and the email
+    is resolved server-side, so it passes a real name here.
+    """
     try:
         signal = await get_signal(session, signal_id)
     except ValueError:
@@ -511,7 +529,7 @@ async def approve_signal(
         write_signal_gate1_approval_observation(
             signal_id=signal_id,
             new_status=updated.signal_status,
-            decided_by="operator",
+            decided_by=decided_by,
             decision_payload={"headline": updated.headline},
             agent_slug="marketing.qualifier.cross_reference",
         )
@@ -546,6 +564,17 @@ async def reject_signal(
     session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> Any:
     """Reject a signal."""
+    return await reject_signal_impl(signal_id, body=body, session=session, decided_by="operator")
+
+
+async def reject_signal_impl(
+    signal_id: int,
+    *,
+    body: dict[str, Any] | None = None,
+    session: AsyncSession,
+    decided_by: str = "operator",
+) -> Any:
+    """The rejection itself. See `approve_signal_impl` on why this is split."""
     body = body or {}
     try:
         signal = await get_signal(session, signal_id)
@@ -576,7 +605,7 @@ async def reject_signal(
         write_signal_gate1_approval_observation(
             signal_id=signal_id,
             new_status=updated.signal_status,
-            decided_by="operator",
+            decided_by=decided_by,
             decision_payload={"headline": updated.headline},
             rejection_reason=reason,
             agent_slug=_qualifier_slug,

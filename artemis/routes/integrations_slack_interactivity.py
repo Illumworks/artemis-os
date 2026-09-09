@@ -50,6 +50,10 @@ from artemis.crisis_content.slack_actions import (
     handle_crisis_content_block_action,
 )
 from artemis.directory.models import DirectoryPerson
+from artemis.marketing.slack_signal_actions import (
+    SIGNAL_ACTION_IDS,
+    handle_signal_block_action,
+)
 from artemis.routes.integrations_slack_events import (
     _normalize_agent_id,
     _resolve_agent_slack_config,
@@ -193,7 +197,9 @@ async def slack_interactivity(
     user_obj = payload.get("user")
     slack_user_id = str(user_obj.get("id") or "") if isinstance(user_obj, dict) else ""
     slack_user_label = (
-        str(user_obj.get("username") or user_obj.get("name") or "") if isinstance(user_obj, dict) else ""
+        str(user_obj.get("username") or user_obj.get("name") or "")
+        if isinstance(user_obj, dict)
+        else ""
     )
 
     actions = payload.get("actions")
@@ -222,6 +228,30 @@ async def slack_interactivity(
             value=value,
             payload=payload,
             access_token=agent_cfg.access_token,
+        )
+
+    # ── Dispatch branch: signal Approve/Reject from Callie's pushed card. Own
+    # action ids, own module (artemis/marketing/slack_signal_actions.py), which
+    # holds its own allowlist and calls the same approve/reject implementation
+    # the web queue uses. Checked before `_APPROVAL_ACTION_IDS` so the dispatch
+    # tables stay independent, exactly as the crisis-content branch above.
+    if action_id in SIGNAL_ACTION_IDS:
+        signal_decider = await _resolve_decided_by(
+            session,
+            slack_user_id=slack_user_id,
+            fallback_label=slack_user_label or "slack_user",
+        )
+        # The authorization subject is the resolved EMAIL and nothing else. A
+        # `_resolve_decided_by` fallback returns a display name or `slack:U123`,
+        # which must never satisfy an allowlist -- so it is passed as the label
+        # and withheld as the identity.
+        resolved_email = signal_decider if "@" in signal_decider else None
+        return await handle_signal_block_action(
+            session,
+            action_id=action_id,
+            value=value,
+            decided_by=signal_decider,
+            resolved_email=resolved_email,
         )
 
     if action_id not in _APPROVAL_ACTION_IDS:
@@ -281,7 +311,10 @@ async def slack_interactivity(
             "blocks": [
                 {
                     "type": "section",
-                    "text": {"type": "mrkdwn", "text": f":white_check_mark: *{decision_label}* by {who}"},
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f":white_check_mark: *{decision_label}* by {who}",
+                    },
                 }
             ],
         },
