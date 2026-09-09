@@ -10,9 +10,12 @@ and nothing from them is reproduced here. Accounts and people are referred to as
 and "an internal user". That restraint is the point of the exercise, not a formatting
 preference: see "The privacy surface" near the end.
 
-There is **no Gong client in this repo yet**. `artemis/config.py` defines the credentials and
-nothing consumes them. This is a pre-integration audit, so everything below describes what we
-*could* build against, not what we currently do.
+This was a **pre-integration** audit: when it was written there was no Gong client in the repo,
+so everything below describes what we *could* build against.
+
+**Built since, 2026-09-08/09** — see "What was built" at the end. The audit itself has not been
+re-run and its numbers are as of 2026-09-08; where the two disagree, the code is current and this
+document is a snapshot.
 
 ---
 
@@ -634,3 +637,45 @@ Three, recorded because each cost real time here and the third cost the most.
 
 **If you re-run this, keep the same discipline: request the minimum `contentSelector` that
 answers the question, and do not paste call content into the result.**
+
+---
+
+## What was built, 2026-09-08/09
+
+Recorded here so the next reader does not have to re-derive it from the tree, and so the gap
+between "what Gong could give us" and "what we actually take" stays visible.
+
+| Module | What it does | Which finding above it acts on |
+|---|---|---|
+| `integrations/gong/client.py` | metadata-only client; **no transcript method exists in it** | §4, §5 — everything useful is metadata, so the content path was never built |
+| `integrations/gong/baseline.py` | portfolio tracker rates, and per-account deviation from them | §7 caution 1: "use counts against a baseline, never presence" |
+| `integrations/gong/brief_section.py` | the daily brief's "What districts are saying" — concern and advocacy | §7 items 1 and 2 |
+| `integrations/gong/snapshots.py` | dated per-district readings, and the trend between them | §7 caution 1: "storing a rolling per-account history before anything can fire" |
+
+**The baseline's margin is not flat.** The first version required a fixed gap above the portfolio
+rate and flagged 48% of accounts, which is not a signal. A district with four calls now has to
+clear a much wider margin (0.40) than one with thirty (0.15): one call joining a four-call window
+moves its rate 25 points, and the sample sizes here are small enough that this dominates.
+Currently 37 of 340 accounts carry a signal.
+
+**Trends compare against a reading at least 21 days old,** not the most recent one. The section
+scores a 120-day window, so yesterday's reading shares 119 days of calls with today's — it cannot
+move, and comparing against it would report "steady" indefinitely while a district drifted from
+40% to 100%. A district with no reading that old is reported as "nothing to compare against yet",
+which is deliberately a different statement from "no change".
+
+**Caution 3 above is still unaddressed.** Nothing notices when someone edits what a tracker
+matches, and the baselines would shift underneath us silently. The fire rates in §4 are the
+record against which a future drift could be detected — by a person, by hand. There is no code
+watching for it.
+
+### What is still not built
+
+- **Trend on the advocacy half.** Only concern is trended. A district whose enthusiasm is rising
+  is arguably a better case-study lead than one that has always been enthusiastic, and nothing
+  currently says which it is.
+- **Transcripts, for the "where did we leave off" use Josh described in the HubSpot meeting.**
+  Not started, and it cannot be built the way the rest of this was — it is the one thing that
+  needs call content. Pending a conversation with Jon and Josh about whether a derived,
+  non-quoting summary is acceptable, and rule 4 says the default answer is no.
+- **Anything keyed to a rep.** Deliberately, permanently. See "The privacy surface".

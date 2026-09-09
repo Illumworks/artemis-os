@@ -2,6 +2,11 @@
 
 **Written 2026-09-04. Repo state: commit `c43a15c` on `main`.**
 
+**Amended 2026-09-09** — the Gong entry in section 4 said there was no Gong
+integration, which was true when written and stopped being true four days later.
+Amendments are marked inline with the date and say what they replace, because a
+map whose corrections are invisible is worse than one that is merely old.
+
 ## What this document is for
 
 Things get built here, tested, and then reachable by nobody, because six weeks
@@ -428,7 +433,7 @@ down.** Salesforce, Jira and Google all have empty env vars and all work.
 | Gmail (sending) | **LIVE** | write | DB (`google_credentials`) |
 | Gmail (reading) | **BROKEN** | read | as above, but the lookup is wrong. See below |
 | Salesforce | **LIVE** | read only, structurally | DB (provider `salesforce`) |
-| Gong | **LIVE, indirect** | read only | none of its own. Rides on Salesforce |
+| Gong | **LIVE, direct + indirect** | read only, metadata only | `GONG_ACCESS_KEY` / `GONG_ACCESS_KEY_SECRET` (direct); the indirect path rides on Salesforce |
 | Starbridge (webhook) | **LIVE** | inbound | `STARBRIDGE_WEBHOOK_PUBLIC_KEY` |
 | Starbridge (agent tool) | **STUBBED** | none | `STARBRIDGE_API_KEY` is set but the tool ignores it |
 | Jira | **LIVE** | read + write | DB (provider `jira`) |
@@ -475,14 +480,41 @@ test asserts the complete public method set so a write method cannot be added
 without the test failing. The only POST it makes is the OAuth token exchange.
 Its job is to stop marketing contacting someone sales is already working.
 
-**Gong: confirmed, there is no Gong integration.** No client, no API key, no Gong
-hostname anywhere in the codebase. Gong syncs its "Engage" flow data onto the
-Salesforce Contact record, and Artemis reads those four synced custom fields
-(`Gong__Actively_Being_in_a_Flow__c`, `Gong__Current_Flow_Name__c`,
+**Gong — CHANGED 2026-09-08/09; the paragraph this replaces said there was no
+integration, and there now is one.** Jon received the credential on 2026-09-08.
+There are two independent paths and they answer different questions.
+
+*Direct, `artemis/integrations/gong/`.* A metadata-only client against
+`api.gong.io`, Basic auth. **It has no transcript method and the string
+`/v2/calls/transcript` does not appear in the module** — CLAUDE.md rule 4 is
+enforced by the absence of the code, not by a convention, and a test asserts the
+public method set so one cannot be added quietly. What it reads: call metadata,
+the Salesforce account each call is linked to, party counts (counts, never
+names), and Gong's own 26 trackers as hit counts. What it produces:
+
+| Piece | Answers |
+|---|---|
+| `client.py` | "when did we last speak to this district, and what did the call touch on" — `recent_contact_summary`, `one_line_contact` |
+| `baseline.py` | "is this district unusual" — its tracker rates against the portfolio's. Small samples need a **higher** margin, not a flat one; the first version flagged 48% of accounts |
+| `brief_section.py` | the "What districts are saying" section of the daily market-signals brief. Concern **and** advocacy — the positive half is the one nothing else surfaces |
+| `snapshots.py` | "is this district *changing*" — dated readings in `memory_observations` under category `gong_account_signal`, compared against a reading at least 21 days old |
+
+Scope discipline, both non-negotiable and both in rule 4: **aggregate by account,
+never by rep** (the credential can read all 22 reps' calls, which is exactly why
+the restraint lives in code), and **derived counts only, never words**. A stored
+reading looks like `[gong|2026-09-09|Pinellas County Schools] calls=10
+concern=(Product feedback 100%) advocacy=(none)` — there is nowhere in that
+format for anything anyone said.
+
+*Indirect, via Salesforce, unchanged and still live.* Gong syncs its "Engage"
+flow data onto the Contact record, and Artemis reads those four synced custom
+fields (`Gong__Actively_Being_in_a_Flow__c`, `Gong__Current_Flow_Name__c`,
 `Gong__Current_Flow_User_Name__c`, `Gong__Added_to_Flow_Date__c`) inside its
 ordinary Salesforce query. That answers "is someone already working this person"
-with no Gong API at all. If Gong access were ever revoked at the Salesforce sync
-level, this would go quiet with no error.
+and needs no Gong API at all. If Gong access were revoked at the Salesforce sync
+level, this path would go quiet with no error.
+
+Audited detail, including what Gong will **not** give us: `docs/gong-capability-map.md`.
 
 **Starbridge is two different things, and only one works.** The **webhook** is
 live and is the single largest source of signals (1,037 in the last 30 days).
