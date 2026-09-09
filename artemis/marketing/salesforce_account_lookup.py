@@ -195,6 +195,54 @@ _CONFLICT_FIELDS = (
 )
 
 
+def _activity_phrase(last_activity: str) -> str:
+    """Describe `LastActivityDate` truthfully, including when it has not happened yet.
+
+    **Salesforce's `LastActivityDate` is a DUE date, not a completed one.** It is
+    the most recent Event's `ActivityDate` or the most recently closed Task's, and
+    an Event counts whether or not it has taken place. So a meeting booked for
+    next March makes a contact look "last touched 2027-03-29".
+
+    That is 233 contacts across 184 accounts (0.087% of those with a date). The
+    rate understates it badly, because `fetch_account_contacts` sorts
+    `LastActivityDate DESC` — future dates sort to the TOP, so on those 184
+    accounts a rounding-error field problem is a 100% error on the first rows
+    anyone reads. Asked about Pinellas, Callie was handed two of them as rows one
+    and two, reported them as past contact, and called the list "warm".
+
+    Filtering them out was the smaller change and would have been worse: it swaps
+    one false statement ("no recorded activity") for another and discards a
+    booked meeting, which is a thing demand gen actually wants to know. So say
+    what it is.
+
+    Evidence that these are calendar entries rather than typos: of the 233 future
+    dates, 232 fall Monday-Friday and one on a Saturday. Typed-wrong years land
+    uniformly across the week; roughly 67 weekend dates would be expected, which
+    puts this about nine standard deviations from noise. Exactly two records are
+    genuinely dirty (years 2763 and 2202), and the lone Saturday is one of them.
+
+    Not confirmed by reading the source Activity: `Task`, `Event` and
+    `OpenActivity` all return 400 for our run-as user (the same permission gap
+    noted in `salesforce_suppression`). This is strong inference plus vendor
+    documentation, not direct observation, and it should be revisited if that
+    permission ever arrives.
+    """
+    from datetime import UTC, datetime
+
+    try:
+        when = datetime.strptime(last_activity[:10], "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError:
+        # Unparseable: hand it back verbatim rather than guessing at a tense.
+        return f"last activity recorded as {last_activity}"
+
+    if when.date() > datetime.now(UTC).date():
+        return (
+            f"a meeting is SCHEDULED for {last_activity[:10]} (not yet happened) — "
+            "Salesforce cannot tell us when this person was last actually contacted"
+        )
+    return f"last touched {last_activity[:10]}"
+
+
 @dataclass
 class AccountContact:
     """One person at a district, with whatever we can say about who is on them."""
@@ -223,7 +271,7 @@ class AccountContact:
             flow = f" ({self.flow_name})" if self.flow_name else ""
             bits.append(f"⚠ IN ACTIVE OUTREACH by {who}{flow} since {self.flow_since or 'unknown'}")
         elif self.last_activity:
-            bits.append(f"last touched {self.last_activity}")
+            bits.append(_activity_phrase(self.last_activity))
         else:
             bits.append("no recorded activity")
         return " — ".join(bits)

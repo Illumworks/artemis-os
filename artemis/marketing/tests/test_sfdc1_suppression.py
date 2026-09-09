@@ -520,3 +520,45 @@ async def test_enrichment_creates_new_row_when_no_match(db_session: AsyncSession
     assert contact.source == "salesforce"
     assert contact.email == "new.person@district.org"
     assert contact.active is True
+
+
+@pytest.mark.asyncio
+async def test_a_scheduled_meeting_suppresses_but_is_not_called_past_activity() -> None:
+    """The decision was already right — a future date passes a `>= now - 90d`
+    lower bound and blocks the send. The stated REASON was a false sentence, and
+    that string is what a human reads when they ask why a send was blocked."""
+    from datetime import UTC, datetime, timedelta
+
+    from artemis.marketing.salesforce_suppression import _recent_contact_from_contact_record
+
+    ahead = (datetime.now(UTC) + timedelta(days=120)).strftime("%Y-%m-%d")
+
+    class _Client:
+        async def query(self, _soql: str) -> list[dict[str, object]]:
+            return [{"Id": "003x", "LastActivityDate": ahead}]
+
+    result = await _recent_contact_from_contact_record(_Client(), "003x", 90)
+
+    assert result is not None
+    assert result.suppressed is True
+    assert "SCHEDULED" in result.detail
+    assert "last sales activity" not in result.detail
+
+
+@pytest.mark.asyncio
+async def test_a_real_past_touch_still_reads_as_one() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from artemis.marketing.salesforce_suppression import _recent_contact_from_contact_record
+
+    behind = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
+
+    class _Client:
+        async def query(self, _soql: str) -> list[dict[str, object]]:
+            return [{"Id": "003x", "LastActivityDate": behind}]
+
+    result = await _recent_contact_from_contact_record(_Client(), "003x", 90)
+
+    assert result is not None
+    assert result.suppressed is True
+    assert "last sales activity" in result.detail

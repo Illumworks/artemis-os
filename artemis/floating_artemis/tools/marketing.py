@@ -1195,7 +1195,18 @@ LIST_SCOUT_RUNS = Tool(
 
 FIRE_SCOUT = Tool(
     name="fire_scout",
-    description=f"Trigger a scout run immediately. {_s} [layer:2]",
+    # NOT "trigger a scout run immediately", which is what this said and what the
+    # handler has never done. Scouts run on a schedule inside the app process;
+    # this tool runs in a per-turn subprocess that cannot reach it, so it returns
+    # `not_started` and says so clearly. But the description is what the model
+    # reads when DECIDING to call, and it was promising the one thing the handler
+    # is careful to refuse -- so the refusal arrived only after the model had
+    # already been told the capability existed.
+    description=(
+        "Report when a scout last ran and what it produced. It CANNOT start one: "
+        "scouts run on a schedule and this cannot reach them. Never tell anyone a "
+        f"scout has been triggered. {_s} [layer:2]"
+    ),
     input_schema={
         "type": "object",
         "properties": {

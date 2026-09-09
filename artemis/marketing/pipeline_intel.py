@@ -309,6 +309,23 @@ NOT_COVERED = (
     "None of the prepared pipeline questions answers that. Say so plainly, name "
     "what you CAN answer, and do not substitute a different figure. Available: "
     "win rate by deal size, open pipeline by stage, stalled deals, late-stage "
-    "deals with no contact attached, deals closing soon, and whether Salesforce "
-    "records loss reasons (it does not)."
+    "deals with no contact attached, deals closing soon, and the most common "
+    "loss reasons on closed-lost deals."
 )
+
+# The line above used to end "and whether Salesforce records loss reasons (it
+# does not)". That was false, and it was false here for four days AFTER the
+# claim was corrected everywhere else.
+#
+# The original error: four conventional field names were probed -- Loss_Reason__c,
+# Reason_Lost__c, Closed_Lost_Reason__c, Loss_Reason_Detail__c -- none existed,
+# and their absence was recorded as the absence of the CAPABILITY. The field is
+# `Reason__c`, populated on roughly 28,600 closed-lost opportunities, and
+# `loss_reasons` above has read it since.
+#
+# Worth the comment because of HOW the second copy survived. The fix went in
+# where the fact was COMPUTED and missed where it was ASSERTED, three hundred
+# lines away, in the string the model is handed when nothing else fits -- so the
+# one path that fires when Callie is least certain was the one still telling her
+# the wrong thing. When a fact turns out to be wrong, grep for the sentence, not
+# just the function.

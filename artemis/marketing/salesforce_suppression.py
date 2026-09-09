@@ -189,12 +189,27 @@ async def _recent_contact_from_contact_record(
         except ValueError:
             last_dt = None
         if last_dt is not None and last_dt >= datetime.now(UTC) - timedelta(days=window_days):
-            return SuppressionResult(
-                True,
-                SKIP_RECENT_SALES_CONTACT,
-                f"last sales activity on {last[:10]}, inside the {window_days}-day window "
-                "(from the Contact record; Task detail is not readable)",
-            )
+            # Still suppress a future date -- a meeting booked for next month is a
+            # better reason not to cold-email someone than a call last quarter --
+            # but do not describe it as something that has already happened.
+            # `LastActivityDate` is a DUE date and counts Events that have not
+            # occurred (see `_activity_phrase` in salesforce_account_lookup for the
+            # evidence); 233 contacts across 184 accounts carry a future one. The
+            # decision here was already right and the stated reason was a false
+            # sentence, which is worse than it sounds: this string is what a human
+            # reads when they ask why a send was blocked.
+            if last_dt.date() > datetime.now(UTC).date():
+                reason = (
+                    f"a meeting is SCHEDULED with this contact for {last[:10]} — do not "
+                    "cold-email into a booked sales conversation (from the Contact "
+                    "record; Task detail is not readable)"
+                )
+            else:
+                reason = (
+                    f"last sales activity on {last[:10]}, inside the {window_days}-day "
+                    "window (from the Contact record; Task detail is not readable)"
+                )
+            return SuppressionResult(True, SKIP_RECENT_SALES_CONTACT, reason)
 
     return SuppressionResult(
         False,
