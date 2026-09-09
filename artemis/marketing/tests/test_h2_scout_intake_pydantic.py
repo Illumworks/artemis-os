@@ -428,3 +428,96 @@ def test_layer_c_genuinely_unknown_field_still_forbidden() -> None:
     with pytest.raises(ValidationError) as exc_info:
         ScoutEmittedSignal.model_validate(payload)
     assert "hallucinated_field" in str(exc_info.value)
+
+
+# ── tier case (measured 2026-09-09) ──────────────────────────────────────────
+
+
+def test_an_uppercase_tier_is_accepted() -> None:
+    """Both claude-haiku-4-5 and the local qwen3.6-35b emitted "HOT" on the real
+    regional_news prompt and had the whole signal discarded over the case of four
+    letters. The prompt never says the tier must be lowercase."""
+    from artemis.marketing.scout_schemas import ScoutEmittedSignal
+
+    sig = ScoutEmittedSignal.model_validate(
+        {"headline": "A district posted an RFP", "sourceType": "news_article", "urgencyTier": "HOT"}
+    )
+
+    assert sig.urgency_tier == "hot"
+
+
+def test_mixed_case_and_snake_case_keys_both_normalise() -> None:
+    from artemis.marketing.scout_schemas import ScoutEmittedSignal
+
+    for payload in (
+        {"headline": "h", "sourceType": "news_article", "urgencyTier": "Standard"},
+        {"headline": "h", "source_type": "news_article", "urgency_tier": "ENRICHMENT"},
+    ):
+        assert ScoutEmittedSignal.model_validate(payload).urgency_tier in (
+            "standard",
+            "enrichment",
+        )
+
+
+def test_an_invented_tier_still_fails() -> None:
+    """Normalising case must not become accepting anything. A tier the model made
+    up is a real error and has to surface."""
+    import pytest
+    from pydantic import ValidationError
+
+    from artemis.marketing.scout_schemas import ScoutEmittedSignal
+
+    with pytest.raises(ValidationError):
+        ScoutEmittedSignal.model_validate(
+            {"headline": "h", "sourceType": "news_article", "urgencyTier": "URGENT"}
+        )
+
+
+def test_evidence_as_a_list_of_quotes_is_accepted() -> None:
+    """The commonest rejection on BOTH models, measured over three runs of the
+    real regional_news prompt. The model emitting several attributed quotes is
+    doing what the prompt asks for; only the container is wrong."""
+    from artemis.marketing.scout_schemas import ScoutEmittedSignal
+
+    sig = ScoutEmittedSignal.model_validate(
+        {
+            "headline": "h",
+            "sourceType": "news_article",
+            "evidence": [
+                "Supt. Rice, 2026-09-05: 'treat this as the emergency it is.'",
+                "M-STEP 2026: 39.6%, fourth consecutive decline",
+            ],
+        }
+    )
+
+    assert sig.evidence is not None
+    assert "Supt. Rice" in sig.evidence
+    assert "39.6%" in sig.evidence, "no quote may be dropped on the way through"
+
+
+def test_evidence_objects_keep_their_attribution() -> None:
+    """Attribution is the thing the prompt is most insistent about."""
+    from artemis.marketing.scout_schemas import ScoutEmittedSignal
+
+    sig = ScoutEmittedSignal.model_validate(
+        {
+            "headline": "h",
+            "sourceType": "news_article",
+            "evidence": [{"text": "Board voted 6-1", "attribution": "2026-09-02 board meeting"}],
+        }
+    )
+
+    assert sig.evidence is not None
+    assert "Board voted 6-1" in sig.evidence
+    assert "2026-09-02 board meeting" in sig.evidence
+
+
+def test_a_plain_string_evidence_is_untouched() -> None:
+    """The common case must not change shape to accommodate the rare one."""
+    from artemis.marketing.scout_schemas import ScoutEmittedSignal
+
+    sig = ScoutEmittedSignal.model_validate(
+        {"headline": "h", "sourceType": "news_article", "evidence": "one quote, attributed"}
+    )
+
+    assert sig.evidence == "one quote, attributed"

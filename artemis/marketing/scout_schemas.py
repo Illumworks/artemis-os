@@ -117,6 +117,67 @@ class ScoutEmittedSignal(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
+    def _flatten_evidence_list(cls, values: Any) -> Any:
+        """Layer-C: accept ``evidence`` as a list, which is the commonest failure.
+
+        Measured 2026-09-09 across three runs of the real regional_news prompt on
+        production-shaped input: BOTH claude-haiku-4-5 and the local qwen3.6-35b
+        emitted ``evidence`` as a list of quotes rather than one string, and it was
+        the single most frequent rejection on either model.
+
+        The contract wants a string and the model is being helpful — several
+        distinct quotes with attribution is BETTER evidence than one blob, which
+        is what the prompt asks for ("Speaker attribution required"). Discarding a
+        whole signal over the container type loses the finding and the evidence
+        both.
+
+        Entries may be plain strings or objects; for objects the ``text`` field is
+        the quote and anything else is dropped, which is the same reduction the
+        prompt describes.
+        """
+        if not isinstance(values, dict):
+            return values
+        raw = values.get("evidence")
+        if isinstance(raw, list):
+            parts: list[str] = []
+            for entry in raw:
+                if isinstance(entry, str) and entry.strip():
+                    parts.append(entry.strip())
+                elif isinstance(entry, dict):
+                    text = entry.get("text") or entry.get("quote") or ""
+                    attribution = entry.get("attribution") or entry.get("source") or ""
+                    line = f"{text} ({attribution})" if text and attribution else str(text or "")
+                    if line.strip():
+                        parts.append(line.strip())
+            values["evidence"] = " | ".join(parts) if parts else None
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_urgency_tier_case(cls, values: Any) -> Any:
+        """Layer-C: accept ``HOT``/``Hot`` for the tier, which every model emits.
+
+        Measured 2026-09-09 on the regional_news prompt: BOTH claude-haiku-4-5 and
+        the local qwen3.6-35b returned ``"urgencyTier": "HOT"`` and were rejected.
+        The prompt never states the tier must be lowercase and the enum is not
+        quoted to the model, so uppercase is the natural reading of "hot" as a
+        priority label -- this is a prompt gap, not a model defect, and fixing it
+        per-provider would fix it for none of them.
+
+        A whole signal was being discarded over the case of four letters. The
+        value is otherwise unambiguous, so normalise it; anything that is not a
+        recognised tier still fails, because inventing a tier is a real error.
+        """
+        if not isinstance(values, dict):
+            return values
+        for key in ("urgencyTier", "urgency_tier"):
+            raw = values.get(key)
+            if isinstance(raw, str) and raw.lower() in {"hot", "standard", "enrichment", "low"}:
+                values[key] = raw.lower()
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
     def _coerce_reason_codes_entries(cls, values: Any) -> Any:
         """Layer-C: promote bare-string reason-code entries to the canonical object shape.
 
