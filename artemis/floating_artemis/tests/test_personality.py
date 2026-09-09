@@ -263,7 +263,11 @@ def test_build_system_prompt_artemis_profile_matches_legacy_output() -> None:
             "**Do NOT use markdown tables** (`| Field | Value |` pipe-table syntax) — "
             "Slack renders them as raw pipes and dashes. "
             "Use **bold labels** with short bullet lines or plain sentences instead."
-            " The operator is Jon."
+            # Wording changed in b9c8126 (2026-08-12, "tell the agent who is in
+            # the room"). This copy did not follow, and the test has been red
+            # ever since -- the cost of a test that reimplements the string it
+            # is checking rather than asserting a property of it.
+            " You are talking to Jon."
         )
         parts.append(
             "## Slack DM scope\n"
