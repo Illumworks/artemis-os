@@ -435,3 +435,54 @@ def test_a_signal_push_without_prior_contact_says_nothing_about_it() -> None:
     )
 
     assert "Prior contact" not in text
+
+
+# ── an empty account name asks about nothing (2026-09-09, live) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_an_empty_account_name_matches_nothing_not_everything(monkeypatch) -> None:
+    """`"" in anything` is True, so an empty name matched EVERY call in the
+    corpus. A signal card in #campaign-signals told the channel an Indiana policy
+    signal with no district attached had "5 calls ... Not a cold account" —
+    five unrelated districts' calls, presented as this one's."""
+    from artemis.integrations.gong.client import GongMetadataClient
+
+    called = False
+
+    async def _post(self, path, body):  # noqa: ANN001, ARG001
+        nonlocal called
+        called = True
+        return {"calls": [], "records": {}}
+
+    monkeypatch.setattr(GongMetadataClient, "_post", _post)
+
+    client = GongMetadataClient("k", "s")
+
+    assert await client.recent_calls_for_account("") == []
+    assert await client.recent_calls_for_account("   ") == []
+    assert called is False, "an empty name must not even reach Gong"
+
+
+@pytest.mark.asyncio
+async def test_the_one_liner_is_silent_for_an_empty_name(monkeypatch) -> None:
+    from artemis.config import settings
+    from artemis.integrations.gong.client import one_line_contact
+
+    monkeypatch.setattr(settings, "gong_access_key", "k", raising=False)
+    monkeypatch.setattr(settings, "gong_access_key_secret", "s", raising=False)
+
+    assert await one_line_contact("") is None
+
+
+def test_the_one_liner_counts_rather_than_reporting_its_fetch_cap() -> None:
+    """The identical bug to `recent_contact_summary`, in its sibling, missed when
+    that one was fixed. This form prints no per-call list, so the ONLY number it
+    shows is the total."""
+    import inspect
+
+    from artemis.integrations.gong.client import _COUNT_CAP, one_line_contact
+
+    src = inspect.getsource(one_line_contact)
+    assert "limit=_COUNT_CAP" in src, "must not fetch 5 and call it the total"
+    assert "_COUNT_CAP" in src and f"{_COUNT_CAP}" != "5"

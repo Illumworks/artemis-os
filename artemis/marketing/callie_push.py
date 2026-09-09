@@ -197,6 +197,28 @@ def _build_push_text(
 # ── Main push entry point ──────────────────────────────────────────────────────
 
 
+async def _resolve_district_name(session: AsyncSession, district_id: str | None) -> str | None:
+    """The district's name, for a Gong lookup that matches on names.
+
+    Returns ``None`` when there is no district, which is the common case: a
+    policy or news signal is about a state, not a district. The caller must then
+    say nothing about prior contact rather than asking Gong about "".
+    """
+    if not district_id:
+        return None
+    try:
+        from artemis.marketing.models import District
+
+        row = await session.get(District, int(district_id))
+    except (TypeError, ValueError):
+        return None
+    except Exception:
+        _log.warning("callie_push: district lookup failed for %r", district_id, exc_info=True)
+        return None
+    name = getattr(row, "name", None) if row is not None else None
+    return str(name) if name else None
+
+
 def _decision_blocks(text: str, signal_id: int) -> list[object]:
     """The card, with somewhere to say yes.
 
@@ -321,17 +343,26 @@ async def push_top_tier_signal(
         # that says "they posted an RFP" reads very differently from one that
         # says "they posted an RFP and we spoke to them twice in July", and the
         # reader cannot ask a Slack message a follow-up question.
+        #
+        # It takes a district NAME. This passed `district_id or ""`, which is an
+        # id -- so it matched an account whose name contained the digits (never)
+        # or, when the signal had no district at all, matched EVERYTHING, because
+        # `"" in anything` is True. That is how a card for an Indiana policy
+        # signal with no district attached announced "5 calls in the last 180
+        # days ... Not a cold account" about five unrelated districts.
         prior_contact: str | None = None
-        try:
-            from artemis.integrations.gong.client import one_line_contact
+        district_name = await _resolve_district_name(session, district_id)
+        if district_name:
+            try:
+                from artemis.integrations.gong.client import one_line_contact
 
-            prior_contact = await one_line_contact(district_id or "")
-        except Exception:
-            _log.warning(
-                "callie_push: prior-contact lookup failed for %r (non-fatal)",
-                district_id,
-                exc_info=True,
-            )
+                prior_contact = await one_line_contact(district_name)
+            except Exception:
+                _log.warning(
+                    "callie_push: prior-contact lookup failed for %r (non-fatal)",
+                    district_name,
+                    exc_info=True,
+                )
 
         text = _build_push_text(
             signal_id=signal_id,

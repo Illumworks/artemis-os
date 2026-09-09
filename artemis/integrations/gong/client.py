@@ -150,6 +150,18 @@ class GongMetadataClient:
         to = datetime.now(UTC).strftime("%Y-%m-%dT23:59:59Z")
 
         wanted = account_name.strip().lower()
+        if not wanted:
+            # `"" in anything` is True, so an empty name matched EVERY call in the
+            # corpus and returned the five most recent from unrelated districts.
+            # A caller with no account name is asking about nothing, and the only
+            # correct answer is nothing -- it is certainly not "here is the whole
+            # company's recent activity, attributed to your district".
+            #
+            # Live on 2026-09-09: a signal card in #campaign-signals said
+            # "5 calls in the last 180 days ... Not a cold account" for an Indiana
+            # policy signal with no district attached at all.
+            logger.warning("gong: recent_calls_for_account called with an empty name")
+            return []
         matches: list[CallContext] = []
         cursor: str | None = None
 
@@ -359,9 +371,18 @@ async def one_line_contact(account_name: str, *, days: int = 180) -> str | None:
     if not settings.gong_access_key or not settings.gong_access_key_secret:
         return None
 
+    if not account_name.strip():
+        # Nothing to annotate. Silently, because this line is an annotation on
+        # someone else's message and a missing one is not a finding.
+        return None
+
     client = GongMetadataClient(settings.gong_access_key, settings.gong_access_key_secret)
     try:
-        calls = await client.recent_calls_for_account(account_name, days=days, limit=5)
+        # Count generously, show nothing -- this form renders no per-call list, so
+        # the only number it prints is the total and it had better be one. The
+        # sibling above reported its fetch cap as the count and made Pinellas, with
+        # 22 calls, read as a quiet account; this had the identical bug.
+        calls = await client.recent_calls_for_account(account_name, days=days, limit=_COUNT_CAP)
     except GongUnavailableError:
         logger.warning("gong: one-line context unavailable for %r", account_name)
         return None
@@ -372,8 +393,9 @@ async def one_line_contact(account_name: str, *, days: int = 180) -> str | None:
     when = str(newest.started or "")[:10]
     fired = sorted({t for call in calls for t in call.fired_trackers})
     themes = f", touching on {', '.join(fired[:3])}" if fired else ""
+    total = f"{len(calls)}+" if len(calls) >= _COUNT_CAP else str(len(calls))
     plural = "s" if len(calls) != 1 else ""
     return (
-        f"{len(calls)} call{plural} in the last {days} days, most recent {when}"
+        f"{total} call{plural} in the last {days} days, most recent {when}"
         f"{themes}. Not a cold account."
     )
