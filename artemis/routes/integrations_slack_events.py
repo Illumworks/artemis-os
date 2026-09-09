@@ -685,6 +685,48 @@ def _verify_slack_signature(
 # ── route_inbound stub ────────────────────────────────────────────────────────
 
 
+async def _ack_seen(
+    *, normalized_agent: str, team_id: str, channel_id: str, message_ts: str
+) -> None:
+    """React to the incoming message so the person knows the turn has started.
+
+    Her median turn is 29 seconds and the 90th percentile is 76. In Slack that
+    reads as nothing happening — there is no distinction between "thinking" and
+    "the bot is down", and the 2026-07-20 outage was invisible for 19 hours for
+    exactly that reason.
+
+    A reaction rather than a posted "on it" message: it costs no second message
+    in the channel, it cannot leave a stale placeholder behind if the turn dies,
+    and it doubles as a record of which messages were actually picked up.
+
+    Best-effort by construction. Any failure here must be invisible to the turn —
+    an acknowledgement that can break the answer is worse than no acknowledgement.
+    """
+    if not message_ts:
+        return
+    try:
+        import artemis.db as _db
+        from artemis.integrations.slack.client import SlackClient
+
+        async with _db.SessionLocal() as session:
+            cfg = await _resolve_agent_slack_config(
+                session, agent_id=normalized_agent, team_id=team_id
+            )
+        if not cfg.access_token:
+            return
+        await SlackClient(token=cfg.access_token).add_reaction(
+            channel=channel_id, ts=message_ts, emoji="eyes"
+        )
+    except Exception:
+        # Includes `already_reacted` on a retried delivery, which is not a problem.
+        logger.debug(
+            "route_inbound: could not acknowledge message %s in %s",
+            message_ts,
+            channel_id,
+            exc_info=True,
+        )
+
+
 async def _post_slack_message(
     *,
     session_id: str,
@@ -1313,6 +1355,14 @@ async def route_inbound(
                 "files: attachment intake failed for session=%s -- continuing as a text-only turn",
                 session_id,
             )
+
+    # Tell them the turn started, before spending 29 seconds not saying anything.
+    await _ack_seen(
+        normalized_agent=normalized_agent,
+        team_id=team_id,
+        channel_id=channel_id,
+        message_ts=str(event_data.get("ts") or ""),
+    )
 
     # ── Normal turn ───────────────────────────────────────────────────────────
     try:
