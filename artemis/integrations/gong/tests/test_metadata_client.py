@@ -192,3 +192,131 @@ def test_pagination_uses_a_top_level_cursor() -> None:
     src = inspect.getsource(C.recent_calls_for_account)
     assert 'body["cursor"] = cursor' in src, "cursor must be set at the top level of the body"
     assert '"filter": {"fromDateTime"' in src, "and filter must carry only the date range"
+
+
+# ── context that arrives without being asked for ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_no_linked_calls_is_not_reported_as_never_contacted(monkeypatch) -> None:
+    """2,582 imported calls carry no account link at all.
+
+    "No linked calls" and "no contact" are different claims, and the second one
+    would licence a cold opener to a district somebody has already worked.
+    """
+    from artemis.integrations.gong import client as mod
+
+    async def _none(self, name, *, days=180, limit=5):  # noqa: ANN001, ARG001
+        return []
+
+    monkeypatch.setattr(mod.GongMetadataClient, "recent_calls_for_account", _none)
+
+    summary = await mod.recent_contact_summary("Anywhere")
+
+    assert summary is not None
+    assert "no linked call" in summary.lower()
+    assert "rather than no" in summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_gong_being_down_is_unknown_not_cold(monkeypatch) -> None:
+    """An outage must not read as "this district has never been contacted"."""
+    from artemis.integrations.gong import client as mod
+
+    async def _boom(self, name, *, days=180, limit=5):  # noqa: ANN001, ARG001
+        raise mod.GongUnavailableError("gong down")
+
+    monkeypatch.setattr(mod.GongMetadataClient, "recent_calls_for_account", _boom)
+
+    summary = await mod.recent_contact_summary("Anywhere")
+
+    assert summary is not None
+    assert "UNKNOWN" in summary
+    assert "do not describe this account as cold" in summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_prior_contact_tells_the_agent_not_to_open_cold(monkeypatch) -> None:
+    """The whole point. Callie was drafting cold outreach for Grosse Pointe while
+    five calls sat in Gong from 29 April to 11 May, two firing Objections."""
+    from artemis.integrations.gong import client as mod
+
+    async def _calls(self, name, *, days=180, limit=5):  # noqa: ANN001, ARG001
+        return [
+            mod.CallContext(
+                call_id="c1",
+                started="2026-05-01T10:00:00Z",
+                duration_seconds=120,
+                title="Call",
+                system="Gong Connect",
+                account_name="A District",
+                account_tier="D3",
+                trackers={"Objections (tracker)": 1, "Pricing": 0},
+                external_parties=1,
+            )
+        ]
+
+    monkeypatch.setattr(mod.GongMetadataClient, "recent_calls_for_account", _calls)
+
+    summary = await mod.recent_contact_summary("A District")
+
+    assert summary is not None
+    assert "Objections (tracker)" in summary
+    assert "Do NOT write to them as a cold account" in summary
+    assert "counts, not quotes" in summary, "it must not imply we know what was said"
+
+
+@pytest.mark.asyncio
+async def test_the_summary_carries_no_participant_names(monkeypatch) -> None:
+    from artemis.integrations.gong import client as mod
+
+    async def _calls(self, name, *, days=180, limit=5):  # noqa: ANN001, ARG001
+        return [
+            mod.CallContext(
+                call_id="c1",
+                started="2026-05-01T10:00:00Z",
+                duration_seconds=60,
+                title="Call",
+                system="Zoom",
+                account_name="A District",
+                external_parties=2,
+                internal_parties=1,
+            )
+        ]
+
+    monkeypatch.setattr(mod.GongMetadataClient, "recent_calls_for_account", _calls)
+
+    summary = await mod.recent_contact_summary("A District")
+
+    assert summary is not None
+    assert "2 external" in summary, "counts are the only party detail that survives"
+
+
+def test_the_context_is_folded_into_the_pre_outreach_check() -> None:
+    """It must arrive without being asked for, or it will not arrive at all.
+
+    A separate tool depends on someone thinking to call it, and nobody thought to
+    ask about Grosse Pointe. check_salesforce_activity is already required before
+    drafting outreach, which makes it the right carrier for anything that should
+    change a recommendation rather than answer a question.
+    """
+    import inspect
+
+    from artemis.floating_artemis.tools import salesforce_tools
+
+    src = inspect.getsource(salesforce_tools)
+    assert "recent_contact_summary" in src
+    assert "gong_lines" in src
+
+
+def test_gong_failure_cannot_take_out_the_suppression_check() -> None:
+    """The Salesforce answer carries the do-not-contact check; it must survive."""
+    import inspect
+
+    from artemis.floating_artemis.tools import salesforce_tools
+
+    src = inspect.getsource(salesforce_tools)
+    block = src[
+        src.index("recent_contact_summary") - 600 : src.index("recent_contact_summary") + 400
+    ]
+    assert "except Exception" in block, "the Gong fetch must be wrapped"

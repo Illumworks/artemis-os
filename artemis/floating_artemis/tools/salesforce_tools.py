@@ -272,6 +272,31 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
                         "sales activity to this one is the error that matters here.",
                     )
 
+            # Conversation context, folded in rather than offered as a
+            # separate tool.
+            #
+            # Callie was drafting COLD outreach for Grosse Pointe while five
+            # calls sat in Gong from 29 April to 11 May, two of them firing an
+            # Objections tracker. Nobody would have thought to ask for that, so a
+            # tool she must remember to call would not have caught it. This
+            # function is already the one she is required to call before drafting
+            # outreach, which makes it the right place for anything that should
+            # CHANGE a recommendation rather than answer a question.
+            #
+            # Never fatal: Gong being down must not take out the Salesforce
+            # answer, which is the part with the suppression check in it.
+            gong_lines: str | None = None
+            try:
+                from artemis.integrations.gong.client import recent_contact_summary
+
+                gong_lines = await recent_contact_summary(district_name or "")
+            except Exception:
+                logger.warning(
+                    "check_salesforce_activity: Gong context failed for %r (non-fatal)",
+                    district_name,
+                    exc_info=True,
+                )
+
             if district is None:
                 # Salesforce may well have answered even though our index did not.
                 # Be precise about WHICH lookup failed. Callie told Josh on
@@ -281,6 +306,7 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
                 # fetch a fact that cannot help is worse than saying "not found".
                 return _joined(
                     sf_lines,
+                    gong_lines,
                     f"Our own index has no entry for {district_name!r}, so there is no "
                     "contact-level suppression detail to add — but the Salesforce answer "
                     "above stands on its own.",
@@ -291,6 +317,7 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
             if not emailed_contacts:
                 return _joined(
                     sf_lines,
+                    gong_lines,
                     _target_conflict(sf_match, district_name),
                     f"{district.name}: no contacts with email addresses on file, so there is no "
                     "per-contact check to run. That is a gap in our contact data — NOT a clean "
@@ -299,6 +326,8 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
 
             lines: list[str] = []
             lines.extend(sf_lines)
+            if gong_lines:
+                lines.append(gong_lines)
             conflict = _target_conflict(sf_match, district_name)
             if conflict:
                 lines.append(conflict)

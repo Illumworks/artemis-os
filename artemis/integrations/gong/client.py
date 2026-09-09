@@ -254,3 +254,70 @@ def _to_context(raw: dict[str, Any]) -> CallContext:
         opportunity_stage=stage,
         days_since_stage_change=days_since_stage,
     )
+
+
+async def recent_contact_summary(account_name: str, *, days: int = 180) -> str | None:
+    """One paragraph of conversation CONTEXT for a district, or None.
+
+    **Why this is a function and not just a tool.** The value is not answering
+    "what's the context on X" when someone asks. It is that Callie was drafting
+    COLD outreach for Grosse Pointe while two calls sat in Gong from 1 and 11 May,
+    one of them firing an Objections tracker. Nobody would have thought to ask.
+    So this is folded into `check_salesforce_activity`, which she is already
+    required to call before drafting outreach, rather than added as a tool she
+    must remember.
+
+    Derived facts only: when, how long, roughly what it concerned via tracker
+    names, and the Salesforce stage. Never a word anyone said. Participant names
+    are dropped; counts are all that survive.
+    """
+    from artemis.config import settings
+
+    client = GongMetadataClient(settings.gong_access_key, settings.gong_access_key_secret)
+    try:
+        calls = await client.recent_calls_for_account(account_name, days=days, limit=5)
+    except GongUnavailableError as exc:
+        # Distinct from "no calls". Reported so it can be repeated verbatim
+        # rather than mistaken for a quiet account.
+        logger.warning("gong: context lookup failed for %r: %s", account_name, exc)
+        return (
+            "Gong: could not be reached, so recent-conversation context is UNKNOWN "
+            "for this district. That is not the same as no contact -- do not "
+            "describe this account as cold."
+        )
+
+    if not calls:
+        # Deliberately not "never contacted": 2,582 imported calls carry no
+        # account link at all, so absence of a match is absence of a LINK.
+        return (
+            "Gong: no linked calls in the last "
+            f"{days} days. Note that calls imported from the previous vendor "
+            "carry no account link, so this means no linked call rather than no "
+            "contact."
+        )
+
+    newest = calls[0]
+    lines = [f"Gong: {len(calls)} linked call(s) in the last {days} days."]
+    for call in calls:
+        when = str(call.started or "")[:10]
+        minutes = round((call.duration_seconds or 0) / 60)
+        fired = ", ".join(sorted(call.fired_trackers)) or "no trackers fired"
+        lines.append(f"   {when} — {minutes} min, {call.external_parties} external — {fired}")
+
+    if newest.opportunity_stage:
+        stalled = (
+            f", {newest.days_since_stage_change}d in stage"
+            if newest.days_since_stage_change is not None
+            else ""
+        )
+        lines.append(f"   Opportunity: {newest.opportunity_stage}{stalled}")
+    if newest.account_tier:
+        lines.append(f"   District tier: {newest.account_tier}")
+
+    lines.append(
+        "   This district has been spoken to. Do NOT write to them as a cold "
+        "account, and say what the last contact was rather than opening as if "
+        "there was none. Tracker names indicate what a call touched on; they are "
+        "counts, not quotes, so do not claim to know what anyone said."
+    )
+    return "\n".join(lines)
