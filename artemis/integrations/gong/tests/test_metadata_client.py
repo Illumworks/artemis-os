@@ -309,17 +309,30 @@ def test_the_context_is_folded_into_the_pre_outreach_check() -> None:
     assert "gong_lines" in src
 
 
-def test_gong_failure_cannot_take_out_the_suppression_check() -> None:
-    """The Salesforce answer carries the do-not-contact check; it must survive."""
-    import inspect
+@pytest.mark.asyncio
+async def test_gong_failure_cannot_take_out_the_suppression_check(monkeypatch) -> None:
+    """The Salesforce answer carries the do-not-contact check; it must survive.
 
-    from artemis.floating_artemis.tools import salesforce_tools
+    This used to slice `inspect.getsource` by character offset around
+    "recent_contact_summary" and look for an `except` in the window — so adding a
+    comment near the call broke it while the behaviour was untouched. Drive the
+    failure instead: make the Gong call raise and assert the Salesforce content
+    still comes back.
+    """
 
-    src = inspect.getsource(salesforce_tools)
-    block = src[
-        src.index("recent_contact_summary") - 600 : src.index("recent_contact_summary") + 400
-    ]
-    assert "except Exception" in block, "the Gong fetch must be wrapped"
+    async def _boom(*_a: object, **_kw: object) -> str:
+        raise RuntimeError("gong down")
+
+    monkeypatch.setattr("artemis.integrations.gong.client.recent_contact_summary", _boom)
+
+    from artemis.floating_artemis.tools.salesforce_tools import _check_salesforce_activity
+
+    out = await _check_salesforce_activity({"district_name": "Pinellas County Schools"})
+
+    assert "Salesforce" in out
+    assert "Pinellas" in out
+    # And it must not have swallowed the district answer to report a Gong problem.
+    assert "gong down" not in out.lower()
 
 
 # ── the one-line form, for annotating someone else's message ─────────────────

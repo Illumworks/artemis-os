@@ -315,3 +315,224 @@ async def fetch_account_contacts(
             )
         )
     return people
+
+
+#: Statuses that mean "this site is on a licence of some kind". `Child` is the
+#: marker proper (5,624 accounts org-wide); the others appear on sites that were
+#: set up directly rather than under a parent rollout.
+_LICENSED_SITE_STATUSES = frozenset({"Child", "Customer", "Pilot"})
+
+
+@dataclass
+class SiteRoster:
+    """The schools under a district, and whether any of them say they are licensed.
+
+    The two counts are deliberately separate. **A district can have 169 child
+    accounts and zero licence markers**, which is exactly Pinellas — a customer
+    that renewed at $731k last month and whose 169 schools all carry a NULL
+    status. Reporting "0 licensed sites" there would be a confident false answer;
+    reporting "169 sites" as licensed would be a different one.
+    """
+
+    district_name: str
+    licensed: list[str] = field(default_factory=list)
+    unmarked: list[str] = field(default_factory=list)
+    #: Set when the roster query itself failed, so "no sites" is distinguishable
+    #: from "could not look".
+    unavailable: bool = False
+
+    @property
+    def total(self) -> int:
+        return len(self.licensed) + len(self.unmarked)
+
+    def one_line(self) -> str:
+        """The summary folded into the district brief, whether or not it was asked for."""
+        if self.unavailable:
+            return "Sites: could not be read from Salesforce (UNKNOWN, not zero)."
+        if not self.total:
+            return "Sites: no child accounts on this district in Salesforce."
+        if self.licensed:
+            return (
+                f"Sites: {len(self.licensed)} of {self.total} school accounts carry a "
+                f"site licence marker."
+            )
+        return (
+            f"Sites: {self.total} school accounts, NONE carrying a site licence marker. "
+            "That is the school roster, not a licence list — Salesforce cannot say which "
+            "of these sites are licensed."
+        )
+
+    def describe(self) -> str:
+        """The full roster, for when someone asks for the list itself."""
+        if self.unavailable:
+            return (
+                f"Could not read the site list for {self.district_name} from Salesforce. "
+                "That is UNKNOWN, not an empty district."
+            )
+        if not self.total:
+            return (
+                f"{self.district_name} has no child accounts in Salesforce. Districts are "
+                "often held as a single account, so this does not mean they have one school."
+            )
+
+        lines: list[str] = []
+        if self.licensed:
+            lines.append(f"{self.district_name} — {len(self.licensed)} site(s) marked as licensed:")
+            lines.extend(f"  {name}" for name in self.licensed[:60])
+            if len(self.licensed) > 60:
+                lines.append(f"  …and {len(self.licensed) - 60} more")
+        else:
+            lines.append(
+                f"{self.district_name} — {self.total} school accounts in Salesforce, and NONE "
+                "carry a site licence marker. This is the school roster, not a licence list. "
+                "Do not tell anyone these sites are licensed, and do not tell them the "
+                "district has no licensed sites either: Salesforce simply does not record it "
+                "for this district."
+            )
+            lines.extend(f"  {name}" for name in self.unmarked[:40])
+            if len(self.unmarked) > 40:
+                lines.append(f"  …and {len(self.unmarked) - 40} more")
+
+        if self.licensed and self.unmarked:
+            lines.append(
+                f"  ({len(self.unmarked)} further school account(s) carry no marker either way.)"
+            )
+            # An unmarked school is not an unlicensed one, and the ratio is the tell.
+            # Pinellas marks 1 of 169 while renewing at $731,625, so "one licensed
+            # site" would be a confident false reading of exactly the data that reads
+            # correctly at Ypsilanti's 10 of 17. State it rather than trusting the
+            # reader to notice the denominator.
+            if len(self.licensed) * 5 < self.total:
+                lines.append(
+                    f"  CAUTION: only {len(self.licensed)} of {self.total} are marked. This "
+                    "district largely does not maintain the site marker, so the list above is "
+                    "not the set of licensed schools -- it is the set that happens to be "
+                    "tagged. Do not present it as coverage."
+                )
+        lines.append(
+            "  Seat counts are NOT available: of 5,631 site-level accounts org-wide, one "
+            "has a licence count on it. Never quote a number of seats or students."
+        )
+        return "\n".join(lines)
+
+
+async def fetch_child_sites(client: Any, account_id: str, district_name: str = "") -> SiteRoster:
+    """The schools filed under a district, split by whether they claim a licence.
+
+    Josh's second priority, and the answer is partial in a way worth stating: the
+    ROSTER is readable on the credential we already have, and the seat COUNTS are
+    not. Of 5,631 site-level accounts exactly one carries a licence count, so
+    anything that reports seats is reporting a blank field.
+    """
+    roster = SiteRoster(district_name=district_name)
+    if not account_id:
+        return roster
+    try:
+        rows = await client.query(
+            "SELECT Id, Name, Customer_Status__c FROM Account "
+            f"WHERE ParentId = '{_soql_escape(account_id)}' ORDER BY Name LIMIT 400"
+        )
+    except Exception:
+        # Distinct from an empty district, and the render says so.
+        logger.warning("site roster fetch failed for account %s", account_id, exc_info=True)
+        roster.unavailable = True
+        return roster
+
+    for row in rows:
+        name = str(row.get("Name") or "(unnamed)")
+        if str(row.get("Customer_Status__c") or "") in _LICENSED_SITE_STATUSES:
+            roster.licensed.append(name)
+        else:
+            roster.unmarked.append(name)
+    return roster
+
+
+@dataclass
+class OpportunityHistory:
+    """Open and closed deals on one account. Josh's third priority.
+
+    `count_open_opportunities` returned an integer and excluded closed deals
+    entirely, so "Pinellas: 5 open opportunities" was the whole of what anyone
+    could learn — while the same account carried a $731,625 renewal closed won
+    five weeks earlier and another $731,625 renewal open for July 2027. The
+    number was true and told nobody anything.
+    """
+
+    open_deals: list[dict[str, Any]] = field(default_factory=list)
+    won: list[dict[str, Any]] = field(default_factory=list)
+    lost: list[dict[str, Any]] = field(default_factory=list)
+    unavailable: bool = False
+
+    @staticmethod
+    def _money(amount: Any) -> str:
+        """Amount is frequently 0 or NULL on real rows; say so rather than print $0."""
+        try:
+            value = float(amount)
+        except (TypeError, ValueError):
+            return "amount not recorded"
+        if value <= 0:
+            return "amount not recorded"
+        return f"${value:,.0f}"
+
+    def _line(self, row: dict[str, Any]) -> str:
+        return f"  {row.get('CloseDate') or '(no date)'} — {self._money(row.get('Amount'))}"
+
+    def describe(self) -> str:
+        if self.unavailable:
+            return "Opportunities: could not be read (UNKNOWN, not zero)."
+        if not (self.open_deals or self.won or self.lost):
+            return "Opportunities: none on this account."
+
+        lines: list[str] = []
+        if self.open_deals:
+            lines.append(f"Open opportunities ({len(self.open_deals)}):")
+            lines.extend(
+                f"{self._line(r)} — {r.get('StageName') or 'stage not set'}"
+                for r in self.open_deals[:6]
+            )
+        if self.won:
+            lines.append(f"Closed won ({len(self.won)}), most recent first:")
+            lines.extend(self._line(r) for r in self.won[:4])
+        if self.lost:
+            # Named separately because a loss on a current customer is a different
+            # fact from a loss on a prospect, and it is the one worth reading.
+            lines.append(f"Closed lost ({len(self.lost)}), most recent first:")
+            lines.extend(
+                f"{self._line(r)} — {r.get('Reason__c') or 'no reason recorded'}"
+                for r in self.lost[:4]
+            )
+        return "\n".join(lines)
+
+
+async def fetch_opportunity_history(
+    client: Any, account_id: str, *, limit: int = 60
+) -> OpportunityHistory:
+    """Open and closed deals on one account, newest first.
+
+    One query, the same round trip the old count made — it selected `Id` alone and
+    returned `len(rows)`. `Reason__c` is included because Salesforce DOES record
+    loss reasons on roughly 28,600 closed-lost opportunities, a fact this codebase
+    got wrong twice.
+    """
+    history = OpportunityHistory()
+    if not account_id:
+        return history
+    try:
+        rows = await client.query(
+            "SELECT Id, Name, StageName, Amount, CloseDate, IsClosed, IsWon, Reason__c "
+            f"FROM Opportunity WHERE AccountId = '{_soql_escape(account_id)}' "
+            f"ORDER BY CloseDate DESC LIMIT {int(limit)}"
+        )
+    except Exception:
+        logger.warning("opportunity fetch failed for account %s", account_id, exc_info=True)
+        history.unavailable = True
+        return history
+
+    for row in rows:
+        if not row.get("IsClosed"):
+            history.open_deals.append(row)
+        elif row.get("IsWon"):
+            history.won.append(row)
+        else:
+            history.lost.append(row)
+    return history

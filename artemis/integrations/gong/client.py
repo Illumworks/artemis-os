@@ -256,6 +256,12 @@ def _to_context(raw: dict[str, Any]) -> CallContext:
     )
 
 
+#: Fetch this many to COUNT (the paging already happened, so it is free), and
+#: render only `_SHOW_CAP` of them so a busy account does not flood the brief.
+_COUNT_CAP = 60
+_SHOW_CAP = 5
+
+
 async def recent_contact_summary(account_name: str, *, days: int = 180) -> str | None:
     """One paragraph of conversation CONTEXT for a district, or None.
 
@@ -275,7 +281,10 @@ async def recent_contact_summary(account_name: str, *, days: int = 180) -> str |
 
     client = GongMetadataClient(settings.gong_access_key, settings.gong_access_key_secret)
     try:
-        calls = await client.recent_calls_for_account(account_name, days=days, limit=5)
+        # Fetch generously and SHOW few. `recent_calls_for_account` pages the
+        # whole window and filters client-side, so a higher limit costs nothing
+        # extra -- it only changes how many survive the truncation at the end.
+        calls = await client.recent_calls_for_account(account_name, days=days, limit=_COUNT_CAP)
     except GongUnavailableError as exc:
         # Distinct from "no calls". Reported so it can be repeated verbatim
         # rather than mistaken for a quiet account.
@@ -297,8 +306,17 @@ async def recent_contact_summary(account_name: str, *, days: int = 180) -> str |
         )
 
     newest = calls[0]
-    lines = [f"Gong: {len(calls)} linked call(s) in the last {days} days."]
-    for call in calls:
+
+    # The count and the list are different numbers, and conflating them was a
+    # real bug: this fetched five calls and reported "5 linked calls in the last
+    # 180 days", so Pinellas -- which has ten in a 120-day window -- read as a
+    # quiet account. A cap presented as a total is the same failure as a limit
+    # presented as a count, and it points the wrong way every time.
+    total = f"{len(calls)}+" if len(calls) >= _COUNT_CAP else str(len(calls))
+    lines = [f"Gong: {total} linked call(s) in the last {days} days."]
+    if len(calls) > _SHOW_CAP:
+        lines[0] += f" Showing the {_SHOW_CAP} most recent."
+    for call in calls[:_SHOW_CAP]:
         when = str(call.started or "")[:10]
         minutes = round((call.duration_seconds or 0) / 60)
         fired = ", ".join(sorted(call.fired_trackers)) or "no trackers fired"

@@ -194,6 +194,11 @@ _CALLIE_EXPECTED_TOOL_NAMES = {
     # only: never keyed to a rep, never a word anyone said (CLAUDE.md rule 4),
     # and "unknown" rather than "quiet" when Gong cannot be reached.
     "district_call_signal",
+    # Josh's second priority. Roster only: which schools are filed under a
+    # district and which carry a licence marker. Seat counts are not available
+    # (one of 5,631 site accounts has one) and the tool says so rather than
+    # returning a blank.
+    "district_sites",
 }
 
 # Tools that must never reach Callie's production (layer<=2, claude-code MCP)

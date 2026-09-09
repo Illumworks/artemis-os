@@ -61,3 +61,109 @@ def test_an_unparseable_date_is_handed_back_rather_than_given_a_tense() -> None:
 
     assert "not-a-date" in line
     assert "last touched" not in line
+
+
+# ── site roster (Josh's item 2) ──────────────────────────────────────────────
+
+
+def test_an_unmarked_roster_is_not_reported_as_unlicensed() -> None:
+    """Pinellas has 169 school accounts, one marker, and renewed at $731,625 five
+    weeks ago. "No licensed sites" would be a confident false answer."""
+    from artemis.marketing.salesforce_account_lookup import SiteRoster
+
+    roster = SiteRoster(district_name="D", unmarked=[f"School {i}" for i in range(169)])
+
+    line = roster.one_line()
+    assert "NONE carrying a site licence marker" in line
+    assert "not a licence list" in line
+    assert "cannot say which" in line
+
+
+def test_a_mostly_unmarked_roster_warns_about_its_own_denominator() -> None:
+    """1 of 169 marked and 10 of 17 marked are the same data structure and mean
+    opposite things. The list alone does not carry that."""
+    from artemis.marketing.salesforce_account_lookup import SiteRoster
+
+    sparse = SiteRoster("D", licensed=["One"], unmarked=[f"S{i}" for i in range(168)])
+    dense = SiteRoster(
+        "D", licensed=[f"L{i}" for i in range(10)], unmarked=[f"S{i}" for i in range(7)]
+    )
+
+    assert "CAUTION" in sparse.describe()
+    assert "CAUTION" not in dense.describe()
+
+
+def test_seat_counts_are_never_offered() -> None:
+    """Of 5,631 site-level accounts, one carries a licence count. Anything that
+    reports seats is reporting a blank field."""
+    from artemis.marketing.salesforce_account_lookup import SiteRoster
+
+    out = SiteRoster("D", licensed=["A School"]).describe()
+
+    assert "Seat counts are NOT available" in out
+
+
+def test_a_failed_roster_lookup_is_unknown_not_empty() -> None:
+    from artemis.marketing.salesforce_account_lookup import SiteRoster
+
+    roster = SiteRoster(district_name="D", unavailable=True)
+
+    assert "UNKNOWN" in roster.describe()
+    assert "could not be read" in roster.one_line()
+
+
+def test_no_children_does_not_imply_one_school() -> None:
+    """Districts are frequently held as a single account."""
+    from artemis.marketing.salesforce_account_lookup import SiteRoster
+
+    assert "does not mean they have one school" in SiteRoster(district_name="D").describe()
+
+
+# ── opportunity history (Josh's item 3) ─────────────────────────────────────
+
+
+def _opp(close: str, amount: float | None, *, closed: bool, won: bool, reason: str = "") -> dict:
+    return {
+        "CloseDate": close,
+        "Amount": amount,
+        "IsClosed": closed,
+        "IsWon": won,
+        "StageName": "Renewal",
+        "Reason__c": reason,
+    }
+
+
+def test_the_history_separates_open_won_and_lost() -> None:
+    """ "5 open opportunities" was true for Pinellas and hid a $731,625 renewal
+    closed won five weeks earlier."""
+    from artemis.marketing.salesforce_account_lookup import OpportunityHistory
+
+    h = OpportunityHistory(
+        open_deals=[_opp("2027-07-31", 731625.0, closed=False, won=False)],
+        won=[_opp("2026-08-06", 731625.0, closed=True, won=True)],
+        lost=[
+            _opp("2025-09-02", 14010.0, closed=True, won=False, reason="Budget Constraints/Price")
+        ],
+    )
+    out = h.describe()
+
+    assert "$731,625" in out
+    assert "Closed won (1)" in out
+    assert "Closed lost (1)" in out
+    assert "Budget Constraints/Price" in out, "Salesforce DOES record loss reasons"
+
+
+def test_a_zero_amount_is_not_printed_as_a_dollar_zero() -> None:
+    """Amount is unpopulated on many real rows. "$0" reads as a free deal."""
+    from artemis.marketing.salesforce_account_lookup import OpportunityHistory
+
+    h = OpportunityHistory(won=[_opp("2025-12-04", 0.0, closed=True, won=True)])
+
+    assert "amount not recorded" in h.describe()
+    assert "$0" not in h.describe()
+
+
+def test_a_failed_opportunity_lookup_is_unknown_not_none() -> None:
+    from artemis.marketing.salesforce_account_lookup import OpportunityHistory
+
+    assert "UNKNOWN" in OpportunityHistory(unavailable=True).describe()

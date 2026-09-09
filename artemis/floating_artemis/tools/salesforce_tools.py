@@ -32,6 +32,7 @@ from artemis.floating_artemis.authority import AuthorizedToolRegistry
 logger = logging.getLogger(__name__)
 
 CHECK_SALESFORCE_ACTIVITY = "check_salesforce_activity"
+DISTRICT_SITES = "district_sites"
 
 
 async def _render_people(client: Any, account_id: str) -> str:
@@ -222,6 +223,33 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
                     # the curriculum leads -- and it lives in Salesforce, not in
                     # our own contact table (which holds 7 rows).
                     sf_lines.append(await _render_people(sf_client, sf_match.account_id))
+
+                    # Deal history and site roster, folded in rather than offered
+                    # as tools someone has to remember. Same reasoning as the Gong
+                    # context below: "Pinellas: 5 open opportunities" was true and
+                    # told nobody that they renewed at $731,625 five weeks earlier.
+                    # Nobody asks a follow-up question about a fact they were not
+                    # shown. Neither call is fatal -- the suppression answer above
+                    # is the part that must survive.
+                    try:
+                        from artemis.marketing.salesforce_account_lookup import (
+                            fetch_child_sites,
+                            fetch_opportunity_history,
+                        )
+
+                        history = await fetch_opportunity_history(sf_client, sf_match.account_id)
+                        sf_lines.append(history.describe())
+
+                        roster = await fetch_child_sites(
+                            sf_client, sf_match.account_id, sf_match.name
+                        )
+                        sf_lines.append(roster.one_line())
+                    except Exception:
+                        logger.warning(
+                            "check_salesforce_activity: deal/site detail failed for %r (non-fatal)",
+                            district_name,
+                            exc_info=True,
+                        )
                 elif lookup.candidates:
                     names = "; ".join(c.describe() for c in lookup.candidates)
                     sf_lines.append(
@@ -242,36 +270,13 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
                 )
 
             district: District | None = None
-            if district_id_raw is not None:
-                try:
-                    district = await session.get(District, int(district_id_raw))
-                except (TypeError, ValueError):
-                    district = None
-            else:
-                district, candidates = await _resolve_district_by_name(session, district_name)
-                if candidates:
-                    # When Salesforce already answered, the local-index miss is a
-                    # footnote, not a question. Ending a complete answer with a
-                    # paragraph asking the reader to pick a district id reads as
-                    # failure and buries what we just told them.
-                    if sf_match is not None:
-                        return _joined(
-                            sf_lines,
-                            "(Our own district index has no matching entry, so there is no "
-                            "extra local detail to add. The Salesforce answer above stands "
-                            "on its own.)",
-                        )
-                    names = ", ".join(f"{d.name} ({d.state}, id {d.id})" for d in candidates)
-                    return _joined(
-                        sf_lines,
-                        f"Our district index has no exact match for {district_name!r}. The "
-                        f"closest entries are: {names}. Our index stores official short forms, "
-                        "which often differ from how the district is written elsewhere. Tell me "
-                        "which one is right (the id is cleanest) and I will run the check -- I "
-                        "am not going to pick one, because attributing another district's "
-                        "sales activity to this one is the error that matters here.",
-                    )
-
+            # Computed BEFORE the local-index resolution below, because that
+            # resolution returns early for a district Salesforce knows and our
+            # own index does not -- and it was returning without ever fetching
+            # this. So the conversation context went missing on exactly the
+            # districts most likely to be treated as cold, which is the failure
+            # the fold-in exists to prevent. Pinellas hit it; Ypsilanti, being in
+            # our index, did not, which is why it stayed invisible.
             # Conversation context, folded in rather than offered as a
             # separate tool.
             #
@@ -290,12 +295,63 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
                 from artemis.integrations.gong.client import recent_contact_summary
 
                 gong_lines = await recent_contact_summary(district_name or "")
+
+                # The tracker signal, from the STORED daily readings rather than
+                # a live survey -- a query instead of eight API pages, which is
+                # what makes it cheap enough to run on every district question.
+                #
+                # This is the fact that was missing from the Pinellas answer on
+                # 2026-09-09. Jon asked an open question; the most decision-
+                # relevant thing available was that Pinellas is the most concern-
+                # heavy account in the portfolio, and no question he would have
+                # thought to ask would have surfaced it.
+                if sf_match is not None:
+                    from artemis.integrations.gong.snapshots import (
+                        latest_for_account,
+                        signal_line,
+                    )
+
+                    reading = await latest_for_account(session, sf_match.name)
+                    if reading is not None and (line := signal_line(reading)):
+                        gong_lines = f"{gong_lines}\n{line}" if gong_lines else line
             except Exception:
                 logger.warning(
                     "check_salesforce_activity: Gong context failed for %r (non-fatal)",
                     district_name,
                     exc_info=True,
                 )
+
+            if district_id_raw is not None:
+                try:
+                    district = await session.get(District, int(district_id_raw))
+                except (TypeError, ValueError):
+                    district = None
+            else:
+                district, candidates = await _resolve_district_by_name(session, district_name)
+                if candidates:
+                    # When Salesforce already answered, the local-index miss is a
+                    # footnote, not a question. Ending a complete answer with a
+                    # paragraph asking the reader to pick a district id reads as
+                    # failure and buries what we just told them.
+                    if sf_match is not None:
+                        return _joined(
+                            sf_lines,
+                            gong_lines,
+                            "(Our own district index has no matching entry, so there is no "
+                            "extra local detail to add. The Salesforce answer above stands "
+                            "on its own.)",
+                        )
+                    names = ", ".join(f"{d.name} ({d.state}, id {d.id})" for d in candidates)
+                    return _joined(
+                        sf_lines,
+                        gong_lines,
+                        f"Our district index has no exact match for {district_name!r}. The "
+                        f"closest entries are: {names}. Our index stores official short forms, "
+                        "which often differ from how the district is written elsewhere. Tell me "
+                        "which one is right (the id is cleanest) and I will run the check -- I "
+                        "am not going to pick one, because attributing another district's "
+                        "sales activity to this one is the error that matters here.",
+                    )
 
             if district is None:
                 # Salesforce may well have answered even though our index did not.
@@ -362,6 +418,60 @@ async def _check_salesforce_activity(inp: dict[str, Any], *, session_factory: An
         return f"check_salesforce_activity failed: {exc}"
 
 
+async def _district_sites(inp: dict[str, Any], *, session_factory: Any = None) -> str:
+    """The schools filed under a district, and which of them claim a licence.
+
+    Josh's second priority. The district brief already carries the one-line
+    version unasked; this is for "which ones", which is a list and does not
+    belong in every answer.
+
+    The honest shape of this answer is the point. A district can have 169 child
+    accounts and one licence marker (Pinellas, a customer that renewed at
+    $731,625 last month) or 10 of 17 (Ypsilanti). Reporting the first as "no
+    licensed sites" would be confidently wrong, so `SiteRoster` keeps the two
+    counts apart and says which question Salesforce can actually answer.
+    """
+    district_name = str(inp.get("district_name") or "").strip()
+    if not district_name:
+        return "Error: provide district_name"
+
+    try:
+        import artemis.db as _db
+        from artemis.marketing.salesforce_account_lookup import fetch_child_sites, lookup_district
+        from artemis.marketing.salesforce_suppression import _get_client
+
+        factory = session_factory or _db.SessionLocal
+        async with factory() as session:
+            client = await _get_client(session)
+            lookup = await lookup_district(client, district_name)
+
+            if lookup.error:
+                return f"Salesforce: {lookup.error}"
+            if lookup.matched is None:
+                if lookup.candidates:
+                    names = "; ".join(c.describe() for c in lookup.candidates)
+                    return (
+                        f"{district_name!r} matches {len(lookup.candidates)} Salesforce "
+                        f"accounts — {names}. Tell me which one; I am not going to pick, "
+                        "because listing another district's schools as these is the error "
+                        "that matters here."
+                    )
+                return (
+                    f"Salesforce has no account matching {district_name!r}. That is a real "
+                    "absence, not a lookup failure."
+                )
+
+            roster = await fetch_child_sites(client, lookup.matched.account_id, lookup.matched.name)
+            return roster.describe()
+    except Exception:
+        logger.warning("district_sites failed for %r", district_name, exc_info=True)
+        # Never a bare empty answer: "could not look" and "no sites" are different.
+        return (
+            f"Could not read the site list for {district_name!r} — Salesforce was not "
+            "reachable. UNKNOWN, not an empty district."
+        )
+
+
 def register_salesforce_tools(registry: AuthorizedToolRegistry) -> None:
     registry.register(
         Tool(
@@ -390,5 +500,30 @@ def register_salesforce_tools(registry: AuthorizedToolRegistry) -> None:
             },
         ),
         _check_salesforce_activity,
+        layer=1,
+    )
+    registry.register(
+        Tool(
+            name=DISTRICT_SITES,
+            description=(
+                "List the schools filed under a district in Salesforce, and which of them "
+                "carry a site licence marker. Use for 'which sites are licensed' and 'what "
+                "schools are in this district'. It distinguishes 'no sites are marked' from "
+                "'this district does not record site markers at all' — most do not, so never "
+                "read an unmarked roster as an unlicensed one. Seat and student counts are "
+                "NOT available and must never be quoted."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "district_name": {
+                        "type": "string",
+                        "description": "District to list the schools for",
+                    }
+                },
+                "required": ["district_name"],
+            },
+        ),
+        _district_sites,
         layer=1,
     )

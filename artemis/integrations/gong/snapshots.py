@@ -289,3 +289,48 @@ def trend_for(current: AccountDeviation, previous: Reading | None) -> TrendVerdi
         return TrendVerdict(current.account_name, "no_history")
     verdict = compare(current, previous.concern)
     return replace(verdict, since=previous.on)
+
+
+async def latest_for_account(session: AsyncSession, account_name: str) -> Reading | None:
+    """The most recent stored reading for one district, or ``None``.
+
+    Reads the store rather than Gong, so this costs a query instead of eight API
+    pages and roughly fifteen seconds. That is what makes it cheap enough to fold
+    into a lookup that runs on every district question, which is the point: asked
+    "what's going on with Pinellas?", the most decision-relevant fact available
+    was that Pinellas is the most concern-heavy account in the portfolio, and
+    nobody would have thought to ask for it.
+
+    ``None`` means no reading is STORED, which is not the same as no signal --
+    only flagged accounts are written, and the store is only as current as the
+    last brief run. Callers must not render it as "nothing to worry about".
+    """
+    readings = await previous_readings(session, min_age_days=0)
+    wanted = account_name.strip().lower()
+    if not wanted:
+        return None
+    if (exact := readings.get(account_name)) is not None:
+        return exact
+    for name, reading in readings.items():
+        if name.lower() == wanted:
+            return reading
+    return None
+
+
+def signal_line(reading: Reading) -> str:
+    """One line for a district brief. Counts, never words (CLAUDE.md rule 4)."""
+    parts: list[str] = []
+    if reading.concern:
+        top, rate = max(reading.concern.items(), key=lambda kv: kv[1])
+        parts.append(f"{top} on {rate:.0%} of calls")
+    if reading.advocacy:
+        top, rate = max(reading.advocacy.items(), key=lambda kv: kv[1])
+        parts.append(f"and {top} on {rate:.0%}")
+    if not parts:
+        return ""
+    return (
+        f"Gong call signal ({reading.on:%d %b}, {reading.calls} calls): "
+        + " ".join(parts)
+        + " — above the rate across all linked calls. Tracker counts only; they say a "
+        "call touched on something, never what anyone said."
+    )
