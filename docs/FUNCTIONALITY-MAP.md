@@ -2,6 +2,13 @@
 
 **Written 2026-09-04. Repo state: commit `c43a15c` on `main`.**
 
+**Callie's live behaviour, graded against a real test, is in
+`callie-analysis-2026-09-09.md`** — with `callie-capability-vs-josh-workflow.md`
+for what her tools actually return and `salesforce-last-touched-audit.md` for the
+date field that lied to her. Note in particular that she has 40 tools registered
+and **30 at runtime**: the claude-code path drops layer-3, so the tables below
+overstate what exists in a live Slack turn.
+
 **Amended 2026-09-09** — the Gong entry in section 4 said there was no Gong
 integration, which was true when written and stopped being true four days later.
 Amendments are marked inline with the date and say what they replace, because a
