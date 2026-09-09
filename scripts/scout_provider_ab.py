@@ -4,6 +4,20 @@ Three distinct failure modes get conflated if you only report pass/fail:
   fence   — did the model wrap output in a code fence, and close it?
   json    — does it parse at all?
   schema  — does it satisfy ScoutEmittedSignal, the scout's real contract?
+
+Run:  PYTHONPATH=. uv run python scripts/scout_provider_ab.py local
+      PYTHONPATH=. uv run python scripts/scout_provider_ab.py claude
+
+Two things to preserve if you change the items. Feed ARTICLE-SHAPED input, the
+way the news client actually does: an earlier version passed a bare headline and
+a fake example.org URL, and Claude scored 0/5 by correctly refusing to invent a
+signal it could not verify, while the local model obliged. That version measured
+willingness to confabulate and would have sent us the wrong way.
+
+And read the emitted signals, not just the pass count. Passing the validator is
+necessary and says nothing about whether the facts came from the source — check
+that the numbers, dates and quotes are all in the input, and that a state-level
+item leaves districtId empty rather than guessing at a district.
 """
 import asyncio, json, sys, time
 from sqlalchemy import text as sqltext
