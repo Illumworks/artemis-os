@@ -8,10 +8,13 @@ calls and outside those calls nobody has heard it.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from artemis.integrations.gong import brief_section as mod
 from artemis.integrations.gong.baseline import AccountDeviation
+from artemis.integrations.gong.client import GongMetadataClient
 
 
 def test_it_follows_the_section_contract() -> None:
@@ -41,7 +44,7 @@ async def test_a_gong_outage_drops_the_section_silently(monkeypatch) -> None:
     async def _boom(self, path, body):  # noqa: ANN001, ARG001
         raise RuntimeError("gong down")
 
-    monkeypatch.setattr(mod.GongMetadataClient, "_post", _boom)
+    monkeypatch.setattr(GongMetadataClient, "_post", _boom)
 
     assert await mod.build_gong_section() is None
 
@@ -91,3 +94,67 @@ def test_a_flagged_account_carries_its_sample_size() -> None:
     )
 
     assert "9 calls" in dev.describe()
+
+
+def _call(account: str, tracker: str, hit: bool) -> dict[str, Any]:
+    """One call in the shape `/v2/calls/extensive` actually returns."""
+    return {
+        "metaData": {"id": f"{account}-{tracker}-{hit}", "started": "2026-08-01T10:00:00Z"},
+        "context": [
+            {"objects": [{"objectType": "Account", "fields": [{"name": "Name", "value": account}]}]}
+        ],
+        "parties": [{"affiliation": "Internal"}, {"affiliation": "External"}],
+        "content": {"trackers": [{"name": tracker, "count": 1 if hit else 0}]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_district_getting_worse_says_so_on_the_line(monkeypatch) -> None:
+    """The clause cannot fire in production until a reading is three weeks old,
+    so without this the rendering path ships unexercised and nobody finds out
+    for 21 days. Same trap as `write_snapshots`, which nothing called for a day.
+    """
+    from datetime import date
+
+    from artemis.config import settings
+    from artemis.integrations.gong.snapshots import Reading
+
+    # Set explicitly rather than inherited from .env: a worktree without one
+    # would otherwise return None at the credential check and pass vacuously.
+    monkeypatch.setattr(settings, "gong_access_key", "test", raising=False)
+    monkeypatch.setattr(settings, "gong_access_key_secret", "test", raising=False)
+
+    async def _calls(self, path, body):  # noqa: ANN001, ARG001
+        # Nine of ten calls fire the tracker at Rising, none at Calm: enough for
+        # Rising to sit above a portfolio norm it is itself half of.
+        return {
+            "calls": [_call("Rising District", "Customer concerns", i < 9) for i in range(10)]
+            + [_call("Calm District", "Customer concerns", False) for _ in range(10)],
+            "records": {},
+        }
+
+    async def _previous(_flagged):  # noqa: ANN001
+        from artemis.integrations.gong.snapshots import trend_for
+
+        was = Reading(
+            on=date(2026, 8, 1),
+            account_name="Rising District",
+            calls=9,
+            concern={"Customer concerns": 0.30},
+            advocacy={},
+        )
+        return {d.account_name: trend_for(d, was) for d in _flagged}
+
+    monkeypatch.setattr(GongMetadataClient, "_post", _calls)
+    monkeypatch.setattr(mod, "_trends", _previous)
+    monkeypatch.setattr(mod, "_record", lambda flagged: _noop())
+
+    body = await mod.build_gong_section()
+
+    assert body is not None
+    assert "Rising District" in body
+    assert "(up from 30% on 01 Aug)" in body, body
+
+
+async def _noop() -> None:
+    return None
