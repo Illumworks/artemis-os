@@ -651,6 +651,8 @@ between "what Gong could give us" and "what we actually take" stays visible.
 | `integrations/gong/baseline.py` | portfolio tracker rates, and per-account deviation from them | §7 caution 1: "use counts against a baseline, never presence" |
 | `integrations/gong/brief_section.py` | the daily brief's "What districts are saying" — concern and advocacy | §7 items 1 and 2 |
 | `integrations/gong/snapshots.py` | dated per-district readings, and the trend between them | §7 caution 1: "storing a rolling per-account history before anything can fire" |
+| `integrations/gong/survey.py` | one paging pass over the window, shared by every consumer | §"Parameter traps" — the cursor belongs at the TOP LEVEL of the body |
+| `floating_artemis/tools/gong_tools.py` | `district_call_signal`, Callie's read-only tool | nothing in the audit; it exists because the signal otherwise had one consumer |
 
 **The baseline's margin is not flat.** The first version required a fixed gap above the portfolio
 rate and flagged 48% of accounts, which is not a signal. A district with four calls now has to
@@ -668,6 +670,13 @@ which is deliberately a different statement from "no change".
 matches, and the baselines would shift underneath us silently. The fire rates in §4 are the
 record against which a future drift could be detected — by a person, by hand. There is no code
 watching for it.
+
+**Asking is now possible, not just being told.** Until 2026-09-09 the signal
+appeared only as a line in the daily brief. `district_call_signal` answers the
+portfolio question from stored readings (no API call) and a named district live.
+It is registered on **Callie's registry only** — not Artemis, Kai or Ares — and
+that is a scope decision, not an oversight: this reads a call corpus whose
+participants did not consent to us reading it.
 
 ### What is still not built
 

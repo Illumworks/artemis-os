@@ -205,11 +205,12 @@ what each one does. Artemis holds `approve_signal`, `assemble_brief`,
 `propose_ruleset_change`, `qualify_signal`, `react_to_slack_message`,
 `reject_signal`, `search_claims_register`, `snooze_signal`, `submit_draft_for_review`.
 
-**What Artemis does NOT have that Callie does** (8 tools, and this is worth
-knowing because it is counter-intuitive): `check_salesforce_activity`,
+**What Artemis does NOT have that Callie does** (9 tools as of 2026-09-09, and
+this is worth knowing because it is counter-intuitive): `check_salesforce_activity`,
 `salesforce_pipeline`, `dispatch_research` (Argus), `get_screentime_report`,
-`record_screentime_feedback`, `import_target_accounts`, `send_guarded_dm`, and
-`read_web_page`. Callie's registry was hand-built later and got the newer tools;
+`record_screentime_feedback`, `import_target_accounts`, `send_guarded_dm`,
+`read_web_page`, and `district_call_signal`. The last of those is a deliberate
+scope decision rather than drift — see the Gong row below. Callie's registry was hand-built later and got the newer tools;
 Artemis's general path never had them added. **Artemis cannot currently read a
 web page.** That is probably a gap rather than a decision.
 
@@ -278,6 +279,11 @@ scope. Explicitly **not** anyone's personal memory and **not** Artemis's.
 |---|---|---|
 | `check_salesforce_activity` | 1 | District brief: customer status, open opportunities, decision-makers, and **which contacts a seller is already working**, so marketing does not step on sales' toes |
 | `salesforce_pipeline` | 1 | Pipeline figures for a **fixed menu of seven questions** (win rate by size, open pipeline by stage, stalled deals, deals missing contacts, closing soon, big deals without contacts, loss-reason availability), plus a `none_of_these` escape hatch. There is deliberately no free-form query language, because handing an agent one is how it invents a filter, gets a number, and reports it as confidently as a real one |
+
+*Gong, read-only (1) — added 2026-09-09*
+| Tool | Layer | What it does |
+|---|---|---|
+| `district_call_signal` | 1 | What districts are saying, from call trackers. No arguments: the shortlist of districts sounding **positive** (case-study leads) and those raising concerns more than usual, answered from stored readings with no API call. With `district_name`: a fresh live read including whether that district is getting better or worse. Counts by ACCOUNT only — never a rep, never a word anyone said. Refuses rather than guesses: an ambiguous name lists the candidates, an unreachable Gong is "unknown" and not "quiet", and too few calls is "not a finding either way" |
 
 *Research (1)*
 | Tool | Layer | What it does |
@@ -1152,7 +1158,9 @@ app.** Confidence: MEDIUM.
 Artemis does not, along with seven other tools Callie has and she does not
 (`check_salesforce_activity`, `salesforce_pipeline`, `dispatch_research`,
 `get_screentime_report`, `record_screentime_feedback`, `import_target_accounts`,
-`send_guarded_dm`). Callie's registry was hand-built later and got the newer
+`send_guarded_dm`). `district_call_signal` is also Callie-only but is NOT part of
+this drift: it reads a call corpus whose participants did not consent to us
+reading it, and the narrow scope is the point. Callie's registry was hand-built later and got the newer
 tools; the general path Artemis uses never had them added. This looks like drift,
 not a decision.
 
