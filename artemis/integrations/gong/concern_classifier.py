@@ -135,11 +135,24 @@ class ConcernProfile:
                 "nothing in these calls matched a category."
             )
         ranked = sorted(self.counts.items(), key=lambda kv: -kv[1])
-        parts = ", ".join(f"{cat} on {n} of {self.calls_examined}" for cat, n in ranked)
+        top, top_n = ranked[0]
+        rest = ", ".join(f"{cat} {n}" for cat, n in ranked[1:5])
+        # Lead with the dominant category and put the rest behind it, because the
+        # NUMBER of categories is not a severity measure and reads like one in a
+        # list. Measured 2026-09-10: a district the brief calls "sounding
+        # positive" returns four categories and a concern-heavy one returns six,
+        # so a count separates them barely. What separates them clearly is which
+        # category dominates and at what rate -- Pinellas rostering on 3 of 3,
+        # Madera product_functionality on 3 of 3.
+        line = (
+            f"{self.account_name}: mainly {top.replace('_', ' ')} — raised on {top_n} of "
+            f"{self.calls_examined} call(s) examined"
+        )
+        if rest:
+            line += f". Also present: {rest}"
         return (
-            f"{self.account_name}: concern categories across {self.calls_examined} call(s) — "
-            f"{parts}. Categories only; this says what a concern was ABOUT, never what "
-            "anyone said about it."
+            line + ". Categories only; this says what a concern was ABOUT, never what "
+            "anyone said about it. A category appearing does not rank how serious it was."
         )
 
 
@@ -254,12 +267,25 @@ async def classify_call(transcript_text: str) -> set[str]:
     found: set[str] = set()
     size = await _chunk_chars()
     for chunk in _chunks(transcript_text, size):
+        # The bar is the whole design. Without it this listed every TOPIC the call
+        # touched, and a district the brief calls "sounding positive" came back
+        # with seven of nine concern categories -- more than one flagged as
+        # concern-heavy. A customer-success call discusses rostering, training and
+        # implementation as a matter of course; none of that is a concern.
         prompt = (
-            "Below is part of a transcript of a call between a vendor and a school "
-            "district. Identify which KINDS of concern the district raised.\n\n"
+            "Below is part of a transcript of a call between a vendor (Amira) and a "
+            "school district.\n\n"
+            "Identify only the topics where the DISTRICT expressed a PROBLEM: "
+            "something not working, a difficulty, a complaint, an unmet need, a "
+            "risk they are worried about, or a blocker.\n\n"
+            "Do NOT include a topic merely because it was discussed, planned, "
+            "explained, demonstrated, or agreed. Routine coordination is not a "
+            "concern. Enthusiasm is not a concern. A question is not a concern "
+            "unless it carries a difficulty.\n\n"
             f"Categories:\n{_CATEGORY_GUIDE}\n\n"
-            "Reply with ONLY the matching category names, comma separated. If none "
-            "apply, reply with: none\n"
+            "Most calls will match ONE or TWO categories, and many will match "
+            "none. Reply with ONLY the matching category names, comma separated. "
+            "If the district raised no problem at all, reply with exactly: none\n"
             "Do not quote or summarise anything that was said.\n\n"
             f"---\n{chunk}\n---"
         )
