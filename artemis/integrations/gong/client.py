@@ -137,6 +137,50 @@ class GongMetadataClient:
         data: dict[str, Any] = resp.json()
         return data
 
+    async def _call_window(self, days: int) -> list[CallContext]:
+        """Every call in the window, cached in process for `_WINDOW_TTL_SECONDS`.
+
+        The paging used to run per district lookup. It is the same corpus each
+        time and it cost 86 seconds a question; the cache makes every district
+        after the first a local filter.
+        """
+        import time as _time
+        from datetime import UTC, datetime, timedelta
+
+        cached = _window_cache.get(days)
+        if cached and (_time.monotonic() - cached[0]) < _WINDOW_TTL_SECONDS:
+            return cached[1]
+
+        frm = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
+        to = datetime.now(UTC).strftime("%Y-%m-%dT23:59:59Z")
+        calls: list[CallContext] = []
+        cursor: str | None = None
+        for _ in range(_MAX_PAGES):
+            body: dict[str, Any] = {
+                "filter": {"fromDateTime": frm, "toDateTime": to},
+                "contentSelector": {
+                    "context": "Extended",
+                    "exposedFields": {"parties": True, "content": {"trackers": True}},
+                },
+            }
+            if cursor:
+                # The cursor goes at the TOP LEVEL of the body. Inside `filter` it
+                # is accepted, ignored, and returns page one forever with no error.
+                body["cursor"] = cursor
+            listing = await self._post("/v2/calls/extensive", body)
+            calls.extend(_to_context(raw) for raw in drop_private(listing.get("calls", [])))
+            cursor = (listing.get("records") or {}).get("cursor")
+            if not cursor:
+                break
+        else:
+            logger.warning(
+                "gong: stopped after %d pages building the call window; it may be partial",
+                _MAX_PAGES,
+            )
+
+        _window_cache[days] = (_time.monotonic(), calls)
+        return calls
+
     async def recent_calls_for_account(
         self, account_name: str, *, days: int = 180, limit: int = 5
     ) -> list[CallContext]:
@@ -147,11 +191,6 @@ class GongMetadataClient:
         previous vendor carry NO account link at all, so absence of results means
         "no linked call", never "no contact".
         """
-        from datetime import UTC, datetime, timedelta
-
-        frm = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
-        to = datetime.now(UTC).strftime("%Y-%m-%dT23:59:59Z")
-
         wanted = account_name.strip().lower()
         if not wanted:
             # `"" in anything` is True, so an empty name matched EVERY call in the
@@ -165,51 +204,33 @@ class GongMetadataClient:
             # policy signal with no district attached at all.
             logger.warning("gong: recent_calls_for_account called with an empty name")
             return []
-        matches: list[CallContext] = []
-        cursor: str | None = None
 
-        # The endpoint returns 100 calls a page, so a single request covers about
-        # a fortnight of activity. Searching 180 days without paging silently
-        # looked at the first page only and reported "no calls" for anything
-        # older -- an under-report indistinguishable from a quiet account, which
-        # is the exact failure shape this codebase keeps producing.
-        #
-        # The cursor goes at the TOP LEVEL of the body. Inside `filter` it is
-        # accepted, ignored, and returns page one forever with no error.
-        for _ in range(_MAX_PAGES):
-            body: dict[str, Any] = {
-                "filter": {"fromDateTime": frm, "toDateTime": to},
-                "contentSelector": {
-                    "context": "Extended",
-                    "exposedFields": {
-                        "parties": True,
-                        "content": {"trackers": True},
-                    },
-                },
-            }
-            if cursor:
-                body["cursor"] = cursor
-
-            listing = await self._post("/v2/calls/extensive", body)
-            for raw in drop_private(listing.get("calls", [])):
-                ctx = _to_context(raw)
-                if ctx.account_name and wanted in ctx.account_name.lower():
-                    matches.append(ctx)
-
-            cursor = (listing.get("records") or {}).get("cursor")
-            if not cursor:
-                break
-        else:
-            # Ran out of pages rather than out of data. Say so: silently
-            # truncating is how a partial answer becomes a confident one.
-            logger.warning(
-                "gong: stopped after %d pages searching for %r; results may be partial",
-                _MAX_PAGES,
-                account_name,
-            )
-
+        window = await self._call_window(days)
+        matches = [c for c in window if c.account_name and wanted in c.account_name.lower()]
         matches.sort(key=lambda c: c.started or "", reverse=True)
         return matches[:limit]
+
+
+#: The call window, cached in process. Gong offers no server-side account filter
+#: -- `/v2/calls/extensive` takes a date range and nothing else -- so finding one
+#: district means paging the whole window and matching names locally. Measured
+#: 2026-09-10: 86 seconds, against 0.2-0.6s for every Salesforce call beside it,
+#: so it was 99% of the time Josh spent waiting on a district question.
+#:
+#: The corpus is identical for every district asked about in the same sitting, and
+#: he asks about several. Caching it turns the second question and every one after
+#: into a local filter.
+#:
+#: Five minutes because a call appearing in Gong a few minutes late costs nothing,
+#: while a stale answer that says "no linked calls" for a district we spoke to this
+#: morning is the failure this package keeps trying to avoid.
+_WINDOW_TTL_SECONDS = 300
+_window_cache: dict[int, tuple[float, list[CallContext]]] = {}
+
+
+def clear_call_window_cache() -> None:
+    """For tests, and for anything that needs to force a fresh read."""
+    _window_cache.clear()
 
 
 def drop_private(raw_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:

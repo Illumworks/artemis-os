@@ -189,7 +189,9 @@ def test_pagination_uses_a_top_level_cursor() -> None:
 
     from artemis.integrations.gong.client import GongMetadataClient as C
 
-    src = inspect.getsource(C.recent_calls_for_account)
+    # The paging moved into `_call_window` when the corpus was cached; the trap is
+    # the same one and this follows it rather than assuming where it lives.
+    src = inspect.getsource(C._call_window)
     assert 'body["cursor"] = cursor' in src, "cursor must be set at the top level of the body"
     assert '"filter": {"fromDateTime"' in src, "and filter must carry only the date range"
 
@@ -500,7 +502,7 @@ def test_a_private_call_is_dropped() -> None:
     needed writing before it did."""
     from artemis.integrations.gong.client import drop_private
 
-    raw = [
+    raw: list[dict[str, object]] = [
         {"metaData": {"id": "1", "isPrivate": False}},
         {"metaData": {"id": "2", "isPrivate": True}},
         {"metaData": {"id": "3"}},
@@ -529,3 +531,13 @@ def test_the_log_line_names_no_call() -> None:
     src = inspect.getsource(client.drop_private)
     assert "dropped %d private call" in src
     assert "call_id" not in src.split('"""')[2], "no identifier in the log"
+
+
+def test_the_window_cache_is_clearable() -> None:
+    """A cache with no way to drop it is a debugging problem waiting to happen."""
+    from artemis.integrations.gong.client import _window_cache, clear_call_window_cache
+
+    _window_cache[999] = (0.0, [])
+    clear_call_window_cache()
+
+    assert _window_cache == {}
