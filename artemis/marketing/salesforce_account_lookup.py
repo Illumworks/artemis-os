@@ -475,7 +475,22 @@ class OpportunityHistory:
         return f"${value:,.0f}"
 
     def _line(self, row: dict[str, Any]) -> str:
-        return f"  {row.get('CloseDate') or '(no date)'} — {self._money(row.get('Amount'))}"
+        line = f"  {row.get('CloseDate') or '(no date)'} — {self._money(row.get('Amount'))}"
+        # The rep's own note. Josh, 2026-09-10: this is where the story is, and
+        # Callie could not see it -- she read "Insufficient Access to Key Decision
+        # Makers" on a $260k loss and had no way to learn that a previous seller
+        # had met the district in person and the handoff to the current one went
+        # cold. Two different problems with two different re-entry paths.
+        note = str(row.get("Description") or "").strip()
+        if note:
+            line += f'\n      note: "{note[:400]}"'
+        nxt = str(row.get("NextStep") or "").strip()
+        if nxt:
+            line += f"\n      next step: {nxt[:200]}"
+        met = row.get("_contacts")
+        if met:
+            line += f"\n      we met: {', '.join(str(m) for m in met[:6])}"
+        return line
 
     def describe(self) -> str:
         if self.unavailable:
@@ -519,7 +534,8 @@ async def fetch_opportunity_history(
         return history
     try:
         rows = await client.query(
-            "SELECT Id, Name, StageName, Amount, CloseDate, IsClosed, IsWon, Reason__c "
+            "SELECT Id, Name, StageName, Amount, CloseDate, IsClosed, IsWon, Reason__c, "
+            "Description, NextStep "
             f"FROM Opportunity WHERE AccountId = '{_soql_escape(account_id)}' "
             f"ORDER BY CloseDate DESC LIMIT {int(limit)}"
         )
@@ -528,7 +544,29 @@ async def fetch_opportunity_history(
         history.unavailable = True
         return history
 
+    # Who was actually in the room, per opportunity. A separate object, readable
+    # on the credential we already have, and the thing that distinguishes "we
+    # never reached anyone" from "we met them and lost the thread".
+    by_opp: dict[str, list[str]] = {}
+    try:
+        roles = await client.query(
+            "SELECT OpportunityId, Contact.Name, Role FROM OpportunityContactRole "
+            f"WHERE Opportunity.AccountId = '{_soql_escape(account_id)}' LIMIT 200"
+        )
+        for role in roles:
+            name = str((role.get("Contact") or {}).get("Name") or "").strip()
+            if not name:
+                continue
+            title = str(role.get("Role") or "").strip()
+            by_opp.setdefault(str(role.get("OpportunityId")), []).append(
+                f"{name} ({title})" if title else name
+            )
+    except Exception:
+        # Non-fatal: the deal history is still worth having without the roster.
+        logger.warning("contact roles unavailable for account %s", account_id, exc_info=True)
+
     for row in rows:
+        row["_contacts"] = by_opp.get(str(row.get("Id")), [])
         if not row.get("IsClosed"):
             history.open_deals.append(row)
         elif row.get("IsWon"):

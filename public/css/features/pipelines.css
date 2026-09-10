@@ -79,11 +79,17 @@
 .plbl { font-size:12px;font-weight:500;color:var(--text-dim) }
 .pinp { padding:7px 12px;background:var(--surface-input,var(--surface-subtle));border:1px solid var(--surface-outline);border-radius:6px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box }
 .pinp:focus { outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent) }
+<<<<<<< Updated upstream
 .pmodal-backdrop { position:fixed;inset:0;z-index:450;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.34) }
 .pmodal { width:min(420px,100%);display:flex;flex-direction:column;gap:12px;background:var(--surface-card);border:1px solid var(--surface-outline);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.38);padding:20px }
 .pmodal h3 { margin:0;font-size:16px;font-weight:650;color:var(--text) }
 .pmodal p { margin:0;color:var(--text-dim);font-size:13px;line-height:1.45 }
 .pconfirm-name { font-family:var(--font-mono);font-size:12px;color:var(--text-dim);background:var(--surface-subtle);border-radius:6px;padding:7px 9px;word-break:break-word }
+=======
+/* Toast */
+.ptst { position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:var(--surface-overlay,#1a1a2e);color:var(--text);border:1px solid var(--surface-outline);border-radius:8px;padding:10px 20px;font-size:13px;z-index:500;box-shadow:0 4px 20px rgba(0,0,0,.4);animation:ptst-in .2s ease;max-width:480px;text-align:center }
+@keyframes ptst-in { from{opacity:0;transform:translateX(-50%) translateY(8px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+>>>>>>> Stashed changes
 /* Danger button variant */
 .pbtn-danger { background:transparent;color:var(--error);border:1px solid color-mix(in srgb,var(--error) 35%,transparent) }
 .pbtn-danger:hover { background:color-mix(in srgb,var(--error) 10%,transparent) }
@@ -210,15 +216,22 @@ button.pcv-palette-group-label:hover { background:var(--surface-hover,var(--surf
 /* ── Canvas ────────────────────────────────────────────────────────── */
 .pcv-canvas-wrap { flex:1;overflow:hidden;position:relative;background:var(--surface-subtle) }
 .pcv-canvas {
+<<<<<<< Updated upstream
   width: 100%;height: 100%;overflow: hidden;position: relative;outline:none;
   cursor: default;
+=======
+  width: 100%;height: 100%;overflow: auto;position: relative;outline:none;
+>>>>>>> Stashed changes
   background:
     linear-gradient(rgba(0,0,0,.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0,0,0,.04) 1px, transparent 1px);
   background-size: 28px 28px;
 }
+<<<<<<< Updated upstream
 .pcv-canvas.pan-ready  { cursor: grab }
 .pcv-canvas.panning    { cursor: grabbing }
+=======
+>>>>>>> Stashed changes
 [data-theme="dark"] .pcv-canvas {
   background:
     linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
@@ -229,7 +242,11 @@ button.pcv-palette-group-label:hover { background:var(--surface-hover,var(--surf
   position: relative;
   width: 2400px;height: 1800px;
   transform-origin: top left;
+<<<<<<< Updated upstream
   /* No CSS transition — pan/zoom transforms are applied directly via JS for smooth interaction */
+=======
+  transition: transform .1s ease;
+>>>>>>> Stashed changes
 }
 
 /* ── Nodes ─────────────────────────────────────────────────────────── */
@@ -413,6 +430,7 @@ button.pcv-palette-group-label:hover { background:var(--surface-hover,var(--surf
 .pcv-ctx-item:hover { background:var(--surface-hover,var(--surface-subtle)) }
 .pcv-ctx-item--danger { color:var(--error) }
 .pcv-ctx-item--danger:hover { background:color-mix(in srgb,var(--error) 10%,transparent) }
+<<<<<<< Updated upstream
 
 /* ── PIPE3: Form/JSON view toggle ──────────────────────────────────────── */
 .pcv-drawer-view-toggle {
@@ -1029,3 +1047,5 @@ details[open] .ncf-summary::before { content: "▼ " }
   font-weight: 500;
   margin-left: 4px;
 }
+=======
+>>>>>>> Stashed changes

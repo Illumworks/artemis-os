@@ -151,17 +151,25 @@ def _load_marketing_pipeline_data():
     return json.loads(result.stdout)
 
 
+<<<<<<< Updated upstream
 def test_marketing_pipeline_has_ci2_node_count():
+=======
+def test_marketing_pipeline_has_16_nodes():
+>>>>>>> Stashed changes
     import pytest
 
     data = _load_marketing_pipeline_data()
     if data is None:
         pytest.skip("Marketing pipeline seed not loadable (DB not available)")
+<<<<<<< Updated upstream
     # 12, down from 14: gate_1_signals_inbox and content_brief_assembler were
     # removed on 2026-08-12 (owner decision -- marketing.main now ends at
     # qualification; see build_marketing_pipeline's comment for why the two had
     # to go together).
     assert len(data["nodes"]) == 12, f"Expected 12 nodes, got {len(data['nodes'])}"
+=======
+    assert len(data["nodes"]) == 16, f"Expected 16 nodes, got {len(data['nodes'])}"
+>>>>>>> Stashed changes
 
 
 def test_marketing_pipeline_edges_reference_valid_nodes():
@@ -199,9 +207,13 @@ def test_marketing_pipeline_edge_count_in_range():
     if data is None:
         pytest.skip("Marketing pipeline seed not loadable")
     edge_count = len(data["edges"])
+<<<<<<< Updated upstream
     # 18-20, was 20-22: removing the gate and the assembler dropped two edges
     # (qualifier -> gate, gate -> assembler). Kept as a range, as before.
     assert 18 <= edge_count <= 20, f"Expected 18–20 edges, got {edge_count}"
+=======
+    assert 20 <= edge_count <= 28, f"Expected 20–28 edges, got {edge_count}"
+>>>>>>> Stashed changes
 
 
 # ── JS canvas logic smoke (via node meta, extracted) ─────────────────────────
@@ -257,6 +269,7 @@ def test_canvas_has_fit_to_view():
     assert "_fitToView" in src or "fitToView" in src
 
 
+<<<<<<< Updated upstream
 def test_canvas_palette_drop_accepts_canvas_wrap_and_custom_mime():
     src = (JS_COMP / "pipeline-canvas.js").read_text()
     palette = (JS_COMP / "pipeline-palette.js").read_text()
@@ -268,6 +281,8 @@ def test_canvas_palette_drop_accepts_canvas_wrap_and_custom_mime():
     assert 'e.dataTransfer.getData("application/x-artemis-pipeline-node")' in src
 
 
+=======
+>>>>>>> Stashed changes
 def test_canvas_has_json_toggle():
     src = (JS_COMP / "pipeline-canvas.js").read_text()
     assert "_toggleJson" in src or "toggleJson" in src

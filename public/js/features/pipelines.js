@@ -24,6 +24,9 @@ let _importInput = null;
 // PIPE2: active canvas instance
 let _canvas = null;
 
+// PIPE2: active canvas instance
+let _canvas = null;
+
 const MOUNT = "#pipelines-page-root";
 const ARCHIVED_FILTER_KEY = "artemis.pipelines.archived-filter";
 const getRoot = () => document.querySelector(MOUNT);
@@ -173,6 +176,7 @@ function card(p) {
   const nodes = (p.nodes || []).length;
   const compact = nodes <= 1;
   const actions = `
+<<<<<<< Updated upstream
     <button class="pbtn pbtn-p popen-canvas" data-id="${p.id}">Open Canvas</button>
     <button class="pbtn pbtn-g pedit" data-id="${p.id}">Edit JSON</button>
     <button class="pbtn pbtn-g prun" data-id="${p.id}">Run</button>`;
@@ -186,6 +190,12 @@ function card(p) {
       : `<button class="pmenu-item parchive" data-menu-action="archive" data-id="${p.id}">Archive</button>`}
     </div>` : ""}
   </div>`;
+=======
+    <button class="pbtn pbtn-g ptoggle" data-id="${p.id}" data-action="${act ? "disable" : "enable"}">${act ? "Pause" : "Enable"}</button>
+    <button class="pbtn pbtn-p popen-canvas" data-id="${p.id}">Open Canvas</button>
+    <button class="pbtn pbtn-g pedit" data-id="${p.id}">Edit JSON</button>
+    <button class="pbtn pbtn-g prun" data-id="${p.id}">Run</button>`;
+>>>>>>> Stashed changes
   if (compact) {
     return `<div class="pcard pcard-c" data-pid="${p.id}">
       <div class="pcc">${dot(p.status)}<span class="pcn">${escapeHtml(p.name)}</span>${menu}
@@ -411,6 +421,7 @@ function wire(root) {
     const p = _pipelines.find((x) => x.id === b.dataset.id);
     if (p) openCanvas(p);
   }));
+<<<<<<< Updated upstream
   root.querySelector("#pmodal-cancel")?.addEventListener("click", () => { _confirm = null; render(); });
   root.querySelector("#pconfirm-name")?.addEventListener("input", (e) => {
     if (_confirm) _confirm.typed = e.target.value;
@@ -431,12 +442,15 @@ function wire(root) {
       await loadPipelines();
     } catch (e) { showToast("Pipeline action failed", e.message, { isError: true }); }
   });
+=======
+>>>>>>> Stashed changes
 }
 
 // ── PIPE2: Canvas view ─────────────────────────────────────────────────────
 
 let _canvasOverlay = null;
 
+<<<<<<< Updated upstream
 // PIPE5: Listen for run-history replay requests
 window.addEventListener("artemis:open-pipeline-canvas", async (e) => {
   const { pipelineId, replayRun } = e.detail || {};
@@ -451,6 +465,9 @@ window.addEventListener("artemis:open-pipeline-canvas", async (e) => {
 });
 
 function openCanvas(pipeline, { replayRun = null } = {}) {
+=======
+function openCanvas(pipeline) {
+>>>>>>> Stashed changes
   // Tear down any existing canvas
   closeCanvas();
 
@@ -475,7 +492,10 @@ function openCanvas(pipeline, { replayRun = null } = {}) {
   _canvas = new PipelineCanvas({
     container: body,
     pipeline,
+<<<<<<< Updated upstream
     replayRun,
+=======
+>>>>>>> Stashed changes
     onSaved: () => loadPipelines(),
   });
   _canvas.mount();
@@ -490,9 +510,13 @@ function closeCanvas() {
 
 export function initPipelinesPage() {
   _loaded = false; _error = null; _search = ""; _sortBy = "updated";
+<<<<<<< Updated upstream
   _editing = null; _showNew = false; _openMenuId = null; _confirm = null;
   _archivedFilter = localStorage.getItem(ARCHIVED_FILTER_KEY) || "default";
   if (!["default", "include", "only"].includes(_archivedFilter)) _archivedFilter = "default";
+=======
+  _editing = null; _showNew = false;
+>>>>>>> Stashed changes
   closeCanvas();
   render();
   loadPipelines();

@@ -4,8 +4,11 @@
  * Light DOM only; no Shadow DOM.
  */
 
+<<<<<<< Updated upstream
 import { describeCron } from "./cron-utils.js";
 
+=======
+>>>>>>> Stashed changes
 const NODE_TYPE_META = {
   trigger_manual:    { icon: "▶", label: "Manual Trigger",    border: "accent" },
   trigger_scheduled: { icon: "⏱", label: "Scheduled Trigger", border: "accent" },
@@ -32,7 +35,11 @@ function configSummary(node) {
     }
   }
   if (node.type === "trigger_scheduled") {
+<<<<<<< Updated upstream
     return cfg.cron ? describeCron(cfg.cron) || `cron: ${cfg.cron}` : "Scheduled";
+=======
+    return cfg.cron ? `cron: ${cfg.cron}` : "Scheduled";
+>>>>>>> Stashed changes
   }
   if (node.type === "trigger_webhook") return "Webhook";
   if (node.type === "trigger_event") return cfg.event_type || "Event";

@@ -11,6 +11,7 @@
  */
 
 import * as api from "../core/api.js";
+<<<<<<< Updated upstream
 import { describeCron } from "./cron-utils.js";
 import { buildNodeCard, updateNodeCardPosition, setNodeCardSelected } from "./pipeline-node-card.js";
 import { PipelinePalette } from "./pipeline-palette.js";
@@ -32,6 +33,11 @@ function _isRecentActiveRun(run) {
   if (!ts) return false;
   return Date.now() - new Date(ts).getTime() < ACTIVE_RUN_MAX_AGE_MS;
 }
+=======
+import { buildNodeCard, updateNodeCardPosition, setNodeCardSelected } from "./pipeline-node-card.js";
+import { PipelinePalette } from "./pipeline-palette.js";
+import { PipelineConfigDrawer } from "./pipeline-config-drawer.js";
+>>>>>>> Stashed changes
 
 // ── Canvas store ──────────────────────────────────────────────────────────────
 
@@ -115,6 +121,7 @@ function edgePath(sx, sy, tx, ty) {
   return `M ${sx} ${sy} C ${sx + cp} ${sy}, ${tx - cp} ${ty}, ${tx} ${ty}`;
 }
 
+<<<<<<< Updated upstream
 /**
  * Return port center in local canvas-inner coordinate space.
  * We use node.style.left/top (which are local-space px values) rather than
@@ -128,6 +135,23 @@ function getPortCenter(nodeEl, port) {
   return port === "out"
     ? { x: x + NODE_W,      y: y + NODE_H / 2 }
     : { x: x,               y: y + NODE_H / 2 };
+=======
+function getPortCenter(nodeEl, port) {
+  const portEl = nodeEl.querySelector(`.pcv-port--${port}`);
+  if (!portEl) {
+    const r = nodeEl.getBoundingClientRect();
+    const cr = nodeEl.closest(".pcv-canvas-inner")?.getBoundingClientRect() || { left: 0, top: 0 };
+    return port === "out"
+      ? { x: parseFloat(nodeEl.style.left) + NODE_W, y: parseFloat(nodeEl.style.top) + NODE_H / 2 }
+      : { x: parseFloat(nodeEl.style.left),             y: parseFloat(nodeEl.style.top) + NODE_H / 2 };
+  }
+  const pr = portEl.getBoundingClientRect();
+  const cr = nodeEl.closest(".pcv-canvas-inner")?.getBoundingClientRect() || { left: 0, top: 0 };
+  return {
+    x: pr.left - cr.left + pr.width / 2,
+    y: pr.top  - cr.top  + pr.height / 2,
+  };
+>>>>>>> Stashed changes
 }
 
 // ── Auto-layout (simple topological left-to-right) ───────────────────────────
@@ -182,10 +206,16 @@ function autoLayout(nodes, edges) {
 // ── Main PipelineCanvas class ─────────────────────────────────────────────────
 
 export class PipelineCanvas {
+<<<<<<< Updated upstream
   constructor({ container, pipeline, onSaved, replayRun = null }) {
     this._container = container;
     this._onSaved = onSaved;
     this._replayRun = replayRun;
+=======
+  constructor({ container, pipeline, onSaved }) {
+    this._container = container;
+    this._onSaved = onSaved;
+>>>>>>> Stashed changes
     this._state = createStore(pipeline);
     this._nodeEls = new Map(); // nodeId → DOM element
     this._draggingNodeId = null;
@@ -196,6 +226,7 @@ export class PipelineCanvas {
     this._palette = null;
     this._drawer = null;
     this.el = null;
+<<<<<<< Updated upstream
 
     // Pan state (view-only, not persisted to DB)
     this._panX = 0;
@@ -221,6 +252,8 @@ export class PipelineCanvas {
     this._pollActive = false;
     /** @type {string | null} */
     this._activeRunId = null;
+=======
+>>>>>>> Stashed changes
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -229,12 +262,16 @@ export class PipelineCanvas {
     this._buildShell();
     this._mountPalette();
     this._mountDrawer();
+<<<<<<< Updated upstream
     this._mountAIPanel();
     this._mountRunOverlay();
+=======
+>>>>>>> Stashed changes
     this._renderAll();
     this._wireToolbar();
     this._wireCanvasEvents();
     this._wireKeyboard();
+<<<<<<< Updated upstream
     // Replay mode: apply fixed node_states from a past run, no polling
     if (this._replayRun) {
       this._applyRunState(this._replayRun);
@@ -252,6 +289,14 @@ export class PipelineCanvas {
     document.removeEventListener("keyup",     this._onKeyUp);
     this._aiPanel?.destroy();
     this._runOverlay?.destroy();
+=======
+  }
+
+  destroy() {
+    document.removeEventListener("mousemove", this._onMouseMove);
+    document.removeEventListener("mouseup", this._onMouseUp);
+    document.removeEventListener("keydown", this._onKeyDown);
+>>>>>>> Stashed changes
     if (this.el) this.el.remove();
   }
 
@@ -277,7 +322,10 @@ export class PipelineCanvas {
           <span class="pcv-zoom-label">100%</span>
           <button class="pbtn pbtn-g pcv-btn-zoom-in" title="Zoom in">+</button>
           <button class="pbtn pbtn-g pcv-btn-json" title="Toggle JSON editor">View JSON</button>
+<<<<<<< Updated upstream
           <button class="pbtn pbtn-g pcv-btn-ai" title="Toggle AI Assistant panel">✦ AI</button>
+=======
+>>>>>>> Stashed changes
         </div>
       </div>
 
@@ -353,11 +401,15 @@ export class PipelineCanvas {
     workspace.appendChild(wrap);
 
     this._drawer = new PipelineConfigDrawer({
+<<<<<<< Updated upstream
       pipelineId: this._state.id ?? null,
+=======
+>>>>>>> Stashed changes
       onSave: (nodeId, updates) => {
         pushUndo(this._state);
         const idx = this._state.nodes.findIndex((n) => n.id === nodeId);
         if (idx >= 0) {
+<<<<<<< Updated upstream
           const nextNode = { ...this._state.nodes[idx], ...updates };
           if (nextNode.type === "trigger_scheduled" && nextNode.config?.cron) {
             nextNode.label = describeCron(nextNode.config.cron) || nextNode.label;
@@ -366,6 +418,12 @@ export class PipelineCanvas {
           this._markDirty();
           this._redrawNode(nodeId);
           this._updateConnectedEdges(nodeId);
+=======
+          this._state.nodes[idx] = { ...this._state.nodes[idx], ...updates };
+          this._markDirty();
+          this._renderNodes();
+          this._renderEdges();
+>>>>>>> Stashed changes
         }
       },
       onDelete: (nodeId) => {
@@ -379,6 +437,7 @@ export class PipelineCanvas {
     this._drawer.mount(wrap);
   }
 
+<<<<<<< Updated upstream
   // ── AI Panel ──────────────────────────────────────────────────────────────
 
   _mountAIPanel() {
@@ -551,6 +610,8 @@ export class PipelineCanvas {
     }
   }
 
+=======
+>>>>>>> Stashed changes
   // ── Full render ───────────────────────────────────────────────────────────
 
   _renderAll() {
@@ -591,6 +652,7 @@ export class PipelineCanvas {
     this._renderEmptyState();
   }
 
+<<<<<<< Updated upstream
   _redrawNode(nodeId) {
     const node = this._state.nodes.find((n) => n.id === nodeId);
     const existing = this._nodeEls.get(nodeId);
@@ -610,11 +672,14 @@ export class PipelineCanvas {
     this._renderEmptyState();
   }
 
+=======
+>>>>>>> Stashed changes
   _renderEdges() {
     const g = this.el?.querySelector(".pcv-edges-g");
     if (!g) return;
     g.innerHTML = "";
 
+<<<<<<< Updated upstream
     // Rebuild edge index for O(connected) drag updates
     this._edgeIndex = new Map();
     for (const edge of this._state.edges) {
@@ -622,6 +687,9 @@ export class PipelineCanvas {
         if (!this._edgeIndex.has(nid)) this._edgeIndex.set(nid, new Set());
         this._edgeIndex.get(nid).add(edge.id);
       }
+=======
+    for (const edge of this._state.edges) {
+>>>>>>> Stashed changes
       this._renderEdge(g, edge);
     }
   }
@@ -692,6 +760,7 @@ export class PipelineCanvas {
   _updateZoomLabel() {
     const lbl = this.el?.querySelector(".pcv-zoom-label");
     if (lbl) lbl.textContent = `${Math.round(this._state.zoom * 100)}%`;
+<<<<<<< Updated upstream
     this._applyTransform();
   }
 
@@ -702,6 +771,10 @@ export class PipelineCanvas {
       inner.style.transform =
         `translate(${this._panX}px, ${this._panY}px) scale(${this._state.zoom})`;
     }
+=======
+    const inner = this.el?.querySelector(".pcv-canvas-inner");
+    if (inner) inner.style.transform = `scale(${this._state.zoom})`;
+>>>>>>> Stashed changes
   }
 
   _updateNodeSelections() {
@@ -742,13 +815,17 @@ export class PipelineCanvas {
     tb.querySelector(".pcv-btn-fit")?.addEventListener("click", () => this._fitToView());
     tb.querySelector(".pcv-btn-layout")?.addEventListener("click", () => this._autoLayout());
     tb.querySelector(".pcv-btn-json")?.addEventListener("click", () => this._toggleJson());
+<<<<<<< Updated upstream
     tb.querySelector(".pcv-btn-ai")?.addEventListener("click", () => this._aiPanel?.toggle());
+=======
+>>>>>>> Stashed changes
   }
 
   // ── Canvas events ─────────────────────────────────────────────────────────
 
   _wireCanvasEvents() {
     const canvas = this.el.querySelector(".pcv-canvas");
+<<<<<<< Updated upstream
     const canvasWrap = this.el.querySelector(".pcv-canvas-wrap");
 
     const onPaletteDragOver = (e) => {
@@ -760,6 +837,8 @@ export class PipelineCanvas {
       e.stopPropagation();
       this._handlePaletteDrop(e);
     };
+=======
+>>>>>>> Stashed changes
 
     // Click on canvas background → deselect
     canvas.addEventListener("click", (e) => {
@@ -778,10 +857,21 @@ export class PipelineCanvas {
     });
 
     // Drag-drop from palette
+<<<<<<< Updated upstream
     canvas.addEventListener("dragover", onPaletteDragOver);
     canvas.addEventListener("drop", onPaletteDrop);
     canvasWrap?.addEventListener("dragover", onPaletteDragOver);
     canvasWrap?.addEventListener("drop", onPaletteDrop);
+=======
+    canvas.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    canvas.addEventListener("drop", (e) => {
+      e.preventDefault();
+      this._handlePaletteDrop(e);
+    });
+>>>>>>> Stashed changes
 
     // Edge delete button (delegated)
     this.el.querySelector(".pcv-edges-svg")?.addEventListener("click", (e) => {
@@ -792,6 +882,7 @@ export class PipelineCanvas {
       }
     });
 
+<<<<<<< Updated upstream
     // Wheel: ctrlKey → zoom; no ctrlKey → pan (trackpad two-finger scroll)
     canvas.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -828,6 +919,8 @@ export class PipelineCanvas {
       }
     });
 
+=======
+>>>>>>> Stashed changes
     // Mouse events for node drag + edge creation
     this._onMouseMove = this._handleMouseMove.bind(this);
     this._onMouseUp   = this._handleMouseUp.bind(this);
@@ -835,6 +928,7 @@ export class PipelineCanvas {
     document.addEventListener("mouseup",   this._onMouseUp);
   }
 
+<<<<<<< Updated upstream
   _startPan(e) {
     this._isPanning = true;
     this._panStart  = { x: e.clientX, y: e.clientY };
@@ -856,6 +950,8 @@ export class PipelineCanvas {
     }
   }
 
+=======
+>>>>>>> Stashed changes
   _wireNodeCard(card, nodeId) {
     // Click → select / open drawer
     card.addEventListener("click", (e) => {
@@ -915,6 +1011,7 @@ export class PipelineCanvas {
   // ── Mouse handlers ────────────────────────────────────────────────────────
 
   _handleMouseMove(e) {
+<<<<<<< Updated upstream
     // Pan
     if (this._isPanning) {
       this._panX = this._panOrigin.x + (e.clientX - this._panStart.x);
@@ -924,11 +1021,15 @@ export class PipelineCanvas {
     }
 
     // Node drag — throttled via requestAnimationFrame
+=======
+    // Node drag
+>>>>>>> Stashed changes
     if (this._draggingNodeId) {
       const inner = this.el?.querySelector(".pcv-canvas-inner");
       if (!inner) return;
       const rect = inner.getBoundingClientRect();
       const scale = this._state.zoom;
+<<<<<<< Updated upstream
       // Compute position in local canvas space (undo scale, undo pan-offset that
       // getBoundingClientRect already includes after applyTransform)
       const x = (e.clientX - rect.left) / scale - this._dragOffset.x;
@@ -939,6 +1040,23 @@ export class PipelineCanvas {
       if (!this._rafPending) {
         this._rafPending = true;
         requestAnimationFrame(() => this._flushDrag());
+=======
+      const x = (e.clientX - rect.left) / scale - this._dragOffset.x;
+      const y = (e.clientY - rect.top)  / scale - this._dragOffset.y;
+
+      const node = this._state.nodes.find((n) => n.id === this._draggingNodeId);
+      if (node) {
+        if (!this._pushUndoForDrag) {
+          pushUndo(this._state);
+          this._pushUndoForDrag = true;
+        }
+        node.position.x = Math.max(0, x);
+        node.position.y = Math.max(0, y);
+        const el = this._nodeEls.get(this._draggingNodeId);
+        if (el) updateNodeCardPosition(el, node.position.x, node.position.y);
+        this._renderEdges();
+        this._markDirty();
+>>>>>>> Stashed changes
       }
     }
 
@@ -962,6 +1080,7 @@ export class PipelineCanvas {
     }
   }
 
+<<<<<<< Updated upstream
   /** Flush a buffered node drag update — called inside requestAnimationFrame. */
   _flushDrag() {
     this._rafPending = false;
@@ -1020,6 +1139,10 @@ export class PipelineCanvas {
     if (this._draggingNodeId) {
       // Flush any buffered RAF drag so the final position is committed
       if (this._dragPendingNode) this._flushDrag();
+=======
+  _handleMouseUp(e) {
+    if (this._draggingNodeId) {
+>>>>>>> Stashed changes
       const el = this._nodeEls.get(this._draggingNodeId);
       if (el) el.classList.remove("pcv-node--dragging");
       this._draggingNodeId = null;
@@ -1125,9 +1248,13 @@ export class PipelineCanvas {
   _handlePaletteDrop(e) {
     let data;
     try {
+<<<<<<< Updated upstream
       const raw =
         e.dataTransfer.getData("application/x-artemis-pipeline-node") ||
         e.dataTransfer.getData("text/plain");
+=======
+      const raw = e.dataTransfer.getData("text/plain");
+>>>>>>> Stashed changes
       data = JSON.parse(raw);
     } catch {
       data = this._paletteDragData;
@@ -1259,6 +1386,7 @@ export class PipelineCanvas {
       const onCanvas = this.el?.contains(document.activeElement) || document.activeElement === document.body;
       if (!onCanvas) return;
 
+<<<<<<< Updated upstream
       // Space → pan-ready cursor (actual pan starts on mousedown)
       if (e.key === " " && !e.target.matches("input,textarea,[contenteditable]")) {
         e.preventDefault();
@@ -1267,6 +1395,8 @@ export class PipelineCanvas {
         return;
       }
 
+=======
+>>>>>>> Stashed changes
       const isMeta = e.metaKey || e.ctrlKey;
       if (isMeta && e.key === "s") { e.preventDefault(); this._save(); return; }
       if (isMeta && e.key === "z") { e.preventDefault(); this._undo(); return; }
@@ -1277,6 +1407,7 @@ export class PipelineCanvas {
         this._deleteSelected();
       }
     };
+<<<<<<< Updated upstream
     this._onKeyUp = (e) => {
       if (e.key === " ") {
         this._spaceHeld = false;
@@ -1289,6 +1420,9 @@ export class PipelineCanvas {
     };
     document.addEventListener("keydown", this._onKeyDown);
     document.addEventListener("keyup",   this._onKeyUp);
+=======
+    document.addEventListener("keydown", this._onKeyDown);
+>>>>>>> Stashed changes
   }
 
   // ── Undo / redo ───────────────────────────────────────────────────────────
@@ -1334,6 +1468,7 @@ export class PipelineCanvas {
 
   async _run() {
     try {
+<<<<<<< Updated upstream
       const result = await api.runPipelineApi(this._state.id);
       const runId = result?.id || result?.run_id;
       const shortRunId = runId ? String(runId).slice(0, 8) : "new";
@@ -1346,6 +1481,10 @@ export class PipelineCanvas {
         this._startPolling();
         this._runOverlay?.show(runId);
       }
+=======
+      await api.runPipelineApi(this._state.id);
+      this._showToast("Run queued — execution wired in PIPE4.");
+>>>>>>> Stashed changes
     } catch (err) {
       this._showToast(`Run failed: ${err.message}`, true);
     }
@@ -1467,6 +1606,7 @@ export class PipelineCanvas {
   getNodeById(id) {
     return this._state.nodes.find((n) => n.id === id);
   }
+<<<<<<< Updated upstream
 
   /** Returns view-only pan offset {x, y}. Not stored in pipeline data. */
   getPan() {
@@ -1477,6 +1617,8 @@ export class PipelineCanvas {
   getZoom() {
     return this._state.zoom;
   }
+=======
+>>>>>>> Stashed changes
 }
 
 function _esc(str) {

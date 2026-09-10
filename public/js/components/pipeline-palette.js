@@ -136,7 +136,11 @@ export class PipelinePalette {
     return `
       <div class="pcv-palette-item"
         draggable="true"
+<<<<<<< Updated upstream
         data-palette-item="${_escAttr(data)}"
+=======
+        data-palette-item="${_esc(JSON.stringify({ type, label, config }))}"
+>>>>>>> Stashed changes
         title="${_esc(label)}">
         <span class="pcv-palette-item-icon">${icon}</span>
         <span class="pcv-palette-item-label">${_esc(label)}</span>
@@ -174,7 +178,10 @@ export class PipelinePalette {
         try {
           const data = JSON.parse(item.dataset.paletteItem);
           e.dataTransfer.setData("text/plain", JSON.stringify(data));
+<<<<<<< Updated upstream
           e.dataTransfer.setData("application/x-artemis-pipeline-node", JSON.stringify(data));
+=======
+>>>>>>> Stashed changes
           e.dataTransfer.effectAllowed = "copy";
           if (this._onDragStart) this._onDragStart(data, e);
         } catch {}
@@ -219,6 +226,7 @@ function _esc(str) {
   d.textContent = String(str ?? "");
   return d.innerHTML;
 }
+<<<<<<< Updated upstream
 
 function _escAttr(str) {
   return String(str ?? "")
@@ -227,3 +235,5 @@ function _escAttr(str) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 }
+=======
+>>>>>>> Stashed changes

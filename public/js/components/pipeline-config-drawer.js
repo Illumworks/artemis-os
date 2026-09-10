@@ -1,4 +1,5 @@
 /**
+<<<<<<< Updated upstream
  * pipeline-config-drawer.js — PIPE2 + PIPE3
  * Right-side config drawer that opens when a node is clicked.
  * PIPE2: generic JSON config view.
@@ -12,6 +13,14 @@ import { renderHumanGateForm } from "./node-config-forms/human-gate-form.js";
 import { renderConditionalForm } from "./node-config-forms/conditional-form.js";
 import { renderSubPipelineForm } from "./node-config-forms/sub-pipeline-form.js";
 
+=======
+ * pipeline-config-drawer.js — PIPE2
+ * Right-side config drawer that opens when a node is clicked.
+ * PIPE2: generic JSON config view. PIPE3 ships per-type forms.
+ * Light DOM only; no Shadow DOM.
+ */
+
+>>>>>>> Stashed changes
 const TYPE_LABELS = {
   trigger_manual:    "Manual Trigger",
   trigger_scheduled: "Scheduled Trigger",
@@ -24,6 +33,7 @@ const TYPE_LABELS = {
   sub_pipeline:      "Sub-Pipeline",
 };
 
+<<<<<<< Updated upstream
 // Node types that have a typed form in PIPE3
 const TYPED_FORM_TYPES = new Set([
   "agent_invocation",
@@ -44,6 +54,16 @@ export class PipelineConfigDrawer {
     this._editErr = null;
     this._viewMode = "form"; // "form" | "json"
     this._formController = null; // { getValues, validate } returned by form renderers
+=======
+export class PipelineConfigDrawer {
+  constructor({ onSave, onDelete, onClose }) {
+    this._onSave = onSave;
+    this._onDelete = onDelete;
+    this._onClose = onClose;
+    this._node = null;
+    this._editJson = "";
+    this._editErr = null;
+>>>>>>> Stashed changes
     this.el = null;
   }
 
@@ -55,6 +75,10 @@ export class PipelineConfigDrawer {
     // Close on outside click
     document.addEventListener("mousedown", (e) => {
       if (this._node && this.el && !this.el.contains(e.target)) {
+<<<<<<< Updated upstream
+=======
+        // Check that the click wasn't on a canvas node
+>>>>>>> Stashed changes
         const onNode = e.target.closest?.(".pcv-node");
         if (!onNode) this.close();
       }
@@ -70,16 +94,22 @@ export class PipelineConfigDrawer {
     this._node = node;
     this._editJson = JSON.stringify(node.config ?? {}, null, 2);
     this._editErr = null;
+<<<<<<< Updated upstream
     this._formController = null;
     // Default to form view if the type has a typed form; otherwise JSON
     this._viewMode = TYPED_FORM_TYPES.has(node.type) ? "form" : "json";
+=======
+>>>>>>> Stashed changes
     this._render();
     this.el?.classList.remove("pcv-drawer--hidden");
   }
 
   close() {
     this._node = null;
+<<<<<<< Updated upstream
     this._formController = null;
+=======
+>>>>>>> Stashed changes
     this.el?.classList.add("pcv-drawer--hidden");
     if (this._onClose) this._onClose();
   }
@@ -92,18 +122,28 @@ export class PipelineConfigDrawer {
   syncNode(node) {
     if (this._node && this._node.id === node.id) {
       this._node = node;
+<<<<<<< Updated upstream
+=======
+      // Only update label — don't overwrite pending JSON edits
+>>>>>>> Stashed changes
       const labelEl = this.el?.querySelector(".pcv-drawer-label");
       if (labelEl) labelEl.textContent = node.label || node.id;
     }
   }
 
+<<<<<<< Updated upstream
   // ── Private ──────────────────────────────────────────────────────────────
 
+=======
+>>>>>>> Stashed changes
   _render() {
     if (!this.el || !this._node) return;
     const n = this._node;
     const typeLabel = TYPE_LABELS[n.type] || n.type || "Node";
+<<<<<<< Updated upstream
     const hasTypedForm = TYPED_FORM_TYPES.has(n.type);
+=======
+>>>>>>> Stashed changes
 
     this.el.innerHTML = `
       <div class="pcv-drawer-header">
@@ -120,6 +160,7 @@ export class PipelineConfigDrawer {
         </div>
       </div>
 
+<<<<<<< Updated upstream
       ${hasTypedForm ? `
         <div class="pcv-drawer-view-toggle">
           <button class="pcv-view-btn${this._viewMode === "form" ? " pcv-view-btn--active" : ""}"
@@ -129,10 +170,13 @@ export class PipelineConfigDrawer {
         </div>
       ` : ""}
 
+=======
+>>>>>>> Stashed changes
       <div class="pcv-drawer-body">
         <label class="pcv-drawer-section-label">Node ID</label>
         <div class="pcv-drawer-id">${_esc(n.id)}</div>
 
+<<<<<<< Updated upstream
         ${this._viewMode === "form" && hasTypedForm
           ? `<div class="pcv-drawer-form-host"></div>`
           : `
@@ -140,6 +184,11 @@ export class PipelineConfigDrawer {
             <label class="pcv-drawer-section-label">Config (JSON)</label>
             <textarea class="pcv-drawer-json" rows="10" spellcheck="false">${_esc(this._editJson)}</textarea>
           `}
+=======
+        <label class="pcv-drawer-section-label">Config <span class="pcv-drawer-hint">(JSON — PIPE3 ships type-specific forms)</span></label>
+        ${this._editErr ? `<div class="pcv-drawer-err">${_esc(this._editErr)}</div>` : ""}
+        <textarea class="pcv-drawer-json" rows="10" spellcheck="false">${_esc(this._editJson)}</textarea>
+>>>>>>> Stashed changes
       </div>
 
       <div class="pcv-drawer-footer">
@@ -148,6 +197,7 @@ export class PipelineConfigDrawer {
       </div>
     `;
 
+<<<<<<< Updated upstream
     // Render typed form if in form mode
     if (this._viewMode === "form" && hasTypedForm) {
       const host = this.el.querySelector(".pcv-drawer-form-host");
@@ -180,12 +230,18 @@ export class PipelineConfigDrawer {
     }
   }
 
+=======
+    this._wire();
+  }
+
+>>>>>>> Stashed changes
   _wire() {
     if (!this.el) return;
 
     this.el.querySelector(".pcv-drawer-close")?.addEventListener("click", () => this.close());
     this.el.querySelector(".pcv-drawer-cancel")?.addEventListener("click", () => this.close());
 
+<<<<<<< Updated upstream
     // View toggle buttons
     this.el.querySelectorAll(".pcv-view-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -221,21 +277,48 @@ export class PipelineConfigDrawer {
     });
 
     // JSON textarea
+=======
+>>>>>>> Stashed changes
     this.el.querySelector(".pcv-drawer-json")?.addEventListener("input", (e) => {
       this._editJson = e.target.value;
     });
 
+<<<<<<< Updated upstream
     // Save
     this.el.querySelector(".pcv-drawer-save")?.addEventListener("click", () => {
       this._doSave();
     });
 
     // Delete
+=======
+    this.el.querySelector(".pcv-drawer-save")?.addEventListener("click", () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(this._editJson);
+      } catch (err) {
+        this._editErr = `JSON error: ${err.message}`;
+        this._render();
+        return;
+      }
+
+      // Get possibly-edited label
+      const labelEl = this.el.querySelector(".pcv-drawer-label");
+      const newLabel = labelEl?.textContent?.trim() || this._node.label;
+
+      this._editErr = null;
+      if (this._onSave) {
+        this._onSave(this._node.id, { config: parsed, label: newLabel });
+      }
+      this.close();
+    });
+
+>>>>>>> Stashed changes
     this.el.querySelector(".pcv-drawer-delete")?.addEventListener("click", () => {
       if (this._onDelete) this._onDelete(this._node.id);
       this.close();
     });
   }
+<<<<<<< Updated upstream
 
   _doSave() {
     const labelEl = this.el?.querySelector(".pcv-drawer-label");
@@ -287,6 +370,8 @@ export class PipelineConfigDrawer {
     if (this._onSave) this._onSave(this._node.id, { config: parsed, label: newLabel });
     this.close();
   }
+=======
+>>>>>>> Stashed changes
 }
 
 function _esc(str) {

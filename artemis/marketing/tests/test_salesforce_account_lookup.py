@@ -167,3 +167,46 @@ def test_a_failed_opportunity_lookup_is_unknown_not_none() -> None:
     from artemis.marketing.salesforce_account_lookup import OpportunityHistory
 
     assert "UNKNOWN" in OpportunityHistory(unavailable=True).describe()
+
+
+# ── rep notes and who we met (Josh, 2026-09-10) ──────────────────────────────
+
+
+def test_a_deal_line_carries_the_reps_own_note() -> None:
+    """Josh asked directly whether Callie could see these fields. She could not,
+    so a $260k loss reading "Insufficient Access to Key Decision Makers" gave her
+    no way to learn that a previous seller had met the district in person and the
+    handoff to the current one went cold. Different problem, different re-entry."""
+    from artemis.marketing.salesforce_account_lookup import OpportunityHistory
+
+    h = OpportunityHistory(
+        lost=[
+            {
+                "CloseDate": "2026-08-21",
+                "Amount": 260000.0,
+                "IsClosed": True,
+                "IsWon": False,
+                "Reason__c": "Insufficient Access to Key Decision Makers",
+                "Description": "Meeting went great! Interested in the bilingual program.",
+                "_contacts": ["Rebecca Kundert (Decision Maker)", "Amanda Gartzke (Gatekeeper)"],
+            }
+        ]
+    )
+    out = h.describe()
+
+    assert "Meeting went great" in out
+    assert "Rebecca Kundert (Decision Maker)" in out
+    # The contradiction has to be visible in one place to be noticed at all.
+    assert "Insufficient Access to Key Decision Makers" in out
+
+
+def test_a_deal_with_no_note_stays_short() -> None:
+    """Most rows have neither, and they must not gain blank lines."""
+    from artemis.marketing.salesforce_account_lookup import OpportunityHistory
+
+    out = OpportunityHistory(
+        won=[{"CloseDate": "2026-08-06", "Amount": 731625.0, "IsClosed": True, "IsWon": True}]
+    ).describe()
+
+    assert "note:" not in out
+    assert "we met:" not in out
