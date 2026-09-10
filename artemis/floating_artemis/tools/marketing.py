@@ -987,7 +987,15 @@ FIND_BY_KEYWORD = Tool(
         f"Matches signal_queue.headline and campaign_candidates.name "
         f"case-insensitively (substring). Returns matching signals "
         f"(id, urgency_tier, signal_status, headline) and campaigns "
-        f"(id, name, decision_state). {_s} [layer:1]"
+        f"(id, name, decision_state). "
+        # Callie asked Josh twice on 2026-09-10 for a StarBridge URL and said she
+        # had been guessing domains. She never needed one: StarBridge delivers by
+        # webhook and its findings are already rows here -- 1,076 of them, newest
+        # today. Saying so in the tool DESCRIPTION rather than a prompt rule
+        # because this is read at the moment she decides what to call.
+        f"StarBridge findings arrive here as signals (source_type "
+        f"'starbridge'); search this rather than asking anyone for a "
+        f"StarBridge link, and never browse to one. {_s} [layer:1]"
     ),
     input_schema={
         "type": "object",
@@ -1038,7 +1046,10 @@ GET_CAMPAIGN_PERFORMANCE = Tool(
 
 LIST_SIGNALS = Tool(
     name="list_signals",
-    description=f"List marketing signals from the signal queue. {_s} [layer:1]",
+    description=(
+        f"List marketing signals from the signal queue, including everything "
+        f"StarBridge has delivered (source_type 'starbridge'). {_s} [layer:1]"
+    ),
     input_schema={
         "type": "object",
         "properties": {
