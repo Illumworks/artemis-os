@@ -486,3 +486,46 @@ def test_the_one_liner_counts_rather_than_reporting_its_fetch_cap() -> None:
     src = inspect.getsource(one_line_contact)
     assert "limit=_COUNT_CAP" in src, "must not fetch 5 and call it the total"
     assert "_COUNT_CAP" in src and f"{_COUNT_CAP}" != "5"
+
+
+# ── private calls (2026-09-10) ───────────────────────────────────────────────
+
+
+def test_a_private_call_is_dropped() -> None:
+    """Gong does NOT filter these server-side. A call marked private comes back
+    like any other and its transcript stays fetchable; Gong requires connectors
+    to drop them client-side and makes it a condition of app approval.
+
+    Zero calls carry the flag today, which is why this never bit and why it
+    needed writing before it did."""
+    from artemis.integrations.gong.client import drop_private
+
+    raw = [
+        {"metaData": {"id": "1", "isPrivate": False}},
+        {"metaData": {"id": "2", "isPrivate": True}},
+        {"metaData": {"id": "3"}},
+    ]
+
+    kept = [r["metaData"]["id"] for r in drop_private(raw)]
+
+    assert kept == ["1", "3"], "a private call must not reach anything downstream"
+
+
+def test_the_flag_survives_onto_the_context() -> None:
+    """So any path that somehow bypasses `drop_private` can still see it."""
+    from artemis.integrations.gong.client import _to_context
+
+    assert _to_context({"metaData": {"id": "1", "isPrivate": True}}).is_private is True
+    assert _to_context({"metaData": {"id": "2"}}).is_private is False
+
+
+def test_the_log_line_names_no_call() -> None:
+    """Which calls somebody marked private is itself something they did not
+    offer us."""
+    import inspect
+
+    from artemis.integrations.gong import client
+
+    src = inspect.getsource(client.drop_private)
+    assert "dropped %d private call" in src
+    assert "call_id" not in src.split('"""')[2], "no identifier in the log"

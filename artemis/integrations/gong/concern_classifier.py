@@ -367,6 +367,11 @@ async def classify_account(
     try:
         client = GongMetadataClient(settings.gong_access_key, settings.gong_access_key_secret)
         calls = await client.recent_calls_for_account(account_name, days=days, limit=max_calls)
+        # `recent_calls_for_account` already drops these, and this checks again
+        # anyway. Reading the transcript of a call somebody marked private is the
+        # worst thing this module could do, and it is not a place to rely on a
+        # caller having done the right thing.
+        calls = [c for c in calls if not c.is_private]
     except Exception:
         logger.warning("concern classifier: could not list calls for %r", account_name)
         return ConcernProfile(account_name=account_name, unavailable=True)

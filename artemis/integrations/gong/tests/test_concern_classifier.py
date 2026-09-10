@@ -194,7 +194,7 @@ async def test_the_embedding_model_does_not_decide_the_transcript_budget(monkeyp
         def raise_for_status(self) -> None:
             return None
 
-        def json(self) -> dict:
+        def json(self) -> dict[str, object]:
             return {
                 "data": [
                     {

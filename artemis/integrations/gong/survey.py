@@ -26,7 +26,12 @@ from artemis.integrations.gong.baseline import (
     account_deviation,
     portfolio_rates,
 )
-from artemis.integrations.gong.client import CallContext, GongMetadataClient, _to_context
+from artemis.integrations.gong.client import (
+    CallContext,
+    GongMetadataClient,
+    _to_context,
+    drop_private,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +117,8 @@ async def run_survey(*, days: int = LOOKBACK_DAYS) -> Survey:
             # TOP LEVEL. Inside `filter` this is ignored silently.
             body["cursor"] = cursor
         payload = await client._post("/v2/calls/extensive", body)
-        calls.extend(_to_context(raw) for raw in payload.get("calls", []))
+        # Private calls are dropped before anything downstream can see them.
+        calls.extend(_to_context(raw) for raw in drop_private(payload.get("calls", [])))
         cursor = (payload.get("records") or {}).get("cursor")
         if not cursor:
             truncated = False

@@ -85,6 +85,9 @@ class CallContext:
     unknown_parties: int = 0
     opportunity_stage: str | None = None
     days_since_stage_change: int | None = None
+    #: Someone marked this call private in Gong. Gong does NOT filter these
+    #: server-side, so it arrives here like any other and dropping it is our job.
+    is_private: bool = False
 
     @property
     def fired_trackers(self) -> dict[str, int]:
@@ -188,7 +191,7 @@ class GongMetadataClient:
                 body["cursor"] = cursor
 
             listing = await self._post("/v2/calls/extensive", body)
-            for raw in listing.get("calls", []):
+            for raw in drop_private(listing.get("calls", [])):
                 ctx = _to_context(raw)
                 if ctx.account_name and wanted in ctx.account_name.lower():
                     matches.append(ctx)
@@ -207,6 +210,33 @@ class GongMetadataClient:
 
         matches.sort(key=lambda c: c.started or "", reverse=True)
         return matches[:limit]
+
+
+def drop_private(raw_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove calls somebody marked private in Gong.
+
+    **Gong does not do this server-side.** A call marked private still comes back
+    from `/v2/calls` with `isPrivate: true` and its transcript is still fetchable;
+    Gong requires connectors to filter client-side and makes it a condition of app
+    approval. This function is the only thing standing between us and reading a
+    conversation someone deliberately shut the door on.
+
+    Zero calls in the corpus carry the flag today, which is exactly why this had
+    never bitten and exactly why it needed writing before it did. Every path that
+    turns raw payloads into `CallContext` goes through here.
+    """
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for raw in raw_calls:
+        if bool((raw.get("metaData") or {}).get("isPrivate")):
+            dropped += 1
+            continue
+        kept.append(raw)
+    if dropped:
+        # No call id in the log line: which calls are private is itself something
+        # the person marking them private did not offer us.
+        logger.info("gong: dropped %d private call(s) before processing", dropped)
+    return kept
 
 
 def _to_context(raw: dict[str, Any]) -> CallContext:
@@ -252,6 +282,7 @@ def _to_context(raw: dict[str, Any]) -> CallContext:
             trackers[str(name)] = int(tracker.get("count") or 0)
 
     return CallContext(
+        is_private=bool(meta.get("isPrivate")),
         call_id=str(meta.get("id") or ""),
         started=meta.get("started"),
         duration_seconds=meta.get("duration"),
