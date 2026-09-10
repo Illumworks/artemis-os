@@ -102,12 +102,19 @@ class AccountDeviation:
     calls_considered: int
     elevated_concern: dict[str, float] = field(default_factory=dict)
     elevated_advocacy: dict[str, float] = field(default_factory=dict)
+    #: Elevated, and in none of the three lists above. Empty today, and that is
+    #: the point: the lists are hand-maintained and Gong's trackers are
+    #: configured by people at Amira, so the next tracker somebody adds lands
+    #: here instead of being dropped on the floor.
+    elevated_other: dict[str, float] = field(default_factory=dict)
     #: Set when the sample is too small to say anything. Not an error.
     insufficient: bool = False
 
     @property
     def has_signal(self) -> bool:
-        return not self.insufficient and bool(self.elevated_concern or self.elevated_advocacy)
+        return not self.insufficient and bool(
+            self.elevated_concern or self.elevated_advocacy or self.elevated_other
+        )
 
     def describe(self) -> str:
         if self.insufficient:
@@ -124,6 +131,12 @@ class AccountDeviation:
             parts.append(f"  concern — {tracker} on {rate:.0%} of calls, above the norm")
         for tracker, rate in sorted(self.elevated_advocacy.items(), key=lambda kv: -kv[1]):
             parts.append(f"  positive — {tracker} on {rate:.0%} of calls, above the norm")
+        for tracker, rate in sorted(self.elevated_other.items(), key=lambda kv: -kv[1]):
+            parts.append(
+                f"  unclassified — {tracker} on {rate:.0%} of calls, above the norm. This "
+                "tracker is not yet sorted into concern or positive, so read it as raised "
+                "more than usual and nothing more."
+            )
         parts.append(
             "  Tracker counts only. They say a call touched on something, never what "
             "anyone said about it."
@@ -190,6 +203,7 @@ def account_deviation(
 
     margin = _required_margin(len(considered))
     concern: dict[str, float] = {}
+    other: dict[str, float] = {}
     advocacy: dict[str, float] = {}
 
     for tracker, count in hits.items():
@@ -202,10 +216,23 @@ def account_deviation(
             concern[tracker] = rate
         elif tracker in ADVOCACY_TRACKERS:
             advocacy[tracker] = rate
+        else:
+            # Previously this fell off the end and the tracker vanished --
+            # elevated, above the portfolio, and reported nowhere.
+            #
+            # Gong's AI trackers are configured by people at Amira, not by us. On
+            # 2026-09-10 a colleague asked whether we could say a district's
+            # concerns were about rostering, or parents, or training. We cannot:
+            # all 26 trackers are sales-process, and the answer is for someone to
+            # ADD those trackers in Gong. The day they do, this is the branch that
+            # decides whether the new tracker appears or is silently discarded
+            # until a person notices and edits a frozenset.
+            other[tracker] = rate
 
     return AccountDeviation(
         account_name=account_name,
         calls_considered=len(considered),
         elevated_concern=concern,
         elevated_advocacy=advocacy,
+        elevated_other=other,
     )

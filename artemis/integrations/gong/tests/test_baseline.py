@@ -145,3 +145,91 @@ def test_an_empty_portfolio_does_not_divide_by_zero() -> None:
     rates = portfolio_rates([])
     assert rates.call_count == 0
     assert rates.rate_for("anything") == 0.0
+
+
+# ── a tracker nobody has classified yet (2026-09-10) ─────────────────────────
+
+
+def test_an_unclassified_tracker_surfaces_instead_of_vanishing() -> None:
+    """Gong's AI trackers are configured by people at Amira, and the three lists
+    here are hand-maintained. A tracker in none of them used to pass the margin
+    check, fall off the end of the if/elif, and be reported nowhere.
+
+    This matters the day someone acts on the 2026-09-10 request to distinguish
+    rostering from parent from training concerns: that is answered by ADDING
+    trackers in Gong, and a silently-dropped new tracker looks exactly like a
+    district with nothing to say."""
+    from artemis.integrations.gong.baseline import PortfolioRates, account_deviation
+    from artemis.integrations.gong.client import CallContext
+
+    calls = [
+        CallContext(
+            call_id=str(i),
+            started=None,
+            duration_seconds=600,
+            title=None,
+            system=None,
+            account_name="A District",
+            trackers={"Rostering concerns": 1},
+        )
+        for i in range(9)
+    ]
+    portfolio = PortfolioRates(rates={"Rostering concerns": 0.05}, call_count=500)
+
+    dev = account_deviation("A District", calls, portfolio)
+
+    assert dev.elevated_other == {"Rostering concerns": 1.0}
+    assert dev.has_signal is True, "an elevated unknown tracker is still a signal"
+    assert "unclassified" in dev.describe()
+    assert "Rostering concerns" in dev.describe()
+
+
+def test_a_known_tracker_is_not_dumped_into_the_unclassified_bucket() -> None:
+    """The new branch must not swallow the classified ones."""
+    from artemis.integrations.gong.baseline import PortfolioRates, account_deviation
+    from artemis.integrations.gong.client import CallContext
+
+    calls = [
+        CallContext(
+            call_id=str(i),
+            started=None,
+            duration_seconds=600,
+            title=None,
+            system=None,
+            account_name="A District",
+            trackers={"Customer concerns": 1},
+        )
+        for i in range(9)
+    ]
+    dev = account_deviation(
+        "A District", calls, PortfolioRates(rates={"Customer concerns": 0.05}, call_count=500)
+    )
+
+    assert dev.elevated_concern == {"Customer concerns": 1.0}
+    assert dev.elevated_other == {}
+
+
+def test_procedural_trackers_are_still_ignored_entirely() -> None:
+    """`Next steps` fires on 95% of external meetings. It must not become a
+    finding just because it is not in the concern or advocacy lists."""
+    from artemis.integrations.gong.baseline import PortfolioRates, account_deviation
+    from artemis.integrations.gong.client import CallContext
+
+    calls = [
+        CallContext(
+            call_id=str(i),
+            started=None,
+            duration_seconds=600,
+            title=None,
+            system=None,
+            account_name="A District",
+            trackers={"Next steps": 1},
+        )
+        for i in range(9)
+    ]
+    dev = account_deviation(
+        "A District", calls, PortfolioRates(rates={"Next steps": 0.05}, call_count=500)
+    )
+
+    assert dev.elevated_other == {}
+    assert dev.has_signal is False

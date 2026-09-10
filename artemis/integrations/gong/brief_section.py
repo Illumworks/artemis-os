@@ -135,6 +135,21 @@ async def build_gong_section(session: object = None) -> str | None:
 
         await _record(flagged)
 
+        # A tracker nobody has classified yet. Empty today; the day someone adds a
+        # tracker in Gong -- which is how the "rostering vs parent vs training"
+        # question gets answered -- it appears here rather than nowhere.
+        unclassified = [d for d in flagged if d.elevated_other]
+        if unclassified:
+            if lines:
+                lines.append("")
+            lines.append("*Raised more than usual, not yet categorised:*")
+            for dev in unclassified[:MAX_PER_KIND]:
+                top = max(dev.elevated_other.items(), key=lambda kv: kv[1])
+                lines.append(
+                    f"• {dev.account_name} — {top[0]} on {top[1]:.0%} of "
+                    f"{dev.calls_considered} calls"
+                )
+
         lines.append("")
         lines.append(
             f"_Call trackers over {LOOKBACK_DAYS} days, compared to the rate across "
