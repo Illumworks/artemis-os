@@ -688,3 +688,53 @@ participants did not consent to us reading it.
   needs call content. Pending a conversation with Jon and Josh about whether a derived,
   non-quoting summary is acceptable, and rule 4 says the default answer is no.
 - **Anything keyed to a rep.** Deliberately, permanently. See "The privacy surface".
+
+---
+
+## Concern categories, derived locally (pilot, 2026-09-10)
+
+Carolyn asked in #market-signals whether we could say a district's concerns were
+about rostering, or parents, or training. §4 above is why we could not: all 26
+trackers are sales-process and all six topics are too. Getting new trackers
+configured would have repeated a two-month access wait, so the category is
+derived from the call instead — on the Studio, never leaving the network, storing
+only the category. `artemis/integrations/gong/concern_classifier.py`.
+
+**Six districts from the brief, three most recent calls each.**
+
+| District | Dominant category | Rest |
+|---|---|---|
+| Rowland Unified | **implementation, 3 of 3** | training 1, product functionality 1 |
+| Pinellas County | **rostering, 3 of 3** | training 2, parent 1, implementation 1, reporting 1, product functionality 1 |
+| Madera Unified | **product functionality, 3 of 3** | reporting 2, training 1, implementation 1 |
+| Idaho Dept of Education | implementation 2, rostering 2 | product functionality 1, reporting 1 |
+| Visions In Education | reporting 2, rostering 2, product functionality 2 | training 1, implementation 1 |
+| Blue Ridge Academy | none recurring | four categories, each on one call |
+
+**Repetition is the signal, not the list.** A category on 3 of 3 calls is a
+pattern; one on 1 of 3 is a mention. Blue Ridge — four categories, each appearing
+once — is the profile of a district with nothing recurring, and it is one the
+brief lists as sounding positive. Across repeat runs the dominant category is
+stable and the single mentions move, so the top line is the part to trust.
+
+**One independent corroboration.** Rowland came back implementation on every
+call. Carolyn's own note, written before any of this ran, says they "did
+transition to direct so we've spent a lot of time with them — answering questions
+and front loading support". The classifier found from the calls alone what the
+person who knows the account already knew.
+
+**The check that nearly did not happen.** The first version reported every topic a
+call touched. Madera — a district the brief calls *sounding positive* — came back
+with seven of nine concern categories, more than one flagged concern-heavy. Unit
+tests were green throughout; only reading the live output against a district
+whose character was already known exposed it. The prompt now requires an
+expressed problem rather than a mention.
+
+Also worth recording: "sounding positive" means `Amira Solving Problems` fires
+often, which means problems are being discussed AND SOLVED. It never meant "has
+no concerns", so a positive district showing concern categories is not on its own
+evidence of anything.
+
+**Status: awaiting validation.** Posted to #market-signals on 2026-09-10 asking
+Carolyn whether the top line matches what she knows. One district corroborates.
+Five are unverified, and it should not reach the daily brief until they are.
