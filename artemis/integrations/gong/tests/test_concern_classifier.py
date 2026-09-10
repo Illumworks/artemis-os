@@ -174,3 +174,72 @@ def test_no_category_found_is_not_a_happy_district() -> None:
     out = ConcernProfile(account_name="A District", calls_examined=9).describe()
 
     assert "not the same as a happy district" in out
+
+
+# ── chunk sizing asks the server rather than assuming ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_embedding_model_does_not_decide_the_transcript_budget(monkeypatch) -> None:
+    """Caught in development: `min()` across every loaded model let the embedding
+    model, loaded at 2,048, size the prompt for a 131,072-token chat model that
+    does the actual work. It cut the budget by 43x."""
+    import httpx
+
+    from artemis.integrations.gong import concern_classifier as mod
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "id": "qwen/qwen3.6-35b-a3b",
+                        "state": "loaded",
+                        "loaded_context_length": 131072,
+                        "type": "vlm",
+                    },
+                    {
+                        "id": "text-embedding-nomic-embed-text-v1.5",
+                        "state": "loaded",
+                        "loaded_context_length": 2048,
+                        "type": "embeddings",
+                    },
+                ]
+            }
+
+    class _Client:
+        async def __aenter__(self):  # noqa: ANN204
+            return self
+
+        async def __aexit__(self, *a: object) -> bool:
+            return False
+
+        async def get(self, _url: str) -> _Resp:
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
+
+    budget = await mod._chunk_chars()
+
+    assert budget > 100_000, "the chat model's context must decide the budget"
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_server_falls_back_to_the_small_safe_size(monkeypatch) -> None:
+    """If we cannot ask, assume the 4,096 default. Assuming large would silently
+    truncate the transcript and classify a fragment as if it were the call."""
+    import httpx
+
+    from artemis.integrations.gong import concern_classifier as mod
+
+    def _boom(**_kw: object):  # noqa: ANN202
+        raise RuntimeError("studio unreachable")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _boom)
+
+    assert await mod._chunk_chars() == mod._FALLBACK_CHUNK_CHARS

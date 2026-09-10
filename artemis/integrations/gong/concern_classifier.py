@@ -33,10 +33,13 @@ rather than an intention:
    variable for the length of one call and is discarded. Nothing in this module
    writes text to the database; the only thing it produces is counts.
 
-4. **Transcripts are chunked and classified in pieces.** A 35-minute call is
-   ~9,450 tokens and LM Studio's just-in-time loading gives a model its DEFAULT
-   4,096-token context, not its maximum. Chunking is correct under either
-   configuration and keeps any single prompt small.
+4. **Chunks are sized to the context the server actually has.** LM Studio reports
+   `loaded_context_length` separately from `max_context_length`, so this asks
+   rather than guesses: a model held at 131,072 takes a whole transcript in one
+   call, and one evicted and reloaded just-in-time at its 4,096 default gets
+   small pieces. Guessing either way is wrong half the time — assume large and a
+   JIT reload silently truncates the input, assume small and every call is split
+   needlessly, losing the cross-chunk context that makes the category obvious.
 
 The output is the same shape as everything else here: counts of what calls touched
 on. "Rowland raised rostering on 4 of 9 calls" is a fact about a district. It is
@@ -60,6 +63,7 @@ ConcernCategory = Literal[
     "product_functionality",
     "reporting",
     "student_engagement",
+    "parent",
     "pricing",
     "support",
     "other",
@@ -77,14 +81,23 @@ implementation — rollout, scheduling, devices, headphones, logistics, timeline
 product_functionality — how the software itself behaves; features, bugs, gaps
 reporting — data, dashboards, exports, evidence of progress, what admins can see
 student_engagement — whether students use it, stick with it, or find it hard
+parent — parent questions, pushback, communication home, consent, screen-time worries
 pricing — cost, budget, renewal terms, contract value
 support — responsiveness, escalations, getting help when something breaks
 other — a concern that is genuinely none of the above\
 """
 
-#: Characters per chunk. Roughly 1,500 tokens, comfortably inside a 4,096-token
-#: default context alongside the instructions and the model's own reasoning.
-_CHUNK_CHARS = 6000
+#: Fallback chunk size, used only when the server will not say what context it
+#: has. Roughly 1,500 tokens, which is safe inside a 4,096-token default.
+_FALLBACK_CHUNK_CHARS = 6000
+
+#: Share of the context window given to transcript text. The rest holds the
+#: instructions, the category guide, and the model's own reasoning block — which
+#: on a reasoning model is not a rounding error.
+_TEXT_SHARE_OF_CONTEXT = 0.5
+
+#: Characters per token, roughly, for English prose.
+_CHARS_PER_TOKEN = 4
 
 #: A cap on how much of one call is examined. A 35-minute call is ~37,800
 #: characters; beyond this the marginal chunk rarely changes the category set and
@@ -148,19 +161,60 @@ def _require_local_adapter(adapter: Any) -> None:
         )
 
 
-def _chunks(text: str) -> list[str]:
+async def _chunk_chars() -> int:
+    """How much transcript fits in one prompt, asked rather than assumed.
+
+    A model held resident at 131,072 tokens can take a whole call at once, which
+    is both faster and better — a category is easier to see with the whole
+    conversation in view than through a 6,000-character window. A model that LM
+    Studio loaded just-in-time gets its DEFAULT context, which for these is 4,096,
+    and the same prompt would be silently truncated.
+    """
+    import httpx
+
+    from artemis.config import settings
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{settings.lm_studio_base_url.rstrip('/')}/api/v0/models")
+        resp.raise_for_status()
+        # Only models that could serve this completion. The embedding model is
+        # loaded at 2,048 and taking the minimum across everything let it decide
+        # the transcript budget for a 131,072-token chat model that will actually
+        # do the work.
+        loaded = [
+            int(m.get("loaded_context_length") or 0)
+            for m in resp.json().get("data", [])
+            if m.get("state") == "loaded"
+            and m.get("loaded_context_length")
+            and "embedding" not in str(m.get("id", "")).lower()
+            and str(m.get("type", "")).lower() not in ("embeddings", "embedding")
+        ]
+    except Exception:
+        logger.warning("concern classifier: could not read the loaded context length")
+        return _FALLBACK_CHUNK_CHARS
+
+    if not loaded:
+        return _FALLBACK_CHUNK_CHARS
+    # The smallest CHAT window still loaded, because we do not control which of
+    # them serves the request.
+    budget = int(min(loaded) * _TEXT_SHARE_OF_CONTEXT * _CHARS_PER_TOKEN)
+    return max(_FALLBACK_CHUNK_CHARS, budget)
+
+
+def _chunks(text: str, chunk_chars: int = _FALLBACK_CHUNK_CHARS) -> list[str]:
     """Split on paragraph-ish boundaries, then hard-split anything still too long."""
     capped = text[:_MAX_CHARS_PER_CALL]
     out: list[str] = []
     current = ""
     for para in capped.split("\n"):
-        if len(current) + len(para) + 1 > _CHUNK_CHARS:
+        if len(current) + len(para) + 1 > chunk_chars:
             if current.strip():
                 out.append(current)
             current = ""
-        if len(para) > _CHUNK_CHARS:
-            for i in range(0, len(para), _CHUNK_CHARS):
-                out.append(para[i : i + _CHUNK_CHARS])
+        if len(para) > chunk_chars:
+            for i in range(0, len(para), chunk_chars):
+                out.append(para[i : i + chunk_chars])
             continue
         current = f"{current}\n{para}" if current else para
     if current.strip():
@@ -198,7 +252,8 @@ async def classify_call(transcript_text: str) -> set[str]:
     _require_local_adapter(adapter)
 
     found: set[str] = set()
-    for chunk in _chunks(transcript_text):
+    size = await _chunk_chars()
+    for chunk in _chunks(transcript_text, size):
         prompt = (
             "Below is part of a transcript of a call between a vendor and a school "
             "district. Identify which KINDS of concern the district raised.\n\n"
