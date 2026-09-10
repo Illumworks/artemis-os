@@ -94,7 +94,7 @@ class OpenAIAdapter:
                 f"{self._base_url}/chat/completions",
                 json=body,
                 headers=headers,
-                timeout=120.0,
+                timeout=getattr(self, "REQUEST_TIMEOUT_SECONDS", 120.0),
             )
 
         if not response.is_success:
@@ -138,7 +138,7 @@ class OpenAIAdapter:
                 f"{self._base_url}/chat/completions",
                 json=body,
                 headers=headers,
-                timeout=120.0,
+                timeout=getattr(self, "REQUEST_TIMEOUT_SECONDS", 120.0),
             ) as response,
         ):
             if not response.is_success:

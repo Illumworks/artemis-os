@@ -105,6 +105,17 @@ class LMStudioAdapter(OpenAIAdapter):
             object.__setattr__(response, "cost_usd", 0.0)
         return response
 
+    #: The OpenAI adapter hardcodes a 120s HTTP timeout, which is right for a paid
+    #: API and wrong here. A local turn on a 24,572-token prompt has to prefill all
+    #: of it and then generate at roughly 100 tok/s, so two minutes is a normal
+    #: turn rather than a hung one -- an agent-loop test failed at 132.1s and was
+    #: read as "the model cannot drive a loop" when it was our client giving up.
+    #:
+    #: A local call costs no tokens, so a slow one costs only wall-clock while an
+    #: abandoned one wastes the whole computation. The asymmetry runs entirely one
+    #: way, which is why this is generous rather than tuned.
+    REQUEST_TIMEOUT_SECONDS = 600.0
+
     async def _with_servable_model(self, request: CompletionRequest) -> CompletionRequest:
         """Drop a model name this server does not have, so a cascade can be data.
 
