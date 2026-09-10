@@ -77,6 +77,8 @@ class LMStudioAdapter(OpenAIAdapter):
             default_model=resolved_model,
             _base_url=resolved_base,
         )
+        self._base_url = resolved_base
+        self._served_models: set[str] | None = None
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
         """Run a completion via LM Studio's OpenAI-compatible API.
@@ -86,6 +88,7 @@ class LMStudioAdapter(OpenAIAdapter):
         Emit a warning so future hollowness is caught immediately.
         """
         request = self._with_reasoning_budget(request)
+        request = await self._with_servable_model(request)
         if request.tools:
             logger.warning(
                 "%s adapter received request.tools but does not support tool execution. "
@@ -101,6 +104,56 @@ class LMStudioAdapter(OpenAIAdapter):
         with contextlib.suppress(AttributeError):
             object.__setattr__(response, "cost_usd", 0.0)
         return response
+
+    async def _with_servable_model(self, request: CompletionRequest) -> CompletionRequest:
+        """Drop a model name this server does not have, so a cascade can be data.
+
+        A cascade hands ONE model name to every provider it tries. The scouts are
+        configured `model="claude-haiku-4-5"`, so pointing one at lm-studio asked
+        the Studio for a Claude model and got "Failed to load model". That made
+        moving a scout to the local box a code change instead of a column update,
+        which is the difference between an experiment and a project.
+
+        An explicit local model is still honoured — asking for the coder model
+        rather than the default has to keep working. Only a name the server cannot
+        serve is replaced, and the list is fetched once per adapter rather than
+        per call.
+        """
+        wanted = (request.model or "").strip()
+        if not wanted:
+            return request
+        served = await self._servable_models()
+        if served is None or wanted in served:
+            return request
+        logger.info(
+            "lm-studio: %r is not served here (%s available) -- using the local default",
+            wanted,
+            len(served),
+        )
+        return dataclasses.replace(request, model=None)
+
+    async def _servable_models(self) -> set[str] | None:
+        """Model ids this server has, or None when it cannot be asked.
+
+        None means "do not second-guess the caller": if the listing fails, pass
+        the request through unchanged and let the real call produce the real
+        error, rather than silently swapping the model on a network blip.
+        """
+        if self._served_models is not None:
+            return self._served_models
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{self._base_url.rstrip('/')}/models")
+            resp.raise_for_status()
+            self._served_models = {
+                str(m.get("id")) for m in resp.json().get("data", []) if m.get("id")
+            }
+        except Exception:
+            logger.warning("lm-studio: could not list models", exc_info=True)
+            return None
+        return self._served_models
 
     def _with_reasoning_budget(self, request: CompletionRequest) -> CompletionRequest:
         """Raise a too-small `max_tokens` to the floor rather than returning nothing.

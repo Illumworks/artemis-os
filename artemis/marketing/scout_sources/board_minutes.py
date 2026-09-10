@@ -137,18 +137,47 @@ def _item_to_raw(district: dict[str, Any], item: dict[str, Any]) -> RawItem:
     )
 
 
+def _run_coroutine_sync(coro: Any) -> Any:
+    """Run a coroutine from sync code, whether or not a loop is already running.
+
+    `asyncio.run` refuses when a loop is running, which is the only case that
+    actually occurs here. Off-thread execution works in both.
+    """
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
 class BoardMinutesAdapter(ScoutSourceAdapter):
     """Fetches board meeting items from BoardDocs and converts them to RawItems.
 
-    Runs the async fetcher synchronously via asyncio.run().  On any top-level
-    error returns [] and logs a warning so the scout runner can continue.
+    Runs the async fetcher from a synchronous `fetch`. On any top-level error
+    returns [] and logs a warning so the scout runner can continue.
+
+    **`asyncio.run` is not usable here.** Every caller of `fetch` is already
+    inside a running event loop -- `run_scout` is async -- and `asyncio.run`
+    raises "cannot be called from a running event loop" unconditionally in that
+    situation. The except below then swallowed it and returned [], so this
+    adapter fetched NOTHING, silently, on every call, while reporting a clean
+    `status=complete` with zero items. One of only two source adapters that is
+    not a stub, and it could never return a row.
+
+    The fetch now runs on a worker thread with its own loop, which is the
+    standard way to call async code from a sync interface that is itself being
+    called from async.
     """
 
     def fetch(
         self, territory_config: dict[str, Any] | None, last_run_at: datetime | None
     ) -> list[RawItem]:
         try:
-            pairs = asyncio.run(_fetch_all_items())
+            pairs = _run_coroutine_sync(_fetch_all_items())
         except Exception:
             logger.warning("BoardMinutesAdapter.fetch: top-level error", exc_info=True)
             return []
