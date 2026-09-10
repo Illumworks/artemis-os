@@ -210,3 +210,46 @@ def test_a_deal_with_no_note_stays_short() -> None:
 
     assert "note:" not in out
     assert "we met:" not in out
+
+
+def test_a_contact_line_shows_the_email_we_already_hold() -> None:
+    """The field was fetched, stored on the object, and never rendered — so Callie
+    read a list with no addresses in it and told Josh, repeatedly, to source them
+    from ZoomInfo. 89% of Salesforce contacts have one; 92.7% on customer
+    accounts. The work was already done."""
+    from artemis.marketing.salesforce_account_lookup import AccountContact
+
+    line = AccountContact(
+        contact_id="1",
+        name="Rebecca Kundert",
+        title="Executive Director of C+I",
+        email="kundert@madison.k12.wi.us",
+        last_activity="2026-03-19",
+    ).describe()
+
+    assert "kundert@madison.k12.wi.us" in line
+    assert "Rebecca Kundert" in line
+
+
+def test_a_contact_in_active_outreach_still_shows_the_warning_first() -> None:
+    """Showing the address must not bury the reason not to use it."""
+    from artemis.marketing.salesforce_account_lookup import AccountContact
+
+    line = AccountContact(
+        contact_id="1",
+        name="A Person",
+        email="a@b.k12.us",
+        in_active_flow=True,
+        flow_owner="Natasha",
+    ).describe()
+
+    assert "IN ACTIVE OUTREACH" in line
+    assert line.index("a@b.k12.us") < line.index("IN ACTIVE OUTREACH")
+
+
+def test_a_contact_with_no_email_says_nothing_extra() -> None:
+    from artemis.marketing.salesforce_account_lookup import AccountContact
+
+    line = AccountContact(contact_id="1", name="A Person", title="Principal").describe()
+
+    assert line.count("—") == 2, "no empty email segment"

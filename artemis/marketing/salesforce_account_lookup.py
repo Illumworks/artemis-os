@@ -266,6 +266,17 @@ class AccountContact:
         bits = [self.name]
         if self.title:
             bits.append(self.title)
+        # The email was fetched, stored on this object, and never rendered.
+        #
+        # So Callie read a contact list with no addresses in it and told Josh, on
+        # 2026-09-10 and repeatedly before that, "No email addresses are on file
+        # for any of these contacts. Your team will need to source them via
+        # ZoomInfo or LinkedIn Sales Nav." She was describing what she could see
+        # accurately. 89% of Salesforce contacts have an email, and 92.7% on
+        # customer accounts, so the advice was almost always wrong and the work
+        # was already done.
+        if self.email:
+            bits.append(self.email)
         if self.conflicted:
             who = self.flow_owner or "a seller"
             flow = f" ({self.flow_name})" if self.flow_name else ""
