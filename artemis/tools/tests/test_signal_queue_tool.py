@@ -106,3 +106,42 @@ async def test_invalid_source_type_validation_error(db_session: AsyncSession) ->
     assert result.startswith("VALIDATION_ERROR")
     rows = (await db_session.execute(select(SignalQueue))).scalars().all()
     assert len(rows) == 0
+
+
+# ── the publication date the model was never offered (2026-09-10) ────────────
+
+
+def test_the_write_tool_offers_a_source_published_date() -> None:
+    """`scout_intake` has always read `payload.get("sourcePublishedAt")` and the
+    tool schema never offered it, so the model had no way to supply one. Every
+    signal therefore carried `source_published_at: null`, `article_recency` had
+    nothing to judge, and February articles reached the brief as current news —
+    reported by a reader in #market-signals on 2026-09-10, not by a test."""
+    from artemis.tools.signal_queue import _DEF
+
+    props = _DEF.input_schema["properties"]
+
+    assert "sourcePublishedAt" in props
+    description = props["sourcePublishedAt"]["description"]
+    assert "never today's date" in description, "the common wrong answer must be named"
+
+
+def test_a_stale_article_is_still_rejected() -> None:
+    """The filter was never broken — it was starved. Confirm it bites once fed."""
+    from datetime import UTC, datetime, timedelta
+
+    from artemis.marketing.article_recency import assess
+
+    old = (datetime.now(UTC).date() - timedelta(days=200)).isoformat()
+    verdict = assess(published_at=old, source_type="news_article", discovered_by="regional_news")
+
+    assert verdict.should_reject
+
+
+def test_an_absent_date_is_unknown_rather_than_fresh() -> None:
+    """A model that omits the date must not thereby get a free pass."""
+    from artemis.marketing.article_recency import assess
+
+    verdict = assess(published_at=None, source_type="news_article", discovered_by="regional_news")
+
+    assert verdict.verdict == "unknown"

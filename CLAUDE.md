@@ -104,9 +104,32 @@ Read these before doing anything substantive.
    even paraphrased closely enough to be recognisable. The test: could the
    speaker read it back and find themselves quoted? Then it does not ship.
 
-5. **Dependencies.** Never add or upgrade a dependency to a version released less than 7 days ago. Exception: direct response to a known CVE, documented at the point of upgrade. Applies to all dependency types — Python, Docker base images, GitHub Actions if we ever add them. The lockfile (`uv.lock`) must reflect the same constraint when regenerated.
+5. **Ask what can run locally.** The binding constraint on this system is
+   Jon's Claude subscription QUOTA, not dollars — `claude-code` is a subscription
+   CLI, so the figures in `cost_events` are imputed API rates and the real
+   marginal cost is zero. He hits 100% of his session limit repeatedly through
+   the day, and the agents compete for the same allowance as the sessions where
+   the building happens.
 
-6. **Tests are not optional.** Same discipline as the Node reference: >85% backend coverage, 100% on keystone-class modules. Run `./scripts/check.sh` before opening any branch for review.
+   So at design time, not as a later optimisation: **could this run on the Mac
+   Studio?** Background, internal, schema-shaped work should default there.
+   Interactive and judgement-heavy work stays on Claude.
+
+   Local drives full tool loops — proven end to end on 2026-09-10, a scout loop
+   through to `signal_queue.write`. It takes minutes and hundreds of thousands of
+   input tokens, and both are free. Three traps all look like the model failing
+   and are all ours: a client timeout (120s was hardcoded; a local turn is
+   legitimately longer), a `max_tokens` below the reasoning budget (returns an
+   EMPTY string with `finish_reason="length"`, a 200 with a usable shape), and a
+   model name the local server does not have.
+
+   Judge it on YIELD, never on errors. A fallback catches a provider that fails;
+   nothing catches one that succeeds and quietly produces less.
+   `docs/local-llm-scout-routing.md`.
+
+6. **Dependencies.** Never add or upgrade a dependency to a version released less than 7 days ago. Exception: direct response to a known CVE, documented at the point of upgrade. Applies to all dependency types — Python, Docker base images, GitHub Actions if we ever add them. The lockfile (`uv.lock`) must reflect the same constraint when regenerated.
+
+7. **Tests are not optional.** Same discipline as the Node reference: >85% backend coverage, 100% on keystone-class modules. Run `./scripts/check.sh` before opening any branch for review.
 
 ## Local dev quickstart
 

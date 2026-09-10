@@ -99,6 +99,16 @@ _DEF = Tool(
                 ),
             },
             "sourceUrl": {"type": "string"},
+            "sourcePublishedAt": {
+                "type": "string",
+                "description": (
+                    "The date the SOURCE was published, YYYY-MM-DD — the date on the "
+                    "article or notice itself, never today's date and never the date "
+                    "you found it. Omit it only if the source genuinely shows none; a "
+                    "guess is worse than nothing here, because an absent date is "
+                    "treated as unknown and a wrong one is treated as fact."
+                ),
+            },
             "whyFlagged": {"type": "string"},
             "changeHash": {
                 "type": "string",
