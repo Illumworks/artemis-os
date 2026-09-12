@@ -34,6 +34,7 @@ from artemis.crisis_content.poller import (
     start_crisis_content_scheduler,
     stop_crisis_content_scheduler,
 )
+from artemis.integrations.gong.warmer import start_gong_warmer, stop_gong_warmer
 from artemis.integrations.token_refresh.scheduler import (
     start_token_refresh_scheduler,
     stop_token_refresh_scheduler,
@@ -164,6 +165,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     start_token_refresh_scheduler()
     # Start the automation cron scheduler (OP1).
     start_automation_scheduler()
+    # Keep the Gong call window warm. Without this the first district question
+    # after every restart pays ~57s to page the corpus, and restarts happen
+    # while someone is working.
+    start_gong_warmer()
     # Start the scout execution scheduler (M5b).
     start_scout_scheduler()
     # Start the pipeline execution scheduler (PIPE4).
@@ -218,6 +223,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stop_token_refresh_scheduler()
         stop_automation_scheduler()
         stop_scout_scheduler()
+        stop_gong_warmer()
         stop_pipeline_scheduler()
         stop_memory_scheduler()
         stop_proactivity_scheduler()

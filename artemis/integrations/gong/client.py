@@ -37,6 +37,7 @@ group. Any logic treating "not Internal" as "the customer" is wrong on real data
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -147,9 +148,30 @@ class GongMetadataClient:
         import time as _time
         from datetime import UTC, datetime, timedelta
 
+        if not self._key or not self._secret:
+            # Before any cache. A client with no credentials must not serve data
+            # another process fetched: that would report success for an
+            # unauthenticated caller and hide a broken credential behind a warm
+            # window. Caught by an existing test when the shared cache landed.
+            raise GongUnavailableError(
+                "Gong credentials are not configured, so the call window cannot be "
+                "read. This is NOT a report of zero calls."
+            )
+
         cached = _window_cache.get(days)
         if cached and (_time.monotonic() - cached[0]) < _WINDOW_TTL_SECONDS:
             return cached[1]
+
+        # The in-process cache above helps a long-running process. It does NOT
+        # help the thing anyone actually uses: Callie's tools run in
+        # `artemis.tools.mcp_server`, spawned PER TURN by the claude-code adapter,
+        # so that dict is empty on arrival every single time and every turn paid
+        # the full 57-second paging. It is why Josh waited 361 seconds on one
+        # question. The shared copy is what makes the warmer worth anything.
+        shared = await _read_shared_window(days)
+        if shared is not None:
+            _window_cache[days] = (_time.monotonic(), shared)
+            return shared
 
         frm = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
         to = datetime.now(UTC).strftime("%Y-%m-%dT23:59:59Z")
@@ -179,6 +201,7 @@ class GongMetadataClient:
             )
 
         _window_cache[days] = (_time.monotonic(), calls)
+        await _write_shared_window(days, calls)
         return calls
 
     async def recent_calls_for_account(
@@ -225,12 +248,92 @@ class GongMetadataClient:
 #: while a stale answer that says "no linked calls" for a district we spoke to this
 #: morning is the failure this package keeps trying to avoid.
 _WINDOW_TTL_SECONDS = 300
+
+#: The shared copy lives a little longer than the in-process one: a
+#: per-turn subprocess should still find it warm between refreshes.
+_SHARED_WINDOW_TTL_SECONDS = 900
 _window_cache: dict[int, tuple[float, list[CallContext]]] = {}
 
 
 def clear_call_window_cache() -> None:
     """For tests, and for anything that needs to force a fresh read."""
     _window_cache.clear()
+
+
+def _context_to_row(call: CallContext) -> dict[str, Any]:
+    """Metadata only, matching what `CallContext` already holds.
+
+    No transcript, no participant names, no rep identity — the same restraint the
+    rest of this module keeps, applied at the point data becomes durable rather
+    than assumed to survive the trip.
+    """
+    return {
+        "call_id": call.call_id,
+        "started": call.started,
+        "duration_seconds": call.duration_seconds,
+        "title": call.title,
+        "system": call.system,
+        "account_name": call.account_name,
+        "account_tier": call.account_tier,
+        "trackers": call.trackers,
+        "internal_parties": call.internal_parties,
+        "external_parties": call.external_parties,
+        "unknown_parties": call.unknown_parties,
+        "opportunity_stage": call.opportunity_stage,
+        "days_since_stage_change": call.days_since_stage_change,
+    }
+
+
+async def _read_shared_window(days: int) -> list[CallContext] | None:
+    """The window another process already paged, or None if there is none fresh.
+
+    Never raises: a cache miss is a slow answer, and a cache that can break the
+    caller is worse than no cache.
+    """
+    try:
+        from sqlalchemy import text as _sql
+
+        import artemis.db as _db
+
+        async with _db.SessionLocal() as session:
+            row = (
+                await session.execute(
+                    _sql(
+                        "SELECT payload FROM gong_call_window_cache "
+                        "WHERE days = :d AND fetched_at > now() - make_interval(secs => :ttl)"
+                    ),
+                    {"d": days, "ttl": _SHARED_WINDOW_TTL_SECONDS},
+                )
+            ).first()
+    except Exception:
+        logger.debug("gong: shared call window unavailable", exc_info=True)
+        return None
+    if row is None or not row[0]:
+        return None
+    return [CallContext(**entry) for entry in row[0]]
+
+
+async def _write_shared_window(days: int, calls: list[CallContext]) -> None:
+    """Publish the window for other processes. Never raises."""
+    try:
+        from sqlalchemy import text as _sql
+
+        import artemis.db as _db
+
+        payload = [_context_to_row(c) for c in calls]
+        async with _db.SessionLocal() as session:
+            await session.execute(
+                _sql(
+                    "INSERT INTO gong_call_window_cache (days, fetched_at, call_count, payload) "
+                    "VALUES (:d, now(), :n, CAST(:p AS jsonb)) "
+                    "ON CONFLICT (days) DO UPDATE SET fetched_at = now(), "
+                    "call_count = EXCLUDED.call_count, payload = EXCLUDED.payload"
+                ),
+                {"d": days, "n": len(calls), "p": json.dumps(payload)},
+            )
+            await session.commit()
+    except Exception:
+        logger.warning("gong: could not publish the shared call window", exc_info=True)
 
 
 def drop_private(raw_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:

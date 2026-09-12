@@ -541,3 +541,75 @@ def test_the_window_cache_is_clearable() -> None:
     clear_call_window_cache()
 
     assert _window_cache == {}
+
+
+# ── the window has to cross processes, not just calls (2026-09-12) ──────────
+
+
+def test_the_window_is_published_for_other_processes() -> None:
+    """The in-process dict helps a long-running process and not the thing anyone
+    uses: Callie's tools run in `artemis.tools.mcp_server`, spawned PER TURN, so
+    that dict is empty on arrival every single time. Every turn paid the full
+    57-second paging, which is why Josh waited 361 seconds on one question."""
+    import inspect
+
+    from artemis.integrations.gong.client import GongMetadataClient
+
+    src = inspect.getsource(GongMetadataClient._call_window)
+    assert "_read_shared_window" in src, "a fresh process must find the window"
+    assert "_write_shared_window" in src, "and publish it for the next one"
+
+
+def test_the_shared_row_carries_no_call_content() -> None:
+    """Same restraint as everything else here, applied where data becomes durable
+    rather than assumed to survive the trip."""
+    from artemis.integrations.gong.client import CallContext, _context_to_row
+
+    # Assert the KEYS of a real row, not words in the source — an earlier version
+    # of this grepped the docstring that explains what is absent and failed on the
+    # word "transcript" appearing in the sentence saying there is none.
+    row = _context_to_row(
+        CallContext(
+            call_id="1",
+            started=None,
+            duration_seconds=60,
+            title="t",
+            system="s",
+            account_name="A District",
+            trackers={"Customer concerns": 1},
+            internal_parties=1,
+            external_parties=2,
+        )
+    )
+
+    allowed = {
+        "call_id",
+        "started",
+        "duration_seconds",
+        "title",
+        "system",
+        "account_name",
+        "account_tier",
+        "trackers",
+        "internal_parties",
+        "external_parties",
+        "unknown_parties",
+        "opportunity_stage",
+        "days_since_stage_change",
+    }
+    assert set(row) == allowed, "a new field reached the durable row unreviewed"
+
+    # Party COUNTS, never party names; and nothing that could carry words.
+    assert all(
+        isinstance(row[k], int) for k in ("internal_parties", "external_parties", "unknown_parties")
+    )
+
+
+def test_a_broken_shared_cache_cannot_break_the_caller() -> None:
+    """A cache miss is a slow answer. A cache that raises is an outage."""
+    import inspect
+
+    from artemis.integrations.gong import client
+
+    for fn in (client._read_shared_window, client._write_shared_window):
+        assert "except Exception" in inspect.getsource(fn)
