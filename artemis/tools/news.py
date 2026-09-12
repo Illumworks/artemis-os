@@ -23,6 +23,11 @@ from artemis.scouts._http import ScoutHttpClient
 from artemis.tools.context import ToolContext
 from artemis.tools.registry import register_tool
 
+#: Matches the 42-day recency bar the signal-queue write applies, so the
+#: search and the filter agree instead of one feeding the other work to
+#: throw away. Google News accepts d/m/y units.
+_DEFAULT_RECENCY = "42d"
+
 logger = logging.getLogger(__name__)
 
 _GOOGLE_NEWS_BASE = "https://news.google.com/rss/search"
@@ -32,7 +37,9 @@ _DEF = Tool(
     name="news_api.search",
     description=(
         "Search Google News RSS for recent articles matching a query. "
-        "Returns up to 25 items as JSON [{title, link, published, source}]. "
+        "Defaults to the last 42 days, matching the age bar the signal queue "
+        "enforces — unfiltered, this source returns a median article age of 130 "
+        "days. Returns up to 25 items as JSON [{title, link, published, source}]. "
         "Returns [] on any error (graceful empty)."
     ),
     input_schema={
@@ -43,6 +50,16 @@ _DEF = Tool(
             "state": {
                 "type": "string",
                 "description": "Optional 2-letter US state code to append to query.",
+            },
+            "when": {
+                "type": "string",
+                "description": (
+                    "Recency window as a Google News operator — '7d', '42d', '6m'. "
+                    "Defaults to 42d, which matches the age bar the signal queue "
+                    "enforces on news. Widen it only when you want a district's "
+                    "history rather than its news; results outside the bar will be "
+                    "rejected on write."
+                ),
             },
         },
     },
@@ -112,7 +129,20 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
         if state:
             query = f"{query} {state}"
 
-        encoded = urllib.parse.quote_plus(query)
+        # Ask Google News for recent articles rather than filtering stale ones out
+        # afterwards. Measured 2026-09-12 across three literacy queries, 75
+        # articles: only 4% were under a fortnight old, 68% were over 90 days, and
+        # the MEDIAN was 130 days. The scout was doing a full run to have almost
+        # everything rejected by the 42-day recency check downstream, and before
+        # that check worked it was publishing four-month-old articles as current
+        # news -- which is what a reader complained about in #market-signals.
+        #
+        # `when:` is a Google News search operator and the cheapest possible fix:
+        # the freshness moves from a filter we apply to a constraint they apply.
+        # Overridable because a caller researching a district's history wants the
+        # archive, not the week.
+        window = str(arguments.get("when") or _DEFAULT_RECENCY).strip()
+        encoded = urllib.parse.quote_plus(f"{query} when:{window}" if window else query)
         url = f"{_GOOGLE_NEWS_BASE}?q={encoded}&hl=en-US&gl=US&ceid=US:en"
 
         try:
