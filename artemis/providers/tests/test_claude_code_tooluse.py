@@ -918,3 +918,40 @@ async def test_run_with_tools_no_claude_config_dir_by_default(tmp_path: Path) ->
     assert "CLAUDE_CONFIG_DIR" not in captured_env, (
         "CLAUDE_CONFIG_DIR must NOT appear in subprocess env when claude_config_dir is None"
     )
+
+
+# ── Sub-agent spawning is denied (2026-08-16 incident) ───────────────────────
+
+
+def test_the_launch_command_denies_sub_agent_spawning() -> None:
+    """A scout spawned a sub-agent that returned six Dallas ISD signals which did
+    not exist — source URLs on our own company's BoardDocs slug, 2025 dates. The
+    scout spotted it and refused. Nothing in the system would have stopped it.
+
+    A sub-agent inherits no reason-code allowlist, no "never invent a signal"
+    rule, and no source-URL discipline, and its own tool calls never reach
+    ``agent_traces.tools_used`` — the parent logs one ``Agent`` entry, so the
+    conclusion gate and every audit are blind to what it did.
+    """
+    from artemis.providers.claude_code.adapter import _build_launch_command
+
+    cmd = _build_launch_command(
+        binary="claude",
+        model="claude-sonnet-4-6",
+        mcp_config_path="/tmp/x.json",
+        agent_tools=["signal_queue.write"],
+    )
+    joined = " ".join(cmd)
+    assert "--disallowed-tools" in cmd
+    # Both spellings: the CLI has used each name for this tool.
+    assert "Task" in cmd
+    assert "Agent" in cmd
+    # And the scout's own MCP tool is still permitted.
+    assert "mcp__artemis__signal_queue_write" in joined
+
+
+def test_denying_sub_agents_did_not_disturb_the_other_denials() -> None:
+    from artemis.providers.claude_code.adapter import _DISALLOWED_BUILTINS
+
+    for builtin in ("Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"):
+        assert builtin in _DISALLOWED_BUILTINS

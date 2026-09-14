@@ -125,6 +125,32 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 #: claude-code built-in tools we explicitly deny in the tool path. The agent's
 #: scoped MCP tools (the ``--allowed-tools`` allowlist) are the security
 #: boundary; denying the built-ins keeps the surface to exactly Artemis tools.
+#:
+#: **Sub-agent spawning is denied, and that one is not about file access.** On
+#: 2026-08-16 the `board_minutes` scout spawned a sub-agent, which came back with
+#: six Dallas ISD signals that did not exist: their source URLs pointed at
+#: `boarddocs.com/ca/amiralearning` — our own company slug — with 2025 dates and
+#: a slug structure no Dallas board uses. The scout noticed and refused to report
+#: them. That was diligence, not a gate; nothing in the system would have stopped
+#: it writing them.
+#:
+#: A spawned sub-agent inherits none of what makes a scout safe. Not the reason-
+#: code allowlist, not the "NEVER INVENT A SIGNAL" instruction, not the rule that
+#: a source URL must be the exact one an item carried. It is a general-purpose
+#: agent asked to go and find things, and its answer reaches the parent as
+#: ordinary text that the parent may relay in good faith — the same shape as
+#: `dispatch_research` returning "dispatched" for work it never started.
+#:
+#: It is also invisible. A sub-agent's own tool calls never appear in
+#: ``agent_traces.tools_used``; the parent records a single ``Agent`` entry, so
+#: neither the conclusion gate nor any audit can see what it actually did.
+#:
+#: Usage was 45 turns in 1,089, and 44 of those were scouts — 28 of them
+#: `state_doe`, which was working around a tool payload so large the harness
+#: spilled it to a file. That payload is fixed, so the workaround is moot.
+#: Nothing in Callie, the builder or the floating path has ever used it.
+#:
+#: Both names are listed because the CLI has used each for this tool.
 _DISALLOWED_BUILTINS: tuple[str, ...] = (
     "Bash",
     "Read",
@@ -134,6 +160,8 @@ _DISALLOWED_BUILTINS: tuple[str, ...] = (
     "Grep",
     "WebSearch",
     "WebFetch",
+    "Task",
+    "Agent",
 )
 
 #: Headless ``-p`` permission mode. ``default`` honours the ``--allowed-tools``
