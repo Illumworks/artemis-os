@@ -30,6 +30,7 @@ dependencies = [
     # (openpyxl 3.1.5 shipped 2024-06-28; python-docx 1.2.0 shipped 2025-06-16).
     "openpyxl>=3.1.5",
     "python-docx>=1.2.0",
+    "pytesseract>=0.3.13",
 ]
 
 [dependency-groups]

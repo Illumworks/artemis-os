@@ -136,13 +136,23 @@ Read these before doing anything substantive.
 **Prerequisites (one-time, brew-native).** This Mac mini is set up with Postgres running natively, not in Docker:
 
 ```bash
-brew install uv postgresql@17 pgvector
+brew install uv postgresql@17 pgvector tesseract
 brew services start postgresql@17
 createuser -s artemis
 createdb -O artemis artemis_os
 psql -d postgres -c "ALTER USER artemis WITH PASSWORD 'artemis';"
 psql -d artemis_os -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
+
+**`tesseract` is not optional if you care about board documents.** District
+board packets are routinely scanned images rather than digital text — of the
+twelve Dallas ISD attachments checked on 2026-09-14, one carried no extractable
+text at all and several were partly image-only. Without the binary,
+`artemis/scouts/_pdf.py` degrades quietly: `extract_text` returns an error for
+the page and the scout reports the document unreadable, which looks exactly like
+a dead link. With it, all twelve extract. The `pytesseract` Python package is a
+normal dependency in `pyproject.toml`; the engine itself is not, so a fresh
+machine needs this line.
 
 (`docker-compose.yml` is kept as an optional alternative for contributors who prefer containers, but the brew path is the supported one on this machine.)
 
