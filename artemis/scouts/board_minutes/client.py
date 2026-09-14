@@ -53,12 +53,14 @@ BoardDocs API notes:
 from __future__ import annotations
 
 import asyncio
+import html as html_module
 import json
 import logging
 import random
 import re
 import time
 from typing import Any
+from urllib.parse import urljoin
 
 from artemis.scouts._http import ScoutHttpClient
 from artemis.scouts._pdf import extract_text
@@ -96,6 +98,10 @@ _BOARDDOCS_UA = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 _BOARDDOCS_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+#: Attachments per agenda item handed to a scout. Items routinely carry a
+#: board doc plus several exhibits, and one Pinellas PDF measured 30MB.
+_MAX_ATTACHMENTS = 4
 
 # HTML entity substitutions for common board-document titles.
 _HTML_ENTITIES = re.compile(r"&#(\d+);|&amp;|&lt;|&gt;|&quot;|&apos;|&#x([0-9a-fA-F]+);")
@@ -340,6 +346,60 @@ async def fetch_agenda_item_body(
     except Exception as exc:
         _logger.debug("BoardDocs goto %s (item %s) failed: %s", goto_url, item_unique, exc)
     return ""
+
+
+async def fetch_agenda_item_files(
+    base_url: str,
+    item_unique: str,
+    http: ScoutHttpClient,
+) -> list[str]:
+    """Absolute URLs of the documents attached to one agenda item.
+
+    An agenda item's substance is usually in its attachments — the board doc, the
+    bid sheet, the contract — not in its title. Until now nothing surfaced them,
+    so a scout calling ``pdf_extractor.extract`` had only the item's ``goto``
+    permalink to pass, which is an HTML page: every call either 403'd or came
+    back "Data format error". That is why the traces say content verification was
+    limited to agenda titles.
+
+    The endpoint is undocumented and appears nowhere else in this codebase.
+    Verified live against Dallas ISD on 2026-09-14: ``POST
+    {base}/BD-GetPublicFiles?open&<rand>`` with body ``id=<item_unique>`` returns
+    a fragment of ``<a class="public-file" href="/…/pfiles/…/$file/….pdf">``.
+    Headers mirror ``fetch_agenda_item_body`` because the same bot filter sits in
+    front of both.
+
+    Returns ``[]`` on any failure — an item with no readable attachment is still
+    a useful item, and this must never cost us the title.
+    """
+    rand = random.random()  # noqa: S311 — not security-sensitive
+    files_url = f"{base_url}/BD-GetPublicFiles?open&{rand}"
+    try:
+        resp = await http.post(
+            files_url,
+            data={"id": item_unique},
+            headers={
+                "User-Agent": _BOARDDOCS_UA,
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "text/html, */*; q=0.01",
+                "Referer": f"{base_url}/Public",
+                "Origin": "https://go.boarddocs.com",
+            },
+        )
+    except Exception as exc:
+        _logger.debug(
+            "BoardDocs BD-GetPublicFiles %s (item %s) failed: %s", files_url, item_unique, exc
+        )
+        return []
+    if resp.status_code != 200 or not resp.text:
+        return []
+
+    urls: list[str] = []
+    for href in re.findall(r'href="([^"]+)"', resp.text):
+        absolute = urljoin("https://go.boarddocs.com", html_module.unescape(href))
+        if absolute not in urls:
+            urls.append(absolute)
+    return urls[:_MAX_ATTACHMENTS]
 
 
 async def fetch_boarddocs_bodies(
@@ -688,7 +748,14 @@ async def fetch_boarddocs(
 
     for pdf_url in pdf_links[:10]:  # Limit to first 10 PDF links per district.
         try:
-            pdf_resp = await http.get(pdf_url)
+            # A browser UA is required: CloudFront answers 403 to the bare
+            # httpx default. Verified 2026-09-14 — same file, 403 without
+            # and 200 application/pdf with.
+            pdf_resp = await http.get(
+                pdf_url,
+                headers={"User-Agent": _BOARDDOCS_UA, "Accept": "application/pdf,*/*"},
+                follow_redirects=True,
+            )
             pdf_bytes = pdf_resp.content
             text = extract_text(pdf_bytes, first_pages=20, last_pages=5, _open_fn=pdf_open_fn)
             speaker = _extract_speaker(text, "")
@@ -766,7 +833,14 @@ async def fetch_granicus(
 
     for pdf_url in pdf_links[:10]:
         try:
-            pdf_resp = await http.get(pdf_url)
+            # A browser UA is required: CloudFront answers 403 to the bare
+            # httpx default. Verified 2026-09-14 — same file, 403 without
+            # and 200 application/pdf with.
+            pdf_resp = await http.get(
+                pdf_url,
+                headers={"User-Agent": _BOARDDOCS_UA, "Accept": "application/pdf,*/*"},
+                follow_redirects=True,
+            )
             pdf_bytes = pdf_resp.content
             text = extract_text(pdf_bytes, first_pages=20, last_pages=5, _open_fn=pdf_open_fn)
             speaker = _extract_speaker(text, "")
@@ -842,7 +916,14 @@ async def fetch_district_site(
 
     for pdf_url in pdf_links[:10]:
         try:
-            pdf_resp = await http.get(pdf_url)
+            # A browser UA is required: CloudFront answers 403 to the bare
+            # httpx default. Verified 2026-09-14 — same file, 403 without
+            # and 200 application/pdf with.
+            pdf_resp = await http.get(
+                pdf_url,
+                headers={"User-Agent": _BOARDDOCS_UA, "Accept": "application/pdf,*/*"},
+                follow_redirects=True,
+            )
             pdf_bytes = pdf_resp.content
             text = extract_text(pdf_bytes, first_pages=20, last_pages=5, _open_fn=pdf_open_fn)
             speaker = _extract_speaker(text, "")

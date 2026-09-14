@@ -20,7 +20,7 @@ import artemis.tools.memory_layer  # noqa: F401 — registers memory_layer.* (st
 import artemis.tools.models  # noqa: F401 — registers tool_invocations on Base.metadata
 import artemis.tools.news  # noqa: F401 — registers news_api.search
 import artemis.tools.pdf_extractor  # noqa: F401 — registers pdf_extractor.extract
-import artemis.tools.procurement  # noqa: F401 — registers procurement_portal.fetch (stub)
+import artemis.tools.procurement  # noqa: F401 — registers procurement_portal.fetch
 import artemis.tools.reason_codes  # noqa: F401 — registers reason_codes.*
 
 # CC4 — qualifier + content tools (the full-chain unblock)

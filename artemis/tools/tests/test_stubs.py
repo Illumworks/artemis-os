@@ -133,13 +133,30 @@ async def test_api_key_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         _legiscan_bill(_ctx()),
         _sb_search(_ctx()),
         _sb_doc(_ctx()),
-        _proc_factory(_ctx()),
         _li_fetch(_ctx()),
         _li_delta(_ctx()),
     ]
     for _, impl in stubs:
         result = await impl({})
         assert "STUB" in result, f"Expected STUB in: {result}"
+
+
+@pytest.mark.asyncio
+async def test_procurement_is_no_longer_a_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``procurement_portal.fetch`` used to sit in the list above. It does not
+    belong there any more: the Bonfire (Euna) path needs no key, so with
+    ``SAM_API_KEY`` unset the tool returns real opportunities rather than a stub
+    string — its own docstring says so. The old assertion described a capability
+    gap that has since been filled, and it failed on live data every run.
+
+    Asserting the current contract instead: no key, still a real answer.
+    """
+    monkeypatch.delenv("SAM_API_KEY", raising=False)
+    monkeypatch.delenv("PROCUREMENT_PORTAL_URL", raising=False)
+    _, impl = _proc_factory(_ctx())
+    result = await impl({})
+    assert "STUB" not in result
+    assert result.startswith("[")
 
 
 @pytest.mark.asyncio
