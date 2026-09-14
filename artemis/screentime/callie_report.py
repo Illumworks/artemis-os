@@ -54,6 +54,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.market_signals.source_link import slack_link
 from artemis.screentime.models import (
     STANCE_FAVORABLE,
     STANCE_UNFAVORABLE,
@@ -195,12 +196,15 @@ def _stance_emoji(stance: str) -> str:
 
 
 def _source_link(signal: ScreentimeSignal) -> str:
+    title = signal.title.strip()
     if signal.source_url:
-        label = signal.title.strip() or "source"
+        label = title or "source"
         if len(label) > 80:
             label = label[:77] + "..."
-        return f"<{signal.source_url}|{label}>"
-    return signal.title.strip() or "(no source link)"
+        # A Google News redirect does not reach the article; slack_link
+        # searches the headline instead. See source_link for why.
+        return slack_link(signal.source_url, label, headline=title)
+    return title or "(no source link)"
 
 
 def _move_line(signal: ScreentimeSignal) -> str:

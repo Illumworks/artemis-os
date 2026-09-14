@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from artemis.config import settings
+from artemis.market_signals.source_link import slack_link
 from artemis.memory.models import MemoryObservation
 from artemis.memory.schemas import Scope
 from artemis.screentime.models import (
@@ -255,13 +256,16 @@ def _signal_brief_line(signal: ScreentimeSignal) -> str:
 
 def _source_link(signal: ScreentimeSignal) -> str:
     """Slack mrkdwn link to the actual source (bill/policy), not a headline."""
+    title = signal.title.strip()
     if signal.source_url:
-        label = signal.title.strip() or "source"
+        label = title or "source"
         # Trim very long titles so the link stays readable.
         if len(label) > 80:
             label = label[:77] + "..."
-        return f"<{signal.source_url}|{label}>"
-    return signal.title.strip() or "(no source link)"
+        # A Google News redirect does not reach the article; slack_link
+        # searches the headline instead. See source_link for why.
+        return slack_link(signal.source_url, label, headline=title)
+    return title or "(no source link)"
 
 
 def _stance_emoji(stance: str) -> str:

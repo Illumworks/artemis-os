@@ -82,29 +82,22 @@ async def _resolve_section(
 
 
 async def _mention_text(session: AsyncSession) -> str:
-    """``<@U…>`` mentions for the people who should read this, or a plain fallback.
+    """The mention at the top of the brief: everyone in the channel.
 
-    Jon asked for Josh and Angela specifically. Resolved through Slack's own
-    records rather than ``directory_people``, whose ``slack_user_id`` was NULL
-    for every real approver and silently broke crisis-content approvals.
-    Unresolvable ids degrade to names — a brief that posts without a mention is
-    fine; a brief that does not post is not.
+    This used to resolve Josh and Angela by email through Slack's own records.
+    Jon, 2026-09-14: the channel is up to about fifteen people, so naming two of
+    them tells the other thirteen the brief is not for them.
+
+    ``<!channel>`` is a literal Slack token, so unlike the email lookup there is
+    nothing here that can fail, and no fallback is needed. It survives
+    ``lint_agent_text`` — checked, because that linter strips emoji as house
+    style and silently ate a ``🔥`` marker from this same brief once.
+
+    Still ``async`` and still taking a session: the signature is what the caller
+    and its tests use, and a mention that later depends on channel membership
+    would want both back.
     """
-    from artemis.integrations.slack.client import SlackClient
-    from artemis.proactivity.commitments import _get_slack_token_for_agent
-
-    wanted = ("joshua.mukai@amiralearning.com", "angela.miata@amiralearning.com")
-    try:
-        token = await _get_slack_token_for_agent(session, agent_id="callie")
-        if not token:
-            return "Josh, Angela"
-        client = SlackClient(token=token)
-        ids = [uid for email in wanted if (uid := await client.lookup_user_by_email(email))]
-        if ids:
-            return " ".join(f"<@{uid}>" for uid in ids)
-    except Exception:
-        logger.warning("market_signals: could not resolve mentions", exc_info=True)
-    return "Josh, Angela"
+    return "<!channel>"
 
 
 async def build_daily_brief(session: AsyncSession) -> str | None:

@@ -30,6 +30,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.market_signals.source_link import slack_link
+
 logger = logging.getLogger(__name__)
 
 # Six is a judgement, not a formula: enough that a real cluster shows up, few
@@ -203,7 +205,9 @@ async def build_campaign_section(session: AsyncSession) -> str | None:
         # posted brief and hot signals would be indistinguishable from standard
         # ones -- with the code looking perfectly correct.
         prefix = "*Hot* " if tier == "hot" else ""
-        headline_text = f"<{url}|{headline}>" if url else headline
+        # A Google News redirect does not reach the article; slack_link
+        # searches the headline instead. See source_link for why.
+        headline_text = slack_link(url, headline, headline=headline)
         lines.append(f"- {prefix}{headline_text}" + (f" [{label}]" if label else ""))
 
     if not lines:

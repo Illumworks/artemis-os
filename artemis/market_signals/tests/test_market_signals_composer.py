@@ -202,3 +202,19 @@ def test_a_state_level_signal_is_not_ranked_last_for_having_no_district() -> Non
         return (_code_priority(m.get("reason_codes")), _tier_rank(m))
 
     assert sort_key(state_mandate) < sort_key(d1_hire)
+
+
+@pytest.mark.asyncio
+async def test_brief_mentions_the_whole_channel() -> None:
+    """Jon, 2026-09-14: about fifteen people read this now, so naming two of
+    them told the other thirteen it was not for them."""
+    from artemis.market_signals import composer
+
+    assert await composer._mention_text(None) == "<!channel>"  # type: ignore[arg-type]
+
+
+def test_channel_mention_survives_the_house_style_linter() -> None:
+    """The same linter silently stripped a 🔥 marker from this brief once."""
+    from artemis.writing_rules.agent_lint import lint_agent_text
+
+    assert lint_agent_text("<!channel>") == "<!channel>"
