@@ -868,9 +868,7 @@ class DistrictContact(Base):
     # a missing target.
     source_observation_id: Mapped[int | None] = mapped_column(
         BigInteger,
-        ForeignKey(
-            "memory_observations.id", name="fk_district_contacts_source_observation"
-        ),
+        ForeignKey("memory_observations.id", name="fk_district_contacts_source_observation"),
         nullable=True,
     )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
@@ -893,6 +891,9 @@ class CampaignSend(Base):
       sent    — transport stub has recorded the send (no real email)
       failed  — transport error (future use)
       skipped — no contacts resolved at enqueue time; deliverable stays 'approved'
+      simulated — rendered in full and delivered to nobody, because no real
+        transport is configured. Distinct from 'sent' on purpose: recording a
+        dry run as sent is how a campaign nobody received looks delivered.
 
     recipients — snapshot of resolved contacts at queue time:
       [{"contact_id": int, "district_id": int, "name": str,
@@ -901,11 +902,14 @@ class CampaignSend(Base):
 
     __tablename__ = "campaign_sends"
     __table_args__ = (
+        # Must stay in step with migration 0122, which added 'simulated' and
+        # dropped the transport pin. The test database is built from this
+        # metadata rather than from the migrations, so a model left behind means
+        # the tests run against a schema production does not have.
         CheckConstraint(
-            "status IN ('queued','sent','failed','skipped')",
+            "status IN ('queued','sent','simulated','failed','skipped')",
             name="ck_campaign_sends_status",
         ),
-        CheckConstraint("transport IN ('stub')", name="ck_campaign_sends_transport"),
         Index("idx_campaign_sends_status_queued_at", "status", "queued_at"),
         Index("idx_campaign_sends_candidate", "candidate_id"),
         Index("idx_campaign_sends_deliverable", "deliverable_id"),
