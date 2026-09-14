@@ -121,6 +121,11 @@ async def build_campaign_section(session: AsyncSession) -> str | None:
                            s.urgency_tier,
                            s.state,
                            s.source_url,
+                           -- Who reported it. For a news item whose URL is an
+                           -- opaque redirect this is the only provenance a
+                           -- reader gets, so it is the link's label.
+                           s.provenance->>'source_publisher' AS source_publisher,
+                           s.provenance->>'source_domain'    AS source_domain,
                            COALESCE(d.name, '') AS district_name,
                            COALESCE(d.tier, '') AS district_tier,
                            s.reason_codes
@@ -206,9 +211,19 @@ async def build_campaign_section(session: AsyncSession) -> str | None:
         # ones -- with the code looking perfectly correct.
         prefix = "*Hot* " if tier == "hot" else ""
         # A Google News redirect does not reach the article; slack_link
-        # searches the headline instead. See source_link for why.
-        headline_text = slack_link(url, headline, headline=headline)
-        lines.append(f"- {prefix}{headline_text}" + (f" [{label}]" if label else ""))
+        # searches the headline instead, scoped to the publisher when we know
+        # one. See source_link for why.
+        headline_text = slack_link(
+            url,
+            headline,
+            headline=headline,
+            domain=(m.get("source_domain") or ""),
+        )
+        publisher = (m.get("source_publisher") or "").strip()
+        # Name the outlet. A reader deciding whether to click has nothing else
+        # to go on when the URL itself is opaque.
+        attribution = f" — _{publisher}_" if publisher else ""
+        lines.append(f"- {prefix}{headline_text}{attribution}" + (f" [{label}]" if label else ""))
 
     if not lines:
         return None

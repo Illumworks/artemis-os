@@ -70,6 +70,12 @@ class NormalizedFinding:
     source_url: str | None
     source_title: str | None
     source_published_at: str | None  # ISO date YYYY-MM-DD
+    #: Who published it, and where they live. Google News hands us
+    #: `<source url="https://www.marinij.com">Marin Independent Journal</source>`
+    #: on every item; until 2026-09-14 nothing carried it past the tool, so a
+    #: brief could not even say who reported a story.
+    source_publisher: str | None
+    source_domain: str | None
     source_author: str | None
     source_metadata_json: Any | None
     state_code: str | None
@@ -265,6 +271,20 @@ def normalize_intake_payload(
         else None
     )
 
+    source_publisher_raw = payload.get("sourcePublisher")
+    source_publisher: str | None = (
+        str(source_publisher_raw).strip()
+        if isinstance(source_publisher_raw, str) and source_publisher_raw.strip()
+        else None
+    )
+
+    source_domain_raw = payload.get("sourceDomain")
+    source_domain: str | None = (
+        str(source_domain_raw).strip()
+        if isinstance(source_domain_raw, str) and source_domain_raw.strip()
+        else None
+    )
+
     source_author_raw = payload.get("sourceAuthor")
     source_author: str | None = (
         str(source_author_raw).strip()
@@ -305,6 +325,8 @@ def normalize_intake_payload(
         source_url=source_url_str.strip() if has_url else None,
         source_title=source_title,
         source_published_at=normalized_published_at,
+        source_publisher=source_publisher,
+        source_domain=source_domain,
         source_author=source_author,
         source_metadata_json=payload.get("sourceMetadataJson"),
         state_code=state_code,

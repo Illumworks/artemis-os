@@ -158,3 +158,51 @@ def test_result_is_normalized_finding_type() -> None:
     payload = _minimal_payload()
     result = normalize_intake_payload(payload, scout_type="manual")
     assert isinstance(result, NormalizedFinding)
+
+
+# ── Publisher provenance (2026-09-14) ────────────────────────────────────────
+
+
+def test_the_publisher_survives_normalisation() -> None:
+    """Google News names the publisher on every item. Nothing carried it past
+    the fetch tool, so `source_title` sat NULL on every stored signal and a brief
+    could not say who reported a story."""
+    from artemis.marketing.scout_intake import normalize_intake_payload
+
+    out = normalize_intake_payload(
+        {
+            "headline": "District names interim superintendent",
+            "campaignFamily": "general_growth",
+            "sourceType": "news_article",
+            "sourceUrl": "https://news.google.com/rss/articles/CBMiabc",
+            "sourcePublisher": "Marin Independent Journal",
+            "sourceDomain": "https://www.marinij.com",
+            "sourceTitle": "Cheltenham board appoints McGinley as interim",
+            "reasonCodes": [{"code": "LEADER_TRANSITION_INTERIM"}],
+            "urgencyTier": "standard",
+        },
+        scout_type="regional_news",
+    )
+    assert out.source_publisher == "Marin Independent Journal"
+    assert out.source_domain == "https://www.marinij.com"
+    assert out.source_title == "Cheltenham board appoints McGinley as interim"
+
+
+def test_a_signal_without_a_publisher_is_still_accepted() -> None:
+    """Most sources are not news and carry no publisher; absence must not be an
+    error, only a missing byline."""
+    from artemis.marketing.scout_intake import normalize_intake_payload
+
+    out = normalize_intake_payload(
+        {
+            "headline": "RFP issued for literacy materials",
+            "campaignFamily": "obc",
+            "sourceType": "board_minutes",
+            "sourceUrl": "https://go.boarddocs.com/tx/disd/Board.nsf/goto?open&id=A",
+            "reasonCodes": [{"code": "OBC_RFP_OPEN"}],
+            "urgencyTier": "standard",
+        },
+        scout_type="board_minutes",
+    )
+    assert out.source_publisher is None
+    assert out.source_domain is None

@@ -99,6 +99,30 @@ _DEF = Tool(
                 ),
             },
             "sourceUrl": {"type": "string"},
+            "sourceTitle": {
+                "type": "string",
+                "description": (
+                    "The source item's own headline, verbatim. Yours is a summary for "
+                    "a reader; this is what the article actually says it is."
+                ),
+            },
+            "sourcePublisher": {
+                "type": "string",
+                "description": (
+                    "Who published it -- the 'source' field a fetch tool returned, e.g. "
+                    "'Marin Independent Journal'. Populate it whenever the tool gave you "
+                    "one. It is what a reader sees beside the link, and for a news item "
+                    "whose URL is an opaque redirect it is the only provenance they get."
+                ),
+            },
+            "sourceDomain": {
+                "type": "string",
+                "description": (
+                    "The publisher's domain -- the 'source_domain' a fetch tool returned, "
+                    "e.g. 'https://www.marinij.com'. Never use it as sourceUrl: a homepage "
+                    "is not the item and is rejected as one."
+                ),
+            },
             "sourcePublishedAt": {
                 "type": "string",
                 "description": (
@@ -301,6 +325,11 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
                 # old anything was and a 2024 article read as current.
                 "source_published_at": normalized.source_published_at,
                 "source_title": normalized.source_title,
+                # The feed names the publisher on every item. Carrying it means a
+                # brief can say WHO reported something even when the link itself
+                # is an unresolvable Google News redirect.
+                "source_publisher": normalized.source_publisher,
+                "source_domain": normalized.source_domain,
                 **({"change_hash": incoming_change_hash} if incoming_change_hash else {}),
             },
         )

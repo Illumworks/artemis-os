@@ -39,7 +39,14 @@ _DEF = Tool(
         "Search Google News RSS for recent articles matching a query. "
         "Defaults to the last 42 days, matching the age bar the signal queue "
         "enforces — unfiltered, this source returns a median article age of 130 "
-        "days. Returns up to 25 items as JSON [{title, link, published, source}]. "
+        "days. Returns up to 25 items as JSON "
+        "[{title, link, published, source, source_domain}]. "
+        "'link' is an opaque news.google.com redirect: cite it as sourceUrl "
+        "exactly as given, and NEVER substitute 'source_domain' for it — a "
+        "homepage is not the item and is rejected as one. Pass 'source' as "
+        "sourcePublisher and 'source_domain' as sourceDomain when you write the "
+        "signal: they are the only provenance a reader gets for a link that "
+        "cannot be opened directly. "
         "Returns [] on any error (graceful empty)."
     ),
     input_schema={

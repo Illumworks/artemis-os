@@ -45,7 +45,9 @@ def test_unresolvable_link_becomes_a_headline_search() -> None:
     # The reader still sees the publisher, and the href is now static.
     assert out.endswith("|Chalkbeat Chicago>")
     assert JULIE_LINK not in out
-    assert "search?q=Illinois+districts+weigh" in out
+    # Quoted since 2026-09-14, so a dozen outlets running the same wire story
+    # do not all match the search.
+    assert "search?q=%22Illinois+districts+weigh" in out
 
 
 def test_resolvable_link_is_passed_through_untouched() -> None:
@@ -71,3 +73,46 @@ def test_rendered_link_survives_the_house_style_linter() -> None:
 
     out = slack_link(JULIE_LINK, "Chalkbeat Chicago", headline=HEADLINE)
     assert lint_agent_text(out) == out
+
+
+# ── Naming the publisher (2026-09-14) ─────────────────────────────────────────
+# Going direct to publisher feeds was considered and measured against: 134
+# distinct publishers in 202 live items across five scout-style queries, 78% of
+# them appearing exactly once. Local district news is a long tail, so a curated
+# feed list cannot cover a national territory. What the Google News feed DOES
+# give on every item is `<source url="...">Publisher</source>`, and that was
+# being thrown away.
+
+
+def test_the_search_is_narrowed_to_the_publisher_when_known() -> None:
+    from artemis.market_signals.source_link import search_url
+
+    out = search_url("Laneville ISD names interim superintendent", "https://www.marinij.com")
+    assert "site%3Awww.marinij.com" in out
+    # Quoted, so a dozen outlets running the same wire story do not all match.
+    assert "%22Laneville" in out
+
+
+def test_without_a_publisher_the_search_still_works() -> None:
+    from artemis.market_signals.source_link import search_url
+
+    out = search_url("Laneville ISD names interim superintendent")
+    assert "site%3A" not in out
+    assert "Laneville" in out
+
+
+def test_the_link_label_is_the_publisher() -> None:
+    out = slack_link(
+        JULIE_LINK, "Marin Independent Journal", headline=HEADLINE, domain="www.marinij.com"
+    )
+    assert out.endswith("|Marin Independent Journal>")
+    assert "site%3Awww.marinij.com" in out
+
+
+def test_a_publisher_domain_is_normalised_however_it_arrives() -> None:
+    from artemis.market_signals.source_link import publisher_host
+
+    for raw in ("https://www.marinij.com", "www.marinij.com", "http://www.marinij.com/"):
+        assert publisher_host(raw) == "www.marinij.com"
+    for junk in ("", None, "   "):
+        assert publisher_host(junk) == ""
