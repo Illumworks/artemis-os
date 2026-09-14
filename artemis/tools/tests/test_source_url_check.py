@@ -75,7 +75,7 @@ async def test_a_definitive_miss_rejects(monkeypatch: pytest.MonkeyPatch, status
 async def test_a_live_page_is_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch(monkeypatch, status=200)
 
-    verdict = await verify_source_url("https://www.cde.ca.gov/")
+    verdict = await verify_source_url("https://www.cde.ca.gov/nr/ne/yr26/yr26rel12.asp")
 
     assert verdict.ok
     assert verdict.verified
@@ -102,7 +102,7 @@ async def test_a_network_failure_is_allowed_but_unverified(
 ) -> None:
     _patch(monkeypatch, boom=True)
 
-    verdict = await verify_source_url("https://www.tea.texas.gov/")
+    verdict = await verify_source_url("https://tea.texas.gov/about-tea/news/2026/release-14")
 
     assert verdict.ok
     assert not verdict.verified
@@ -122,3 +122,62 @@ async def test_a_blocked_address_is_rejected(monkeypatch: pytest.MonkeyPatch) ->
 
     assert not verdict.ok
     assert "egress" in verdict.reason
+
+
+# ── A homepage is not a source (2026-09-14) ───────────────────────────────────
+# 107 signals in 45 days cited a bare domain. They pass the network check
+# perfectly — that is the trap — so this rule is on shape, before any request.
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://6abc.com",  # all three were live in the brief on 2026-09-14
+        "https://www.wjtv.com",
+        "https://kval.com/",
+        "https://www.cascadiadaily.com",
+        "https://thehendersonnews.com/",
+        "https://example.com/#top",  # a fragment never reaches the server
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_bare_homepage_is_rejected_without_a_request(url: str) -> None:
+    verdict = await verify_source_url(url)
+    assert not verdict.ok
+    assert "homepage" in verdict.reason
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://6abc.com/news/visalia-unified-dual-language/1234",
+        "https://legiscan.com/IL/bill/SB1672/2025",
+        "https://go.boarddocs.com/il/cps/Board.nsf/goto?open&id=ABC",
+        "https://utah.bonfirehub.com/opportunities/234696",
+        # An opaque Google News redirect is the EXACT url the item carried, which
+        # is what we want cited — never swapped for the publisher's front page.
+        "https://news.google.com/rss/articles/CBMitgFBVV95cUxOdXpjM1dvTHBa",
+    ],
+)
+def test_real_item_urls_are_not_caught_by_the_shape_rule(url: str) -> None:
+    from artemis.tools._source_url_check import _is_bare_domain
+
+    assert not _is_bare_domain(url)
+
+
+def test_unparseable_input_is_left_to_the_network_check() -> None:
+    """This rule must only fire where we are certain; anything odd falls through
+    rather than rejecting a signal on a parsing quirk."""
+    from artemis.tools._source_url_check import _is_bare_domain
+
+    for junk in ("not a url", "", "://", "mailto:a@b.com"):
+        assert not _is_bare_domain(junk)
+
+
+@pytest.mark.asyncio
+async def test_an_absent_url_is_still_legitimate() -> None:
+    """Rejecting the homepage must not make omission a rejection too — absence is
+    honest, a front page standing in for an article is not."""
+    verdict = await verify_source_url("")
+    assert verdict.ok
+    assert not verdict.verified

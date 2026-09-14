@@ -211,8 +211,12 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
             )
             return (
                 f"REJECTED: {verdict.reason}. A signal must cite a source you actually "
-                "retrieved. Do not construct or guess a URL -- if a feed returned nothing, "
-                "report zero signals; that is a valid and useful result."
+                "retrieved. Use the EXACT url the item carried, character for character, "
+                "even when it is a long opaque redirect you cannot open yourself -- that is "
+                "still the right answer, and a later step resolves it. Never substitute the "
+                "publisher's homepage, and never construct, shorten or guess a URL. If a "
+                "feed returned nothing, report zero signals; that is a valid and useful "
+                "result."
             )
 
         # ── Source-URL dedup (fallback for null-district / federal signals) ──────
