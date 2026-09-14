@@ -90,7 +90,13 @@ async def _run_scout_job(agent_id: str) -> None:
     tail = (stdout or b"").decode(errors="replace").strip().splitlines()[-1:] if stdout else []
     last_line = tail[0] if tail else "(no output)"
     if proc.returncode == 0:
-        logger.info("scout %s: subprocess exit=0 last_line=%s", agent_id, last_line)
+        # exit=0 means the subprocess ran, NOT that the scan reached an answer.
+        # scout_cli flags a run that fetched and then stopped without writing or
+        # concluding; that must not read as a clean cycle in the log.
+        if '"inconclusive"' in last_line:
+            logger.warning("scout %s: scan did not conclude — %s", agent_id, last_line)
+        else:
+            logger.info("scout %s: subprocess exit=0 last_line=%s", agent_id, last_line)
     else:
         logger.warning(
             "scout %s: subprocess exit=%s last_line=%s",

@@ -52,6 +52,8 @@ async def _run_scout_in_db(
     from sqlalchemy import select
 
     from artemis.builders.executor import default_agent_instruction, run_agent
+    from artemis.builders.models import AgentTrace
+    from artemis.marketing import scout_conclusion
     from artemis.marketing.models import SignalQueue
     from artemis.marketing.repository import create_scout_run, update_scout_run
 
@@ -79,6 +81,26 @@ async def _run_scout_in_db(
                 .scalars()
                 .all()
             )
+            # Did the run actually finish? A scout that fetches, starts
+            # analysing and stops has been recorded as a success 161 times in
+            # the last 30 days. See scout_conclusion for the measurement.
+            trace = (
+                await session.execute(
+                    select(AgentTrace.tools_used, AgentTrace.output_summary)
+                    .where(AgentTrace.session_id == run.run_id)
+                    .order_by(AgentTrace.id.desc())
+                    .limit(1)
+                )
+            ).first()
+            inconclusive = False
+            note: str | None = None
+            if trace is not None and run.status == "completed" and not signal_ids:
+                tools_used, output_summary = trace
+                if scout_conclusion.is_inconclusive(tools_used, output_summary):
+                    inconclusive = True
+                    note = scout_conclusion.reason(tools_used, output_summary)
+                    logger.warning("scout %s: %s", agent_id, note)
+
             scout_run = await create_scout_run(
                 session,
                 run_id=f"sched_{run.run_id}",
@@ -88,17 +110,23 @@ async def _run_scout_in_db(
             await update_scout_run(
                 session,
                 scout_run.id,
-                status="complete" if run.status == "completed" else "failed",
+                status="failed" if (run.status != "completed" or inconclusive) else "complete",
                 created_signal_ids=[str(sid) for sid in signal_ids],
             )
             await session.commit()
-            return {
+            result: dict[str, Any] = {
                 "agent_id": agent_id,
                 "run_id": run.run_id,
+                # The agent run itself completed; the SCAN did not. Keep both,
+                # because conflating them is what hid this for a month.
                 "status": run.status,
                 "emitted": len(signal_ids),
                 "scout_run_id": scout_run.id,
             }
+            if inconclusive:
+                result["inconclusive"] = True
+                result["reason"] = note
+            return result
         except Exception:
             await session.rollback()
             raise
