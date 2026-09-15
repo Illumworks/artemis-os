@@ -116,3 +116,34 @@ def test_a_publisher_domain_is_normalised_however_it_arrives() -> None:
         assert publisher_host(raw) == "www.marinij.com"
     for junk in ("", None, "   "):
         assert publisher_host(junk) == ""
+
+
+def test_the_publisher_suffix_is_split_off_the_headline() -> None:
+    """Google News appends " - Publisher" to every title. Left inside a quoted
+    search it prevents the match it is meant to make."""
+    from artemis.market_signals.source_link import split_google_title
+
+    head, pub = split_google_title(
+        "Illinois State Board of Education issues AI guidance, "
+        "written with help from AI - Capitol News Illinois"
+    )
+    assert pub == "Capitol News Illinois"
+    assert head.endswith("written with help from AI")
+
+
+def test_a_headline_containing_a_dash_is_not_cut_in_half() -> None:
+    """The split is on the LAST separator, and only when the tail looks like an
+    outlet name rather than a clause."""
+    from artemis.market_signals.source_link import split_google_title
+
+    text = "Board approves K-5 curriculum - and then reversed course the following week entirely"
+    head, pub = split_google_title(text)
+    assert pub == ""
+    assert head == text
+
+
+def test_a_title_with_no_publisher_survives_intact() -> None:
+    from artemis.market_signals.source_link import split_google_title
+
+    assert split_google_title("A headline with no suffix") == ("A headline with no suffix", "")
+    assert split_google_title("") == ("", "")

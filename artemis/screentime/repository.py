@@ -47,7 +47,25 @@ async def store_signal(
     the previous contract for callers that only ever stored items which had
     already cleared the bar; the runner now passes it explicitly so brand-lane
     corpus items persist as not-reportable.
+
+    **content_hash alone was not enough.** It is
+    ``source_type|source_url|title``, and Google News does not keep the title
+    stable: the same Capitol News Illinois piece arrived on 2026-08-15 suffixed
+    " - capitolnewsillinois.com" and on 2026-09-15 as " - Capitol News Illinois".
+    Different title, different hash, no conflict, second row. Jon clicked that
+    story in the 15 September brief and reached a month-old article.
+
+    It is not rare: **515 URLs in 90 days carried more than one row, up to five
+    apiece, and 514 of them were `national_news`** — every one a Google News
+    redirect, which addresses exactly one article. So the URL is the reliable
+    identity here and the title is not.
+
+    Checked before the URL check rather than instead of it: content_hash still
+    catches items with no URL at all, and leaving it alone means no rehashing, no
+    migration, and no row deleted.
     """
+    if await _url_already_stored(session, candidate.source_url):
+        return False
     stmt = (
         pg_insert(ScreentimeSignal)
         .values(
@@ -71,6 +89,23 @@ async def store_signal(
     )
     result = await session.execute(stmt)
     return result.scalar_one_or_none() is not None
+
+
+async def _url_already_stored(session: AsyncSession, source_url: str | None) -> bool:
+    """Whether this exact source URL is already on a stored signal.
+
+    Empty URLs are not a match — several source types legitimately carry none,
+    and treating "no URL" as a duplicate would silently drop all but the first.
+    """
+    url = (source_url or "").strip()
+    if not url:
+        return False
+    found = await session.scalar(
+        select(ScreentimeSignal.id).where(ScreentimeSignal.source_url == url).limit(1)
+    )
+    if found is not None:
+        _logger.debug("screentime: skipping already-stored url %s (signal %s)", url, found)
+    return found is not None
 
 
 async def upsert_signal_classification(

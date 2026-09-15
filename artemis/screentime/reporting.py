@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from artemis.config import settings
-from artemis.market_signals.source_link import slack_link
+from artemis.market_signals.source_link import slack_link, split_google_title
 from artemis.memory.models import MemoryObservation
 from artemis.memory.schemas import Scope
 from artemis.screentime.models import (
@@ -256,16 +256,20 @@ def _signal_brief_line(signal: ScreentimeSignal) -> str:
 
 def _source_link(signal: ScreentimeSignal) -> str:
     """Slack mrkdwn link to the actual source (bill/policy), not a headline."""
-    title = signal.title.strip()
+    # Google News appends " - Publisher" to every title. Inside a quoted search
+    # that suffix prevents the match it is meant to make, and in the label it is
+    # noise -- but as attribution it is the only provenance a reader gets for a
+    # link that cannot be opened directly. So: split it out, search the headline,
+    # name the outlet beside it.
+    headline, publisher = split_google_title(signal.title or "")
     if signal.source_url:
-        label = title or "source"
+        label = headline or "source"
         # Trim very long titles so the link stays readable.
         if len(label) > 80:
             label = label[:77] + "..."
-        # A Google News redirect does not reach the article; slack_link
-        # searches the headline instead. See source_link for why.
-        return slack_link(signal.source_url, label, headline=title)
-    return title or "(no source link)"
+        link = slack_link(signal.source_url, label, headline=headline)
+        return f"{link} — _{publisher}_" if publisher else link
+    return headline or "(no source link)"
 
 
 def _stance_emoji(stance: str) -> str:

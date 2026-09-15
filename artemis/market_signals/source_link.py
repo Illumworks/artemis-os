@@ -44,6 +44,32 @@ def is_unresolvable(url: str) -> bool:
     return host in _UNRESOLVABLE_HOSTS or host.removeprefix("www.") in _UNRESOLVABLE_HOSTS
 
 
+def split_google_title(title: str) -> tuple[str, str]:
+    """Split a Google News title into its headline and its publisher.
+
+    Google News appends the outlet to every title — "Illinois State Board of
+    Education issues AI guidance, written with help from AI - Capitol News
+    Illinois". The suffix is not part of the article's own headline, so leaving it
+    inside a quoted search actively prevents the match it is meant to make. It is
+    exactly what we want as the link's LABEL, though.
+
+    Splits on the LAST " - " so a headline containing its own dash survives.
+    Returns ``(headline, publisher)``, with publisher ``""`` when there is no
+    recognisable suffix — some feeds omit it, and a wrong guess here would cut a
+    real headline in half.
+    """
+    text = (title or "").strip()
+    for sep in (" - ", " – ", " — "):
+        head, found, tail = text.rpartition(sep)
+        if not found or not head.strip() or not tail.strip():
+            continue
+        # A publisher is a short name, never a sentence. Anything long is far
+        # more likely to be part of the headline itself.
+        if len(tail) <= 45 and tail.count(" ") <= 6:
+            return head.strip(), tail.strip()
+    return text, ""
+
+
 def publisher_host(domain: str | None) -> str:
     """The bare host from a publisher domain, or "" — `www.` kept, scheme dropped."""
     raw = (domain or "").strip()

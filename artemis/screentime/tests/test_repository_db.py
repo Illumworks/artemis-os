@@ -214,3 +214,51 @@ async def test_purge_truncates_only_screentime_tables(db_session):
         await db_session.execute(text("SELECT count(*) FROM pipelines"))
     ).scalar_one()
     assert pipelines_after == pipelines_before  # untouched
+
+
+# ── Same article, different title suffix (2026-09-15) ────────────────────────
+
+
+async def test_the_same_url_is_not_stored_twice_under_a_changed_title(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Google News does not keep the title stable. The same Capitol News Illinois
+    piece arrived on 2026-08-15 suffixed " - capitolnewsillinois.com" and on
+    2026-09-15 as " - Capitol News Illinois" — different title, different
+    content_hash, no conflict, second row. Jon clicked it in the 15 September
+    brief and reached a month-old article.
+
+    515 URLs in 90 days carried more than one row, up to five apiece.
+    """
+    url = "https://news.google.com/rss/articles/CBMitwFBVV95cUxPdzhPTTNWdVFk"
+    base = "Illinois State Board of Education issues AI guidance, written with help from AI"
+    cls = _cls(STANCE_NEUTRAL)
+
+    first = _cand(f"{base} - capitolnewsillinois.com", stance_url=url)
+    assert await store_signal(db_session, first, cls) is True
+
+    second = _cand(f"{base} - Capitol News Illinois", stance_url=url)
+    assert second.content_hash != first.content_hash, "titles differ, so hashes must"
+    assert await store_signal(db_session, second, cls) is False
+
+    rows = await db_session.scalar(
+        text("SELECT count(*) FROM screentime_signals WHERE source_url = :u").bindparams(u=url)
+    )
+    assert rows == 1
+
+
+async def test_signals_without_a_url_are_still_deduped_on_content(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Several source types carry no URL. Treating "no URL" as a match would
+    silently drop all but the first, so the content_hash path must still run."""
+    cls = _cls(STANCE_FAVORABLE)
+
+    a = _cand("A bill with no link", stance_url="")
+    assert await store_signal(db_session, a, cls) is True
+    assert await store_signal(db_session, a, cls) is False, "identical content should dedupe"
+
+    b = _cand("A different bill with no link", stance_url="")
+    assert await store_signal(db_session, b, cls) is True, "different content must still store"
+
+
+async def test_a_genuinely_new_article_is_unaffected(db_session) -> None:  # type: ignore[no-untyped-def]
+    cls = _cls(STANCE_UNFAVORABLE)
+    assert await store_signal(db_session, _cand("One", stance_url="https://x.test/1"), cls) is True
+    assert await store_signal(db_session, _cand("Two", stance_url="https://x.test/2"), cls) is True
