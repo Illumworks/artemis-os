@@ -44,7 +44,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import or_, select
 
 from artemis.config import settings
-from artemis.market_signals.source_link import slack_link, split_google_title
+from artemis.market_signals.source_link import (
+    is_unresolvable,
+    search_url,
+    slack_link,
+    split_google_title,
+)
 from artemis.memory.models import MemoryObservation
 from artemis.memory.schemas import Scope
 from artemis.screentime.models import (
@@ -275,8 +280,16 @@ def _signal_brief_line(signal: ScreentimeSignal) -> str:
         bits.append(f"summary={signal.summary}")
     if signal.amira_angle:
         bits.append(f"amira_angle={signal.amira_angle}")
+    if signal.published_at:
+        # The composer could not tell a story's age, so a fourteen-month-old
+        # article read exactly like this morning's.
+        bits.append(f"published={signal.published_at.date().isoformat()}")
     if signal.source_url:
-        bits.append(f"source={signal.source_url}")
+        # The RENDERED link, not the raw URL. Handing the composer a
+        # news.google.com redirect meant it emitted one, so everything the
+        # deterministic builder does about dead links was bypassed on the path
+        # that actually posts.
+        bits.append(f"link={_source_link(signal)}")
     return " | ".join(bits)
 
 
@@ -418,7 +431,32 @@ async def _compose_digest_text(session: AsyncSession, signals: list[ScreentimeSi
     if have_links and "http" not in text:
         _log.info("screentime_report: composed digest had no links; using fallback")
         return _fallback_digest_text(signals)
-    return text
+    return _repair_unresolvable_links(text, signals)
+
+
+def _repair_unresolvable_links(text: str, signals: list[ScreentimeSignal]) -> str:
+    """Replace any Google News redirect the composer emitted with a search.
+
+    The prompt asks for the prepared link and the composer is now given one, but
+    a rule in a prompt is not a gate in code — and this is the path that actually
+    posts to Slack. Anything still carrying a `news.google.com/rss/articles/...`
+    URL is rewritten here, so a redirect cannot reach a reader whatever the model
+    decided to do.
+
+    Matched on the URL, so it repairs the link even when the composer wrote its
+    own label. A URL we cannot match back to a signal is left alone rather than
+    guessed at.
+    """
+    repaired = text
+    for signal in signals:
+        url = (signal.source_url or "").strip()
+        if not url or not is_unresolvable(url):
+            continue
+        headline, _publisher = split_google_title(signal.title or "")
+        if not headline:
+            continue
+        repaired = repaired.replace(url, search_url(headline))
+    return repaired
 
 
 # ── Slack post helper (reuses Callie's resolved token + SlackClient) ─────────

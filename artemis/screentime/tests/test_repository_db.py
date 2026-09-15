@@ -301,3 +301,63 @@ def test_the_digest_age_bar_matches_the_rest_of_the_system() -> None:
     from artemis.screentime.reporting import _MAX_ARTICLE_AGE_DAYS
 
     assert _MAX_ARTICLE_AGE_DAYS == 42
+
+
+# ── The composed path is the one that posts (2026-09-15) ─────────────────────
+
+
+def test_a_redirect_the_composer_emits_is_repaired() -> None:
+    """The digest Slack actually receives is LLM-composed, not the deterministic
+    builder — so fixing `_source_link` alone left the posting path untouched, and
+    a reader flagged a link on it. The composer is now handed a prepared link,
+    but a rule in a prompt is not a gate in code, so anything still carrying a
+    redirect is rewritten before it is posted."""
+    from artemis.screentime.models import ScreentimeSignal
+    from artemis.screentime.reporting import _repair_unresolvable_links
+
+    url = "https://news.google.com/rss/articles/CBMitwFBVV95cUxPdzhPTTNW"
+    sig = ScreentimeSignal(
+        title="Illinois State Board of Education issues AI guidance - Capitol News Illinois",
+        source_url=url,
+        state="IL",
+    )
+    composed = f"• <{url}|ISBE issues AI guidance>, Illinois SBE issued guidance."
+
+    out = _repair_unresolvable_links(composed, [sig])
+    assert url not in out
+    assert "news.google.com/search?q=" in out
+    # The composer's own label survives; only the href changes.
+    assert "|ISBE issues AI guidance>" in out
+
+
+def test_a_working_link_is_left_alone_by_the_repair() -> None:
+    from artemis.screentime.models import ScreentimeSignal
+    from artemis.screentime.reporting import _repair_unresolvable_links
+
+    url = "https://capitolnewsillinois.com/news/isbe-ai-guidance"
+    sig = ScreentimeSignal(title="ISBE issues AI guidance - Capitol News Illinois", source_url=url)
+    composed = f"• <{url}|ISBE issues AI guidance>"
+    assert _repair_unresolvable_links(composed, [sig]) == composed
+
+
+def test_the_composer_is_told_how_old_the_article_is() -> None:
+    """It could not previously tell a fourteen-month-old story from this
+    morning's, which is exactly what a reader called out."""
+    from datetime import UTC, datetime
+
+    from artemis.screentime.models import ScreentimeSignal
+    from artemis.screentime.reporting import _signal_brief_line
+
+    sig = ScreentimeSignal(
+        title="Use of AI reading tool in Worcester schools raises privacy concerns - Telegram",
+        source_url="https://news.google.com/rss/articles/CBMiabc",
+        state="MA",
+        level="district",
+        status="news",
+        stance="neutral",
+        published_at=datetime(2025, 7, 16, tzinfo=UTC),
+    )
+    line = _signal_brief_line(sig)
+    assert "published=2025-07-16" in line
+    # And it is handed a usable link rather than the raw redirect.
+    assert "news.google.com/rss/articles" not in line
