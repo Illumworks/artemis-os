@@ -8,6 +8,84 @@ This is what stops a bad item reaching a channel. It is deliberately explicit
 about what we do NOT check, because a list of only the successes reads as
 complete and is worse than no list.
 
+## What we are actually looking for
+
+Two channels with two different jobs, which is why an item that belongs in one
+would be noise in the other.
+
+### #market-signals — buying intent
+
+Scored against **17 named reasons**, each with its own urgency. Nothing else
+qualifies; a scout may not invent a category.
+
+**Policy and funding**
+- A state law passes requiring literacy screening or intervention *(hot once it
+  passes a chamber or is enacted)*
+- Legislation reducing ed-tech screen time, or public dissatisfaction with it
+- A state publishes a literacy or high-impact-tutoring grant *(hot if the
+  deadline is within 30 days)*
+- A funding or selection deadline falls within 90 days
+- A district publicly discusses HB 2 Early Literacy Intervention Allotment money
+  *(context only, never an alert on its own)*
+
+**Competitive**
+- A state adds Amira to an approved-vendor list *(hot)*
+- Public dissatisfaction with iReady, Lexia, UCSF Multitudes or Amplify — on
+  efficacy, cost, fit or renewal *(hot if it reaches a non-renewal vote or an
+  RFP)*
+
+**What a district is dealing with**
+- A strategic plan naming literacy as a top priority
+- A publicly cited reading-proficiency drop or achievement gap *(hot when paired
+  with vendor dissatisfaction or an RFP)*
+- A bilingual or dual-language programme expansion
+- MTSS or intervention staffing strain — Tier 2/3 capacity, shortages
+
+**Procurement**
+- A new core ELA adoption cycle opening — committee formed, materials review on a
+  board agenda
+- An active literacy, assessment, curriculum or tutoring RFP *(hot if it closes
+  within 14 days; **rejected outright beyond 45 days** unless strategic)*
+
+**Texas-specific** *(both hot — Amira is TEA-approved for each)*
+- A district pursuing or awarded an HB 1416 tutoring waiver
+- A district flagging HB 3 dyslexia reporting difficulty
+
+**Leadership**
+- A superintendent, CAO or curriculum director formally hired — **two sources
+  required**, a board vote or a district release *(hot for 90 days after)*
+- An interim named — single source is enough, and it is never hot
+
+Work is grouped into five campaign families — outcomes-based contracting,
+dyslexia and structured literacy, biliteracy and dual-language, high-impact
+tutoring, and general growth — and the priority territory is **Florida, Texas,
+Indiana, Maryland, Missouri and Illinois**, with per-state nuances applied on top.
+
+### #policy-watch — screen-time and AI policy
+
+Two lanes:
+
+**Policy.** Per-state searches for screen time, device policy and AI policy in
+schools. The bar for reporting is deliberately higher than "an article exists":
+
+- It must be an actual **action** — proposed, passed, amended, or formal
+  guidance. A bare news item is captured but never reported.
+- It must genuinely concern screen time or AI in schools. A phone ban with no
+  instructional-technology angle is out of lane.
+- **Opinion, op-ed and editorial pieces are dropped.**
+- A vetoed or failed bill is kept as its own status and deliberately never counts
+  as a move that landed.
+
+**Brand.** Named-vendor coverage: Amira Learning, i-Ready, Lexia, Amplify
+reading, Renaissance Learning, MagicSchool AI, Brisk Teaching. This lane is how
+we hear about ourselves and our competitors, so it keeps items the policy bar
+would reject.
+
+Capture is broad and the read is narrow, on purpose: an item is stored even when
+it will not be reported, so the judgement can be revisited without re-crawling.
+Everything reportable carries an urgency — **hot**, **standard**, or
+**enrichment** (context, never an alert on its own).
+
 ## How old an item may be
 
 | Rule | Where |
