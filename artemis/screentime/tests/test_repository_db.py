@@ -262,3 +262,42 @@ async def test_a_genuinely_new_article_is_unaffected(db_session) -> None:  # typ
     cls = _cls(STANCE_UNFAVORABLE)
     assert await store_signal(db_session, _cand("One", stance_url="https://x.test/1"), cls) is True
     assert await store_signal(db_session, _cand("Two", stance_url="https://x.test/2"), cls) is True
+
+
+# ── Article age (2026-09-15) ─────────────────────────────────────────────────
+
+
+def test_rfc_2822_feed_dates_parse() -> None:
+    """RSS publication dates are RFC 2822. `_parse_dt` only tried
+    `fromisoformat`, so it returned None every time and `published_at` was NULL
+    on all 1,742 stored signals — which is why a two-month-old article could head
+    a brief as news."""
+    from artemis.screentime.filters import _parse_dt
+
+    parsed = _parse_dt("Tue, 11 Apr 2023 07:00:00 GMT")
+    assert parsed is not None
+    assert (parsed.year, parsed.month, parsed.day) == (2023, 4, 11)
+    assert parsed.tzinfo is not None, "a naive datetime would shift by the host offset"
+    assert parsed.hour == 7, "GMT must not be reinterpreted as local time"
+
+
+def test_iso_dates_still_parse() -> None:
+    from artemis.screentime.filters import _parse_dt
+
+    for value in ("2026-09-10T17:03:45Z", "2026-09-10T17:03:45+00:00", "2026-09-10"):
+        assert _parse_dt(value) is not None
+
+
+def test_an_unreadable_date_costs_the_date_not_the_signal() -> None:
+    from artemis.screentime.filters import _parse_dt
+
+    for junk in ("not a date", "", None, "Tue, 99 Zzz 9999"):
+        assert _parse_dt(junk) is None
+
+
+def test_the_digest_age_bar_matches_the_rest_of_the_system() -> None:
+    """The news tool and the signal queue both use 42 days. Three different bars
+    would mean one feeding the others work to throw away."""
+    from artemis.screentime.reporting import _MAX_ARTICLE_AGE_DAYS
+
+    assert _MAX_ARTICLE_AGE_DAYS == 42

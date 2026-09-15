@@ -19,7 +19,8 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from artemis.screentime.models import LEVEL_DISTRICT, LEVEL_STATE
@@ -309,15 +310,38 @@ def normalize_finding(finding: dict[str, Any]) -> CandidateSignal | None:
 
 
 def _parse_dt(value: Any) -> datetime | None:
+    """Parse a publication date from any of the shapes our sources emit.
+
+    **RFC 2822 was missing, and it is the one every news feed uses.** RSS dates
+    arrive as ``"Tue, 11 Apr 2023 07:00:00 GMT"``; this function only tried
+    ``fromisoformat``, which cannot read that, so it returned None every single
+    time. `published_at` was NULL on all 1,742 stored screentime signals —
+    including one from April 2023 sitting in the corpus as a current signal — and
+    nothing anywhere could tell how old an article was. It is why a month-old
+    story could head a brief and read as news.
+
+    Returns None only when the value is genuinely absent or unreadable. An
+    unparseable date must not raise: a bad timestamp should cost the date, never
+    the signal.
+    """
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if not value:
         return None
-    text = str(value).strip().replace("Z", "+00:00")
+    text = str(value).strip()
     try:
-        return datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+    if parsed is None:
         return None
+    # Naive timestamps are stored against a tz-aware column; assume UTC rather
+    # than the host's local zone, which would shift every feed date by the
+    # machine's offset.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _classify_status(text: str, source_type: str, meta: dict[str, Any]) -> str:

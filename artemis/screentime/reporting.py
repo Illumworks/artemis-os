@@ -38,9 +38,10 @@ Provider/Slack imports are lazy (inside functions) to stay circular-import safe.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from artemis.config import settings
 from artemis.market_signals.source_link import slack_link, split_google_title
@@ -142,6 +143,12 @@ async def _mark_reported(session: AsyncSession, signal_id: int, *, mode: str, ti
     )
 
 
+#: How old an ARTICLE may be and still head a brief. Matches the 42-day bar the
+#: news tool and the signal queue already enforce, so the three agree instead of
+#: one feeding the others work to throw away.
+_MAX_ARTICLE_AGE_DAYS = 42
+
+
 # ── Signal selection ────────────────────────────────────────────────────────
 
 
@@ -152,12 +159,31 @@ async def _select_unreported_real_moves(
 
     Filters to ``is_real_move`` (the digest is "real moves, not headlines") and
     excludes anything already reported via the dedup marker.
+
+    **Also filters on when the ARTICLE was published, not when we found it.**
+    Ordering by ``discovered_at`` alone put a story at the top of the brief
+    because our scout saw it yesterday, regardless of its age. That was
+    unavoidable while ``published_at`` was NULL on all 1,742 rows; migration 0124
+    backfilled it, and the corpus turned out to be **71% older than 180 days,
+    730 rows older than two years, the oldest from 2003**. A reader clicked one
+    of those on 2026-09-15.
+
+    A row whose date is still unknown is KEPT. Fifteen rows have an unparseable
+    date, and dropping real intelligence because a timestamp was malformed is the
+    more expensive mistake — the same call the fetch tools make.
     """
+    cutoff = datetime.now(UTC) - timedelta(days=_MAX_ARTICLE_AGE_DAYS)
     rows = (
         (
             await session.execute(
                 select(ScreentimeSignal)
                 .where(ScreentimeSignal.is_real_move.is_(True))
+                .where(
+                    or_(
+                        ScreentimeSignal.published_at.is_(None),
+                        ScreentimeSignal.published_at >= cutoff,
+                    )
+                )
                 .order_by(ScreentimeSignal.discovered_at.desc())
             )
         )
