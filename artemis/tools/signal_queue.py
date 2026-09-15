@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import select, text
 
 from artemis.agent.types import Tool, ToolImpl
+from artemis.marketing.deliverable import deliverable_email_clause
 from artemis.marketing.josh_spec import parse_spec, reason_codes_for_scout
 from artemis.marketing.models import DistrictContact, SignalQueue
 from artemis.marketing.qualification import run_and_store_qualification
@@ -386,7 +387,12 @@ def _factory(ctx: ToolContext) -> tuple[Tool, ToolImpl]:
                 .where(
                     DistrictContact.district_id == row.resolved_district_id,
                     DistrictContact.active.is_(True),
-                    DistrictContact.email.isnot(None),
+                    # And the address must be able to receive mail. Every one
+                    # stored today is on an RFC 2606 reserved domain, so a
+                    # NOT NULL check alone marked districts routable that
+                    # nobody can write to. Same rule as has_contact and
+                    # resolve_recipients_for_candidate.
+                    deliverable_email_clause(DistrictContact.email),
                 )
                 .limit(1)
             )

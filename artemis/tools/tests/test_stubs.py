@@ -93,10 +93,17 @@ async def test_contact_db_stub_numeric_true() -> None:
 
 @pytest.mark.asyncio
 async def test_contact_db_stub_numeric_false() -> None:
-    """Numeric districtId with no active contact → 'false'."""
+    """Numeric districtId with no active contact → a 'false' that says WHY.
+
+    A bare "false" could not distinguish "this district has none" from "the
+    database is empty", and on 2026-09-15 Callie read the second as the first —
+    reporting a New Mexico gap for a system that had no usable contact anywhere.
+    """
     ctx = _ctx_with_mock_session(scalar_one_or_none_return=None)
     _, impl = _contact_factory(ctx)
-    assert await impl({"districtId": "123"}) == "false"
+    result = await impl({"districtId": "123"})
+    assert result.startswith("false")
+    assert "district" in result
 
 
 @pytest.mark.asyncio

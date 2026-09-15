@@ -63,7 +63,7 @@ async def test_create_and_list(db_session: AsyncSession) -> None:
             db_session,
             district_id=district.id,
             name="Alex Johnson",
-            email="alex.johnson@example.example",
+            email="alex.johnson@fortworthisd.org",
             title="Curriculum Director",
         )
 
@@ -71,7 +71,7 @@ async def test_create_and_list(db_session: AsyncSession) -> None:
         contacts = await list_contacts_for_district(db_session, district.id)
     assert len(contacts) == 1
     assert contacts[0].id == contact.id
-    assert contacts[0].email == "alex.johnson@example.example"
+    assert contacts[0].email == "alex.johnson@fortworthisd.org"
     assert contacts[0].title == "Curriculum Director"
     assert contacts[0].active is True
 
@@ -84,7 +84,7 @@ async def test_reactivate_inactive_row(db_session: AsyncSession) -> None:
             db_session,
             district_id=district.id,
             name="Morgan Smith",
-            email="morgan.smith@test.example",
+            email="morgan.smith@fortbendisd.gov",
         )
         original_id = contact.id
         await deactivate_contact(db_session, contact.id)
@@ -100,7 +100,7 @@ async def test_reactivate_inactive_row(db_session: AsyncSession) -> None:
             db_session,
             district_id=district.id,
             name="Morgan Smith Updated",
-            email="morgan.smith@test.example",
+            email="morgan.smith@fortbendisd.gov",
         )
 
     assert reactivated.id == original_id
@@ -119,10 +119,10 @@ async def test_list_active_contacts_for_districts_bulk(db_session: AsyncSession)
         d1 = await _make_district(db_session, "District One")
         d2 = await _make_district(db_session, "District Two")
         c1 = await create_contact(
-            db_session, district_id=d1.id, name="Alice A", email="alice@d1.example"
+            db_session, district_id=d1.id, name="Alice A", email="alice@d1schools.org"
         )
         c2 = await create_contact(
-            db_session, district_id=d2.id, name="Bob B", email="bob@d2.example"
+            db_session, district_id=d2.id, name="Bob B", email="bob@d2schools.org"
         )
 
     async with db_session.begin():
@@ -138,7 +138,7 @@ async def test_deactivate_contact_filtering(db_session: AsyncSession) -> None:
     async with db_session.begin():
         district = await _make_district(db_session)
         contact = await create_contact(
-            db_session, district_id=district.id, name="Chris C", email="chris@example.example"
+            db_session, district_id=district.id, name="Chris C", email="chris@chrisdistrict.org"
         )
         await deactivate_contact(db_session, contact.id)
 
@@ -156,7 +156,7 @@ async def test_has_contact_true_numeric_district_id(db_session: AsyncSession) ->
     async with db_session.begin():
         district = await _make_district(db_session)
         await create_contact(
-            db_session, district_id=district.id, name="Dana D", email="dana@example.example"
+            db_session, district_id=district.id, name="Dana D", email="dana@danadistrict.org"
         )
 
     ctx = _ctx(db_session)
@@ -166,14 +166,20 @@ async def test_has_contact_true_numeric_district_id(db_session: AsyncSession) ->
 
 
 async def test_has_contact_false_no_contacts(db_session: AsyncSession) -> None:
-    """has_contact returns 'false' when no active contact exists for the district."""
+    """A 'false' that says WHICH kind of no it is.
+
+    A bare "false" cannot distinguish "this district has none" from "there are
+    none anywhere", and on 2026-09-15 Callie read the second as the first —
+    reporting a New Mexico gap for a system with no usable contact at all.
+    """
     async with db_session.begin():
         district = await _make_district(db_session)
 
     ctx = _ctx(db_session)
     _, impl = _contact_factory(ctx)
     result = await impl({"districtId": str(district.id)})
-    assert result == "false"
+    assert result.startswith("false")
+    assert "0 usable contacts for ANY district" in result
 
 
 async def test_has_contact_false_all_deactivated(db_session: AsyncSession) -> None:
@@ -181,14 +187,14 @@ async def test_has_contact_false_all_deactivated(db_session: AsyncSession) -> No
     async with db_session.begin():
         district = await _make_district(db_session)
         contact = await create_contact(
-            db_session, district_id=district.id, name="Eve E", email="eve@example.example"
+            db_session, district_id=district.id, name="Eve E", email="eve@evedistrict.org"
         )
         await deactivate_contact(db_session, contact.id)
 
     ctx = _ctx(db_session)
     _, impl = _contact_factory(ctx)
     result = await impl({"districtId": str(district.id)})
-    assert result == "false"
+    assert result.startswith("false")
 
 
 async def test_district_cascade_deletes_contacts(db_session: AsyncSession) -> None:
@@ -196,7 +202,7 @@ async def test_district_cascade_deletes_contacts(db_session: AsyncSession) -> No
     async with db_session.begin():
         district = await _make_district(db_session)
         contact = await create_contact(
-            db_session, district_id=district.id, name="Frank F", email="frank@example.example"
+            db_session, district_id=district.id, name="Frank F", email="frank@frankdistrict.org"
         )
         contact_id = contact.id
         district_id = district.id
@@ -238,3 +244,41 @@ async def test_create_contact_normalizes_email(db_session: AsyncSession) -> None
             email="  Jane.Doe@EXAMPLE.EXAMPLE  ",
         )
     assert contact.email == "jane.doe@example.example"
+
+
+# ── An address that cannot receive mail is not a contact (2026-09-15) ────────
+
+
+async def test_a_reserved_domain_is_not_a_send_target(db_session: AsyncSession) -> None:
+    """`has_contact` answered TRUE for Fort Worth ISD on the strength of
+    `alex.johnson@fort-worth-isd.example`. RFC 2606 reserves `.example` precisely
+    so it can never reach a mailbox, so that was a promised send target that
+    could not exist — and every address stored in production was one."""
+    async with db_session.begin():
+        district = await _make_district(db_session)
+        await create_contact(
+            db_session, district_id=district.id, name="Test T", email="t@a-district.example"
+        )
+
+    ctx = _ctx(db_session)
+    _, impl = _contact_factory(ctx)
+    assert (await impl({"districtId": str(district.id)})).startswith("false")
+
+
+async def test_a_reserved_domain_is_not_a_resolved_recipient(db_session: AsyncSession) -> None:
+    """The same rule at the send path, so the three read sites cannot disagree —
+    otherwise the queue calls a district routable and recipient resolution
+    silently returns nobody."""
+    from artemis.marketing.contacts import list_active_contacts_for_districts
+
+    async with db_session.begin():
+        district = await _make_district(db_session)
+        await create_contact(
+            db_session, district_id=district.id, name="Test T", email="t@a-district.example"
+        )
+        await create_contact(
+            db_session, district_id=district.id, name="Real R", email="r@realdistrict.org"
+        )
+
+    found = await list_active_contacts_for_districts(db_session, [district.id])
+    assert [c.email for c in found] == ["r@realdistrict.org"]

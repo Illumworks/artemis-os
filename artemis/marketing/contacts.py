@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from artemis.marketing.deliverable import deliverable_email_clause
 from artemis.marketing.models import District, DistrictContact
 
 logger = logging.getLogger(__name__)
@@ -156,7 +157,11 @@ async def list_active_contacts_for_districts(
         .where(
             DistrictContact.district_id.in_(district_ids),
             DistrictContact.active.is_(True),
-            DistrictContact.email.isnot(None),
+            # "Has an email" was one step short of "someone we can send to":
+            # an RFC 2606 reserved address is a guaranteed non-delivery, and
+            # every address stored today is one. Same rule as has_contact and
+            # the routable classification, so the three cannot disagree.
+            deliverable_email_clause(DistrictContact.email),
         )
         .order_by(DistrictContact.id)
     )

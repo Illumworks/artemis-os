@@ -412,9 +412,9 @@ async def test_resolve_recipients_returns_contact_snapshot(db_session: AsyncSess
     d = await _make_district(db_session, name="Contact Dist", state="TX")
     await db_session.flush()
     await create_contact(
-        db_session, district_id=d.id, name="Alice", email="alice@example.com", title="Super"
+        db_session, district_id=d.id, name="Alice", email="alice@aliceschools.org", title="Super"
     )
-    await create_contact(db_session, district_id=d.id, name="Bob", email="bob@example.com")
+    await create_contact(db_session, district_id=d.id, name="Bob", email="bob@bobschools.org")
     candidate = await _make_candidate(
         db_session, target_scope_json={"mode": "states", "states": ["TX"]}
     )
@@ -424,7 +424,7 @@ async def test_resolve_recipients_returns_contact_snapshot(db_session: AsyncSess
     assert d.id in district_ids
     assert len(snapshot) == 2
     alice = next(r for r in snapshot if r["name"] == "Alice")
-    assert alice["email"] == "alice@example.com"
+    assert alice["email"] == "alice@aliceschools.org"
     assert alice["title"] == "Super"
     assert alice["district_id"] == d.id
     assert "contact_id" in alice
