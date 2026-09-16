@@ -110,6 +110,15 @@ class VanillaClient:
                 logger.warning("champions: /%s exceeded 200 pages, stopping", path)
                 return
 
+    async def fetch_category_names(self, client: httpx.AsyncClient) -> dict[str, str]:
+        """categoryID -> name. A bare id in the sheet is useless to a reader."""
+        names: dict[str, str] = {}
+        async for row in self._paginate(client, "categories", {}):
+            cid, name = row.get("categoryID"), row.get("name")
+            if cid is not None and isinstance(name, str):
+                names[str(cid)] = name
+        return names
+
     async def fetch_user_emails(self, client: httpx.AsyncClient) -> dict[int, str]:
         """userID -> email, for the domain join.
 

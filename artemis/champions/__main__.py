@@ -14,13 +14,26 @@ import argparse
 import asyncio
 import logging
 
+import httpx
+
 from artemis.champions.ingest import classify_pending, ingest, resolve_pods
+from artemis.champions.sheet import build_sheet
+from artemis.champions.vanilla import VanillaClient
 from artemis.db import SessionLocal, engine
 
 
 async def _run(args: argparse.Namespace) -> None:
     async with SessionLocal() as session:
-        if args.resolve_pods:
+        if args.sheet:
+            async with httpx.AsyncClient(timeout=60) as http:
+                categories = await VanillaClient().fetch_category_names(http)
+            sheet_result = await build_sheet(session, categories=categories)
+            await session.commit()
+            for tab, n in sheet_result.tabs_written.items():
+                print(f"  {tab:20} {n:5} rows")
+            if sheet_result.removed_tabs:
+                print(f"  removed: {', '.join(sheet_result.removed_tabs)}")
+        elif args.resolve_pods:
             placed, unplaced = await resolve_pods(session, only_unresolved=not args.full)
             await session.commit()
             total = placed + unplaced
@@ -61,6 +74,7 @@ def main() -> None:
     parser.add_argument(
         "--resolve-pods", action="store_true", help="fill district/state/pod/CSM from D1"
     )
+    parser.add_argument("--sheet", action="store_true", help="rebuild the Google Sheet")
     parser.add_argument("--limit", type=int, help="cap items processed (for a smoke run)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
