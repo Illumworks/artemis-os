@@ -22,7 +22,7 @@ def _item(**kw: object) -> ChampionsItem:
         "is_amira_staff": False,
     }
     base.update(kw)
-    return ChampionsItem(**base)  # type: ignore[arg-type]
+    return ChampionsItem(**base)
 
 
 class TestUnknownIsNotFalse:
