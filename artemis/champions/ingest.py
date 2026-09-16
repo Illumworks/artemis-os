@@ -164,6 +164,17 @@ async def classify_pending(
 
     classified = flagged = escalated = 0
     for row, result in await asyncio.gather(*(one(r) for r in rows)):
+        # An item with no extractable prose -- an embedded image, an empty
+        # comment -- can never be classified, and would otherwise sit in the
+        # work queue being retried on every run forever. Image posts are normal
+        # in this community, so that set only grows. Marked as SEEN, not judged:
+        # classified_at stops the churn while summary and both flags stay null,
+        # so nothing downstream reads silence as a verdict of "no problem".
+        if result is None and not (row.title or strip_html(row.body)):
+            row.classified_at = datetime.now(UTC)
+            row.classifier_model = "skipped:no-text"
+            continue
+
         # The escalation tripwire is independent of the LLM and runs even when
         # classification failed -- it is the safety net, not a nice-to-have.
         hits = escalation_hits(f"{row.title or ''} {strip_html(row.body)}")

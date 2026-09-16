@@ -110,3 +110,53 @@ async def test_unparseable_reply_is_not_stored_as_a_judgment(db_session, monkeyp
     assert classified == 0 and flagged == 0
     assert row.product_issue is None, "absence of a judgment must not read as False"
     assert row.summary is None
+
+
+@pytest.mark.asyncio
+async def test_textless_item_is_marked_seen_not_judged(db_session, monkeypatch) -> None:
+    """An embedded-image post can never be classified.
+
+    Left alone it sits in the work queue forever, retried on every run, and
+    image posts are normal here so that set only grows. It is marked as seen so
+    the churn stops -- but the flags stay NULL, because "we could not read it"
+    must never be stored as "we looked and found no problem".
+    """
+    row = _item(
+        external_id="c-image",
+        title=None,
+        body='<span class="embedExternal" data-embedjson="{}"></span>',
+    )
+    db_session.add(row)
+    await db_session.flush()
+
+    async def unparseable(**_kw: object) -> None:
+        return None
+
+    monkeypatch.setattr("artemis.champions.ingest.classify_item", unparseable)
+    classified, flagged, _, errors = await classify_pending(db_session)
+
+    assert classified == 0 and flagged == 0 and errors == []
+    assert row.classified_at is not None, "should leave the retry queue"
+    assert row.classifier_model == "skipped:no-text"
+    assert row.summary is None
+    assert row.product_issue is None, "unreadable must not read as 'no problem'"
+
+
+@pytest.mark.asyncio
+async def test_item_with_text_that_fails_to_parse_stays_in_the_queue(
+    db_session, monkeypatch
+) -> None:
+    """The skip applies only to items with nothing to read. A real post whose
+    reply was unparseable is a transient failure and must be retried."""
+    row = _item(external_id="c-real", body="<p>Amira stopped loading this morning</p>")
+    db_session.add(row)
+    await db_session.flush()
+
+    async def unparseable(**_kw: object) -> None:
+        return None
+
+    monkeypatch.setattr("artemis.champions.ingest.classify_item", unparseable)
+    await classify_pending(db_session)
+
+    assert row.classified_at is None
+    assert row.classifier_model is None
