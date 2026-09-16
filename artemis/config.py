@@ -107,6 +107,18 @@ class Settings(BaseSettings):
         default="",
         description="Cloudflare Access application audience tag (AUD).",
     )
+    vanilla_base_url: str = Field(
+        default="https://amiralearning.vanillacommunities.com/api/v2",
+        description="Vanilla Forums API v2 base for the Amira Champions community.",
+    )
+    vanilla_token: str = Field(
+        default="",
+        description=(
+            "Vanilla Forums API bearer token. Read-only use: the Champions digest "
+            "never posts back into the community."
+        ),
+    )
+
     google_client_id: str = Field(
         default="",
         description="Google OAuth client id for per-user Docs/Drive access.",
