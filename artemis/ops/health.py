@@ -189,6 +189,7 @@ class Report:
     state_coverage: list[StateCoverage] = field(default_factory=list)
     source_yield: list[SourceYield] = field(default_factory=list)
     backup: dict[str, str] = field(default_factory=dict)
+    brain_sync: dict[str, str] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
 
 
@@ -199,6 +200,14 @@ BACKUP_STALE_AFTER = timedelta(hours=48)
 
 #: Where backup_db.sh writes. Kept in sync with ARTEMIS_BACKUP_DIR's default.
 BACKUP_DIR = Path.home() / "artemis-backups"
+
+#: The cross-machine notes repo. Its own sync is the only thing keeping this
+#: machine's handoffs, briefs and decisions off one disk.
+BRAIN_REPO = Path.home() / "Artemis" / "brain"
+
+#: Brain sync runs on every session start and end, so a machine in use syncs
+#: many times a day. Three days means it is not merely quiet -- it has stopped.
+BRAIN_STALE_AFTER = timedelta(days=3)
 
 
 #: A scout must have had at least this many runs in the window before "zero
@@ -299,6 +308,60 @@ def collect_backup() -> dict[str, str]:
         "size_mb": f"{stat.st_size / 1_048_576:.0f}",
         "count": str(len(dumps)),
     }
+
+
+def collect_brain_sync() -> dict[str, str]:
+    """Whether the cross-machine notes repo is still syncing, and why not.
+
+    **Why this is in the health report.** From 2026-09-10 to 2026-09-16 this
+    machine's brain sync was wedged: a conflicted rebase left the repo detached
+    mid-rebase, the sync's own guard refused correctly on every run, and both
+    hooks discarded its output. The repo looked completely normal -- files
+    present, git log working, nothing erroring. It simply stopped receiving
+    anything, and six days later a session read the stale tree and reported that
+    a document written on another Mac did not exist.
+
+    That is the same shape as a stale backup and a scout that yields nothing:
+    the failure is silent, and the only question worth asking is how long it has
+    been since the thing actually happened. An unfinished rebase or a detached
+    HEAD is reported separately from staleness, because it names the fix.
+    """
+    if not (BRAIN_REPO / ".git").exists():
+        return {"state": "absent", "dir": str(BRAIN_REPO)}
+
+    git_dir = BRAIN_REPO / ".git"
+    for marker, label in (
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+    ):
+        if (git_dir / marker).exists():
+            return {"state": "wedged", "dir": str(BRAIN_REPO), "operation": label}
+
+    branch = _shell(f"git -C {BRAIN_REPO} symbolic-ref --quiet --short HEAD").strip()
+    if not branch:
+        return {"state": "detached", "dir": str(BRAIN_REPO)}
+    if branch != "main":
+        return {"state": "off_main", "dir": str(BRAIN_REPO), "branch": branch}
+
+    # `git log --not --remotes` with no positive ref lists NOTHING -- git only
+    # defaults to HEAD when there are no revision arguments at all, and `--not`
+    # is one. The runbook recommends exactly that command as the check that
+    # matters, and it has been silently answering "nothing stranded" regardless.
+    # rev-list with an explicit HEAD is the version that actually counts.
+    unpushed = _shell(f"git -C {BRAIN_REPO} rev-list --count HEAD --not --remotes").strip()
+    last = _shell(f"git -C {BRAIN_REPO} log -1 --format=%ct").strip()
+    result = {
+        "state": "ok",
+        "dir": str(BRAIN_REPO),
+        "branch": branch,
+        "unpushed": unpushed if unpushed.isdigit() else "0",
+    }
+    if last.isdigit():
+        result["age"] = _fmt_duration(datetime.fromtimestamp(int(last), tz=UTC))
+        result["age_seconds"] = str(int(datetime.now(UTC).timestamp() - int(last)))
+    return result
 
 
 def collect_service() -> dict[str, str]:
@@ -669,6 +732,56 @@ def derive_findings(report: Report) -> list[Finding]:
             )
         )
 
+    _brain = report.brain_sync
+    _brain_state = _brain.get("state")
+    if _brain_state == "wedged":
+        findings.append(
+            Finding(
+                "stuck",
+                f"brain sync is WEDGED -- an unfinished {_brain.get('operation')} in "
+                f"{_brain.get('dir')} stops every sync, silently. Notes written on the "
+                "other Macs are not arriving here and nothing written here is leaving. "
+                f"Fix: git -C {_brain.get('dir')} {_brain.get('operation')} --abort",
+            )
+        )
+    elif _brain_state == "detached":
+        findings.append(
+            Finding(
+                "stuck",
+                f"brain sync is stopped -- {_brain.get('dir')} is on a detached HEAD, "
+                "which the sync refuses to touch. No notes are being backed up from "
+                "this machine.",
+            )
+        )
+    elif _brain_state == "off_main":
+        findings.append(
+            Finding(
+                "warn",
+                f"brain sync is paused -- {_brain.get('dir')} is on branch "
+                f"'{_brain.get('branch')}', not main, so it is not syncing.",
+            )
+        )
+    elif _brain_state == "ok":
+        if _brain.get("age_seconds") and int(_brain["age_seconds"]) > int(
+            BRAIN_STALE_AFTER.total_seconds()
+        ):
+            findings.append(
+                Finding(
+                    "warn",
+                    f"brain's newest commit is {_brain.get('age')} old -- sync runs on "
+                    "every session start and end, so this machine has either been idle "
+                    "or has quietly stopped syncing",
+                )
+            )
+        if int(_brain.get("unpushed") or 0):
+            findings.append(
+                Finding(
+                    "stuck",
+                    f"{_brain.get('unpushed')} brain commit(s) exist on this Mac and "
+                    "nowhere else -- they are one disk failure from gone",
+                )
+            )
+
     for src in report.source_yield:
         if src.is_silently_dead:
             findings.append(
@@ -799,6 +912,7 @@ def derive_findings(report: Report) -> list[Finding]:
 async def build_report() -> Report:
     report = Report(generated_at=datetime.now(UTC), service=collect_service())
     report.backup = collect_backup()
+    report.brain_sync = collect_brain_sync()
     async with _db.SessionLocal() as session:
         report.agents = await collect_agents(session)
         report.funnel = await collect_funnel(session)
@@ -913,6 +1027,28 @@ def render(report: Report) -> str:
             )
         else:
             add(f"  !! {report.backup.get('state')} -- {report.backup.get('dir')}")
+
+    if report.brain_sync:
+        add("")
+        add("BRAIN SYNC")
+        if report.brain_sync.get("state") == "ok":
+            unpushed = int(report.brain_sync.get("unpushed") or 0)
+            mark = "  !!" if unpushed else "     "
+            add(
+                f"{mark} on {report.brain_sync.get('branch')}, newest commit "
+                f"{report.brain_sync.get('age', 'unknown')} old, "
+                f"{unpushed} unpushed"
+            )
+        else:
+            add(
+                f"  !! {report.brain_sync.get('state')}"
+                + (
+                    f" ({report.brain_sync['operation']})"
+                    if report.brain_sync.get("operation")
+                    else ""
+                )
+                + f" -- {report.brain_sync.get('dir')}"
+            )
 
     if report.source_yield:
         add("")
