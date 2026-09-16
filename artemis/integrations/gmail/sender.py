@@ -47,24 +47,48 @@ async def resolve_gmail_client(
     session: AsyncSession,
     *,
     purpose: GooglePurpose = "personal",
+    connected_email: str | None = None,
 ) -> GmailClient:
     """Return a send-capable GmailClient for ``purpose``.
+
+    ``connected_email`` names WHICH account, and callers that send on a
+    schedule must pass it. "The marketing credential" is not a single thing:
+    on 2026-09-16 there were three (amiracentral@, julie.kalinowski@,
+    kristen.spiker@), only one of which could send. Picking the most recently
+    updated row -- which is what this did first -- is a coin flip that lands
+    differently every time the background refresh loop runs, so the weekly
+    digest would have sent from whoever happened to refresh last.
+
+    With several candidates and no name given, this raises rather than
+    choosing. A wrong sender is worse than a failed run, and silently picking
+    one is how you find out in front of the recipients.
 
     Refreshes the access token if it is close to expiry, and persists any
     in-request refresh the client performs on a 401.
     """
-    result = await session.execute(
-        select(GoogleCredential)
-        .where(GoogleCredential.purpose == purpose)
-        .order_by(GoogleCredential.updated_at.desc())
-        .limit(1)
-    )
-    credential = result.scalar_one_or_none()
-    if credential is None:
+    stmt = select(GoogleCredential).where(GoogleCredential.purpose == purpose)
+    if connected_email:
+        stmt = stmt.where(GoogleCredential.connected_email == connected_email)
+    candidates = list((await session.execute(stmt.order_by(GoogleCredential.id))).scalars())
+
+    if not candidates:
+        if connected_email:
+            raise GmailSenderNotReadyError(
+                f"No {purpose} Google credential for {connected_email}. Connect it at "
+                f"/api/google/oauth/start?purpose={purpose} while signed in as that account."
+            )
         raise GmailSenderNotReadyError(
             f"No {purpose} Google credential is connected. Connect one at "
             f"/api/google/oauth/start?purpose={purpose}."
         )
+    if len(candidates) > 1:
+        names = ", ".join(sorted(str(c.connected_email) for c in candidates))
+        raise GmailSenderNotReadyError(
+            f"{len(candidates)} {purpose} Google credentials are connected ({names}); "
+            f"pass connected_email to say which one should send. Refusing to guess -- "
+            f"the most recently refreshed row changes on its own."
+        )
+    credential = candidates[0]
     if not google_has_any_scope(credential.scope, GMAIL_SEND_SCOPE):
         raise GmailSenderNotReadyError(
             f"The {purpose} Google credential ({credential.connected_email}) is connected "

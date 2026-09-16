@@ -96,25 +96,33 @@ async def test_html_alternative_is_attached() -> None:
 
 
 class _FakeResult:
-    def __init__(self, value: Any) -> None:
-        self._value = value
+    def __init__(self, values: list[Any]) -> None:
+        self._values = values
 
-    def scalar_one_or_none(self) -> Any:
-        return self._value
+    def scalars(self) -> list[Any]:
+        return self._values
 
 
 class _FakeSession:
-    def __init__(self, credential: Any) -> None:
-        self._credential = credential
+    """Returns a fixed candidate list; the WHERE clause is exercised live, not here."""
+
+    def __init__(self, *credentials: Any) -> None:
+        self._credentials = [c for c in credentials if c is not None]
 
     async def execute(self, *_args: Any, **_kwargs: Any) -> _FakeResult:
-        return _FakeResult(self._credential)
+        return _FakeResult(self._credentials)
+
+
+class _Credential:
+    def __init__(self, email: str, scope: str = "") -> None:
+        self.connected_email = email
+        self.scope = scope
 
 
 @pytest.mark.asyncio
 async def test_missing_credential_says_not_connected() -> None:
     with pytest.raises(GmailSenderNotReadyError) as exc:
-        await resolve_gmail_client(_FakeSession(None), purpose="marketing")  # type: ignore[arg-type]
+        await resolve_gmail_client(_FakeSession(), purpose="marketing")  # type: ignore[arg-type]
     message = str(exc.value)
     assert "No marketing Google credential is connected" in message
     assert "gmail.send" not in message, "must not blame the scope when nothing is connected"
@@ -122,15 +130,57 @@ async def test_missing_credential_says_not_connected() -> None:
 
 @pytest.mark.asyncio
 async def test_connected_without_send_scope_names_the_account_and_the_fix() -> None:
-    class _Credential:
-        connected_email = "amiracentral@amiralearning.com"
-        scope = "https://www.googleapis.com/auth/drive.file openid"
+    cred = _Credential(
+        "amiracentral@amiralearning.com", "https://www.googleapis.com/auth/drive.file"
+    )
 
     with pytest.raises(GmailSenderNotReadyError) as exc:
-        await resolve_gmail_client(_FakeSession(_Credential()), purpose="marketing")  # type: ignore[arg-type]
+        await resolve_gmail_client(_FakeSession(cred), purpose="marketing")  # type: ignore[arg-type]
     message = str(exc.value)
     # Names WHICH account, and says a refresh will not fix it -- the actual trap.
     assert "amiracentral@amiralearning.com" in message
     assert "gmail.send" in message
     assert "re-authorize" in message.lower()
     assert "refresh will not add it" in message
+
+
+@pytest.mark.asyncio
+async def test_several_marketing_credentials_refuses_to_guess() -> None:
+    """The bug a live send caught, and the reason scheduled callers name the account.
+
+    "The marketing credential" is not one thing. On 2026-09-16 there were three
+    (amiracentral@, julie.kalinowski@, kristen.spiker@) and only amiracentral@
+    could send. Selecting the most recently updated row picked Julie, because the
+    background refresh loop had just touched hers -- an ordering that changes on
+    its own every refresh cycle. A weekly job built on that sends from whoever
+    refreshed last, which is found out in front of the recipients.
+    """
+    send = "https://www.googleapis.com/auth/gmail.send"
+    with pytest.raises(GmailSenderNotReadyError) as exc:
+        await resolve_gmail_client(
+            _FakeSession(
+                _Credential("amiracentral@amiralearning.com", send),
+                _Credential("julie.kalinowski@amiralearning.com"),
+                _Credential("kristen.spiker@amiralearning.com"),
+            ),  # type: ignore[arg-type]
+            purpose="marketing",
+        )
+    message = str(exc.value)
+    assert "3 marketing Google credentials" in message
+    # Names them, so the caller can pick without going to the database.
+    assert "amiracentral@amiralearning.com" in message
+    assert "julie.kalinowski@amiralearning.com" in message
+    assert "Refusing to guess" in message
+
+
+@pytest.mark.asyncio
+async def test_named_account_that_is_not_connected_says_so() -> None:
+    with pytest.raises(GmailSenderNotReadyError) as exc:
+        await resolve_gmail_client(
+            _FakeSession(),  # type: ignore[arg-type]
+            purpose="marketing",
+            connected_email="nobody@amiralearning.com",
+        )
+    message = str(exc.value)
+    assert "nobody@amiralearning.com" in message
+    assert "Connect it at" in message
