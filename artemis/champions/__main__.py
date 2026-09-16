@@ -14,13 +14,19 @@ import argparse
 import asyncio
 import logging
 
-from artemis.champions.ingest import classify_pending, ingest
+from artemis.champions.ingest import classify_pending, ingest, resolve_pods
 from artemis.db import SessionLocal, engine
 
 
 async def _run(args: argparse.Namespace) -> None:
     async with SessionLocal() as session:
-        if args.classify_only:
+        if args.resolve_pods:
+            placed, unplaced = await resolve_pods(session, only_unresolved=not args.full)
+            await session.commit()
+            total = placed + unplaced
+            pct = (100 * placed / total) if total else 0
+            print(f"pods: placed {placed}/{total} ({pct:.0f}%) | needs a decision {unplaced}")
+        elif args.classify_only:
             classified, flagged, escalated, errors = await classify_pending(
                 session, limit=args.limit
             )
@@ -52,6 +58,9 @@ def main() -> None:
     parser.add_argument("--full", action="store_true", help="re-read the whole community")
     parser.add_argument("--no-classify", action="store_true", help="store only, no model calls")
     parser.add_argument("--classify-only", action="store_true", help="label rows already stored")
+    parser.add_argument(
+        "--resolve-pods", action="store_true", help="fill district/state/pod/CSM from D1"
+    )
     parser.add_argument("--limit", type=int, help="cap items processed (for a smoke run)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.champions.classify import classify_item, escalation_hits, strip_html
 from artemis.champions.models import ChampionsItem, ChampionsRun
+from artemis.champions.pods import load_domain_directory, resolve
 from artemis.champions.vanilla import VanillaClient, email_domain, is_amira_staff
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,42 @@ async def ingest(
         escalations=escalated,
         errors=errors,
     )
+
+
+async def resolve_pods(session: AsyncSession, *, only_unresolved: bool = True) -> tuple[int, int]:
+    """Fill district / state / pod / CSM from the D1 pod directory.
+
+    Separate from ingest, and re-runnable: the directory is corrected by hand in
+    /pods/admin over time, so a domain that could not be placed today is placed
+    on a later pass without re-reading Vanilla. Returns (placed, unplaced).
+    """
+    stmt = select(ChampionsItem)
+    if only_unresolved:
+        stmt = stmt.where(ChampionsItem.pod_resolved_at.is_(None))
+    rows = list((await session.execute(stmt)).scalars())
+
+    async with httpx.AsyncClient(timeout=60) as http:
+        directory = await load_domain_directory(http)
+
+    placed = unplaced = 0
+    now = datetime.now(UTC)
+    for row in rows:
+        match = resolve(row.author_email_domain, directory)
+        # pod_resolved_at records that the question was ASKED, whatever the
+        # answer. Without it an unplaceable domain is indistinguishable from one
+        # never looked up, and the needs-a-decision bucket cannot be counted.
+        row.pod_resolved_at = now
+        if match is None or match.needs_decision:
+            unplaced += 1
+            continue
+        row.district = match.district
+        row.state = match.state
+        row.pod = match.pod_name or match.pod_slug
+        row.csm_email = match.csm_email
+        placed += 1
+
+    await session.flush()
+    return placed, unplaced
 
 
 async def classify_pending(
