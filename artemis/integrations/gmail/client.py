@@ -199,19 +199,40 @@ class GmailClient:
     async def send_message(
         self,
         *,
-        to: str,
+        to: str | Sequence[str],
         subject: str,
         body: str,
         thread_id: str | None = None,
         in_reply_to: str | None = None,
+        from_addr: str | None = None,
+        reply_to: str | None = None,
+        cc: str | Sequence[str] | None = None,
+        html_body: str | None = None,
     ) -> dict[str, Any]:
+        """Send a message.
+
+        ``from_addr`` sets the From header, which Gmail honours ONLY when the
+        address is a verified "Send mail as" address on the authenticated
+        account. When it is not verified Gmail does NOT error -- it silently
+        rewrites From to the authenticated account and sends anyway. So a
+        successful return here is not evidence the message carries the sender
+        you asked for; read the delivered header to confirm that.
+        """
         message = EmailMessage()
-        message["To"] = to
+        message["To"] = _address_header(to)
+        if cc:
+            message["Cc"] = _address_header(cc)
+        if from_addr:
+            message["From"] = from_addr
+        if reply_to:
+            message["Reply-To"] = reply_to
         message["Subject"] = subject
         if in_reply_to:
             message["In-Reply-To"] = in_reply_to
             message["References"] = in_reply_to
         message.set_content(body)
+        if html_body:
+            message.add_alternative(html_body, subtype="html")
 
         payload: dict[str, object] = {
             "raw": base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
@@ -225,6 +246,13 @@ class GmailClient:
             "threadId": str(resp.get("threadId") or thread_id or ""),
             "labelIds": resp.get("labelIds") or [],
         }
+
+
+def _address_header(value: str | Sequence[str]) -> str:
+    """Join a recipient list into one header value; accept a plain string too."""
+    if isinstance(value, str):
+        return value
+    return ", ".join(part for part in value if part)
 
 
 def _message_summary(payload: dict[str, Any]) -> dict[str, Any]:

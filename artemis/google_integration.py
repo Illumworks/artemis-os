@@ -36,14 +36,23 @@ GOOGLE_MARKETING_SCOPES: tuple[str, ...] = (
     # one that does not exist. That is the Google half of the attachment-intake
     # gap: without this, a pasted Docs/Sheets link is unreadable.
     #
-    # `readonly` rather than full `drive` deliberately: the agents need to READ
-    # what people share with them, never to modify it. Writes stay on
-    # `drive.file`, scoped to documents the app made itself.
+    # Retained for intent even though full `drive` below supersedes it: the
+    # Docs/Sheets intake path only ever READS what people share with it.
     "https://www.googleapis.com/auth/drive.readonly",
     # Drive's export endpoint renders a spreadsheet to CSV but returns ONLY the
     # first tab. Multi-tab sheets are normal in marketing, so reading them
     # properly needs the Sheets API. Read-only for the same reason as above.
     "https://www.googleapis.com/auth/spreadsheets.readonly",
+    # The Champions digest sends from the marketing account (amiracentral@) with
+    # hannah.slater@ as a verified Gmail send-as address, so the marketing
+    # purpose needs send rights of its own. Send-only: reading the marketing
+    # mailbox is not a capability anything here should have.
+    "https://www.googleapis.com/auth/gmail.send",
+    # Full drive (not drive.file) for the Champions sheet, which the app did not
+    # create: Drive returns 404 (not 403) on externally-owned files under
+    # drive.file, so the sheet is indistinguishable from one that does not exist.
+    # Same failure recorded in artemis/enablement/sync.py.
+    "https://www.googleapis.com/auth/drive",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
 )
@@ -53,12 +62,8 @@ GOOGLE_PERSONAL_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-    # Full drive (not drive.file) is required for files the app did not create:
-    # Drive returns 404 on an externally-owned doc under drive.file, which blocks
-    # both the export endpoint and comments.create (the @mention path). See the
-    # access note in artemis/enablement/sync.py, which hit the same 403.
-    "https://www.googleapis.com/auth/drive",
+    # gmail.send and full drive are inherited from GOOGLE_MARKETING_SCOPES above;
+    # listing them again would duplicate them in the consent string.
 )
 
 _KNOWN_PURPOSES = frozenset({"personal", "marketing"})
