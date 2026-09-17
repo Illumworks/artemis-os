@@ -259,3 +259,98 @@ def render_slack(d: Digest) -> str:
         ]
     lines += ["", f"<{SHEET_URL}|Full detail in the sheet>"]
     return "\n".join(lines)
+
+
+def render_slack_blocks(d: Digest) -> list[dict[str, object]]:
+    """Block Kit version — structure Slack will definitely render.
+
+    Slack messages cannot contain tables, so the structure comes from headers,
+    dividers and one grouped block per state. Items stay one line each so the
+    five fields survive: date, district, markers, summary, replied.
+
+    Blocks are capped at 50 and section text at 3000 characters, so a state with
+    many posts is split rather than silently truncated by Slack.
+    """
+    blocks: list[dict[str, object]] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "Community Hub Digest", "emoji": True},
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"*{d.window_label}*  ·  {len(d.items)} new items"
+                    + (
+                        f"  ·  :triangular_flag_on_post: {len(d.flagged)} flagged"
+                        if d.flagged
+                        else ""
+                    ),
+                }
+            ],
+        },
+        {"type": "divider"},
+    ]
+
+    def line(item: ChampionsItem) -> str:
+        summary = _summary_cell(item)
+        if item.url:
+            summary = f"<{item.url}|{summary}>"
+        tick = "  :white_check_mark:" if item.replied_by_amira else ""
+        return f"`{item.posted_at.strftime('%m/%d')}`  *{_district(item)}* — {summary}{tick}"
+
+    current: str | None = None
+    buffer: list[str] = []
+
+    def flush() -> None:
+        nonlocal buffer
+        while buffer:
+            chunk, size = [], 0
+            while buffer and size + len(buffer[0]) < 2800:
+                size += len(buffer[0]) + 1
+                chunk.append(buffer.pop(0))
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(chunk)}})
+
+    for item in _sorted_rows(d.items):
+        state = item.state or "Unplaced"
+        if state != current:
+            flush()
+            current = state
+            buffer.append(f"*{state}*")
+        buffer.append(line(item))
+    flush()
+
+    footer: list[str] = []
+    if d.staff:
+        footer.append(f"Amira team posts this period: {len(d.staff)}")
+    if d.unplaced_domains:
+        total = sum(d.unplaced_domains.values())
+        top = ", ".join(f"{dom} ({n})" for dom, n in d.unplaced_domains.most_common(3))
+        footer.append(
+            f"{total} post(s) show a domain instead of a district: {top} · <{PODS_ADMIN_URL}|Resolve>"
+        )
+    footer.append(f"<{SHEET_URL}|Full detail in the sheet>")
+    blocks.append({"type": "divider"})
+    blocks.append(
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": "  ·  ".join(footer)}]}
+    )
+
+    # Slack rejects the whole message above 50 blocks, so trim the middle rather
+    # than lose the footer, and say so instead of silently dropping rows.
+    if len(blocks) > 50:
+        keep_head, keep_tail = blocks[:47], blocks[-2:]
+        blocks = [
+            *keep_head,
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": ":warning: truncated for Slack — full list in the sheet",
+                    }
+                ],
+            },
+            *keep_tail,
+        ]
+    return blocks

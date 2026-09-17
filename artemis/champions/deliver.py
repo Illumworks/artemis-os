@@ -15,7 +15,13 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from artemis.champions.digest import Digest, render_html, render_slack, render_text
+from artemis.champions.digest import (
+    Digest,
+    render_html,
+    render_slack,
+    render_slack_blocks,
+    render_text,
+)
 from artemis.integrations.crypto import decrypt_credentials
 from artemis.integrations.gmail.sender import resolve_gmail_client
 
@@ -95,7 +101,16 @@ async def post_slack(
     """Post as Kai to each target. A DM id (``U...``) is allowed; a channel must
     be on Kai's allowlist, which is our own gate and not Slack's."""
     token, allowed = await _kai_token(session)
-    body = (preamble + "\n\n" if preamble else "") + render_slack(digest)
+    blocks = render_slack_blocks(digest)
+    if preamble:
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": preamble}},
+            *blocks,
+        ]
+    # `text` is the notification and accessibility fallback, not a duplicate of
+    # the blocks -- Slack shows it in the sidebar and to screen readers, and a
+    # message with blocks and no text is unreadable in both.
+    fallback = render_slack(digest)
 
     sent: list[str] = []
     async with httpx.AsyncClient(timeout=30) as http:
@@ -108,7 +123,12 @@ async def post_slack(
             resp = await http.post(
                 "https://slack.com/api/chat.postMessage",
                 headers={"Authorization": f"Bearer {token}"},
-                json={"channel": target, "text": body, "unfurl_links": False},
+                json={
+                    "channel": target,
+                    "text": fallback,
+                    "blocks": blocks,
+                    "unfurl_links": False,
+                },
             )
             payload = resp.json()
             if not payload.get("ok"):

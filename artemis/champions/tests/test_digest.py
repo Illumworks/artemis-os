@@ -125,3 +125,49 @@ class TestStaffPostsAreSeparate:
         assert "AMIRA TEAM POSTS" in body
         table = body[: body.index("AMIRA TEAM POSTS")]
         assert "educator post" in table and "Monthly News" not in table
+
+
+class TestSlackBlocks:
+    """Slack has no tables, so structure comes from headers, dividers and one
+    grouped block per state. Its limits are hard failures, not soft ones."""
+
+    def test_structure_is_header_context_divider_then_states(self) -> None:
+        from artemis.champions.digest import render_slack_blocks
+
+        blocks = render_slack_blocks(_digest([_item(state="CA", summary="a thing")]))
+        assert blocks[0]["type"] == "header"
+        assert blocks[1]["type"] == "context"
+        assert blocks[2]["type"] == "divider"
+        assert blocks[-1]["type"] == "context"
+
+    def test_every_item_appears_somewhere(self) -> None:
+        from artemis.champions.digest import render_slack_blocks
+
+        items = [
+            _item(external_id="a", state="CA", summary="first thing"),
+            _item(external_id="b", state="TX", summary="second thing"),
+        ]
+        rendered = str(render_slack_blocks(_digest(items)))
+        assert "first thing" in rendered and "second thing" in rendered
+        assert "*CA*" in rendered and "*TX*" in rendered
+
+    def test_never_exceeds_slacks_block_limit(self) -> None:
+        """Over 50 blocks Slack rejects the whole message, so a busy week must
+        degrade to a truncation notice rather than failing to post at all."""
+        from artemis.champions.digest import render_slack_blocks
+
+        items = [
+            _item(external_id=f"d-{i}", state=f"S{i:02d}", summary=f"item {i}") for i in range(120)
+        ]
+        blocks = render_slack_blocks(_digest(items))
+        assert len(blocks) <= 50
+        assert "truncated" in str(blocks)
+
+    def test_section_text_stays_under_slacks_character_cap(self) -> None:
+        from artemis.champions.digest import render_slack_blocks
+
+        items = [_item(external_id=f"d-{i}", state="CA", summary="x" * 200) for i in range(40)]
+        for block in render_slack_blocks(_digest(items)):
+            text = block.get("text")
+            if isinstance(text, dict):
+                assert len(str(text.get("text", ""))) <= 3000
