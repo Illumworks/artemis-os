@@ -16,6 +16,11 @@
     <array>
         <string>/bin/bash</string>
         <string>/Users/artemis/Artemis/artemis-os/scripts/champions_weekly.sh</string>
+        <!-- #hub. Approved by Jon 2026-09-17. Kai must also carry this id in its
+             allowed_channel_ids, which is our own gate, separate from the Slack
+             scope -- post_slack refuses the channel otherwise. -->
+        <string>--slack</string>
+        <string>C0B26KNKGCT</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
