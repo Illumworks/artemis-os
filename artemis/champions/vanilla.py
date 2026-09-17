@@ -52,6 +52,7 @@ class VanillaItem:
     posted_at: datetime
     author_user_id: int | None
     author_name: str | None
+    parent_discussion_id: int | None = None
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -194,6 +195,7 @@ class VanillaClient:
             posted_at=posted,
             author_user_id=row.get("insertUserID"),
             author_name=user.get("name"),
+            parent_discussion_id=did if isinstance(did, int) else None,
         )
 
     def _comment(self, row: dict[str, Any]) -> VanillaItem | None:
@@ -212,6 +214,9 @@ class VanillaClient:
             posted_at=posted,
             author_user_id=row.get("insertUserID"),
             author_name=user.get("name"),
+            parent_discussion_id=(
+                row.get("discussionID") if isinstance(row.get("discussionID"), int) else None
+            ),
         )
 
     def _article(self, row: dict[str, Any]) -> VanillaItem | None:

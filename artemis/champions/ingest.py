@@ -80,29 +80,47 @@ async def ingest(
     # ── store first, classify second ──────────────────────────────────────
     # Deliberate: a classifier failure must not lose the item. An unclassified
     # row is picked up by the next run; an item never stored is invisible.
+    # RETURNING fires on an update too, so novelty is decided before the write.
+    seen_before = set((await session.execute(select(ChampionsItem.external_id))).scalars())
     new_ids: list[str] = []
     for item in items:
         email = emails.get(item.author_user_id or -1)
         domain = email_domain(email)
-        stmt = (
-            pg_insert(ChampionsItem)
-            .values(
-                external_id=item.external_id,
-                item_type=item.item_type,
-                url=item.url,
-                category=item.category,
-                title=item.title,
-                posted_at=item.posted_at,
-                author_user_id=item.author_user_id,
-                author_name=item.author_name,
-                author_email_domain=domain,
-                is_amira_staff=is_amira_staff(domain),
-                body=item.body,
-            )
-            .on_conflict_do_nothing(index_elements=["external_id"])
-            .returning(ChampionsItem.external_id)
+        base = pg_insert(ChampionsItem).values(
+            external_id=item.external_id,
+            item_type=item.item_type,
+            url=item.url,
+            category=item.category,
+            title=item.title,
+            posted_at=item.posted_at,
+            parent_discussion_id=item.parent_discussion_id,
+            author_user_id=item.author_user_id,
+            author_name=item.author_name,
+            author_email_domain=domain,
+            is_amira_staff=is_amira_staff(domain),
+            body=item.body,
         )
-        if (await session.execute(stmt)).scalar_one_or_none() is not None:
+        # Vanilla owns these columns, so a re-read refreshes them -- that is what
+        # lets `--full` repair data rather than only add rows. Our own derived
+        # columns (summary, theme, the flags, the pod join) are NOT in this list
+        # and are never touched: re-reading the source must not discard a
+        # judgment or a human's correction.
+        stmt = base.on_conflict_do_update(
+            index_elements=["external_id"],
+            set_={
+                "url": base.excluded.url,
+                "category": base.excluded.category,
+                "title": base.excluded.title,
+                "body": base.excluded.body,
+                "author_name": base.excluded.author_name,
+                "author_email_domain": base.excluded.author_email_domain,
+                "is_amira_staff": base.excluded.is_amira_staff,
+                "parent_discussion_id": base.excluded.parent_discussion_id,
+                "updated_at": datetime.now(UTC),
+            },
+        ).returning(ChampionsItem.external_id)
+        result = (await session.execute(stmt)).scalar_one_or_none()
+        if result is not None and item.external_id not in seen_before:
             new_ids.append(item.external_id)
     await session.flush()
 
@@ -155,17 +173,60 @@ async def resolve_pods(session: AsyncSession, *, only_unresolved: bool = True) -
         # answer. Without it an unplaceable domain is indistinguishable from one
         # never looked up, and the needs-a-decision bucket cannot be counted.
         row.pod_resolved_at = now
-        if match is None or match.needs_decision:
+        if match is None:
             unplaced += 1
             continue
+        # Take whatever the directory can say. An ambiguous domain is ambiguous
+        # about the DISTRICT; its state and pod may still be unanimous across
+        # every claiming account, and the digest sorts by state. Discarding a
+        # fact all claimants agree on is not caution, it is data loss.
         row.district = match.district
         row.state = match.state
         row.pod = match.pod_name or match.pod_slug
         row.csm_email = match.csm_email
-        placed += 1
+        if match.needs_decision:
+            unplaced += 1
+        else:
+            placed += 1
 
     await session.flush()
     return placed, unplaced
+
+
+async def mark_amira_replies(session: AsyncSession) -> int:
+    """Set replied_by_amira across each thread.
+
+    It is a property of the THREAD, not the item: a discussion counts as replied
+    when any comment on it came from an amiralearning.com address, and every
+    comment in that thread inherits the same answer. Computed here rather than at
+    ingest because a reply can arrive long after the post it answers.
+    """
+    replied_threads = set(
+        (
+            await session.execute(
+                select(ChampionsItem.parent_discussion_id)
+                .where(ChampionsItem.item_type == "comment")
+                .where(ChampionsItem.is_amira_staff.is_(True))
+                .where(ChampionsItem.parent_discussion_id.is_not(None))
+            )
+        ).scalars()
+    )
+
+    rows = list((await session.execute(select(ChampionsItem))).scalars())
+    touched = 0
+    for row in rows:
+        if row.item_type == "discussion":
+            thread = (
+                int(row.external_id.removeprefix("d-")) if row.external_id[2:].isdigit() else None
+            )
+        else:
+            thread = row.parent_discussion_id
+        value = thread is not None and thread in replied_threads
+        if row.replied_by_amira != value:
+            row.replied_by_amira = value
+            touched += 1
+    await session.flush()
+    return touched
 
 
 async def classify_pending(

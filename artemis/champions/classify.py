@@ -100,7 +100,11 @@ where US educators discuss using Amira (an AI reading tutor) with their students
 
 For the post you are given, return a JSON object with exactly these keys:
 
-  "summary"            one sentence, max 20 words, plain past tense, no preamble
+  "summary"            one sentence, max 25 words, plain past tense, no preamble.
+                       Keep whatever the poster is UNHAPPY or STUCK about -- that
+                       is the part a reader acts on. A summary that records the
+                       question and drops "nobody could tell me" has lost the
+                       point of the post.
   "theme"              exactly one of: {" | ".join(THEMES)}
   "product_issue"      true if Amira itself misbehaved: broke, failed to load, lost
                        data, misheard a student, scored wrongly, or a feature
@@ -126,6 +130,13 @@ rather than complaining, when the post also describes upset students, and when
 the teacher blames the microphone or the headphones -- those are reports of the
 product failing at its core job, and they are the single most common real
 problem in this community.
+
+Amira also fails when it behaves INCONSISTENTLY or inexplicably. A report that
+the same assessment was given differently to different students, that a score
+cannot be accounted for, that data changed between years, or that nobody at
+Amira could explain what the product did, is product_issue = true. It is phrased
+as a question far more often than as a complaint, and the question is the
+complaint.
 
 Set adoption_friction = true when the difficulty is about getting students or
 teachers to engage, buy in, stay motivated, or fit sessions into the schedule,

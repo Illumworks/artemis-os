@@ -41,6 +41,10 @@ class ChampionsItem(Base):
     # The body is stored because classification is re-runnable: the flagging
     # rules changed once already and will change again, and re-pulling 478
     # items to re-label them is worse than keeping 174k characters.
+    #: For a comment, the discussion it belongs to. Needed for "Replied by
+    #: Amira", which is a property of the THREAD, not of the item.
+    parent_discussion_id: Mapped[int | None] = mapped_column(Integer)
+
     author_user_id: Mapped[int | None] = mapped_column(Integer)
     author_name: Mapped[str | None] = mapped_column(Text)
     author_email_domain: Mapped[str | None] = mapped_column(Text)

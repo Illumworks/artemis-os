@@ -122,9 +122,23 @@ async def load_domain_directory(
     reads, so an admin correction takes effect here with no redeploy.
     """
     token, account = _cloudflare_credentials()
+    # An ambiguous domain is ambiguous about the DISTRICT. It is not necessarily
+    # ambiguous about the state or the pod: k12.nd.us is claimed by 60 accounts,
+    # all of them in North Dakota and all in one pod. Refusing to say "ND" there
+    # throws away a fact every claimant agrees on, and it is the fact the digest
+    # sorts by. So the unanimous values are taken and only the contested ones
+    # withheld -- abstain where you must, not everywhere.
     sql = (
         "SELECT l.domain, l.pod_slug, l.account_name, l.state, l.csm_email, "
-        "l.is_ambiguous, p.display_name AS pod_name "
+        "l.is_ambiguous, p.display_name AS pod_name, "
+        "(SELECT COUNT(DISTINCT c.state) FROM domain_claim c WHERE c.domain = l.domain) "
+        "  AS claim_states, "
+        "(SELECT MIN(c.state) FROM domain_claim c WHERE c.domain = l.domain) "
+        "  AS agreed_state, "
+        "(SELECT COUNT(DISTINCT c.pod_slug) FROM domain_claim c WHERE c.domain = l.domain) "
+        "  AS claim_pods, "
+        "(SELECT MIN(c.pod_slug) FROM domain_claim c WHERE c.domain = l.domain) "
+        "  AS agreed_pod "
         "FROM domain_lookup l LEFT JOIN pod p ON p.slug = l.pod_slug"
     )
     resp = await client.post(
@@ -139,34 +153,62 @@ async def load_domain_directory(
         raise PodDirectoryError(f"D1 query failed: {payload.get('errors')}")
 
     rows = (payload.get("result") or [{}])[0].get("results", [])
+    pod_names = {
+        str(r["pod_slug"]): str(r["pod_name"])
+        for r in rows
+        if r.get("pod_slug") and r.get("pod_name")
+    }
     directory: dict[str, PodMatch] = {}
     for row in rows:
         domain = str(row.get("domain") or "").strip().lower()
         if not domain:
             continue
-        directory[domain] = _to_match(domain, row)
+        directory[domain] = _to_match(domain, row, pod_names)
     logger.info("champions: loaded %d domains from the pod directory", len(directory))
     return directory
 
 
-def _to_match(domain: str, row: dict[str, object]) -> PodMatch:
+def _to_match(domain: str, row: dict[str, object], pod_names: dict[str, str]) -> PodMatch:
     slug = row.get("pod_slug")
     slug_str = str(slug) if slug else None
     ambiguous = bool(row.get("is_ambiguous"))
     resolved = bool(slug_str) and slug_str != "unassigned"
 
-    # The Worker's rule: a caller that finds the answer unsettled routes the
-    # item to the unassigned bucket and surfaces the choice. It does not pick.
+    # The Worker's rule: a caller that finds the answer unsettled routes the item
+    # to the unassigned bucket and surfaces the choice. It does not pick.
     settled = resolved and not ambiguous
+
+    # District and CSM are the contested facts, and are withheld unless settled.
+    district = str(row["account_name"]) if settled and row.get("account_name") else None
+    csm = str(row["csm_email"]) if settled and row.get("csm_email") else None
+
+    # State and pod survive ambiguity when every claimant agrees. One claimant
+    # is trivially unanimous, which is the settled case.
+    state = str(row["state"]) if settled and row.get("state") else None
+    if state is None and row.get("claim_states") == 1 and row.get("agreed_state"):
+        state = str(row["agreed_state"])
+
+    pod_slug = slug_str if settled else None
+    if pod_slug is None and row.get("claim_pods") == 1 and row.get("agreed_pod"):
+        candidate = str(row["agreed_pod"])
+        if candidate and candidate != "unassigned":
+            pod_slug = candidate
+
+    pod_name = str(row["pod_name"]) if settled and row.get("pod_name") else None
+    if pod_name is None and pod_slug:
+        pod_name = pod_names.get(pod_slug)
+
     return PodMatch(
         domain=domain,
-        pod_slug=slug_str if settled else None,
-        pod_name=str(row["pod_name"]) if settled and row.get("pod_name") else None,
-        district=str(row["account_name"]) if settled and row.get("account_name") else None,
-        state=str(row["state"]) if settled and row.get("state") else None,
-        csm_email=str(row["csm_email"]) if settled and row.get("csm_email") else None,
+        pod_slug=pod_slug,
+        pod_name=pod_name,
+        district=district,
+        state=state,
+        csm_email=csm,
         is_ambiguous=ambiguous,
-        needs_decision=not settled,
+        # Still a decision for a human: the DISTRICT is what is unresolved, and
+        # that is what the digest and the CSM routing need.
+        needs_decision=district is None,
     )
 
 

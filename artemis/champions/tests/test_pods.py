@@ -11,6 +11,11 @@ from __future__ import annotations
 from artemis.champions.pods import CONSUMER_DOMAINS, PodMatch, _to_match, resolve
 
 
+def _match(domain: str, row: dict[str, object]) -> PodMatch:
+    """_to_match with an empty pod-name map; the map only prettifies the label."""
+    return _to_match(domain, row, {})
+
+
 def _row(**kw: object) -> dict[str, object]:
     base = {
         "pod_slug": "new-mexico",
@@ -26,7 +31,7 @@ def _row(**kw: object) -> dict[str, object]:
 
 class TestSettledMatches:
     def test_a_clean_domain_resolves_fully(self) -> None:
-        m = _to_match("1.rrps.net", _row())
+        m = _match("1.rrps.net", _row())
         assert m.district == "Rio Rancho Public Schools"
         assert m.state == "NM" and m.pod_name == "New Mexico"
         assert m.needs_decision is False
@@ -36,7 +41,7 @@ class TestRefusingToGuess:
     """Naming one arbitrary district is worse than admitting we do not know."""
 
     def test_ambiguous_domain_names_nothing(self) -> None:
-        m = _to_match("dekalbschoolsga.org", _row(is_ambiguous=1))
+        m = _match("dekalbschoolsga.org", _row(is_ambiguous=1))
         assert m.is_ambiguous is True
         assert m.needs_decision is True
         # Every field a reader might trust must be empty, not "the first one".
@@ -44,11 +49,11 @@ class TestRefusingToGuess:
         assert m.pod_slug is None and m.pod_name is None and m.csm_email is None
 
     def test_unassigned_pod_is_not_a_placement(self) -> None:
-        m = _to_match("somewhere.edu", _row(pod_slug="unassigned"))
+        m = _match("somewhere.edu", _row(pod_slug="unassigned"))
         assert m.needs_decision is True and m.pod_slug is None
 
     def test_null_pod_is_not_a_placement(self) -> None:
-        m = _to_match("somewhere.edu", _row(pod_slug=None))
+        m = _match("somewhere.edu", _row(pod_slug=None))
         assert m.needs_decision is True
 
 
@@ -59,13 +64,13 @@ class TestConsumerDomains:
     """
 
     def test_personal_addresses_are_never_placed(self) -> None:
-        directory = {"gmail.com": _to_match("gmail.com", _row(account_name="Some AZ District"))}
+        directory = {"gmail.com": _match("gmail.com", _row(account_name="Some AZ District"))}
         assert resolve("gmail.com", directory) is None
 
     def test_even_when_the_directory_wrongly_contains_one(self) -> None:
         """The guarantee must not depend on the build script staying correct."""
         for domain in ("yahoo.com", "icloud.com", "outlook.com"):
-            directory = {domain: _to_match(domain, _row())}
+            directory = {domain: _match(domain, _row())}
             assert resolve(domain, directory) is None, domain
 
     def test_a_personal_address_is_not_a_decision_for_a_human(self) -> None:
@@ -77,7 +82,7 @@ class TestConsumerDomains:
 
 class TestLookupHygiene:
     def test_case_and_whitespace_do_not_matter(self) -> None:
-        directory = {"rusd.org": _to_match("rusd.org", _row())}
+        directory = {"rusd.org": _match("rusd.org", _row())}
         got = resolve("  RUSD.ORG ", directory)
         assert isinstance(got, PodMatch) and got.district is not None
 

@@ -16,7 +16,7 @@ import logging
 
 import httpx
 
-from artemis.champions.ingest import classify_pending, ingest, resolve_pods
+from artemis.champions.ingest import classify_pending, ingest, mark_amira_replies, resolve_pods
 from artemis.champions.sheet import build_sheet
 from artemis.champions.vanilla import VanillaClient
 from artemis.db import SessionLocal, engine
@@ -24,7 +24,11 @@ from artemis.db import SessionLocal, engine
 
 async def _run(args: argparse.Namespace) -> None:
     async with SessionLocal() as session:
-        if args.sheet:
+        if args.replies:
+            touched = await mark_amira_replies(session)
+            await session.commit()
+            print(f"replied_by_amira set on {touched} row(s)")
+        elif args.sheet:
             async with httpx.AsyncClient(timeout=60) as http:
                 categories = await VanillaClient().fetch_category_names(http)
             sheet_result = await build_sheet(session, categories=categories)
@@ -73,6 +77,9 @@ def main() -> None:
     parser.add_argument("--classify-only", action="store_true", help="label rows already stored")
     parser.add_argument(
         "--resolve-pods", action="store_true", help="fill district/state/pod/CSM from D1"
+    )
+    parser.add_argument(
+        "--replies", action="store_true", help="recompute replied_by_amira across threads"
     )
     parser.add_argument("--sheet", action="store_true", help="rebuild the Google Sheet")
     parser.add_argument("--limit", type=int, help="cap items processed (for a smoke run)")
