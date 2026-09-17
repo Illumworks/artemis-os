@@ -118,3 +118,43 @@ class TestNeedsADecision:
         assert (
             _needs_decision([_item(author_email_domain="unknown.org", pod_resolved_at=None)]) == []
         )
+
+
+class TestByDistrictCarriesState:
+    """Hannah, 2026-09-17: a state column to the LEFT of district."""
+
+    def test_state_is_the_first_column(self) -> None:
+        from artemis.champions.sheet import _district_rollup
+
+        rows = _district_rollup([_item(district="Alpha ISD", state="TX")])
+        assert rows[0][0] == "TX" and rows[0][1] == "Alpha ISD"
+
+    def test_same_district_name_in_two_states_stays_two_rows(self) -> None:
+        """US school districts include more than one Lincoln; collapsing them on
+        name alone would merge two real districts into one line."""
+        from artemis.champions.sheet import _district_rollup
+
+        rows = _district_rollup(
+            [
+                _item(external_id="a", district="Lincoln Public Schools", state="NE"),
+                _item(external_id="b", district="Lincoln Public Schools", state="RI"),
+            ]
+        )
+        assert len(rows) == 2
+        assert {r[0] for r in rows} == {"NE", "RI"}
+
+    def test_counts_survive_the_extra_column(self) -> None:
+        from artemis.champions.sheet import _district_rollup
+
+        rows = _district_rollup(
+            [
+                _item(external_id="a", district="Alpha ISD", state="TX", product_issue=True),
+                _item(external_id="b", district="Alpha ISD", state="TX"),
+            ]
+        )
+        assert rows[0][2] == "2" and rows[0][3] == "1"
+
+    def test_unplaced_items_are_not_given_a_district_row(self) -> None:
+        from artemis.champions.sheet import _district_rollup
+
+        assert _district_rollup([_item(district=None, state="TX")]) == []

@@ -143,6 +143,43 @@ def _rollup(items: list[ChampionsItem], key: str) -> list[list[str]]:
     return rows
 
 
+def _district_rollup(items: list[ChampionsItem]) -> list[list[str]]:
+    """By District, with State to its left.
+
+    A district name alone is ambiguous to someone scanning the tab -- US school
+    districts include more than one Lincoln and more than one Washington -- and
+    state is the column people reach for first.
+    """
+    buckets: dict[tuple[str, str], dict[str, Any]] = defaultdict(
+        lambda: {"items": 0, "issues": 0, "friction": 0, "escalations": 0, "latest": ""}
+    )
+    for i in items:
+        if not i.district:
+            continue
+        b = buckets[(i.state or "", i.district)]
+        b["items"] += 1
+        b["issues"] += 1 if i.product_issue else 0
+        b["friction"] += 1 if i.adoption_friction else 0
+        b["escalations"] += 1 if i.escalation else 0
+        day = i.posted_at.date().isoformat()
+        if day > b["latest"]:
+            b["latest"] = day
+    rows = [
+        [
+            state,
+            district,
+            str(b["items"]),
+            str(b["issues"]),
+            str(b["friction"]),
+            str(b["escalations"]),
+            b["latest"],
+        ]
+        for (state, district), b in buckets.items()
+    ]
+    rows.sort(key=lambda r: (-int(r[2]), r[0], r[1]))
+    return rows
+
+
 def _themes(items: list[ChampionsItem]) -> list[list[str]]:
     buckets: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"count": 0, "states": set(), "districts": set(), "latest": ""}
@@ -257,6 +294,7 @@ async def build_sheet(
         ],
         "By District": [
             [
+                "State",
                 "District",
                 "Items",
                 "Product issues",
@@ -264,7 +302,7 @@ async def build_sheet(
                 "Escalations",
                 "Most recent",
             ],
-            *_rollup([i for i in educators if i.district], "district"),
+            *_district_rollup(educators),
         ],
         "Themes": [
             ["Theme", "Count", "States", "Districts", "Most recent"],
@@ -425,6 +463,26 @@ async def _write(
                     "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1},
                     "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
                     "fields": "userEnteredFormat.textFormat.bold",
+                }
+            }
+        )
+        # A filter on every tab, so any column can be sorted or filtered in
+        # place. Cleared first: a filter left from the previous run still spans
+        # the old row count, and a rebuilt tab with more rows would leave the new
+        # ones outside it -- invisible to a sort, which is worse than no filter.
+        fmt.append({"clearBasicFilter": {"sheetId": sid}})
+        fmt.append(
+            {
+                "setBasicFilter": {
+                    "filter": {
+                        "range": {
+                            "sheetId": sid,
+                            "startRowIndex": 0,
+                            "endRowIndex": max(len(tabs[title]), 1),
+                            "startColumnIndex": 0,
+                            "endColumnIndex": max(len(tabs[title][0]), 1),
+                        }
+                    }
                 }
             }
         )
