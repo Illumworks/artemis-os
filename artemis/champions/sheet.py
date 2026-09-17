@@ -65,6 +65,16 @@ class SheetResult:
     removed_tabs: list[str]
 
 
+#: Google caps a tab name at 100 characters and rejects these characters in one.
+_TAB_FORBIDDEN = str.maketrans({c: "-" for c in "[]*?/\\:"})
+
+
+def _pod_tab_title(pod_name: str) -> str:
+    """A sheet tab name for a pod, prefixed so pod tabs group together."""
+    cleaned = pod_name.translate(_TAB_FORBIDDEN).strip() or "Unassigned"
+    return f"Pod · {cleaned}"[:100]
+
+
 def _yn(value: bool | None) -> str:
     """Blank for unknown. An unclassified row must not read as a clean one --
     FALSE and "we never looked" are different facts."""
@@ -269,6 +279,23 @@ async def build_sheet(
             *_simple_list(staff, categories),
         ],
         "KB Articles": [["Date", "Category", "Heading", "Link"], *_simple_list(kb, categories)],
+    }
+
+    # One tab per pod, which Hannah confirmed she still wants alongside `By Pod`.
+    # Built from the same Activity rows, so a pod tab can never disagree with the
+    # rollup. Ordered by size so the busiest pod is nearest the front, and named
+    # with a prefix so the pod tabs stay together and never collide with a fixed
+    # tab name.
+    by_pod: dict[str, list[ChampionsItem]] = defaultdict(list)
+    for item in educators:
+        by_pod[item.pod or "Unassigned"].append(item)
+    for pod_name, pod_items in sorted(by_pod.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        tabs[_pod_tab_title(pod_name)] = [
+            ACTIVITY_HEADERS,
+            *_activity_rows(pod_items, categories),
+        ]
+
+    tabs |= {
         "Run log": [
             [
                 "Run at",
@@ -341,7 +368,13 @@ async def _write(
     # confirmed is disposable. Never remove a tab with content in it.
     removed = []
     for title, sheet_id in existing.items():
-        if title == "Alerts" and title not in tabs:
+        if title in tabs:
+            continue
+        # The empty placeholder Jon confirmed was disposable, and any pod tab
+        # this run no longer produces -- a pod that was renamed or emptied would
+        # otherwise leave a stale tab that still looks current. Only tabs this
+        # module creates are ever removed; anything else is left alone.
+        if title == "Alerts" or title.startswith("Pod · "):
             requests.append({"deleteSheet": {"sheetId": sheet_id}})
             removed.append(title)
     if requests:

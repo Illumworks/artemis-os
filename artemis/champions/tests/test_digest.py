@@ -131,13 +131,17 @@ class TestSlackBlocks:
     """Slack has no tables, so structure comes from headers, dividers and one
     grouped block per state. Its limits are hard failures, not soft ones."""
 
-    def test_structure_is_header_context_divider_then_states(self) -> None:
-        from artemis.champions.digest import render_slack_blocks
+    def test_structure_leads_with_the_header_and_the_spreadsheet(self) -> None:
+        """Hannah asked for the spreadsheet at the top: it is what people act
+        from, and in the footer nobody scrolled to it."""
+        from artemis.champions.digest import SHEET_URL, render_slack_blocks
 
         blocks = render_slack_blocks(_digest([_item(state="CA", summary="a thing")]))
         assert blocks[0]["type"] == "header"
-        assert blocks[1]["type"] == "context"
-        assert blocks[2]["type"] == "divider"
+        assert blocks[1]["type"] == "section"
+        assert SHEET_URL in str(blocks[1])
+        assert blocks[2]["type"] == "context"
+        assert blocks[3]["type"] == "divider"
         assert blocks[-1]["type"] == "context"
 
     def test_every_item_appears_somewhere(self) -> None:

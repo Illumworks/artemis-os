@@ -58,7 +58,11 @@ async def collect(session: AsyncSession, *, days: int = 7, until: datetime | Non
     # Educators are the digest; Amira's own posts are a separate list below it.
     educators = [r for r in rows if not r.is_amira_staff]
     digest = Digest(since=since, until=until, items=educators)
-    digest.staff = [r for r in rows if r.is_amira_staff]
+    # Hannah, 2026-09-17: this section should be what the Amira team POSTED --
+    # newsletters, knowledge-base articles, announcements -- not a reply it left
+    # on someone else's thread. A staff comment is participation in an
+    # educator's post, and that post is already in the table above it.
+    digest.staff = [r for r in rows if r.is_amira_staff and r.item_type != "comment"]
     rows = educators
     digest.flagged = [r for r in rows if r.product_issue]
     digest.friction = [r for r in rows if r.adoption_friction and not r.product_issue]
@@ -114,6 +118,8 @@ def _sorted_rows(items: list[ChampionsItem]) -> list[ChampionsItem]:
 def render_text(d: Digest) -> str:
     lines = [
         f"Champions community digest - {d.window_label}",
+        "",
+        f"FULL SPREADSHEET: {SHEET_URL}",
         "",
         f"{len(d.items)} new items" + (f" - {len(d.flagged)} flagged" if d.flagged else ""),
         "",
@@ -182,6 +188,12 @@ def render_html(d: Digest) -> str:
         'color:#101828;line-height:1.45">',
         '<h1 style="font-size:19px;margin:0 0 2px">Community Hub Digest</h1>',
         f'<div style="color:#667085;font-size:13px;margin-bottom:14px">{e(d.window_label)}</div>',
+        # Hannah asked for the spreadsheet at the top and prominent -- it is what
+        # people act from, and at the bottom nobody scrolled to it.
+        f'<div style="margin:0 0 18px"><a href="{SHEET_URL}" '
+        'style="display:inline-block;background:#1a56db;color:#ffffff;text-decoration:none;'
+        'padding:11px 20px;border-radius:6px;font-size:15px;font-weight:600">'
+        "Open the full spreadsheet &rarr;</a></div>",
         f'<div style="font-size:14px;margin-bottom:10px"><strong>{len(d.items)}</strong> new items'
         + (f" &nbsp;·&nbsp; <strong>{len(d.flagged)}</strong> flagged" if d.flagged else "")
         + "</div>",
@@ -275,6 +287,13 @@ def render_slack_blocks(d: Digest) -> list[dict[str, object]]:
         {
             "type": "header",
             "text": {"type": "plain_text", "text": "Community Hub Digest", "emoji": True},
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":bar_chart: *<{SHEET_URL}|Open the full spreadsheet>*",
+            },
         },
         {
             "type": "context",
