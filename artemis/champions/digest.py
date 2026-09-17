@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.champions.models import ChampionsItem
+from artemis.champions.vanilla import public_url
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1RcRcQQeS8FXbYxxA14PXAZ1qvsoBUF0nC3jWrREWFbw"
 PODS_ADMIN_URL = "https://central.amiralearning.com/pods/admin"
@@ -165,9 +166,7 @@ def render_html(d: Digest) -> str:
     for item in _sorted_rows(d.items):
         summary = e(item.summary or "")
         if item.url:
-            summary = (
-                f'<a href="{e(item.url)}" style="color:#1a56db;text-decoration:none">{summary}</a>'
-            )
+            summary = f'<a href="{e(public_url(item.url))}" style="color:#1a56db;text-decoration:none">{summary}</a>'
         markers = ""
         if item.escalation:
             markers += '<span title="needs a human">&#9888;&#65039;</span> '
@@ -208,7 +207,7 @@ def render_html(d: Digest) -> str:
         items = "".join(
             f'<li style="margin-bottom:4px">{item.posted_at.strftime("%m/%d/%y")} — '
             + (
-                f'<a href="{e(item.url)}" style="color:#1a56db">{e(item.title or item.summary or "")}</a>'
+                f'<a href="{e(public_url(item.url))}" style="color:#1a56db">{e(item.title or item.summary or "")}</a>'
                 if item.url
                 else e(item.title or item.summary or "")
             )
@@ -255,7 +254,7 @@ def render_slack(d: Digest) -> str:
             current = state
         summary = _summary_cell(item)
         if item.url:
-            summary = f"<{item.url}|{summary}>"
+            summary = f"<{public_url(item.url)}|{summary}>"
         tick = " :white_check_mark:" if item.replied_by_amira else ""
         lines.append(f"• {item.posted_at.strftime('%m/%d')} · {_district(item)} — {summary}{tick}")
 
@@ -315,7 +314,7 @@ def render_slack_blocks(d: Digest) -> list[dict[str, object]]:
     def line(item: ChampionsItem) -> str:
         summary = _summary_cell(item)
         if item.url:
-            summary = f"<{item.url}|{summary}>"
+            summary = f"<{public_url(item.url)}|{summary}>"
         tick = "  :white_check_mark:" if item.replied_by_amira else ""
         return f"`{item.posted_at.strftime('%m/%d')}`  *{_district(item)}* — {summary}{tick}"
 

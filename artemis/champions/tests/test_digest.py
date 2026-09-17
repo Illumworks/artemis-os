@@ -17,6 +17,7 @@ from artemis.champions.digest import (
     _district,
     _sorted_rows,
     _summary_cell,
+    render_html,
     render_slack,
     render_text,
 )
@@ -206,3 +207,49 @@ class TestRecipients:
 
         with pytest.raises(ValueError, match="explicit recipients"):
             await send_email(None, _digest([_item()]), to=[])  # type: ignore[arg-type]
+
+
+class TestPublicLinks:
+    """Champions reach the community on champions.amiralearning.com; the API
+    answers on, and returns URLs for, amiralearning.vanillacommunities.com."""
+
+    def test_api_host_is_rewritten(self) -> None:
+        from artemis.champions.vanilla import public_url
+
+        assert (
+            public_url("https://amiralearning.vanillacommunities.com/discussion/165/boy-testing")
+            == "https://champions.amiralearning.com/discussion/165/boy-testing"
+        )
+
+    def test_the_path_is_untouched(self) -> None:
+        """Only the host differs between the two; a rewritten path would 404."""
+        from artemis.champions.vanilla import public_url
+
+        src = "https://amiralearning.vanillacommunities.com/discussion/comment/314#Comment_314"
+        assert public_url(src).endswith("/discussion/comment/314#Comment_314")
+
+    def test_an_unexpected_host_is_left_alone(self) -> None:
+        from artemis.champions.vanilla import public_url
+
+        other = "https://example.com/discussion/1"
+        assert public_url(other) == other
+
+    def test_missing_url_is_empty_not_none(self) -> None:
+        from artemis.champions.vanilla import public_url
+
+        assert public_url(None) == "" and public_url("") == ""
+
+    def test_rendered_digest_links_use_the_public_host(self) -> None:
+        d = _digest(
+            [
+                _item(
+                    state="TX",
+                    url="https://amiralearning.vanillacommunities.com/discussion/165/x",
+                )
+            ]
+        )
+        # The plain-text part is the fallback and carries no per-row link, by
+        # design -- the table would be unreadable with a URL in every line.
+        for rendered in (render_html(d), render_slack(d)):
+            assert "champions.amiralearning.com" in rendered
+            assert "vanillacommunities.com" not in rendered

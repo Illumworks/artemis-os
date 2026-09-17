@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from artemis.champions.models import ChampionsItem, ChampionsRun
+from artemis.champions.vanilla import public_url
 from artemis.integrations.gmail.sender import resolve_gmail_client
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ def _activity_rows(items: list[ChampionsItem], categories: dict[str, str]) -> li
                 _yn(i.adoption_friction),
                 _yn(i.escalation),
                 _yn(i.replied_by_amira),
-                i.url or "",
+                public_url(i.url),
             ]
         )
     return rows
@@ -252,7 +253,7 @@ def _simple_list(items: list[ChampionsItem], categories: dict[str, str]) -> list
             i.posted_at.date().isoformat(),
             categories.get(i.category or "", i.category or ""),
             i.title or (i.summary or "")[:80],
-            i.url or "",
+            public_url(i.url),
         ]
         for i in items
     ]

@@ -239,6 +239,22 @@ class VanillaClient:
         )
 
 
+#: The member-facing host. The API answers on amiralearning.vanillacommunities.com
+#: and returns URLs on that host, but Champions reach the community through
+#: champions.amiralearning.com -- same community, same paths, and the host
+#: Hannah's existing digest links to. Rewritten at render time rather than at
+#: ingest, so the stored value stays exactly what the API said.
+PUBLIC_HOST = "champions.amiralearning.com"
+API_HOST = "amiralearning.vanillacommunities.com"
+
+
+def public_url(url: str | None) -> str:
+    """The link a Champion would recognise."""
+    if not url:
+        return ""
+    return url.replace(f"//{API_HOST}/", f"//{PUBLIC_HOST}/", 1)
+
+
 def email_domain(email: str | None) -> str | None:
     if not email or "@" not in email:
         return None
