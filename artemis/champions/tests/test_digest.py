@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from artemis.champions.digest import (
     Digest,
     _district,
@@ -175,3 +177,32 @@ class TestSlackBlocks:
             text = block.get("text")
             if isinstance(text, dict):
                 assert len(str(text.get("text", ""))) <= 3000
+
+
+class TestRecipients:
+    """The list is recorded in code; sending to it still has to be deliberate."""
+
+    def test_the_confirmed_list(self) -> None:
+        from artemis.champions.deliver import DIGEST_RECIPIENTS
+
+        assert DIGEST_RECIPIENTS == (
+            "success@amiralearning.com",
+            "jaclyn.wright@amiralearning.com",
+            "amy.scholz@amiralearning.com",
+            "hannah.slater@amiralearning.com",
+        )
+
+    def test_angela_is_not_on_it(self) -> None:
+        """Removed 2026-09-17, leaving the company."""
+        from artemis.champions.deliver import DIGEST_RECIPIENTS
+
+        assert not any("angela" in r for r in DIGEST_RECIPIENTS)
+
+    @pytest.mark.asyncio
+    async def test_send_email_still_refuses_an_empty_recipient_list(self) -> None:
+        """Recording who should receive the digest must not make it possible to
+        send to them by forgetting an argument."""
+        from artemis.champions.deliver import send_email
+
+        with pytest.raises(ValueError, match="explicit recipients"):
+            await send_email(None, _digest([_item()]), to=[])  # type: ignore[arg-type]

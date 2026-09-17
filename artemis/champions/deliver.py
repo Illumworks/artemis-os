@@ -27,6 +27,26 @@ from artemis.integrations.gmail.sender import resolve_gmail_client
 
 logger = logging.getLogger(__name__)
 
+#: Who the weekly digest goes to. Confirmed by Jon 2026-09-17, from Hannah's
+#: list with Angela Miata removed (leaving the company) and Hannah kept on --
+#: she is the sender, and replies come back to her either way.
+#:
+#: Every individual address here was resolved through Slack's
+#: users.lookupByEmail rather than inferred from a first name: "jackie" is
+#: Jaclyn Wright, and this codebase has already been bitten by two people
+#: sharing a first name. success@ is a distribution address and is deliberately
+#: NOT a Slack user.
+#:
+#: This is a constant, not a default argument. send_email still requires its
+#: recipients explicitly, so adding the list here records who should receive the
+#: digest without making it possible to send to them by forgetting a flag.
+DIGEST_RECIPIENTS: tuple[str, ...] = (
+    "success@amiralearning.com",
+    "jaclyn.wright@amiralearning.com",
+    "amy.scholz@amiralearning.com",
+    "hannah.slater@amiralearning.com",
+)
+
 MARKETING_ACCOUNT = "amiracentral@amiralearning.com"
 SENDER = "Hannah Slater <hannah.slater@amiralearning.com>"
 REPLY_TO = "hannah.slater@amiralearning.com"
