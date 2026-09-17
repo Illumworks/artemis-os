@@ -37,6 +37,7 @@ _SHEETS = "https://sheets.googleapis.com/v4/spreadsheets"
 ACTIVITY_HEADERS = [
     "ID",
     "Type",
+    "Post Type",
     "Date",
     "Author",
     "Domain",
@@ -84,15 +85,39 @@ def _yn(value: bool | None) -> str:
     return "TRUE" if value else "FALSE"
 
 
-def _activity_rows(items: list[ChampionsItem], categories: dict[str, str]) -> list[list[str]]:
+def _post_type_label(post_type: str | None, names: dict[str, str] | None) -> str:
+    """Vanilla's display name for a post type, or a readable fallback.
+
+    /post-types lists the active ones, but posts carry ids it does not return --
+    `teacher-tips` and `getting-started-discussions` are in the corpus and absent
+    from the endpoint, presumably retired. Falling back to a titleised slug keeps
+    the sheet readable without inventing a name that contradicts Vanilla for a
+    type it does list.
+    """
+    if not post_type:
+        return ""
+    known = (names or {}).get(post_type)
+    if known:
+        return known
+    return post_type.replace("-", " ").title()
+
+
+def _activity_rows(
+    items: list[ChampionsItem],
+    categories: dict[str, str],
+    post_types: dict[str, str] | None = None,
+) -> list[list[str]]:
     rows = []
     for i in items:
         rows.append(
             [
                 i.external_id,
-                {"discussion": "Discussion", "comment": "Comment", "article": "KB Article"}.get(
+                {"discussion": "Post", "comment": "Comment", "article": "KB Article"}.get(
                     i.item_type, i.item_type
                 ),
+                # A comment has no post type of its own. Hannah's sheet repeats
+                # "Comment" there; blank is honest and sorts together.
+                _post_type_label(i.post_type, post_types) if i.item_type != "comment" else "",
                 i.posted_at.date().isoformat(),
                 i.author_name or "",
                 i.author_email_domain or "",
@@ -264,6 +289,7 @@ async def build_sheet(
     *,
     spreadsheet_id: str = SHEET_ID,
     categories: dict[str, str] | None = None,
+    post_types: dict[str, str] | None = None,
 ) -> SheetResult:
     items = list(
         (
@@ -278,13 +304,14 @@ async def build_sheet(
         ).scalars()
     )
     categories = categories or {}
+    post_types = post_types or {}
 
     educators = [i for i in items if not i.is_amira_staff]
     staff = [i for i in items if i.is_amira_staff and i.item_type != "article"]
     kb = [i for i in items if i.item_type == "article"]
 
     tabs: dict[str, list[list[str]]] = {
-        "Activity": [ACTIVITY_HEADERS, *_activity_rows(items, categories)],
+        "Activity": [ACTIVITY_HEADERS, *_activity_rows(items, categories, post_types)],
         "By Pod": [
             ["Pod", "Items", "Product issues", "Adoption friction", "Escalations", "Most recent"],
             *_rollup(educators, "pod"),
@@ -331,7 +358,7 @@ async def build_sheet(
     for pod_name, pod_items in sorted(by_pod.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         tabs[_pod_tab_title(pod_name)] = [
             ACTIVITY_HEADERS,
-            *_activity_rows(pod_items, categories),
+            *_activity_rows(pod_items, categories, post_types),
         ]
 
     tabs |= {

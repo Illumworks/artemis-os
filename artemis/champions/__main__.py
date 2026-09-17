@@ -30,8 +30,10 @@ async def _run(args: argparse.Namespace) -> None:
             print(f"replied_by_amira set on {touched} row(s)")
         elif args.sheet:
             async with httpx.AsyncClient(timeout=60) as http:
-                categories = await VanillaClient().fetch_category_names(http)
-            sheet_result = await build_sheet(session, categories=categories)
+                client = VanillaClient()
+                categories = await client.fetch_category_names(http)
+                post_types = await client.fetch_post_type_names(http)
+            sheet_result = await build_sheet(session, categories=categories, post_types=post_types)
             await session.commit()
             for tab, n in sheet_result.tabs_written.items():
                 print(f"  {tab:20} {n:5} rows")

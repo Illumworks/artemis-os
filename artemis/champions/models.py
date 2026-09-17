@@ -34,6 +34,10 @@ class ChampionsItem(Base):
     item_type: Mapped[str] = mapped_column(Text, nullable=False)  # discussion|comment|article
     url: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str | None] = mapped_column(Text)
+    #: Vanilla's own post type -- discussion, tip, inspiration, newsletter and
+    #: so on. Read from the source rather than inferred: the community already
+    #: classifies every post this way, and the author chose it when they posted.
+    post_type: Mapped[str | None] = mapped_column(Text)
     title: Mapped[str | None] = mapped_column(Text)
     posted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 

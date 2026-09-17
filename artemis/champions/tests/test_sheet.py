@@ -158,3 +158,41 @@ class TestByDistrictCarriesState:
         from artemis.champions.sheet import _district_rollup
 
         assert _district_rollup([_item(district=None, state="TX")]) == []
+
+
+class TestPostType:
+    """Vanilla classifies every post; the author picks it when posting. Read it
+    rather than infer it -- the author cannot be wrong about what they meant."""
+
+    def test_vanillas_display_name_is_used(self) -> None:
+        from artemis.champions.sheet import _post_type_label
+
+        assert _post_type_label("tip", {"tip": "Tip"}) == "Tip"
+
+    def test_a_type_the_endpoint_no_longer_lists_is_still_readable(self) -> None:
+        """`teacher-tips` and `getting-started-discussions` are in the corpus and
+        absent from /post-types, presumably retired."""
+        from artemis.champions.sheet import _post_type_label
+
+        assert _post_type_label("teacher-tips", {}) == "Teacher Tips"
+        assert _post_type_label("getting-started-discussions", {}) == (
+            "Getting Started Discussions"
+        )
+
+    def test_vanilla_wins_over_the_fallback(self) -> None:
+        """Never invent a name for a type Vanilla does list."""
+        from artemis.champions.sheet import _post_type_label
+
+        assert _post_type_label("inspiration", {"inspiration": "Inspiration"}) == "Inspiration"
+
+    def test_missing_post_type_is_blank(self) -> None:
+        from artemis.champions.sheet import _post_type_label
+
+        assert _post_type_label(None, {"tip": "Tip"}) == ""
+
+    def test_comments_get_no_post_type(self) -> None:
+        """Hannah's sheet repeats "Comment" there, which just restates Type."""
+        from artemis.champions.sheet import _activity_rows
+
+        rows = _activity_rows([_item(item_type="comment", post_type=None)], {}, {"tip": "Tip"})
+        assert rows[0][1] == "Comment" and rows[0][2] == ""

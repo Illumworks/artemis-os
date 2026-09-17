@@ -91,6 +91,7 @@ async def ingest(
             item_type=item.item_type,
             url=item.url,
             category=item.category,
+            post_type=item.post_type,
             title=item.title,
             posted_at=item.posted_at,
             parent_discussion_id=item.parent_discussion_id,
@@ -110,6 +111,7 @@ async def ingest(
             set_={
                 "url": base.excluded.url,
                 "category": base.excluded.category,
+                "post_type": base.excluded.post_type,
                 "title": base.excluded.title,
                 "body": base.excluded.body,
                 "author_name": base.excluded.author_name,

@@ -53,6 +53,7 @@ class VanillaItem:
     author_user_id: int | None
     author_name: str | None
     parent_discussion_id: int | None = None
+    post_type: str | None = None
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -110,6 +111,20 @@ class VanillaClient:
             if page > 200:  # pragma: no cover - corpus is ~478 items
                 logger.warning("champions: /%s exceeded 200 pages, stopping", path)
                 return
+
+    async def fetch_post_type_names(self, client: httpx.AsyncClient) -> dict[str, str]:
+        """postTypeID -> display name, e.g. ``tip`` -> ``Tip``.
+
+        Hannah's sheet has a "Post Type" column and this is where it comes from:
+        Vanilla classifies every post and the author picks it when posting. No
+        reason to have a model guess at something the source already knows.
+        """
+        names: dict[str, str] = {}
+        async for row in self._paginate(client, "post-types", {}):
+            pid, name = row.get("postTypeID"), row.get("name")
+            if isinstance(pid, str) and isinstance(name, str):
+                names[pid] = name
+        return names
 
     async def fetch_category_names(self, client: httpx.AsyncClient) -> dict[str, str]:
         """categoryID -> name. A bare id in the sheet is useless to a reader."""
@@ -196,6 +211,7 @@ class VanillaClient:
             author_user_id=row.get("insertUserID"),
             author_name=user.get("name"),
             parent_discussion_id=did if isinstance(did, int) else None,
+            post_type=str(row["postTypeID"]) if row.get("postTypeID") else None,
         )
 
     def _comment(self, row: dict[str, Any]) -> VanillaItem | None:
