@@ -16,6 +16,8 @@ import logging
 
 import httpx
 
+from artemis.champions.deliver import DIGEST_RECIPIENTS, post_slack, send_email
+from artemis.champions.digest import collect
 from artemis.champions.ingest import classify_pending, ingest, mark_amira_replies, resolve_pods
 from artemis.champions.sheet import build_sheet
 from artemis.champions.vanilla import VanillaClient
@@ -24,7 +26,28 @@ from artemis.db import SessionLocal, engine
 
 async def _run(args: argparse.Namespace) -> None:
     async with SessionLocal() as session:
-        if args.replies:
+        if args.deliver:
+            digest = await collect(session, days=args.days)
+            # An empty week is not a failure, but it is not worth a send either:
+            # a digest with nothing in it teaches people to ignore the next one.
+            if not digest.items:
+                print(f"no educator posts in the last {args.days} days -- nothing sent")
+                await session.commit()
+                await engine.dispose()
+                return
+            to = list(args.to) if args.to else list(DIGEST_RECIPIENTS)
+            print(
+                f"window {digest.window_label} | {len(digest.items)} items | "
+                f"{len(digest.flagged)} flagged"
+            )
+            print(f"email -> {', '.join(to)}")
+            message_id = await send_email(session, digest, to=to)
+            print(f"  sent id={message_id}")
+            if args.slack:
+                sent = await post_slack(session, digest, channels=list(args.slack))
+                print(f"slack -> {sent}")
+            await session.commit()
+        elif args.replies:
             touched = await mark_amira_replies(session)
             await session.commit()
             print(f"replied_by_amira set on {touched} row(s)")
@@ -83,6 +106,14 @@ def main() -> None:
     parser.add_argument(
         "--replies", action="store_true", help="recompute replied_by_amira across threads"
     )
+    parser.add_argument(
+        "--deliver", action="store_true", help="send the digest (email, and Slack with --slack)"
+    )
+    parser.add_argument("--to", action="append", help="override the recipient list; repeatable")
+    parser.add_argument(
+        "--slack", action="append", help="Slack channel or user id to post to; repeatable"
+    )
+    parser.add_argument("--days", type=int, default=7, help="digest window in days (default 7)")
     parser.add_argument("--sheet", action="store_true", help="rebuild the Google Sheet")
     parser.add_argument("--limit", type=int, help="cap items processed (for a smoke run)")
     parser.add_argument("-v", "--verbose", action="store_true")

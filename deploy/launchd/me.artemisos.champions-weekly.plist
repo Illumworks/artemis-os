@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Champions digest, delivered Fridays at 09:00 local. THIS ONE REACHES PEOPLE.
+     Weekday 5 is Friday. Recipients come from DIGEST_RECIPIENTS in
+     artemis/champions/deliver.py; add `--slack C0B26KNKGCT` to the script's
+     arguments to post to #hub as well.
+     Install: cp to ~/Library/LaunchAgents/ then
+     `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.artemisos.champions-weekly.plist`
+     RunAtLoad is false and must stay false: true would send a digest every time
+     the agent loads, including at login and at every reboot. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.artemisos.champions-weekly</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/artemis/Artemis/artemis-os/scripts/champions_weekly.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>5</integer>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/artemis/Library/Logs/artemisos/champions-weekly.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/artemis/Library/Logs/artemisos/champions-weekly.err.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/artemis/Artemis/artemis-os</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

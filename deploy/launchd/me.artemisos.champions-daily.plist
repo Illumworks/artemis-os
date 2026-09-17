@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Champions digest, daily refresh at 17:00 local. Sends nothing.
+     Install: cp to ~/Library/LaunchAgents/ then
+     `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.artemisos.champions-daily.plist`
+     RunAtLoad is omitted deliberately: a refresh at every login adds model calls
+     and changes nothing a human is waiting for. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.artemisos.champions-daily</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/artemis/Artemis/artemis-os/scripts/champions_daily.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>17</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/artemis/Library/Logs/artemisos/champions-daily.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/artemis/Library/Logs/artemisos/champions-daily.err.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/artemis/Artemis/artemis-os</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
