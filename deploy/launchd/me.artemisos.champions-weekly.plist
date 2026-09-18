@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Champions digest, delivered Fridays at 09:00 local. THIS ONE REACHES PEOPLE.
-     Weekday 5 is Friday. Recipients come from DIGEST_RECIPIENTS in
+<!-- Champions digest, delivered Mondays at 09:00 local. THIS ONE REACHES PEOPLE.
+     Weekday 1 is Monday. Recipients come from DIGEST_RECIPIENTS in
      artemis/champions/deliver.py; add `--slack C0B26KNKGCT` to the script's
      arguments to post to #hub as well.
      Install: cp to ~/Library/LaunchAgents/ then
@@ -25,7 +25,7 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Weekday</key>
-        <integer>5</integer>
+        <integer>1</integer>
         <key>Hour</key>
         <integer>9</integer>
         <key>Minute</key>
