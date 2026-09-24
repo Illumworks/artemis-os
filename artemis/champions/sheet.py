@@ -290,6 +290,7 @@ async def build_sheet(
     spreadsheet_id: str = SHEET_ID,
     categories: dict[str, str] | None = None,
     post_types: dict[str, str] | None = None,
+    user_tabs: tuple[list[list[str]], list[list[str]]] | None = None,
 ) -> SheetResult:
     items = list(
         (
@@ -360,6 +361,13 @@ async def build_sheet(
             ACTIVITY_HEADERS,
             *_activity_rows(pod_items, categories, post_types),
         ]
+
+    # Hannah's two account tabs. Every account in one filterable tab rather than
+    # only the active ones, and a separate never-logged-in list -- her explicit
+    # asks, 2026-09-23/24. Passed in rather than fetched here: they come from
+    # Vanilla's user records, not from the stored items this module works on.
+    if user_tabs is not None:
+        tabs["Users"], tabs["Never Logged In"] = user_tabs
 
     tabs |= {
         "Run log": [

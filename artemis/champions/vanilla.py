@@ -135,6 +135,10 @@ class VanillaClient:
                 names[str(cid)] = name
         return names
 
+    async def fetch_users(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Every account, with the fields the Users tab needs."""
+        return [row async for row in self._paginate(client, "users", {})]
+
     async def fetch_user_emails(self, client: httpx.AsyncClient) -> dict[int, str]:
         """userID -> email, for the domain join.
 

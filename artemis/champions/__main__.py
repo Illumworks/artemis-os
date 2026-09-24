@@ -19,7 +19,9 @@ import httpx
 from artemis.champions.deliver import DIGEST_RECIPIENTS, post_slack, send_email
 from artemis.champions.digest import collect
 from artemis.champions.ingest import classify_pending, ingest, mark_amira_replies, resolve_pods
+from artemis.champions.pods import load_domain_directory
 from artemis.champions.sheet import build_sheet
+from artemis.champions.users import build_user_rows, to_grid
 from artemis.champions.vanilla import VanillaClient
 from artemis.db import SessionLocal, engine
 
@@ -56,7 +58,14 @@ async def _run(args: argparse.Namespace) -> None:
                 client = VanillaClient()
                 categories = await client.fetch_category_names(http)
                 post_types = await client.fetch_post_type_names(http)
-            sheet_result = await build_sheet(session, categories=categories, post_types=post_types)
+                directory = await load_domain_directory(http)
+                users, never = await build_user_rows(http, directory, client=client)
+            sheet_result = await build_sheet(
+                session,
+                categories=categories,
+                post_types=post_types,
+                user_tabs=(to_grid(users), to_grid(never)),
+            )
             await session.commit()
             for tab, n in sheet_result.tabs_written.items():
                 print(f"  {tab:20} {n:5} rows")
