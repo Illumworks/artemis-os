@@ -265,11 +265,11 @@ class VanillaClient:
         )
 
 
-#: The member-facing host. The API answers on amiralearning.vanillacommunities.com
-#: and returns URLs on that host, but Champions reach the community through
-#: champions.amiralearning.com -- same community, same paths, and the host
-#: Hannah's existing digest links to. Rewritten at render time rather than at
-#: ingest, so the stored value stays exactly what the API said.
+#: The member-facing host, and since 2026-09-25 the API host too. Rows stored
+#: before that carry URLs on the old host, so the rewrite below still matters:
+#: 525 of the 529 stored URLs are on amiralearning.vanillacommunities.com.
+#: Rewritten at render time rather than at ingest, so the stored value stays
+#: exactly what the API said when it was read.
 PUBLIC_HOST = "champions.amiralearning.com"
 #: The host the API used to answer on. It now 302s to PUBLIC_HOST, but 518 rows
 #: were stored with URLs on it and those still need rewriting for display.
