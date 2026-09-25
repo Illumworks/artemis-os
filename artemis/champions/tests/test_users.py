@@ -87,8 +87,58 @@ class TestGrid:
     def test_header_order_is_hannahs(self) -> None:
         grid = to_grid([_row(_user(), None)])
         assert grid[0] == USER_HEADERS
-        assert grid[0][5] == "# of Logins", "her label, not a tidier one"
+        # Her label, not a tidier one. Asserted by name rather than by position,
+        # so adding a column cannot make this fail for the wrong reason.
+        assert "# of Logins" in grid[0]
+        assert "# of Comments" in grid[0]
 
     def test_every_row_matches_the_header_width(self) -> None:
         grid = to_grid([_row(_user(), None), _row(_user(countVisits=3), None)])
         assert all(len(r) == len(USER_HEADERS) for r in grid)
+
+
+class TestPodColumn:
+    """Added at Hannah's request, 2026-09-25."""
+
+    def test_pod_sits_beside_the_other_location_columns(self) -> None:
+        """Every column she already knows keeps its position."""
+        assert USER_HEADERS[:4] == ["State", "District", "Pod", "Name"]
+
+    def test_pod_is_filled_from_the_directory(self) -> None:
+        from artemis.champions.pods import PodMatch
+
+        match = PodMatch(
+            domain="rusd.org",
+            pod_slug="california-big-west",
+            pod_name="California and Big West",
+            district="Riverside USD",
+            state="CA",
+            csm_email="x@amiralearning.com",
+            is_ambiguous=False,
+            needs_decision=False,
+        )
+        assert _row(_user(), match)["Pod"] == "California and Big West"
+
+    def test_a_pod_can_be_known_while_the_district_is_not(self) -> None:
+        """k12.nd.us is claimed by 60 accounts -- all in one pod, so the pod is
+        safe -- but they are different districts, so the district is not. A blank
+        pod there would discard a fact every claimant agrees on."""
+        from artemis.champions.pods import PodMatch
+
+        match = PodMatch(
+            domain="k12.nd.us",
+            pod_slug="great-lakes-midwest",
+            pod_name="Great Lakes and Midwest",
+            district=None,
+            state="ND",
+            csm_email=None,
+            is_ambiguous=True,
+            needs_decision=True,
+        )
+        row = _row(_user(), match)
+        assert row["Pod"] == "Great Lakes and Midwest"
+        assert row["District"] == ""
+        assert row["State"] == "ND"
+
+    def test_unplaceable_domain_leaves_pod_blank(self) -> None:
+        assert _row(_user(), None)["Pod"] == ""

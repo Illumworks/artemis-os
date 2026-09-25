@@ -108,8 +108,12 @@ class Settings(BaseSettings):
         description="Cloudflare Access application audience tag (AUD).",
     )
     vanilla_base_url: str = Field(
-        default="https://amiralearning.vanillacommunities.com/api/v2",
-        description="Vanilla Forums API v2 base for the Amira Champions community.",
+        default="https://champions.amiralearning.com/api/v2",
+        description=(
+            "Vanilla Forums API v2 base for the Amira Champions community. The "
+            "amiralearning.vanillacommunities.com host began 302-ing here on "
+            "2026-09-25; the vanity domain is now canonical for the API too."
+        ),
     )
     vanilla_token: str = Field(
         default="",

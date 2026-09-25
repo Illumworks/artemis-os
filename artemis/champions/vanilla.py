@@ -78,10 +78,16 @@ class VanillaClient:
     async def _get(
         self, client: httpx.AsyncClient, path: str, params: dict[str, Any]
     ) -> list[dict[str, Any]]:
+        # Redirects are followed deliberately. On 2026-09-25 the API host moved
+        # from amiralearning.vanillacommunities.com to champions.amiralearning.com
+        # and every endpoint began answering 302; without this, a host move is a
+        # hard failure rather than a redirect we quietly survive. The base URL
+        # points at the new host, so this is the safety net, not the mechanism.
         resp = await client.get(
             f"{self._base}/{path.lstrip('/')}",
             params=params,
             headers={"Authorization": f"Bearer {self._token}"},
+            follow_redirects=True,
         )
         if resp.status_code != 200:
             raise VanillaError(f"GET /{path} -> {resp.status_code}: {resp.text[:200]}")
@@ -265,6 +271,8 @@ class VanillaClient:
 #: Hannah's existing digest links to. Rewritten at render time rather than at
 #: ingest, so the stored value stays exactly what the API said.
 PUBLIC_HOST = "champions.amiralearning.com"
+#: The host the API used to answer on. It now 302s to PUBLIC_HOST, but 518 rows
+#: were stored with URLs on it and those still need rewriting for display.
 API_HOST = "amiralearning.vanillacommunities.com"
 
 

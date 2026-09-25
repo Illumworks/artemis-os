@@ -41,6 +41,10 @@ SYSTEM_NAMES: frozenset[str] = frozenset({"system", "stopforumspam", "akismet", 
 USER_HEADERS: list[str] = [
     "State",
     "District",
+    # Added at Hannah's request, 2026-09-25. Placed beside the other location
+    # columns rather than at the front so every column she already knows stays
+    # where she left it.
+    "Pod",
     "Name",
     "# of Posts",
     "# of Comments",
@@ -70,6 +74,12 @@ def _row(user: dict[str, Any], match: PodMatch | None) -> dict[str, Any]:
         # names, and a shared domain resolves to no single district, so naming
         # one would be confidently wrong on a list a CSM acts from.
         "District": (match.district if match else None) or "",
+        # Pod is known more often than district: a domain claimed by several
+        # districts is ambiguous about WHICH district, but its claimants usually
+        # agree on the pod, and the resolver keeps a value every claimant agrees
+        # on. So a row can carry a pod with the district blank, and that is the
+        # honest reading rather than a gap.
+        "Pod": (match.pod_name if match else None) or "",
         "Name": str(user.get("name") or ""),
         "# of Posts": posts,
         "# of Comments": comments,
